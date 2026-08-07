@@ -116,6 +116,64 @@ describe("fast mode workflow/runtime invariants", () => {
     }
   });
 
+  it("rehydrates a held direct-graph principal fence into the runner", async () => {
+    const selected = { workflowId: "WF-fenced-resume", stepIds: [] };
+    const { store, executor } = makeExecutorForTask(task());
+    store.getTaskWorkflowSelectionAsync = vi.fn(async () => selected);
+    store.getWorkflowDefinition = vi.fn(async () => ({
+      id: selected.workflowId,
+      name: "Fenced resume",
+      ir: {
+        version: "v1",
+        name: "Fenced resume",
+        nodes: [{ id: "start", kind: "start" }, { id: "end", kind: "end" }],
+        edges: [{ from: "start", to: "end" }],
+      },
+    }));
+    store.listWorkflowWorkItemsForTask = vi.fn(async () => [{
+      id: "work-item-1",
+      taskId: "FN-6226",
+      nodeId: "start",
+      nodeInstanceId: "start",
+      kind: "task",
+      state: "held",
+      principalAgentId: "reviewer-1",
+      workflowRole: "reviewer",
+      authorityKind: "review-node-override",
+    }]);
+    store.transitionWorkflowWorkItem = vi.fn(async (_id: string, state: string, patch: object = {}) => ({
+      id: "work-item-1",
+      taskId: "FN-6226",
+      nodeId: "start",
+      nodeInstanceId: "start",
+      kind: "task",
+      state,
+      principalAgentId: "reviewer-1",
+      workflowRole: "reviewer",
+      authorityKind: "review-node-override",
+      ...patch,
+    }));
+    const run = vi.spyOn(WorkflowGraphTaskRunner.prototype, "run").mockResolvedValue({
+      disposition: "completed",
+      outcome: "success",
+      visitedNodeIds: ["start"],
+      context: {},
+    } as never);
+
+    try {
+      await (executor as any).executeWorkflowGraph(task());
+      expect(run).toHaveBeenCalledWith(expect.anything(), expect.anything(), "start", {
+        "workflow:work-item-id": "work-item-1",
+        "workflow:principal-agent-id": "reviewer-1",
+        "workflow:principal-role": "reviewer",
+        "workflow:principal-authority": "review-node-override",
+        "workflow:node-instance-id": "start",
+      });
+    } finally {
+      run.mockRestore();
+    }
+  });
+
   it("graph executor with a custom workflow skips custom pre-merge prompt/gate nodes in fast mode", async () => {
     const { store, executor } = makeExecutorForTask(task({ executionMode: "fast", worktree: "/tmp/wt" }));
     const executeStep = vi.spyOn(executor as any, "executeWorkflowStep").mockResolvedValue({ success: true });

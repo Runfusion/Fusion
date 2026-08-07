@@ -83,6 +83,7 @@ export function NewAgentDialog({
   const [title, setTitle] = useState("");
   const [icon, setIcon] = useState("");
   const [role, setRole] = useState<AgentCapability>("custom");
+  const [additionalRoles, setAdditionalRoles] = useState<AgentCapability[]>([]);
   const [reportsTo, setReportsTo] = useState("");
   const [instructionsPath, setInstructionsPath] = useState("");
   const [instructionsText, setInstructionsText] = useState("");
@@ -187,6 +188,7 @@ export function NewAgentDialog({
     setTitle(spec.description);
     setIcon(spec.icon);
     setRole(mappedRole);
+    setAdditionalRoles([]);
     // Map generated systemPrompt to instructionsText
     setInstructionsText(spec.systemPrompt);
     setRuntimeConfig(c => ({
@@ -219,6 +221,7 @@ export function NewAgentDialog({
     setIcon(draft.icon ?? "");
     setTitle(draft.title ?? "");
     setRole(draft.role);
+    setAdditionalRoles([]);
     setSoul(draft.soul ?? "");
     setInstructionsText(draft.instructionsText ?? "");
     // Advance to Step 1 so user can review model selection
@@ -234,6 +237,7 @@ export function NewAgentDialog({
     setTitle(values.title ?? "");
     setIcon(values.icon ?? "");
     setRole(values.role);
+    setAdditionalRoles([]);
     setReportsTo(values.reportsTo ?? "");
     // FNXC:StandingInstructionsTemplate 2026-07-14-00:12:
     // Prefill/onboarding can set custom tab programmatically with empty instructionsText.
@@ -283,6 +287,7 @@ export function NewAgentDialog({
     setSelectedRuntimeId("");
     setSelectedPresetId(null);
     setSelectedSkills([]);
+    setAdditionalRoles([]);
     setError(null);
     setIsGenerationModalOpen(false);
     setIsInterviewOpen(false);
@@ -297,6 +302,7 @@ export function NewAgentDialog({
       await createAgent(buildAgentCreatePayload({
         name,
         role,
+        roles: [role, ...additionalRoles],
         title,
         icon,
         reportsTo,
@@ -563,14 +569,17 @@ export function NewAgentDialog({
                       />
                     </div>
                     <div className="agent-dialog-field">
-                      <label>{t("agents.fieldRole", "Role")}</label>
+                      <label>{t("agents.fieldRole", "Primary role")}</label>
                       <div className="agent-role-grid">
                         {AGENT_ROLES.map(r => (
                           <button
                             key={r.value}
                             type="button"
                             className={`agent-role-option${role === r.value ? " selected" : ""}`}
-                            onClick={() => setRole(r.value)}
+                            onClick={() => {
+                              setRole(r.value);
+                              setAdditionalRoles((current) => current.filter((candidate) => candidate !== r.value));
+                            }}
                           >
                             <span className="agent-role-option-icon" aria-hidden="true">
                               <ProviderIcon provider={selectedModelProvider} size="sm" />
@@ -579,6 +588,21 @@ export function NewAgentDialog({
                           </button>
                         ))}
                       </div>
+                      <fieldset className="agent-dialog-field" aria-label={t("agents.additionalRoles", "Additional workflow roles")}>
+                        <legend>{t("agents.additionalRoles", "Additional workflow roles")}</legend>
+                        {AGENT_ROLES.filter((candidate) => candidate.value !== role).map((candidate) => (
+                          <label key={candidate.value} className="checkbox-label">
+                            <input
+                              type="checkbox"
+                              checked={additionalRoles.includes(candidate.value)}
+                              onChange={() => setAdditionalRoles((current) => current.includes(candidate.value)
+                                ? current.filter((value) => value !== candidate.value)
+                                : [...current, candidate.value])}
+                            />
+                            {getRoleLabel(candidate.value)}
+                          </label>
+                        ))}
+                      </fieldset>
                     </div>
                   </div>
                   <div className="agent-dialog-section">

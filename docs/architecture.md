@@ -2359,3 +2359,9 @@ FN-8685 adds per-project, per-consumer registration, cursor/lease, receipt, and 
 Consumers replay within the 30-day retention window. A stale cursor or retained gap uses snapshot-bounded reconciliation: capture the outbox head before reading live tasks, emit observed deletes for missing cached tasks, and CAS-advance only to that captured head so later rows remain available for normal polling. Poison parking atomically inserts the unique `(project_id, consumer_id, event_id)` dead letter, advances the fenced cursor, resets retries, and writes its audit record.
 
 `SelfHealingManager` invokes bounded `pruneTaskLifecycleEvents` no more than once per project every six hours. It uses durable registration liveness rather than cursor existence, retains unacknowledged rows, and uses an age-only 30-day prune when no consumer is live. Run-audit mutation types are `task-deleted-outbox:catch-up`, `task-deleted-outbox:reconciliation-fallback`, `task-deleted-outbox:lease-fenced`, `task-deleted-outbox:dead-letter`, and `task-deleted-outbox:retention-pruned`.
+
+## Durable workflow principals
+
+Workflow work items fence agent-executed stages with `principalAgentId`, `workflowRole`, `authorityKind`, and `nodeInstanceId`. A fence is persisted before the session handler runs and retry/resume retains it. Task ownership is stable metadata; active identity is derived from live, leased work items rather than stored on the task row.
+
+Workflow session capacity is acquired separately from heartbeat capacity and released idempotently on terminal, cancellation, pause, and recovery paths. Task-assignee and review-node-override authority is a live task/run/work-item/node capability checked for every gated tool call; it does not broaden heartbeat, chat, other tasks, or other review nodes.

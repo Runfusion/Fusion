@@ -871,6 +871,7 @@ The guard runs FIRST in each tool's execute, before any store access or param va
 const WITHHELD_FROM_AGENT_EXTENSION_TOOLS: ReadonlySet<string> = new Set([
   "fn_task_delete",
   "fn_task_bypass_review",
+  "fn_workflow_step_resume",
   "fn_mission_delete",
   "fn_milestone_delete",
   "fn_slice_delete",
@@ -2570,6 +2571,67 @@ export default function kbExtension(pi: ExtensionAPI) {
           content: [{ type: "text", text: `ERROR: Failed to bypass review lane for ${params.id}: ${err?.message ?? err}` }],
           isError: true,
           details: { taskId: params.id, error: String(err?.message ?? err) },
+        };
+      }
+    },
+  });
+
+  // ── fn_workflow_step_resume ────────────────────────────────────
+
+  /*
+   * FNXC:StepResume 2026-08-06-17:42:
+   * Operator escape hatch for in-review/in-progress tasks with workflow steps
+   * stuck in `pending` because a dispatched prompt node verdict callback was
+   * never received (Runfusion/Fusion#1946). Transitions the stuck `pending` step to
+   * `failed` so the existing `fn_task_bypass_review` escape hatch can then clear
+   * the merge blocker. Registered ONLY on this pi-extension/CLI operator tool
+   * surface — deliberately NOT wired into executor/reviewer/triage agent tool
+   * lists; the WITHHELD_FROM_AGENT_EXTENSION_TOOLS guard below is the hard
+   * enforcement that an agent session cannot reach it (operator-only, mandatory
+   * `reason` and `stepId`, audit-logged via store.resumeWorkflowStep's run-audit
+   * event).
+   */
+  pi.registerTool({
+    name: "fn_workflow_step_resume",
+    label: "fn: Resume Stuck Pending Step",
+    description:
+      "Resume a stuck pending workflow step on an in-review or in-progress Fusion task " +
+      "(operator-only, mandatory reason, audit-logged). When a prompt node (like code-review) " +
+      "is dispatched but never receives a verdict callback (Runfusion/Fusion#1946), the step " +
+      "stays in 'pending' status indefinitely. This tool transitions it to 'failed', enabling " +
+      "the existing fn_task_bypass_review escape hatch to clear the merge blocker. Requires " +
+      "a mandatory reason and step ID.",
+    promptSnippet:
+      "Resume a stuck pending workflow step on an in-review or in-progress Fusion task (operator-only, mandatory reason, audit-logged)",
+    parameters: Type.Object({
+      id: Type.String({ description: "Task ID (e.g. FN-001)" }),
+      stepId: Type.String({ description: "Workflow step ID to resume (e.g. 'code-review', 'plan-review')" }),
+      reason: Type.String({ description: "Mandatory justification for resuming the step (audit-logged)" }),
+    }),
+
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const withheldDenied = denyWithheldToolForAgentPrincipal("fn_workflow_step_resume", ctx as ExtensionCallerContext);
+      if (withheldDenied) return withheldDenied;
+      const store = await getStore(ctx.cwd);
+      const fnCtx = ctx as typeof ctx & { agentId?: string };
+      const actor = fnCtx.agentId ?? "cli-operator";
+
+      try {
+        const task = await store.resumeWorkflowStep(params.id, {
+          stepId: params.stepId,
+          reason: params.reason,
+          actor,
+        });
+        return {
+          content: [{ type: "text", text: `Resumed stuck pending workflow step '${params.stepId}' for ${task.id}` }],
+          details: { taskId: task.id, stepId: params.stepId },
+        };
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      } catch (err: any) {
+        return {
+          content: [{ type: "text", text: `ERROR: Failed to resume step '${params.stepId}' for ${params.id}: ${err?.message ?? err}` }],
+          isError: true,
+          details: { taskId: params.id, stepId: params.stepId, error: String(err?.message ?? err) },
         };
       }
     },
@@ -5232,14 +5294,19 @@ export default function kbExtension(pi: ExtensionAPI) {
     description: "Create a new non-ephemeral agent.",
     parameters: Type.Object({
       name: Type.String({ description: "Agent name" }),
-      role: Type.Union([
+      role: Type.Optional(Type.Union([
         Type.Literal("triage"),
         Type.Literal("executor"),
         Type.Literal("reviewer"),
         Type.Literal("merger"),
+        Type.Literal("scheduler"),
         Type.Literal("engineer"),
         Type.Literal("custom"),
-      ], { description: "Agent role/capability" }),
+      ], { description: "Deprecated singular role; use roles for multi-role agents." })),
+      roles: Type.Optional(Type.Array(Type.Union([
+        Type.Literal("triage"), Type.Literal("executor"), Type.Literal("reviewer"),
+        Type.Literal("merger"), Type.Literal("scheduler"), Type.Literal("engineer"), Type.Literal("custom"),
+      ]), { minItems: 1, description: "Canonical permanent-agent role tags." })),
       soul: Type.Optional(Type.String({ description: "Agent personality/identity text" })),
       instructions_text: Type.Optional(Type.String({ description: "Inline custom instructions" })),
       instructions_path: Type.Optional(Type.String({ description: "Path to instructions markdown" })),
@@ -5247,6 +5314,7 @@ export default function kbExtension(pi: ExtensionAPI) {
       heartbeat_interval_ms: Type.Optional(Type.Number({ minimum: 1000 })),
       heartbeat_timeout_ms: Type.Optional(Type.Number({ minimum: 5000 })),
       max_concurrent_runs: Type.Optional(Type.Number({ minimum: 1 })),
+      max_workflow_sessions: Type.Optional(Type.Number({ minimum: 1, description: "Max concurrent workflow sessions, independent of heartbeat runs" })),
       message_response_mode: Type.Optional(Type.Union([Type.Literal("immediate"), Type.Literal("on-heartbeat")])),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
@@ -5320,11 +5388,18 @@ export default function kbExtension(pi: ExtensionAPI) {
         ...(params.heartbeat_interval_ms !== undefined ? { heartbeatIntervalMs: params.heartbeat_interval_ms } : {}),
         ...(params.heartbeat_timeout_ms !== undefined ? { heartbeatTimeoutMs: params.heartbeat_timeout_ms } : {}),
         ...(params.max_concurrent_runs !== undefined ? { maxConcurrentRuns: params.max_concurrent_runs } : {}),
+        ...(params.max_workflow_sessions !== undefined ? { maxWorkflowSessions: params.max_workflow_sessions } : {}),
         ...(params.message_response_mode !== undefined ? { messageResponseMode: params.message_response_mode } : {}),
       };
       const created = await agentStore.createAgent({
         name: params.name,
-        role: params.role as never,
+        /*
+        FNXC:WorkflowAgentRouting 2026-08-07-07:56:
+        FN-8764 exposes canonical multi-role creation through the public CLI.
+        Singular `role` remains an input-only compatibility seam in AgentStore.
+        */
+        ...(params.roles !== undefined ? { roles: params.roles as AgentCapability[] } : {}),
+        ...(params.role !== undefined ? { role: params.role as AgentCapability } : {}),
         ...(params.soul !== undefined ? { soul: params.soul } : {}),
         ...(params.instructions_text !== undefined ? { instructionsText: params.instructions_text } : {}),
         ...(params.instructions_path !== undefined ? { instructionsPath: params.instructions_path } : {}),
@@ -5366,9 +5441,14 @@ export default function kbExtension(pi: ExtensionAPI) {
         Type.Literal("executor"),
         Type.Literal("reviewer"),
         Type.Literal("merger"),
+        Type.Literal("scheduler"),
         Type.Literal("engineer"),
         Type.Literal("custom"),
-      ], { description: "Agent role/capability" })),
+      ], { description: "Deprecated singular role; replaces roles for compatibility." })),
+      roles: Type.Optional(Type.Array(Type.Union([
+        Type.Literal("triage"), Type.Literal("executor"), Type.Literal("reviewer"),
+        Type.Literal("merger"), Type.Literal("scheduler"), Type.Literal("engineer"), Type.Literal("custom"),
+      ]), { minItems: 1, description: "Canonical permanent-agent role tags." })),
       title: Type.Optional(Type.String({ description: "Optional title shown for the agent" })),
       icon: Type.Optional(Type.String({ description: "Optional compact icon/emoji" })),
       soul: Type.Optional(Type.String({ description: "Agent personality/identity text", maxLength: 10000 })),
@@ -5379,6 +5459,7 @@ export default function kbExtension(pi: ExtensionAPI) {
       heartbeat_interval_ms: Type.Optional(Type.Number({ minimum: 1000, description: "Heartbeat polling interval in ms" })),
       heartbeat_timeout_ms: Type.Optional(Type.Number({ minimum: 5000, description: "Heartbeat timeout in ms" })),
       max_concurrent_runs: Type.Optional(Type.Number({ minimum: 1, description: "Max concurrent heartbeat runs" })),
+      max_workflow_sessions: Type.Optional(Type.Number({ minimum: 1, description: "Max concurrent workflow sessions, independent of heartbeat runs" })),
       message_response_mode: Type.Optional(Type.Union([
         Type.Literal("immediate"),
         Type.Literal("on-heartbeat"),
@@ -5395,6 +5476,7 @@ export default function kbExtension(pi: ExtensionAPI) {
       const updateParamKeys = [
         "name",
         "role",
+        "roles",
         "title",
         "icon",
         "soul",
@@ -5405,6 +5487,7 @@ export default function kbExtension(pi: ExtensionAPI) {
         "heartbeat_interval_ms",
         "heartbeat_timeout_ms",
         "max_concurrent_runs",
+        "max_workflow_sessions",
         "message_response_mode",
       ] as const;
       const providedKeys = updateParamKeys.filter((key) => params[key] !== undefined);
@@ -5442,6 +5525,9 @@ export default function kbExtension(pi: ExtensionAPI) {
       }
       if (params.max_concurrent_runs !== undefined && params.max_concurrent_runs < 1) {
         return invalid("max_concurrent_runs", "max_concurrent_runs must be at least 1");
+      }
+      if (params.max_workflow_sessions !== undefined && params.max_workflow_sessions < 1) {
+        return invalid("max_workflow_sessions", "max_workflow_sessions must be at least 1");
       }
 
       const target = (await agentStore.getAgent(params.agent_id)) ?? (await agentStore.resolveAgent(params.agent_id));
@@ -5524,6 +5610,7 @@ export default function kbExtension(pi: ExtensionAPI) {
         params.heartbeat_interval_ms,
         params.heartbeat_timeout_ms,
         params.max_concurrent_runs,
+        params.max_workflow_sessions,
         params.message_response_mode,
       ].some((value) => value !== undefined);
       const updateInput: AgentUpdateInput = {};
@@ -5534,7 +5621,8 @@ export default function kbExtension(pi: ExtensionAPI) {
       };
 
       if (params.name !== undefined) setField("name", params.name);
-      if (params.role !== undefined) setField("role", params.role as AgentCapability);
+      if (params.roles !== undefined) setField("roles", params.roles as AgentCapability[]);
+      else if (params.role !== undefined) setField("role", params.role as AgentCapability);
       if (params.title !== undefined) setField("title", params.title);
       if (params.icon !== undefined) setField("icon", params.icon);
       if (params.soul !== undefined) setField("soul", params.soul);
@@ -5550,6 +5638,7 @@ export default function kbExtension(pi: ExtensionAPI) {
           ...(params.heartbeat_interval_ms !== undefined ? { heartbeatIntervalMs: params.heartbeat_interval_ms } : {}),
           ...(params.heartbeat_timeout_ms !== undefined ? { heartbeatTimeoutMs: params.heartbeat_timeout_ms } : {}),
           ...(params.max_concurrent_runs !== undefined ? { maxConcurrentRuns: params.max_concurrent_runs } : {}),
+          ...(params.max_workflow_sessions !== undefined ? { maxWorkflowSessions: params.max_workflow_sessions } : {}),
           ...(params.message_response_mode !== undefined ? { messageResponseMode: params.message_response_mode } : {}),
         });
       }
@@ -5792,7 +5881,7 @@ export default function kbExtension(pi: ExtensionAPI) {
         const parts: string[] = [
           `ID: ${agent.id}`,
           `Name: ${agent.name}`,
-          `Role: ${agent.role}`,
+          `Roles: ${(agent.roles?.length ? agent.roles : [agent.role]).join(", ")}`,
           `State: ${agent.state}`,
         ];
 
@@ -6199,7 +6288,7 @@ export default function kbExtension(pi: ExtensionAPI) {
       const parts: string[] = [
         `ID: ${agent.id}`,
         `Name: ${agent.name}`,
-        `Role: ${agent.role}`,
+        `Roles: ${(agent.roles?.length ? agent.roles : [agent.role]).join(", ")}`,
         `State: ${agent.state}`,
       ];
 

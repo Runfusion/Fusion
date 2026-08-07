@@ -1201,6 +1201,7 @@ import {
   isApprovalRequestExpired,
   isValidApprovalRequestTransition,
   normalizeApprovalRequestActionCategory,
+  normalizeAgentRoles,
 } from "./types/agents/agents.js";
 export {
   AGENT_PERMISSIONS,
@@ -1231,6 +1232,7 @@ export {
   isApprovalRequestExpired,
   isValidApprovalRequestTransition,
   normalizeApprovalRequestActionCategory,
+  normalizeAgentRoles,
 };
 import type {
   Agent,

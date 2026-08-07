@@ -70,6 +70,7 @@ interface AgentRow {
   id: string;
   name: string;
   role: string;
+  roles: string[];
   state: string;
   taskId: string | null;
   createdAt: string;
@@ -105,6 +106,7 @@ const agentColumns = {
   id: schema.project.agents.id,
   name: schema.project.agents.name,
   role: schema.project.agents.role,
+  roles: schema.project.agents.roles,
   state: schema.project.agents.state,
   taskId: schema.project.agents.taskId,
   createdAt: schema.project.agents.createdAt,
@@ -145,6 +147,7 @@ export function agentToData(agent: Agent): Record<string, unknown> {
   return {
     id: agent.id,
     name: agent.name,
+    roles: agent.roles,
     role: agent.role,
     state: agent.state,
     taskId: agent.taskId,
@@ -195,6 +198,7 @@ export async function writeAgent(handle: QueryHandle, agent: Agent, projectId?: 
       id: agent.id,
       name: agent.name,
       role: agent.role,
+      roles: agent.roles,
       state: agent.state,
       taskId: agent.taskId ?? null,
       createdAt: agent.createdAt,
@@ -208,6 +212,7 @@ export async function writeAgent(handle: QueryHandle, agent: Agent, projectId?: 
       set: {
         name: agent.name,
         role: agent.role,
+        roles: agent.roles,
         state: agent.state,
         taskId: agent.taskId ?? null,
         updatedAt: agent.updatedAt,
@@ -244,6 +249,7 @@ export function mergeAgentRow(row: AgentRow): Agent {
     ...(data as object),
     id: row.id,
     name: row.name,
+    roles: (row.roles?.length ? row.roles : [row.role]) as AgentCapability[],
     role: row.role as AgentCapability,
     state: row.state as AgentState,
     taskId: row.taskId ?? undefined,

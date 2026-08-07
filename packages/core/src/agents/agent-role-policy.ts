@@ -1,4 +1,4 @@
-import type { Agent, Task } from "../types.js";
+import type { Agent, AgentCapability, Task } from "../types.js";
 
 /*
 FNXC:WorkflowResolvedColumns 2026-07-30-15:20 (FLAGGED, NOT FIXED — found by a #2739 review thread):
@@ -47,15 +47,27 @@ The per-agent assignment policy (agent.runtimeConfig.assignmentPolicy) closes th
 */
 export type AgentAssignmentPolicy = "auto" | "explicit-only" | "none";
 
-export type AgentAssignmentPolicyInput = Pick<Agent, "role"> & Partial<Pick<Agent, "runtimeConfig">>;
+/*
+FNXC:WorkflowAgentRouting 2026-08-07-07:56:
+FN-8764 makes `roles` canonical. Assignment admission must inspect every
+normalized tag while still accepting the deprecated singular projection from
+legacy callers, so a multi-role executor is never rejected as its first tag.
+*/
+type RoleTaggedAgent = Partial<Pick<Agent, "id" | "role" | "roles" | "runtimeConfig">>;
 
-export function getAgentAssignmentPolicy(agent: Partial<Pick<Agent, "id" | "role" | "runtimeConfig">>): AgentAssignmentPolicy {
+function agentRoles(agent: RoleTaggedAgent): readonly AgentCapability[] {
+  return agent.roles?.length ? agent.roles : agent.role ? [agent.role] : [];
+}
+
+export type AgentAssignmentPolicyInput = RoleTaggedAgent;
+
+export function getAgentAssignmentPolicy(agent: RoleTaggedAgent): AgentAssignmentPolicy {
   const raw = (agent.runtimeConfig ?? {})["assignmentPolicy"];
   return raw === "explicit-only" || raw === "none" ? raw : "auto";
 }
 
 /** Eligible for automatic routing (scheduler auto-assign, no-task backlog auto-claim). */
-export function isAgentAutoAssignable(agent: Partial<Pick<Agent, "id" | "role" | "runtimeConfig">>): boolean {
+export function isAgentAutoAssignable(agent: RoleTaggedAgent): boolean {
   return getAgentAssignmentPolicy(agent) === "auto";
 }
 
@@ -63,7 +75,7 @@ export function isAgentAutoAssignable(agent: Partial<Pick<Agent, "id" | "role" |
  * Hard floor: policy "none" blocks implementation-task binding on EVERY path,
  * including explicit delegation and executorRoleOverride (issue #2015).
  */
-export function canAgentReceiveImplementationTasks(agent: Partial<Pick<Agent, "id" | "role" | "runtimeConfig">>): boolean {
+export function canAgentReceiveImplementationTasks(agent: RoleTaggedAgent): boolean {
   return getAgentAssignmentPolicy(agent) !== "none";
 }
 
@@ -71,12 +83,12 @@ export function isImplementationTask(task: Pick<Task, "column">): boolean {
   return IMPLEMENTATION_TASK_COLUMNS.has(task.column);
 }
 
-export function isExecutorRoleAgent(agent: Pick<Agent, "role">): boolean {
-  return agent.role === "executor";
+export function isExecutorRoleAgent(agent: RoleTaggedAgent): boolean {
+  return agentRoles(agent).includes("executor");
 }
 
-export function isEngineerRoleAgent(agent: Pick<Agent, "role">): boolean {
-  return agent.role === "engineer";
+export function isEngineerRoleAgent(agent: RoleTaggedAgent): boolean {
+  return agentRoles(agent).includes("engineer");
 }
 
 export function canAgentTakeImplementationTaskForExplicitRouting(
@@ -140,7 +152,7 @@ export interface ImplementationTaskBindContext {
 export type ImplementationTaskBindVerdict = { allowed: true } | { allowed: false; reason: string };
 
 export function evaluateImplementationTaskBind(
-  agent: Pick<Agent, "id" | "role"> & Partial<Pick<Agent, "runtimeConfig">>,
+  agent: RoleTaggedAgent & Pick<Agent, "id">,
   task: Pick<Task, "id" | "column">,
   context: ImplementationTaskBindContext = {},
 ): ImplementationTaskBindVerdict {
@@ -174,7 +186,7 @@ export class AgentTaskRoutingPolicyError extends Error {
 }
 
 export function assertImplementationTaskBindAllowed(
-  agent: Pick<Agent, "id" | "role"> & Partial<Pick<Agent, "runtimeConfig">>,
+  agent: RoleTaggedAgent & Pick<Agent, "id">,
   task: Pick<Task, "id" | "column">,
   context: ImplementationTaskBindContext = {},
 ): void {
@@ -185,12 +197,13 @@ export function assertImplementationTaskBindAllowed(
 }
 
 export function formatRoleMismatchReason(
-  agent: Pick<Agent, "id" | "role"> & Partial<Pick<Agent, "runtimeConfig">>,
+  agent: RoleTaggedAgent & Pick<Agent, "id">,
   task: Pick<Task, "id" | "column">,
 ): string {
   const policy = getAgentAssignmentPolicy(agent);
   if (policy !== "auto") {
     return `Agent ${agent.id} has assignmentPolicy "${policy}"; implementation task ${task.id} cannot be routed to it${policy === "none" ? " by any path (no override supported)" : " automatically — explicit routing only"}.`;
   }
-  return `Agent ${agent.id} has role "${agent.role}"; implementation task ${task.id} requires an "executor"-role agent by default, with durable "engineer" supported only for explicit routing. Pass override=true to bypass.`;
+  const roles = agentRoles(agent);
+  return `Agent ${agent.id} has roles "${roles.join(", ") || "none"}"; implementation task ${task.id} requires an "executor"-role agent by default, with durable "engineer" supported only for explicit routing. Pass override=true to bypass.`;
 }

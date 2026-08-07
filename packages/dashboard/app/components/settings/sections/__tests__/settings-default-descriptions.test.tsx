@@ -262,7 +262,6 @@ const SETTING_DESCRIPTION_KEYS: Record<string, string> = {
   completionDocumentationMode: "general.workflowsOrChangelogModeWhenContributorsShouldUpdate",
   reviewArtifacts: "general.reviewArtifactsHint",
   ephemeralAgentTaskCreationPolicy: "general.ephemeralAgentTaskCreationPolicyHint",
-  ephemeralAgentsEnabled: "general.whenEnabledDefaultFusionSpawnsShortLived",
   githubLinkImportedIssuesToTracking: "general.whenEnabledImportedGitHubIssuesUseTheirSource",
   // FNXC:GitHubImportTranslate 2026-07-15-09:30: surfaced as plain rows in
   // GeneralSection beside the other import-scoped GitHub settings.

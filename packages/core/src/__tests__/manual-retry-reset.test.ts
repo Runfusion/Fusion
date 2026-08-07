@@ -60,7 +60,7 @@ describe("buildManualRetryResetPatch", () => {
   });
 
   it("includes all retry-summary counters in the reset key list", () => {
-    const retrySummarySource = readFileSync(new URL("../retry-summary.ts", import.meta.url), "utf-8");
+    const retrySummarySource = readFileSync(new URL("../tasks/retry-summary.ts", import.meta.url), "utf-8");
     const retrySummaryKeys = new Set<string>();
     let match: RegExpExecArray | null = RETRY_SUMMARY_COUNTER_REGEX.exec(retrySummarySource);
     while (match) {

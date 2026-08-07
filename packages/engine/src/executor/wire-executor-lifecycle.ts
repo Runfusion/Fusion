@@ -34,6 +34,7 @@ import { formatCommentForInjection } from "./execution-prompt.js";
 import { detectReviewHandoffIntent } from "./pseudo-pause.js";
 import { createSeenSteeringIds } from "./task-predicates.js";
 import { facadeFields, facadeMethods } from "./facade-methods.js";
+import { WorkflowAgentCapacity } from "../agents/workflow-agent-capacity.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -905,5 +906,8 @@ One-shot constructor wire: build deps, register lifecycle listeners, apply dispo
 handles. TaskExecutor constructor is then super()+wireTaskExecutorLifecycle(this).
 */
 export function wireTaskExecutorLifecycle(host: object): void {
+  // FNXC:WorkflowAgentRouting 2026-08-07-03:38: init capacity before listeners so graph admission tests see the field post-construct.
+  const h = host as { options?: TaskExecutorOptions; workflowAgentCapacity?: WorkflowAgentCapacity };
+  h.workflowAgentCapacity = new WorkflowAgentCapacity(h.options?.agentStore ?? undefined);
   applyWireExecutorLifecycleDisposers(host, wireExecutorLifecycle(buildWireExecutorLifecycleDeps(host)));
 }

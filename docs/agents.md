@@ -1716,3 +1716,9 @@ Per-agent overrides via `runtimeConfig`:
 - **Heartbeat**: `heartbeatIntervalMs`, `heartbeatTimeoutMs`, `maxConcurrentRuns`. Triggered by timer, task assignment, or on-demand (`POST /api/agents/:id/runs`).
 - **Budgets**: per-agent token budget tracking; `HeartbeatMonitor.executeHeartbeat()` skips when `isOverBudget` or `isOverThreshold` (timer triggers). Hard caps pause the agent.
 - **Performance ratings**: 1–5 scale with trend analysis, injected into system prompts.
+
+## Workflow role principals
+
+Permanent agents carry one or more normalized role tags: `triage`, `executor`, `reviewer`, `merger`, `scheduler`, `engineer`, and `custom`. Upgrades preserve legacy singular roles, and every project receives four distinct heartbeat-disabled built-ins for planning, execution, review, and merge. Heartbeat enablement and `maxConcurrentRuns` are independent from `runtimeConfig.maxWorkflowSessions`.
+
+Workflow routing never changes `assignedAgentId`. An explicit task owner runs classified stages regardless of its tags, except for an exact reviewer-node override. Otherwise a column binding is considered, then an available role-tag pool is selected by fewest active workflow sessions, oldest creation time, and ID. A named unavailable principal holds work rather than falling back.

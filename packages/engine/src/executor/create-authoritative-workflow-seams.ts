@@ -55,6 +55,7 @@ export type CreateAuthoritativeWorkflowSeamsDeps = {
     [k: string]: unknown;
   };
   workspaceConfig: WorkspaceConfig | null | undefined;
+  activeWorkflowPrincipals: Map<string, { agentId: string; nodeInstanceId: string; agent?: import("@fusion/core").Agent }>;
   graphSeamGoverningNodeId: Map<string, string>;
   graphSeamThinkingLevel: Map<string, ThinkingLevel>;
   graphStepActiveContext: Map<string, unknown>;
@@ -412,6 +413,8 @@ export function createAuthoritativeWorkflowSeams(
               agentStore: deps.options.agentStore ?? undefined,
               rootDir: deps.rootDir,
               settings,
+              /* FNXC:WorkflowAgentRouting 2026-08-07-04:45: reviewer sessions inherit the exact graph-fenced principal, including a node-local override. */
+              agentId: deps.activeWorkflowPrincipals.get(seamTask.id)?.agentId,
               onSessionCreated: (s) => deps.registerSubagentSession(seamTask.id, s),
               onSessionEnded: (s) => deps.unregisterSubagentSession(seamTask.id, s),
             },

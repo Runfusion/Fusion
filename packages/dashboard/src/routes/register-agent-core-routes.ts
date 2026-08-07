@@ -13,6 +13,7 @@ import {
   isAgentPermissionPolicyPresetId,
   isEphemeralAgent,
   normalizeAgentPermissionPolicy,
+  normalizeAgentRoles,
 } from "@fusion/core";
 import { ApiError, badRequest, notFound } from "../api-error.js";
 import type { ApiRoutesContext } from "./types.js";
@@ -226,6 +227,7 @@ export function registerAgentCoreListCreateRoutes(ctx: ApiRoutesContext, deps: A
       const {
         name,
         role,
+        roles,
         metadata,
         title,
         icon,
@@ -244,8 +246,17 @@ export function registerAgentCoreListCreateRoutes(ctx: ApiRoutesContext, deps: A
       if (!name || typeof name !== "string") {
         throw badRequest("name is required");
       }
-      if (!role || typeof role !== "string") {
-        throw badRequest("role is required");
+      if (role !== undefined && typeof role !== "string") {
+        throw badRequest("role must be a string");
+      }
+      if (roles !== undefined && (!Array.isArray(roles) || roles.some((value) => typeof value !== "string"))) {
+        throw badRequest("roles must be an array of role tags");
+      }
+      let normalizedRoles: AgentCapability[];
+      try {
+        normalizedRoles = normalizeAgentRoles(roles as string[] | undefined, role);
+      } catch (err) {
+        throw badRequest(err instanceof Error ? err.message : String(err));
       }
       if (metadata !== undefined && (typeof metadata !== "object" || metadata === null || Array.isArray(metadata))) {
         throw badRequest("metadata must be an object");
@@ -315,7 +326,14 @@ export function registerAgentCoreListCreateRoutes(ctx: ApiRoutesContext, deps: A
       try {
         agent = await agentStore.createAgent({
           name,
-          role: role as AgentCapability,
+          roles: normalizedRoles,
+          /*
+          FNXC:WorkflowAgentRouting 2026-08-07-07:56:
+          FN-8764 keeps singular input only for legacy clients. Canonical role
+          tags are normalized before persistence so public API writes cannot
+          create role-only permanent agents.
+          */
+          ...(role !== undefined ? { role: role as AgentCapability } : {}),
           metadata,
           title: title ?? undefined,
           icon: icon ?? undefined,
@@ -656,11 +674,27 @@ export function registerAgentCoreRoutes(ctx: ApiRoutesContext, deps: AgentCoreRo
         updates.name = body.name ?? undefined;
       }
 
+      if ("roles" in body) {
+        if (!Array.isArray(body.roles) || body.roles.some((value: unknown) => typeof value !== "string")) {
+          throw badRequest("roles must be an array of role tags");
+        }
+        try {
+          updates.roles = normalizeAgentRoles(body.roles as string[]);
+        } catch (err) {
+          throw badRequest(err instanceof Error ? err.message : String(err));
+        }
+      }
+
       if ("role" in body) {
         if (body.role !== null && typeof body.role !== "string") {
           throw badRequest("role must be a string");
         }
-        updates.role = body.role ?? undefined;
+        /*
+        FNXC:WorkflowAgentRouting 2026-08-07-07:56:
+        Singular PATCH input retains documented replacement semantics only when
+        canonical roles are absent, preventing ambiguous dual-role writes.
+        */
+        if (!("roles" in body)) updates.role = body.role ?? undefined;
       }
 
       if ("metadata" in body) {

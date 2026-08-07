@@ -576,6 +576,101 @@ describe("WorkflowTaskRuntime", () => {
     ]);
   });
 
+  it("fences a routed permanent principal before invoking a classified work-item handler", async () => {
+    const transitions: Array<{ id: string; state: WorkflowWorkItemState; patch?: Record<string, unknown> }> = [];
+    const workItem = {
+      id: "work-fenced",
+      runId: "run-1",
+      taskId: task.id,
+      nodeId: "execute",
+      kind: "task",
+      state: "running",
+      attempt: 0,
+      retryAfter: null,
+      leaseOwner: "scheduler-a",
+      leaseExpiresAt: "2026-06-09T00:01:00.000Z",
+      lastError: null,
+      blockedReason: null,
+      stableWorkflowRunId: null,
+      continuationSequence: null,
+      waitReason: null,
+      sourceColumn: null,
+      targetColumn: null,
+      irHash: null,
+      principalAgentId: null,
+      workflowRole: null,
+      authorityKind: null,
+      nodeInstanceId: null,
+      createdAt: "2026-06-09T00:00:00.000Z",
+      updatedAt: "2026-06-09T00:00:00.000Z",
+    } satisfies WorkflowWorkItem;
+    const runtime = new WorkflowTaskRuntime({
+      store: {
+        getTask: async () => task,
+        getTaskWorkflowSelection: () => ({ workflowId: "WF-001", stepIds: [] }),
+        getWorkflowDefinition: async () => ({ ir: selectedIr() }),
+        transitionWorkflowWorkItem: (id, state, patch) => {
+          transitions.push({ id, state, patch });
+          return { ...workItem, state, ...patch } as WorkflowWorkItem;
+        },
+      },
+      primitives: recordingPrimitives([]),
+      runCustomNode: async () => ({ outcome: "success" }),
+      resolveWorkflowPrincipal: () => ({
+        status: "routed",
+        route: {
+          agent: { id: "executor-owner" },
+          role: "executor",
+          authority: "task-assignee",
+        },
+      } as any),
+    });
+
+    await runtime.runWorkItem(workItem, flagOff);
+
+    expect(transitions[0]).toEqual({
+      id: "work-fenced",
+      state: "running",
+      patch: {
+        principalAgentId: "executor-owner",
+        workflowRole: "executor",
+        authorityKind: "task-assignee",
+        nodeInstanceId: "execute",
+      },
+    });
+    expect(transitions[1]?.state).toBe("succeeded");
+  });
+
+  it("holds a claimed work item when the shared pre-handler fence is unavailable", async () => {
+    const workItem = {
+      id: "work-preflight", runId: "run-1", taskId: task.id, nodeId: "execute", kind: "task", state: "running",
+      attempt: 0, retryAfter: null, leaseOwner: "scheduler-a", leaseExpiresAt: null, lastError: null, blockedReason: null,
+      stableWorkflowRunId: null, continuationSequence: null, waitReason: null, sourceColumn: null, targetColumn: null, irHash: null,
+      principalAgentId: "executor-owner", workflowRole: "executor", authorityKind: "task-assignee", nodeInstanceId: "execute",
+      createdAt: "2026-06-09T00:00:00.000Z", updatedAt: "2026-06-09T00:00:00.000Z",
+    } satisfies WorkflowWorkItem;
+    const preflight = vi.fn(async () => ({ outcome: "failure" as const, value: "workflow-principal-agent-capacity:executor" }));
+    const transitions: string[] = [];
+    const runtime = new WorkflowTaskRuntime({
+      store: {
+        getTask: async () => task,
+        getTaskWorkflowSelection: () => ({ workflowId: "WF-001", stepIds: [] }),
+        getWorkflowDefinition: async () => ({ ir: selectedIr() }),
+        transitionWorkflowWorkItem: (_id, state) => { transitions.push(state); return { ...workItem, state } as WorkflowWorkItem; },
+      },
+      primitives: recordingPrimitives([]),
+      runCustomNode: async () => ({ outcome: "success" }),
+      beforeNodeExecution: preflight,
+    });
+
+    await expect(runtime.runWorkItem(workItem, flagOff)).resolves.toMatchObject({
+      disposition: "manual-required",
+      reason: "workflow-principal-agent-capacity:executor",
+    });
+    expect(preflight).toHaveBeenCalledOnce();
+    expect(transitions).toEqual(["held"]);
+  });
+
   it("fails and releases a workflow work item when the addressed node fails", async () => {
     const transitions: Array<{ id: string; state: WorkflowWorkItemState; patch?: Record<string, unknown> }> = [];
     const workItem = {

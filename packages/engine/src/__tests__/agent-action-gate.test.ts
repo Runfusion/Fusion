@@ -4,6 +4,7 @@ import {
   computeApprovalDedupeKey,
   evaluateAgentActionGate,
   getExemptToolNames,
+  hasLiveWorkflowAuthority,
   reloadExemptTools,
   resolveGateOutcome,
 } from "../agents/agent-action-gate.js";
@@ -80,6 +81,38 @@ describe("agent-action-gate", () => {
   beforeEach(() => {
     reloadExemptTools();
   });
+  it("limits live workflow authority to its fenced task, run, and principal", async () => {
+    const context: any = {
+      agentId: "owner", taskId: "FN-1", runId: "run-1",
+      workflowAuthority: {
+        projectId: "project-a", taskId: "FN-1", runId: "run-1", workItemId: "work-1",
+        nodeInstanceId: "review-1", principalAgentId: "owner", kind: "task-assignee",
+        isLive: () => true,
+      },
+    };
+    await expect(hasLiveWorkflowAuthority(context, { id: "FN-1" })).resolves.toBe(true);
+    await expect(hasLiveWorkflowAuthority(context, { id: "FN-2" })).resolves.toBe(false);
+    await expect(hasLiveWorkflowAuthority({ ...context, runId: "run-2" }, {})).resolves.toBe(false);
+    await expect(hasLiveWorkflowAuthority({ ...context, agentId: "other" }, {})).resolves.toBe(false);
+    await expect(hasLiveWorkflowAuthority({ ...context, workflowAuthority: { ...context.workflowAuthority, isLive: () => false } }, {})).resolves.toBe(false);
+  });
+
+  it("does not elevate board or agent mutations from a task-scoped workflow grant", async () => {
+    const context: any = {
+      agentId: "owner", taskId: "FN-1", runId: "run-1",
+      workflowAuthority: {
+        projectId: "project-a", taskId: "FN-1", runId: "run-1", workItemId: "work-1",
+        nodeInstanceId: "plan-1", principalAgentId: "owner", kind: "task-assignee",
+        isLive: () => true,
+      },
+    };
+    await expect(hasLiveWorkflowAuthority(context, {}, "fn_task_create")).resolves.toBe(false);
+    await expect(hasLiveWorkflowAuthority(context, { id: "FN-1" }, "fn_task_update")).resolves.toBe(true);
+    await expect(hasLiveWorkflowAuthority(context, { id: "FN-2" }, "fn_task_update")).resolves.toBe(false);
+    await expect(hasLiveWorkflowAuthority(context, {}, "fn_workflow_update")).resolves.toBe(false);
+    await expect(hasLiveWorkflowAuthority(context, {}, "fn_agent_create")).resolves.toBe(false);
+  });
+
   it("classifies write/edit as file_write_delete", () => {
     const write = evaluateAgentActionGate({ agentId: "a1", toolName: "write", args: { path: "a.ts" }, permissionPolicy: unrestrictedPolicy });
     const edit = evaluateAgentActionGate({ agentId: "a1", toolName: "edit", args: { path: "a.ts" }, permissionPolicy: unrestrictedPolicy });

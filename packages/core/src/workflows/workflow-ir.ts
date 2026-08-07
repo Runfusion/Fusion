@@ -15,6 +15,7 @@ import type {
   WorkflowSettingDefinition,
   WorkflowSettingType,
 } from "./workflow-ir-types.js";
+import { classifyWorkflowAgentNode } from "./workflow-ir-types.js";
 import { getWorkflowExtensionRegistry } from "./workflow-extension-registry.js";
 import type { WorkflowExtensionConfigField } from "./workflow-extension-types.js";
 import { THINKING_LEVELS } from "../types.js";
@@ -960,6 +961,23 @@ function validateCredentialInstanceIdConfig(nodes: WorkflowIrNode[]): void {
   }
 }
 
+
+/** Validate reviewer overrides recursively against the shared session classifier. */
+function validateReviewerAgentOverrides(nodes: WorkflowIrNode[]): void {
+  for (const node of nodes) {
+    if (node.reviewerAgentId !== undefined) {
+      if (typeof node.reviewerAgentId !== "string" || !node.reviewerAgentId.trim()) {
+        throw new WorkflowIrError(`Workflow node '${node.id}' reviewerAgentId must be a non-empty string`);
+      }
+      if (classifyWorkflowAgentNode(node) !== "reviewer") {
+        throw new WorkflowIrError(`Workflow node '${node.id}' reviewerAgentId is only legal on reviewer-session nodes`);
+      }
+    }
+    const templateNodes = (node.config as { template?: { nodes?: unknown } } | undefined)?.template?.nodes;
+    if (Array.isArray(templateNodes)) validateReviewerAgentOverrides(templateNodes as WorkflowIrNode[]);
+  }
+}
+
 function validateThinkingLevelConfig(nodes: WorkflowIrNode[]): void {
   for (const node of nodes) {
     const value = node.config?.thinkingLevel;
@@ -1743,6 +1761,7 @@ function validateV2(ir: WorkflowIrV2): void {
   validateStepExecutePlacement(ir.nodes);
   validateThinkingLevelConfig(ir.nodes);
   validateCredentialInstanceIdConfig(ir.nodes);
+  validateReviewerAgentOverrides(ir.nodes);
   for (const node of ir.nodes) {
     if (node.kind === "foreach") validateForeach(node, topLevelIds, columnIds);
     if (node.kind === "loop") validateLoop(node, topLevelIds, columnIds);

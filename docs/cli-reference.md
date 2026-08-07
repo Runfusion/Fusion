@@ -1383,3 +1383,5 @@ For configuration details used by these commands, see [Settings Reference](./set
 - `fn org-import <file> [--project <name>] [--dry-run] [--collision-mode skip|suffix]`
   materializes a bundle. `--dry-run` reports the plan without modifying stores or files;
   collision mode defaults to `skip` and `suffix` creates deterministically named copies.
+
+Agent create/update payloads accept `roles` (a non-empty role-tag array) and optional `runtimeConfig.maxWorkflowSessions`. The legacy singular `role` input remains accepted for migration compatibility.

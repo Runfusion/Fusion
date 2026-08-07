@@ -78,6 +78,7 @@ import { buildCustomProviderModels } from "./auth/custom-provider-registry.js";
 import {
   buildGateRejection,
   evaluateAgentActionGate,
+  hasLiveWorkflowAuthority,
   resolveGateOutcome,
   type AgentActionGateContext,
 } from "./agents/agent-action-gate.js";
@@ -2134,6 +2135,16 @@ export function wrapToolsWithActionGate(
           args: params,
           permissionPolicy: gateContext.permissionPolicy,
         });
+
+        /*
+         * FNXC:WorkflowAgentRouting 2026-08-07-03:43:
+         * A routed principal may bypass restrictive policy only for its live,
+         * fenced task/node attempt. This per-call probe prevents the authority
+         * from escaping to heartbeat, chat, another task, or a stale retry.
+         */
+        if (await hasLiveWorkflowAuthority(gateContext, params, tool.name)) {
+          return originalExecute(...args);
+        }
 
         const latestApproval = gateContext.findApprovalByDedupeKey
           ? await gateContext.findApprovalByDedupeKey(decision.approvalDedupeKey)

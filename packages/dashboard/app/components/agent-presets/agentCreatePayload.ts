@@ -8,6 +8,8 @@ export const VALID_AGENT_CAPABILITIES = new Set<string>(["triage", "executor", "
 export interface AgentDraftValues {
   name: string;
   role: AgentCapability;
+  /** Canonical multi-role tags; `role` remains the compatibility primary. */
+  roles?: AgentCapability[];
   title?: string;
   icon?: string;
   reportsTo?: string;
@@ -68,7 +70,12 @@ export function buildAgentCreatePayload(values: AgentDraftValues): AgentCreateIn
 
   return {
     name: values.name.trim(),
-    role: values.role,
+    /*
+     * FNXC:WorkflowAgentRouting 2026-08-07-03:46:
+     * New permanent agents submit canonical role tags. The deprecated singular
+     * field remains an API compatibility seam, never the source of new data.
+     */
+    roles: values.roles?.length ? values.roles : [values.role],
     ...(values.title?.trim() ? { title: values.title.trim() } : {}),
     ...(values.icon?.trim() ? { icon: values.icon.trim() } : {}),
     ...(values.reportsTo?.trim() ? { reportsTo: values.reportsTo.trim() } : {}),

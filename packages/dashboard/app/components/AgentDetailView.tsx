@@ -1526,7 +1526,7 @@ function DashboardTab({
               {t("agents.pendingApprovalsCount", "{{count}} pending approvals", { count: agent.pendingApprovalCount })}
             </span>
           ) : null}
-          <span>{t("agents.roleLabel", "Role: {{role}}", { role: agent.role })}</span>
+          <span>{t("agents.roleLabel", "Roles: {{role}}", { role: (agent.roles ?? [agent.role]).join(", ") })}</span>
           <span>
             <span className="dashboard-summary-label">{runtimeHint ? t("agents.runtime", "Runtime") : t("agents.model", "Model")}</span>
             <span> {modelDisplay ?? t("agents.auto", "Auto")}</span>
@@ -4045,6 +4045,7 @@ function ConfigTab({
   // Identity field state
   const [nameValue, setNameValue] = useState(agent.name);
   const [roleValue, setRoleValue] = useState(agent.role);
+  const [additionalRoleValues, setAdditionalRoleValues] = useState<AgentCapability[]>(() => (agent.roles ?? [agent.role]).filter((role) => role !== agent.role));
   const [titleValue, setTitleValue] = useState(agent.title ?? "");
   const [iconValue, setIconValue] = useState(agent.icon ?? "");
   const [reportsToValue, setReportsToValue] = useState(agent.reportsTo ?? "");
@@ -4754,7 +4755,7 @@ function ConfigTab({
 
     return {
       name: nameValue.trim() || undefined,
-      role: roleValue,
+      roles: [roleValue, ...additionalRoleValues],
       title: titleValue.trim() || undefined,
       icon: iconValue.trim() || undefined,
       reportsTo: reportsToValue.trim() || undefined,
@@ -4762,7 +4763,7 @@ function ConfigTab({
       runtimeConfig: newRuntimeConfig,
       bundleConfig: newBundleConfig,
     };
-  }, [agent.metadata, agent.runtimeConfig, allowParallelExecution, assignmentPolicy, autoClaimRelevantTasksEnabled, budgetValues, bundleEntryFile, bundleExternalPath, bundleFiles, bundleMode, engineerBacklogAutoClaimEnabled, formValues, heartbeatEnabled, heartbeatPromptTemplate, heartbeatScopeDiscipline, heartbeatValues, iconValue, modelValue, nameValue, reportsToValue, roleValue, runMissedHeartbeatOnStartup, runtimeMode, selectedRuntimeId, selectedSkills, skipHeartbeatWhenIdle, titleValue, validationErrors]);
+  }, [additionalRoleValues, agent.metadata, agent.runtimeConfig, allowParallelExecution, assignmentPolicy, autoClaimRelevantTasksEnabled, budgetValues, bundleEntryFile, bundleExternalPath, bundleFiles, bundleMode, engineerBacklogAutoClaimEnabled, formValues, heartbeatEnabled, heartbeatPromptTemplate, heartbeatScopeDiscipline, heartbeatValues, iconValue, modelValue, nameValue, reportsToValue, roleValue, runMissedHeartbeatOnStartup, runtimeMode, selectedRuntimeId, selectedSkills, skipHeartbeatWhenIdle, titleValue, validationErrors]);
 
   const persistSettings = useCallback(async (showValidationToast: boolean, source: "auto" | "manual") => {
     const payload = buildSavePayload();
@@ -4915,13 +4916,15 @@ function ConfigTab({
           </div>
           
           <div className="config-field">
-            <label htmlFor="agent-role">{t("agents.roleLabel2", "Role")}</label>
+            <label htmlFor="agent-role">{t("agents.roleLabel2", "Primary role")}</label>
             <select
               id="agent-role"
               className="select"
               value={roleValue}
               onChange={(e) => {
-                setRoleValue(e.target.value as AgentCapability);
+                const next = e.target.value as AgentCapability;
+                setRoleValue(next);
+                setAdditionalRoleValues((current) => current.filter((role) => role !== next));
                 void scheduleAutoSave();
               }}
             >
@@ -4930,8 +4933,29 @@ function ConfigTab({
               <option value="reviewer">{t("agents.roleReviewer", "Reviewer")}</option>
               <option value="merger">{t("agents.roleMerger", "Merger")}</option>
               <option value="scheduler">{t("agents.roleScheduler", "Scheduler")}</option>
+              <option value="engineer">{t("agents.roleEngineer", "Engineer")}</option>
               <option value="custom">{t("agents.roleCustom", "Custom")}</option>
             </select>
+            <fieldset className="config-role-tags" aria-label={t("agents.additionalRoles", "Additional workflow roles")}>
+              <legend>{t("agents.additionalRoles", "Additional workflow roles")}</legend>
+              {(["triage", "executor", "reviewer", "merger", "scheduler", "engineer", "custom"] as AgentCapability[])
+                .filter((candidate) => candidate !== roleValue)
+                .map((candidate) => (
+                  <label key={candidate} className="checkbox-label">
+                    <input
+                      type="checkbox"
+                      checked={additionalRoleValues.includes(candidate)}
+                      onChange={() => {
+                        setAdditionalRoleValues((current) => current.includes(candidate)
+                          ? current.filter((role) => role !== candidate)
+                          : [...current, candidate]);
+                        void scheduleAutoSave();
+                      }}
+                    />
+                    {candidate}
+                  </label>
+                ))}
+            </fieldset>
           </div>
 
           <div className="config-field">

@@ -8,6 +8,30 @@ import type { AgentState } from "./agent-state.js";
 
 export type AgentCapability = "triage" | "executor" | "reviewer" | "merger" | "scheduler" | "engineer" | "custom";
 
+/*
+FNXC:WorkflowAgentRouting 2026-08-07-03:12:
+FN-8764 requires durable permanent agents to carry normalized multi-role tags.
+The deprecated singular value remains only at migration/API boundaries and must
+always be derived from this stable canonical order.
+*/
+/** Stable serialized order for normalized permanent-agent role tags. */
+export const AGENT_CAPABILITIES: readonly AgentCapability[] = [
+  "triage", "executor", "reviewer", "merger", "scheduler", "engineer", "custom",
+] as const;
+
+/** Normalize role tags at every legacy/API boundary; unknown tags never persist. */
+export function normalizeAgentRoles(
+  roles: readonly string[] | undefined,
+  legacyRole?: string,
+): AgentCapability[] {
+  const values = roles?.length ? roles : legacyRole ? [legacyRole] : [];
+  const unique = new Set(values);
+  const normalized = AGENT_CAPABILITIES.filter((role) => unique.has(role));
+  if (normalized.length !== unique.size) throw new Error("Agent roles contain an unknown capability");
+  if (normalized.length === 0) throw new Error("Agent requires at least one role");
+  return normalized;
+}
+
 
 /** Single heartbeat event recorded for an agent */
 export interface AgentHeartbeatEvent {
@@ -581,7 +605,12 @@ export interface Agent {
   id: string;
   /** Display name */
   name: string;
-  /** Role/capability of the agent */
+  /** Canonical normalized role tags. */
+  roles: AgentCapability[];
+  /**
+   * @deprecated Migration/API compatibility projection. New routing must use
+   * `roles`; this is always the first normalized role.
+   */
   role: AgentCapability;
   /** Current lifecycle state */
   state: AgentState;
@@ -603,7 +632,7 @@ export interface Agent {
   imageUrl?: string;
   /** Agent ID this agent reports to (org hierarchy) */
   reportsTo?: string;
-  /** Runtime configuration. Supports: AgentHeartbeatConfig keys (heartbeatIntervalMs, heartbeatTimeoutMs, maxConcurrentRuns) */
+  /** Runtime configuration. Supports heartbeat and independent workflow-session limits. */
   runtimeConfig?: Record<string, unknown>;
   /** Why the agent was paused (error, manual, etc.) */
   pauseReason?: string;
@@ -672,6 +701,8 @@ export interface AgentHeartbeatConfig {
   heartbeatTimeoutMs?: number;
   /** Max concurrent heartbeat runs per agent (default: 1). Min: 1 */
   maxConcurrentRuns?: number;
+  /** Optional cap for workflow sessions; independent from heartbeat runs. */
+  maxWorkflowSessions?: number;
   /** Whether periodic self-improvement is enabled (default: true) */
   selfImproveEnabled?: boolean;
   /** Interval between self-improvement cycles in ms (default: 14400000 = 4h). Min: 3600000 (1h) */
@@ -777,7 +808,10 @@ export interface AgentDetail extends Agent {
 /** Input for creating a new agent */
 export interface AgentCreateInput {
   name: string;
-  role: AgentCapability;
+  /** Canonical multi-tag input. */
+  roles?: AgentCapability[];
+  /** @deprecated compatibility input; normalized into `roles` once. */
+  role?: AgentCapability;
   metadata?: Record<string, unknown>;
   title?: string;
   icon?: string;
@@ -797,6 +831,8 @@ export interface AgentCreateInput {
 /** Input for updating an existing agent */
 export interface AgentUpdateInput {
   name?: string;
+  roles?: AgentCapability[];
+  /** @deprecated compatibility input; normalized into `roles` once. */
   role?: AgentCapability;
   metadata?: Record<string, unknown>;
   title?: string;
@@ -897,6 +933,8 @@ export interface AgentRatingInput {
  *  Excludes budget-related items, state, taskId, token counts, and timestamps. */
 export interface AgentConfigSnapshot {
   name: string;
+  roles: AgentCapability[];
+  /** @deprecated compatibility projection; derived from roles. */
   role: AgentCapability;
   title?: string;
   icon?: string;
@@ -1063,6 +1101,7 @@ export function getDefaultHeartbeatProcedurePath(agentId: string, agentName?: st
 export function agentToConfigSnapshot(agent: Agent): AgentConfigSnapshot {
   return {
     name: agent.name,
+    roles: [...agent.roles],
     role: agent.role,
     title: agent.title,
     icon: agent.icon,

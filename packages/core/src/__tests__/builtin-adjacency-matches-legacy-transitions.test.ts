@@ -20,7 +20,7 @@ the order it receives them, so a reordering is an operator-visible change.
 import { describe, expect, it } from "vitest";
 import { BUILTIN_CODING_WORKFLOW_IR } from "../workflows/builtin-coding-workflow-ir.js";
 import { resolveAllowedColumns } from "../workflows/workflow-transitions.js";
-import { COLUMNS } from "../types/board.js";
+import { COLUMNS } from "../types/board/index.js";
 import { VALID_TRANSITIONS } from "../types/board/board-config.js";
 
 describe("built-in workflow adjacency vs the legacy transition table", () => {

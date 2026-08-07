@@ -79,7 +79,7 @@ import { EvalStore } from "./eval/eval-store.js";
 import { AsyncEvalStore } from "./async-stores/async-eval-store.js";
 import { CentralCore } from "./central/central-core.js";
 import { SecretsStore } from "./secrets/secrets-store.js";
-import { getLatestFailedPreMergeReviewStep } from "./merge/task-merge.js";
+import { getLatestFailedPreMergeReviewStep, findPendingPreMergeStep } from "./merge/task-merge.js";
 import { createLogger } from "./process/logger.js";
 import { type UsageEventInput } from "./tasks/usage-events.js";
 import { assertNotLinkedWorktreeOfExistingProject, assertProjectRootDir } from "./central/project-root-guard.js";
@@ -1688,6 +1688,136 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     });
   }
   /*
+   * FNXC:StepResume 2026-08-06-02:12:
+   * STAS-032: Operator/privileged-only escape hatch for a card stranded in
+   * `in-review` or `in-progress` with a workflow step permanently in `pending`
+   * status (leading real-world cause: the Runfusion/Fusion#1946 dispatched
+   * prompt node verdict callback never received). Transitions the stuck
+   * `pending` pre-merge step to `status: "failed"` with resume audit metadata
+   * (who/when/why/prior status) so the existing `fn_task_bypass_review` escape
+   * hatch can then clear the merge blocker (FN-7720). Requires a mandatory
+   * `reason` and `stepId`; audit-logged via the `task:resume-step` run-audit
+   * event. A resumed result is a terminal `failed` result and does NOT clear,
+   * create, or alter any other merge-blocker condition. NOT exposed to
+   * executor/reviewer/triage agent tool surfaces — see `fn_workflow_step_resume`
+   * registration comments for the same rule.
+   */
+  async resumeWorkflowStep(
+    id: string,
+    options: { stepId: string; reason: string; actor: string },
+  ): Promise<Task> {
+    const reason = options.reason?.trim();
+    if (!reason) {
+      throw new Error("resumeWorkflowStep requires a non-empty reason");
+    }
+    const stepId = options.stepId?.trim();
+    if (!stepId) {
+      throw new Error("resumeWorkflowStep requires a non-empty stepId");
+    }
+    const actor = options.actor?.trim() || "operator";
+
+    return this.withTaskLock(id, async () => {
+      const dir = this.taskDir(id);
+      const task = await this.readTaskJson(dir);
+
+      if (task.paused) {
+        throw new Error(`Cannot resume workflow step for ${id}: task is paused`);
+      }
+
+      // FNXC:StepResume 2026-08-06-17:42:
+      // Resolve the review and WIP lanes against the task's actual workflow IR instead of
+      // hardcoded 'in-review'/'in-progress' literals. A board whose review lane is named
+      // differently (or carries review on a humanReview/mergeBlocker-only lane) would
+      // otherwise reject a legitimately stuck task. This mirrors bypassFailedPreMergeReviewStep's
+      // lane resolution; the WIP side uses the workflow's countsTowardWip columns.
+      const resumeIr = await resolveWorkflowIrForTask(this, task.id).catch(() => undefined);
+      const reviewColumns: ReadonlySet<string> =
+        resumeIr === undefined || !declaresAnyLifecycleTrait(resumeIr)
+          ? new Set(["in-review"])
+          : new Set(resolveReviewColumns(resumeIr));
+      const wipColumns = await resolveProjectColumnsForRoles(this, ["countsTowardWip"]);
+      const resumeInReview = reviewColumns.has(task.column);
+      const resumeInProgress = wipColumns.has(task.column);
+      if (!resumeInReview && !resumeInProgress) {
+        const named = reviewColumns.size > 0 ? [...reviewColumns].map((c) => `'${c}'`).join(" or ") : "a review lane";
+        throw new Error(
+          `Cannot resume workflow step for ${id}: task is in '${task.column}', must be in ${named} or a WIP (in-progress) lane`,
+        );
+      }
+
+      const results = task.workflowStepResults ?? [];
+      // Only a pending PRE-MERGE step may be resumed: post-merge steps are never the stuck prompt
+      // verdict target, and resuming one would fabricate a terminal 'failed' result the merge gate
+      // does not own. findPendingPreMergeStep (used to name the candidate below) enforces the same
+      // pre-merge boundary as the operator-only resume surface.
+      const target = results.find((r) => r.workflowStepId === stepId && r.phase !== "post-merge");
+      if (!target) {
+        const pendingPreMerge = findPendingPreMergeStep(task);
+        const candidateName = pendingPreMerge ? pendingPreMerge.workflowStepName : undefined;
+        throw new Error(
+          `Cannot resume workflow step for ${id}: step '${stepId}' not found as a pending pre-merge step` +
+            (candidateName ? ` (pending pre-merge step found: '${candidateName}')` : ""),
+        );
+      }
+      if (target.status !== "pending") {
+        throw new Error(
+          `Cannot resume workflow step for ${id}: only pending steps can be resumed`,
+        );
+      }
+
+      const now = new Date().toISOString();
+      const resumed: import("./types.js").WorkflowStepResult = {
+        ...target,
+        status: "failed",
+        completedAt: now,
+        resumedAt: now,
+        resumedBy: actor,
+        resumeReason: reason,
+        resumedFromStatus: target.status,
+      };
+      // A resumed result is terminal 'failed' — never carry lease ownership forward onto a
+      // completed step result. The lease was held by the (never-completed) dispatched prompt node;
+      // preserving leaseOwner/leaseNodeId on the failed record would strand successor lease logic.
+      delete resumed.leaseOwner;
+      delete resumed.leaseNodeId;
+
+      const nextResults = [...results];
+      const targetIndex = nextResults.indexOf(target);
+      nextResults[targetIndex] = resumed;
+      task.workflowStepResults = nextResults;
+
+      if (!task.log) {
+        task.log = [];
+      }
+      task.updatedAt = now;
+      task.log.push({
+        timestamp: now,
+        action: `Workflow step resumed: ${target.workflowStepName} (${target.workflowStepId}) by ${actor} — ${reason}`,
+      });
+
+      await this.recordRunAuditEvent({
+        taskId: task.id,
+        agentId: actor,
+        runId: this.makeSyntheticDeleteRunId(task.id),
+        domain: "database",
+        mutationType: "task:resume-step",
+        target: task.id,
+        metadata: {
+          workflowStepId: target.workflowStepId,
+          workflowStepName: target.workflowStepName,
+          resumedFromStatus: target.status,
+          reason,
+        },
+      });
+
+      await this.atomicWriteTaskJson(dir, task);
+      if (this.isWatching) this.taskCache.set(id, { ...task });
+
+      this.emit("task:updated", task);
+      return task;
+    });
+  }
+  /*
   FNXC:WorkflowEvents 2026-08-01-06:11:
   One seam decorates every TaskStore `task:updated` emission, including hot synchronous paths, with a
   cached answer only. Explicit metadata wins; runtime and process bridge EventEmitters do not call this
@@ -1833,7 +1963,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     return cancelActiveWorkflowWorkItemsForTaskImpl(this, taskId, opts, tx);
   }
   async listDueWorkflowWorkItems(filter: WorkflowWorkItemDueFilter = {}): Promise<WorkflowWorkItem[]> {
-    return listDueWorkflowWorkItemsImpl(this, filter);
+    return listDueWorkflowWorkItemsImpl(this, { ...filter, projectId: this.asyncLayer?.projectId });
   }
   async acquireWorkflowWorkItemLease( id: string, leaseOwner: string, opts: { leaseDurationMs: number; now?: string }, ): Promise<WorkflowWorkItem | null> {
     return acquireWorkflowWorkItemLeaseImpl(this, id, leaseOwner, opts);

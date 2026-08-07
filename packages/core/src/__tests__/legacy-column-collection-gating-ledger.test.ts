@@ -29,9 +29,6 @@ sites; all three were fine:
   agent-role-policy.ts:32     a documented FLAGGED-NOT-FIXED deferral with the reasoning recorded
   DocumentsView.tsx:88        already converted — flags-first, threaded as an object rather than
                               called, so a scan for resolver CALLS cannot see the conversion
-  agent-assignment.ts:118     a `DELIBERATE-LITERAL` fallback behind an injected
-                              `countsAsAssignmentLoad` callback, reviewed 2026-07-31-05:40
-
 That is the same failure `--triage`'s pick-work list had before #3194 fixed it, from the same cause:
 inferring "unexamined" from the absence of a pattern rather than from evidence. A detector that
 cannot tell "not yet looked at" from "looked at and settled" must not be pointed at a work queue. It
@@ -67,12 +64,12 @@ const LEGACY_IDS = ["triage", "todo", "in-progress", "in-review", "done", "archi
  * lane vocabulary at all.
  */
 const RECORDED_GATING_SITES: ReadonlySet<string> = new Set([
-  "packages/core/src/agent-role-policy.ts :: IMPLEMENTATION_TASK_COLUMNS",
+  "packages/core/src/agents/agent-role-policy.ts :: IMPLEMENTATION_TASK_COLUMNS",
   "packages/core/src/column-roles.ts :: LEGACY_PRE_IMPLEMENTATION_COLUMN_IDS",
-  "packages/core/src/live-agent-count.ts :: LEGACY_PRE_IMPLEMENTATION_COLUMN_IDS",
+  "packages/core/src/agents/live-agent-count.ts :: LEGACY_PRE_IMPLEMENTATION_COLUMN_IDS",
   "packages/core/src/task-store/branch-group-ops.ts :: satisfiedColumns",
   "packages/core/src/task-store/update-task-deps.ts :: refineFrom",
-  "packages/core/src/workflow-analytics.ts :: LEGACY_ACTIVE_LANES",
+  "packages/core/src/board/workflow-analytics.ts :: LEGACY_ACTIVE_LANES",
   "packages/dashboard/app/components/DocumentsView.tsx :: LEGACY_PRE_IMPLEMENTATION_COLUMNS",
   "packages/dashboard/app/components/TaskCard.tsx :: TIME_INDICATOR_COLUMNS",
   "packages/dashboard/app/components/TaskDetailModal.tsx :: GITHUB_TRACKING_EDITABLE_COLUMNS",
@@ -80,14 +77,12 @@ const RECORDED_GATING_SITES: ReadonlySet<string> = new Set([
   "packages/dashboard/app/hooks/useTasks.ts :: PLANNER_ACTIVITY_COLUMN_IDS",
   "packages/dashboard/app/utils/columnRoles.ts :: LEGACY_FIELD_EDITABLE_COLUMN_IDS",
   "packages/dashboard/app/utils/columnRoles.ts :: LEGACY_PRE_IMPLEMENTATION_COLUMN_IDS",
-  "packages/engine/src/agent-assignment.ts :: LEGACY_ACTIVE_COLUMNS",
-  "packages/engine/src/agent-reflection.ts :: completedColumns",
-  "packages/engine/src/ephemeral-worker-manager.ts :: TERMINAL_TASK_COLUMNS",
+  "packages/engine/src/agents/agent-reflection.ts :: completedColumns",
   "packages/engine/src/executor.ts :: activeColumns",
   "packages/engine/src/merger.ts :: finalizedColumns",
   "packages/engine/src/merger.ts :: sourceTerminal",
-  "packages/engine/src/mission-execution-loop.ts :: fixTaskTerminalColumns",
-  "packages/engine/src/mission-feature-sync.ts :: LEGACY_PLANNER_COLUMNS",
+  "packages/engine/src/missions/mission-execution-loop.ts :: fixTaskTerminalColumns",
+  "packages/engine/src/missions/mission-feature-sync.ts :: LEGACY_PLANNER_COLUMNS",
   "packages/engine/src/triage.ts :: LEGACY_PLANNER_COLUMN_IDS",
   /*
   FNXC:WorkflowEvents 2026-08-03-02:01:
@@ -96,7 +91,7 @@ const RECORDED_GATING_SITES: ReadonlySet<string> = new Set([
   so the ledger does not re-flag a RESOLVED site with a deliberate legacy arm.
   */
   "packages/engine/src/triage.ts :: LEGACY_PLANNER_WAKE_COLUMNS",
-  "packages/engine/src/worktree-pool.ts :: managed",
+  "packages/engine/src/worktree/worktree-pool.ts :: managed",
 ]);
 
 function* walk(dir: string): Generator<string> {

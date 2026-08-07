@@ -14,7 +14,16 @@ vi.mock("@fusion/core", async () => {
     async init() {}
     updateAgent = updateAgent;
   }
-  return { ...actual, AgentStore: MockAgentStore };
+  return {
+    ...actual,
+    AgentStore: MockAgentStore,
+    normalizeAgentRoles: (roles: readonly string[] | undefined, role?: string) => {
+      const values = roles?.length ? roles : role ? [role] : [];
+      const order = ["triage", "executor", "reviewer", "merger", "scheduler", "engineer", "custom"];
+      if (values.length === 0 || values.some((value) => !order.includes(value))) throw new Error("Agent roles contain an unknown capability");
+      return order.filter((value) => values.includes(value));
+    },
+  };
 });
 
 function createStore(): TaskStore {
@@ -43,6 +52,18 @@ function createStore(): TaskStore {
 }
 
 describe("agent core PATCH route", () => {
+  it("normalizes multi-role PATCH payloads before persisting them", async () => {
+    updateAgent.mockResolvedValue({ id: "agent-roles", roles: ["executor", "reviewer"] });
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(createStore()));
+
+    const response = await request(app, "PATCH", "/api/agents/agent-roles", JSON.stringify({ roles: ["reviewer", "executor", "reviewer"] }), { "Content-Type": "application/json" });
+
+    expect(response.status, JSON.stringify(response.body)).toBe(200);
+    expect(updateAgent).toHaveBeenCalledWith("agent-roles", { roles: ["executor", "reviewer"] });
+  });
+
   it("passes a complete heartbeat runtime config to the project-scoped agent store without lifecycle transitions", async () => {
     updateAgent.mockResolvedValue({ id: "agent-1" });
     const store = createStore();

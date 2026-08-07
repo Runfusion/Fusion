@@ -59,14 +59,18 @@ import {resolveTaskLifecycleColumns} from "../workflows/workflow-lifecycle-trait
 import { computeAccessState, normalizePermissions } from "./agent-permissions.js";
 import { assertImplementationTaskBindAllowed, evaluateImplementationTaskBind } from "./agent-role-policy.js";
 import { normalizeAgentPermissionPolicy } from "./agent-permission-policy.js";
+import { normalizeAgentRoles } from "../types/agents/agents.js";
 import { Database } from "../db/db.js";
 import type { AsyncDataLayer } from "../postgres/data-layer.js";
+import * as postgresSchema from "../postgres/schema/index.js";
+import { and, eq, gt, lte, sql } from "drizzle-orm";
 /*
  * FNXC:SqliteFinalRemoval 2026-06-25-23:30:
  * Async Drizzle helpers for backend-mode (PostgreSQL) AgentStore operations.
  * Each helper targets the project-schema tables via Drizzle and is the async
  * equivalent of the sync this.db.prepare() call sites below.
  */
+import type { QueryHandle } from "../async-stores/async-mission-store-queries.js";
 import {
   writeAgent as writeAgentAsync,
   readAgent as readAgentAsync,
@@ -167,6 +171,8 @@ export interface AgentStoreOptions {
 interface AgentData {
   id: string;
   name: string;
+  roles?: AgentCapability[];
+  /** Deprecated compatibility projection persisted for legacy consumers. */
   role: AgentCapability;
   state: AgentState;
   taskId?: string;
@@ -408,6 +414,94 @@ export class AgentStore extends EventEmitter {
     return projectId;
   }
 
+  /** The durable project partition used by workflow routing and capacity leases. */
+  public get workflowProjectId(): string | undefined {
+    return this.asyncLayer?.projectId;
+  }
+
+  /**
+   * FNXC:WorkflowAgentRouting 2026-08-07-05:52:
+   * Workflow capacity is a PostgreSQL lease rather than a process-local count.
+   * The project advisory lock serializes project then agent admission across
+   * engine processes; model work starts only after this short transaction ends.
+   */
+  public async acquireWorkflowSessionCapacity(input: {
+    agentId: string;
+    attemptId: string;
+    maxProjectSessions?: number;
+    maxAgentSessions?: number;
+    leaseDurationMs?: number;
+  }): Promise<"acquired" | "project-capacity" | "agent-capacity"> {
+    if (!this.asyncLayer) return "acquired";
+    const projectId = this.backendProjectId;
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + (input.leaseDurationMs ?? 10 * 60_000)).toISOString();
+    return this.asyncLayer.transactionImmediate(async (tx) => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${projectId}), hashtext('workflow-agent-capacity'))`);
+      /*
+       * FNXC:WorkflowAgentRouting 2026-08-07-07:16:
+       * Capacity is a crash-safe lease, not a permanent counter. Reclaim only
+       * expired rows while holding the same project admission lock used for the
+       * count and insert, so a dead engine frees slots without oversubscription.
+       */
+      await tx.delete(postgresSchema.project.workflowAgentCapacityLeases).where(and(
+        eq(postgresSchema.project.workflowAgentCapacityLeases.projectId, projectId),
+        lte(postgresSchema.project.workflowAgentCapacityLeases.expiresAt, now.toISOString()),
+      ));
+      const existing = await tx.select({ attemptId: postgresSchema.project.workflowAgentCapacityLeases.attemptId })
+        .from(postgresSchema.project.workflowAgentCapacityLeases)
+        .where(and(
+          eq(postgresSchema.project.workflowAgentCapacityLeases.projectId, projectId),
+          eq(postgresSchema.project.workflowAgentCapacityLeases.attemptId, input.attemptId),
+        )).limit(1);
+      if (existing[0]) return "acquired";
+      const projectCount = await tx.select({ count: sql<number>`count(*)::int` })
+        .from(postgresSchema.project.workflowAgentCapacityLeases)
+        .where(eq(postgresSchema.project.workflowAgentCapacityLeases.projectId, projectId));
+      if (input.maxProjectSessions !== undefined && (projectCount[0]?.count ?? 0) >= input.maxProjectSessions) return "project-capacity";
+      const agentCount = await tx.select({ count: sql<number>`count(*)::int` })
+        .from(postgresSchema.project.workflowAgentCapacityLeases)
+        .where(and(
+          eq(postgresSchema.project.workflowAgentCapacityLeases.projectId, projectId),
+          eq(postgresSchema.project.workflowAgentCapacityLeases.agentId, input.agentId),
+        ));
+      if (input.maxAgentSessions !== undefined && (agentCount[0]?.count ?? 0) >= input.maxAgentSessions) return "agent-capacity";
+      await tx.insert(postgresSchema.project.workflowAgentCapacityLeases).values({
+        projectId, agentId: input.agentId, attemptId: input.attemptId, createdAt: now.toISOString(), expiresAt,
+      });
+      return "acquired";
+    });
+  }
+
+  /** Renew only the caller's project-scoped attempt; a reclaimed lease never resurrects. */
+  public async renewWorkflowSessionCapacity(attemptId: string, leaseDurationMs = 10 * 60_000): Promise<boolean> {
+    if (!this.asyncLayer) return true;
+    const now = new Date();
+    const result = await this.asyncLayer.db.update(postgresSchema.project.workflowAgentCapacityLeases)
+      .set({ expiresAt: new Date(now.getTime() + leaseDurationMs).toISOString() })
+      .where(and(
+        eq(postgresSchema.project.workflowAgentCapacityLeases.projectId, this.backendProjectId),
+        eq(postgresSchema.project.workflowAgentCapacityLeases.attemptId, attemptId),
+        /*
+         * FNXC:WorkflowAgentRouting 2026-08-07-07:30:
+         * Renew a currently live lease only. An expired row may already have
+         * been reclaimed by another engine's admission transaction.
+         */
+        gt(postgresSchema.project.workflowAgentCapacityLeases.expiresAt, now.toISOString()),
+      ))
+      .returning({ attemptId: postgresSchema.project.workflowAgentCapacityLeases.attemptId });
+    return result.length > 0;
+  }
+
+  /** Release is project-scoped and idempotent so cancellation and recovery may race safely. */
+  public async releaseWorkflowSessionCapacity(attemptId: string): Promise<void> {
+    if (!this.asyncLayer) return;
+    await this.asyncLayer.db.delete(postgresSchema.project.workflowAgentCapacityLeases).where(and(
+      eq(postgresSchema.project.workflowAgentCapacityLeases.projectId, this.backendProjectId),
+      eq(postgresSchema.project.workflowAgentCapacityLeases.attemptId, attemptId),
+    ));
+  }
+
   private get db(): Database {
         throw new Error("SQLite Database is not available in backend mode (asyncLayer injected)");
 }
@@ -422,9 +516,15 @@ export class AgentStore extends EventEmitter {
    * covers these migrations. Only create the agents directory.
    */
   async init(): Promise<void> {
-        await mkdir(this.agentsDir, { recursive: true });
-    return;
-}
+    await mkdir(this.agentsDir, { recursive: true });
+    /*
+    FNXC:WorkflowAgentRouting 2026-08-07-03:12:
+    Every upgraded or new project must have the four durable workflow owners
+    once storage is ready. Their heartbeat remains disabled; graph routing may
+    still invoke them independently of the heartbeat scheduler.
+    */
+    await this.provisionBuiltinWorkflowRoleAgents();
+  }
 
   /**
    * One-shot migration that re-points every non-ephemeral agent off the
@@ -632,10 +732,10 @@ export class AgentStore extends EventEmitter {
    * @param name - Agent name to match exactly
    * @returns Matching non-ephemeral agent, or null when none exists
    */
-  async findAgentByName(name: string): Promise<Agent | null> {
+  async findAgentByName(name: string, executor?: QueryHandle): Promise<Agent | null> {
     // FNXC:SqliteFinalRemoval 2026-06-25-23:45:
     // Backend mode: read via async Drizzle helper, filter ephemeral in-memory.
-        const agents = await findAgentRowsByNameAsync(this.asyncLayer!.db, name);
+        const agents = await findAgentRowsByNameAsync(executor ?? this.asyncLayer!.db, name);
     for (const agent of agents) {
       if (!isEphemeralAgent(agent)) {
         return this.parseAgent(agent as unknown as AgentData);
@@ -673,20 +773,18 @@ export class AgentStore extends EventEmitter {
    * @returns The created agent
    * @throws Error if input is invalid or a duplicate non-ephemeral name exists
    */
-  async createAgent(input: AgentCreateInput): Promise<Agent> {
+  async createAgent(input: AgentCreateInput, executor?: QueryHandle): Promise<Agent> {
     if (!input.name?.trim()) {
       throw new Error("Agent name is required");
     }
-    if (!input.role) {
-      throw new Error("Agent role is required");
-    }
+    const roles = normalizeAgentRoles(input.roles, input.role);
 
     const normalizedName = input.name.trim();
     const metadata = input.metadata ?? {};
-    const ephemeral = isEphemeralAgent({ metadata, name: input.name, role: input.role, reportsTo: input.reportsTo });
+    const ephemeral = isEphemeralAgent({ metadata, name: input.name, role: roles[0], reportsTo: input.reportsTo });
 
     if (!ephemeral) {
-      const existing = await this.findAgentByName(normalizedName);
+      const existing = await this.findAgentByName(normalizedName, executor);
       if (existing) {
         throw new Error(`Agent with name "${normalizedName}" already exists (agentId: ${existing.id})`);
       }
@@ -717,7 +815,8 @@ export class AgentStore extends EventEmitter {
     const agent: Agent = {
       id: agentId,
       name: normalizedName,
-      role: input.role,
+      roles,
+      role: roles[0],
       // Non-ephemeral agents start active so they immediately participate in
       // heartbeat scheduling; ephemeral/task-worker agents start idle and are
       // activated by the engine when work is assigned.
@@ -740,7 +839,7 @@ export class AgentStore extends EventEmitter {
       ...(resolvedHeartbeatProcedurePath && { heartbeatProcedurePath: resolvedHeartbeatProcedurePath }),
     };
 
-    await this.writeAgent(agent);
+    await this.writeAgent(agent, executor);
     this.emit("agent:created", agent);
 
     return agent;
@@ -1164,10 +1263,14 @@ export class AgentStore extends EventEmitter {
           ? normalizeAgentPermissionPolicy(updates.permissionPolicy)
           : updates.permissionPolicy;
 
+      const roles = updates.roles !== undefined || updates.role !== undefined
+        ? normalizeAgentRoles(updates.roles, updates.role)
+        : agent.roles;
       const updated: Agent = {
         ...agent,
         name: nextName ?? agent.name,
-        role: updates.role ?? agent.role,
+        roles,
+        role: roles[0],
         metadata: updates.metadata !== undefined ? updates.metadata : agent.metadata,
         updatedAt,
         ...("title" in updates && { title: updates.title }),
@@ -1858,17 +1961,82 @@ export class AgentStore extends EventEmitter {
    * @param filter - Optional filter criteria
    * @returns Array of agents
    */
-  async listAgents(filter?: { state?: AgentState; role?: AgentCapability; includeEphemeral?: boolean }): Promise<Agent[]> {
-    // FNXC:SqliteFinalRemoval 2026-06-25-23:50:
-    // Backend mode: read via async Drizzle helper, apply ephemeral filter in-memory.
-        const agents = await listAgentRowsAsync(this.asyncLayer!.db, {
-      state: filter?.state,
-      role: filter?.role,
-    });
+  async listAgents(
+    filter?: { state?: AgentState; role?: AgentCapability; includeEphemeral?: boolean },
+    executor?: QueryHandle,
+  ): Promise<Agent[]> {
+    // FNXC:WorkflowAgentRouting 2026-08-07-03:12:
+    // Role-pool membership is canonical multi-tag state, so SQL must not use the
+    // deprecated singular projection to exclude a matching durable principal.
+    const agents = await listAgentRowsAsync(executor ?? this.asyncLayer!.db, { state: filter?.state });
     return agents
       .map((a) => this.parseAgent(a as unknown as AgentData))
+      .filter((agent) => !filter?.role || agent.roles.includes(filter.role))
       .filter((agent) => filter?.includeEphemeral === true || !isEphemeralAgent(agent));
-}
+  }
+
+  /**
+   * Idempotently seed the permanent owners that route built-in workflow stages.
+   * Matching operator-created agents are intentionally not reused: provenance
+   * makes upgrade repair deterministic while operators remain free to add pool
+   * members with the same tag.
+   */
+  async provisionBuiltinWorkflowRoleAgents(): Promise<Agent[]> {
+    const provision = async (executor?: QueryHandle): Promise<Agent[]> => {
+      const definitions: ReadonlyArray<{ role: AgentCapability; name: string; title: string }> = [
+        { role: "triage", name: "Workflow Planner", title: "Built-in workflow planning owner" },
+        { role: "executor", name: "Workflow Executor", title: "Built-in workflow execution owner" },
+        { role: "reviewer", name: "Workflow Reviewer", title: "Built-in workflow review owner" },
+        { role: "merger", name: "Workflow Merger", title: "Built-in workflow merge owner" },
+      ];
+      const existing = await this.listAgents({ includeEphemeral: true }, executor);
+      const builtins = new Map(
+        existing
+          .filter((agent) => agent.metadata?.builtInWorkflowRole === true)
+          .map((agent) => [agent.metadata.workflowRole as AgentCapability, agent]),
+      );
+      const result: Agent[] = [];
+      for (const definition of definitions) {
+        const present = builtins.get(definition.role);
+        if (present) {
+          result.push(present);
+          continue;
+        }
+        result.push(await this.createAgent({
+          name: definition.name,
+          roles: [definition.role],
+          title: definition.title,
+          metadata: { builtInWorkflowRole: true, workflowRole: definition.role },
+          // Disabled scheduling does not make the agent unavailable for graph sessions.
+          runtimeConfig: { enabled: false },
+        }, executor));
+      }
+      return result;
+    };
+    if (!this.asyncLayer) return provision();
+    /*
+     * FNXC:WorkflowAgentRouting 2026-08-07-07:16:
+     * Startup and onboarding can run in separate engine processes. Serialize the
+     * read/repair/create sequence with a project-scoped advisory lock so both
+     * callers observe the first four durable built-ins instead of racing to add
+     * duplicate owners. User-created same-role agents are intentionally outside
+     * this provenance lock and remain valid pool members.
+     */
+    /*
+     * FNXC:WorkflowAgentRouting 2026-08-07-16:22:
+     * The provisioning work MUST run on `tx`, not on the pool. The lock holder
+     * previously called provision() with no executor, so its reads/writes asked
+     * the pool for a SECOND connection while concurrent callers occupied the
+     * remaining slots blocking on this same advisory lock. With DEFAULT_POOL_MAX=3
+     * that self-deadlocks: the holder can never finish, the waiters can never take
+     * the lock, and every later query — i.e. every DB-backed API route — queues
+     * forever behind an exhausted pool. Keep the lock and the work on one connection.
+     */
+    return this.asyncLayer.transactionImmediate(async (tx) => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${this.backendProjectId}), hashtext('builtin-workflow-role-provisioning'))`);
+      return provision(tx);
+    });
+  }
 
   /**
    * Create an API key for an agent.
@@ -2821,6 +2989,7 @@ export class AgentStore extends EventEmitter {
       ...data,
       id: row.id,
       name: row.name,
+      roles: (data.roles?.length ? data.roles : [row.role]),
       role: row.role,
       state: row.state,
       taskId: row.taskId ?? undefined,
@@ -2864,7 +3033,8 @@ export class AgentStore extends EventEmitter {
     return {
       id: data.id,
       name: data.name,
-      role: data.role,
+      roles: normalizeAgentRoles(data.roles, data.role),
+      role: normalizeAgentRoles(data.roles, data.role)[0],
       state: data.state,
       taskId: data.taskId,
       createdAt: data.createdAt,
@@ -2891,10 +3061,10 @@ export class AgentStore extends EventEmitter {
     };
   }
 
-  private async writeAgent(agent: Agent): Promise<void> {
+  private async writeAgent(agent: Agent, executor?: QueryHandle): Promise<void> {
     // FNXC:SqliteFinalRemoval 2026-06-25-23:40:
     // Backend mode: delegate to async Drizzle writeAgent helper.
-        await writeAgentAsync(this.asyncLayer!.db, agent, this.asyncLayer!.projectId);
+        await writeAgentAsync(executor ?? this.asyncLayer!.db, agent, this.asyncLayer!.projectId);
     return;
 }
 

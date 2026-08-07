@@ -92,6 +92,44 @@ pgDescribe("workflow work-item transition compare-and-set", () => {
     expect(persisted?.retryAfter).not.toBe(LATER);
   });
 
+  it("reclaims only a durable principal availability hold after it becomes due", async () => {
+    const store = h.store();
+    const task = await store.createTask({ description: "availability hold recovery", column: "todo" });
+    const held = await store.upsertWorkflowWorkItem({
+      ...continuation(task.id),
+      state: "held",
+      blockedReason: "workflow-principal-named-principal-unavailable:executor",
+    });
+
+    const claimed = await store.acquireWorkflowWorkItemLease(held.id, "recovery-worker", {
+      leaseDurationMs: 60_000,
+      now: "2026-08-07T07:02:00.000Z",
+    });
+
+    expect(claimed).toMatchObject({
+      id: held.id,
+      state: "running",
+      leaseOwner: "recovery-worker",
+      blockedReason: "workflow-principal-named-principal-unavailable:executor",
+    });
+  });
+
+  it("does not claim a generic held item through workflow recovery", async () => {
+    const store = h.store();
+    const task = await store.createTask({ description: "manual hold remains inert", column: "todo" });
+    const held = await store.upsertWorkflowWorkItem({
+      ...continuation(task.id),
+      state: "held",
+      blockedReason: "operator-approval-required",
+    });
+
+    await expect(store.acquireWorkflowWorkItemLease(held.id, "recovery-worker", {
+      leaseDurationMs: 60_000,
+      now: "2026-08-07T07:02:00.000Z",
+    })).resolves.toBeNull();
+    expect((await store.getWorkflowWorkItem(held.id))?.state).toBe("held");
+  });
+
   it("is a NO-OP rather than a throw for a terminalized item", async () => {
     const store = h.store();
     const task = await store.createTask({ description: "cas terminal race", column: "todo" });

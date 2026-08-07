@@ -39,6 +39,7 @@ import {
   resolveLifecycleColumns,
   resolveWorkflowIrForTaskWithProvenance,
   resolveProjectColumnsForRoles,
+  isWorkflowAgentNodeForRole,
   resolveWorktreeCapacityLimit,
   workflowHasColumn,
   getStepParser,
@@ -233,6 +234,8 @@ import { finalizePlanningSegment, startPlanningSegment } from "@fusion/core";
 import { collectPlanReviewFeedbackHistory, isPlanReviewRevisionLog } from "./plan-review-feedback-history.js";
 import type { AgentActionGateContext } from "./agents/agent-action-gate.js";
 import { buildAgentGatedActionSummary } from "./agents/permanent-agent-gating.js";
+import { routeWorkflowPrincipal } from "./agents/workflow-agent-router.js";
+import { WorkflowAgentCapacity } from "./agents/workflow-agent-capacity.js";
 
 
 export interface TriageProcessorOptions {
@@ -445,6 +448,8 @@ export class TriageProcessor {
   /** FNXC:PlanningEvacuation 2026-07-25-23:00: stops planning when a card leaves the planner lanes. */
   private taskEvacuatedFromPlanningHandler?: (task: Task, meta?: { lanes?: TaskMoveLanes }) => void;
   private _approvalRequestStore?: ApprovalRequestStore;
+  /** Workflow planning uses its own durable budget, never heartbeat concurrency. */
+  private readonly workflowAgentCapacity: WorkflowAgentCapacity;
 
   /**
    * @param store — Task store instance (also used to listen for `settings:updated` events)
@@ -477,6 +482,7 @@ export class TriageProcessor {
     runId: string,
     agent: Agent | null,
     projectDefaultPolicy?: { rules?: Partial<AgentPermissionPolicy["rules"]>; toolRules?: AgentPermissionPolicy["toolRules"] },
+    workflowAuthority?: { workItemId: string; nodeInstanceId: string; principalAgentId: string; kind: "task-assignee" | "review-node-override"; isLive: () => boolean | Promise<boolean> },
   ): AgentActionGateContext {
     const actorId = agent?.id ?? `triage-${taskId}`;
     const actorName = agent?.name ?? `Triage planner ${taskId}`;
@@ -488,6 +494,16 @@ export class TriageProcessor {
       taskId,
       runId,
       permissionPolicy,
+      ...(workflowAuthority ? { workflowAuthority: {
+        projectId: this.options.agentStore?.workflowProjectId ?? this.rootDir,
+        taskId,
+        runId,
+        workItemId: workflowAuthority.workItemId,
+        nodeInstanceId: workflowAuthority.nodeInstanceId,
+        principalAgentId: workflowAuthority.principalAgentId,
+        kind: workflowAuthority.kind,
+        isLive: workflowAuthority.isLive,
+      } } : {}),
       createApprovalRequest: async (decision, args) => await this.approvalRequestStore.create({
         requester: { actorId, actorType: "agent", actorName },
         taskId,
@@ -558,6 +574,7 @@ export class TriageProcessor {
     private rootDir: string,
     private options: TriageProcessorOptions = {},
   ) {
+    this.workflowAgentCapacity = new WorkflowAgentCapacity(this.options.agentStore);
     this.unregisterAdmissionProvider = projectAdmissionCoordinator.registerProvider(`specify:${this.rootDir}`, {
       projectId: this.rootDir,
       refresh: async () => {
@@ -2433,6 +2450,11 @@ export class TriageProcessor {
     checkout). Declared at method scope because registration happens deep inside the try.
     */
     let registeredPlanningPath: string | null = null;
+    let workflowCapacityAttemptId: string | undefined;
+    let workflowCapacityProjectId: string | undefined;
+    let planningWorkItemId: string | undefined;
+    let planningAuthority: { workItemId: string; nodeInstanceId: string; principalAgentId: string; kind: "task-assignee" | "review-node-override"; isLive: () => Promise<boolean> } | undefined;
+    let planningSessionCompleted = false;
 
     /*
     FNXC:DuplicateIntake 2026-07-26-10:40:
@@ -2521,7 +2543,7 @@ export class TriageProcessor {
         // Track subtasks created during triage when breakIntoSubtasks was requested.
         const createdSubtasksRef: { current: string[] } = { current: [] };
 
-        const assignedAgent = task.assignedAgentId && this.options.agentStore
+        let assignedAgent = task.assignedAgentId && this.options.agentStore
           ? await this.options.agentStore.getAgent(task.assignedAgentId).catch(() => null)
           : null;
 
@@ -2532,7 +2554,158 @@ export class TriageProcessor {
           taskLineageId: task.lineageId,
           phase: "plan",
           source: "triage",
-        } as const;
+        };
+
+        /*
+        FNXC:WorkflowAgentRouting 2026-08-07-06:27:
+        The production planning session is an agent-executed workflow seam, so
+        it must select and fence the same permanent principal as graph nodes.
+        Do not fall back to the synthetic `triage` identity: a missing named
+        owner or empty role pool leaves planning visibly recoverable instead of
+        granting ambient authority to an ephemeral worker.
+        */
+        const planningIr = await resolveWorkflowIrForTask(this.store, task.id).catch(() => undefined);
+        const planningNode = planningIr?.nodes.find((node) => isWorkflowAgentNodeForRole(node, "triage"));
+        if (this.options.agentStore && planningIr && planningNode && typeof this.options.agentStore.listAgents === "function") {
+          const agents = await this.options.agentStore.listAgents({ includeEphemeral: true });
+          // Narrow test/runtime compatibility: an incomplete legacy AgentStore
+          // seam cannot claim permanent routing authority, so retain its existing
+          // non-production fallback instead of treating an absent list as a pool.
+          if (!Array.isArray(agents)) {
+            assignedAgent = assignedAgent ?? null;
+          } else {
+          let routed = routeWorkflowPrincipal({
+            task: currentTask,
+            ir: planningIr,
+            node: planningNode,
+            agents,
+          });
+          if (routed.status === "held") {
+            /*
+            FNXC:WorkflowAgentRouting 2026-08-07-06:40:
+            An unavailable owner or exhausted role pool is durable workflow
+            state, not a planner-only log. Record the held planning seam before
+            returning so recovery and operator surfaces retain the fail-closed
+            reason and no synthetic planner can silently retry around it.
+            */
+            await this.store.upsertWorkflowWorkItem({
+              runId: triageRunContext.runId,
+              taskId: task.id,
+              nodeId: planningNode.id,
+              nodeInstanceId: planningNode.id,
+              kind: "task",
+              state: "held",
+              leaseOwner: null,
+              leaseExpiresAt: null,
+              blockedReason: `workflow-principal-${routed.reason}:${routed.role}`,
+              principalAgentId: currentTask.assignedAgentId ?? null,
+              workflowRole: routed.role,
+              authorityKind: currentTask.assignedAgentId ? "task-assignee" : null,
+            });
+            await this.store.logEntry(task.id, `Planning held: workflow-principal-${routed.reason}:${routed.role}`);
+            await this.updatePlanningStateIfStillCurrent(task, { status: "needs-replan" });
+            return;
+          }
+          if (routed.status === "routed") {
+            assignedAgent = routed.route.agent;
+            triageRunContext.agentId = assignedAgent.id;
+            workflowCapacityAttemptId = `${triageRunContext.runId}:${planningNode.id}`;
+            workflowCapacityProjectId = this.options.agentStore.workflowProjectId ?? this.rootDir;
+            let capacity = await this.workflowAgentCapacity.acquire({
+              projectId: workflowCapacityProjectId,
+              agent: assignedAgent,
+              attemptId: workflowCapacityAttemptId,
+              maxProjectSessions: settings.maxConcurrent,
+            });
+            /*
+            FNXC:WorkflowAgentRouting 2026-08-07-07:32:
+            Role-pool selection is optimistic across engine processes. Retry a
+            different pool member only after durable agent-capacity rejects this
+            contender; task owners and other named principals remain fail-closed.
+            */
+            if (capacity.status === "held" && capacity.reason === "agent-capacity"
+              && routed.route.authority === "role-pool") {
+              const excludedPoolAgentIds = new Set<string>();
+              while (capacity.status === "held" && capacity.reason === "agent-capacity"
+                && routed.route.authority === "role-pool") {
+                excludedPoolAgentIds.add(routed.route.agent.id);
+                const retryRoute = routeWorkflowPrincipal({
+                  task: currentTask,
+                  ir: planningIr,
+                  node: planningNode,
+                  agents,
+                  excludedPoolAgentIds,
+                });
+                if (retryRoute.status !== "routed" || retryRoute.route.authority !== "role-pool") break;
+                routed = retryRoute;
+                assignedAgent = routed.route.agent;
+                triageRunContext.agentId = assignedAgent.id;
+                capacity = await this.workflowAgentCapacity.acquire({
+                  projectId: workflowCapacityProjectId,
+                  agent: assignedAgent,
+                  attemptId: workflowCapacityAttemptId,
+                  maxProjectSessions: settings.maxConcurrent,
+                });
+              }
+            }
+            if (capacity.status === "held") {
+              await this.store.logEntry(task.id, `Planning held: workflow-principal-${capacity.reason}:triage`);
+              await this.updatePlanningStateIfStillCurrent(task, { status: "needs-replan" });
+              return;
+            }
+            try {
+              const item = await this.store.upsertWorkflowWorkItem({
+                runId: triageRunContext.runId,
+                taskId: task.id,
+                nodeId: planningNode.id,
+                nodeInstanceId: planningNode.id,
+                kind: "task",
+                state: "running",
+                leaseOwner: `triage:${task.id}`,
+                leaseExpiresAt: null,
+                principalAgentId: assignedAgent.id,
+                workflowRole: routed.route.role,
+                authorityKind: routed.route.authority,
+              });
+              planningWorkItemId = item.id;
+              if (routed.route.authority === "task-assignee") {
+                const fencedPrincipal = routed.route.agent;
+                /*
+                FNXC:WorkflowAgentRouting 2026-08-07-06:40:
+                Planning authority is valid only while this exact durable work
+                item is actively leased by the assigned owner. Re-read both
+                records on every gated call so reassignment, cancellation, or
+                terminalization immediately restores the owner's normal policy.
+                */
+                planningAuthority = {
+                  workItemId: item.id,
+                  nodeInstanceId: planningNode.id,
+                  principalAgentId: fencedPrincipal.id,
+                  kind: "task-assignee",
+                  isLive: async () => {
+                    if (!this.activeSessions.has(task.id)) return false;
+                    const liveItems = await this.store.listWorkflowWorkItemsForTask(task.id);
+                    const liveItem = liveItems.find((candidate) => candidate.id === item.id);
+                    if (liveItem?.state !== "running"
+                      || liveItem.runId !== triageRunContext.runId
+                      || liveItem.principalAgentId !== fencedPrincipal.id
+                      || liveItem.authorityKind !== "task-assignee"
+                      || liveItem.nodeInstanceId !== planningNode.id
+                      || !liveItem.leaseOwner
+                      || (liveItem.leaseExpiresAt !== null && Date.parse(liveItem.leaseExpiresAt) <= Date.now())) return false;
+                    const liveTask = await this.store.getTask(task.id);
+                    return liveTask.assignedAgentId === fencedPrincipal.id;
+                  },
+                };
+              }
+            } catch (error) {
+              await this.workflowAgentCapacity.release(workflowCapacityAttemptId, workflowCapacityProjectId);
+              workflowCapacityAttemptId = undefined;
+              throw new Error(`workflow-principal-fence-unavailable:triage`, { cause: error });
+            }
+          }
+          }
+        }
 
         /*
         FNXC:TriagePromptPersistence 2026-07-21-16:30:
@@ -2894,7 +3067,13 @@ export class TriageProcessor {
           ...(skillContext.additionalSkillPaths.length > 0 ? { additionalSkillPaths: skillContext.additionalSkillPaths } : {}),
           taskId: task.id,
           taskTitle: task.title,
-          actionGateContext: this.buildActionGateContext(task.id, triageRunContext.runId, assignedAgent, settings.defaultAgentPermissionPolicy),
+          actionGateContext: this.buildActionGateContext(
+            task.id,
+            triageRunContext.runId,
+            assignedAgent,
+            settings.defaultAgentPermissionPolicy,
+            planningAuthority,
+          ),
           permanentAgentGating: this.buildPermanentAgentGatingContext(task.id, triageRunContext.runId, assignedAgent, settings.defaultAgentPermissionPolicy),
           onFallbackModelUsed,
         });
@@ -3062,6 +3241,7 @@ export class TriageProcessor {
 
           // Re-raise errors that pi-coding-agent swallowed after exhausting retries.
           checkSessionError(session);
+          planningSessionCompleted = true;
 
           if (this.pauseAborted.has(task.id)) {
             this.pauseAborted.delete(task.id);
@@ -3552,6 +3732,16 @@ export class TriageProcessor {
           activeSessionRegistry.unregisterPath(registeredPlanningPath);
         }
         registeredPlanningPath = null;
+      }
+      if (planningWorkItemId) {
+        await this.store.transitionWorkflowWorkItem(planningWorkItemId, planningSessionCompleted ? "succeeded" : "failed", {
+          leaseOwner: null,
+          leaseExpiresAt: null,
+          lastError: planningSessionCompleted ? null : "planning-session-ended-before-completion",
+        }).catch(() => undefined);
+      }
+      if (workflowCapacityAttemptId) {
+        await this.workflowAgentCapacity.release(workflowCapacityAttemptId, workflowCapacityProjectId);
       }
       this.processing.delete(task.id);
       this.processingSince.delete(task.id);

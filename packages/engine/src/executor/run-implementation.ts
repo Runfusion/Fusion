@@ -229,6 +229,7 @@ export type RunImplementationDeps = {
   activeSessions: Map<string, ActiveExecutorSessionState>;
   activeWorktrees: Map<string, Set<string>>;
   activeWorkflowGraphAbortControllers: Map<string, AbortController>;
+  activeWorkflowPrincipals: Map<string, { agentId: string; nodeInstanceId: string; agent?: import("@fusion/core").Agent }>;
   currentRunContexts: Map<string, RunMutationContext | EngineRunContext | undefined>;
   effectiveColumnAgentByTask: Map<string, unknown>;
   graphSeamThinkingLevel: Map<string, string | undefined>;
@@ -1647,6 +1648,15 @@ export async function runImplementation(
         ? [createReflectOnPerformanceTool(deps.options.reflectionService, assignedAgentId)]
         : [];
       const assignedAgent = await deps.getAuthoritativeAssignedAgent(assignedAgentId);
+      const routedPrincipal = deps.activeWorkflowPrincipals.get(task.id);
+      const routedPrincipalAgentId = routedPrincipal?.agentId;
+      const routedPrincipalAgent = routedPrincipal?.agent
+        ?? (routedPrincipalAgentId
+          ? await deps.getAuthoritativeAssignedAgent(routedPrincipalAgentId)
+          : undefined);
+      if (routedPrincipalAgentId && !routedPrincipalAgent) {
+        throw new Error(`workflow-principal-unavailable:${routedPrincipalAgentId}`);
+      }
 
       // Column-agent SESSION IDENTITY (U4, R2/R3/R4/R8): when the governing execute
       // seam node's declared column binds an agent that supersedes the task's
@@ -1658,7 +1668,13 @@ export async function runImplementation(
       // `identityAgent` — the effective column agent when a binding governs, else
       // the assigned agent (U5/KTD-3 principal substitution).
       const columnAgentSeam = await deps.resolveSeamColumnAgent(task, detail);
-      const identityAgent = columnAgentSeam?.agent ?? assignedAgent;
+      /*
+       * FNXC:WorkflowAgentRouting 2026-08-07-03:46:
+       * Once graph admission has fenced a durable workflow principal, the model
+       * session must use that exact identity instead of re-resolving ownership or
+       * a column binding. This prevents a retry from silently changing authority.
+       */
+      const identityAgent = routedPrincipalAgent ?? columnAgentSeam?.agent ?? assignedAgent;
       const executorRuntimeHint = extractRuntimeHint(identityAgent?.runtimeConfig);
       // U5 (R6): track the effective column-agent principal so the heartbeat
       // scheduler's reverse guard knows this agent is executing a task it may not

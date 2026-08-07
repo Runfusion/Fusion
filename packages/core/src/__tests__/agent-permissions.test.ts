@@ -81,6 +81,18 @@ describe("computeAccessState", () => {
     expect(state.resolvedPermissions.has("tasks:execute")).toBe(true);
   });
 
+  it("unions defaults across canonical multi-role tags", () => {
+    const state = computeAccessState({
+      ...makeAgent("reviewer"),
+      role: "reviewer",
+      roles: ["executor", "reviewer", "merger"],
+    });
+
+    expect(state.canExecuteTasks).toBe(true);
+    expect(state.canReviewTasks).toBe(true);
+    expect(state.canMergeTasks).toBe(true);
+  });
+
   it("scheduler role gets assign by default", () => {
     const state = computeAccessState(makeAgent("scheduler"));
 

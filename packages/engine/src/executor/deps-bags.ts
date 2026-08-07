@@ -135,7 +135,8 @@ export function buildExecuteWorkflowGraphDeps(host: any): any {
     options: host.options as { prNodes?: unknown; [k: string]: unknown },
     processWideGraphRouting: host.constructor.processWideGraphRouting as Set<string>,
     ...facadeFields(host, [
-      "activeWorkflowGraphAbortControllers", "graphColumnAgentResolver", "graphExecuteSelfRequeued",
+      "activeWorkflowGraphAbortControllers", "workflowAgentCapacity", "activeWorkflowAuthorities",
+      "activeWorkflowPrincipals", "graphColumnAgentResolver", "graphExecuteSelfRequeued",
       "graphRethinkNarrations", "graphRouting", "graphSeamGoverningNodeId", "graphSeamSkillName",
       "graphSeamThinkingLevel", "graphStepActiveContext", "graphStepRunOnce", "graphStepSessionPinned",
       "graphToolFailureRunCursors", "graphUnattendedRuns", "outerConcurrencyClaims",
@@ -191,12 +192,13 @@ export function buildRunImplementationDeps(
     options: host.options as any,
     BRANCH_CONFLICT_TRIPWIRE_THRESHOLD: constants.BRANCH_CONFLICT_TRIPWIRE_THRESHOLD,
     MAX_AUTO_RECOVERY_ATTEMPTS: constants.MAX_AUTO_RECOVERY_ATTEMPTS,
-    approvalRequestStore: host.approvalRequestStore,
+    // Lazy: ApprovalRequestStore requires PostgreSQL AsyncDataLayer; mock/tests often omit it.
+    get approvalRequestStore() { return host.approvalRequestStore; },
     ...facadeFields(host, [
       "stuckAborted", "executing", "depAborted", "tokenUsageBaselines", "loopRecoveryState",
       "branchConflictErrorCount", "pausedAborted", "userCanceledTaskIds", "tokenCapDetector",
       "activeSessions", "activeWorktrees", "activeWorkflowGraphAbortControllers", "currentRunContexts",
-      "effectiveColumnAgentByTask", "graphSeamThinkingLevel", "graphSeamSkillName",
+      "activeWorkflowPrincipals", "effectiveColumnAgentByTask", "graphSeamThinkingLevel", "graphSeamSkillName",
       "graphStepSessionPinned", "outerConcurrencyClaims",
     ]),
     ...facadeMethods(host, [
@@ -247,7 +249,7 @@ export function buildCreateAuthoritativeWorkflowSeamsDeps(host: any): any {
     rootDir: host.rootDir,
     options: host.options as { mergeRequester?: unknown; pluginRunner?: unknown; [k: string]: unknown },
     ...facadeFields(host, [
-      "workspaceConfig", "graphSeamGoverningNodeId", "graphSeamThinkingLevel",
+      "workspaceConfig", "activeWorkflowPrincipals", "graphSeamGoverningNodeId", "graphSeamThinkingLevel",
       "graphStepActiveContext", "graphRethinkNarrations", "pausedAborted",
       "mergeRequester",
     ]),
@@ -669,7 +671,10 @@ export function buildBuildActionGateContextDeps(host: any): any {
     approvalSuspended: host.approvalSuspended,
     awaitAbortInFlightTaskWork: (id: string, reason: string) => host.awaitAbortInFlightTaskWork(id, reason),
     agentStore: host.options.agentStore,
-    approvalRequestStore: host.approvalRequestStore,
+    // Lazy getter: only construct the PostgreSQL-backed store when a gate needs it.
+    get approvalRequestStore() { return host.approvalRequestStore; },
+    activeWorkflowAuthorities: host.activeWorkflowAuthorities,
+    activeWorkflowGraphAbortControllers: host.activeWorkflowGraphAbortControllers,
   };
 }
 
@@ -691,7 +696,7 @@ export function buildExecuteCoreDeps(host: any): any {
     releaseSemaphore: () => { host.options.semaphore?.release(); },
     ...facadeMethods(host, [
       "clearStalePauseAbortBeforeDispatch", "blockOuterDispatchWhenDependenciesUnmet",
-      "blockOuterDispatchWhenEphemeralDisabled", "executeWorkflowGraph",
+      "executeWorkflowGraph",
     ]),
   };
 }
@@ -815,7 +820,7 @@ export function buildBuildPermanentAgentGatingContextDeps(host: any): any {
   return {
     ...buildStoreRunContextDeps(host),
     approvalSuspended: host.approvalSuspended,
-    approvalRequestStore: host.approvalRequestStore,
+    get approvalRequestStore() { return host.approvalRequestStore; },
   };
 }
 

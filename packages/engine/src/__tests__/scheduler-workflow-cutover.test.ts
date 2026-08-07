@@ -315,25 +315,6 @@ describe("Scheduler workflow cutover", () => {
     expect(onSchedule).not.toHaveBeenCalledWith(expect.objectContaining({ id: "FN-300" }));
   });
 
-  it("queues without dispatch when ephemeral agents are disabled and no agent store is available", async () => {
-    const ready = task({ id: "FN-101" });
-    const store = storeWith([ready], { ephemeralAgentsEnabled: false });
-    const onSchedule = vi.fn();
-    const scheduler = new Scheduler(store, { onSchedule });
-    (scheduler as unknown as { running: boolean }).running = true;
-
-    await scheduler.schedule();
-
-    expect(store.updateTask).toHaveBeenCalledWith("FN-101", { status: "queued" });
-    expect(store.logEntry).toHaveBeenCalledWith(
-      "FN-101",
-      "queued — permanent executor selection unavailable (ephemeral agents disabled)",
-    );
-    expect(store.moveTaskIf).not.toHaveBeenCalledWith("FN-101", "in-progress", expect.anything(), expect.anything());
-    expect(onSchedule).not.toHaveBeenCalled();
-    expect(ready.column).toBe("todo");
-  });
-
   it("passes worktree naming and directory settings to the workflow release allocator", async () => {
     const ready = task({ id: "FN-102" });
     const store = storeWith([ready], {

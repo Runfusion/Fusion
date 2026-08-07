@@ -288,7 +288,6 @@ describe("log severity spam contract (source)", () => {
     const exec = readSrc("executor.ts");
     const heartbeat = readSrc("agent-heartbeat.ts");
     const autoClaim = readSrc("auto-claim-snapshot.ts");
-    const ephemeral = readSrc("ephemeral-worker-manager.ts");
     const worktree = readSrc("worktree-acquisition.ts");
 
     expect(scheduler).toMatch(/schedulerLog\.debug\(`No linked feature found for task/);
@@ -314,8 +313,6 @@ describe("log severity spam contract (source)", () => {
     expect(autoClaim).toMatch(/this\.logger\.debug\(`invalidate reason=\$\{reason\}`\)/);
     expect(autoClaim).not.toMatch(/this\.logger\.log\(`invalidate reason=\$\{reason\}`\)/);
 
-    expect(ephemeral).toMatch(/this\.log\.debug\(`Skipping task-worker creation for \$\{task\.id\}: task already has execution owner`\)/);
-    expect(ephemeral).not.toMatch(/this\.log\.warn\(`Skipping task-worker creation for \$\{task\.id\}: task already has execution owner`\)/);
 
     expect(worktree).toMatch(/logger\.debug\(`Reusing existing worktree: \$\{path\}`\)/);
     expect(worktree).toMatch(/logger\.debug\(`Reusing existing worktree: \$\{worktreePath\}`\)/);

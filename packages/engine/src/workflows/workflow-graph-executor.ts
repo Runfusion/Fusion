@@ -9,7 +9,7 @@ import type {
   WorkflowNodeExtensionResult,
   WorkflowStepResult,
 } from "@fusion/core";
-import { BUILTIN_CODING_WORKFLOW_IR, PLAN_REVIEW_GROUP_ID, WorkflowIrError, getWorkflowExtensionRegistry, resolveMaxReworkCycles, isExperimentalFeatureEnabled, GRAPH_NATIVE_POST_MERGE_FLAG, isCompletionSummaryNode, classifyReviewLease, isWorkflowOptionalGroupEnabled, isPlanReviewSatisfied } from "@fusion/core";
+import { BUILTIN_CODING_WORKFLOW_IR, PLAN_REVIEW_GROUP_ID, WorkflowIrError, getWorkflowExtensionRegistry, instanceNodeId, resolveMaxReworkCycles, isExperimentalFeatureEnabled, GRAPH_NATIVE_POST_MERGE_FLAG, isCompletionSummaryNode, classifyReviewLease, isWorkflowOptionalGroupEnabled, isPlanReviewSatisfied } from "@fusion/core";
 import { isNonPlanDefectPlanReviewFailure } from "../errors/transient-error-detector.js";
 import { isSessionContentionError } from "../errors/transient-error-patterns.js";
 import { isRequiredArtifactReadFailedValue, parseRequiredArtifactMissingValue } from "../execution/required-workflow-artifacts.js";
@@ -68,6 +68,31 @@ This is what makes the FN-1315 duplicate "Starting workflow step: Plan Review"
 interleaving impossible by construction (exactly one reviewer per gate per attempt).
 */
 export const PLAN_REVIEW_LEASE_HELD_VALUE = "plan-review-lease-held";
+
+/**
+ * FNXC:WorkflowAgentRouting 2026-08-07-05:37:
+ * Template sessions need a materialized node identity, not their reusable
+ * template ID. This keeps reviewer overrides and durable principal fences scoped
+ * to the exact foreach iteration, loop iteration, or optional-group invocation.
+ */
+function materializedTemplateNodeId(node: WorkflowIrNode, context: Record<string, unknown>): string {
+  const parent = typeof context["workflow:node-instance-id"] === "string"
+    ? context["workflow:node-instance-id"]
+    : undefined;
+  const foreach = context["foreach:active"] as { foreachNodeId?: unknown; stepIndex?: unknown } | undefined;
+  if (typeof foreach?.foreachNodeId === "string" && typeof foreach.stepIndex === "number") {
+    const containerId = parent && parent !== foreach.foreachNodeId ? parent : foreach.foreachNodeId;
+    return instanceNodeId(containerId, foreach.stepIndex, node.id);
+  }
+  const loop = context["loop:active"] as { loopNodeId?: unknown; iteration?: unknown } | undefined;
+  if (typeof loop?.loopNodeId === "string" && typeof loop.iteration === "number") {
+    const containerId = parent && parent !== loop.loopNodeId ? parent : loop.loopNodeId;
+    return `${containerId}#${loop.iteration}:${node.id}`;
+  }
+  const optionalGroup = context["optional-group:active"];
+  if (typeof optionalGroup === "string") return `${optionalGroup}::${node.id}`;
+  return node.id;
+}
 
 /*
 FNXC:SessionContention 2026-07-25-21:30:
@@ -161,6 +186,16 @@ export interface WorkflowGraphExecutorDeps {
     task: TaskDetail,
     requirement: WorkflowNodePreparationRequirement,
   ) => void | Promise<void>;
+  /**
+   * Invoked immediately before an agent-executed node handler. Implementations
+   * may fence a durable workflow principal or fail closed before any session is
+   * constructed; control nodes remain untouched when the callback is absent.
+   */
+  beforeNodeExecution?: (
+    node: WorkflowIrNode,
+    task: TaskDetail,
+    context: Record<string, unknown>,
+  ) => void | WorkflowNodeResult | Promise<void | WorkflowNodeResult>;
   /** Step-inversion (U12, KTD-12): dependencies for the `parse-steps` node
    *  handler (artifact read, projection write, pin-protection probe, audit).
    *  Absent → a parse-steps node fails cleanly. */
@@ -185,6 +220,13 @@ export interface WorkflowGraphExecutorDeps {
   onBranchProgress?: (progress: WorkflowBranchProgress) => void;
   /** Stable identifier for this run, used to key persisted branch state. */
   runId?: string;
+  /**
+   * FNXC:WorkflowAgentRouting 2026-08-07-07:45:
+   * Durable continuation fields supplied by a direct graph resume are copied
+   * into the fresh graph context before node admission. The shared router must
+   * revalidate the already-fenced principal rather than pool-route recovery.
+   */
+  initialContext?: Record<string, unknown>;
   /** Test seam for bounded loop timeout checks. Defaults to Date.now. */
   runLoopNowForTests?: () => number;
   /**
@@ -507,6 +549,12 @@ export class WorkflowGraphExecutor {
 
     const runId = this.deps.runId ?? `${task.id}:run`;
     const context: Record<string, unknown> = {
+      ...this.deps.initialContext,
+      /*
+       * FNXC:WorkflowAgentRouting 2026-08-07-07:45:
+       * The caller restores only durable continuation metadata; this live
+       * interpreter invocation always owns its run and workflow identities.
+       */
       [WORKFLOW_RUN_ID_CONTEXT_KEY]: runId,
       [WORKFLOW_ID_CONTEXT_KEY]: ir.name || "unknown",
     };
@@ -712,7 +760,7 @@ export class WorkflowGraphExecutor {
             getLiveSteps: () => this.resolveTaskSteps(task),
             context,
             runTemplateNode: (tNode, sig, contextOverride) =>
-              this.executeNodeWithRetries(tNode, task, settings, contextOverride ?? context, ir, sig, false),
+              this.executeMaterializedTemplateNode(tNode, task, settings, contextOverride ?? context, ir, sig),
             shouldTraverseEdge: (edge, src) => this.shouldTraverseEdge(edge, src),
             persistence: this.deps.stepInstancePersistence,
             onReworkReset: this.deps.onReworkReset,
@@ -740,7 +788,7 @@ export class WorkflowGraphExecutor {
           const loopResult = await runLoop(node, {
             context,
             runTemplateNode: (tNode, sig, contextOverride) =>
-              this.executeNodeWithRetries(tNode, task, settings, contextOverride ?? context, ir, sig, false),
+              this.executeMaterializedTemplateNode(tNode, task, settings, contextOverride ?? context, ir, sig),
             shouldTraverseEdge: (edge, src) => this.shouldTraverseEdge(edge, src),
             signal: this.deps.signal,
             now: this.deps.runLoopNowForTests,
@@ -925,7 +973,7 @@ export class WorkflowGraphExecutor {
                 [WORKFLOW_OPTIONAL_GROUP_CONTEXT_KEY]: node.id,
                 ...(this.workflowReviewKind(node) ? { [WORKFLOW_REVIEW_KIND_CONTEXT_KEY]: this.workflowReviewKind(node) } : {}),
               };
-              return this.executeNodeWithRetries(tNode, task, settings, optionalGroupContext, ir, sig, false);
+              return this.executeMaterializedTemplateNode(tNode, task, settings, optionalGroupContext, ir, sig);
             },
             shouldTraverseEdge: (edge, src) => this.shouldTraverseEdge(edge, src),
             signal: this.deps.signal,
@@ -1560,6 +1608,25 @@ export class WorkflowGraphExecutor {
     return undefined;
   }
 
+  /** Execute a reusable template node under its one concrete runtime identity. */
+  private async executeMaterializedTemplateNode(
+    node: WorkflowIrNode,
+    task: TaskDetail,
+    settings: WorkflowNodeSettings | undefined,
+    context: Record<string, unknown>,
+    workflow: WorkflowIr,
+    signal?: AbortSignal,
+  ): Promise<WorkflowNodeResult> {
+    const priorInstanceId = context["workflow:node-instance-id"];
+    context["workflow:node-instance-id"] = materializedTemplateNodeId(node, context);
+    try {
+      return await this.executeNodeWithRetries(node, task, settings, context, workflow, signal, false);
+    } finally {
+      if (priorInstanceId === undefined) delete context["workflow:node-instance-id"];
+      else context["workflow:node-instance-id"] = priorInstanceId;
+    }
+  }
+
   private async executeNodeWithRetries(
     node: WorkflowIrNode,
     task: TaskDetail,
@@ -1581,8 +1648,32 @@ export class WorkflowGraphExecutor {
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       // Fail-fast cancellation: a branch or top-level graph abort mid-retry stops re-trying.
       if (signal?.aborted) return this.withEnginePauseAbortContext(node, { outcome: "failure", value: "aborted" });
+      let releasePrincipal: (() => void) | undefined;
       try {
         await this.prepareNodeExecution(node, task, context, settings);
+        const preflight = await this.deps.beforeNodeExecution?.(node, task, context);
+        releasePrincipal = typeof context["workflow:release-principal"] === "function"
+          ? context["workflow:release-principal"] as () => void
+          : undefined;
+        if (preflight) {
+          /*
+           * FNXC:WorkflowAgentRouting 2026-08-07-06:53:
+           * Agent routing and capacity refusals have already persisted a durable
+           * held work item. Suspend traversal rather than following a failure
+           * edge, because temporary principal unavailability must not terminalize
+           * the task or convert an operator-visible hold into graph failure.
+           */
+          if (preflight.outcome === "failure" && typeof preflight.value === "string" && preflight.value.startsWith("workflow-principal-")) {
+            throw new WorkflowGraphSuspended({
+              reason: "capacity",
+              nodeId: node.id,
+              fromColumn: task.column,
+              toColumn: task.column,
+              irHash: "workflow-principal-hold",
+            });
+          }
+          return preflight;
+        }
         const progressRecord = recordProgress && this.shouldRecordNodeProgress(node)
           ? await this.recordNodeProgressStart(task.id, node)
           : null;
@@ -1610,6 +1701,7 @@ export class WorkflowGraphExecutor {
         }
         return projected;
       } catch (error) {
+        if (error instanceof WorkflowGraphSuspended) throw error;
         if (signal?.aborted) return this.withEnginePauseAbortContext(node, { outcome: "failure", value: "aborted" });
         /*
         FNXC:WorktreeBaseRefresh 2026-08-01-16:33:
@@ -1640,6 +1732,15 @@ export class WorkflowGraphExecutor {
         retrying here and hand the executor a typed contention failure it can back off on.
         */
         if (isSessionContentionError(error instanceof Error ? error.message : String(error))) break;
+      } finally {
+        /*
+         * FNXC:WorkflowAgentRouting 2026-08-07-04:13:
+         * A workflow reservation lasts for one handler attempt, not the entire
+         * graph. Releasing here covers success, handler errors, cancellation,
+         * and retry paths while the executor's outer finally remains crash-safe.
+         */
+        releasePrincipal?.();
+        delete context["workflow:release-principal"];
       }
     }
 

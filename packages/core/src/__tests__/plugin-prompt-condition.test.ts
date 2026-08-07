@@ -54,7 +54,7 @@ describe("evaluatePromptCondition", () => {
   });
 
   it("is implemented without dynamic code execution", () => {
-    const source = readFileSync(new URL("../plugin-prompt-condition.ts", import.meta.url), "utf8");
+    const source = readFileSync(new URL("../plugins/plugin-prompt-condition.ts", import.meta.url), "utf8");
     expect(source).not.toMatch(/\beval\s*\(/);
     expect(source).not.toMatch(/new\s+Function\b/);
     expect(source).not.toMatch(/from\s+["']node:vm["']|require\(["']node:vm["']\)|\bvm\s*\./);

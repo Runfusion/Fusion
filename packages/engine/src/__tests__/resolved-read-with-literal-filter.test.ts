@@ -46,10 +46,6 @@ site. An entry here asserts the degraded answer is harmless — not that the lit
 */
 const ALLOWED: ReadonlyArray<{ file: string; because: string }> = [
   {
-    file: "ephemeral-worker-manager.ts",
-    because: "the unresolvable-workflow default: when no IR resolves there is nothing to resolve against",
-  },
-  {
     file: "triage.ts",
     because: "the U11 orphan case — a row resting in a column its workflow no longer declares has no trait to resolve",
   },

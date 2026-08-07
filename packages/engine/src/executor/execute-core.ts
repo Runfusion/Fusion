@@ -36,7 +36,6 @@ export type ExecuteCoreDeps = {
   releaseSemaphore: () => void;
   clearStalePauseAbortBeforeDispatch: (task: Task) => Promise<void>;
   blockOuterDispatchWhenDependenciesUnmet: (task: Task) => Promise<boolean>;
-  blockOuterDispatchWhenEphemeralDisabled: (task: Task) => Promise<boolean>;
   executeWorkflowGraph: (task: Task, options: { alreadyClaimed: true }) => Promise<void>;
 };
 
@@ -78,13 +77,13 @@ export async function executeCore(deps: ExecuteCoreDeps, task: Task): Promise<vo
       if (dropPreHeldExecutorSlot(task.id)) deps.releaseSemaphore();
       return;
     }
-    // FNXC:EphemeralAgents 2026-07-01-00:00: gate ALL workflow dispatch paths
-    // (graph/authoritative/work-engine) on ephemeralAgentsEnabled before any of
-    // them can claim the task, so the single check covers all three entry points.
-    if (await deps.blockOuterDispatchWhenEphemeralDisabled(task)) {
-      if (dropPreHeldExecutorSlot(task.id)) deps.releaseSemaphore();
-      return;
-    }
+    /*
+    FNXC:WorkflowAgentRouting 2026-08-07-09:11:
+    FN-8821: ephemeralAgentsEnabled is a routing-inert compatibility setting. Do not
+    rebound or queue at outer dispatch based on it; graph principal admission owns
+    durable identity/capacity. The old blockOuterDispatchWhenEphemeralDisabled gate is
+    retired from this path.
+    */
     /*
     FNXC:WorkflowExecution 2026-07-19-10:40:
     U10 (R9) — the `workflowAuthoritativeDispatch` branch is DELETED along with

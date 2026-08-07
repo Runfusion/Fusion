@@ -1392,6 +1392,29 @@ describe("SettingsModal", () => {
       expect(screen.getByRole("option", { name: "Require changelog update (existing changelog)" })).toBeInTheDocument();
     });
 
+    it("persists the routing-inert ephemeral agent compatibility input", async () => {
+      renderModal({ initialSection: "general" });
+      await waitForSettingsModalReady();
+
+      const toggle = screen.getByLabelText("Use ephemeral task-worker agents") as HTMLInputElement;
+      expect(toggle.checked).toBe(true);
+      await settingsModalUser.click(toggle);
+
+      await waitFor(() => expect(mockUpdateSettings).toHaveBeenCalled());
+      expect(mockUpdateSettings.mock.calls[0]?.[0]).toMatchObject({ ephemeralAgentsEnabled: false });
+    });
+
+    it("defaults the ephemeral agent compatibility input when an upgraded record omits it", async () => {
+      const { ephemeralAgentsEnabled: _omitted, ...upgradeSettings } = defaultSettings;
+      mockFetchSettings.mockResolvedValueOnce(upgradeSettings);
+      mockFetchSettingsByScope.mockResolvedValueOnce({ global: defaultSettings, project: {} });
+
+      renderModal({ initialSection: "general" });
+      await waitForSettingsModalReady();
+
+      expect((screen.getByLabelText("Use ephemeral task-worker agents") as HTMLInputElement).checked).toBe(true);
+    });
+
     it("reports Quick Chat launcher changes immediately before save", async () => {
       const onQuickChatButtonModeChange = vi.fn();
       renderModal({ initialSection: "general", onQuickChatButtonModeChange });
@@ -1543,92 +1566,6 @@ describe("SettingsModal", () => {
       expect(screen.getByLabelText("Embedded PostgreSQL connection cap")).toHaveAttribute("placeholder", "auto");
       expect(screen.getByTestId("settings-help-embeddedPostgresMaxConnections")).toBeInTheDocument();
       expect(screen.getByText("Maximum server connections for Fusion's embedded PostgreSQL. Applies after restarting Fusion. Range: 32–2,000. Unset by default — Fusion picks 500, or 150 on Windows where each connection is a separate process and higher caps can crash backends. External PostgreSQL uses its provider's connection limit.").closest(".settings-help-bubble")).toBeTruthy();
-    });
-
-    it("saves ephemeral agent toggle in project settings payload", async () => {
-      renderModal({ initialSection: "general" });
-      await waitForSettingsModalReady();
-
-      const ephemeralToggle = screen.getByLabelText("Use ephemeral task-worker agents") as HTMLInputElement;
-      expect(ephemeralToggle.checked).toBe(true);
-
-      await settingsModalUser.click(ephemeralToggle);
-
-      await waitFor(() => {
-        expect(mockUpdateSettings).toHaveBeenCalled();
-      });
-
-      const payload = mockUpdateSettings.mock.calls[0][0] as Record<string, unknown>;
-      expect(payload.ephemeralAgentsEnabled).toBe(false);
-    });
-
-    it("exposes the ephemeral agents toggle via the desktop Project General sidebar nav item", async () => {
-      renderModal();
-      await waitForSettingsModalReady();
-
-      await settingsModalUser.click(screen.getByRole("button", { name: "General · Project" }));
-
-      const ephemeralToggle = screen.getByLabelText("Use ephemeral task-worker agents") as HTMLInputElement;
-      expect(ephemeralToggle).toBeInTheDocument();
-      expect(ephemeralToggle.checked).toBe(true);
-    });
-
-    it("exposes the ephemeral agents toggle via the mobile Settings Section picker", async () => {
-      Object.defineProperty(window, "matchMedia", {
-        writable: true,
-        value: vi.fn().mockImplementation((query: string) => ({
-          matches: query === "(max-width: 768px)" || query === "(max-width: 768px), (max-height: 480px)",
-          media: query,
-          onchange: null,
-          addEventListener: vi.fn(),
-          removeEventListener: vi.fn(),
-          addListener: vi.fn(),
-          removeListener: vi.fn(),
-          dispatchEvent: vi.fn(),
-        })),
-      });
-
-      renderModal();
-      await waitForSettingsModalReady();
-
-      const sectionPicker = screen.getByLabelText("Settings Section") as HTMLSelectElement;
-      expect(sectionPicker).toBeInTheDocument();
-      const projectGeneralOption = sectionPicker.querySelector('option[value="general"]');
-      expect(projectGeneralOption).toBeInTheDocument();
-      expect(projectGeneralOption).toHaveTextContent("General · Project");
-
-      await settingsModalUser.selectOptions(sectionPicker, "general");
-
-      const ephemeralToggle = screen.getByLabelText("Use ephemeral task-worker agents") as HTMLInputElement;
-      expect(ephemeralToggle).toBeInTheDocument();
-      expect(ephemeralToggle.checked).toBe(true);
-      expect(screen.getByLabelText("Show task chats in common Chat feed")).toBeInTheDocument();
-
-      Object.defineProperty(window, "matchMedia", {
-        writable: true,
-        value: vi.fn().mockImplementation((query: string) => ({
-          matches: false,
-          media: query,
-          onchange: null,
-          addEventListener: vi.fn(),
-          removeEventListener: vi.fn(),
-          addListener: vi.fn(),
-          removeListener: vi.fn(),
-          dispatchEvent: vi.fn(),
-        })),
-      });
-    });
-
-    it("keeps ephemeral agent toggle checked when upgrading settings omit the key", async () => {
-      const { ephemeralAgentsEnabled: _omitted, ...upgradeSettings } = defaultSettings;
-      mockFetchSettings.mockResolvedValueOnce(upgradeSettings);
-      mockFetchSettingsByScope.mockResolvedValueOnce({ global: defaultSettings, project: {} });
-
-      renderModal({ initialSection: "general" });
-      await waitForSettingsModalReady();
-
-      const ephemeralToggle = screen.getByLabelText("Use ephemeral task-worker agents") as HTMLInputElement;
-      expect(ephemeralToggle.checked).toBe(true);
     });
 
     it("renders chat auto-cleanup retention with the default off value", async () => {

@@ -100,7 +100,7 @@ describe("the analytics wip/review tallies key on role, not name", () => {
   const read = (relative: string): string =>
     readFileSync(new URL(relative, import.meta.url), "utf8");
 
-  for (const file of ["../team-analytics.ts", "../workflow-analytics.ts"]) {
+  for (const file of ["../board/team-analytics.ts", "../board/workflow-analytics.ts"]) {
     it(`${file} tallies via the role helpers and holds no lane literal`, () => {
       const source = read(file);
 

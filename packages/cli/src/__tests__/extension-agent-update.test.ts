@@ -104,13 +104,14 @@ pgDescribe("fn_agent_update", () => {
         "call-1",
         {
           agent_id: ids.middle,
-          role: "reviewer",
+          roles: ["reviewer", "executor"],
           instructions_text: "Review thoroughly.",
           instructions_path: "docs/reviewer.md",
           reportsTo: ids.peer,
           heartbeat_interval_ms: 2000,
           heartbeat_timeout_ms: 6000,
           max_concurrent_runs: 2,
+          max_workflow_sessions: 3,
           message_response_mode: "on-heartbeat",
         },
         undefined,
@@ -121,7 +122,7 @@ pgDescribe("fn_agent_update", () => {
       expect(result.isError).not.toBe(true);
       expect(result.details).toMatchObject({ outcome: "updated", agentId: ids.middle });
       expect(result.details.updatedFields).toEqual([
-        "role",
+        "roles",
         "instructionsText",
         "instructionsPath",
         "reportsTo",
@@ -129,7 +130,8 @@ pgDescribe("fn_agent_update", () => {
       ]);
       expect(updateSpy).toHaveBeenCalledTimes(1);
       await expect(agentStore.getAgent(ids.middle)).resolves.toMatchObject({
-        role: "reviewer",
+        role: "executor",
+        roles: ["executor", "reviewer"],
         instructionsText: "Review thoroughly.",
         instructionsPath: "docs/reviewer.md",
         reportsTo: ids.peer,
@@ -140,9 +142,10 @@ pgDescribe("fn_agent_update", () => {
         heartbeatIntervalMs: 2000,
         heartbeatTimeoutMs: 6000,
         maxConcurrentRuns: 2,
+        maxWorkflowSessions: 3,
         messageResponseMode: "on-heartbeat",
       });
-      expect(result.details.agent).toMatchObject({ id: ids.middle, role: "reviewer" });
+      expect(result.details.agent).toMatchObject({ id: ids.middle, role: "executor", roles: ["executor", "reviewer"] });
       updateSpy.mockRestore();
     });
   });

@@ -87,6 +87,8 @@ import {
   VALIDATOR_INPUT_FINGERPRINT_VERSION,
   UNPLANNED_EXECUTION_BLOCK_DEDUPE_VERSION,
   QUEUED_EPISODE_SIGNATURE_VERSION,
+  MULTI_ROLE_WORKFLOW_AGENTS_VERSION,
+  WORKFLOW_PRINCIPAL_FENCE_VERSION,
 } from "../../postgres/schema-applier.js";
 import { ProjectPartitionRekeyError, rekeyFallbackProjectPartition } from "../../postgres/migration-stamping.js";
 import type { PluginSchemaInitHook } from "../../postgres/plugin-schema-hook.js";
@@ -107,7 +109,9 @@ describe("schema-applier: immutable migration identities", () => {
     expect(VALIDATOR_INPUT_FINGERPRINT_VERSION).toBe("0042");
     expect(UNPLANNED_EXECUTION_BLOCK_DEDUPE_VERSION).toBe("0043");
     expect(QUEUED_EPISODE_SIGNATURE_VERSION).toBe("0044");
-    expect(SCHEMA_BASELINE_VERSION).toBe("0044");
+    expect(MULTI_ROLE_WORKFLOW_AGENTS_VERSION).toBe("0045");
+    expect(WORKFLOW_PRINCIPAL_FENCE_VERSION).toBe("0046");
+    expect(SCHEMA_BASELINE_VERSION).toBe("0046");
   });
 
   it("keeps monitor and approval isolation assigned to version 0003", () => {
@@ -1764,6 +1768,8 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       VALIDATOR_INPUT_FINGERPRINT_VERSION,
       UNPLANNED_EXECUTION_BLOCK_DEDUPE_VERSION,
       QUEUED_EPISODE_SIGNATURE_VERSION,
+      MULTI_ROLE_WORKFLOW_AGENTS_VERSION,
+      WORKFLOW_PRINCIPAL_FENCE_VERSION,
     ]);
     expect((await applySchemaBaseline(ctx.db, { pluginHooks: [] })).applied).toBe(false);
   });
@@ -1834,6 +1840,8 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       VALIDATOR_INPUT_FINGERPRINT_VERSION,
       UNPLANNED_EXECUTION_BLOCK_DEDUPE_VERSION,
       QUEUED_EPISODE_SIGNATURE_VERSION,
+      MULTI_ROLE_WORKFLOW_AGENTS_VERSION,
+      WORKFLOW_PRINCIPAL_FENCE_VERSION,
     ]);
   });
 
@@ -2037,6 +2045,8 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       VALIDATOR_INPUT_FINGERPRINT_VERSION,
       UNPLANNED_EXECUTION_BLOCK_DEDUPE_VERSION,
       QUEUED_EPISODE_SIGNATURE_VERSION,
+      MULTI_ROLE_WORKFLOW_AGENTS_VERSION,
+      WORKFLOW_PRINCIPAL_FENCE_VERSION,
     ]);
   });
 
@@ -2121,6 +2131,8 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       VALIDATOR_INPUT_FINGERPRINT_VERSION,
       UNPLANNED_EXECUTION_BLOCK_DEDUPE_VERSION,
       QUEUED_EPISODE_SIGNATURE_VERSION,
+      MULTI_ROLE_WORKFLOW_AGENTS_VERSION,
+      WORKFLOW_PRINCIPAL_FENCE_VERSION,
     ]);
   });
 
@@ -2205,6 +2217,8 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       VALIDATOR_INPUT_FINGERPRINT_VERSION,
       UNPLANNED_EXECUTION_BLOCK_DEDUPE_VERSION,
       QUEUED_EPISODE_SIGNATURE_VERSION,
+      MULTI_ROLE_WORKFLOW_AGENTS_VERSION,
+      WORKFLOW_PRINCIPAL_FENCE_VERSION,
     ]);
   });
 });

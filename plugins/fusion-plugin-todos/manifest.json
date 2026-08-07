@@ -2,5 +2,15 @@
   "id": "fusion-plugin-todos",
   "name": "Todo Lists",
   "version": "0.1.0",
-  "description": "Project-scoped todo lists that hand items into Fusion planning."
+  "description": "Project-scoped todo lists that hand items into Fusion planning.",
+  "dashboardViews": [
+    {
+      "viewId": "todos",
+      "label": "Todos",
+      "componentPath": "./dashboard-view",
+      "icon": "CheckSquare",
+      "placement": "overflow",
+      "order": 70
+    }
+  ]
 }

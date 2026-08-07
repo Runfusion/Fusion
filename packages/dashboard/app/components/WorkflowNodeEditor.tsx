@@ -4434,6 +4434,25 @@ function InnerEditor({
                     );
                   })()}
 
+                  {selectedNode.data.config?.seam === "review" && (() => {
+                    const reviewerAgentId = typeof selectedNode.data.reviewerAgentId === "string" ? selectedNode.data.reviewerAgentId : "";
+                    const missingReviewer = reviewerAgentId && !agents.some((agent) => agent.id === reviewerAgentId);
+                    return (
+                      <label className="wf-field">
+                        <span>{t("workflowEditor.reviewerOverride", "Reviewer override")}</span>
+                        <select
+                          value={reviewerAgentId}
+                          onChange={(event) => updateSelectedData({ reviewerAgentId: event.target.value || undefined })}
+                        >
+                          <option value="">{t("workflowEditor.reviewerPool", "Role pool / task owner")}</option>
+                          {missingReviewer ? <option value={reviewerAgentId}>{reviewerAgentId} ({t("workflowColumns.agentNotFound", "unavailable")})</option> : null}
+                          {agents.map((agent) => <option key={agent.id} value={agent.id}>{agent.name}</option>)}
+                        </select>
+                        {missingReviewer ? <p className="wf-inspector-note wf-inspector-note--warn">{reviewerAgentId}</p> : null}
+                      </label>
+                    );
+                  })()}
+
                   {currentExecutor === "skill" && (() => {
                     // The stored skillName may be namespaced (e.g.
                     // "compound-engineering:ce-work") while the <option> values are

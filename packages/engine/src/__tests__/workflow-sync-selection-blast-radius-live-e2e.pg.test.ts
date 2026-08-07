@@ -44,7 +44,7 @@ import { beforeAll, beforeEach, afterEach, afterAll, expect, it } from "vitest";
 import "@fusion/core"; // registers the built-in column traits
 import { resolveWorkflowIrForTask, type TaskStore } from "@fusion/core";
 
-import { resolveEffectiveSettingsDetailed } from "../../../core/src/workflow-settings-resolver.js";
+import { resolveEffectiveSettingsDetailed } from "../../../core/src/workflows/workflow-settings-resolver.js";
 import {
   pgDescribe,
   createSharedPgTaskStoreTestHarness,

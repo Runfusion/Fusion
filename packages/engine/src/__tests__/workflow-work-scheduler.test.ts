@@ -11,6 +11,26 @@ describe("claimDueWorkflowWorkItem", () => {
     expect(acquireWorkflowWorkItemLease).toHaveBeenCalledOnce();
   });
 
+  it("offers a durable availability hold back to the scoped lease claimer", async () => {
+    const held = {
+      ...item,
+      state: "held",
+      blockedReason: "workflow-principal-named-principal-unavailable:executor",
+    };
+    const acquireWorkflowWorkItemLease = vi.fn(async () => ({ ...held, state: "running" }));
+
+    const result = await claimDueWorkflowWorkItem({
+      listDueWorkflowWorkItems: async () => [held],
+      acquireWorkflowWorkItemLease,
+    }, { leaseOwner: "recovery-worker", leaseDurationMs: 1000 });
+
+    expect(result?.workItem).toMatchObject({ id: "WW-1", state: "running" });
+    expect(acquireWorkflowWorkItemLease).toHaveBeenCalledWith("WW-1", "recovery-worker", {
+      now: undefined,
+      leaseDurationMs: 1000,
+    });
+  });
+
   it("does not consume a work lease when mission lineage is unapproved", async () => {
     const acquireWorkflowWorkItemLease = vi.fn(() => item);
     const logEntry = vi.fn(async () => undefined);

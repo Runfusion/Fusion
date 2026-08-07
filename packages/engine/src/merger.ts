@@ -1112,8 +1112,8 @@ async function attemptInMergeVerificationFix(
       taskId,
       agent: "merger",
       persistAgentToolOutput: settings.persistAgentToolOutput,
-      // Merger agents are task-scoped ephemeral workers.
-    persistAgentThinkingLog: resolvePersistAgentThinkingLog(settings, { ephemeral: true }),
+      /* FNXC:WorkflowAgentRouting 2026-08-07-04:13: Merger workflow sessions use durable routed principals and permanent-agent logging policy. */
+    persistAgentThinkingLog: resolvePersistAgentThinkingLog(settings, { ephemeral: false }),
       onAgentText: options.onAgentText,
       onAgentTool: options.onAgentTool,
     });
@@ -2364,8 +2364,8 @@ async function runAiAgentForAutostashConflict(params: {
     taskId,
     agent: "merger",
     persistAgentToolOutput: settings.persistAgentToolOutput,
-    // Merger agents are task-scoped ephemeral workers.
-    persistAgentThinkingLog: resolvePersistAgentThinkingLog(settings, { ephemeral: true }),
+    /* FNXC:WorkflowAgentRouting 2026-08-07-04:13: Merger workflow sessions use durable routed principals and permanent-agent logging policy. */
+    persistAgentThinkingLog: resolvePersistAgentThinkingLog(settings, { ephemeral: false }),
     onAgentText: options.onAgentText
       ? (_id: string, delta: string) => options.onAgentText!(delta)
       : undefined,
@@ -2780,8 +2780,8 @@ async function runAiAgentForAutostashHardFail(params: {
     taskId,
     agent: "merger",
     persistAgentToolOutput: settings.persistAgentToolOutput,
-    // Merger agents are task-scoped ephemeral workers.
-    persistAgentThinkingLog: resolvePersistAgentThinkingLog(settings, { ephemeral: true }),
+    /* FNXC:WorkflowAgentRouting 2026-08-07-04:13: Merger workflow sessions use durable routed principals and permanent-agent logging policy. */
+    persistAgentThinkingLog: resolvePersistAgentThinkingLog(settings, { ephemeral: false }),
     onAgentText: options.onAgentText
       ? (_id: string, delta: string) => options.onAgentText!(delta)
       : undefined,
@@ -5901,8 +5901,8 @@ You are assisting with a paused \`git pull --rebase\`.
     taskId,
     agent: "merger",
     persistAgentToolOutput: settings.persistAgentToolOutput,
-    // Merger agents are task-scoped ephemeral workers.
-    persistAgentThinkingLog: resolvePersistAgentThinkingLog(settings, { ephemeral: true }),
+    /* FNXC:WorkflowAgentRouting 2026-08-07-04:13: Merger workflow sessions use durable routed principals and permanent-agent logging policy. */
+    persistAgentThinkingLog: resolvePersistAgentThinkingLog(settings, { ephemeral: false }),
     onAgentText: options?.onAgentText
       ? (_id, delta) => options.onAgentText?.(delta)
       : undefined,
@@ -10849,8 +10849,8 @@ async function runAiAgentForCommit(params: AiAgentParams): Promise<{ success: bo
     taskId,
     agent: "merger",
     persistAgentToolOutput: settings.persistAgentToolOutput,
-    // Merger agents are task-scoped ephemeral workers.
-    persistAgentThinkingLog: resolvePersistAgentThinkingLog(settings, { ephemeral: true }),
+    /* FNXC:WorkflowAgentRouting 2026-08-07-04:13: Merger workflow sessions use durable routed principals and permanent-agent logging policy. */
+    persistAgentThinkingLog: resolvePersistAgentThinkingLog(settings, { ephemeral: false }),
     onAgentText: options.onAgentText
       ? (_id, delta) => options.onAgentText!(delta)
       : undefined,

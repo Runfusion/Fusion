@@ -22,6 +22,7 @@ import {
 import type { WorkflowRuntimePrimitives } from "../execution/runtime-primitives.js";
 import { ensureWorkflowCompletionSummary } from "./workflow-completion-summary.js";
 import { requiresNonEmptyWorkflowArtifact } from "../execution/required-workflow-artifacts.js";
+import { findWorkflowNodeInstance, type WorkflowPrincipalRouteResult } from "../agents/workflow-agent-router.js";
 
 export type WorkflowTaskRuntimeDisposition = "completed" | "failed" | "manual-required";
 
@@ -42,11 +43,23 @@ export interface WorkflowTaskRuntimeDeps extends Omit<WorkflowGraphExecutorDeps,
     transitionWorkflowWorkItem?: (
       id: string,
       state: WorkflowWorkItemState,
-      patch?: { now?: string; lastError?: string | null; leaseOwner?: string | null; leaseExpiresAt?: string | null },
-    ) => WorkflowWorkItem;
+      patch?: {
+        now?: string;
+        lastError?: string | null;
+        blockedReason?: string | null;
+        leaseOwner?: string | null;
+        leaseExpiresAt?: string | null;
+        principalAgentId?: string | null;
+        workflowRole?: WorkflowWorkItem["workflowRole"];
+        authorityKind?: WorkflowWorkItem["authorityKind"];
+        nodeInstanceId?: string | null;
+      },
+    ) => WorkflowWorkItem | Promise<WorkflowWorkItem>;
   };
   primitives: WorkflowRuntimePrimitives;
   runCustomNode: WorkflowCustomNodeRunner;
+  /** Resolves and fences a principal at the graph-runtime boundary before a session handler runs. */
+  resolveWorkflowPrincipal?: (input: { task: TaskDetail; ir: WorkflowIr; node: WorkflowIrNode; workItem: WorkflowWorkItem }) => Promise<WorkflowPrincipalRouteResult> | WorkflowPrincipalRouteResult;
   onEvent?: (event: { type: "start" | "terminal"; taskId: string; detail: string }) => void;
 }
 
@@ -185,12 +198,23 @@ export class WorkflowTaskRuntime {
       return this.failWorkItem(workItem, `workflow-resolution-error: ${err instanceof Error ? err.message : String(err)}`);
     }
 
-    const node = target.ir.nodes.find((candidate) => candidate.id === workItem.nodeId);
+    const node = findWorkflowNodeInstance(target.ir, workItem.nodeInstanceId ?? workItem.nodeId);
     if (!node) {
-      return this.failWorkItem(workItem, `workflow-work-item-node-missing:${workItem.nodeId}`);
+      return this.failWorkItem(workItem, `workflow-work-item-node-missing:${workItem.nodeInstanceId ?? workItem.nodeId}`);
     }
 
-    if (workItem.kind === "merge" || workItem.kind === "manual-hold") {
+    const fencedWorkItem = await this.resolveAndFencePrincipal(workItem, task, target.ir, node);
+    if (!fencedWorkItem) {
+      return {
+        disposition: "manual-required",
+        outcome: "failure",
+        visitedNodeIds: [node.id],
+        context: {},
+        reason: "workflow-principal-unavailable",
+      };
+    }
+
+    if (fencedWorkItem.kind === "merge" || workItem.kind === "manual-hold") {
       await ensureWorkflowCompletionSummary(this.deps.store, task, {
         reason: `workflow-work-item:${workItem.kind}`,
         workflowId: target.workflowId,
@@ -208,17 +232,28 @@ export class WorkflowTaskRuntime {
     let outcome: WorkflowNodeOutcome = "success";
     let reason: string | undefined;
     let context: Record<string, unknown> = {
-      [WORKFLOW_RUN_ID_CONTEXT_KEY]: workItem.runId,
+      [WORKFLOW_RUN_ID_CONTEXT_KEY]: fencedWorkItem.runId,
       [WORKFLOW_ID_CONTEXT_KEY]: target.workflowId,
-      "workflow:work-item-id": workItem.id,
-      "workflow:work-item-kind": workItem.kind,
-      "workflow:work-item-attempt": workItem.attempt,
+      "workflow:work-item-id": fencedWorkItem.id,
+      "workflow:work-item-kind": fencedWorkItem.kind,
+      "workflow:work-item-attempt": fencedWorkItem.attempt,
+      "workflow:principal-agent-id": fencedWorkItem.principalAgentId,
+      "workflow:principal-role": fencedWorkItem.workflowRole,
+      "workflow:principal-authority": fencedWorkItem.authorityKind,
+      "workflow:node-instance-id": fencedWorkItem.nodeInstanceId,
     };
 
     try {
-      const result = handler
+      /*
+       * FNXC:WorkflowAgentRouting 2026-08-07-03:46:
+       * Durable work-item dispatch uses the same pre-handler fence as whole
+       * graph dispatch. This keeps a claimed principal/capacity decision ahead
+       * of every session construction while control nodes remain principal-free.
+       */
+      const preflight = await this.deps.beforeNodeExecution?.(node, task, context);
+      const result = preflight ?? (handler
         ? await handler(node, { task, settings: runtimeSettings, context })
-        : { outcome: "success" as const };
+        : { outcome: "success" as const });
       outcome = result.outcome;
       if (result.value !== undefined) context[`node:${node.id}:value`] = result.value;
       context = { ...context, ...(result.contextPatch ?? {}) };
@@ -228,22 +263,33 @@ export class WorkflowTaskRuntime {
       reason = `workflow-work-item-node-error:${err instanceof Error ? err.message : String(err)}`;
     }
 
+    /*
+     * FNXC:WorkflowAgentRouting 2026-08-07-06:53:
+     * Principal routing and workflow capacity are availability holds, not node
+     * failures. Retain the fenced work item in `held` with its operator-visible
+     * reason so scheduler recovery may retry the same work instead of terminalizing
+     * a task merely because its named owner or role pool is temporarily unavailable.
+     */
+    const principalHold = outcome === "failure" && reason?.startsWith("workflow-principal-");
     const disposition: WorkflowTaskRuntimeDisposition = outcome === "success"
       ? "completed"
-      : reason === "manual-required"
+      : principalHold || reason === "manual-required"
         ? "manual-required"
         : "failed";
     const terminalState: WorkflowWorkItemState = disposition === "completed"
       ? "succeeded"
-      : disposition === "manual-required"
-        ? "manual-required"
-        : "failed";
-    this.deps.store.transitionWorkflowWorkItem(workItem.id, terminalState, {
+      : principalHold
+        ? "held"
+        : disposition === "manual-required"
+          ? "manual-required"
+          : "failed";
+    await this.deps.store.transitionWorkflowWorkItem(fencedWorkItem.id, terminalState, {
       leaseOwner: null,
       leaseExpiresAt: null,
       lastError: reason ?? null,
+      ...(principalHold ? { blockedReason: reason } : {}),
     });
-    this.emit("terminal", workItem.taskId, `work-item:${disposition}`);
+    this.emit("terminal", workItem.taskId, `work-item:${principalHold ? "held" : disposition}`);
     return {
       disposition,
       outcome,
@@ -251,6 +297,51 @@ export class WorkflowTaskRuntime {
       context,
       reason,
     };
+  }
+
+  /**
+   * FNXC:WorkflowAgentRouting 2026-08-07-07:32:
+   * Principal resolution runs immediately after the durable lease is claimed and
+   * before a handler can construct a session. Recovery revalidates an existing
+   * fence through the same resolver, then accepts only its exact principal, role,
+   * and authority; it must never pool-route a stale attempt to a new identity.
+   */
+  private async resolveAndFencePrincipal(
+    workItem: WorkflowWorkItem,
+    task: TaskDetail,
+    ir: WorkflowIr,
+    node: WorkflowIrNode,
+  ): Promise<WorkflowWorkItem | null> {
+    if (!this.deps.resolveWorkflowPrincipal) return workItem;
+    const result = await this.deps.resolveWorkflowPrincipal({ task, ir, node, workItem });
+    if (result.status === "unclassified") return workItem;
+    if (result.status === "held") {
+      await this.deps.store.transitionWorkflowWorkItem!(workItem.id, "held", {
+        leaseOwner: null,
+        leaseExpiresAt: null,
+        lastError: `workflow-${result.reason}:${result.role}`,
+        blockedReason: `workflow-${result.reason}:${result.role}`,
+      });
+      return null;
+    }
+    if (workItem.principalAgentId) {
+      if (workItem.principalAgentId === result.route.agent.id
+        && workItem.workflowRole === result.route.role
+        && workItem.authorityKind === result.route.authority) return workItem;
+      await this.deps.store.transitionWorkflowWorkItem!(workItem.id, "held", {
+        leaseOwner: null,
+        leaseExpiresAt: null,
+        lastError: "workflow-named-principal-unavailable:fence-mismatch",
+        blockedReason: "workflow-named-principal-unavailable:fence-mismatch",
+      });
+      return null;
+    }
+    return this.deps.store.transitionWorkflowWorkItem!(workItem.id, "running", {
+      principalAgentId: result.route.agent.id,
+      workflowRole: result.route.role,
+      authorityKind: result.route.authority,
+      nodeInstanceId: workItem.nodeInstanceId ?? node.id,
+    });
   }
 
   private failWorkItem(workItem: WorkflowWorkItem, reason: string): WorkflowTaskRuntimeResult {

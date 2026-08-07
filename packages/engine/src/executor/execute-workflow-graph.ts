@@ -6,6 +6,7 @@
  * execution, foreach worktree deps, and terminal handleGraphFailure.
  */
 import type {
+  AgentStore,
   Settings,
   Task,
   TaskDetail,
@@ -38,6 +39,11 @@ import type { EngineRunContext } from "../util/run-audit.js";
 import { takePreHeldExecutorSlot } from "../concurrency/concurrency.js";
 import { resolveCompleteColumnFor } from "./lifecycle-columns.js";
 import type { AgentSemaphore } from "../concurrency/concurrency.js";
+import type { WorkflowAgentCapacity } from "../agents/workflow-agent-capacity.js";
+import {
+  admitWorkflowPrincipalBeforeNode,
+  type ActiveWorkflowAuthority,
+} from "./workflow-principal-before-node.js";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- mirror TaskExecutor method/map surface
 type AnyFn = (...args: any[]) => any;
@@ -48,9 +54,13 @@ export type ExecuteWorkflowGraphDeps = {
     prNodes?: unknown;
     semaphore?: AgentSemaphore;
     getLocalNodeId?: () => string | undefined;
+    agentStore?: AgentStore | null;
     [k: string]: unknown;
   };
   activeWorkflowGraphAbortControllers: Map<string, AbortController>;
+  workflowAgentCapacity: WorkflowAgentCapacity;
+  activeWorkflowAuthorities: Map<string, ActiveWorkflowAuthority>;
+  activeWorkflowPrincipals: Map<string, { agentId: string; nodeInstanceId: string; agent?: import("@fusion/core").Agent }>;
   graphColumnAgentResolver: Map<string, (nodeId: string) => WorkflowColumnAgent | undefined>;
   graphExecuteSelfRequeued: Set<string>;
   graphRethinkNarrations: Map<string, unknown>;
@@ -101,6 +111,14 @@ export async function executeWorkflowGraph(
       deps.graphRouting.add(task.id);
     }
     let graphAbortController: AbortController | undefined;
+    const workflowCapacityAttemptIds = new Set<string>();
+    /*
+     * FNXC:WorkflowAgentRouting 2026-08-07-05:06:
+     * Direct graph dispatch is also a production session-launch path. Track its
+     * per-node durable fences so direct runs do not degrade principals to a
+     * process-local map while scheduled continuations remain fenced in Postgres.
+     */
+    const directWorkflowPrincipalWorkItemIds = new Set<string>();
     /*
     FNXC:GlobalConcurrencyControls 2026-07-14-18:30:
     The hold/release sweep may have already tryAcquired a global slot for this card before moving it to in-progress. Claim that pre-held slot for the full graph run so utilization stays honest between workflow nodes and triage cannot overfill the cap while this task is still graph-owned.
@@ -303,6 +321,25 @@ export async function executeWorkflowGraph(
         seams: deps.createAuthoritativeWorkflowSeams(settings),
         prepareNodeExecution: (node, nodeTask, requirement) =>
           deps.prepareGraphNodeExecution(node, nodeTask, settings, requirement),
+        beforeNodeExecution: async (node, nodeTask, context) =>
+          admitWorkflowPrincipalBeforeNode(
+            {
+              store: deps.store,
+              options: deps.options,
+              workflowAgentCapacity: deps.workflowAgentCapacity,
+              activeWorkflowAuthorities: deps.activeWorkflowAuthorities,
+              activeWorkflowPrincipals: deps.activeWorkflowPrincipals,
+              workflowCapacityAttemptIds,
+              directWorkflowPrincipalWorkItemIds,
+              columnAgentIr,
+              resolveBindingForNode,
+              resolvedRunId,
+              settings,
+            },
+            node,
+            nodeTask,
+            context,
+          ),
         runCustomNode: customNodeExecution.runner(settings),
         publishTaskProjection: async (taskId, patch) => {
           await deps.store.updateTaskAtomic(taskId, (liveTask) => {
@@ -421,7 +458,23 @@ export async function executeWorkflowGraph(
             lastError: null,
           });
         }
-        result = await runner.run(detail, settings, continuation?.nodeId);
+        /*
+         * FNXC:WorkflowAgentRouting 2026-08-07-07:45:
+         * A direct graph resume owns the same durable continuation as scheduler
+         * work-item dispatch. Rehydrate its fence before the graph reaches
+         * beforeNodeExecution so recovery validates this exact principal instead
+         * of silently choosing a fresh role-pool candidate.
+         */
+        const continuationContext = continuation?.principalAgentId
+          ? {
+              "workflow:work-item-id": continuation.id,
+              "workflow:principal-agent-id": continuation.principalAgentId,
+              "workflow:principal-role": continuation.workflowRole,
+              "workflow:principal-authority": continuation.authorityKind,
+              "workflow:node-instance-id": continuation.nodeInstanceId ?? continuation.nodeId,
+            }
+          : undefined;
+        result = await runner.run(detail, settings, continuation?.nodeId, continuationContext);
       } catch (err) {
         if (continuation) {
           await deps.store.transitionWorkflowWorkItem(continuation.id, "failed", {
@@ -440,6 +493,40 @@ export async function executeWorkflowGraph(
           visitedNodeIds: [],
         });
         return;
+      }
+      const principalHoldReason = Object.values(result.context ?? {}).find((value): value is string =>
+        typeof value === "string" && value.startsWith("workflow-principal-"),
+      );
+      /*
+       * FNXC:WorkflowAgentRouting 2026-08-07-07:45:
+       * Principal availability is a recoverable continuation hold, not a graph
+       * failure. Do not terminalize the direct fence or call graph failure
+       * handling; the next direct resume must receive the same fenced identity.
+       */
+      if (principalHoldReason) {
+        if (continuation && typeof deps.store.transitionWorkflowWorkItem === "function") {
+          await deps.store.transitionWorkflowWorkItem(continuation.id, "held", {
+            leaseOwner: null,
+            leaseExpiresAt: null,
+            lastError: principalHoldReason,
+            blockedReason: principalHoldReason,
+          }).catch(() => undefined);
+        }
+        return;
+      }
+      /* Direct graph node fences are terminalized only after the interpreter
+       * returns, preserving their historical principal through all handler and
+       * tool-gate calls while ensuring completed work cannot render as active.
+       * Availability holds intentionally remain held for recovery instead. */
+      if (result.disposition !== "suspended" && directWorkflowPrincipalWorkItemIds.size > 0 && typeof deps.store.transitionWorkflowWorkItem === "function") {
+        const terminalState = result.disposition === "completed" ? "succeeded" : "failed";
+        await Promise.all([...directWorkflowPrincipalWorkItemIds].map(async (id) => {
+          await deps.store.transitionWorkflowWorkItem(id, terminalState, {
+            leaseOwner: null,
+            leaseExpiresAt: null,
+            lastError: terminalState === "failed" ? "workflow-graph-node-failed" : null,
+          }).catch(() => undefined);
+        }));
       }
       if (result.disposition === "fell-back") {
         executorLog.warn(`[workflow-graph] ${task.id} could not resolve workflow — parking task instead of legacy fallback: ${result.reason}`);
@@ -507,6 +594,14 @@ export async function executeWorkflowGraph(
         */
         deps.options.semaphore?.release();
       }
+      for (const attemptId of workflowCapacityAttemptIds) {
+        void deps.workflowAgentCapacity.release(
+          attemptId,
+          deps.options.agentStore?.workflowProjectId ?? deps.store.getRootDir(),
+        );
+      }
+      deps.activeWorkflowAuthorities.delete(task.id);
+      deps.activeWorkflowPrincipals.delete(task.id);
       if (graphAbortController && deps.activeWorkflowGraphAbortControllers.get(task.id) === graphAbortController) {
         deps.activeWorkflowGraphAbortControllers.delete(task.id);
       }

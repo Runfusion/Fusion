@@ -9,7 +9,6 @@
 import {TaskStore} from "../store.js";
 import type {Settings, GlobalSettings, ProjectSettings} from "../types.js";
 import {DEFAULT_SETTINGS, isGlobalOnlySettingsKey} from "../types.js";
-import {DEFAULT_PROJECT_SETTINGS} from "../config/settings-schema.js";
 import "../builtin-traits.js";
 import {resolveWorktrunkSettings} from "../config/worktrunk-settings.js";
 import {hasSyncPassphraseConfigured} from "../secrets/secrets-sync-passphrase.js";
@@ -117,11 +116,7 @@ export async function getSettingsByScopeImpl(store: TaskStore): Promise<{ global
         }
       }
     }
-    const canonicalizedProject = canonicalizeSettings(projectSettings as Settings);
-    if (canonicalizedProject.ephemeralAgentsEnabled === undefined) {
-      canonicalizedProject.ephemeralAgentsEnabled = DEFAULT_PROJECT_SETTINGS.ephemeralAgentsEnabled;
-    }
-    return { global, project: canonicalizedProject };
+    return { global, project: canonicalizeSettings(projectSettings as Settings) };
   }
 
 export async function getSettingsByScopeFastImpl(store: TaskStore): Promise<{ global: GlobalSettings; project: Partial<ProjectSettings> }> {
@@ -152,10 +147,6 @@ export async function getSettingsByScopeFastImpl(store: TaskStore): Promise<{ gl
         }
       }
     }
-    const canonicalizedProject = canonicalizeSettings(projectScoped as Settings);
-    if (canonicalizedProject.ephemeralAgentsEnabled === undefined) {
-      canonicalizedProject.ephemeralAgentsEnabled = DEFAULT_PROJECT_SETTINGS.ephemeralAgentsEnabled;
-    }
-    return { global, project: canonicalizedProject };
+    return { global, project: canonicalizeSettings(projectScoped as Settings) };
 }
 

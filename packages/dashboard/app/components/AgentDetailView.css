@@ -1253,6 +1253,20 @@ Agent Settings composes native inputs, buttons, editors, and portaled controls. 
   font-weight: 500;
 }
 
+.config-role-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  margin: 0;
+  padding: var(--space-sm);
+  border: var(--border-width) solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.config-role-tags legend {
+  padding-inline: var(--space-xs);
+}
+
 .agent-avatar-editor {
   display: flex;
   align-items: center;

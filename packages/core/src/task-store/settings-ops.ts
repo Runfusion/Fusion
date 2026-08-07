@@ -15,7 +15,7 @@ import {validateLocale, assertWorktreeNamingRecycleExclusive} from "../config/se
 import {hasSyncPassphraseConfigured} from "../secrets/secrets-sync-passphrase.js";
 import {ensureMemoryFileWithBackend} from "../memory/project-memory.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
-import {isPlainObject, deepMergeWithNullDelete} from "../task-store/settings-helpers.js";
+import {canonicalizeSettings, isPlainObject, deepMergeWithNullDelete} from "../task-store/settings-helpers.js";
 import {readProjectConfig as readProjectConfigAsync, writeProjectConfig as writeProjectConfigAsync} from "../task-store/async/async-settings.js";
 import {appendConfigurationRevision, createConfigurationRevision} from "../async-stores/async-configuration-revision-store.js";
 import {isValidProviderInstanceId} from "../provider-instance.js";
@@ -88,8 +88,12 @@ export async function updateSettingsImpl(store: TaskStore, patch: Partial<Settin
             return stripMovedSettingsKeys(patch as Record<string, unknown>) as Partial<Settings>;
           })()
         : patch;
-
-    // Filter out global-only fields — they should go through updateGlobalSettings()
+    /*
+    FNXC:WorkflowAgentRouting 2026-08-07-08:45:
+    Preserve ephemeralAgentsEnabled in project updates for configuration compatibility. Its
+    routing-inert behavior is enforced exclusively by scheduler, executor, and mission consumers.
+    */
+    // Filter out global-only fields — they should go through updateGlobalSettings().
     const projectPatch: Partial<Settings> = {};
     for (const [key, value] of Object.entries(guardedPatch)) {
       if (!isGlobalOnlySettingsKey(key)) {
@@ -154,8 +158,8 @@ export async function updateSettingsImpl(store: TaskStore, patch: Partial<Settin
         }
 
         const globalSettings = await store.globalSettingsStore.getSettings();
-        const previousMerged: Settings = { ...DEFAULT_SETTINGS, ...globalSettings, ...config.settings } as Settings;
-        const updatedProjectSettings = { ...config.settings, ...projectPatch };
+        const previousMerged = canonicalizeSettings({ ...DEFAULT_SETTINGS, ...globalSettings, ...config.settings } as Settings);
+        const updatedProjectSettings = canonicalizeSettings({ ...config.settings, ...projectPatch } as Settings);
         // FNXC:TaskPinnedWorktrees 2026-07-16-00:00: reject recycleWorktrees + worktreeNaming:"task-id"
         // (mutually exclusive) against the resolved next state BEFORE persisting the invalid combination.
         assertWorktreeNamingRecycleExclusive({ ...DEFAULT_SETTINGS, ...globalSettings, ...updatedProjectSettings } as Settings);
@@ -176,7 +180,7 @@ export async function updateSettingsImpl(store: TaskStore, patch: Partial<Settin
           changedBy,
         });
         if (revision) await appendConfigurationRevision(tx, revision);
-        const updatedMerged: Settings = { ...DEFAULT_SETTINGS, ...globalSettings, ...updatedProjectSettings } as Settings;
+        const updatedMerged = canonicalizeSettings({ ...DEFAULT_SETTINGS, ...globalSettings, ...updatedProjectSettings } as Settings);
         // Do not publish changes from within the transaction: a revision insert
         // or commit failure must remain invisible to listeners and side effects.
         return { previousMerged, updatedMerged };

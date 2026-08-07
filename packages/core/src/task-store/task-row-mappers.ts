@@ -224,6 +224,10 @@ export function rowToWorkflowWorkItemImpl(store: TaskStore, row: WorkflowWorkIte
       sourceColumn: row.sourceColumn,
       targetColumn: row.targetColumn,
       irHash: row.irHash,
+      principalAgentId: row.principalAgentId,
+      workflowRole: row.workflowRole as WorkflowWorkItem["workflowRole"],
+      authorityKind: row.authorityKind as WorkflowWorkItem["authorityKind"],
+      nodeInstanceId: row.nodeInstanceId,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
     };

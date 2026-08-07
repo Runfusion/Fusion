@@ -8,12 +8,12 @@
  */
 import {TaskStore} from "../store.js";
 import * as schema from "../postgres/schema/index.js";
-import {and, eq, inArray, isNull, lt, or} from "drizzle-orm";
+import {and, eq, inArray, isNull, like, lt, or} from "drizzle-orm";
 import type {WorkflowWorkItem, WorkflowWorkItemState, WorkflowWorkItemTransitionPatch, WorkflowWorkItemUpsertInput} from "../types.js";
 import "../builtin-traits.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 import {replaceActiveTaskWorkflowContinuation as replaceActiveTaskWorkflowContinuationAsync, seedStrandedPlanReviewContinuation as seedStrandedPlanReviewContinuationAsync, upsertWorkflowWorkItem as upsertWorkflowWorkItemAsync, transitionWorkflowWorkItem as transitionWorkflowWorkItemAsync, getWorkflowWorkItem as getWorkflowWorkItemAsync, withTaskWorkflowSerialization} from "../task-store/async/async-workflow-workitems.js";
-import type {DbTransaction} from "../postgres/data-layer.js";
+import { projectScopeFor, type DbTransaction } from "../postgres/data-layer.js";
 
 export async function upsertWorkflowWorkItemImpl(store: TaskStore, input: WorkflowWorkItemUpsertInput, tx?: DbTransaction): Promise<WorkflowWorkItem> {
     return upsertWorkflowWorkItemAsync(store.asyncLayer!, input, tx);
@@ -59,20 +59,33 @@ export async function acquireWorkflowWorkItemLeaseImpl(store: TaskStore, id: str
     conditional repair's idle check and insert.
     */
     const updated = await layer.transactionImmediate(async (tx) => {
-      const owner = await getWorkflowWorkItemAsync(tx, id);
+      const owner = await getWorkflowWorkItemAsync(tx, id, layer.projectId);
       if (!owner) return null;
       return withTaskWorkflowSerialization(tx, layer.projectId, owner.taskId, async () => {
         /*
-        FNXC:SqliteDualPathCleanup 2026-07-26-15:00:
-        Atomic lease claim: only transition runnable/retrying, or running rows whose lease has already expired — never steal a live lease.
+        FNXC:WorkflowAgentRouting 2026-08-07-07:02:
+        Availability holds must be claimable after an operator restores the named
+        principal or pool capacity. Only workflow-principal holds re-enter the
+        scheduler; generic/manual holds remain inert until their own lifecycle
+        releases them. Every claim predicate carries project_id because work-item
+        IDs are only unique within a project.
         */
         await tx
           .update(schema.project.workflowWorkItems)
           .set({ state: "running", leaseOwner, leaseExpiresAt, updatedAt: now })
           .where(and(
             eq(schema.project.workflowWorkItems.id, id),
+            projectScopeFor(schema.project.workflowWorkItems.projectId, layer.projectId),
             or(
               inArray(schema.project.workflowWorkItems.state, ["runnable", "retrying"]),
+              and(
+                eq(schema.project.workflowWorkItems.state, "held"),
+                or(
+                  like(schema.project.workflowWorkItems.blockedReason, "workflow-principal-%"),
+                  like(schema.project.workflowWorkItems.blockedReason, "workflow-named-principal-%"),
+                  like(schema.project.workflowWorkItems.blockedReason, "workflow-role-pool-%"),
+                ),
+              ),
               and(
                 eq(schema.project.workflowWorkItems.state, "running"),
                 or(
@@ -82,7 +95,7 @@ export async function acquireWorkflowWorkItemLeaseImpl(store: TaskStore, id: str
               ),
             ),
           ));
-        const claimed = await getWorkflowWorkItemAsync(tx, id);
+        const claimed = await getWorkflowWorkItemAsync(tx, id, layer.projectId);
         return claimed?.leaseOwner === leaseOwner ? claimed : null;
       });
     });

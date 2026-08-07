@@ -655,6 +655,7 @@ export function irToFlow(def: WorkflowDefinition): {
             ...dataIrKind(inner, innerKind),
             label: nodeLabel(inner),
             config: { ...(inner.config ?? {}) },
+            ...(inner.reviewerAgentId ? { reviewerAgentId: inner.reviewerAgentId } : {}),
             ...(templateBoundary ? { templateBoundary } : {}),
             ...(optionalGroupBoundary ? { optionalGroupBoundary } : {}),
           },
@@ -695,6 +696,7 @@ export function irToFlow(def: WorkflowDefinition): {
         ...dataIrKind(node, kind),
         label: nodeLabel(node),
         config: { ...(node.config ?? {}) },
+        ...(node.reviewerAgentId ? { reviewerAgentId: node.reviewerAgentId } : {}),
         column,
       },
       deletable: node.kind !== "start" && node.kind !== "end",
@@ -821,10 +823,14 @@ export function flowToIr(
         config: { ...baseCfg, template: { nodes: templateNodes, edges: templateEdges } },
       };
     }
+    const reviewerAgentId = typeof data.reviewerAgentId === "string" && data.reviewerAgentId.trim()
+      ? data.reviewerAgentId
+      : undefined;
     return {
       id: localId,
       kind: originalKind ?? (data.kind as WorkflowIrNode["kind"]),
       config: config && Object.keys(config).length ? config : undefined,
+      ...(reviewerAgentId ? { reviewerAgentId } : {}),
     };
   }
 
@@ -1506,6 +1512,7 @@ export function insertFragment(
             ...dataIrKind(inner, innerKind),
             label: nodeLabel(inner),
             config: { ...(inner.config ?? {}) },
+            ...(inner.reviewerAgentId ? { reviewerAgentId: inner.reviewerAgentId } : {}),
             ...(templateBoundary ? { templateBoundary } : {}),
             ...(optionalGroupBoundary ? { optionalGroupBoundary } : {}),
           },

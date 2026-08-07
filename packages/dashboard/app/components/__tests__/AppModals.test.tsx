@@ -633,6 +633,43 @@ describe("AppModals", () => {
       expect(document.querySelector(".list-status-badge")).toHaveTextContent("Planning");
       expect(screen.getByTestId("task-detail-status-badge")).toHaveTextContent("Planning");
     });
+
+    const inProgressTask = {
+      ...parkedTask,
+      column: "in-progress" as const,
+      status: "planning",
+      updatedAt: "2026-08-05T10:03:00.000Z",
+      columnMovedAt: "2026-08-05T10:03:00.000Z",
+    };
+    act(() => {
+      boardEvents?.["task:moved"]?.({ data: JSON.stringify({
+        task: inProgressTask,
+        from: "triage",
+        to: "in-progress",
+      }) });
+    });
+
+    await waitFor(() => {
+      expect(document.querySelector('.card[data-id="FN-8798"] .card-status-badge')).toHaveTextContent("Planning");
+      expect(document.querySelector(".list-status-badge")).toHaveTextContent("Planning");
+      expect(screen.getByTestId("task-detail-status-badge")).toHaveTextContent("Planning");
+    });
+
+    vi.mocked(taskApi.fetchTasks).mockResolvedValueOnce([{
+      ...inProgressTask,
+      status: null,
+    }] as any);
+    act(() => window.dispatchEvent(new Event("focus")));
+
+    await waitFor(() => expect(taskApi.fetchTasks).toHaveBeenCalledTimes(2));
+    await waitFor(() => {
+      const card = document.querySelector('.card[data-id="FN-8798"]');
+      expect(card).toBeInTheDocument();
+      expect(card?.querySelector(".card-status-badge")).not.toBeInTheDocument();
+      expect(document.querySelector(".list-status-badge")).not.toHaveTextContent("Planning");
+      expect(document.querySelector("#task-detail-modal-title")).toHaveTextContent("FN-8798");
+      expect(screen.queryByTestId("task-detail-status-badge")).not.toBeInTheDocument();
+    });
   });
 
   describe("ModelOnboardingModal wiring", () => {

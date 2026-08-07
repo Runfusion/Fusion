@@ -261,8 +261,12 @@ export async function reviewStep(
           ? (_id, delta) => options.onText!(delta)
           : undefined,
         persistAgentToolOutput: effectiveSettings?.persistAgentToolOutput,
-        // Reviewer sessions are task-scoped ephemeral workers.
-        persistAgentThinkingLog: resolvePersistAgentThinkingLog(effectiveSettings, { ephemeral: true }),
+        /*
+         * FNXC:WorkflowAgentRouting 2026-08-07-04:13:
+         * Review is a durable workflow role, not an ephemeral stage worker.
+         * Preserve the permanent-agent thinking-log policy for review sessions.
+         */
+        persistAgentThinkingLog: resolvePersistAgentThinkingLog(effectiveSettings, { ephemeral: false }),
       })
     : null;
 
@@ -319,8 +323,19 @@ export async function reviewStep(
   let reviewerInstructions = "";
   if (options.agentStore && options.rootDir) {
     try {
-      const agents = await options.agentStore.listAgents({ role: "reviewer" });
-      for (const agent of agents) {
+      /*
+       * FNXC:WorkflowAgentRouting 2026-08-07-04:45:
+       * A graph-fenced reviewer may carry any role tag. When the caller names
+       * that principal, use its own instructions instead of silently selecting
+       * the first reviewer-tagged agent from the pool.
+       */
+      const explicitAgent = options.agentId
+        ? await options.agentStore.getAgent(options.agentId).catch(() => null)
+        : null;
+      const candidates = explicitAgent
+        ? [explicitAgent]
+        : await options.agentStore.listAgents({ role: "reviewer" });
+      for (const agent of candidates) {
         if (agent.instructionsText || agent.instructionsPath) {
           const memoryMode = resolveAgentMemoryInclusionMode({ agent, globalSettings: effectiveSettings }).mode;
           reviewerInstructions = await resolveAgentInstructions(agent, options.rootDir, undefined, memoryMode);
@@ -375,7 +390,8 @@ export async function reviewStep(
     }
   }
 
-  const assignedAgentId = options.task?.assignedAgentId ?? null;
+  // A routed reviewer principal owns its memory/runtime identity for this session.
+  const assignedAgentId = options.agentId ?? options.task?.assignedAgentId ?? null;
   const agentStore = options.agentStore;
   const memoryAgent =
     options.rootDir

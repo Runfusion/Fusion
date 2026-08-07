@@ -5,6 +5,7 @@
  * and runtime tests that poke (executor as any).fieldName keep working.
  */
 import type {
+  Agent,
   AgentStore,
   TaskStore,
   RunMutationContext,
@@ -22,6 +23,7 @@ import { TokenCapDetector } from "../errors/token-cap-detector.js";
 import { StepSessionExecutor } from "../execution/step-session-executor.js";
 import type { PausedAbortProvenance } from "./paused-abort-provenance.js";
 import type { ActiveExecutorSessionState, TaskExecutorOptions } from "./task-executor-options.js";
+import type { WorkflowAgentCapacity } from "../agents/workflow-agent-capacity.js";
 
 export abstract class TaskExecutorState {
   /**
@@ -33,6 +35,33 @@ export abstract class TaskExecutorState {
   protected rootDir!: string;
   protected options: TaskExecutorOptions = {};
   protected activeWorktrees = new Map<string, Set<string>>();
+  /**
+   * FNXC:WorkflowAgentRouting 2026-08-07-03:46:
+   * Workflow stage reservations are intentionally independent from heartbeat slots.
+   * Constructed in wireTaskExecutorLifecycle so direct graph admission and triage share the same class.
+   */
+  protected workflowAgentCapacity!: WorkflowAgentCapacity;
+  /**
+   * FNXC:WorkflowAgentRouting 2026-08-07-03:46:
+   * Process-local index carrying a durable work item's narrow authority to the model tool gate.
+   * Keyed by task for the live graph turn; removed in graph cleanup. isLive revalidates the exact record.
+   */
+  protected activeWorkflowAuthorities = new Map<string, {
+    agentId: string;
+    taskId: string;
+    runId: string;
+    workItemId: string;
+    nodeInstanceId: string;
+    /** Direct graph runs have no work-item row; claimed continuations must recheck it per tool call. */
+    requiresDurableFence: boolean;
+    kind: "task-assignee" | "review-node-override";
+  }>();
+  /**
+   * FNXC:WorkflowAgentRouting 2026-08-07-03:46:
+   * Live fenced principal per task for execute/review session identity (exact graph-selected agent).
+   * `agent` is the admission-time row so session identity does not depend on a second getAgent round-trip.
+   */
+  protected activeWorkflowPrincipals = new Map<string, { agentId: string; nodeInstanceId: string; agent?: Agent }>();
   protected executing = new Set<string>();
   protected resumingUnpaused = new Set<string>();
   protected approvalSuspended = new Set<string>();

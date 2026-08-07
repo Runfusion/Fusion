@@ -313,8 +313,15 @@ export function mergeTaskSnapshot<T extends Task>(
       || (options.fullSnapshot === true && columnMovedAtCompare === 0 && updatedAtCompare > 0)
       // Older rows have no column-move clock. A newer task timestamp is still evidence for a real move.
       || (!current.columnMovedAt && !incoming.columnMovedAt && updatedAtCompare > 0));
+  // An equal-clock fetch may resolve a stale client-only status only when it describes the same
+  // lifecycle row. Otherwise accepting its status while rejecting its column would tear the pair.
+  const acceptsEqualClockStatus = acceptsEqualClockFields
+    && (incoming.column === undefined || incoming.column === current.column);
   const incomingUpdatesStatus = incoming.status !== undefined
-    && (current.status === undefined || updatedAtCompare > 0 || incomingMovesColumn);
+    && (current.status === undefined
+      || acceptsIncomingSnapshot
+      || acceptsEqualClockStatus
+      || incomingMovesColumn);
 
   // The lifecycle fields are evidence-owned rather than object-spread-owned.
   merged.column = incomingMovesColumn ? incoming.column : current.column;
@@ -325,13 +332,16 @@ export function mergeTaskSnapshot<T extends Task>(
     ? carryAwaitingPlanning(current, incoming)
     : current.awaitingPlanning;
   /*
-  FNXC:TaskStatusConsistency 2026-08-05-04:05:
+  FNXC:TaskStatusConsistency 2026-08-07-06:10:
   `recentAgentActivityAt` is a client-only bridge from an agent-log event to the next task snapshot.
-  Preserve it while a stale/equal payload is rejected so live Planning does not flash back to Queued,
-  but clear it when a newer authoritative row arrives without the marker. Equal-clock sparse events
-  may fill missing fields but cannot replace populated detail metadata; only complete fetches may do so.
+  Preserve it while a stale payload is rejected so live Planning does not flash back to Queued. A
+  complete equal-clock fetch clears it only when that same lifecycle row proves the status changed;
+  otherwise an agent-log that arrived while the fetch was in flight remains newer evidence.
   */
-  merged.recentAgentActivityAt = acceptsIncomingSnapshot
+  const equalClockStatusChanged = acceptsEqualClockStatus
+    && incoming.status !== undefined
+    && incoming.status !== current.status;
+  merged.recentAgentActivityAt = acceptsIncomingSnapshot || equalClockStatusChanged
     ? incoming.recentAgentActivityAt
     : current.recentAgentActivityAt;
 

@@ -80,7 +80,6 @@ export const PROJECT_SECTION_KEYS: Readonly<Record<string, readonly string[]>> =
     "taskCreateWorkflowId",
     "refinementTaskWorkflowId",
     "ephemeralAgentTaskCreationPolicy",
-    "ephemeralAgentsEnabled",
     "sessionAdvisorEnabledByDefault",
     "mailAutoCleanupDays",
     "mobileNavPrimaryItems",

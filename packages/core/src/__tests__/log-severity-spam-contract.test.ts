@@ -49,7 +49,7 @@ function withoutComments(source: string): string {
 
 describe("core diagnostic source contract", () => {
   // Logger implementation is the sole adapter allowed to write severity-marked console output.
-  const bareConsoleAllowlist = new Set([join(__dirname, "..", "logger.ts")]);
+  const bareConsoleAllowlist = new Set([join(__dirname, "..", "process", "logger.ts")]);
 
   it("pins each core demotion to one debug call site, not any louder severity", () => {
     for (const entry of logSeverityManifest.filter((entry) => entry.pkg === "core")) {

@@ -268,7 +268,18 @@ export async function runOptionalGroup(
   const entry = findTemplateEntry(template.nodes, template.edges, groupNode.id);
   const visitedNodeIds: string[] = [];
 
-  const groupContext: Record<string, unknown> = { ...env.context };
+  /*
+   * FNXC:WorkflowAgentRouting 2026-08-07-05:37:
+   * Keep the enclosing optional-group's materialized identity while its reusable
+   * template runs. The graph executor extends this marker for each child so a
+   * reviewer override cannot leak between separate group invocations.
+   */
+  const groupContext: Record<string, unknown> = {
+    ...env.context,
+    "optional-group:active": typeof env.context["workflow:node-instance-id"] === "string"
+      ? env.context["workflow:node-instance-id"]
+      : groupNode.id,
+  };
   let current: WorkflowIrNode | undefined = entry;
   let lastResult: WorkflowNodeResult = { outcome: "success" };
 

@@ -438,6 +438,79 @@ describe("WorkflowGraphTaskRunner (CU-U2)", () => {
     expect(result.context?.["node:lint:value"]).toBe("APPROVE");
   });
 
+  it("runs principal admission before an executable handler and honors its fail-closed result", async () => {
+    const calls: string[] = [];
+    const admitted: string[] = [];
+    const runner = new WorkflowGraphTaskRunner({
+      store: storeWith(definition(fullLifecycleIr())),
+      seams: recordingSeams(calls),
+      runCustomNode: async (node) => {
+        calls.push(`custom:${node.id}`);
+        return { outcome: "success" };
+      },
+      beforeNodeExecution: (node, _task, context) => {
+        if (node.id === "lint") {
+          admitted.push(node.id);
+          context["workflow:principal-agent-id"] = "planner";
+          return { outcome: "failure", value: "workflow-principal-named-principal-unavailable:triage" };
+        }
+        return undefined;
+      },
+    });
+
+    const result = await runner.run(task, flagOn);
+    expect(admitted).toEqual(["lint"]);
+    expect(calls).toEqual([]);
+    expect(result.disposition).toBe("suspended");
+    expect(result.suspension).toMatchObject({ reason: "capacity", nodeId: "lint" });
+    expect(result.context?.["workflow:principal-agent-id"]).toBe("planner");
+  });
+
+  it("restores a direct-resume principal fence before node admission", async () => {
+    const observed: Record<string, unknown>[] = [];
+    const runner = new WorkflowGraphTaskRunner({
+      store: storeWith(definition(fullLifecycleIr())),
+      seams: recordingSeams([]),
+      runCustomNode: async () => ({ outcome: "success" }),
+      beforeNodeExecution: (node, _task, context) => {
+        if (node.id === "lint") observed.push({ ...context });
+      },
+    });
+
+    await runner.run(task, flagOn, "lint", {
+      "workflow:work-item-id": "work-item-1",
+      "workflow:principal-agent-id": "reviewer-1",
+      "workflow:principal-role": "reviewer",
+      "workflow:principal-authority": "review-node-override",
+      "workflow:node-instance-id": "lint",
+    });
+
+    expect(observed).toEqual([expect.objectContaining({
+      "workflow:work-item-id": "work-item-1",
+      "workflow:principal-agent-id": "reviewer-1",
+      "workflow:principal-role": "reviewer",
+      "workflow:principal-authority": "review-node-override",
+      "workflow:node-instance-id": "lint",
+    })]);
+  });
+
+  it("releases a principal reservation after its node handler settles", async () => {    const released: string[] = [];
+    const runner = new WorkflowGraphTaskRunner({
+      store: storeWith(definition(fullLifecycleIr())),
+      seams: recordingSeams([]),
+      runCustomNode: async () => ({ outcome: "success" }),
+      beforeNodeExecution: (node, _task, context) => {
+        if (node.id === "execute") {
+          context["workflow:release-principal"] = () => released.push(node.id);
+        }
+      },
+    });
+
+    const result = await runner.run(task, flagOn);
+    expect(result.disposition).toBe("completed");
+    expect(released).toEqual(["execute"]);
+  });
+
   it("onEvent diagnostics failures never affect the run", async () => {
     const runner = new WorkflowGraphTaskRunner({
       store: storeWith(definition(fullLifecycleIr())),

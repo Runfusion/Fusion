@@ -49,6 +49,21 @@ export type WorkflowIrNodeKind =
 
 import type { WorkflowReviewKind } from "../types/workflow/workflow-steps.js";
 
+/** Roles that may launch a durable workflow principal. */
+export type WorkflowAgentRole = "triage" | "executor" | "reviewer" | "merger";
+
+/*
+ * FNXC:WorkflowAgentRouting 2026-08-07-08:30:
+ * Workflow principal roles are authority labels, not lifecycle columns. Keep
+ * role validation centralized so routing does not duplicate column-like string
+ * comparisons that could be mistaken for board transitions.
+ */
+export const WORKFLOW_AGENT_ROLES = ["triage", "executor", "reviewer", "merger"] as const satisfies readonly WorkflowAgentRole[];
+
+export function isWorkflowAgentRole(value: unknown): value is WorkflowAgentRole {
+  return typeof value === "string" && (WORKFLOW_AGENT_ROLES as readonly string[]).includes(value);
+}
+
 export interface WorkflowIrNode {
   id: string;
   kind: WorkflowIrNodeKind;
@@ -58,6 +73,8 @@ export interface WorkflowIrNode {
   extensions?: Record<string, Record<string, unknown>>;
   /** Open node config; supported top-level review producers may set `reviewKind`. */
   config?: Record<string, unknown>;
+  /** Exact reviewer-session override, durable only on classifier-approved nodes. */
+  reviewerAgentId?: string;
 }
 
 /** Default bounded-rework budget when a rework region omits `maxReworkCycles`
@@ -470,3 +487,44 @@ export interface WorkflowIrV2 {
 
 /** Either IR version. v1 graphs upgrade to v2 on parse (see parseWorkflowIr). */
 export type WorkflowIr = WorkflowIrV1 | WorkflowIrV2;
+
+
+/**
+ * FNXC:WorkflowAgentRouting 2026-08-07-03:12:
+ * Principal acquisition follows the production session seam, never a board
+ * column or container kind. This classifier is shared by IR validation, routing,
+ * and editor affordances so a reviewer override cannot leak onto lifecycle work.
+ */
+export function classifyWorkflowAgentNode(node: WorkflowIrNode): WorkflowAgentRole | undefined {
+  if (node.kind === "step-review") return "reviewer";
+  if (node.kind !== "prompt" && node.kind !== "script") return undefined;
+  switch (node.config?.seam) {
+    /*
+     * FNXC:WorkflowAgentRouting 2026-08-07-05:52:
+     * Planning, independent review, and promotion seams each launch work under
+     * their permanent stage owner. Classify those production seams here rather
+     * than treating their handoff worker as an unowned lifecycle operation.
+     * Only pure handoff/scheduling seams remain principal-free.
+     */
+    case "planning": return "triage";
+    case "execute":
+    case "step-execute": return "executor";
+    case "review": return "reviewer";
+    case "merge": return "merger";
+    case "review-handoff":
+    case "schedule": return undefined;
+    default: {
+      const explicit = node.config?.workflowRole;
+      return isWorkflowAgentRole(explicit) ? explicit : undefined;
+    }
+  }
+}
+
+/** Whether this node is owned by the requested permanent workflow role. */
+export function isWorkflowAgentNodeForRole(node: WorkflowIrNode, role: WorkflowAgentRole): boolean {
+  return classifyWorkflowAgentNode(node) === role;
+}
+
+export function isWorkflowReviewerNode(node: WorkflowIrNode): boolean {
+  return classifyWorkflowAgentNode(node) === "reviewer";
+}

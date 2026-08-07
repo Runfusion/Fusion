@@ -46,6 +46,18 @@ export interface AgentActionGateContext {
   taskId?: string;
   runId?: string;
   permissionPolicy: AgentPermissionPolicy;
+  /** Live workflow authority is validated for each tool call; absence preserves ordinary policy. */
+  workflowAuthority?: {
+    projectId: string;
+    taskId: string;
+    runId: string;
+    workItemId: string;
+    nodeInstanceId: string;
+    principalAgentId: string;
+    kind: "task-assignee" | "review-node-override";
+    /** Revalidates the durable lease, current principal, task and node fence. */
+    isLive: () => boolean | Promise<boolean>;
+  };
   createApprovalRequest: (decision: AgentActionGateDecision, args: Record<string, unknown>) => Promise<unknown>;
   /**
    * FNXC:ApprovalRedemption 2026-07-26-13:05:
@@ -325,6 +337,58 @@ export function evaluateAgentActionGate(params: {
         }
       : {},
   };
+}
+
+/**
+ * FNXC:WorkflowAgentRouting 2026-08-07-03:46:
+ * Workflow authority is a narrow session capability, not an agent-wide policy
+ * change. A task mutation aimed at another task must retain ordinary policy
+ * even if the caller holds a live authority token for this task.
+ */
+export async function hasLiveWorkflowAuthority(
+  context: AgentActionGateContext,
+  args: Record<string, unknown>,
+  toolName?: string,
+): Promise<boolean> {
+  const authority = context.workflowAuthority;
+  if (!authority
+    || authority.principalAgentId !== context.agentId
+    || authority.taskId !== context.taskId
+    || authority.runId !== context.runId) return false;
+
+  const targetTaskId = typeof args.id === "string"
+    ? args.id
+    : typeof args.task_id === "string"
+      ? args.task_id
+      : undefined;
+  if (targetTaskId && targetTaskId !== authority.taskId) return false;
+
+  /*
+  FNXC:WorkflowAgentRouting 2026-08-07-06:40:
+  A task-scoped workflow grant may cover work on its own task, not board,
+  workflow, mission, or agent administration. In particular, planning may
+  propose follow-up tasks, but creating or delegating them remains governed by
+  the principal's ordinary policy instead of inheriting the plan's elevation.
+  */
+  const taskScopedTools = new Set([
+    "fn_task_add_dep",
+    "fn_task_update",
+  ]);
+  if (toolName && !taskScopedTools.has(toolName) && (
+    toolName.startsWith("fn_task_")
+    || toolName.startsWith("fn_agent_")
+    || toolName.startsWith("fn_workflow_")
+    || toolName.startsWith("fn_mission_")
+    || toolName.startsWith("fn_milestone_")
+    || toolName.startsWith("fn_slice_")
+    || toolName.startsWith("fn_feature_")
+    || toolName.startsWith("fn_ideation_")
+    || toolName === "fn_delegate_task"
+    || toolName === "fn_spawn_agent"
+    || toolName === "fn_update_agent_config"
+  )) return false;
+
+  return await authority.isLive();
 }
 
 export function resolveGateOutcome(

@@ -66,7 +66,7 @@ type MovedProjectSettingsKey =
   | "validatorFallbackThinkingLevel";
 
 type NonDefaultProjectSettingsKey = "ephemeralAgentTaskCreationPolicy" | "selectedWorkflowModelLanes";
-type ProjectSettingsSchema = Omit<ProjectSettings, MovedProjectSettingsKey | NonDefaultProjectSettingsKey>; 
+type ProjectSettingsSchema = Omit<ProjectSettings, MovedProjectSettingsKey | NonDefaultProjectSettingsKey>;
 
 /**
  * Settings schema source of truth.
@@ -629,6 +629,12 @@ export const DEFAULT_PROJECT_SETTINGS = {
   // proportional to the change; the thin merge gate carries cross-cutting
   // coverage. Falls back to package/explicit command when no tests resolve.
   scopeVerificationToChangedFiles: true,
+  /*
+  FNXC:WorkflowAgentRouting 2026-08-07-08:45:
+  Keep the legacy project setting defaulted and persistable for existing clients and
+  configuration records. Workflow-stage routing must ignore its value; durable role
+  principals own scheduler, executor, and mission-stage authority.
+  */
   ephemeralAgentsEnabled: true,
   /*
   FNXC:EphemeralAgentTaskCreation 2026-07-01-00:00:

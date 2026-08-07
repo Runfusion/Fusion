@@ -110,7 +110,6 @@ export const defaultSettings = {
   verificationFixRetries: 2,
   workflowRevisionForkOnScopeMismatch: true,
   recycleWorktrees: false,
-  ephemeralAgentsEnabled: true,
   executorAllowSiblingBranchRename: false,
   worktreeNaming: "random",
   worktreeCopyFiles: [],

@@ -36,10 +36,13 @@ import {
   ApprovalRequestStore,
   isEphemeralAgent,
   resolveEffectiveAgentPermissionPolicy,
+  resolveWorkflowIrForTask,
 } from "@fusion/core";
 import type { AgentActionGateContext } from "../agents/agent-action-gate.js";
+import { isCurrentReviewerNodeOverride } from "../agents/workflow-agent-router.js";
 import { executorLog } from "../logger.js";
 import type { EngineRunContext } from "../util/run-audit.js";
+import type { ActiveWorkflowAuthority } from "./workflow-principal-before-node.js";
 
 export type BuildActionGateContextDeps = {
   store: TaskStore;
@@ -48,6 +51,8 @@ export type BuildActionGateContextDeps = {
   awaitAbortInFlightTaskWork: (taskId: string, reason: string) => Promise<void>;
   agentStore?: AgentStore | null;
   approvalRequestStore: ApprovalRequestStore;
+  activeWorkflowAuthorities: Map<string, ActiveWorkflowAuthority>;
+  activeWorkflowGraphAbortControllers: Map<string, AbortController>;
 };
 
 export function buildActionGateContext(
@@ -63,13 +68,69 @@ export function buildActionGateContext(
   const actorName = agent?.name ?? `Task worker ${taskId ?? "unknown"}`;
   const isEphemeral = !agent || isEphemeralAgent(agent);
   const policy = resolveEffectiveAgentPermissionPolicy(agent?.permissionPolicy, projectDefaultPolicy);
+  const workflowAuthority = taskId ? deps.activeWorkflowAuthorities.get(taskId) : undefined;
+  const authorityMatchesActor = workflowAuthority?.agentId === actorId;
   return {
     agentId: actorId,
     agentName: actorName,
     isEphemeral,
     taskId,
-    runId: taskId ? deps.getRunContextFor(taskId)?.runId : undefined,
+    runId: authorityMatchesActor ? workflowAuthority!.runId : taskId ? deps.getRunContextFor(taskId)?.runId : undefined,
     permissionPolicy: policy,
+    ...(authorityMatchesActor ? {
+      workflowAuthority: {
+        projectId: deps.store.getRootDir(),
+        taskId: workflowAuthority!.taskId,
+        runId: workflowAuthority!.runId,
+        workItemId: workflowAuthority!.workItemId,
+        nodeInstanceId: workflowAuthority!.nodeInstanceId,
+        principalAgentId: workflowAuthority!.agentId,
+        kind: workflowAuthority!.kind,
+        isLive: async () => {
+          const current = deps.activeWorkflowAuthorities.get(workflowAuthority!.taskId);
+          if (current !== workflowAuthority
+            || !deps.activeWorkflowGraphAbortControllers.has(workflowAuthority!.taskId)
+            || deps.activeWorkflowGraphAbortControllers.get(workflowAuthority!.taskId)!.signal.aborted) {
+            return false;
+          }
+          if (!workflowAuthority!.requiresDurableFence) return true;
+          /*
+           * FNXC:WorkflowAgentRouting 2026-08-07-04:31:
+           * Tool authority for a claimed continuation survives only while its exact leased
+           * work item still names this principal and node.
+           */
+          const items = await deps.store.listWorkflowWorkItemsForTask(workflowAuthority!.taskId);
+          const item = items.find((candidate) => candidate.id === workflowAuthority!.workItemId);
+          if (item?.state !== "running"
+            || item.principalAgentId !== workflowAuthority!.agentId
+            || item.nodeInstanceId !== workflowAuthority!.nodeInstanceId
+            || !item.leaseOwner
+            || (item.leaseExpiresAt !== null && Date.parse(item.leaseExpiresAt) <= Date.now())) {
+            return false;
+          }
+          const liveTask = await deps.store.getTask(workflowAuthority!.taskId);
+          if (workflowAuthority!.kind === "task-assignee") {
+            return liveTask.assignedAgentId === workflowAuthority!.agentId;
+          }
+          /*
+           * FNXC:WorkflowAgentRouting 2026-08-07-04:56:
+           * A reviewer override is authority for one exact IR node attempt, not a
+           * task-wide reviewer grant. Re-read the selected workflow definition at
+           * every gated call so an operator removing or changing the node override
+           * immediately fences an already-running session.
+           */
+          if (workflowAuthority!.kind === "review-node-override") {
+            const liveIr = await resolveWorkflowIrForTask(deps.store, workflowAuthority!.taskId);
+            return isCurrentReviewerNodeOverride(
+              liveIr,
+              workflowAuthority!.nodeInstanceId,
+              workflowAuthority!.agentId,
+            );
+          }
+          return false;
+        },
+      },
+    } : {}),
     createApprovalRequest: async (decision, args) => await deps.approvalRequestStore.create({
       requester: {
         actorId,

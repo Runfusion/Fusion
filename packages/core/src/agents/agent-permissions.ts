@@ -39,9 +39,16 @@ export function normalizePermissions(raw: Record<string, boolean>): Set<AgentPer
   return permissions;
 }
 
-/** Compute resolved access state for an agent from role defaults + explicit grants. */
+/*
+FNXC:WorkflowAgentRouting 2026-08-07-07:56:
+FN-8764 grants a permanent agent the union of defaults for every canonical
+role tag. The singular role remains migration compatibility only and cannot
+silently strip reviewer, merger, or executor authority from multi-role agents.
+*/
+/** Compute resolved access state from all role defaults plus explicit grants. */
 export function computeAccessState(agent: Agent): AgentAccessState {
-  const roleDefaultPermissions = new Set<AgentPermission>(ROLE_DEFAULT_PERMISSIONS[agent.role] ?? []);
+  const roles = agent.roles?.length ? agent.roles : [agent.role];
+  const roleDefaultPermissions = new Set<AgentPermission>(roles.flatMap((role) => ROLE_DEFAULT_PERMISSIONS[role] ?? []));
   const explicitPermissions = normalizePermissions(agent.permissions ?? {});
   const resolvedPermissions = new Set<AgentPermission>(roleDefaultPermissions);
 

@@ -62,7 +62,6 @@ import { PluginRunner } from "../plugins/plugin-runner.js";
 import { MissionAutopilot } from "../missions/mission-autopilot.js";
 import { MissionExecutionLoop } from "../missions/mission-execution-loop.js";
 import { TriageProcessor } from "../triage.js";
-import { EphemeralWorkerManager } from "../agents/ephemeral-worker-manager.js";
 import { validateProjectNodeMapping } from "../project/node-dispatch-validation.js";
 import { attachAgentLinkSync } from "../agents/task-agent-sync.js";
 import { createRunAuditor, generateSyntheticRunId } from "../util/run-audit.js";
@@ -767,12 +766,6 @@ export class InProcessRuntime
   private agentStore?: AgentStore;
   private heartbeatMonitor?: HeartbeatMonitor;
   private triggerScheduler?: HeartbeatTriggerScheduler;
-  /**
-   * Coordinates the ephemeral task-worker lifecycle (spawn dedup, finalize,
-   * halt-listener cleanup, startup sweep). See `ephemeral-worker-manager.ts`.
-   * Created once the AgentStore is available; guard call sites with `?`.
-   */
-  private workerManager?: EphemeralWorkerManager;
   private lastActivityAt: string = new Date().toISOString();
   private pluginRunner?: PluginRunner;
   private pluginStore?: PluginStore;
@@ -1373,15 +1366,11 @@ export class InProcessRuntime
           worktree-created / node-acquired lines. Demote this echo to debug.
           */
           runtimeLog.debug(`Started executing task ${task.id} in ${worktreePath}`);
-          // Legacy invariant (implemented in EphemeralWorkerManager):
-          // if (this.taskAgentMap.has(task.id)) { ... "Skipping task-worker creation for" ... }
-          void this.workerManager?.onTaskStart(task);
         },
         onComplete: (task) => {
           this.recordActivity();
           runtimeLog.log(`Completed task ${task.id}`);
           this.recordTaskCompletion(task.id, true);
-          void this.workerManager?.onTaskComplete(task.id);
         },
         onError: (task, error) => {
           this.recordActivity();
@@ -1418,7 +1407,6 @@ export class InProcessRuntime
             })();
           }
 
-          void this.workerManager?.onTaskError(task.id);
         },
       };
 
@@ -1559,29 +1547,6 @@ export class InProcessRuntime
         const isTimerManagedAgent = (agent: import("@fusion/core").Agent) =>
           isHeartbeatEnabledAgent(agent) && isTickableHeartbeatState(agent.state);
 
-        // Wire the ephemeral worker manager (now that the executor exists, so
-        // its spawned-child pending-deletion set can be consulted) and run
-        // the startup orphan sweep. See ephemeral-worker-manager.ts for the
-        // full lifecycle contract. Non-fatal: failures are logged and never
-        // block startup.
-        if (this.agentStore && !this.workerManager) {
-          this.workerManager = new EphemeralWorkerManager({
-            agentStore: this.agentStore,
-            taskStore: this.taskStore,
-            logger: runtimeLog,
-            isDeletionPendingExternal: (agentId) => this.executor?.isEphemeralDeletionPending(agentId) ?? false,
-            getSettings: async () => {
-              const settings = await this.taskStore.getSettings();
-              return { ephemeralAgentsEnabled: settings.ephemeralAgentsEnabled };
-            },
-          });
-        }
-        if (this.workerManager) {
-          this.workerManager.attachStateChangeListener();
-          void this.workerManager.reconcileOrphaned().catch((err) => {
-            runtimeLog.warn(`Deferred workerManager.reconcileOrphaned failed: ${err instanceof Error ? err.message : String(err)}`);
-          });
-        }
 
         // Register existing non-ephemeral, heartbeat-enabled agents in tickable states.
         try {
@@ -2060,8 +2025,6 @@ export class InProcessRuntime
       // 3. Tear down the ephemeral worker manager (detaches the
       // agent:stateChanged listener and clears in-memory tracking). Safe to
       // call when uninitialized.
-      this.workerManager?.detachStateChangeListener();
-      this.workerManager?.reset();
       this.executor?.disposeEphemeralTimers();
 
       // 4. Stop trigger scheduler

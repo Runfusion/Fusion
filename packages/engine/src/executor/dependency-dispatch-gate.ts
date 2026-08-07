@@ -49,13 +49,30 @@ export async function blockOuterDispatchWhenDependenciesUnmet(
       recoveryRehome: true,
     });
   }
-  await deps.store.updateTask(liveTask.id, { status: "queued", blockedBy: unmetDeps[0] }, deps.getRunContextFor(liveTask.id));
-  await deps.store.logEntry(
-    liveTask.id,
-    `queued — unmet dependencies: ${unmetDeps.join(", ")}`,
-    "Executor pre-dispatch dependency gate blocked workflow/authoritative execution.",
-    deps.getRunContextFor(liveTask.id),
-  );
+  /*
+  FNXC:DependencyGating 2026-08-07-12:10:
+  Prefer the store's transitionQueuedEpisode so queued signature/blockedBy/audit are one atomic
+  write (FN-8806 / main). Falls back to updateTask+logEntry only when the store lacks the helper.
+  */
+  const normalizedUnmetDeps = [...new Set(unmetDeps)].sort();
+  if (typeof deps.store.transitionQueuedEpisode === "function") {
+    await deps.store.transitionQueuedEpisode(liveTask.id, {
+      signature: `dependency:${normalizedUnmetDeps.join(",")}`,
+      blockedBy: unmetDeps[0] ?? null,
+      overlapBlockedBy: liveTask.overlapBlockedBy ?? null,
+      action: `queued — unmet dependencies: ${unmetDeps.join(", ")}`,
+      outcome: "Executor pre-dispatch dependency gate blocked workflow/authoritative execution.",
+      runContext: deps.getRunContextFor(liveTask.id),
+    });
+  } else {
+    await deps.store.updateTask(liveTask.id, { status: "queued", blockedBy: unmetDeps[0] }, deps.getRunContextFor(liveTask.id));
+    await deps.store.logEntry(
+      liveTask.id,
+      `queued — unmet dependencies: ${unmetDeps.join(", ")}`,
+      "Executor pre-dispatch dependency gate blocked workflow/authoritative execution.",
+      deps.getRunContextFor(liveTask.id),
+    );
+  }
   executorLog.log(`${liveTask.id}: executor dispatch blocked by unmet dependencies: ${unmetDeps.join(", ")}`);
   return true;
 }

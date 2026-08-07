@@ -44,6 +44,13 @@ describe("agent-role-policy", () => {
     ).toBe(true);
   });
 
+  it("accepts a canonical multi-role executor regardless of legacy role projection", () => {
+    const multiRoleAgent = { roles: ["reviewer", "executor"] as const, role: "reviewer" as const };
+    expect(isExecutorRoleAgent(multiRoleAgent)).toBe(true);
+    expect(canAgentTakeImplementationTaskForExplicitRouting(multiRoleAgent, { column: "todo" })).toBe(true);
+    expect(canAgentTakeImplementationTaskForBacklogPickup(multiRoleAgent, { column: "todo" })).toBe(true);
+  });
+
   it("allows durable engineer for explicit routing and opt-in backlog pickup only", () => {
     expect(isEngineerRoleAgent({ role: "engineer" })).toBe(true);
     // Explicit routing is independent from engineerBacklogAutoClaim: callers

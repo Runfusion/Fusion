@@ -56,7 +56,7 @@ capacity-model table drop that landed while this PR was open.
 */
 /* FNXC:CrossProcessDeleteObservation 2026-08-01-11:39: advance the schema ceiling so durable consumer state exists before observers begin polling FN-8684's outbox. */
 /* FNXC:MissionValidation 2026-08-01-16:21: advance the schema ceiling before validator admission reads durable content fingerprints. */
-export const SCHEMA_BASELINE_VERSION = "0044";
+export const SCHEMA_BASELINE_VERSION = "0046";
 /** FNXC:SymbolLock 2026-07-20-10:00: upgrades need durable task declarations before admission resolves symbols. */
 export const TASK_DECLARED_SYMBOLS_VERSION = "0028";
 const INITIAL_SCHEMA_VERSION = "0000";
@@ -187,6 +187,10 @@ export const VALIDATOR_INPUT_FINGERPRINT_VERSION = "0042";
 export const UNPLANNED_EXECUTION_BLOCK_DEDUPE_VERSION = "0043";
 /** FNXC:QueuedTaskLogging 2026-08-04-18:03: upgraded databases need the durable full queue-episode signature before concurrent producers can suppress repeats safely. */
 export const QUEUED_EPISODE_SIGNATURE_VERSION = "0044";
+/** FNXC:WorkflowAgentRouting 2026-08-07-03:12: explicit registration keeps role-tag upgrades from being skipped. */
+export const MULTI_ROLE_WORKFLOW_AGENTS_VERSION = "0045";
+/** FNXC:WorkflowAgentRouting 2026-08-07-03:25: upgraded projects need durable principal fencing before graph dispatch can route permanent agents. */
+export const WORKFLOW_PRINCIPAL_FENCE_VERSION = "0046";
 
 /** SECURITY DEFINER helper that only inserts LEGACY_ADOPTION_DRAINED_MARKER. */
 export const LEGACY_ADOPTION_DRAINED_MARKER_FUNCTION = "fusion_mark_legacy_adoption_drained";
@@ -405,6 +409,8 @@ const TASK_LIFECYCLE_CONSUMERS_MIGRATION_PATH = join(MIGRATIONS_DIR, "0041_fn_86
 const VALIDATOR_INPUT_FINGERPRINT_MIGRATION_PATH = join(MIGRATIONS_DIR, "0042_fn_8694_validator_input_fingerprint.sql");
 const UNPLANNED_EXECUTION_BLOCK_DEDUPE_MIGRATION_PATH = join(MIGRATIONS_DIR, "0043_fn8768_dispatch_dedupe.sql");
 const QUEUED_EPISODE_SIGNATURE_MIGRATION_PATH = join(MIGRATIONS_DIR, "0044_fn_8785_queued_episode_signature.sql");
+const MULTI_ROLE_WORKFLOW_AGENTS_MIGRATION_PATH = join(MIGRATIONS_DIR, "0045_fn_8764_multi_role_workflow_agents.sql");
+const WORKFLOW_PRINCIPAL_FENCE_MIGRATION_PATH = join(MIGRATIONS_DIR, "0046_fn_8764_workflow_principal_fence.sql");
 
 /**
  * Ensure the migration bookkeeping table exists. Lives in the public schema so
@@ -519,6 +525,8 @@ export async function applySchemaBaseline(
     const validatorInputFingerprintAlreadyApplied = applied.includes(VALIDATOR_INPUT_FINGERPRINT_VERSION);
     const unplannedExecutionBlockDedupeAlreadyApplied = applied.includes(UNPLANNED_EXECUTION_BLOCK_DEDUPE_VERSION);
     const queuedEpisodeSignatureAlreadyApplied = applied.includes(QUEUED_EPISODE_SIGNATURE_VERSION);
+    const multiRoleWorkflowAgentsAlreadyApplied = applied.includes(MULTI_ROLE_WORKFLOW_AGENTS_VERSION);
+    const workflowPrincipalFenceAlreadyApplied = applied.includes(WORKFLOW_PRINCIPAL_FENCE_VERSION);
     assertBinaryNotOlderThanDatabase(applied);
     let schemaChanged = false;
 
@@ -1108,6 +1116,18 @@ export async function applySchemaBaseline(
       const migrationSql = await readFile(QUEUED_EPISODE_SIGNATURE_MIGRATION_PATH, "utf8");
       await tx.execute(sql.raw(migrationSql));
       await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${QUEUED_EPISODE_SIGNATURE_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+    if (!multiRoleWorkflowAgentsAlreadyApplied) {
+      const migrationSql = await readFile(MULTI_ROLE_WORKFLOW_AGENTS_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${MULTI_ROLE_WORKFLOW_AGENTS_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+    if (!workflowPrincipalFenceAlreadyApplied) {
+      const migrationSql = await readFile(WORKFLOW_PRINCIPAL_FENCE_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${WORKFLOW_PRINCIPAL_FENCE_VERSION}) ON CONFLICT (version) DO NOTHING`);
       schemaChanged = true;
     }
 

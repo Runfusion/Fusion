@@ -41,6 +41,7 @@ import {getTaskMovedCountsByDay as getTaskMovedCountsByDayAsync} from "../task-s
 import {getAllDocuments as getAllDocumentsAsync} from "../task-store/async/async-comments-attachments.js";
 import {recordGoalCitations as recordGoalCitationsAsync} from "../task-store/async/async-events.js";
 import type { WorkflowWorkItemRow } from "../task-store/row-types.js";
+import { projectScopeFor } from "../postgres/data-layer.js";
 
 export async function recordGoalCitationsImpl(store: TaskStore, inputs: GoalCitationInput[]): Promise<GoalCitation[]> {
         const layer = store.asyncLayer!;
@@ -434,15 +435,16 @@ export async function listWorkflowPromptOverridesForProjectImpl(store: TaskStore
 export async function listWorkflowWorkItemsForTaskImpl(store: TaskStore, taskId: string, opts: { kinds?: WorkflowWorkItemKind[] } = {}): Promise<WorkflowWorkItem[]> {
     // No dedicated async helper; use a raw Drizzle query in backend mode.
         const layer = store.asyncLayer!;
+    const scope = projectScopeFor(schema.project.workflowWorkItems.projectId, layer.projectId);
     const q = layer.db
       .select()
       .from(schema.project.workflowWorkItems)
-      .where(eq(schema.project.workflowWorkItems.taskId, taskId));
+      .where(and(scope, eq(schema.project.workflowWorkItems.taskId, taskId)));
     const rows = opts.kinds?.length
       ? await layer.db
           .select()
           .from(schema.project.workflowWorkItems)
-          .where(and(eq(schema.project.workflowWorkItems.taskId, taskId), inArray(schema.project.workflowWorkItems.kind, opts.kinds)))
+          .where(and(scope, eq(schema.project.workflowWorkItems.taskId, taskId), inArray(schema.project.workflowWorkItems.kind, opts.kinds)))
       : await q;
     return (rows as WorkflowWorkItemRow[]).map((row) => store.rowToWorkflowWorkItem(row));
 }

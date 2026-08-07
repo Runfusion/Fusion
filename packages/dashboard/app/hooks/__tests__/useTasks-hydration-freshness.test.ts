@@ -215,6 +215,71 @@ describe("task snapshot lifecycle freshness", () => {
     });
   });
 
+  it("clears a stale planning status from an equal-clock complete refresh", () => {
+    const current = {
+      ...todo,
+      column: "in-progress",
+      status: "planning",
+      updatedAt: "2026-08-05T10:02:00.000Z",
+      recentAgentActivityAt: "2026-08-05T10:02:00.000Z",
+    } as Task;
+    const completeFetch = {
+      ...todo,
+      column: "in-progress",
+      status: null,
+      updatedAt: current.updatedAt,
+    } as Task;
+
+    expect(mergeTaskSnapshot(current, completeFetch, { fullSnapshot: true })).toMatchObject({
+      column: "in-progress",
+      status: null,
+      recentAgentActivityAt: undefined,
+    });
+  });
+
+  it("preserves newer planner activity when an equal-clock refresh has unchanged status", () => {
+    const current = {
+      ...todo,
+      column: "triage",
+      status: "needs-replan",
+      updatedAt: "2026-08-05T10:02:00.000Z",
+      recentAgentActivityAt: "2026-08-05T10:03:00.000Z",
+    } as Task;
+    const completeFetch = {
+      ...todo,
+      column: "triage",
+      status: "needs-replan",
+      updatedAt: current.updatedAt,
+    } as Task;
+
+    expect(mergeTaskSnapshot(current, completeFetch, { fullSnapshot: true })).toMatchObject({
+      status: "needs-replan",
+      recentAgentActivityAt: current.recentAgentActivityAt,
+    });
+  });
+
+  it("keeps column and status from the same lifecycle row", () => {
+    const current = {
+      ...todo,
+      column: "in-progress",
+      status: "planning",
+      updatedAt: "2026-08-05T10:02:00.000Z",
+      columnMovedAt: "2026-08-05T10:02:00.000Z",
+    } as Task;
+    const staleCompleteFetch = {
+      ...todo,
+      column: "triage",
+      status: null,
+      updatedAt: current.updatedAt,
+      columnMovedAt: current.columnMovedAt,
+    } as Task;
+
+    expect(mergeTaskSnapshot(current, staleCompleteFetch, { fullSnapshot: true })).toMatchObject({
+      column: "in-progress",
+      status: "planning",
+    });
+  });
+
   it("accepts a genuinely newer column transition", () => {
     const queued = { ...todo, column: "todo", status: "queued-overlap", updatedAt: "2026-08-05T10:02:00.000Z", columnMovedAt: "2026-08-05T10:02:00.000Z" };
     const executing = { ...todo, column: "in-progress", status: "executing", updatedAt: "2026-08-05T10:03:00.000Z", columnMovedAt: "2026-08-05T10:03:00.000Z" };

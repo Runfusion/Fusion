@@ -834,6 +834,7 @@ export class AgentReflectionService {
     return {
       id: agentId,
       name: `Unknown Agent (${agentId})`,
+      roles: ["custom"],
       role: "custom",
       state: "idle",
       createdAt: now,

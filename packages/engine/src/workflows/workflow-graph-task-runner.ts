@@ -95,6 +95,8 @@ export interface WorkflowGraphTaskRunnerDeps {
     task: TaskDetail,
     requirement: WorkflowNodePreparationRequirement,
   ) => void | Promise<void>;
+  /** Durable principal fence invoked before classified node handlers. */
+  beforeNodeExecution?: WorkflowGraphExecutorDeps["beforeNodeExecution"];
   maxRetriesPerNode?: number;
   /** Optional diagnostics hook (audit/log emission). Never throws into the run. */
   onEvent?: (event: { type: "start" | "terminal" | "fallback"; taskId: string; detail: string }) => void;
@@ -225,6 +227,7 @@ export class WorkflowGraphTaskRunner {
     task: TaskDetail,
     settings: Pick<Settings, "experimentalFeatures"> | undefined,
     startNodeId?: string,
+    initialContext?: Record<string, unknown>,
   ): Promise<WorkflowGraphTaskRunResult> {
     let selection: { workflowId: string; stepIds: string[] } | undefined;
     try {
@@ -380,6 +383,7 @@ export class WorkflowGraphTaskRunner {
         primitives: wrappedPrimitives,
         runCustomNode: wrappedRunCustomNode,
         prepareNodeExecution: this.deps.prepareNodeExecution,
+        beforeNodeExecution: this.deps.beforeNodeExecution,
         maxRetriesPerNode: this.deps.maxRetriesPerNode,
         branchPersistence: this.deps.branchPersistence,
         branchSemaphore: this.deps.branchSemaphore,
@@ -416,6 +420,14 @@ export class WorkflowGraphTaskRunner {
         // executor's persistence deps probe/flip rows under the SAME id; fall back
         // to the canonical derivation when unthreaded.
         runId: this.deps.runId ?? `${task.id}:${definition.id}`,
+        /*
+         * FNXC:WorkflowAgentRouting 2026-08-07-07:45:
+         * Direct graph recovery must restore a continuation's principal fence
+         * into the interpreter context before node admission. Otherwise resume
+         * would re-run precedence routing and could replace a held reviewer or
+         * role-pool principal after a restart.
+         */
+        initialContext,
         onBranchProgress: (progress) => {
           this.branchProgress.set(progress.branchId, progress);
           try {

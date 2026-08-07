@@ -36,7 +36,6 @@ import { resolveEffectiveNode, type EffectiveNode } from "./project/effective-no
 import { applyUnavailableNodePolicy, decideOwningNodeHandoff } from "./project/node-routing-policy.js";
 import type { NodeDispatchValidationResult } from "./project/node-dispatch-validation.js";
 import type { MeshLeaseManager } from "./project/mesh-lease-manager.js";
-import { selectPermanentAgentForTask } from "./agents/agent-assignment.js";
 import type { AutoClaimSnapshotManager } from "./scheduling/auto-claim-snapshot.js";
 import { StaleTaskReporter } from "./healing/stale-task-reporter.js";
 import { BacklogPressureReporter } from "./scheduling/backlog-pressure-reporter.js";
@@ -2690,118 +2689,7 @@ export class Scheduler {
             }
           }
 
-          if (latestSettings.ephemeralAgentsEnabled === false && !freshTask.assignedAgentId) {
-            /*
-            FNXC:WorkflowScheduling 2026-06-23-22:33:
-            The workflow cutover path must not silently dispatch unassigned work when ephemeral agents are disabled. Queue until permanent-agent selection is available so upgrades preserve the executor contract instead of falling through to local execution.
-            */
-            if (!this.options.agentStore) {
-              await this.store.updateTask(task.id, { status: "queued" });
-              if (!this.wasPermanentAgentUnavailable.has(task.id)) {
-                await this.logDispatchQueuedReason(
-                  task.id,
-                  "queued — permanent executor selection unavailable (ephemeral agents disabled)",
-                );
-                this.wasPermanentAgentUnavailable.add(task.id);
-              }
-              return null;
-            }
-
-            /*
-            FNXC:WorkflowLifecycleColumns 2026-07-31-09:30 (#2787 review — greptile P1):
-            PASS THE RESOLVED LANES. Without this the optional parameter added to
-            `selectPermanentAgentForTask` is never supplied by the only production caller, so the
-            predicate keeps its legacy default and the load tally stays empty on a renamed board —
-            a converted function reachable only through an argument nobody passes is the
-            guard-that-cannot-fire pattern, and shipping one would have been worse than leaving the
-            literal in place, because the site then reads as done.
-
-            The set is a MEMBERSHIP union of every wip/review lane the board declares, not the
-            first-per-role ids: a workflow may declare more than one implementation lane, and load
-            held in the second must still count.
-            */
-            /*
-            FNXC:WorkflowLifecycleColumns 2026-07-31-11:40 (#2787 review — greptile P1, third round):
-            RESOLVE PER TASK, because a project runs several workflows at once.
-
-            My first wiring resolved the lanes from the CANDIDATE task's workflow and handed that flat
-            set to a tally that runs over EVERY assigned row. Assignments living in another workflow's
-            load-bearing lanes were therefore omitted — the same already-loaded-agent-wins bug the
-            parameter exists to fix, reached through a different door. A column id means something
-            only relative to its OWN workflow; `blocker-fanout.ts` documents exactly this and offers a
-            per-task `classify`, so this passes a per-task predicate rather than a board-wide set.
-
-            One IR cache for the whole selection, per the caller-owned-cache contract, so a board
-            spanning three workflows reads three IRs and not one per assigned card.
-            */
-            const loadLaneIrCache = new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>();
-            const resolveLoadLanes = async (candidate: Task): Promise<ReadonlySet<string>> => {
-              const ir = await resolveWorkflowIrForTask(this.store, candidate.id, loadLaneIrCache).catch(() => undefined);
-              /* DELIBERATE-LITERAL — the unresolvable-workflow default. */
-              if (!ir) return new Set(["todo", "in-progress", "in-review"]);
-              return new Set([
-                ...columnsWithFlag(ir, "intake"),
-                ...columnsWithFlag(ir, "hold"),
-                ...columnsWithFlag(ir, "countsTowardWip"),
-                ...columnsWithFlag(ir, "mergeOrchestration"),
-                ...columnsWithFlag(ir, "mergeBlocker"),
-                ...columnsWithFlag(ir, "humanReview"),
-              ]);
-            };
-            /*
-            FNXC:WorkflowResolvedColumns 2026-07-30-12:10 (#2796 review — greptile):
-            MEMOISE THE LANES, NOT THE VERDICT — the two snapshots are not the same list.
-
-            This pre-computed a Set of load-bearing task IDs from ITS OWN `listTasks` read, and
-            `selectPermanentAgentForTask` then applies the predicate to rows from ITS read. Anything
-            that changes in between diverges, and it diverges in both directions: a task MOVED out of
-            a load-bearing lane keeps its id in the set and is still counted, while a task created or
-            newly assigned in between is missing from the set and counts as zero. Either way the
-            balancer acts on a board that no longer exists.
-
-            Caching the resolved LANES per task instead of a boolean removes the dependency. Lane
-            membership is a property of the task's workflow, which a move does not change, so the
-            predicate can be evaluated against the column on the row the helper actually holds. Only
-            the workflow lookup is memoised; the comparison is live.
-
-            A task absent from the map (created between the two reads) falls back to the same legacy
-            trio the resolver itself uses when a workflow will not resolve, rather than silently
-            counting as no load.
-            */
-            const LEGACY_LOAD_LANES: ReadonlySet<string> = new Set(["todo", "in-progress", "in-review"]);
-            const loadLanesByTaskId = new Map<string, ReadonlySet<string>>();
-            for (const candidate of await this.store.listTasks({ slim: true })) {
-              if (!candidate.assignedAgentId) continue;
-              loadLanesByTaskId.set(candidate.id, await resolveLoadLanes(candidate));
-            }
-
-            const selectedAgent = await selectPermanentAgentForTask({
-              task: freshTask,
-              agentStore: this.options.agentStore,
-              taskStore: this.store,
-              countsAsAssignmentLoad: (candidate: Task) =>
-                (loadLanesByTaskId.get(candidate.id) ?? LEGACY_LOAD_LANES).has(candidate.column),
-            });
-            if (!selectedAgent) {
-              await this.store.updateTask(task.id, { status: "queued" });
-              if (!this.wasPermanentAgentUnavailable.has(task.id)) {
-                await this.logDispatchQueuedReason(
-                  task.id,
-                  "queued — no permanent executor available (ephemeral agents disabled)",
-                );
-                this.wasPermanentAgentUnavailable.add(task.id);
-              }
-              return null;
-            }
-            await this.store.updateTask(task.id, { assignedAgentId: selectedAgent.id });
-            await this.store.logEntry(
-              task.id,
-              `Auto-assigned to permanent agent ${selectedAgent.id} (ephemeral agents disabled)`,
-            );
-            this.wasPermanentAgentUnavailable.delete(task.id);
-          } else {
-            this.wasPermanentAgentUnavailable.delete(task.id);
-          }
+          this.wasPermanentAgentUnavailable.delete(task.id);
 
           const oscillationSettings = latestSettings as Settings & {
             dispatchOscillationSettleMs?: number;

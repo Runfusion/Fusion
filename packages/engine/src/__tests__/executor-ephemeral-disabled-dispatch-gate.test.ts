@@ -1,46 +1,28 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { TaskDetail } from "@fusion/core";
 import "./executor-test-helpers.js";
 import { TaskExecutor } from "../executor.js";
+import {
+  AgentSemaphore,
+  clearPreHeldExecutorSlotsForTests,
+  hasPreHeldExecutorSlot,
+  registerPreHeldExecutorSlot,
+} from "../concurrency/concurrency.js";
 import { createMockStore, resetExecutorMocks } from "./executor-test-helpers.js";
 
-/*
-FNXC:EphemeralAgents 2026-07-01-00:00:
-Regression coverage for the ephemeral-disabled dispatch gate. `ephemeralAgentsEnabled: false`
-must stop the workflow engine from running unassigned work, not just the legacy spawn path.
-The bug: EphemeralWorkerManager.onTaskStart is a fire-and-forget bookkeeping callback that runs
-AFTER execution begins, and the workflow dispatch paths in TaskExecutor.execute()
-(executeWorkflowGraph, and the work-engine dispatch downstream of it)
-never consulted the toggle — so tasks reaching execute() without a permanent assignment ran
-anyway. These tests assert the invariant at the single routing boundary that fronts every
-workflow dispatch entry point (Surface Enumeration), not just one reproduction.
-
-FNXC:EngineTests 2026-07-19-19:20 (U10b):
-The enumerated dispatch surfaces collapsed from three to one. `maybeExecuteWorkflowGraph`
-(which could DECLINE a task and fall through to a legacy implementation path) and the
-workflow-authoritative driver are deleted; routing now ends in `executeWorkflowGraph(task)`
-and work-engine dispatch lives inside `runImplementation`, downstream of the graph. The
-requirement is unchanged: with the toggle off and no permanent assignment, execute() must
-requeue the task and reach NO execution surface at all.
-*/
-
-const now = "2026-07-01T00:00:00.000Z";
+const now = "2026-08-07T00:00:00.000Z";
 
 function task(overrides: Partial<TaskDetail> = {}): TaskDetail {
   return {
-    id: "FN-EPHEMERAL-GATE",
-    title: "Ephemeral-disabled dispatch gate",
-    description: "Gate coverage for ephemeralAgentsEnabled=false workflow dispatch",
+    id: "FN-8821-EXECUTOR",
+    title: "Executor compatibility regression",
+    description: "Dispatch through the workflow graph",
     column: "in-progress",
     dependencies: [],
-    steps: [{ name: "Implement", status: "pending" }],
+    steps: [],
     currentStep: 0,
     log: [],
-    branch: "fusion/fn-ephemeral-gate",
-    baseBranch: "main",
-    worktree: "/tmp/fusion-fn-ephemeral-gate",
     status: null,
-    error: null,
     paused: false,
     userPaused: false,
     autoMerge: true,
@@ -51,173 +33,211 @@ function task(overrides: Partial<TaskDetail> = {}): TaskDetail {
   } as TaskDetail;
 }
 
-function settings(overrides: Record<string, unknown> = {}) {
+function settings(ephemeralAgentsEnabled: boolean | undefined) {
   return {
     autoMerge: true,
     maxAutoMergeRetries: 3,
     maxConcurrent: 2,
     maxWorktrees: 4,
-    pollIntervalMs: 15000,
+    pollIntervalMs: 15_000,
+    ephemeralAgentsEnabled,
+  };
+}
+
+/*
+FNXC:WorkflowAgentRouting 2026-08-07-09:11:
+A non-scheduler TaskExecutor.execute() entry must run the real graph admission hook regardless
+of the persisted compatibility value. The graph owns durable principal acquisition, unavailable
+principal holds, and capacity fencing; outer dispatch must not rebound or queue work under this setting.
+*/
+const graphDefinition = {
+  id: "WF-fn-8821-principal",
+  name: "FN-8821 principal fixture",
+  ir: {
+    version: "v1",
+    name: "FN-8821 principal fixture",
+    nodes: [
+      { id: "start", kind: "start" },
+      { id: "execute", kind: "script", config: { seam: "execute", scriptName: "noop" } },
+      { id: "end", kind: "end" },
+    ],
+    edges: [{ from: "start", to: "execute" }, { from: "execute", to: "end" }],
+  },
+};
+
+function durableExecutorAgent(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "workflow-executor",
+    name: "Workflow Executor",
+    state: "active",
+    roles: ["executor"],
+    createdAt: now,
+    runtimeConfig: {},
     ...overrides,
   };
 }
 
-describe("executor ephemeral-disabled dispatch gate", () => {
-  it("blocks and re-queues an unassigned task when ephemeralAgentsEnabled=false", async () => {
+function createProductionGraphHarness(
+  ephemeralAgentsEnabled: boolean | undefined,
+  agents: unknown[] = [durableExecutorAgent()],
+  taskOverrides: Partial<TaskDetail> = {},
+  semaphore?: AgentSemaphore,
+) {
+  const store = createMockStore();
+  const live = task(taskOverrides);
+  store.getTask.mockResolvedValue(live);
+  store.getRootDir = vi.fn(() => "/tmp/fn-8821-project");
+  store.getSettings.mockResolvedValue(settings(ephemeralAgentsEnabled));
+  store.getTaskWorkflowSelectionAsync.mockResolvedValue({ workflowId: graphDefinition.id, stepIds: [] });
+  store.getTaskWorkflowSelection.mockReturnValue({ workflowId: graphDefinition.id, stepIds: [] });
+  store.getWorkflowDefinition = vi.fn(async () => graphDefinition);
+  store.upsertWorkflowWorkItem = vi.fn(async (input: Record<string, unknown>) => ({ id: "work-item-1", ...input }));
+  const agentStore = {
+    workflowProjectId: "project-fn-8821",
+    listAgents: vi.fn(async () => agents),
+  };
+  const executor = new TaskExecutor(store, "/tmp/fn-8821-executor", { agentStore, semaphore } as any);
+  const acquire = vi.spyOn((executor as any).workflowAgentCapacity, "acquire").mockResolvedValue({ status: "acquired" });
+  const release = vi.spyOn((executor as any).workflowAgentCapacity, "release").mockResolvedValue(undefined);
+  return { store, live, executor, agentStore, acquire, release };
+}
+
+describe("executor compatibility setting is routing-inert", () => {
+  afterEach(() => {
+    clearPreHeldExecutorSlotsForTests();
+    (TaskExecutor as unknown as { processWideGraphRouting: Set<string> }).processWideGraphRouting.clear();
+  });
+
+  it.each([undefined, true, false])(
+    "runs real graph principal admission for unassigned direct re-entry with compatibility input %s",
+    async (ephemeralAgentsEnabled) => {
+      resetExecutorMocks();
+      const { store, live, executor, agentStore, acquire, release } = createProductionGraphHarness(ephemeralAgentsEnabled);
+
+      await executor.execute(live);
+
+      expect(agentStore.listAgents).toHaveBeenCalledWith({ includeEphemeral: true });
+      expect(store.upsertWorkflowWorkItem).toHaveBeenCalled();
+      expect(acquire).toHaveBeenCalledWith(expect.objectContaining({
+        projectId: "project-fn-8821",
+        agent: expect.objectContaining({ id: "workflow-executor" }),
+        maxProjectSessions: 2,
+      }));
+      expect(release).toHaveBeenCalledOnce();
+      expect((TaskExecutor as unknown as { processWideGraphRouting: Set<string> }).processWideGraphRouting).not.toContain(live.id);
+      expect(store.upsertWorkflowWorkItem).toHaveBeenCalledWith(expect.objectContaining({
+        state: "running",
+        principalAgentId: "workflow-executor",
+        workflowRole: "executor",
+        authorityKind: "role-pool",
+      }));
+      expect(store.moveTask).not.toHaveBeenCalled();
+      expect(store.transitionQueuedEpisode).not.toHaveBeenCalled();
+      expect(store.updateTask).not.toHaveBeenCalledWith(live.id, expect.objectContaining({ status: "queued" }), undefined);
+      expect(store.logEntry).not.toHaveBeenCalledWith(
+        live.id,
+        expect.stringContaining("ephemeral agents disabled"),
+        expect.anything(),
+        expect.anything(),
+      );
+    },
+  );
+
+  it.each([undefined, true, false])(
+    "preserves assigned workflow principals through scheduler-held graph dispatch for compatibility input %s",
+    async (ephemeralAgentsEnabled) => {
+      resetExecutorMocks();
+      const semaphore = new AgentSemaphore(1);
+      expect(semaphore.tryAcquire()).toBe(true);
+      const { store, live, executor, acquire, release } = createProductionGraphHarness(
+        ephemeralAgentsEnabled,
+        [durableExecutorAgent()],
+        { assignedAgentId: "workflow-executor" },
+        semaphore,
+      );
+      registerPreHeldExecutorSlot(live.id);
+
+      await executor.execute(live);
+
+      expect(store.upsertWorkflowWorkItem).toHaveBeenCalledWith(expect.objectContaining({
+        state: "running",
+        principalAgentId: "workflow-executor",
+        workflowRole: "executor",
+        authorityKind: "task-assignee",
+      }));
+      expect(acquire).toHaveBeenCalled();
+      expect(release).toHaveBeenCalledTimes(acquire.mock.calls.length);
+      expect(hasPreHeldExecutorSlot(live.id)).toBe(false);
+      expect(semaphore.activeCount).toBe(0);
+      expect(store.moveTask).not.toHaveBeenCalled();
+      expect(store.transitionQueuedEpisode).not.toHaveBeenCalled();
+    },
+  );
+
+  it("keeps an explicit-false direct re-entry behind the real unmet-dependency gate", async () => {
     resetExecutorMocks();
-    const store = createMockStore();
-    const live = task({ column: "in-progress", assignedAgentId: undefined });
-    store.getTask.mockResolvedValue(live);
-    store.getSettings.mockResolvedValue(settings({ ephemeralAgentsEnabled: false }));
-    const executor = new TaskExecutor(store, "/tmp/test");
-
-    const blocked = await (executor as any).blockOuterDispatchWhenEphemeralDisabled(live);
-
-    expect(blocked).toBe(true);
-    expect(store.moveTask).toHaveBeenCalledWith(
-      live.id,
-      "todo",
-      expect.objectContaining({ preserveProgress: true, moveSource: "engine", recoveryRehome: true }),
+    const { store, live, executor, agentStore, acquire } = createProductionGraphHarness(
+      false,
+      [durableExecutorAgent()],
+      { dependencies: ["FN-8821-PARENT"] },
     );
-    expect(store.updateTask).toHaveBeenCalledWith(
-      live.id,
-      expect.objectContaining({ status: "queued" }),
-      undefined,
-    );
-    expect(store.logEntry).toHaveBeenCalledWith(
-      live.id,
-      expect.stringContaining("ephemeral agents disabled"),
-      expect.stringContaining("Executor pre-dispatch ephemeral gate"),
-      undefined,
-    );
-  });
-
-  it("allows dispatch when ephemeralAgentsEnabled is on (default)", async () => {
-    resetExecutorMocks();
-    const store = createMockStore();
-    const live = task({ assignedAgentId: undefined });
-    store.getTask.mockResolvedValue(live);
-    store.getSettings.mockResolvedValue(settings({ ephemeralAgentsEnabled: true }));
-    const executor = new TaskExecutor(store, "/tmp/test");
-
-    const blocked = await (executor as any).blockOuterDispatchWhenEphemeralDisabled(live);
-
-    expect(blocked).toBe(false);
-    expect(store.moveTask).not.toHaveBeenCalled();
-    expect(store.updateTask).not.toHaveBeenCalled();
-  });
-
-  it("allows dispatch when the toggle is absent (undefined defaults to enabled)", async () => {
-    resetExecutorMocks();
-    const store = createMockStore();
-    const live = task({ assignedAgentId: undefined });
-    store.getTask.mockResolvedValue(live);
-    store.getSettings.mockResolvedValue(settings());
-    const executor = new TaskExecutor(store, "/tmp/test");
-
-    expect(await (executor as any).blockOuterDispatchWhenEphemeralDisabled(live)).toBe(false);
-    expect(store.moveTask).not.toHaveBeenCalled();
-  });
-
-  it("allows a task assigned to a permanent (non-ephemeral) agent through", async () => {
-    resetExecutorMocks();
-    const store = createMockStore();
-    const live = task({ assignedAgentId: "agent-permanent" });
-    store.getTask.mockResolvedValue(live);
-    store.getSettings.mockResolvedValue(settings({ ephemeralAgentsEnabled: false }));
-    const agentStore = {
-      getAgent: vi.fn().mockResolvedValue({ id: "agent-permanent", name: "reviewer", role: "executor" }),
-    };
-    const executor = new TaskExecutor(store, "/tmp/test", { agentStore } as any);
-
-    const blocked = await (executor as any).blockOuterDispatchWhenEphemeralDisabled(live);
-
-    expect(blocked).toBe(false);
-    expect(store.moveTask).not.toHaveBeenCalled();
-    expect(store.updateTask).not.toHaveBeenCalled();
-  });
-
-  it("blocks a task whose assigned agent is itself ephemeral", async () => {
-    resetExecutorMocks();
-    const store = createMockStore();
-    const live = task({ assignedAgentId: "executor-FN-EPHEMERAL-GATE" });
-    store.getTask.mockResolvedValue(live);
-    store.getSettings.mockResolvedValue(settings({ ephemeralAgentsEnabled: false }));
-    // isEphemeralAgent keys off the runtime-managed task-worker marker.
-    const agentStore = {
-      getAgent: vi.fn().mockResolvedValue({
-        id: "executor-FN-EPHEMERAL-GATE",
-        name: "executor-FN-EPHEMERAL-GATE",
-        role: "executor",
-        metadata: { agentKind: "task-worker", taskWorker: true },
-      }),
-    };
-    const executor = new TaskExecutor(store, "/tmp/test", { agentStore } as any);
-
-    const blocked = await (executor as any).blockOuterDispatchWhenEphemeralDisabled(live);
-
-    expect(blocked).toBe(true);
-    expect(store.updateTask).toHaveBeenCalledWith(
-      live.id,
-      expect.objectContaining({ status: "queued" }),
-      undefined,
-    );
-  });
-
-  /*
-  FNXC:EphemeralAgents 2026-07-01-00:00:
-  Surface Enumeration — one gate must cover every workflow dispatch entry point.
-  Drive the real execute() and assert that neither the graph nor the work-engine dispatch it
-  fronts is reached when the gate blocks. This is the invariant that prevented the fix from
-  being repro-only.
-  */
-  it("execute() reaches no workflow dispatch path when ephemeral is disabled and task is unassigned", async () => {
-    resetExecutorMocks();
-    const store = createMockStore();
-    const live = task({ assignedAgentId: undefined });
-    store.getTask.mockResolvedValue(live);
-    store.getSettings.mockResolvedValue(settings({ ephemeralAgentsEnabled: false }));
-
-    const executor = new TaskExecutor(store, "/tmp/test", {} as any);
-
-    const graphSpy = vi.spyOn(executor as any, "executeWorkflowGraph").mockResolvedValue(undefined);
-    const workEngineSpy = vi
-      .spyOn(executor as any, "maybeDispatchWorkflowWorkEngine")
-      .mockResolvedValue(false);
+    const parent = task({
+      id: "FN-8821-PARENT",
+      dependencies: [],
+      column: "in-progress",
+    });
+    store.listTasks.mockResolvedValue([live, parent]);
 
     await executor.execute(live);
 
-    // Every workflow dispatch entry point must be unreachable once the gate blocks.
-    expect(graphSpy).not.toHaveBeenCalled();
-    expect(workEngineSpy).not.toHaveBeenCalled();
-
-    // And the task is re-queued for the scheduler to assign a permanent agent.
-    expect(store.updateTask).toHaveBeenCalledWith(
-      live.id,
-      expect.objectContaining({ status: "queued" }),
-      undefined,
-    );
+    expect(agentStore.listAgents).not.toHaveBeenCalled();
+    expect(acquire).not.toHaveBeenCalled();
+    expect(store.transitionQueuedEpisode).toHaveBeenCalledWith(live.id, expect.objectContaining({
+      signature: "dependency:FN-8821-PARENT",
+      blockedBy: parent.id,
+    }));
+    expect(store.upsertWorkflowWorkItem).not.toHaveBeenCalled();
   });
 
-  it("execute() still reaches the workflow graph path when ephemeral agents are enabled", async () => {
-    resetExecutorMocks();
-    const store = createMockStore();
-    const live = task({ assignedAgentId: undefined });
-    store.getTask.mockResolvedValue(live);
-    store.getSettings.mockResolvedValue(settings({ ephemeralAgentsEnabled: true }));
+  it.each([undefined, true, false])(
+    "holds unavailable workflow principals through their graph owner for compatibility input %s",
+    async (ephemeralAgentsEnabled) => {
+      resetExecutorMocks();
+      const { store, live, executor, agentStore, acquire } = createProductionGraphHarness(ephemeralAgentsEnabled, []);
 
-    const executor = new TaskExecutor(store, "/tmp/test");
-    // Stub the graph so execute() stops at the routing boundary — we only need
-    // to prove the gate did NOT short-circuit dispatch when the toggle is on.
-    const graphSpy = vi.spyOn(executor as any, "executeWorkflowGraph").mockResolvedValue(undefined);
+      await executor.execute(live);
 
-    await executor.execute(live);
+      expect(agentStore.listAgents).toHaveBeenCalledOnce();
+      expect(acquire).not.toHaveBeenCalled();
+      expect(store.upsertWorkflowWorkItem).toHaveBeenCalledWith(expect.objectContaining({
+        state: "held",
+        blockedReason: "workflow-principal-role-pool-exhausted:executor",
+        workflowRole: "executor",
+        authorityKind: null,
+      }));
+      expect(store.moveTask).not.toHaveBeenCalled();
+      expect(store.transitionQueuedEpisode).not.toHaveBeenCalled();
+    },
+  );
 
-    expect(graphSpy).toHaveBeenCalledTimes(1);
-    expect(store.updateTask).not.toHaveBeenCalledWith(
-      live.id,
-      expect.objectContaining({ status: "queued" }),
-      undefined,
-    );
-  });
+  it.each([undefined, true, false])(
+    "holds saturated workflow principals through graph capacity for compatibility input %s",
+    async (ephemeralAgentsEnabled) => {
+      resetExecutorMocks();
+      const { store, live, executor, acquire } = createProductionGraphHarness(ephemeralAgentsEnabled);
+      acquire.mockResolvedValue({ status: "held", reason: "project-capacity" });
+
+      await executor.execute(live);
+
+      expect(acquire).toHaveBeenCalledOnce();
+      expect(store.upsertWorkflowWorkItem).toHaveBeenCalledWith(expect.objectContaining({
+        state: "held",
+        blockedReason: "workflow-principal-project-capacity:executor",
+        principalAgentId: "workflow-executor",
+        authorityKind: "role-pool",
+      }));
+      expect(store.moveTask).not.toHaveBeenCalled();
+      expect(store.transitionQueuedEpisode).not.toHaveBeenCalled();
+    },
+  );
 });

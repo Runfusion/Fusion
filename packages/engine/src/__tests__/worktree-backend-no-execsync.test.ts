@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 
 describe("worktree-backend static shellout guard", () => {
   it("does not use execSync and always sets timeout for exec/execFile calls", () => {
-    const source = readFileSync(resolve(process.cwd(), "src/worktree-backend.ts"), "utf-8");
+    const source = readFileSync(resolve(process.cwd(), "src/worktree/worktree-backend.ts"), "utf-8");
 
     expect(source).not.toContain("execSync(");
     expect(source).not.toMatch(/\bexecSync\b/);

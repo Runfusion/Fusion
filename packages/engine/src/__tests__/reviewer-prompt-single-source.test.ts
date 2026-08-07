@@ -75,7 +75,7 @@ beforeEach(() => {
 describe("reviewer prompt single source", () => {
   it("does not reintroduce an engine reviewer policy constant", () => {
     const reviewerSource = readFileSync(
-      resolve(fileURLToPath(new URL("..", import.meta.url)), "reviewer.ts"),
+      resolve(fileURLToPath(new URL("..", import.meta.url)), "execution/reviewer.ts"),
       "utf8",
     );
 

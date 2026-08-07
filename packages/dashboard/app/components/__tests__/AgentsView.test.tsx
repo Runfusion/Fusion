@@ -2093,7 +2093,7 @@ describe("AgentsView", () => {
         expect(mockCreateAgent).toHaveBeenCalledWith(
           expect.objectContaining({
             name: "My Agent",
-            role: "custom",
+            roles: ["custom"],
           }),
           undefined,
         );

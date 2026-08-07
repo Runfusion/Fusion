@@ -4,12 +4,12 @@ import { decideMissionSymbolAdmission } from "../missions/mission-symbol-admissi
 const WORKFLOW_SYMBOL_LOCK_LEASE_MS = 10 * 60_000;
 
 export interface WorkflowWorkSchedulerStore {
-  listDueWorkflowWorkItems(filter?: WorkflowWorkItemDueFilter): WorkflowWorkItem[];
+  listDueWorkflowWorkItems(filter?: WorkflowWorkItemDueFilter): WorkflowWorkItem[] | Promise<WorkflowWorkItem[]>;
   acquireWorkflowWorkItemLease(
     id: string,
     leaseOwner: string,
     opts: { leaseDurationMs: number; now?: string },
-  ): WorkflowWorkItem | null;
+  ): WorkflowWorkItem | null | Promise<WorkflowWorkItem | null>;
   /** TaskStore supplies these optional scheduler-admission capabilities. */
   getTask?(id: string): Promise<Task | undefined>;
   getMissionStore?(): MissionStore | AsyncMissionStore;
@@ -52,7 +52,7 @@ export async function claimDueWorkflowWorkItem(
   store: WorkflowWorkSchedulerStore,
   opts: ClaimWorkflowWorkOptions,
 ): Promise<WorkflowWorkDispatch | null> {
-  const due = store.listDueWorkflowWorkItems({
+  const due = await store.listDueWorkflowWorkItems({
     now: opts.now,
     limit: opts.limit ?? 25,
     kinds: opts.kinds,
@@ -85,7 +85,7 @@ export async function claimDueWorkflowWorkItem(
       }
     }
 
-    const workItem = store.acquireWorkflowWorkItemLease(candidate.id, opts.leaseOwner, {
+    const workItem = await store.acquireWorkflowWorkItemLease(candidate.id, opts.leaseOwner, {
       now: opts.now,
       leaseDurationMs: opts.leaseDurationMs,
     });

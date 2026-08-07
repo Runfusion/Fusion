@@ -362,3 +362,6 @@ A second quarantine in the same subsystem is a product-race smell: the flake may
 ## Flagged ambiguities
 
 - "Merging" a shared-branch-group Task had been used for both member integration and group promotion — these are distinct steps with independent gating and must not be conflated.
+
+- **Workflow principal:** the durable agent fenced on one agent-executed workflow node. It is distinct from task ownership and exists only while a live work item/session lease is active.
+- **Role tag:** a normalized permanent-agent capability label used for workflow pool routing; agents may have multiple tags.

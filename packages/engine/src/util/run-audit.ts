@@ -497,6 +497,7 @@ export type DatabaseMutationType =
   | "task:release"
   | "task:pause"
   | "task:unpause"
+  | "task:resume-step"
   | "task:dependency:add"
   | "merge:request-enqueued"
   | "merge:dependency-parity-diff"

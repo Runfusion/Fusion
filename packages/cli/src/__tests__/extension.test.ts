@@ -270,6 +270,7 @@ legacyDescribe("fn pi extension (legacy exhaustive suite)", () => {
         "fn_task_unpause",
         "fn_task_retry",
         "fn_task_bypass_review",
+        "fn_workflow_step_resume",
         "fn_task_duplicate",
         "fn_task_refine",
         "fn_task_import_github",
@@ -4189,12 +4190,15 @@ pgTest("fn pi extension (runnable structured-output regression slice)", () => {
       expect(text).not.toMatch(new RegExp(`Current Task: ${triageTask.id}(?! \\()`));
     });
 
-    it("returns empty list message when no agents", async () => {
+    it("lists the four mandatory built-in workflow owners on a fresh project", async () => {
       const tool = api.tools.get("fn_list_agents")!;
       const result = await tool.execute("la-5", {}, undefined, undefined, makeCtx(tmpDir));
 
-      expect(result.content[0].text).toContain("No agents found");
-      expect(result.details.count).toBe(0);
+      expect(result.content[0].text).toContain("Workflow Planner");
+      expect(result.content[0].text).toContain("Workflow Executor");
+      expect(result.content[0].text).toContain("Workflow Reviewer");
+      expect(result.content[0].text).toContain("Workflow Merger");
+      expect(result.details.count).toBe(4);
     });
   });
 
@@ -4971,12 +4975,15 @@ pgTest("fn pi extension (runnable structured-output regression slice)", () => {
       expect(result.content[0].text).toContain("org-report");
     });
 
-    it("returns empty message when no agents", async () => {
+    it("shows the mandatory built-in workflow owners in a fresh project", async () => {
       const tool = api.tools.get("fn_agent_org_chart")!;
       const result = await tool.execute("oc-3", {}, undefined, undefined, makeCtx(tmpDir));
 
-      expect(result.content[0].text).toContain("No agents found");
-      expect(result.details.count).toBe(0);
+      expect(result.content[0].text).toContain("Workflow Planner");
+      expect(result.content[0].text).toContain("Workflow Executor");
+      expect(result.content[0].text).toContain("Workflow Reviewer");
+      expect(result.content[0].text).toContain("Workflow Merger");
+      expect(result.details.count).toBe(4);
     });
 
     it("returns single agent for lone agent", async () => {

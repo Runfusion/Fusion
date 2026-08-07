@@ -802,7 +802,9 @@ export const agents = projectSchema.table("agents", {
   projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
   id: text("id").notNull(),
   name: text("name").notNull(),
+  /** Deprecated singular compatibility column; canonical roles live in roles JSONB. */
   role: text("role").notNull(),
+  roles: jsonb("roles").notNull().default([]),
   state: text("state").notNull().default("idle"),
   taskId: text("task_id"),
   createdAt: text("created_at").notNull(),
@@ -938,6 +940,18 @@ export const completionHandoffMarkers = projectSchema.table("completion_handoff_
 ]);
 
 // ── Workflow work items ──────────────────────────────────────────────
+export const workflowAgentCapacityLeases = projectSchema.table("workflow_agent_capacity_leases", {
+  projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
+  attemptId: text("attempt_id").notNull(),
+  agentId: text("agent_id").notNull(),
+  createdAt: text("created_at").notNull(),
+  // FNXC:WorkflowAgentRouting 2026-08-07-07:16: A crashed engine cannot run its finally cleanup, so durable workflow capacity leases expire and are reclaimed on the next admission.
+  expiresAt: text("expires_at").notNull(),
+}, (t) => [
+  primaryKey({ columns: [t.projectId, t.attemptId] }),
+  index("idx_workflow_agent_capacity_leases_agent").on(t.projectId, t.agentId),
+]);
+
 export const workflowWorkItems = projectSchema.table("workflow_work_items", {
   projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
   id: text("id").notNull(),
@@ -958,6 +972,13 @@ export const workflowWorkItems = projectSchema.table("workflow_work_items", {
   sourceColumn: text("source_column"),
   targetColumn: text("target_column"),
   irHash: text("ir_hash"),
+  // FNXC:WorkflowAgentRouting 2026-08-07-03:25:
+  // A workflow claim fences its durable principal and exact template instance.
+  // Session retries must reuse this identity rather than re-routing a task.
+  principalAgentId: text("principal_agent_id"),
+  workflowRole: text("workflow_role"),
+  authorityKind: text("authority_kind"),
+  nodeInstanceId: text("node_instance_id"),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
 }, (t) => [

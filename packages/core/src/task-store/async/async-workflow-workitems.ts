@@ -112,6 +112,10 @@ export function rowToWorkflowWorkItem(row: WorkflowWorkItemRow): WorkflowWorkIte
     sourceColumn: row.sourceColumn,
     targetColumn: row.targetColumn,
     irHash: row.irHash,
+    principalAgentId: row.principalAgentId,
+    workflowRole: row.workflowRole as WorkflowWorkItem["workflowRole"],
+    authorityKind: row.authorityKind as WorkflowWorkItem["authorityKind"],
+    nodeInstanceId: row.nodeInstanceId,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -123,11 +127,15 @@ export function rowToWorkflowWorkItem(row: WorkflowWorkItemRow): WorkflowWorkIte
 export async function getWorkflowWorkItem(
   db: AsyncDataLayer["db"] | DbTransaction,
   id: string,
+  projectId?: string,
 ): Promise<WorkflowWorkItem | null> {
   const rows = await db
     .select()
     .from(schema.project.workflowWorkItems)
-    .where(eq(schema.project.workflowWorkItems.id, id))
+    .where(and(
+      eq(schema.project.workflowWorkItems.id, id),
+      projectScopeFor(schema.project.workflowWorkItems.projectId, projectId),
+    ))
     .limit(1);
   const row = rows[0] as WorkflowWorkItemRow | undefined;
   return row ? rowToWorkflowWorkItem(row) : null;
@@ -163,6 +171,7 @@ export async function upsertWorkflowWorkItem(
       .from(schema.project.workflowWorkItems)
       .where(
         and(
+          projectScopeFor(schema.project.workflowWorkItems.projectId, layer.projectId),
           eq(schema.project.workflowWorkItems.runId, input.runId),
           eq(schema.project.workflowWorkItems.taskId, input.taskId),
           eq(schema.project.workflowWorkItems.nodeId, input.nodeId),
@@ -208,6 +217,13 @@ export async function upsertWorkflowWorkItem(
         sourceColumn: input.sourceColumn === undefined ? existing?.sourceColumn ?? null : input.sourceColumn,
         targetColumn: input.targetColumn === undefined ? existing?.targetColumn ?? null : input.targetColumn,
         irHash: input.irHash === undefined ? existing?.irHash ?? null : input.irHash,
+        // FNXC:WorkflowAgentRouting 2026-08-07-03:25:
+        // Preserve a claimed principal on resume; a new route can only be
+        // fenced by explicitly providing these fields before session creation.
+        principalAgentId: input.principalAgentId === undefined ? existing?.principalAgentId ?? null : input.principalAgentId,
+        workflowRole: input.workflowRole === undefined ? existing?.workflowRole ?? null : input.workflowRole,
+        authorityKind: input.authorityKind === undefined ? existing?.authorityKind ?? null : input.authorityKind,
+        nodeInstanceId: input.nodeInstanceId === undefined ? existing?.nodeInstanceId ?? null : input.nodeInstanceId,
         createdAt: existing?.createdAt ?? now,
         updatedAt: now,
       })
@@ -236,11 +252,15 @@ export async function upsertWorkflowWorkItem(
           sourceColumn: input.sourceColumn === undefined ? existing?.sourceColumn ?? null : input.sourceColumn,
           targetColumn: input.targetColumn === undefined ? existing?.targetColumn ?? null : input.targetColumn,
           irHash: input.irHash === undefined ? existing?.irHash ?? null : input.irHash,
+          principalAgentId: input.principalAgentId === undefined ? existing?.principalAgentId ?? null : input.principalAgentId,
+          workflowRole: input.workflowRole === undefined ? existing?.workflowRole ?? null : input.workflowRole,
+          authorityKind: input.authorityKind === undefined ? existing?.authorityKind ?? null : input.authorityKind,
+          nodeInstanceId: input.nodeInstanceId === undefined ? existing?.nodeInstanceId ?? null : input.nodeInstanceId,
           updatedAt: now,
         },
       });
 
-    const row = await getWorkflowWorkItem(tx, id);
+    const row = await getWorkflowWorkItem(tx, id, layer.projectId);
     if (!row) throw new Error(`Failed to upsert workflow work item ${id}`);
 
     // Run-audit event inside the same transaction (commits/rolls back together).
@@ -357,7 +377,10 @@ export async function transitionWorkflowWorkItem(
     const existingRows = await tx
       .select()
       .from(schema.project.workflowWorkItems)
-      .where(eq(schema.project.workflowWorkItems.id, id))
+      .where(and(
+        eq(schema.project.workflowWorkItems.id, id),
+        projectScopeFor(schema.project.workflowWorkItems.projectId, layer.projectId),
+      ))
       .limit(1);
     const existing = existingRows[0] as WorkflowWorkItemRow | undefined;
     if (!existing) throw new Error(`Workflow work item ${id} not found`);
@@ -392,14 +415,24 @@ export async function transitionWorkflowWorkItem(
           patch.leaseExpiresAt === undefined ? existing.leaseExpiresAt : patch.leaseExpiresAt,
         lastError: patch.lastError === undefined ? existing.lastError : patch.lastError,
         blockedReason: patch.blockedReason === undefined ? existing.blockedReason : patch.blockedReason,
+        principalAgentId: patch.principalAgentId === undefined ? existing.principalAgentId : patch.principalAgentId,
+        workflowRole: patch.workflowRole === undefined ? existing.workflowRole : patch.workflowRole,
+        authorityKind: patch.authorityKind === undefined ? existing.authorityKind : patch.authorityKind,
+        nodeInstanceId: patch.nodeInstanceId === undefined ? existing.nodeInstanceId : patch.nodeInstanceId,
         updatedAt: now,
       })
-      .where(eq(schema.project.workflowWorkItems.id, id));
+      .where(and(
+        eq(schema.project.workflowWorkItems.id, id),
+        projectScopeFor(schema.project.workflowWorkItems.projectId, layer.projectId),
+      ));
 
     const updatedRows = await tx
       .select()
       .from(schema.project.workflowWorkItems)
-      .where(eq(schema.project.workflowWorkItems.id, id))
+      .where(and(
+        eq(schema.project.workflowWorkItems.id, id),
+        projectScopeFor(schema.project.workflowWorkItems.projectId, layer.projectId),
+      ))
       .limit(1);
     const updated = updatedRows[0] as WorkflowWorkItemRow | undefined;
     if (!updated) throw new Error(`Workflow work item ${id} disappeared`);
@@ -428,7 +461,10 @@ export async function transitionWorkflowWorkItem(
   const serialized = async (tx: DbTransaction): Promise<WorkflowWorkItem> => {
     const owner = await tx.select({ taskId: schema.project.workflowWorkItems.taskId })
       .from(schema.project.workflowWorkItems)
-      .where(eq(schema.project.workflowWorkItems.id, id))
+      .where(and(
+        eq(schema.project.workflowWorkItems.id, id),
+        projectScopeFor(schema.project.workflowWorkItems.projectId, layer.projectId),
+      ))
       .limit(1);
     const taskId = owner[0]?.taskId;
     if (!taskId) return doWork(tx);
@@ -450,6 +486,7 @@ export async function listDueWorkflowWorkItems(
 ): Promise<WorkflowWorkItem[]> {
   const now = filter.now ?? new Date().toISOString();
   const conditions = [
+    projectScopeFor(schema.project.workflowWorkItems.projectId, filter.projectId),
     // retryAfter is null OR retryAfter <= now.
     or(
       sql`${schema.project.workflowWorkItems.retryAfter} IS NULL`,

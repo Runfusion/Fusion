@@ -13,7 +13,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 const centralCoreSrc = readFileSync(
-  join(dirname(fileURLToPath(import.meta.url)), "../central-core.ts"),
+  join(dirname(fileURLToPath(import.meta.url)), "../central/central-core.ts"),
   "utf8",
 );
 

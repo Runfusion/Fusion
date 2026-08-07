@@ -71,6 +71,11 @@ export interface WorkflowWorkItem {
   sourceColumn: string | null;
   targetColumn: string | null;
   irHash: string | null;
+  /** Fenced durable principal for this claimed workflow attempt. */
+  principalAgentId: string | null;
+  workflowRole: "triage" | "executor" | "reviewer" | "merger" | null;
+  authorityKind: "task-assignee" | "review-node-override" | "column-binding" | "role-pool" | null;
+  nodeInstanceId: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -94,6 +99,11 @@ export interface WorkflowWorkItemUpsertInput {
   sourceColumn?: string | null;
   targetColumn?: string | null;
   irHash?: string | null;
+  /** Set once when a classified node is claimed; retries retain the fence. */
+  principalAgentId?: string | null;
+  workflowRole?: "triage" | "executor" | "reviewer" | "merger" | null;
+  authorityKind?: "task-assignee" | "review-node-override" | "column-binding" | "role-pool" | null;
+  nodeInstanceId?: string | null;
   now?: string;
 }
 
@@ -104,6 +114,11 @@ export interface WorkflowWorkItemTransitionPatch {
   leaseExpiresAt?: string | null;
   lastError?: string | null;
   blockedReason?: string | null;
+  /** Principal fencing may be set only before the session handler starts. */
+  principalAgentId?: string | null;
+  workflowRole?: "triage" | "executor" | "reviewer" | "merger" | null;
+  authorityKind?: "task-assignee" | "review-node-override" | "column-binding" | "role-pool" | null;
+  nodeInstanceId?: string | null;
   now?: string;
   /*
   FNXC:WorkflowWorkItemCas 2026-07-27-22:10 (U7, PR #2491 review — greptile P1):
@@ -122,6 +137,8 @@ export interface WorkflowWorkItemTransitionPatch {
 }
 
 export interface WorkflowWorkItemDueFilter {
+  /** Required by project-bound callers so due work cannot cross a tenant boundary. */
+  projectId?: string;
   now?: string;
   limit?: number;
   kinds?: WorkflowWorkItemKind[];

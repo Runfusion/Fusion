@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const taskStore = join(here, "../task-store");
-const workItemsSource = readFileSync(join(taskStore, "async-workflow-workitems.ts"), "utf8");
+const workItemsSource = readFileSync(join(taskStore, "async", "async-workflow-workitems.ts"), "utf8");
 const workItemFacadeSource = readFileSync(join(taskStore, "workflow-workitems-ops-2.ts"), "utf8");
 const auditedPersistenceSource = readFileSync(join(taskStore, "project-store-ops.ts"), "utf8");
 const persistenceSource = readFileSync(join(taskStore, "workflow-task-create-ops.ts"), "utf8");
@@ -61,7 +61,7 @@ describe("FN-8592 workflow task serialization protocol", () => {
 
   it("rejects plan-review passed persistence outside the enumerated protected writer set", () => {
     const allowed = new Set([
-      join(taskStore, "async-workflow-workitems.ts"),
+      join(taskStore, "async", "async-workflow-workitems.ts"),
       // The embedded-store conditional fallback reads this same predicate in
       // one SQLite immediate transaction; it is not a PostgreSQL bypass.
       join(taskStore, "workflow-workitems-ops-2.ts"),
@@ -79,7 +79,7 @@ describe("FN-8592 workflow task serialization protocol", () => {
 
   it("rejects unprotected PostgreSQL active-state mutation sites anywhere in core", () => {
     const allowed = new Set([
-      join(taskStore, "async-workflow-workitems.ts"),
+      join(taskStore, "async", "async-workflow-workitems.ts"),
       join(taskStore, "workflow-workitems-ops-2.ts"),
     ]);
     const activeMutationMarkers = [
@@ -106,11 +106,15 @@ describe("FN-8592 workflow task serialization protocol", () => {
   });
 
   it("uses an unfiltered active-state check in the conditional repair", () => {
+    /*
+    FNXC:FullSuiteBookkeeping 2026-08-05-00:30:
+    Plan-review satisfaction moved into shared `isPlanReviewSatisfied` so writers and repair paths share one definition.
+    Keep the active-state unfiltered invariant and project-scope binding; pin the helper call instead of the inlined step id/status literals.
+    */
     const body = exportedBody(workItemsSource, "seedStrandedPlanReviewContinuation");
     expect(body).toContain("ACTIVE_WORKFLOW_WORK_ITEM_STATES");
     expect(body).not.toContain("kind,");
-    expect(body).toContain('workflowStepId === "plan-review"');
-    expect(body).toContain('status === "passed"');
+    expect(body).toContain("isPlanReviewSatisfied");
     // Task identifiers are project-local in embedded PostgreSQL. Both sides
     // of the conditional predicate must stay bound to the layer's project.
     expect(body).toContain("projectScopeFor(schema.project.workflowWorkItems.projectId, layer.projectId)");

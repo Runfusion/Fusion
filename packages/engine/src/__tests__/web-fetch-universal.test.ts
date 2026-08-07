@@ -12,7 +12,7 @@ describe("fn_web_fetch universal registration", () => {
   });
 
   it("step-session executor registers fn_web_fetch", () => {
-    expect(readSource("step-session-executor.ts")).toContain("createWebFetchTool()");
+    expect(readSource("execution/step-session-executor.ts")).toContain("createWebFetchTool()");
   });
 
   it("reviewer registers fn_web_fetch", () => {
@@ -24,7 +24,8 @@ describe("fn_web_fetch universal registration", () => {
     // still registers fn_web_fetch as its first custom tool. Assert the current wiring —
     // createWebFetchTool() heads the reviewCustomTools array and that array is the
     // session's customTools — so this surface stays enumerated without pinning the literal.
-    const reviewerSrc = readSource("reviewer.ts");
+    // FNXC:FullSuiteBookkeeping 2026-08-05-00:15: reviewer lives under execution/ after the engine source peel.
+    const reviewerSrc = readSource("execution/reviewer.ts");
     expect(reviewerSrc).toMatch(/reviewCustomTools\s*=\s*\[\s*createWebFetchTool\(\),/);
     expect(reviewerSrc).toContain("customTools: reviewCustomTools");
   });

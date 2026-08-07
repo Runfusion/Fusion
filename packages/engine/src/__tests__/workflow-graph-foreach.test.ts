@@ -95,6 +95,21 @@ describe("WorkflowGraphExecutor foreach (U3)", () => {
     expect(result.visitedNodeIds).toContain("fe");
   });
 
+  it("uses a distinct materialized identity for each template-session admission", async () => {
+    const admitted: string[] = [];
+    const executor = new WorkflowGraphExecutor({
+      seams: baseSeams({ stepExecute: async () => ({ outcome: "success" as const }) }),
+      beforeNodeExecution: (node, _task, context) => {
+        if (node.id === "exec") admitted.push(String(context["workflow:node-instance-id"]));
+      },
+    });
+
+    const result = await executor.run(taskWithSteps(2), settingsOn(), foreachIr(singleExecuteTemplate()));
+
+    expect(result.outcome).toBe("success");
+    expect(admitted).toEqual(["fe#0:exec", "fe#1:exec"]);
+  });
+
   it("zero steps → foreach traverses its success edge without running any instance", async () => {
     const exec = vi.fn(async () => ({ outcome: "success" as const }));
     const seams = baseSeams({ stepExecute: exec });

@@ -433,7 +433,7 @@ it("refreshes agent data without showing full-screen loading spinner after initi
   });
 });
 
-it("displays role badge", async () => {
+it("displays canonical role tags", async () => {
   render(
     <AgentDetailView
       agentId="agent-001"
@@ -443,7 +443,7 @@ it("displays role badge", async () => {
   );
 
   await waitFor(() => {
-    expect(screen.getByText("Role: executor")).toBeInTheDocument();
+    expect(screen.getByText("Roles: executor")).toBeInTheDocument();
   });
 });
 

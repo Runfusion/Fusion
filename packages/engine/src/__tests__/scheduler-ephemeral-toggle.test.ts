@@ -1,8 +1,8 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
-import type { Agent, Task, TaskStore } from "@fusion/core";
-import { Scheduler } from "../scheduler.js";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { Task, TaskStore } from "@fusion/core";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
+import { Scheduler } from "../scheduler.js";
 
 vi.mock("node:fs", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs")>();
@@ -14,13 +14,6 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   return { ...actual, readFile: vi.fn() };
 });
 
-/*
-FNXC:PlanReviewStep 2026-07-26-17:10:
-The default workflow is plan-in-place: a `todo` card releases only after Plan Review passed, so these
-scheduler fixtures model a card that already cleared the gate (the state every real card is in when
-the capacity sweep sees it). Holding an unreviewed card is the gate working — that path is owned by
-`pre-release-plan-review.test.ts`.
-*/
 const PASSED_PLAN_REVIEW = {
   workflowStepId: "plan-review",
   workflowStepName: "Plan Review",
@@ -29,147 +22,104 @@ const PASSED_PLAN_REVIEW = {
   phase: "pre-merge" as const,
 };
 
-function makeTask(overrides: Partial<Task> = {}): Task {
+function task(overrides: Partial<Task> = {}): Task {
   return {
-    id: "FN-100",
-    description: "test",
+    id: "FN-8821-SCHEDULER",
+    title: "Scheduler compatibility regression",
+    description: "A dispatchable workflow task",
     column: "todo",
     dependencies: [],
     steps: [],
     currentStep: 0,
     log: [],
     workflowStepResults: [PASSED_PLAN_REVIEW],
-    createdAt: "2026-01-01T00:00:00.000Z",
-    updatedAt: "2026-01-01T00:00:00.000Z",
+    createdAt: "2026-08-07T00:00:00.000Z",
+    updatedAt: "2026-08-07T00:00:00.000Z",
     ...overrides,
   } as Task;
 }
 
-function makeAgent(overrides: Partial<Agent> & Pick<Agent, "id">): Agent {
+function storeWith(ready: Task, ephemeralAgentsEnabled: boolean | undefined): TaskStore {
+  const updateTask = vi.fn(async (_id: string, patch: Partial<Task>) => Object.assign(ready, patch));
   return {
-    name: overrides.name ?? overrides.id,
-    role: overrides.role ?? "executor",
-    state: overrides.state ?? "idle",
-    createdAt: overrides.createdAt ?? "2026-01-01T00:00:00.000Z",
-    updatedAt: overrides.updatedAt ?? "2026-01-01T00:00:00.000Z",
-    metadata: overrides.metadata ?? {},
-    ...overrides,
-  };
-}
-
-function createStore(task: Task, settings: Record<string, unknown>, tasksForList?: Task[]): TaskStore {
-  const moveTask = vi.fn().mockResolvedValue(undefined);
-  return {
-    listTasks: vi.fn().mockImplementation(async () => tasksForList ?? [task]),
-    getSettings: vi.fn().mockResolvedValue(settings),
-    /*
-    FNXC:EngineTests 2026-06-27-10:05:
-    Scheduler fakes must expose the production `updateSettings` heartbeat write so ephemeral-agent dispatch assertions measure scheduler behavior instead of fake drift.
-    */
-    updateSettings: vi.fn().mockResolvedValue(settings),
-    getTask: vi.fn().mockResolvedValue(task),
-    updateTask: vi.fn().mockResolvedValue(undefined),
-    moveTask,
-    /*
-    FNXC:EngineTests 2026-07-23-21:20:
-    Scheduler dispatch now goes through the atomic `moveTaskIf` (user-paused dispatch fix, commit 0818fc1da).
-    The fake delegates to the mock `moveTask` after the predicate passes so existing dispatch assertions on `store.moveTask` stay meaningful.
-    */
-    moveTaskIf: vi.fn(async (id: string, column: Task["column"], predicate: (live: Task) => boolean | Promise<boolean>, opts?: Record<string, unknown>) => {
-      const cur = (tasksForList ?? [task]).find((t) => t.id === id) ?? task;
-      if (!(await predicate(cur)) || cur.column === column) return { task: cur, moved: false };
-      await moveTask(id, column, opts);
-      cur.column = column;
-      return { task: cur, moved: true };
+    listTasks: vi.fn(async () => [ready]),
+    getTask: vi.fn(async () => ready),
+    getSettings: vi.fn(async () => ({
+      maxConcurrent: 2,
+      maxWorktrees: 4,
+      ephemeralAgentsEnabled,
+    })),
+    updateSettings: vi.fn(async () => undefined),
+    updateTask,
+    moveTask: vi.fn(async (_id: string, column: Task["column"]) => {
+      ready.column = column;
+      return ready;
     }),
-    parseFileScopeFromPrompt: vi.fn().mockResolvedValue([]),
-    logEntry: vi.fn().mockResolvedValue(undefined),
-    getRootDir: vi.fn().mockReturnValue("/tmp/project"),
-    getTasksDir: vi.fn().mockReturnValue("/tmp/project/.fusion/tasks"),
+    moveTaskIf: vi.fn(async (_id: string, column: Task["column"], predicate: (live: Task) => boolean | Promise<boolean>) => {
+      if (!await predicate(ready) || ready.column === column) return { task: ready, moved: false };
+      ready.column = column;
+      return { task: ready, moved: true };
+    }),
+    parseFileScopeFromPrompt: vi.fn(async () => []),
+    logEntry: vi.fn(async () => undefined),
+    transitionQueuedEpisode: vi.fn(async () => ({ appended: true, task: ready })),
+    getRootDir: vi.fn(() => "/tmp/fn-8821-scheduler"),
+    getTasksDir: vi.fn(() => "/tmp/fn-8821-scheduler/.fusion/tasks"),
     on: vi.fn(),
     off: vi.fn(),
+    recordRunAuditEvent: vi.fn(async () => undefined),
+    renewSymbolLocks: vi.fn(async () => ({ renewed: [], lost: [] })),
+    getMissionStore: vi.fn(() => ({ listMissions: () => [], listGoalIdsForMission: () => [] })),
   } as unknown as TaskStore;
 }
 
-async function runSchedulerOnce(scheduler: Scheduler): Promise<void> {
-  await scheduler.start();
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  scheduler.stop();
-}
-
-describe("Scheduler ephemeralAgentsEnabled toggle", () => {
+/*
+FNXC:WorkflowScheduling 2026-08-07-09:01:
+`ephemeralAgentsEnabled` remains an accepted persisted compatibility input, but scheduler release
+must not inspect it to assign, queue, or reject workflow work. Principal selection and capacity
+belong to graph admission after this production scheduler handoff.
+*/
+describe("scheduler compatibility setting is routing-inert", () => {
   beforeEach(() => {
-    vi.restoreAllMocks();
+    vi.clearAllMocks();
     vi.mocked(existsSync).mockReturnValue(true);
-    vi.mocked(readFile).mockResolvedValue("# Prompt\n");
+    vi.mocked(readFile).mockResolvedValue("# Task\nBody");
   });
 
-  it("default on: dispatches without auto-assigned agent", async () => {
-    const task = makeTask({ id: "FN-101" });
-    const store = createStore(task, { maxConcurrent: 2, maxWorktrees: 4, ephemeralAgentsEnabled: true });
-    const scheduler = new Scheduler(store);
+  it.each([undefined, true, false])(
+    "releases an unassigned workflow task with compatibility input %s without legacy assignment or queueing",
+    async (ephemeralAgentsEnabled) => {
+      const ready = task();
+      const store = storeWith(ready, ephemeralAgentsEnabled);
+      const onSchedule = vi.fn();
+      const scheduler = new Scheduler(store, { onSchedule });
+      (scheduler as unknown as { running: boolean }).running = true;
 
-    await runSchedulerOnce(scheduler);
+      await scheduler.schedule();
 
-    expect(store.updateTask).not.toHaveBeenCalledWith("FN-101", expect.objectContaining({ assignedAgentId: expect.any(String) }));
-    expect(store.moveTask).toHaveBeenCalledWith("FN-101", "in-progress", expect.any(Object));
-  });
+      expect(ready.column).toBe("in-progress");
+      expect(onSchedule).toHaveBeenCalledWith(expect.objectContaining({ id: ready.id, column: "in-progress" }));
+      expect(store.updateTask).not.toHaveBeenCalledWith(ready.id, expect.objectContaining({ assignedAgentId: expect.any(String) }));
+      expect(store.updateTask).not.toHaveBeenCalledWith(ready.id, expect.objectContaining({ status: "queued" }));
+      expect(store.transitionQueuedEpisode).not.toHaveBeenCalled();
+    },
+  );
 
-  it("off + no permanent executor: keeps task queued in todo", async () => {
-    const task = makeTask({ id: "FN-102" });
-    const store = createStore(task, { maxConcurrent: 2, maxWorktrees: 4, ephemeralAgentsEnabled: false });
-    const scheduler = new Scheduler(store, {
-      agentStore: {
-        listAgents: vi.fn().mockResolvedValue([]),
-        getChainOfCommand: vi.fn().mockResolvedValue([]),
-      } as never,
-    });
+  it.each([undefined, true, false])(
+    "preserves an assigned task's normal release for compatibility input %s",
+    async (ephemeralAgentsEnabled) => {
+      const ready = task({ id: "FN-8821-SCHEDULER-ASSIGNED", assignedAgentId: "durable-owner" });
+      const store = storeWith(ready, ephemeralAgentsEnabled);
+      const onSchedule = vi.fn();
+      const scheduler = new Scheduler(store, { onSchedule });
+      (scheduler as unknown as { running: boolean }).running = true;
 
-    await runSchedulerOnce(scheduler);
+      await scheduler.schedule();
 
-    expect(store.updateTask).toHaveBeenCalledWith("FN-102", { status: "queued" });
-    expect(store.logEntry).toHaveBeenCalledWith("FN-102", "queued — no permanent executor available (ephemeral agents disabled)");
-    expect(store.moveTask).not.toHaveBeenCalled();
-  });
-
-  it("off + permanent executor: assigns then dispatches", async () => {
-    const task = makeTask({ id: "FN-103" });
-    const store = createStore(task, { maxConcurrent: 2, maxWorktrees: 4, ephemeralAgentsEnabled: false });
-    const scheduler = new Scheduler(store, {
-      agentStore: {
-        listAgents: vi.fn().mockResolvedValue([makeAgent({ id: "agent-1" })]),
-        getChainOfCommand: vi.fn().mockResolvedValue([]),
-      } as never,
-    });
-
-    await runSchedulerOnce(scheduler);
-
-    expect(store.updateTask).toHaveBeenCalledWith("FN-103", { assignedAgentId: "agent-1" });
-    expect(store.moveTask).toHaveBeenCalledWith("FN-103", "in-progress", expect.any(Object));
-  });
-
-  it("off + multiple executors: picks least-loaded", async () => {
-    const task = makeTask({ id: "FN-104" });
-    const tasks = [
-      task,
-      makeTask({ id: "FN-A", column: "in-progress", assignedAgentId: "agent-heavy" }),
-      makeTask({ id: "FN-B", column: "todo", assignedAgentId: "agent-heavy" }),
-      makeTask({ id: "FN-C", column: "in-review", assignedAgentId: "agent-light" }),
-    ];
-    const store = createStore(task, { maxConcurrent: 2, maxWorktrees: 4, ephemeralAgentsEnabled: false }, tasks);
-    const scheduler = new Scheduler(store, {
-      agentStore: {
-        listAgents: vi.fn().mockResolvedValue([
-          makeAgent({ id: "agent-heavy", createdAt: "2026-01-01T00:00:00.000Z" }),
-          makeAgent({ id: "agent-light", createdAt: "2026-01-01T00:00:01.000Z" }),
-        ]),
-        getChainOfCommand: vi.fn().mockResolvedValue([]),
-      } as never,
-    });
-
-    await runSchedulerOnce(scheduler);
-
-    expect(store.updateTask).toHaveBeenCalledWith("FN-104", { assignedAgentId: "agent-light" });
-    expect(store.moveTask).toHaveBeenCalledWith("FN-104", "in-progress", expect.any(Object));
-  });
+      expect(ready.column).toBe("in-progress");
+      expect(ready.assignedAgentId).toBe("durable-owner");
+      expect(onSchedule).toHaveBeenCalledWith(expect.objectContaining({ id: ready.id, column: "in-progress" }));
+      expect(store.transitionQueuedEpisode).not.toHaveBeenCalled();
+    },
+  );
 });

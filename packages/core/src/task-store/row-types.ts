@@ -195,6 +195,10 @@ export interface WorkflowWorkItemRow {
   sourceColumn: string | null;
   targetColumn: string | null;
   irHash: string | null;
+  principalAgentId: string | null;
+  workflowRole: string | null;
+  authorityKind: string | null;
+  nodeInstanceId: string | null;
   createdAt: string;
   updatedAt: string;
 }

@@ -57,7 +57,7 @@ describe("the eval batch's complete-lane vocabulary", () => {
     to drive end to end. What was missing is that the READ asks for the resolved lane at all — the
     behaviour of the resolver itself is covered in `project-lane-vocabulary.test.ts`.
     */
-    const raw = readFileSync(new URL("../eval-automation.ts", import.meta.url), "utf8");
+    const raw = readFileSync(new URL("../eval/eval-automation.ts", import.meta.url), "utf8");
     /*
     COMMENTS STRIPPED FIRST. My first version asserted against the raw source and failed on its own
     explanatory comment, which quotes the deleted clause verbatim — a ratchet matching prose rather
