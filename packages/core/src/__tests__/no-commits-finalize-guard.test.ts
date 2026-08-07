@@ -40,6 +40,34 @@ describe("evaluateNoCommitsNoOpFinalize", () => {
     })).toEqual({ blocked: false, doneCount: 5, incompleteCount: 1 });
   });
 
+  it("allows intentional no-op tasks when all remaining steps are done", () => {
+    expect(evaluateNoCommitsNoOpFinalize({
+      noCommitsExpected: true,
+      steps: namedSteps([
+        ["Preflight", "done"],
+        ["Restore the invariant if needed", "skipped"],
+        ["Apply the invariant everywhere", "skipped"],
+        ["Add regressions if needed", "skipped"],
+        ["Testing & Verification", "done"],
+        ["Documentation & Delivery", "done"],
+      ]),
+    })).toEqual({ blocked: false, doneCount: 3, incompleteCount: 3 });
+  });
+
+  it("still blocks an equal done/skipped split without completed verification", () => {
+    expect(evaluateNoCommitsNoOpFinalize({
+      noCommitsExpected: true,
+      steps: namedSteps([
+        ["Preflight", "done"],
+        ["Apply", "done"],
+        ["Document", "done"],
+        ["Deploy", "skipped"],
+        ["Announce", "skipped"],
+        ["Follow up", "skipped"],
+      ]),
+    })).toMatchObject({ blocked: true, doneCount: 3, incompleteCount: 3 });
+  });
+
   it("blocks pending or in-progress work on no-commits tasks", () => {
     expect(evaluateNoCommitsNoOpFinalize({
       noCommitsExpected: true,

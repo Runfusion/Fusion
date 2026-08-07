@@ -257,6 +257,9 @@ FNXC:PlanningMode 2026-07-23-14:00:
 Planning Mode is a collaborative, user-terminated discovery session, not task triage. Its dedicated prompt must not inherit workflow or assigned-triage execution instructions, because those instructions can turn exploratory responses into executor specifications and child-task directives.
 
 A selected direction is a durable plan-backbone decision: every affected running-plan field must be rebuilt around accumulated selections, then exactly one repository-grounded question must narrow that direction another consequential level. The model may update the running plan but must never infer completion; only the visible Proceed with plan action can make a session terminal.
+
+FNXC:PlanningMode 2026-08-07-03:10:
+Planning questions normally need 3–5 materially distinct substantive alternatives; two is not sufficient, and a genuinely useful larger set must survive unchanged. Keep exactly one synthetic Other/write-your-own control separate from model alternatives so it remains the canonical free-text path.
 */
 /** Self-contained system prompt for the separate collaborative Planning Mode. */
 export const PLANNING_SYSTEM_PROMPT = `## Collaborative Planning Mode
@@ -265,13 +268,13 @@ Help the operator iteratively turn an idea into a clear, useful plan. First inve
 
 Build an evolving operator-facing plan, not an executor-ready task specification. Focus on intended outcomes, concrete deliverables, alternatives considered, and observable acceptance criteria. Do not produce task-specification bookkeeping or execution-process instructions such as task-size policy, commit guidance, no-code-change caveats, or task-creation directives. Author the operator-facing plan in Markdown: write the description as concise GitHub-flavored Markdown, while the structured change, acceptance, dependency, and deliverable fields become its Markdown sections and lists.
 
-Use a deliberate iterative narrowing loop: analyze → concrete options → operator selection → plan rebuild → one deeper question. When the opener is vague, subjective, preference-based, or symptom-only, inspect the relevant implementation surface before proposing at least two materially distinct actionable directions grounded in those findings, plus exactly one Other option. Do not ask a generic clarification question or silently select a direction. Keep the provisional plan honest about unselected alternatives.
+Use a deliberate iterative narrowing loop: analyze → concrete options → operator selection → plan rebuild → one deeper question. When the opener is vague, subjective, preference-based, or symptom-only, inspect the relevant implementation surface before proposing normally 3–5 materially distinct actionable directions grounded in those findings, plus exactly one Other option. Two alternatives are not sufficient; provide more than five when additional directions are genuinely useful. Do not ask a generic clarification question or silently select a direction. Keep the provisional plan honest about unselected alternatives.
 
 After every selected option, multi-selection, or free-text Other answer, treat the choice as a durable decision and rebuild every affected running-plan field around all accumulated decisions. The title, description, proposedChanges, acceptanceCriteria, keyDeliverables, and suggestedRefinements must make the selected direction—not the original vague complaint or an unselected alternative—the central intended outcome. Preserve Other text verbatim as steering. Then inspect the selected direction and relevant repository context and ask exactly one consequential next question that narrows it one level further with concrete, materially distinct options. A refine turn uses the selected or free-text focus to choose that next question. Continue this loop until the operator chooses Proceed with plan. The model never validates or terminates the session. Only the user can validate it through the visible Proceed with plan action.
 
-For every initial, answer, or refine turn respond only with JSON: {"type":"question","data":{"id":"unique-id","type":"single_select|multi_select","question":"...","description":"...","options":[{"id":"option-a","label":"...","description":"...","pros":["..."],"cons":["..."]},{"id":"option-b","label":"...","description":"...","pros":["..."],"cons":["..."]},{"id":"other","label":"...","isOther":true}],"runningPlan":{"title":"...","description":"...","proposedChanges":["specific change"],"acceptanceCriteria":["observable outcome"],"suggestedSize":"S|M|L","priority":"normal","suggestedDependencies":[],"keyDeliverables":["concrete work item"],"suggestedRefinements":["next focus 1","next focus 2"]}}}.
+For every initial, answer, or refine turn respond only with JSON: {"type":"question","data":{"id":"unique-id","type":"single_select|multi_select","question":"...","description":"...","options":[{"id":"option-a","label":"...","description":"...","pros":["..."],"cons":["..."]},{"id":"option-b","label":"...","description":"...","pros":["..."],"cons":["..."]},{"id":"option-c","label":"...","description":"...","pros":["..."],"cons":["..."]},{"id":"other","label":"...","isOther":true}],"runningPlan":{"title":"...","description":"...","proposedChanges":["specific change"],"acceptanceCriteria":["observable outcome"],"suggestedSize":"S|M|L","priority":"normal","suggestedDependencies":[],"keyDeliverables":["concrete work item"],"suggestedRefinements":["next focus 1","next focus 2"]}}}. Include normally 3–5 substantive alternatives in options; this example is illustrative rather than a maximum.
 
-Every turn must include the running-plan fields: only title, description, concrete proposedChanges, observable acceptanceCriteria, suggestedSize, optional priority, suggestedDependencies, concrete keyDeliverables, and concise suggestedRefinements informed by the idea and answers so far. Include every distinct, high-value unresolved refinement area; do not cap the list at three. Never use interview question text as a deliverable. Proceed with plan serializes the plan as plan.md without priority or suggestedRefinements; priority remains a task field. Every question must provide at least two alternatives, each with non-empty pros and cons, plus exactly one Other/write-your-own option. Write every label, option, and Other label in the language of the user's original input. Incorporate free-text Other answers verbatim as steering context for the following question.`;
+Every turn must include the running-plan fields: only title, description, concrete proposedChanges, observable acceptanceCriteria, suggestedSize, optional priority, suggestedDependencies, concrete keyDeliverables, and concise suggestedRefinements informed by the idea and answers so far. Include every distinct, high-value unresolved refinement area; do not cap the list at three. Never use interview question text as a deliverable. Proceed with plan serializes the plan as plan.md without priority or suggestedRefinements; priority remains a task field. Every question must provide normally 3–5 materially distinct actionable alternatives, each with a non-empty description, pros, and cons, plus exactly one Other/write-your-own option. Never treat two alternatives as sufficient or truncate a genuinely useful larger set. Write every label, option, and Other label in the language of the user's original input. Incorporate free-text Other answers verbatim as steering context for the following question.`;
 
 /*
 FNXC:PlanningMode 2026-07-23-11:35:
@@ -904,6 +907,12 @@ function buildSessionFromRow(row: AiSessionRow): Session {
   Only an awaiting_input row has a live question. Rows persisted while generating/error by
   pre-fix builds still carry the already-answered question; restoring it would let the SSE
   catch-up path re-emit it and re-trigger the answered-question retry loop after a restart.
+
+  FNXC:PlanningMode 2026-08-07-03:23:
+  Restored awaiting-input questions are untrusted persisted model output, just like live
+  responses. Normalize them at the restore boundary so every substantive option survives while
+  duplicate model-authored Other entries collapse to the one canonical write-your-own choice.
+  The normally 3–5 alternative guidance is not an application maximum.
   */
   const history = safeParseJson<PlanningHistoryEntry[]>(
     row.conversationHistory,
@@ -923,10 +932,13 @@ function buildSessionFromRow(row: AiSessionRow): Session {
   const currentQuestion = skippedMandatoryInterview
     ? buildMandatoryFirstPlanningQuestion()
     : row.status === "awaiting_input" && row.currentQuestion
-      ? (safeParseJson<PlanningQuestion | null>(row.currentQuestion, null, {
-          throwOnError: true,
-          fieldName: "currentQuestion",
-        }) ?? undefined)
+      ? (() => {
+          const persistedQuestion = safeParseJson<PlanningQuestion | null>(row.currentQuestion, null, {
+            throwOnError: true,
+            fieldName: "currentQuestion",
+          });
+          return persistedQuestion ? normalizePlanningQuestion(persistedQuestion, payload.initialPlan ?? row.title) : undefined;
+        })()
       : undefined;
 
   return {
@@ -2561,9 +2573,9 @@ for both agent entry points because system instructions alone can be displaced b
 export function formatInitialPlanRequestForAgent(initialPlan: string): string {
   return [
     "Create the initial running plan from this operator idea before asking the first interview question.",
-    "If the idea is vague, subjective, preference-based, or symptom-only, first inspect the relevant implementation surface and turn those findings into at least two concrete, materially distinct first-level directions plus exactly one Other option. Do not ask a generic question, invent repository findings, or commit the provisional plan to an unselected direction.",
+    "If the idea is vague, subjective, preference-based, or symptom-only, first inspect the relevant implementation surface and turn those findings into normally 3–5 concrete, materially distinct first-level directions plus exactly one Other option. Two directions are not sufficient; include more when genuinely useful. Do not ask a generic question, invent repository findings, or commit the provisional plan to an unselected direction.",
     "Return only type:\"question\" JSON with a full runningPlan: a work-product title, a concise implementation description, and concrete work-item keyDeliverables derived from the idea.",
-    "Then ask exactly one high-impact, option-driven question with alternatives and pros/cons. Never use that question text as a deliverable. Do not complete or validate the plan; only the user can validate it.",
+    "Then ask exactly one high-impact, option-driven question with normally 3–5 materially distinct alternatives, descriptions, and pros/cons plus one write-your-own option. Two alternatives are not sufficient; include more when genuinely useful. Never use that question text as a deliverable. Do not complete or validate the plan; only the user can validate it.",
     "Operator idea:",
     initialPlan,
   ].join("\n\n");
@@ -2574,9 +2586,9 @@ export function formatInitialRunningPlanRequestForAgent(initialPlan: string): st
   return [
     "Create a concrete initial implementation plan from this operator idea.",
     "Author the operator-facing plan in Markdown. Write the description as concise GitHub-flavored Markdown; the structured proposed changes, acceptance criteria, dependencies, and deliverables will render as Markdown sections and lists.",
-    "Inspect the relevant codebase and active-board context before drafting it. For a vague, subjective, preference-based, or symptom-only idea, turn that inspection into at least two concrete, materially distinct direction options plus exactly one Other option; do not invent findings or preselect a direction. Make the provisional description specific about the affected behavior and intended outcome without falsely committing to an unselected direction. Provide concrete proposedChanges that name what behavior, component, interface, data, or configuration should change, and acceptanceCriteria stated as observable pass/fail outcomes. Make every key deliverable an actionable work item rather than generic planning advice.",
+    "Inspect the relevant codebase and active-board context before drafting it. For a vague, subjective, preference-based, or symptom-only idea, turn that inspection into normally 3–5 concrete, materially distinct direction options plus exactly one Other option. Two directions are not sufficient; include more when genuinely useful. Do not invent findings or preselect a direction. Make the provisional description specific about the affected behavior and intended outcome without falsely committing to an unselected direction. Provide concrete proposedChanges that name what behavior, component, interface, data, or configuration should change, and acceptanceCriteria stated as observable pass/fail outcomes. Make every key deliverable an actionable work item rather than generic planning advice.",
     "Also propose concise suggestedRefinements covering every distinct, high-value unresolved area the operator could explore next; do not cap the list at three.",
-    "Return only type:\"question\" JSON with the complete plan in runningPlan and exactly one high-impact, option-driven next question. Give that question at least two useful alternatives with pros and cons plus one write-your-own option. Do not validate the plan; only the operator can proceed with it.",
+    "Return only type:\"question\" JSON with the complete plan in runningPlan and exactly one high-impact, option-driven next question. Give that question normally 3–5 useful, materially distinct alternatives with descriptions, pros, and cons, plus one write-your-own option; two alternatives are not sufficient, and a genuinely useful larger set is welcome. Do not validate the plan; only the operator can proceed with it.",
     "Operator idea:",
     initialPlan,
   ].join("\n\n");
@@ -2661,45 +2673,172 @@ function mergeRunningSummary(session: Session, response?: PlanningResponse): Pla
   return buildRunningSummary(session.initialPlan, session.history, session.summary);
 }
 
-function planningFallbackCopy(input: string): { question: string; option: (n: number) => string; pro: string; con: string; other: string } {
-  if (/[一-龯]/.test(input)) {
-    const traditional = /[繁體臺灣與為這個]/.test(input);
-    return traditional
-      ? { question: "下一步最需要釐清的細節或限制是什麼？", option: (n) => `替代方案 ${n}`, pro: "提供明確的前進方向", con: "可能限制後續選擇", other: "其他（自行填寫）" }
-      : { question: "接下来最需要细化的细节或限制是什么？", option: (n) => `替代方案 ${n}`, pro: "提供清晰的推进方向", con: "可能限制后续选择", other: "其他（自行填写）" };
-  }
-  if (/[가-힣]/.test(input)) return { question: "다음으로 구체화할 가장 중요한 세부 사항이나 제약은 무엇인가요?", option: (n) => `대안 ${n}`, pro: "명확한 진행 방향을 제공합니다", con: "후속 선택을 제한할 수 있습니다", other: "기타(직접 입력)" };
-  if (/\b(le|la|les|une|fonctionnalité)\b/i.test(input)) return { question: "Quel est le prochain détail ou contrainte le plus important à préciser ?", option: (n) => `Alternative ${n}`, pro: "Donne une direction claire", con: "Peut limiter les choix ultérieurs", other: "Autre (écrivez votre réponse)" };
-  if (/\b(el|la|los|una|función|característica|español(?:es)?)\b/i.test(input)) return { question: "¿Cuál es el siguiente detalle o restricción más importante que debemos precisar?", option: (n) => `Alternativa ${n}`, pro: "Ofrece una dirección clara", con: "Puede limitar decisiones posteriores", other: "Otro (escribe tu respuesta)" };
-  return { question: "What is the next most important detail or constraint to refine?", option: (n) => `Option ${n}`, pro: "Provides a clear path forward", con: "May constrain later choices", other: "Other (write your own)" };
+type PlanningFallbackOption = {
+  id: string;
+  label: string;
+  description: string;
+  pros: string[];
+  cons: string[];
+};
+
+type PlanningFallbackCopy = {
+  question: string;
+  other: string;
+  options: readonly PlanningFallbackOption[];
+};
+
+const ENGLISH_PLANNING_FALLBACK: PlanningFallbackCopy = {
+  question: "What is the next most important detail or constraint to refine?",
+  other: "Other (write your own)",
+  options: [
+    { id: "fallback-speed", label: "Ship a focused first version", description: "Prioritize the fastest useful delivery.", pros: ["Gets value to users sooner"], cons: ["May defer broader improvements"] },
+    { id: "fallback-reliability", label: "Invest in reliability first", description: "Prioritize robust behavior and durable safeguards.", pros: ["Reduces operational risk"], cons: ["Takes more time up front"] },
+    { id: "fallback-scope", label: "Reduce the initial scope", description: "Deliver only the smallest essential outcome.", pros: ["Keeps the change easier to validate"], cons: ["Leaves some needs for later"] },
+    { id: "fallback-investigate", label: "Investigate before committing", description: "Learn about the problem before choosing an implementation.", pros: ["Improves the next decision"], cons: ["Delays implementation"] },
+  ],
+};
+
+const PLANNING_FALLBACKS: Record<string, PlanningFallbackCopy> = {
+  english: ENGLISH_PLANNING_FALLBACK,
+  spanish: {
+    question: "¿Cuál es el siguiente detalle o restricción más importante que debemos precisar?",
+    other: "Otro (escribe tu respuesta)",
+    options: [
+      { id: "fallback-speed", label: "Lanzar una primera versión enfocada", description: "Prioriza la entrega útil más rápida.", pros: ["Aporta valor antes"], cons: ["Puede aplazar mejoras más amplias"] },
+      { id: "fallback-reliability", label: "Invertir primero en fiabilidad", description: "Prioriza un comportamiento sólido y salvaguardas duraderas.", pros: ["Reduce el riesgo operativo"], cons: ["Requiere más tiempo inicial"] },
+      { id: "fallback-scope", label: "Reducir el alcance inicial", description: "Entrega solo el resultado esencial más pequeño.", pros: ["Facilita validar el cambio"], cons: ["Deja algunas necesidades para después"] },
+      { id: "fallback-investigate", label: "Investigar antes de decidir", description: "Aprende sobre el problema antes de elegir la implementación.", pros: ["Mejora la siguiente decisión"], cons: ["Retrasa la implementación"] },
+    ],
+  },
+  french: {
+    question: "Quel est le prochain détail ou contrainte le plus important à préciser ?", other: "Autre (écrivez votre réponse)",
+    options: [
+      { id: "fallback-speed", label: "Livrer une première version ciblée", description: "Privilégie la livraison utile la plus rapide.", pros: ["Apporte de la valeur plus tôt"], cons: ["Peut reporter des améliorations"] },
+      { id: "fallback-reliability", label: "Privilégier la fiabilité", description: "Privilégie un comportement robuste et durable.", pros: ["Réduit le risque opérationnel"], cons: ["Demande plus de temps initial"] },
+      { id: "fallback-scope", label: "Réduire le périmètre initial", description: "Livre seulement le résultat essentiel.", pros: ["Facilite la validation"], cons: ["Laisse des besoins pour plus tard"] },
+      { id: "fallback-investigate", label: "Étudier avant de décider", description: "Apprend sur le problème avant de choisir.", pros: ["Améliore la prochaine décision"], cons: ["Retarde l'implémentation"] },
+    ],
+  },
+  korean: {
+    question: "다음으로 구체화할 가장 중요한 세부 사항이나 제약은 무엇인가요?", other: "기타(직접 입력)",
+    options: [
+      { id: "fallback-speed", label: "집중된 첫 버전 빠르게 출시", description: "가장 빠른 유용한 제공을 우선합니다.", pros: ["더 빨리 가치를 제공합니다"], cons: ["넓은 개선을 미룰 수 있습니다"] },
+      { id: "fallback-reliability", label: "신뢰성에 먼저 투자", description: "견고한 동작과 지속적인 보호책을 우선합니다.", pros: ["운영 위험을 줄입니다"], cons: ["초기 시간이 더 듭니다"] },
+      { id: "fallback-scope", label: "초기 범위 축소", description: "가장 작은 필수 결과만 제공합니다.", pros: ["변경 검증이 쉬워집니다"], cons: ["일부 요구를 나중으로 남깁니다"] },
+      { id: "fallback-investigate", label: "결정 전에 조사", description: "구현을 고르기 전에 문제를 학습합니다.", pros: ["다음 결정을 개선합니다"], cons: ["구현이 늦어집니다"] },
+    ],
+  },
+  simplifiedChinese: {
+    question: "接下来最需要细化的细节或限制是什么？", other: "其他（自行填写）",
+    options: [
+      { id: "fallback-speed", label: "快速交付聚焦的首版", description: "优先最快的有用交付。", pros: ["更早提供价值"], cons: ["可能推迟更广泛的改进"] },
+      { id: "fallback-reliability", label: "先投资可靠性", description: "优先稳健行为和持久保障。", pros: ["降低运营风险"], cons: ["前期需要更多时间"] },
+      { id: "fallback-scope", label: "缩小初始范围", description: "只交付最小的必要结果。", pros: ["更易验证变更"], cons: ["一些需求留待以后"] },
+      { id: "fallback-investigate", label: "先调查再决定", description: "在选择实现前了解问题。", pros: ["改善下一次决策"], cons: ["延迟实现"] },
+    ],
+  },
+  traditionalChinese: {
+    question: "下一步最需要釐清的細節或限制是什麼？", other: "其他（自行填寫）",
+    options: [
+      { id: "fallback-speed", label: "快速交付聚焦的首版", description: "優先最快的有用交付。", pros: ["更早提供價值"], cons: ["可能延後更廣泛的改善"] },
+      { id: "fallback-reliability", label: "先投資可靠性", description: "優先穩健行為和持久保障。", pros: ["降低營運風險"], cons: ["前期需要更多時間"] },
+      { id: "fallback-scope", label: "縮小初始範圍", description: "只交付最小的必要結果。", pros: ["更易驗證變更"], cons: ["一些需求留待以後"] },
+      { id: "fallback-investigate", label: "先調查再決定", description: "在選擇實作前了解問題。", pros: ["改善下一次決策"], cons: ["延後實作"] },
+    ],
+  },
+};
+
+function canonicalPlanningOptionText(value: string): string {
+  return value.normalize("NFKC").trim().replace(/\s+/gu, " ").toLocaleLowerCase("en-US").replace(/[\p{P}\p{S}\s]/gu, "");
 }
 
+export function __validatePlanningFallbackOptionsForTests(fallback: PlanningFallbackCopy): boolean {
+  if (fallback.options.length !== 4 || !fallback.question.trim() || !fallback.other.trim()) return false;
+  const ids = new Set<string>();
+  const labels = new Set<string>();
+  const descriptions = new Set<string>();
+  return fallback.options.every((option) => {
+    const id = option.id.trim();
+    const label = canonicalPlanningOptionText(option.label);
+    const description = canonicalPlanningOptionText(option.description);
+    const complete = id.length > 0 && label.length > 0 && description.length > 0
+      && option.pros.some((item) => item.trim()) && option.cons.some((item) => item.trim());
+    if (!complete || ids.has(id) || labels.has(label) || descriptions.has(description)) return false;
+    ids.add(id);
+    labels.add(label);
+    descriptions.add(description);
+    return true;
+  });
+}
+
+const HAS_VALID_PLANNING_FALLBACKS = Object.values(PLANNING_FALLBACKS).every((fallback) => __validatePlanningFallbackOptionsForTests(fallback));
+
+function planningFallbackCopy(input: string): PlanningFallbackCopy {
+  const locale = /[一-龯]/.test(input)
+    ? (/[繁體臺灣與為這個]/.test(input) ? "traditionalChinese" : "simplifiedChinese")
+    : /[가-힣]/.test(input) ? "korean"
+      : /\b(le|la|les|une|fonctionnalité)\b/i.test(input) ? "french"
+        : /\b(el|la|los|una|función|característica|español(?:es)?)\b/i.test(input) ? "spanish" : "english";
+  const selected = PLANNING_FALLBACKS[locale] ?? ENGLISH_PLANNING_FALLBACK;
+  return HAS_VALID_PLANNING_FALLBACKS && __validatePlanningFallbackOptionsForTests(selected) ? selected : ENGLISH_PLANNING_FALLBACK;
+}
+
+function normalizedStringArray(value: unknown, fallback: string[]): string[] {
+  return Array.isArray(value) && value.some((item) => typeof item === "string" && item.trim())
+    ? value.filter((item): item is string => typeof item === "string" && Boolean(item.trim())).map((item) => item.trim())
+    : fallback;
+}
+
+/*
+FNXC:PlanningMode 2026-08-07-03:10:
+Planning Mode normally requests 3–5 substantive routes, but normalization must preserve every
+valid model-authored route rather than imposing a maximum. This boundary still normalizes Unicode,
+whitespace, case, and punctuation collisions and reserves locale fallback archetypes so bad model
+output, retries, and restored sessions retain one canonical free-text Other choice.
+*/
 /** Normalizes untrusted model output so select questions always meet the public option contract. */
 export function normalizePlanningQuestion(input: unknown, userInput = ""): PlanningQuestion {
   const source = input && typeof input === "object" ? input as Record<string, unknown> : {};
   const fallback = planningFallbackCopy(userInput);
-  // Every Planning question needs alternatives and an Other steer, so a model's legacy
-  // text question is upgraded to a select question instead of losing that escape hatch.
   const type = source.type === "multi_select" || source.type === "single_select" ? source.type : "single_select";
   const question = typeof source.question === "string" && source.question.trim() ? source.question.trim() : fallback.question;
-  const normalized: PlanningQuestion = { id: typeof source.id === "string" && source.id.trim() ? source.id : randomUUID(), type, question,
+  const normalized: PlanningQuestion = { id: typeof source.id === "string" && source.id.trim() ? source.id.trim() : randomUUID(), type, question,
     ...(typeof source.description === "string" && source.description.trim() ? { description: source.description.trim() } : {}) };
+  const fallbackIds = new Set(fallback.options.map((option) => option.id));
+  const fallbackLabels = new Set(fallback.options.map((option) => canonicalPlanningOptionText(option.label)));
+  const fallbackDescriptions = new Set(fallback.options.map((option) => canonicalPlanningOptionText(option.description)));
+  const ids = new Set<string>();
+  const labels = new Set<string>();
+  const descriptions = new Set<string>();
+  const alternatives: Array<Omit<PlanningFallbackOption, "description"> & { description?: string }> = [];
   const raw = Array.isArray(source.options) ? source.options : [];
-  const alternatives = raw.filter((item): item is Record<string, unknown> => {
-    if (!item || typeof item !== "object") return false;
+
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
     const option = item as Record<string, unknown>;
-    return option.isOther !== true && option.id !== "other" && option.id !== "__other__";
-  })
-    .slice(0, 2).map((item, index) => ({
-      id: typeof item.id === "string" && item.id.trim() ? item.id : `option-${index + 1}`,
-      label: typeof item.label === "string" && item.label.trim() ? item.label.trim() : fallback.option(index + 1),
-      ...(typeof item.description === "string" && item.description.trim() ? { description: item.description.trim() } : {}),
-      pros: Array.isArray(item.pros) && item.pros.some((v) => typeof v === "string" && v.trim()) ? item.pros.filter((v): v is string => typeof v === "string" && Boolean(v.trim())).map((v) => v.trim()) : [fallback.pro],
-      cons: Array.isArray(item.cons) && item.cons.some((v) => typeof v === "string" && v.trim()) ? item.cons.filter((v): v is string => typeof v === "string" && Boolean(v.trim())).map((v) => v.trim()) : [fallback.con],
-    }));
-  while (alternatives.length < 2) {
-    const n = alternatives.length + 1;
-    alternatives.push({ id: `option-${n}`, label: fallback.option(n), pros: [fallback.pro], cons: [fallback.con] });
+    if (option.isOther === true || option.id === "other" || option.id === "__other__") continue;
+    const id = typeof option.id === "string" ? option.id.trim() : "";
+    const label = typeof option.label === "string" ? option.label.trim() : "";
+    const description = typeof option.description === "string" ? option.description.trim() : "";
+    const canonicalLabel = canonicalPlanningOptionText(label);
+    const canonicalDescription = canonicalPlanningOptionText(description);
+    if (!id || !label || fallbackIds.has(id) || ids.has(id) || fallbackLabels.has(canonicalLabel)
+      || labels.has(canonicalLabel) || (description && (fallbackDescriptions.has(canonicalDescription) || descriptions.has(canonicalDescription)))) continue;
+    alternatives.push({
+      id,
+      label,
+      ...(description ? { description } : {}),
+      pros: normalizedStringArray(option.pros, [fallback.options[0].pros[0]]),
+      cons: normalizedStringArray(option.cons, [fallback.options[0].cons[0]]),
+    });
+    ids.add(id);
+    labels.add(canonicalLabel);
+    if (description) descriptions.add(canonicalDescription);
+  }
+
+  for (const option of fallback.options) {
+    if (alternatives.length >= 4) break;
+    if (!ids.has(option.id)) alternatives.push({ ...option, pros: [...option.pros], cons: [...option.cons] });
   }
   normalized.options = [...alternatives, { id: "other", label: fallback.other, isOther: true }];
   return normalized;
@@ -3214,7 +3353,7 @@ function formatRefineRequestForAgent(summary: PlanningSummary, focus?: string): 
   return [
     "The user clicked Refine Further on the planning summary.",
     "Continue the planning interview from the existing context. Rebuild affected plan fields around every accumulated selection, Other answer, and requested focus; do not retain an unselected alternative as the plan backbone.",
-    "Inspect the selected direction and relevant repository context, then ask exactly one focused, high-impact option-driven follow-up question that narrows it one consequential level further with alternatives and pros/cons.",
+    "Inspect the selected direction and relevant repository context, then ask exactly one focused, high-impact option-driven follow-up question that narrows it one consequential level further with normally 3–5 materially distinct alternatives, descriptions, and pros/cons plus one write-your-own option. Two alternatives are not sufficient; include more when genuinely useful.",
     "Do not return a completion response: only the user can validate a plan.",
     ...(focus ? ["The operator wants this next question to focus on:", focus] : []),
     "Current summary:",
@@ -3241,7 +3380,7 @@ export function formatQuestionRegenerationForAgent(
     .map(([key, value]) => `${key}: ${typeof value === "string" ? value : JSON.stringify(value)}`);
   return [
     "The planning session currently has no active interview question; continue the interview instead of treating this as an error.",
-    "Rebuild affected plan fields around every accumulated selection and Other answer, then ask exactly one new high-impact, option-driven question that narrows the current direction, with at least two useful alternatives (pros and cons) plus one write-your-own option.",
+    "Rebuild affected plan fields around every accumulated selection and Other answer, then ask exactly one new high-impact, option-driven question that narrows the current direction, with normally 3–5 useful, materially distinct alternatives (descriptions, pros, and cons) plus one write-your-own option. Two alternatives are not sufficient; include more when genuinely useful.",
     'Return only type:"question" JSON with the complete runningPlan. Do not return a completion response: only the user can validate a plan.',
     ...(operatorInput.length
       ? ["The operator submitted this input while no question was active; honor it as context for the plan and the next question:", operatorInput.join("\n")]
@@ -3838,7 +3977,7 @@ export function formatResponseForAgent(
   FNXC:PlanningMode 2026-07-23-14:10:
   System prompts can be displaced by long tool/context turns. Repeat the selection-as-plan-backbone contract at the invocation boundary so every submitted option, multi-selection, or Other answer rebuilds the work product before the one deeper question, instead of becoming an append-only note or inviting model-authored completion.
   */
-  return `${answerContext}\n\nThis answer is a durable planning decision, not an append-only note. Regenerate the runningPlan fields (title, description, concrete proposedChanges, observable acceptanceCriteria, suggestedSize, optional priority, suggestedDependencies, concrete keyDeliverables, and all distinct high-value suggestedRefinements) around this selected label/description and every accumulated decision; do not cap suggestedRefinements at three. Rewrite every affected field so the selected direction is the central intended outcome, not the original vague complaint or an unselected alternative. Preserve free-text Other verbatim as steering. Author the operator-facing plan in Markdown: use concise GitHub-flavored Markdown in the description, with the structured fields supplying its Markdown sections and lists. Never list interview questions as deliverables or PROMPT.md sections such as Mission, Steps, File Scope, Review Level, Completion Criteria, or Do NOT. Inspect the selected direction and relevant repository context, return type:"question" with that complete runningPlan, and ask exactly one next question: a deeper concrete option-driven question with materially distinct alternatives and pros/cons. Do not validate the plan; only the user can proceed with it.`;
+  return `${answerContext}\n\nThis answer is a durable planning decision, not an append-only note. Regenerate the runningPlan fields (title, description, concrete proposedChanges, observable acceptanceCriteria, suggestedSize, optional priority, suggestedDependencies, concrete keyDeliverables, and all distinct high-value suggestedRefinements) around this selected label/description and every accumulated decision; do not cap suggestedRefinements at three. Rewrite every affected field so the selected direction is the central intended outcome, not the original vague complaint or an unselected alternative. Preserve free-text Other verbatim as steering. Author the operator-facing plan in Markdown: use concise GitHub-flavored Markdown in the description, with the structured fields supplying its Markdown sections and lists. Never list interview questions as deliverables or PROMPT.md sections such as Mission, Steps, File Scope, Review Level, Completion Criteria, or Do NOT. Inspect the selected direction and relevant repository context, return type:"question" with that complete runningPlan, and ask exactly one next question: a deeper concrete option-driven question with normally 3–5 materially distinct alternatives, descriptions, and pros/cons plus one write-your-own option. Two alternatives are not sufficient; include more when genuinely useful. Do not validate the plan; only the user can proceed with it.`;
 }
 
 function coerceResponseRecord(question: PlanningQuestion, response: unknown): Record<string, unknown> {

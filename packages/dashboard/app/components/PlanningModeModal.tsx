@@ -364,27 +364,24 @@ function normalizeQuestionOptions(question: PlanningQuestion): PlanningQuestion 
     return question;
   }
   const options = Array.isArray(question.options)
-    ? question.options
-        .filter((option): option is { id: string; label: string; description?: string } =>
-          Boolean(
-            option &&
-            typeof option === "object" &&
-            typeof option.id === "string" &&
-            option.id.trim().length > 0 &&
-            typeof option.label === "string" &&
-            option.label.trim().length > 0 &&
-            (option.description === undefined || typeof option.description === "string") &&
-            option.isOther !== true &&
-            option.id !== "other" &&
-            option.id !== PLANNING_OTHER_OPTION_ID,
-          ),
-        )
-        .map((option) => ({
-          ...option,
-          id: option.id.trim(),
-          label: option.label.trim(),
-          ...(option.description ? { description: option.description.trim() } : {}),
-        }))
+    ? (() => {
+        const ids = new Set<string>();
+        const labels = new Set<string>();
+        const descriptions = new Set<string>();
+        return question.options.flatMap((option) => {
+          if (!option || typeof option !== "object" || typeof option.id !== "string" || !option.id.trim()
+            || typeof option.label !== "string" || !option.label.trim() || (option.description !== undefined && typeof option.description !== "string")
+            || option.isOther === true || option.id === "other" || option.id === PLANNING_OTHER_OPTION_ID) return [];
+          const id = option.id.trim();
+          const label = option.label.trim();
+          const description = option.description?.trim();
+          if (ids.has(id) || labels.has(label) || (description && descriptions.has(description))) return [];
+          ids.add(id);
+          labels.add(label);
+          if (description) descriptions.add(description);
+          return [{ ...option, id, label, ...(description ? { description } : {}) }];
+        });
+      })()
     : [];
   return { ...question, options };
 }
