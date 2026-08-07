@@ -986,7 +986,8 @@ export function SettingsModal({
     maxAutoMergeRetries: 3,
     executorToolFailureRetryCount: 2,
     executorToolFailureRetryBackoffMs: 2000,
-    executorToolFailureThreshold: 3,
+    // FNXC:ExecutorToolFailureRetry 2026-08-06-14:56: mirror the core first-terminal-error default so an unset project setting never displays or persists the retired threshold of three.
+    executorToolFailureThreshold: 1,
     executorModelEscalationEnabled: false,
     executorEscalationProvider: "",
     executorEscalationModelId: "",
@@ -1652,7 +1653,7 @@ export function SettingsModal({
           maxAutoMergeRetries: resolveMaxAutoMergeRetriesForSettingsForm(s),
           executorToolFailureRetryCount: resolveNonNegativeExecutorToolFailureSetting(s.executorToolFailureRetryCount, 2),
           executorToolFailureRetryBackoffMs: resolveNonNegativeExecutorToolFailureSetting(s.executorToolFailureRetryBackoffMs, 2000),
-          executorToolFailureThreshold: Math.max(1, Math.floor(Number(s.executorToolFailureThreshold ?? 3) || 3)),
+          executorToolFailureThreshold: Math.max(1, Math.floor(Number(s.executorToolFailureThreshold ?? 1) || 1)),
           executorModelEscalationEnabled: s.executorModelEscalationEnabled === true,
           executorEscalationProvider: s.executorEscalationProvider ?? "",
           executorEscalationModelId: s.executorEscalationModelId ?? "",
@@ -3442,7 +3443,7 @@ export function SettingsModal({
         maxAutoMergeRetries: resolveMaxAutoMergeRetriesForSettingsForm(formSnapshot),
         executorToolFailureRetryCount: resolveNonNegativeExecutorToolFailureSetting(formSnapshot.executorToolFailureRetryCount, 2),
         executorToolFailureRetryBackoffMs: resolveNonNegativeExecutorToolFailureSetting(formSnapshot.executorToolFailureRetryBackoffMs, 2000),
-        executorToolFailureThreshold: Math.max(1, Math.floor(Number(formSnapshot.executorToolFailureThreshold ?? 3) || 3)),
+        executorToolFailureThreshold: Math.max(1, Math.floor(Number(formSnapshot.executorToolFailureThreshold ?? 1) || 1)),
         executorModelEscalationEnabled: formSnapshot.executorModelEscalationEnabled === true,
         executorEscalationProvider: formSnapshot.executorEscalationProvider?.trim() || undefined,
         executorEscalationModelId: formSnapshot.executorEscalationModelId?.trim() || undefined,
@@ -4069,7 +4070,7 @@ export function SettingsModal({
         );
 
       case "secrets":
-        return <SecretsSection addToast={addToast} />;
+        return <SecretsSection addToast={addToast} projectId={projectId} />;
       case "global-mcp":
         return (
           <GlobalMcpSection

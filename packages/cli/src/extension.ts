@@ -795,6 +795,41 @@ type ExtensionCallerContext = {
 /** Stand-in agent id when the principal is ambiguous (multiple live sessions in one cwd). */
 const AMBIGUOUS_AGENT_PRINCIPAL_ID = "unknown-agent";
 
+/**
+ * FNXC:SecretsAccessApproval 2026-08-05-21:31:
+ * Prompt-gated secret approvals must resolve one caller principal before every
+ * lifecycle operation. Dashboard chat's pi tool context omits `agentId`, but
+ * its engine-owned session registration proves the bound durable agent; treating
+ * that omission as the operator makes the operator self-approval guard permanently
+ * reject both decisions. Ambiguous cwd registrations deliberately fail closed:
+ * this tool refuses to mint or redeem a grant rather than sharing an approval
+ * between concurrent agents or collapsing either one into the operator.
+ */
+function resolveSecretAccessPrincipal(ctx: ExtensionCallerContext):
+  | { kind: "resolved"; actor: ApprovalRequestActorSnapshot; agentId: string | null; agentName?: string; taskId?: string }
+  | { kind: "ambiguous" } {
+  const principal = resolveExtensionCallerPrincipal(ctx);
+  if (principal.kind === "ambiguous") return { kind: "ambiguous" };
+  if (principal.kind === "operator") {
+    return {
+      kind: "resolved",
+      actor: { actorId: "user", actorType: "user", actorName: "CLI User" },
+      agentId: null,
+    };
+  }
+  return {
+    kind: "resolved",
+    actor: {
+      actorId: principal.identity.agentId,
+      actorType: "agent",
+      actorName: principal.identity.agentName ?? principal.identity.agentId,
+    },
+    agentId: principal.identity.agentId,
+    ...(principal.identity.agentName ? { agentName: principal.identity.agentName } : {}),
+    ...(principal.identity.taskId ? { taskId: principal.identity.taskId } : {}),
+  };
+}
+
 /*
 FNXC:ToolPermissionGates 2026-07-26-13:55:
 Security incident root cause: all fn_* host-extension tools are delivered to engine agent
@@ -3266,11 +3301,22 @@ export default function kbExtension(pi: ExtensionAPI) {
       scope: Type.Optional(Type.Union([Type.Literal("project"), Type.Literal("global")], { description: "Optional scope" })),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      const fnCtx = ctx as typeof ctx & {
-        agentId?: string;
-        agentName?: string;
-        runId?: string;
-        taskId?: string;
+      const fnCtx = ctx as typeof ctx & ExtensionCallerContext;
+      const secretPrincipal = resolveSecretAccessPrincipal(fnCtx);
+      if (secretPrincipal.kind === "ambiguous") {
+        return {
+          content: [{ type: "text", text: "Secret access was not requested because the calling agent identity is ambiguous. End one concurrent session and retry." }],
+          isError: true,
+          details: { error: "ambiguous-caller-identity", key: params.key, scope: params.scope ?? null },
+        };
+      }
+      const effectiveCtx: { agentId?: string; agentName?: string; taskId?: string; runId?: string } = {
+        ...(secretPrincipal.agentId ? { agentId: secretPrincipal.agentId } : {}),
+        ...(secretPrincipal.agentName ? { agentName: secretPrincipal.agentName } : {}),
+        ...(typeof fnCtx.taskId === "string"
+          ? { taskId: fnCtx.taskId }
+          : secretPrincipal.taskId ? { taskId: secretPrincipal.taskId } : {}),
+        ...(typeof fnCtx.runId === "string" ? { runId: fnCtx.runId } : {}),
       };
       const store = await getStore(ctx.cwd);
       const secretsStore = await store.getSecretsStore();
@@ -3298,7 +3344,7 @@ export default function kbExtension(pi: ExtensionAPI) {
       });
 
       if (decision.policy === "deny") {
-        emitSecretAudit(store, fnCtx, "secret:approval-denied", `${resolvedScope}:${params.key}`);
+        emitSecretAudit(store, effectiveCtx, "secret:approval-denied", `${resolvedScope}:${params.key}`);
         return { content: [{ type: "text", text: "Secret access denied by policy." }], details: { error: "denied", key: params.key, scope: resolvedScope, policySource: decision.source } };
       }
 
@@ -3319,25 +3365,13 @@ export default function kbExtension(pi: ExtensionAPI) {
         */
         const cliLayer = requireProjectLayer(store, "CLI secret approval store");
         const approvalStore = new ApprovalRequestStore(null, { asyncLayer: cliLayer });
-        const dedupeKey = `secret-read:${resolvedScope}:${params.key}:${fnCtx.agentId ?? "unknown"}`;
-        const requesterActorId = fnCtx.agentId ?? "user";
-        /*
-        FNXC:SecretsAccessApproval 2026-07-26-18:35:
-        Review finding: a caller with no agentId is the human CLI operator, and
-        recording it as actorType "agent" mislabels the attribution this branch
-        exists to fix. Snapshot the real principal shape.
-        */
-        const requesterSnapshot: ApprovalRequestActorSnapshot = fnCtx.agentId
-          ? {
-              actorId: requesterActorId,
-              actorType: "agent",
-              actorName: fnCtx.agentName ?? fnCtx.agentId,
-            }
-          : { actorId: "user", actorType: "user", actorName: "CLI User" };
-        const existing = await findLatestApprovalRequestByDedupeKey(approvalStore, { requesterActorId, ...(fnCtx.taskId ? { taskId: fnCtx.taskId } : {}), dedupeKey });
+        const requesterSnapshot = secretPrincipal.actor;
+        const requesterActorId = requesterSnapshot.actorId;
+        const dedupeKey = `secret-read:${resolvedScope}:${params.key}:${requesterActorId}`;
+        const existing = await findLatestApprovalRequestByDedupeKey(approvalStore, { requesterActorId, ...(effectiveCtx.taskId ? { taskId: effectiveCtx.taskId } : {}), dedupeKey });
 
         if (existing?.status === "pending") {
-          emitSecretAudit(store, fnCtx, "secret:approval-requested", `${resolvedScope}:${params.key}`);
+          emitSecretAudit(store, effectiveCtx, "secret:approval-requested", `${resolvedScope}:${params.key}`);
           return {
             content: [{ type: "text", text: `Secret access approval request ${existing.id} is still pending. Approve via POST /api/approvals/:id/decision.` }],
             details: { outcome: "pending_approval", approvalRequestId: existing.id, key: params.key, scope: resolvedScope },
@@ -3345,7 +3379,7 @@ export default function kbExtension(pi: ExtensionAPI) {
         }
 
         if (existing?.status === "denied") {
-          emitSecretAudit(store, fnCtx, "secret:approval-denied", `${resolvedScope}:${params.key}`);
+          emitSecretAudit(store, effectiveCtx, "secret:approval-denied", `${resolvedScope}:${params.key}`);
           return {
             content: [{ type: "text", text: `Secret access request ${existing.id} was denied by the operator. Do not retry without operator direction.` }],
             details: { outcome: "denied", approvalRequestId: existing.id, key: params.key, scope: resolvedScope },
@@ -3353,7 +3387,7 @@ export default function kbExtension(pi: ExtensionAPI) {
         }
 
         if (existing?.status === "approved") {
-          const revealedAfterApproval = await secretsStore.revealSecret(record.id, resolvedScope, { agentId: fnCtx.agentId ?? null });
+          const revealedAfterApproval = await secretsStore.revealSecret(record.id, resolvedScope, { agentId: secretPrincipal.agentId });
           await approvalStore.markCompleted(existing.id, {
             actor: requesterSnapshot,
             note: "Secret revealed after approval",
@@ -3361,7 +3395,7 @@ export default function kbExtension(pi: ExtensionAPI) {
             // get the same expectedRequesterActorId enforcement as the gate path.
             expectedRequesterActorId: requesterActorId,
           });
-          emitSecretAudit(store, fnCtx, "secret:read", `${resolvedScope}:${params.key}`, { key: params.key, scope: resolvedScope, approvalRequestId: existing.id });
+          emitSecretAudit(store, effectiveCtx, "secret:read", `${resolvedScope}:${params.key}`, { key: params.key, scope: resolvedScope, approvalRequestId: existing.id });
           return {
             content: [{ type: "text", text: `Loaded secret '${params.key}' from ${resolvedScope} scope (approval ${existing.id} consumed).` }],
             details: { key: params.key, value: revealedAfterApproval.plaintextValue, scope: resolvedScope, approvalRequestId: existing.id },
@@ -3379,19 +3413,19 @@ export default function kbExtension(pi: ExtensionAPI) {
             resourceId: record.id,
             context: { approvalDedupeKey: dedupeKey, key: params.key, scope: resolvedScope },
           },
-          ...(fnCtx.runId ? { runId: fnCtx.runId } : {}),
-          ...(fnCtx.taskId ? { taskId: fnCtx.taskId } : {}),
+          ...(effectiveCtx.runId ? { runId: effectiveCtx.runId } : {}),
+          ...(effectiveCtx.taskId ? { taskId: effectiveCtx.taskId } : {}),
         });
 
-        emitSecretAudit(store, fnCtx, "secret:approval-requested", `${resolvedScope}:${params.key}`);
+        emitSecretAudit(store, effectiveCtx, "secret:approval-requested", `${resolvedScope}:${params.key}`);
         return {
           content: [{ type: "text", text: `Secret access requires approval. Request ${request.id} is pending. Approve via POST /api/approvals/:id/decision.` }],
           details: { outcome: "pending_approval", approvalRequestId: request.id, key: params.key, scope: resolvedScope },
         };
       }
 
-      const revealed = await secretsStore.revealSecret(record.id, resolvedScope, { agentId: fnCtx.agentId ?? null });
-      emitSecretAudit(store, fnCtx, "secret:read", `${resolvedScope}:${params.key}`, { key: params.key, scope: resolvedScope });
+      const revealed = await secretsStore.revealSecret(record.id, resolvedScope, { agentId: secretPrincipal.agentId });
+      emitSecretAudit(store, effectiveCtx, "secret:read", `${resolvedScope}:${params.key}`, { key: params.key, scope: resolvedScope });
       return {
         content: [{ type: "text", text: `Loaded secret '${params.key}' from ${resolvedScope} scope.` }],
         details: { key: params.key, value: revealed.plaintextValue, scope: resolvedScope },

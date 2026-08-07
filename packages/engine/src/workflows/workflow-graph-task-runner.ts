@@ -86,6 +86,8 @@ export interface WorkflowGraphTaskRunnerDeps {
   store: WorkflowGraphRunnerStore;
   seams: WorkflowLegacySeams;
   primitives?: WorkflowRuntimePrimitives;
+  /** Resolves the live intermediate-group exemption for graph merge gates. */
+  isLiveSharedBranchMember?: WorkflowGraphExecutorDeps["isLiveSharedBranchMember"];
   runCustomNode: WorkflowCustomNodeRunner;
   /** Workflow-node prerequisite fulfillment, invoked after graph-level classification. */
   prepareNodeExecution?: (
@@ -387,6 +389,10 @@ export class WorkflowGraphTaskRunner {
         runCode: this.deps.runCode,
         notifyDispatch: this.deps.notifyDispatch,
         prNodes: this.deps.prNodes,
+        // FNXC:SharedBranchMemberHold 2026-08-06-00:24: carry the executor's
+        // live group resolver into the graph merge gate; omitting it turns
+        // mission-policy members into manual holds before integration.
+        isLiveSharedBranchMember: this.deps.isLiveSharedBranchMember,
         /*
         FNXC:WorkflowResume 2026-06-29-08:49:
         Production graph runs must fetch live task steps during foreach replay. The runner is the workflow boundary that has store access, so it supplies the fresh projection seam instead of making executor self-healing guess after a stale step node fails.

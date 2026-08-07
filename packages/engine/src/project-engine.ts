@@ -24,6 +24,7 @@ import {
   resolveColumnFlags,
   type TraitFlags,
   allowsAutoMergeProcessing,
+  hasUserAutoMergeHold,
   compareTasksByPriorityThenAgeAndId,
   emitOverseerConfirmation,
   emitOverseerEscalation,
@@ -497,7 +498,22 @@ export class ProjectEngine {
   Cleared on the first non-busy outcome (success path resets it).
   */
   private workspaceBusyReenqueues = new Map<string, number>();
+  private readonly workspaceBusyReenqueueTimers = new Set<ReturnType<typeof setTimeout>>();
   private static readonly WORKSPACE_BUSY_MAX_REENQUEUES = 10;
+
+  /*
+  FNXC:WorkspaceMergeDispatch 2026-08-05-23:56:
+  Workspace lease-contention retries are engine-owned lifecycle work, not detached callbacks.
+  Track only these busy re-enqueue timers so stop() can cancel them and tests can measure the
+  capped workspace ladder without confusing it with merge-body or maintenance timers.
+  */
+  private scheduleWorkspaceBusyReenqueue(taskId: string, delayMs: number): void {
+    const timer = setTimeout(() => {
+      this.workspaceBusyReenqueueTimers.delete(timer);
+      if (!this.shuttingDown) this.internalEnqueueMerge(taskId);
+    }, delayMs);
+    this.workspaceBusyReenqueueTimers.add(timer);
+  }
 
   /**
    * Pending manual merge resolvers — keyed by taskId.
@@ -1328,6 +1344,10 @@ export class ProjectEngine {
       clearInterval(this.mergeActiveReconcileTimer);
       this.mergeActiveReconcileTimer = null;
     }
+    for (const timer of this.workspaceBusyReenqueueTimers) {
+      clearTimeout(timer);
+    }
+    this.workspaceBusyReenqueueTimers.clear();
     for (const [taskId, deferred] of this.capacityDeferredMerges) {
       clearTimeout(deferred.timer);
       for (const resolver of deferred.resolvers) {
@@ -2916,23 +2936,27 @@ export class ProjectEngine {
    * pushed wins. listTasks returns createdAt ASC — without this sort an
    * older low-priority task would start before a later urgent one.
    */
-  private async allowInReviewMergeProcessing(task: Pick<Task, "branchContext" | "autoMerge">, settings: Pick<Settings, "autoMerge">, store: Partial<Pick<TaskStore, "getBranchGroup">> = this.runtime.getTaskStore()): Promise<boolean> {
-    if (allowsAutoMergeProcessing(task, settings)) {
-      return true;
-    }
+  private async allowInReviewMergeProcessing(task: Pick<Task, "branchContext" | "autoMerge" | "autoMergeProvenance">, settings: Pick<Settings, "autoMerge">, store: Partial<Pick<TaskStore, "getBranchGroup">> = this.runtime.getTaskStore()): Promise<boolean> {
+    // FNXC:SharedBranchMemberHold 2026-08-05-23:35: resolve group liveness before
+    // general admission. Only a live intermediate group may bypass false policy;
+    // a user-authored Off always remains a manual hold.
+    if (hasUserAutoMergeHold(task)) return false;
 
     const groupId = task.branchContext?.groupId?.trim();
     const branchGroup = groupId ? await store.getBranchGroup?.(groupId) : null;
-    if (!branchGroup || branchGroup.status !== "open" || !branchGroup.branchName.trim()) {
-      return false;
+    const projectDefaultBranch = await resolveIntegrationBranch(this.config.workingDirectory, settings as Settings);
+    if (isLiveSharedBranchGroupMemberIntegration(task, branchGroup, projectDefaultBranch)) {
+      return true;
     }
 
-    const projectDefaultBranch = await resolveIntegrationBranch(this.config.workingDirectory, settings as Settings);
     /*
-    FNXC:AutoMergeHold 2026-07-09-16:53:
-    FN-7750 / Runfusion#1980: shared-branch member integration may bypass the global `autoMerge:false` hold only while its group row is still open. Stale, finalized, abandoned, or missing groups must flow through the standalone manual-hold gate so no task provenance can solo auto-merge to main.
+    FNXC:AutoMergeHold 2026-08-05-23:35:
+    A shared member with a missing, closed, or default-branch group is no longer
+    an intermediate integration. Its false task value must use the standalone
+    manual-release path even when project auto-merge is enabled.
     */
-    return isLiveSharedBranchGroupMemberIntegration(task, branchGroup, projectDefaultBranch);
+    if (task.autoMerge === false && groupId) return false;
+    return allowsAutoMergeProcessing(task, settings);
   }
 
   private async emitLegacyAutoMergeStampAdvisory(store: TaskStore): Promise<void> {
@@ -4323,9 +4347,7 @@ export class ProjectEngine {
               runtimeLog.log(
                 `Workspace land busy re-enqueue ${busyCount + 1}/${ProjectEngine.WORKSPACE_BUSY_MAX_REENQUEUES} for ${taskId} in ${delayMs / 1000}s (no mergeRetry consumed — pure lease contention)`,
               );
-              setTimeout(() => {
-                if (!this.shuttingDown) this.internalEnqueueMerge(taskId);
-              }, delayMs);
+              this.scheduleWorkspaceBusyReenqueue(taskId, delayMs);
             } else {
               // Pathological sustained contention — surface but do NOT burn mergeRetries; park as
               // failed so the cooldown sweep stops re-attempting and an operator can intervene.

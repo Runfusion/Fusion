@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { cleanup, render, screen, fireEvent, waitFor, within } from "@testing-library/react";
+import { act, cleanup, render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { EditorView } from "@codemirror/view";
 import path from "path";
 import { SettingsModal } from "../SettingsModal";
@@ -208,6 +208,65 @@ describe("SettingsModal", () => {
   });
 
   describe("Scheduling overlap ignore paths", () => {
+    /*
+    FNXC:ExecutorToolFailureRetry 2026-08-06-15:10:
+    Exercise the SettingsModal API lifecycle, not only the SchedulingSection fallback.
+    An omitted project threshold must render as one, while an explicit operator value
+    must remain unchanged when another scheduling edit triggers the project save.
+    */
+    it("loads the first-error threshold default and saves an explicit threshold", async () => {
+      const { executorToolFailureThreshold: _omitted, ...settingsWithoutThreshold } = defaultSettings;
+      mockFetchSettings.mockResolvedValue(settingsWithoutThreshold);
+      mockFetchSettingsByScope.mockResolvedValue({ global: settingsWithoutThreshold, project: {} });
+
+      renderModal();
+      await waitForSettingsModalReady();
+      await act(async () => {
+        await Promise.resolve();
+      });
+      await settingsModalUser.click(screen.getByRole("button", { name: "Scheduling" }));
+
+      const threshold = screen.getByLabelText("Consecutive tool failures") as HTMLInputElement;
+      expect(threshold.value).toBe("1");
+
+      fireEvent.change(threshold, { target: { value: "4" } });
+      expect(threshold.value).toBe("4");
+      await settingsModalUser.click(document.querySelector(".modal-close") as HTMLButtonElement);
+
+      await waitFor(() => expect(mockUpdateSettings).toHaveBeenCalled());
+      expect(mockUpdateSettings.mock.calls.map((call) => call[0])).toContainEqual(
+        expect.objectContaining({ executorToolFailureThreshold: 4 }),
+      );
+    });
+
+    it("does not overwrite an explicit threshold when saving another scheduling setting", async () => {
+      mockFetchSettings.mockResolvedValue({
+        ...defaultSettings,
+        executorToolFailureThreshold: 4,
+        engineerBacklogAutoClaim: false,
+      });
+      mockFetchSettingsByScope.mockResolvedValue({
+        global: defaultSettings,
+        project: { executorToolFailureThreshold: 4, engineerBacklogAutoClaim: false },
+      });
+
+      renderModal();
+      await waitForSettingsModalReady();
+      await act(async () => {
+        await Promise.resolve();
+      });
+      await settingsModalUser.click(screen.getByRole("button", { name: "Scheduling" }));
+
+      expect((screen.getByLabelText("Consecutive tool failures") as HTMLInputElement).value).toBe("4");
+      await settingsModalUser.click(screen.getByLabelText("Let engineer agents auto-claim backlog tasks"));
+      await settingsModalUser.click(document.querySelector(".modal-close") as HTMLButtonElement);
+
+      await waitFor(() => expect(mockUpdateSettings).toHaveBeenCalled());
+      const payload = mockUpdateSettings.mock.calls[0][0] as Record<string, unknown>;
+      expect(payload.engineerBacklogAutoClaim).toBe(true);
+      expect(payload).not.toHaveProperty("executorToolFailureThreshold");
+    });
+
     it("defaults hidden overlap path filtering checked when settings omit the key", async () => {
       const { ignoreHiddenOverlapPaths: _omitted, ...settingsWithoutHiddenDefault } = defaultSettings;
       mockFetchSettings.mockResolvedValue(settingsWithoutHiddenDefault);

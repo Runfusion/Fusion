@@ -165,6 +165,28 @@ export async function handleGraphFailure(
         return;
       }
       /*
+      FNXC:WorkflowMerge 2026-08-06-14:41:
+      A merge requester can deliberately reject finalization, persist the blocker in `error`, and
+      rebound the task to its workflow hold column. The graph then unwinds as a merge-node failure.
+      Retrying or resuming that stale graph overrides the merger's durable decision and creates an
+      unbounded hold -> merge -> hold loop. Honor the fresh parked row before any retry router; an
+      operator retry can clear the error and start a new graph run explicitly.
+      */
+      const parkedMergeNode = result.visitedNodeIds[result.visitedNodeIds.length - 1];
+      if (
+        live.error != null &&
+        live.column === failureLanes.hold &&
+        isMergeGraphFailure(parkedMergeNode)
+      ) {
+        deps.clearPausedAborted(task.id);
+        deps.activeWorktrees.delete(task.id);
+        const mergerParkHonored = `Workflow graph run ended after merger parked task with blocker (${live.error}) — honoring park, not retrying or resuming merge`;
+        executorLog.log(`${task.id}: ${mergerParkHonored}`);
+        await deps.store.logEntry(task.id, mergerParkHonored, undefined, deps.getRunContextFor(task.id));
+        await deps.persistTokenUsage(task.id);
+        return;
+      }
+      /*
       FNXC:WorkflowIrPin 2026-07-19-21:10 (KTD-3 drift park, PR #2342):
       A graph run that exited on the drift guard carries WORKFLOW_DRIFT_PARK_CONTEXT_KEY
       and visited no nodes. Before this branch existed the result fell through to the

@@ -250,10 +250,12 @@ export default defineConfig({
             "src/__tests__/merger-landed-files-capture.test.ts",
             "src/__tests__/branch-attribution.test.ts",
             /*
-            FNXC:EngineTests 2026-07-28-20:10:
-            Gate admission evidence (U9 safeguard baseline). This one file proves FIVE of the merge lane's safeguards: user pause on merge admission, autoMerge:false, capacity single-flight, the pre-enqueue merge-proof consult, and at-most-once enqueue. A U9 mutation audit found NONE of them defended by blocking CI — and two (user pause, single-flight) had no test at all until this change. Merge is where irreversible work happens and U9 is about to move it behind graph nodes, so these must fail the gate, not a non-blocking run hours after the merge. Deterministic: the store, runtime, merger, and notifier are all mocked; no real git, no network. Measured 5.02s standalone / 103 tests.
+            FNXC:EngineTests 2026-08-06-00:04:
+            FN-8811 quarantines project-engine.test.ts after its workspace-busy case
+            contradicted its 60s cap with a real 120s retry and left a timed-out git
+            subprocess. The paired ledger entry owns its 14-day deletion ratchet; keep
+            this gate allow-list free of the file until a root-cause fix rescues it.
             */
-            "src/__tests__/project-engine.test.ts",
             /*
             FNXC:EngineTests 2026-07-28-21:05 (#2520 review — greptile P1):
             Capacity single-flight IS covered — by this purpose-built file, not by anything in project-engine.test.ts. It was outside blocking CI, which is the real gap. Removing `if (this.mergeRunning) return;` fails "refuses a second concurrent drain while one merge is in flight" here and nowhere else. Deterministic, 3.69s / 3 tests.
@@ -382,6 +384,9 @@ export default defineConfig({
             Quarantined on sight per AGENTS.md; mirrored in scripts/lib/test-quarantine.json.
             */
             // SQLite-path gate test evicted + quarantined (see engine-core comment + ledger).
+            // FNXC:EngineTests 2026-08-06-00:04: paired with the ledger's FN-8811
+            // workspace-busy quarantine; do not appease its timing assertion.
+            "src/__tests__/project-engine.test.ts",
             "node_modules/**",
             "dist/**",
             // FNXC:PgMigrationQuarantine 2026-07-18-04:30: FN-8270 rescued the final seven VAL-REMOVAL-005 holdouts by awaiting PG audit reads and modeling async collaborators. Their paired ledger entries and excludes were removed only after targeted green runs.

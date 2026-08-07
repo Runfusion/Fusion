@@ -4,6 +4,7 @@ import { SettingsHelpTip } from "../SettingsHelpTip";
 import type { Dispatch, SetStateAction } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { withProjectId } from "../../../api/client/health";
 import {
   exportMcpServersJson,
   importMcpServersJson,
@@ -267,6 +268,7 @@ export function McpServersCard({ scope, form, setForm, globalSettings, projectId
   const [editor, setEditor] = useState<EditorDraft | null>(null);
   const [editorError, setEditorError] = useState<string | null>(null);
   const [secrets, setSecrets] = useState<SecretRecord[]>([]);
+  const [secretsProjectId, setSecretsProjectId] = useState<string | undefined>();
   const [secretsError, setSecretsError] = useState<string | null>(null);
   const [importText, setImportText] = useState("");
   const [importError, setImportError] = useState<string | null>(null);
@@ -275,18 +277,39 @@ export function McpServersCard({ scope, form, setForm, globalSettings, projectId
   const [discovered, setDiscovered] = useState<DiscoveredMcpResponse | null>(null);
   const [discoveryLoading, setDiscoveryLoading] = useState(false);
   const [discoveryError, setDiscoveryError] = useState<string | null>(null);
+  const secretsRequestVersionRef = useRef(0);
+  const activeProjectIdRef = useRef(projectId);
+  if (activeProjectIdRef.current !== projectId) {
+    activeProjectIdRef.current = projectId;
+    secretsRequestVersionRef.current += 1;
+  }
 
+  /*
+  FNXC:Secrets 2026-08-05-21:37:
+  MCP secret references use the same selected-project request binding as SecretsView. The selected context chooses a safe store; a global secret body still dispatches to central.secrets_global.
+  */
   const reloadSecrets = useCallback(async () => {
+    const requestProjectId = projectId;
+    if (activeProjectIdRef.current !== requestProjectId) return;
+    const requestVersion = ++secretsRequestVersionRef.current;
     try {
-      const data = await requestJson<{ secrets: SecretRecord[] }>("/api/secrets");
-      setSecrets(data.secrets);
-      setSecretsError(null);
+      const data = await requestJson<{ secrets: SecretRecord[] }>(withProjectId("/api/secrets", requestProjectId));
+      if (secretsRequestVersionRef.current === requestVersion && activeProjectIdRef.current === requestProjectId) {
+        setSecrets(data.secrets);
+        setSecretsProjectId(requestProjectId);
+        setSecretsError(null);
+      }
     } catch (error) {
-      setSecretsError(error instanceof Error ? error.message : String(error));
+      if (secretsRequestVersionRef.current === requestVersion && activeProjectIdRef.current === requestProjectId) setSecretsError(error instanceof Error ? error.message : String(error));
     }
-  }, []);
+  }, [projectId]);
 
   useEffect(() => {
+    setSecrets([]);
+    setSecretsProjectId(undefined);
+    setSecretsError(null);
+    setEditor(null);
+    setEditorError(null);
     void reloadSecrets();
   }, [reloadSecrets]);
 
@@ -426,13 +449,14 @@ export function McpServersCard({ scope, form, setForm, globalSettings, projectId
 
   const createSecretForRow = async (row: SensitiveRowDraft, field: "env" | "headers") => {
     if (!editor) return;
+    const requestProjectId = projectId;
     const key = row.createKey.trim() || row.key.trim();
     if (!key || !row.createValue) {
       setEditorError(t("settings.mcp.secretCreateRequired", "Secret key and value are required."));
       return;
     }
     try {
-      const secret = await requestJson<SecretRecord>("/api/secrets", {
+      const secret = await requestJson<SecretRecord>(withProjectId("/api/secrets", requestProjectId), {
         method: "POST",
         body: JSON.stringify({
           scope: row.scope,
@@ -444,14 +468,15 @@ export function McpServersCard({ scope, form, setForm, globalSettings, projectId
           envExportKey: null,
         }),
       });
+      if (activeProjectIdRef.current !== requestProjectId) return;
       setEditor((current) => current && {
         ...current,
         [field]: current[field].map((candidate) => candidate.id === row.id ? { ...candidate, secretRef: secret.id, scope: secret.scope, createKey: secret.key, createValue: "" } : candidate),
       });
       await reloadSecrets();
-      addToast(t("settings.mcp.secretCreated", "Secret created"), "success");
+      if (activeProjectIdRef.current === requestProjectId) addToast(t("settings.mcp.secretCreated", "Secret created"), "success");
     } catch (error) {
-      setEditorError(error instanceof Error ? error.message : String(error));
+      if (activeProjectIdRef.current === requestProjectId) setEditorError(error instanceof Error ? error.message : String(error));
     }
   };
 
@@ -481,10 +506,12 @@ export function McpServersCard({ scope, form, setForm, globalSettings, projectId
       setImportError(t("settings.mcp.importDuplicate", "Duplicate MCP server name: {{name}}", { name: duplicate.name }));
       return;
     }
+    const requestProjectId = projectId;
     try {
       const refBySuggestedKey = new Map<string, McpSecretRef>();
       for (const descriptor of result.secretsToCreate) {
-        const secret = await requestJson<SecretRecord>("/api/secrets", {
+        if (activeProjectIdRef.current !== requestProjectId) return;
+        const secret = await requestJson<SecretRecord>(withProjectId("/api/secrets", requestProjectId), {
           method: "POST",
           body: JSON.stringify({
             scope: descriptor.scope,
@@ -498,6 +525,7 @@ export function McpServersCard({ scope, form, setForm, globalSettings, projectId
         });
         refBySuggestedKey.set(descriptor.suggestedKey, { secretRef: secret.id, scope: secret.scope });
       }
+      if (activeProjectIdRef.current !== requestProjectId) return;
       const definitions = result.definitions.map((server) => {
         if (server.transport === "stdio") {
           const env = Object.fromEntries(Object.entries(server.env ?? {}).map(([key, value]) => [key, isMcpSecretRef(value) && refBySuggestedKey.has(value.secretRef) ? refBySuggestedKey.get(value.secretRef)! : value]));
@@ -509,9 +537,9 @@ export function McpServersCard({ scope, form, setForm, globalSettings, projectId
       updateMcpSettings({ ...settings, enabled: true, servers: [...configuredServers, ...definitions] });
       setImportText("");
       await reloadSecrets();
-      addToast(t("settings.mcp.imported", "MCP servers imported"), "success");
+      if (activeProjectIdRef.current === requestProjectId) addToast(t("settings.mcp.imported", "MCP servers imported"), "success");
     } catch (error) {
-      setImportError(error instanceof Error ? error.message : String(error));
+      if (activeProjectIdRef.current === requestProjectId) setImportError(error instanceof Error ? error.message : String(error));
     }
   };
 
@@ -525,6 +553,12 @@ export function McpServersCard({ scope, form, setForm, globalSettings, projectId
       addToast(t("settings.mcp.exportReady", "MCP JSON ready to copy"), "info");
     }
   };
+
+  /*
+  FNXC:Secrets 2026-08-05-21:57:
+  An MCP card can re-render for a new project before its reload effect runs. Hide the prior project's secret options synchronously and reject late responses so an A-only reference cannot be selected or imported under B.
+  */
+  const visibleSecrets = secretsProjectId === projectId ? secrets : [];
 
   const renderSensitiveRows = (field: "env" | "headers", rows: SensitiveRowDraft[]) => (
     <div className="mcp-sensitive-list" data-testid={`mcp-${field}-rows`}>
@@ -540,7 +574,7 @@ export function McpServersCard({ scope, form, setForm, globalSettings, projectId
             setEditor((current) => current && { ...current, [field]: current[field].map((candidate) => candidate.id === row.id ? { ...candidate, scope: nextScope as SecretScope, secretRef: nextRef } : candidate) });
           }}>
             <option value={`${row.scope}:`}>{t("settings.mcp.chooseSecret", "Choose a secret…")}</option>
-            {secrets.map((secret) => <option key={`${secret.scope}:${secret.id}`} value={`${secret.scope}:${secret.id}`}>{secret.scope}: {secret.key}</option>)}
+            {visibleSecrets.map((secret) => <option key={`${secret.scope}:${secret.id}`} value={`${secret.scope}:${secret.id}`}>{secret.scope}: {secret.key}</option>)}
           </select>
           <input className="input" aria-label={t("settings.mcp.newSecretKey", "New secret key")} value={row.createKey} onChange={(event) => setEditor((current) => current && { ...current, [field]: current[field].map((candidate) => candidate.id === row.id ? { ...candidate, createKey: event.target.value } : candidate) })} placeholder={t("settings.mcp.newSecretKey", "New secret key")} />
           <input className="input" type="password" aria-label={t("settings.mcp.newSecretValue", "New secret value (not stored in settings)")} value={row.createValue} onChange={(event) => setEditor((current) => current && { ...current, [field]: current[field].map((candidate) => candidate.id === row.id ? { ...candidate, createValue: event.target.value } : candidate) })} placeholder={t("settings.mcp.createSecretPlaceholder", "Create secret value")} />

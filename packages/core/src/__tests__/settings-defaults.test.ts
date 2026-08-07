@@ -347,8 +347,12 @@ describe("settings defaults invariants", () => {
     expect(resolveMaxConsecutiveToolFailureRetries({ executorToolFailureRetryCount: -1 })).toBe(2);
     expect(resolveConsecutiveToolFailureRetryBackoffMs({ executorToolFailureRetryBackoffMs: 2500.9 })).toBe(2500);
     expect(resolveConsecutiveToolFailureRetryBackoffMs({ executorToolFailureRetryBackoffMs: Infinity })).toBe(2000);
+    expect(resolveConsecutiveToolFailureThreshold(undefined)).toBe(1);
+    expect(resolveConsecutiveToolFailureThreshold({})).toBe(1);
+    expect(resolveConsecutiveToolFailureThreshold({ executorToolFailureThreshold: Number.NaN })).toBe(1);
+    expect(resolveConsecutiveToolFailureThreshold({ executorToolFailureThreshold: 0.5 })).toBe(1);
     expect(resolveConsecutiveToolFailureThreshold({ executorToolFailureThreshold: 3.9 })).toBe(3);
-    expect(resolveConsecutiveToolFailureThreshold({ executorToolFailureThreshold: 0.5 })).toBe(3);
+    expect(resolveConsecutiveToolFailureThreshold({ executorToolFailureThreshold: 4 })).toBe(4);
   });
 
 });

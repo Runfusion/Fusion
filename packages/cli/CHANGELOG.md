@@ -1,5 +1,90 @@
 # @runfusion/fusion
 
+## 0.75.1
+
+### Patch Changes
+
+- 9c77788: summary: Hide stale file-overlap blockers when a task is queued on an unfinished dependency.
+  category: fix
+  dev: Scheduler dependency transitions now retain only overlap blockers backed by an active overlapping lease.
+- b9c5df0: summary: Prevent chat checkpoints from failing on NUL-containing tool output.
+  category: fix
+  dev: Sanitizes chat JSONB persistence boundaries and observes best-effort checkpoint failures.
+- 4167841: summary: Resume Plan Review automatically after approving a task plan.
+  category: fix
+  dev: Dashboard approval now invokes the public engine handoff that seeds graph-owned review work.
+- 0658795: summary: Restore workflow review feedback selection for same-task revisions.
+  category: fix
+  dev: Canonical workflow-step review items now prevent forged client feedback from reaching snapshots or steering.
+- e75c788: summary: Classify custom workflow review nodes for direct Review-tab feedback.
+  category: feature
+  dev: Persists explicit plan/code reviewKind snapshots on supported top-level workflow results.
+- ec10411: summary: Select individual structured workflow review findings for same-task revision.
+  category: feature
+  dev: Review-kind results persist normalized finding IDs, location, and severity in existing JSONB history.
+- 26219b8: summary: Suppress task failure alerts while Fusion automatically recovers the task.
+  category: fix
+  dev: Wedge episodes now require recovery ownership to be absent or exhausted.
+- 59cfa47: summary: Refresh dashboard task state immediately after unpausing.
+  category: fix
+  dev: Detail pause controls now use the shared lifecycle reconciliation path.
+- 4324762: summary: Keep long task-detail titles stable when expanded or collapsed.
+  category: fix
+  dev: Measures title eligibility only from the collapsed layout so resize callbacks preserve the operator's choice.
+- 6ccde2b: summary: Keep expanded task titles stable without flickering during resize.
+  category: fix
+  dev: Measures the persistent title text box so its control cannot alter overflow eligibility.
+- 09e4808: summary: Refresh dashboard cards reliably after browser and tab resume.
+  category: fix
+  dev: Unifies focus, visibility, pageshow, and SSE reconnect card revalidation with context fencing.
+- 00fdbe1: summary: Bind dashboard secret management to the selected project.
+  category: fix
+  dev: Secrets routes now reject requests without an explicit projectId before fallback context resolution.
+- 1db7adc: summary: Repair chat-agent secret approvals and show actionable decision failures.
+  category: fix
+  dev: Prompt-gated secret reads now retain the registered engine session principal.
+- 2a08278: summary: Restore secrets-env files in fresh task worktrees.
+  category: fix
+  dev: Runtime shares the project secrets store with executor and heartbeat worktree acquisition.
+- 4f4aef7: summary: Honor an operator's review hold before a mission task joins its shared branch.
+  category: fix
+  dev: Mission policy auto-merge values retain distinct provenance from operator task overrides.
+- 1e4c7fa: summary: Stop cancels pending workspace merge contention retries.
+  category: fix
+  dev: Tracks workspace busy re-enqueue timers separately from merge maintenance timers.
+
+## 0.75.1-beta.2
+
+### Patch Changes
+
+- 59cfa47: summary: Refresh dashboard task state immediately after unpausing.
+  category: fix
+  dev: Detail pause controls now use the shared lifecycle reconciliation path.
+- 4324762: summary: Keep long task-detail titles stable when expanded or collapsed.
+  category: fix
+  dev: Measures title eligibility only from the collapsed layout so resize callbacks preserve the operator's choice.
+- 6ccde2b: summary: Keep expanded task titles stable without flickering during resize.
+  category: fix
+  dev: Measures the persistent title text box so its control cannot alter overflow eligibility.
+- 09e4808: summary: Refresh dashboard cards reliably after browser and tab resume.
+  category: fix
+  dev: Unifies focus, visibility, pageshow, and SSE reconnect card revalidation with context fencing.
+- 00fdbe1: summary: Bind dashboard secret management to the selected project.
+  category: fix
+  dev: Secrets routes now reject requests without an explicit projectId before fallback context resolution.
+- 1db7adc: summary: Repair chat-agent secret approvals and show actionable decision failures.
+  category: fix
+  dev: Prompt-gated secret reads now retain the registered engine session principal.
+- 2a08278: summary: Restore secrets-env files in fresh task worktrees.
+  category: fix
+  dev: Runtime shares the project secrets store with executor and heartbeat worktree acquisition.
+- 4f4aef7: summary: Honor an operator's review hold before a mission task joins its shared branch.
+  category: fix
+  dev: Mission policy auto-merge values retain distinct provenance from operator task overrides.
+- 1e4c7fa: summary: Stop cancels pending workspace merge contention retries.
+  category: fix
+  dev: Tracks workspace busy re-enqueue timers separately from merge maintenance timers.
+
 ## 0.75.1-beta.1
 
 ### Patch Changes

@@ -29,6 +29,7 @@
  * graph executor's signature guard rather than this budget check.
  */
 import type { Task, WorkflowStepResult as CoreWorkflowStepResult } from "@fusion/core";
+import { hasUserAutoMergeHold } from "@fusion/core";
 import { executorLog } from "../logger.js";
 
 export type RecoverFailedPreMergeStepDeps = {
@@ -53,6 +54,13 @@ export async function recoverFailedPreMergeWorkflowStep(
   task: Task,
 ): Promise<boolean> {
   try {
+    /*
+     * FNXC:SharedBranchMemberHold 2026-08-06-00:12:
+     * Startup/self-healing recovery is another pre-merge remediation requester.
+     * Do not let it send a user-held member back to execution: only an explicit
+     * operator release or revision may advance that manual checkpoint.
+     */
+    if (hasUserAutoMergeHold(task)) return false;
     const failed = (task.workflowStepResults ?? [])
       .filter((r) => (r.phase || "pre-merge") === "pre-merge" && r.status === "failed")
       .sort((a, b) => {

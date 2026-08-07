@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { classifyDashboardFatalExit, hasLiveSupervisingParent, resolveSupervisorRespawnCommand, shouldSuperviseDashboard } from "../dashboard.js";
+import {
+  buildUiOnlyHeartbeatMonitorOptions,
+  classifyDashboardFatalExit,
+  hasLiveSupervisingParent,
+  resolveSupervisorRespawnCommand,
+  shouldSuperviseDashboard,
+} from "../dashboard.js";
 import { FUSION_NON_RETRYABLE_EXIT_CODE } from "@fusion/core";
 
 /*
@@ -72,6 +78,26 @@ describe("hasLiveSupervisingParent", () => {
   it("is disabled when an inspector is attached (child would fight over the port)", () => {
     expect(shouldSuperviseDashboard(["dashboard"], {}, ["--inspect=9230"])).toBe(false);
     expect(shouldSuperviseDashboard(["dashboard"], {}, ["--inspect-brk"])).toBe(false);
+  });
+});
+
+describe("UI-only heartbeat composition", () => {
+  it("preserves the project-scoped secrets store for fresh heartbeat worktrees", () => {
+    const agentStore = {} as any;
+    const taskStore = {} as any;
+    const secretsStore = { listEnvExportable: async () => [] };
+
+    const options = buildUiOnlyHeartbeatMonitorOptions({
+      agentStore,
+      taskStore,
+      rootDir: "/project",
+      secretsStore,
+    });
+
+    expect(options.store).toBe(agentStore);
+    expect(options.agentStore).toBe(agentStore);
+    expect(options.taskStore).toBe(taskStore);
+    expect(options.secretsStore).toBe(secretsStore);
   });
 });
 

@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, statSync, symlinkSync, writeFileSync, existsSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -83,6 +84,40 @@ describe("secrets-env-writer", () => {
 
     const outputBlob = JSON.stringify({ calls: filesystem.mock.calls, logs: log.mock.calls, warns: warn.mock.calls });
     expect(outputBlob).not.toContain(secretValue);
+  });
+
+  it("writes an ignored configured file and records a redacted production audit", async () => {
+    const dir = tmpWorktree();
+    const filesystem = vi.fn();
+    const secretValue = "runtime-materialized-secret";
+    execFileSync("git", ["init", "-q"], { cwd: dir });
+    writeFileSync(join(dir, ".gitignore"), ".secrets.env\n");
+
+    const result = await writeSecretsEnvFile({
+      rootDir: dir,
+      worktreePath: dir,
+      taskId: "FN-8810",
+      settings: { secretsEnv: { enabled: true, filename: ".secrets.env" } },
+      worktreeSource: "fresh",
+      audit: { filesystem },
+      secretsStore: {
+        listEnvExportable: vi.fn().mockResolvedValue([
+          { id: "1", key: "runtime-key", exportKey: "RUNTIME_SECRET", scope: "project", plaintextValue: secretValue },
+        ]),
+      } as any,
+    });
+
+    expect(result).toMatchObject({ outcome: "written", filename: ".secrets.env", keyCount: 1 });
+    const exportedKeys = readFileSync(join(dir, ".secrets.env"), "utf8")
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => line.split("=", 1)[0]);
+    expect(exportedKeys).toContain("RUNTIME_SECRET");
+    expect(filesystem).toHaveBeenCalledWith(expect.objectContaining({
+      type: "secret:env-write",
+      metadata: expect.objectContaining({ keyCount: 1, fingerprint: expect.any(String) }),
+    }));
+    expect(JSON.stringify(filesystem.mock.calls)).not.toContain(secretValue);
   });
 
   it("merge is idempotent", async () => {

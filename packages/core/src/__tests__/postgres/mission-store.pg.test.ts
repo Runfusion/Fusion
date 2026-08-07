@@ -190,6 +190,7 @@ pgTest("MissionStore (PostgreSQL backend mode)", () => {
     const triaged = tasks.filter((task) => ["Single", "Bulk"].includes(task.title));
     expect(triaged).toHaveLength(2);
     expect(triaged.map((task) => task.autoMerge)).toEqual([false, false]);
+    expect(triaged.map((task) => task.autoMergeProvenance)).toEqual(["mission", "mission"]);
     // Single and bulk triage must join the one lazily-created mission group, not merely any group.
     expect(new Set(triaged.map((task) => task.branchContext?.groupId))).toEqual(new Set([triaged[0]!.branchContext!.groupId]));
     expect(triaged[0]!.branchContext?.groupId).toBeDefined();

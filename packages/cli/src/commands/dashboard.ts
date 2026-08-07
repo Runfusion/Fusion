@@ -7,6 +7,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
   type TaskStore,
+  type SecretsStore,
   AutomationStore,
   CentralCore,
   AgentStore,
@@ -152,6 +153,26 @@ import {
 
 // Re-export for backward compatibility with tests
 export { promptForPort };
+
+/*
+FNXC:SecretsEnvRuntimeWiring 2026-08-05-21:40:
+UI-only dashboard heartbeats are a separate production composition root. Keep this
+factory bound to the project-scoped store so fresh heartbeat worktrees never degrade to no-store.
+*/
+export function buildUiOnlyHeartbeatMonitorOptions(input: {
+  agentStore: AgentStore;
+  taskStore: TaskStore;
+  rootDir: string;
+  secretsStore: Pick<SecretsStore, "listEnvExportable">;
+}) {
+  return {
+    store: input.agentStore,
+    agentStore: input.agentStore,
+    taskStore: input.taskStore,
+    rootDir: input.rootDir,
+    secretsStore: input.secretsStore,
+  };
+}
 
 let processDiagnosticsRegistered = false;
 let diagnosticIntervalHandle: ReturnType<typeof setInterval> | null = null;
@@ -2494,11 +2515,20 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
     }
 
     try {
+      /*
+      FNXC:SecretsEnvRuntimeWiring 2026-08-05-21:40:
+      UI-only dashboard mode still runs durable-agent heartbeat worktree acquisition.
+      Resolve this project's store before constructing that monitor so its fresh worktrees
+      materialize only env-exportable project secrets instead of silently taking no-store.
+      */
+      const secretsStore = await store.getSecretsStore();
       heartbeatMonitorImpl = new HeartbeatMonitor({
-        store: agentStore,
-        agentStore,
-        taskStore: store,
-        rootDir: cwd,
+        ...buildUiOnlyHeartbeatMonitorOptions({
+          agentStore,
+          taskStore: store,
+          rootDir: cwd,
+          secretsStore,
+        }),
         onMissed: (agentId, reason) => {
           logSink.warn(`Agent ${agentId} missed heartbeat: ${reason}`, "engine");
         },

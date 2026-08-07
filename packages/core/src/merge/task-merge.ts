@@ -50,6 +50,19 @@ export function resolveEffectiveAutoMerge(
 }
 
 /**
+ * FNXC:SharedBranchMemberHold 2026-08-05-22:50:
+ * FN-8811 keeps live member→group integration fast by default, but an operator's
+ * explicit task-level Off choice is a durable request for the existing manual
+ * review hold. Mission policy, legacy stamps, and inherited values must never
+ * impersonate that consent boundary.
+ */
+export function hasUserAutoMergeHold(
+  task: Pick<Task, "autoMerge" | "autoMergeProvenance">,
+): boolean {
+  return task.autoMerge === false && task.autoMergeProvenance === "user";
+}
+
+/**
  * Gate for auto-merge *processing* (engine enqueue + self-healing sweeps).
  * Additive relative to the global setting: when `settings.autoMerge` is on,
  * every task flows through — tasks with an explicit `autoMerge: false` are
@@ -85,9 +98,10 @@ export function resolveEffectiveGroupAutoMerge(
 
 /**
  * Shared-branch-group members perform a soft pre-integration step:
- * member branch → shared group branch. This path is exempt from the global
- * `autoMerge:false` in-review terminal gate so member integration can proceed,
- * but shared-branch → default-branch promotion remains separately gated.
+ * member branch → shared group branch. This path is exempt from inherited and
+ * mission-policy `autoMerge:false` terminal gates so member integration can
+ * proceed. `hasUserAutoMergeHold` is the narrow operator opt-in that overrides
+ * this exemption; shared-branch → default promotion remains separately gated.
  */
 export function isSharedBranchGroupMemberIntegration(
   task: Pick<Task, "branchContext">,

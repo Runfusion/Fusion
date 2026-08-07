@@ -205,6 +205,28 @@ describe("POST /api/approvals/:id/decision — server-derived decider", () => {
     expect(approvalState.decide).not.toHaveBeenCalled();
   });
 
+  it.each(["approve", "deny"] as const)("allows the server-derived operator to %s an agent-requested secrets approval", async (decision) => {
+    approvalState.requests.set(REQUEST_ID, makeApprovalRequest({
+      requester: { actorId: "agent-1a009724", actorType: "agent", actorName: "Dashboard Chat Agent" },
+      targetAction: {
+        category: "secrets_access",
+        action: "read",
+        summary: "Read secret",
+        resourceType: "secret",
+        resourceId: "secret-1",
+      },
+    }));
+    const { app } = makeApp();
+    const res = await postDecision(app, { decision });
+
+    expect(res.status).toBe(200);
+    expect(approvalState.decide).toHaveBeenCalledWith(
+      REQUEST_ID,
+      decision === "approve" ? "approved" : "denied",
+      expect.objectContaining({ actor: { actorId: "user", actorType: "user", actorName: "User" } }),
+    );
+  });
+
   it("still rejects a malformed body actor with 400", async () => {
     const { app } = makeApp();
     const res = await postDecision(app, { decision: "approve", actor: { actorId: 42 } });

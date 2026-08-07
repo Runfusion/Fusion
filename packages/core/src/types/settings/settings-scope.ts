@@ -1136,11 +1136,17 @@ export interface ProjectSettings {
    *  (triage specification, task execution, and merge operations). */
   maxConcurrent: number;
   /**
-   * FNXC:ExecutorToolFailureRetry 2026-07-16-12:00:
-   * Bounded same-model retry before the executor terminal park. Tool markers are ignored, terminal tool_error counts, tool_result resets; per-run cursor claims prevent concurrent over-retry and count 0 preserves prior behavior. Values are floored and the backoff timer is unref'd. FN-7998 consumes this stable policy shape for escalation.
+   * FNXC:ExecutorToolFailureRetry 2026-08-06-14:56:
+   * Bounded same-model retry before the executor terminal park. Tool markers
+   * are ignored, terminal tool_error counts, and tool_result resets; one
+   * terminal error qualifies by default. Per-run cursor claims prevent
+   * concurrent over-retry, count 0 preserves disabled recovery, explicit
+   * thresholds remain honored, and the unref'd backoff supports FN-7998
+   * escalation after exhaustion.
    */
   executorToolFailureRetryCount?: number;
   executorToolFailureRetryBackoffMs?: number;
+  /** Consecutive terminal tool errors required to retry. Default: 1. */
   executorToolFailureThreshold?: number;
   /**
    * FNXC:ExecutorEscalation 2026-07-16-21:00:

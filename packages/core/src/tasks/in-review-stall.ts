@@ -65,7 +65,13 @@ export const DEFAULT_STALE_MERGING_MIN_AGE_MS = 5 * 60_000;
 export const DEFAULT_MAX_AUTO_MERGE_RETRIES = 3;
 export const DEFAULT_MAX_CONSECUTIVE_TOOL_FAILURE_RETRIES = 2;
 export const DEFAULT_CONSECUTIVE_TOOL_FAILURE_RETRY_BACKOFF_MS = 2_000;
-export const CONSECUTIVE_TOOL_FAILURE_RETRY_THRESHOLD = 3;
+/*
+FNXC:ExecutorToolFailureRetry 2026-08-06-14:56:
+One terminal tool_error after an execute-family run cursor must qualify for the
+existing bounded same-model recovery. Explicit thresholds, retry budgets, and
+cursor ownership remain the operator-controlled safety fences.
+*/
+export const CONSECUTIVE_TOOL_FAILURE_RETRY_THRESHOLD = 1;
 
 /**
  * FNXC:AutoMergeRetries 2026-06-17-04:20:
@@ -79,7 +85,12 @@ export function resolveMaxAutoMergeRetries(settings?: { maxAutoMergeRetries?: un
   return DEFAULT_MAX_AUTO_MERGE_RETRIES;
 }
 
-/** FNXC:ExecutorToolFailureRetry 2026-07-16-12:00: normalize the project policy identically in engine and settings UI; finite in-range fractions floor, invalid values retain safe defaults. */
+/**
+ * FNXC:ExecutorToolFailureRetry 2026-08-06-14:56:
+ * Normalize project policy identically in engine and settings UI. Invalid or
+ * undefined thresholds fall back to the first-error default; finite explicit
+ * thresholds at or above one retain operator intent.
+ */
 function resolveNonNegativeInteger(value: unknown, fallback: number): number {
   const numeric = Number(value);
   return Number.isFinite(numeric) && Math.floor(numeric) >= 0 ? Math.floor(numeric) : fallback;

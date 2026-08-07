@@ -825,8 +825,15 @@ export function MailboxView({
       setSelectedApproval(updated);
       setApprovalComment("");
       addToast?.(`Request ${decision === "approve" ? "approved" : "denied"}`, "success");
-    } catch {
-      addToast?.("Failed to submit decision", "error");
+    } catch (error) {
+      /*
+      FNXC:SecretsAccessApproval 2026-08-05-21:31:
+      Approval decisions can fail for a server-enforced security invariant such as
+      genuine self-approval. Preserve a safe Error message so desktop and mobile
+      operators can act on it; unknown rejection shapes retain the generic fallback
+      and never expose raw response bodies, stacks, or secret material.
+      */
+      addToast?.(error instanceof Error ? error.message : "Failed to submit decision", "error");
     } finally {
       setApprovalDecisionLoading(false);
     }

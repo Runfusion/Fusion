@@ -145,7 +145,7 @@ export function buildExecuteWorkflowGraphDeps(host: any): any {
       "buildBranchPersistence", "buildCodeNodeRunner", "buildColumnBoundaryHooks", "buildForeachWorktreeDeps",
       "buildParseStepsDeps", "buildStepInstancePersistence", "createAuthoritativeWorkflowPrimitives",
       "createAuthoritativeWorkflowSeams", "finalizeMergeConfirmedWorkflowGraphTask", "handleGraphFailure",
-      "prepareGraphNodeExecution", "readTaskArtifact", "recoverMissingRequiredArtifacts",
+      "isLiveSharedBranchGroupMember", "prepareGraphNodeExecution", "readTaskArtifact", "recoverMissingRequiredArtifacts",
       "requestPreMergeOptionalStepFix", "runGraphCustomNode", "terminateAllChildren",
     ]),
   };

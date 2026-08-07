@@ -85,7 +85,7 @@ export function rowToTask(row: TaskRow): Task {
     executionStartBranch: row.executionStartBranch || undefined,
     branch: row.branch || undefined,
     autoMerge: row.autoMerge === null ? undefined : row.autoMerge === 1,
-    autoMergeProvenance: row.autoMergeProvenance === "user" || row.autoMergeProvenance === "legacy-stamp"
+    autoMergeProvenance: row.autoMergeProvenance === "user" || row.autoMergeProvenance === "mission" || row.autoMergeProvenance === "legacy-stamp"
       ? row.autoMergeProvenance
       : undefined,
     baseCommitSha: row.baseCommitSha || undefined,

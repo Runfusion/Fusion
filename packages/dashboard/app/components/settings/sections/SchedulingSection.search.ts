@@ -54,7 +54,7 @@ export const schedulingSearchEntries: SettingsSearchEntry[] = [
     labelKey: "settings.scheduling.executorToolFailureThreshold",
     labelFallback: "Consecutive tool failures",
     helpKey: "settings.scheduling.executorToolFailureThresholdHelp",
-    helpFallback: "Terminal tool errors required before retrying. Default: 3.",
+    helpFallback: "Terminal tool errors required before retrying. Default: 1.",
     keywords: ["executor", "tool error", "threshold", "auto retry"],
   },
   {

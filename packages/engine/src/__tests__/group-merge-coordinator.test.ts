@@ -6,6 +6,16 @@ import { tmpdir } from "node:os";
 
 import { describe, expect, it, afterEach, beforeEach, vi } from "vitest";
 import { type TaskStore } from "@fusion/core";
+
+const createResolvedAgentSessionMock = vi.hoisted(() => vi.fn());
+vi.mock("../agents/agent-session-helpers.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../agents/agent-session-helpers.js")>()),
+  createResolvedAgentSession: createResolvedAgentSessionMock,
+}));
+vi.mock("../pi.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../pi.js")>()),
+  promptWithFallback: vi.fn(async (session: { prompt: (prompt: string) => Promise<void> }, prompt: string) => session.prompt(prompt)),
+}));
 import { createTaskStoreForTest, pgDescribe, type PgTestHarness } from "../../../core/src/__test-utils__/pg-test-harness.js";
 import {
   evaluateBranchGroupCompletion,
@@ -1252,6 +1262,7 @@ function createPostReviewTask(groupId: string): Record<string, any> {
 function createPostReviewStore(task: Record<string, any>, branchGroup: Record<string, any> | null) {
   return {
     getTask: vi.fn(async () => task),
+    listTasks: vi.fn(async () => [task]),
     getSettings: vi.fn(async () => ({
       autoMerge: false,
       merger: { maxReviewPasses: 0 },
@@ -1266,6 +1277,7 @@ function createPostReviewStore(task: Record<string, any>, branchGroup: Record<st
     logEntry: vi.fn(async () => undefined),
     appendAgentLog: vi.fn(async () => undefined),
     recordRunAuditEvent: vi.fn(async () => undefined),
+    getActiveMergingTask: vi.fn(async () => null),
     emit: vi.fn(),
   } as any;
 }
@@ -1273,7 +1285,8 @@ function createPostReviewStore(task: Record<string, any>, branchGroup: Record<st
 function createInterpreterMergeEngine(repo: string, store: any): any {
   const engine = Object.create(ProjectEngine.prototype) as any;
   engine.config = { workingDirectory: repo };
-  engine.runtime = { getTaskStore: () => store };
+  engine.options = {};
+  engine.runtime = { getTaskStore: () => store, getPluginRunner: () => undefined };
   return engine;
 }
 
@@ -1364,6 +1377,90 @@ describe("resolveBranchGroupMergeRouting", () => {
     expect(safeTask.mergeDetails).toMatchObject({
       mergeConfirmed: true,
       mergeTargetBranch: "mission/M-3324",
+      mergeTargetSource: "branch-group-integration",
+    });
+  }, 30_000);
+
+  /*
+  FNXC:SharedBranchMemberHold 2026-08-05-23:45:
+  FN-8811 requires an operator-authored task-level Off choice to stop before
+  member→group integration, while the explicit Merge & Close release must still
+  land exactly once on the mission branch. Exercise the production requester and
+  real merger together so a gate-only test cannot hide a release-target regression.
+  */
+  it("holds a user-off member before release, then lands exactly once on its mission branch", async () => {
+    const repo = makeRepo();
+    const mainBefore = git(repo, "git rev-parse main");
+    git(repo, "git checkout -q -b fusion/fn-3324");
+    writeFileSync(join(repo, "user-hold-feature.txt"), "release only after operator confirmation\n");
+    git(repo, "git add user-hold-feature.txt && git commit -q -m feature");
+    git(repo, "git checkout -q main");
+    git(repo, "git branch mission/M-8811 main");
+
+    const task = {
+      ...createPostReviewTask("BG-user-hold"),
+      autoMerge: false,
+      autoMergeProvenance: "user",
+    };
+    const store = createPostReviewStore(task, {
+      id: "BG-user-hold",
+      status: "open",
+      branchName: "mission/M-8811",
+    });
+    const engine = createInterpreterMergeEngine(repo, store);
+    const blockedMerge = vi.fn(async () => {
+      throw new Error("user hold must prevent automatic member integration");
+    });
+    engine.onMerge = blockedMerge;
+
+    const held = await engine.requestInterpreterMerge("FN-3324");
+
+    expect(held).toMatchObject({ merged: false, noOp: true });
+    expect(blockedMerge).not.toHaveBeenCalled();
+    expect(git(repo, "git rev-parse main")).toBe(mainBefore);
+    expect(() => git(repo, "git show mission/M-8811:user-hold-feature.txt")).toThrow();
+
+    let mergeAttempts = 0;
+    /*
+     * FNXC:SharedBranchMemberHold 2026-08-06-00:24:
+     * FN-8811 requires release to travel through the production queue, not a
+     * test-owned drain. The session fake supplies deterministic AI responses,
+     * while ProjectEngine's real drain invokes runAiMerge against Git.
+     */
+    createResolvedAgentSessionMock.mockImplementation(async (options: any) => ({
+      session: {
+        async prompt() {
+          if (String(options.systemPrompt).includes("read-only")) {
+            options.onText?.("REVIEW_VERDICT: approve");
+            return;
+          }
+          mergeAttempts += 1;
+          git(options.cwd, "git merge --squash fusion/fn-3324");
+          git(options.cwd, "git add -A && git commit -q -m 'squash user-held member'");
+        },
+        dispose: vi.fn(),
+        getSessionStats: vi.fn(() => ({ tokens: { input: 1, output: 1 } })),
+      },
+    }));
+    engine.manualMergeResolvers = new Map();
+    engine.mergeActive = new Set();
+    engine.mergeQueue = [];
+    engine.capacityDeferredMergeTaskIds = new Set();
+    engine.capacityDeferredMerges = new Map();
+    engine.coordinatorAdmittedMergeTaskIds = new Set();
+    engine.started = true;
+    engine.shuttingDown = false;
+
+    const released = await ProjectEngine.prototype.onMerge.call(engine, "FN-3324");
+    createResolvedAgentSessionMock.mockReset();
+
+    expect(released.merged).toBe(true);
+    expect(mergeAttempts).toBe(1);
+    expect(git(repo, "git rev-parse main")).toBe(mainBefore);
+    expect(git(repo, "git show mission/M-8811:user-hold-feature.txt")).toBe("release only after operator confirmation");
+    expect(task.mergeDetails).toMatchObject({
+      mergeConfirmed: true,
+      mergeTargetBranch: "mission/M-8811",
       mergeTargetSource: "branch-group-integration",
     });
   }, 30_000);

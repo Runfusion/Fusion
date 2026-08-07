@@ -9,7 +9,7 @@
  * Resume lanes resolved once at top so renamed boards keep FN-7214 terminal rules.
  */
 import type { Settings, TaskDetail, TaskStore } from "@fusion/core";
-import { allowsAutoMergeProcessing } from "@fusion/core";
+import { allowsAutoMergeProcessing, hasUserAutoMergeHold } from "@fusion/core";
 import type { WorkflowGraphTaskRunResult } from "../workflows/workflow-graph-task-runner.js";
 import { WORKFLOW_NODE_ENGINE_PAUSE_ABORT_KIND } from "../workflows/workflow-graph-executor.js";
 import type { PausedAbortProvenance } from "./paused-abort-provenance.js";
@@ -82,9 +82,13 @@ export async function isReentrantPausedAbortedInFlightNode(
       if (settings.globalPause === true) return false;
     }
     if (live.column === resumeLanes.review) {
-      if (live.autoMerge === false) return false;
       if (!settings) return false;
       const sharedBranchMember = await deps.isLiveSharedBranchGroupMember(live);
+      // FNXC:SharedBranchMemberHold 2026-08-05-23:55: an interrupted live
+      // member with mission/legacy policy false must resume its local integration;
+      // only the user hold (and every stale/default-group false override) remains
+      // terminal at this recovery boundary.
+      if (hasUserAutoMergeHold(live) || (live.autoMerge === false && !sharedBranchMember)) return false;
       if (!sharedBranchMember && !allowsAutoMergeProcessing(live, settings)) return false;
       if (live.mergeDetails?.mergeConfirmed === true) return false;
     }

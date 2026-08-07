@@ -21,6 +21,7 @@ import {
   WORKFLOW_ID_CONTEXT_KEY,
   WORKFLOW_RUN_ID_CONTEXT_KEY,
   type CodeNodeRunner,
+  type DefaultNodeHandlerDeps,
   type ForeachActiveContext,
   type ParseStepsHandlerDeps,
   type WorkflowNotifyDispatch,
@@ -172,6 +173,8 @@ export interface WorkflowGraphExecutorDeps {
   /** PR-entity nodes (U3): deps for `pr-create`/`pr-respond`/`pr-merge` (injected
    *  GitHub callbacks + store accessor). Absent → the pr-* kinds fail cleanly. */
   prNodes?: PrNodeDeps;
+  /** Resolves the live intermediate-group exemption for a merge-gate node. */
+  isLiveSharedBranchMember?: DefaultNodeHandlerDeps["isLiveSharedBranchMember"];
   maxRetriesPerNode?: number;
   /** Per-branch run-state persistence (U13). Optional — fully in-memory without it. */
   branchPersistence?: WorkflowBranchPersistence;
@@ -459,6 +462,7 @@ export class WorkflowGraphExecutor {
         runCode: deps.runCode,
         notifyDispatch: deps.notifyDispatch,
         prNodes: deps.prNodes,
+        isLiveSharedBranchMember: deps.isLiveSharedBranchMember,
       }),
       ...(deps.runnerRegistry?.toHandlers() ?? {}),
       ...(deps.handlers ?? {}),

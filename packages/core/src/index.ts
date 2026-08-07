@@ -1145,6 +1145,7 @@ export {
   getLatestFailedPreMergeReviewStep,
   isTaskReadyForMerge,
   allowsAutoMergeProcessing,
+  hasUserAutoMergeHold,
   isSharedBranchGroupMemberIntegration,
   isLiveSharedBranchGroupMemberIntegration,
   resolveEffectiveAutoMerge,
@@ -2703,10 +2704,12 @@ export {
 FNXC:SessionIdentity 2026-07-26-12:10:
 In-process principal channel between the engine (session spawner) and the bundled
 @runfusion/fusion pi extension (tool surface). Exported from core because both sides
-inline core, while the actual state lives on globalThis so bundling cannot fork it.
+inline core, while the registry and prompt-invocation context live on globalThis so
+bundling cannot fork either channel.
 */
 export {
   registerFusionSessionIdentity,
+  runWithFusionSessionIdentity,
   resolveFusionSessionPrincipal,
   __clearFusionSessionIdentityRegistryForTests,
   type FusionSessionIdentity,

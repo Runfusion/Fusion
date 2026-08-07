@@ -78,6 +78,9 @@ export type ExecuteWorkflowGraphDeps = {
   createAuthoritativeWorkflowSeams: AnyFn;
   finalizeMergeConfirmedWorkflowGraphTask: AnyFn;
   handleGraphFailure: AnyFn;
+  isLiveSharedBranchGroupMember: (
+    task: Pick<TaskDetail, "branchContext" | "autoMerge" | "autoMergeProvenance">,
+  ) => Promise<boolean>;
   prepareGraphNodeExecution: AnyFn;
   readTaskArtifact: AnyFn;
   recoverMissingRequiredArtifacts: AnyFn;
@@ -294,6 +297,8 @@ export async function executeWorkflowGraph(
           getTask: (taskId: string) => deps.store.getTask(taskId),
         },
         runId: resolvedRunId,
+        isLiveSharedBranchMember: (nodeTask) =>
+          deps.isLiveSharedBranchGroupMember(nodeTask),
         primitives: deps.createAuthoritativeWorkflowPrimitives(settings),
         seams: deps.createAuthoritativeWorkflowSeams(settings),
         prepareNodeExecution: (node, nodeTask, requirement) =>

@@ -47,7 +47,13 @@ import { getStalledReviewSignal } from "../utils/taskStalledReview";
 import { getInReviewStallCopy, shouldShowInReviewStallBadge } from "../utils/inReviewStallCopy";
 import { getStalePausedReviewCopy, shouldShowStalePausedReviewBadge } from "../utils/stalePausedReviewCopy";
 import { getTaskAgeStalenessCopy, shouldShowTaskAgeStalenessBadge } from "../utils/taskAgeStalenessCopy";
-import { getRunningOptionalGateBadge, getRunningWorkflowStepLabel, getUnifiedTaskProgress, isPlanReviewRunning } from "../utils/taskProgress";
+import {
+  getRunningOptionalGateBadge,
+  getRunningWorkflowStepLabel,
+  getUnifiedTaskProgress,
+  isNonPlanningOptionalGateBadge,
+  isPlanReviewRunning,
+} from "../utils/taskProgress";
 import { ACTIVE_STATUSES, isTaskAgentActive } from "../utils/taskActivity";
 import { getPrBadgeModifierClass } from "../utils/prBadgeClass";
 import { getTotalAgentActiveMs, getEndToEndDurationMs, getTimedDurationMs, getWorkflowRuntimeMs, parseTimestampToMs } from "../utils/taskTiming";
@@ -3379,6 +3385,19 @@ function TaskCardComponent({
     && isAgentActive;
   const isLivePlanning = isTaskPlanningActive(task, { globalPaused });
   /*
+  FNXC:TaskCardBadgePrecedence 2026-08-06-14:53:
+  A visible non-planning gate is the lifecycle authority while it runs, so suppress only the
+  contradictory Planning status shell. Plan Review is intentionally excluded by the shared helper:
+  Planning + Plan Review expresses nested planning, while Planning + Code Review is stale state.
+  Paused, stuck, approval, merge, and other operator states retain their existing precedence.
+  */
+  const suppressPlanningStatusBadge = showOptionalGateBadge && isNonPlanningOptionalGateBadge(optionalGateBadge);
+  const isPlanningStatusBadge = !isStuck
+    && !isPlanReviewReplanCapApproval
+    && !isAwaitingApproval
+    && !isAwaitingInput
+    && (isLivePlanning || isTransientPlannerActive || visualStatus === "planning");
+  /*
   FNXC:TaskStatusBadge 2026-08-01-07:20 (operator: queued belongs with Planning and Ready):
   Queued used to render as a clock-and-text footer tag, separating the waiting state from the
   Planning and Ready badges operators compare it with. Treat every non-WIP queued card as a normal
@@ -3390,7 +3409,8 @@ function TaskCardComponent({
     && (queued || visualStatus === "queued");
   const showStatusBadge = !isPaused
     && (hasTaskStatusBadge(visualStatus) || isTransientPlannerActive)
-    && visualStatus !== "queued";
+    && visualStatus !== "queued"
+    && !(suppressPlanningStatusBadge && isPlanningStatusBadge);
   /*
   FNXC:TaskStatusBadge 2026-07-26-14:05:
   The status badge's resolved copy, hoisted out of the JSX. U12 lets this badge borrow the running

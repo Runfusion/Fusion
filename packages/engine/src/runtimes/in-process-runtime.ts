@@ -1326,6 +1326,13 @@ export class InProcessRuntime
       }
 
       const prNodeGithubOps = this.config.prNodeGithubOps;
+      /*
+      FNXC:SecretsEnvRuntimeWiring 2026-08-05-21:30:
+      `secretsEnv` materializes only through fresh executor and heartbeat worktree acquisitions.
+      Resolve the project-scoped store once at this composition boundary and share it with both
+      consumers; omitting either dependency silently degrades that path to the defensive no-store skip.
+      */
+      const secretsStore = await this.taskStore.getSecretsStore();
       const executorOptions: TaskExecutorOptions = {
         /*
         FNXC:PlanReviewLease 2026-07-26-21:12:
@@ -1341,6 +1348,7 @@ export class InProcessRuntime
         cliAgentRuntime: this.cliAgentRuntime?.bundle,
         pluginRunner: this.pluginRunner,
         messageStore: this.messageStore,
+        secretsStore,
         missionStore,
         reflectionService,
         // PR-entity nodes (U3): assemble the handler deps from the CLI-injected
@@ -1473,6 +1481,7 @@ export class InProcessRuntime
           reflectionService,
           selfImproveService,
           credentialRotator: this.credentialRotator,
+          secretsStore,
           snapshotManager: autoClaimSnapshotManager,
           onMissed: (agentId, reason) => {
             runtimeLog.warn(`Agent ${agentId} missed heartbeat: ${reason}`);

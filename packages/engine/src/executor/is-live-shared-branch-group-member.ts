@@ -20,7 +20,7 @@ export type IsLiveSharedBranchGroupMemberDeps = {
 
 export async function isLiveSharedBranchGroupMember(
   deps: IsLiveSharedBranchGroupMemberDeps,
-  live: Pick<TaskDetail, "branchContext">,
+  live: Pick<TaskDetail, "branchContext" | "autoMerge" | "autoMergeProvenance">,
 ): Promise<boolean> {
   const groupId = live.branchContext?.groupId?.trim();
   // FNXC:PostgresCutover 2026-07-10: getBranchGroup is async on the PG branch.

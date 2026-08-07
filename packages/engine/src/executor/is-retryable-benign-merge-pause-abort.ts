@@ -11,6 +11,7 @@
 import type { Settings, TaskDetail, TaskStore } from "@fusion/core";
 import {
   allowsAutoMergeProcessing,
+  hasUserAutoMergeHold,
   resolveEffectiveAutoMerge,
   resolveMaxAutoMergeRetries,
 } from "@fusion/core";
@@ -63,6 +64,10 @@ export async function isRetryableBenignMergePauseAbort(
     } catch {
       return false;
     }
+    // FNXC:SharedBranchMemberHold 2026-08-05-22:50: FN-8811 lets only an
+    // operator-authored Off choice fence the live member fast path; policy and
+    // legacy false values retain member→group flow.
+    if (hasUserAutoMergeHold(live)) return false;
     const sharedBranchMember = await deps.isLiveSharedBranchGroupMember(live);
     if (!sharedBranchMember && !allowsAutoMergeProcessing(live, settings)) return false;
     if (!sharedBranchMember && resolveEffectiveAutoMerge(live, settings) === false) return false;

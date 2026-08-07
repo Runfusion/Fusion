@@ -28,6 +28,7 @@
 import type { Task, TaskStore, WorkflowStepResult as CoreWorkflowStepResult } from "@fusion/core";
 import {
   DEFAULT_MAX_POST_REVIEW_FIXES,
+  hasUserAutoMergeHold,
   resolveOptionalReviewRevisionBudget,
   resolveOptionalStepRevisionBudget,
 } from "@fusion/core";
@@ -93,6 +94,14 @@ export async function requestPreMergeOptionalStepFix(
   if (info.status !== "advisory_failure" && info.status !== "failed") return false;
 
   const liveTask = await deps.store.getTask(taskId).catch(() => fallbackTask);
+  /*
+   * FNXC:SharedBranchMemberHold 2026-08-06-00:12:
+   * An operator-authored task Off is a durable manual checkpoint, not merely
+   * an auto-merge admission preference. Pre-merge remediation must not reopen
+   * implementation and thereby bypass that checkpoint before the operator
+   * releases or revises the held member.
+   */
+  if (hasUserAutoMergeHold(liveTask)) return false;
   const missingArtifactKeys = parseRequiredArtifactMissingValue(info.failureValue);
   if (missingArtifactKeys) {
     await deps.recoverMissingRequiredArtifacts(liveTask, missingArtifactKeys, {

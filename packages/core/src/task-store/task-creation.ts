@@ -490,7 +490,9 @@ export async function _createTaskInternalBackendImpl(store: TaskStore, input: Ta
       sourceMetadata: withTaskBranchContextInSourceMetadata(input.source?.sourceMetadata, input.branchContext),
       branchContext: input.branchContext,
       autoMerge: input.autoMerge,
-      autoMergeProvenance: input.autoMerge === undefined ? undefined : "user",
+      // FNXC:SharedBranchMemberHold 2026-08-05-22:50: trusted mission creation
+      // preserves policy provenance; operator/API create requests retain user provenance.
+      autoMergeProvenance: input.autoMerge === undefined ? undefined : input.autoMergeProvenance ?? "user",
       // FNXC:CodingIdeasWorkflow 2026-07-05-19:45: land the task in its
       // workflow's manual intake column (e.g. Coding (Ideas) → "ideas") when
       // no explicit column is given (main FN-7591 parity).
@@ -967,7 +969,9 @@ export async function _createTaskInternalImpl(store: TaskStore, input: TaskCreat
       sourceMetadata: withTaskBranchContextInSourceMetadata(input.source?.sourceMetadata, input.branchContext),
       branchContext: input.branchContext,
       autoMerge: input.autoMerge,
-      autoMergeProvenance: input.autoMerge === undefined ? undefined : "user",
+      // FNXC:SharedBranchMemberHold 2026-08-05-22:50: trusted mission creation
+      // preserves policy provenance; operator/API create requests retain user provenance.
+      autoMergeProvenance: input.autoMerge === undefined ? undefined : input.autoMergeProvenance ?? "user",
       // FNXC:CodingIdeasWorkflow 2026-07-05-19:45: land the task in its
       // workflow's manual intake column (e.g. Coding (Ideas) → "ideas") when
       // no explicit column is given (main FN-7591 parity).

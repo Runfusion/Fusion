@@ -2708,6 +2708,72 @@ describe("TaskCard", () => {
     expect(container.querySelector(".card-steps-list")).toBeNull();
   });
 
+  /*
+  FNXC:TaskCardBadgePrecedence 2026-08-06-14:53:
+  The reported snapshot retains Planning while Code Review starts. The real card must render only the
+  review gate; Plan Review remains separately covered as the valid Planning + Plan Review pairing.
+  */
+  it("renders Code Review without a stale Planning status badge", () => {
+    const { container } = render(
+      <TaskCard
+        task={makeTask({
+          id: "FN-8814",
+          column: "in-review",
+          status: "planning" as any,
+          enabledWorkflowSteps: ["plan-review", "code-review"],
+          workflowStepResults: [
+            {
+              workflowStepId: "plan-review",
+              workflowStepName: "Plan Review",
+              status: "passed",
+              startedAt: "2026-08-06T14:40:00.000Z",
+              completedAt: "2026-08-06T14:41:00.000Z",
+            },
+            {
+              workflowStepId: "code-review",
+              workflowStepName: "Code Review",
+              status: "pending",
+              startedAt: "2026-08-06T14:42:00.000Z",
+            },
+          ],
+        })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    expect(screen.getByTestId("card-code-review-FN-8814")).toHaveTextContent("Code Review");
+    expect(screen.queryByText("Planning")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Planning")).not.toBeInTheDocument();
+    expect(container.querySelectorAll(".card-status-badge")).toHaveLength(1);
+  });
+
+  it.each([
+    { name: "pending but not started", result: { status: "pending" as const, startedAt: undefined } },
+    { name: "completed", result: { status: "passed" as const, startedAt: "2026-08-06T14:42:00.000Z", completedAt: "2026-08-06T14:43:00.000Z" } },
+  ])("keeps Planning when Code Review is $name", ({ result }) => {
+    render(
+      <TaskCard
+        task={makeTask({
+          id: `FN-8814-${result.status}`,
+          column: "in-review",
+          status: "planning" as any,
+          enabledWorkflowSteps: ["code-review"],
+          workflowStepResults: [{
+            workflowStepId: "code-review",
+            workflowStepName: "Code Review",
+            ...result,
+          }],
+        })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    expect(screen.getByText("Planning")).toBeInTheDocument();
+    expect(screen.queryByTestId(`card-code-review-FN-8814-${result.status}`)).not.toBeInTheDocument();
+  });
+
   it("does not badge Code Review while the card is still in-progress", () => {
     const { container } = render(
       <TaskCard

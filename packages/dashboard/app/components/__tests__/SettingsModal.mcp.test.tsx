@@ -48,12 +48,14 @@ function mockFetch(statusByName: Record<string, { status: "valid" | "unreachable
       const scope = (new URL(url, "https://fusion.test").searchParams.get("scope") === "global" ? "global" : "project") as McpSettingsScope;
       return new Response(JSON.stringify(discoveryByScope?.[scope] ?? { sources: [], servers: [], errors: [] }), { status: 200, headers: { "Content-Type": "application/json" } });
     }
-    if (url === "/api/secrets" && (!init?.method || init.method === "GET")) {
-      return new Response(JSON.stringify({ secrets: [secret] }), { status: 200, headers: { "Content-Type": "application/json" } });
-    }
-    if (url === "/api/secrets" && init?.method === "POST") {
+    if (url.startsWith("/api/secrets?") || url === "/api/secrets") {
+      if (!init?.method || init.method === "GET") {
+        return new Response(JSON.stringify({ secrets: [secret] }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (init?.method === "POST") {
       const body = JSON.parse(String(init.body ?? "{}")) as { key?: string; scope?: "project" | "global" };
-      return new Response(JSON.stringify({ ...secret, id: `created-${body.key ?? "secret"}`, key: body.key ?? "TOKEN", scope: body.scope ?? "project" }), { status: 201, headers: { "Content-Type": "application/json" } });
+        return new Response(JSON.stringify({ ...secret, id: `created-${body.key ?? "secret"}`, key: body.key ?? "TOKEN", scope: body.scope ?? "project" }), { status: 201, headers: { "Content-Type": "application/json" } });
+      }
     }
     if (url === "/api/mcp/validate") {
       const body = JSON.parse(String(init?.body ?? "{}")) as { server?: { name?: string } };
@@ -74,7 +76,7 @@ function expectButtonIconSize(button: HTMLElement, size: "14" | "16") {
   expect(icon).toHaveAttribute("height", size);
 }
 
-function renderCard(options: { scope: McpSettingsScope; form?: Settings; globalSettings?: Pick<GlobalSettings, "mcpServers"> | null; pluginServers?: Array<{ pluginId: string; server: { name: string; transport: "stdio"; command: string; enabledByDefault?: boolean } }> }) {
+function renderCard(options: { scope: McpSettingsScope; form?: Settings; globalSettings?: Pick<GlobalSettings, "mcpServers"> | null; projectId?: string; pluginServers?: Array<{ pluginId: string; server: { name: string; transport: "stdio"; command: string; enabledByDefault?: boolean } }> }) {
   let currentForm: Settings = options.form ?? ({} as Settings);
   const addToast = vi.fn();
   function Harness() {
@@ -85,6 +87,7 @@ function renderCard(options: { scope: McpSettingsScope; form?: Settings; globalS
         scope={options.scope}
         form={form}
         globalSettings={options.globalSettings}
+        projectId={options.projectId}
         pluginServers={options.pluginServers}
         addToast={addToast}
         setForm={(next) => {
@@ -144,6 +147,60 @@ afterEach(() => {
 });
 
 describe("MCP Settings UI", () => {
+  it("binds MCP secret listing to its selected project", async () => {
+    const fetchMock = mockFetch();
+    renderCard({ scope: "project", projectId: "proj_A" });
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/secrets?projectId=proj_A", expect.anything()));
+  });
+
+  it("drops stale MCP secret options when the selected project changes", async () => {
+    let resolveA!: (response: Response) => void;
+    let resolveB!: (response: Response) => void;
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/secrets?projectId=proj_A") return new Promise<Response>((resolve) => { resolveA = resolve; });
+      if (url === "/api/secrets?projectId=proj_B" && init?.method === "POST") {
+        const body = JSON.parse(String(init.body)) as { key: string; scope: string };
+        return Promise.resolve(new Response(JSON.stringify({ ...secret, id: `created-${body.key}`, key: body.key, scope: body.scope }), { status: 201, headers: { "Content-Type": "application/json" } }));
+      }
+      if (url === "/api/secrets?projectId=proj_B") return new Promise<Response>((resolve) => { resolveB = resolve; });
+      if (url.startsWith("/api/mcp/discovered")) return Promise.resolve(new Response(JSON.stringify({ sources: [], servers: [], errors: [] }), { status: 200, headers: { "Content-Type": "application/json" } }));
+      return Promise.resolve(new Response(JSON.stringify({ error: `Unhandled ${url}` }), { status: 500, headers: { "Content-Type": "application/json" } }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const props = { scope: "project" as const, form: {} as Settings, setForm: vi.fn(), addToast: vi.fn() };
+    const { rerender } = render(<McpServersCard {...props} projectId="proj_A" />);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/secrets?projectId=proj_A", expect.anything()));
+
+    rerender(<McpServersCard {...props} projectId="proj_B" />);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/secrets?projectId=proj_B", expect.anything()));
+    fireEvent.click(screen.getByRole("button", { name: /Add server/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Add secret reference/i }));
+    const picker = screen.getByRole("combobox", { name: "Secret reference" });
+    expect(within(picker).queryByRole("option", { name: /A_ONLY/ })).not.toBeInTheDocument();
+
+    resolveB(new Response(JSON.stringify({ secrets: [
+      { ...secret, id: "b", key: "B_ONLY" },
+      { ...secret, id: "global", key: "SHARED", scope: "global" },
+    ] }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    await screen.findByRole("option", { name: /B_ONLY/ });
+    expect(within(picker).getByRole("option", { name: /SHARED/ })).toBeInTheDocument();
+
+    resolveA(new Response(JSON.stringify({ secrets: [{ ...secret, id: "a", key: "A_ONLY" }] }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    await waitFor(() => expect(within(picker).getByRole("option", { name: /B_ONLY/ })).toBeInTheDocument());
+    expect(within(picker).queryByRole("option", { name: /A_ONLY/ })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /^Cancel$/i }));
+    const importPayload = JSON.stringify({ mcpServers: { imported: { command: "node", env: { TOKEN: "secret" } } } });
+    fireEvent.change(screen.getByPlaceholderText("Paste Claude Desktop mcpServers JSON"), { target: { value: importPayload } });
+    fireEvent.click(screen.getByRole("button", { name: /^Import$/i }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/secrets?projectId=proj_B",
+      expect.objectContaining({ method: "POST", body: expect.stringContaining('"scope":"project"') }),
+    ));
+  });
+
   it("renders global and project MCP section affordances without a new lazy view", async () => {
     render(<GlobalMcpSection form={{} as Settings} setForm={vi.fn()} addToast={vi.fn()} />);
     expect(await screen.findByTestId("mcp-servers-card-global")).toBeInTheDocument();

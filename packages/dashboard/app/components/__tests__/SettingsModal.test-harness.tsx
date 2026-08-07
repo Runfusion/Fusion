@@ -377,18 +377,18 @@ export function installSettingsModalEnv(options?: { advancedSettings?: boolean }
     });
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
-      if (url.endsWith("/api/secrets")) {
-        return {
-          ok: true,
-          status: 200,
-          json: async () => ({ secrets: [] }),
-        };
-      }
-      if (url.endsWith("/api/secrets/sync-passphrase")) {
+      if (url.startsWith("/api/secrets/sync-passphrase")) {
         return {
           ok: true,
           status: 200,
           json: async () => ({ configured: false }),
+        };
+      }
+      if (url.startsWith("/api/secrets")) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ secrets: [] }),
         };
       }
       return {

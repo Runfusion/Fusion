@@ -1014,6 +1014,7 @@ export {
   getTaskCompletionBlocker,
   isTaskReadyForMerge,
   allowsAutoMergeProcessing,
+  hasUserAutoMergeHold,
   isSharedBranchGroupMemberIntegration,
   isLiveSharedBranchGroupMemberIntegration,
   resolveEffectiveAutoMerge,

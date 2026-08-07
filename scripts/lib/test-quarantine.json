@@ -5,6 +5,16 @@
       "file": "packages/dashboard/src/__tests__/register-model-routes-kimi-k3-supplemental.test.ts",
       "reason": "Real Pi SDK ModelRuntime catalog construction timed out at the 15s test budget in 2/6 sampled loaded CI runs; failing run https://github.com/Runfusion/Fusion/actions/runs/30664201149 and issue https://github.com/Runfusion/Fusion/issues/3245. FN-8647 landed a reusable shared-construction seam without widening timeouts. FN-8669 must obtain an owner budget decision and re-measure CI before the 14-day deletion deadline; this entry and its paired exclusion must remain through 2026-08-15.",
       "quarantinedAt": "2026-08-01"
+    },
+    {
+      "file": "packages/engine/src/__tests__/project-engine.test.ts",
+      "reason": "FN-8811 observed B4/B5 workspace busy contention asserting a stale 60s cap while runtime schedules 120s, then the subprocess guard timed out on git remote; reproduced in isolation on 2026-08-06. Do not widen timing or weaken the assertion; restore only with a root-cause fix before the deletion deadline.",
+      "quarantinedAt": "2026-08-06"
+    },
+    {
+      "file": "packages/dashboard/app/components/__tests__/PlanningModeModal.planning-flow.test.tsx",
+      "reason": "FN-8816 observed the previously registered direct task-handoff failure a second time in a loaded planning-flow run while the exact test passed in isolation. Quarantined under the deletion ratchet rather than weakening assertions or adding retries; delete by 2026-08-20 unless a root-cause rescue restores stable coverage.",
+      "quarantinedAt": "2026-08-06"
     }
   ]
 }

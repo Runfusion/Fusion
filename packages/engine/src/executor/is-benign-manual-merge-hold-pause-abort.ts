@@ -9,7 +9,7 @@
  * Exclude only live shared-group integrations; stale shared-group members are standalone holds.
  */
 import type { Settings, TaskDetail, TaskStore } from "@fusion/core";
-import { allowsAutoMergeProcessing, resolveEffectiveAutoMerge } from "@fusion/core";
+import { allowsAutoMergeProcessing, hasUserAutoMergeHold, resolveEffectiveAutoMerge } from "@fusion/core";
 import type { WorkflowGraphTaskRunResult } from "../workflows/workflow-graph-task-runner.js";
 import type { PausedAbortProvenance } from "./paused-abort-provenance.js";
 import { isGenericAbortProvenance } from "./paused-abort-provenance.js";
@@ -53,6 +53,8 @@ export async function isBenignManualMergeHoldPauseAbort(
       return false;
     }
     /* FNXC:AutoMergeHold 2026-07-09-17:07: FN-7749's benign manual-hold classifier must exclude only live shared-group integrations. FN-7750 stale shared-group members are standalone manual-hold rows and should not be stranded as pause-abort failures. */
-    if (await deps.isLiveSharedBranchGroupMember(live)) return false;
-    return !allowsAutoMergeProcessing(live, settings) || resolveEffectiveAutoMerge(live, settings) === false;
+    if (await deps.isLiveSharedBranchGroupMember(live) && !hasUserAutoMergeHold(live)) return false;
+    return hasUserAutoMergeHold(live)
+      || !allowsAutoMergeProcessing(live, settings)
+      || resolveEffectiveAutoMerge(live, settings) === false;
 }

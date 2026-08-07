@@ -151,6 +151,15 @@ describe("SecretsView mobile layout contracts", () => {
     },
   );
 
+  it("uses the selected project for mobile initial requests", async () => {
+    const fetchMock = seedFetchForSecretsList();
+    render(<SecretsView addToast={vi.fn()} projectId="proj-mobile" />);
+
+    await screen.findByText("LONG_SECRET_KEY_NAME_FOR_WRAP_TESTING");
+    expect(fetchMock).toHaveBeenCalledWith("/api/secrets?projectId=proj-mobile", expect.anything());
+    expect(fetchMock).toHaveBeenCalledWith("/api/secrets/sync-passphrase?projectId=proj-mobile", expect.anything());
+  });
+
   it("renders add-secret modal body with scoped spacing", async () => {
     const removeCss = installCss(baseCss);
     seedFetchForSecretsList();

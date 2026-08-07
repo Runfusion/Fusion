@@ -684,7 +684,7 @@ export function MainContent({
     return (
       <PageErrorBoundary>
         <Suspense fallback={null}>
-          <SecretsView addToast={addToast} />
+          <SecretsView addToast={addToast} projectId={currentProject?.id} />
         </Suspense>
       </PageErrorBoundary>
     );
@@ -908,6 +908,8 @@ export function MainContent({
               onReviseTask={(task) => modalManager.openNewTaskWithDescription(task.description)}
               onMergeTask={mergeTask}
               onRetryTask={retryTask}
+              onPauseTask={pauseTask}
+              onUnpauseTask={unpauseTask}
               onResetTask={resetTask}
               onDuplicateTask={duplicateTask}
               /*

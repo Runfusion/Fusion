@@ -825,4 +825,43 @@ describe("TaskCard badge wrapping (FN-5162)", () => {
     expect(styles.justifyContent).toBe("flex-start");
     expect(styles.minWidth).toBe("0px");
   });
+
+  it("contains minimal and populated cards when a host narrows below the mobile breakpoint", () => {
+    const { container: minimalContainer } = render(
+      <TaskCard task={makeTask({ id: "FN-8802-MINIMAL", title: undefined, description: "" })} onOpenDetail={noop} addToast={noop} />,
+    );
+    const { container: populatedContainer } = render(
+      <TaskCard
+        task={makeTask({
+          id: "FN-8802-POPULATED",
+          title: "A deliberately long task title that must shrink inside a very narrow card without moving controls outside its boundary",
+          priority: "urgent" as Task["priority"],
+          executionMode: "fast",
+          size: "L",
+          sourceType: "agent_heartbeat",
+          sourceAgentId: "agent-badge-wrap",
+          noCommitsExpected: true,
+        })}
+        onOpenDetail={noop}
+        addToast={noop}
+        onMoveTask={async () => makeTask()}
+        workflowBadge={{ workflowId: "wf-narrow", workflowName: "A workflow badge with an intentionally long name" }}
+      />,
+    );
+
+    for (const card of [
+      minimalContainer.querySelector(".card"),
+      populatedContainer.querySelector(".card"),
+    ] as HTMLElement[]) {
+      expect(card).toBeTruthy();
+      const styles = getComputedStyle(card);
+      expect(styles.minWidth).toBe("0px");
+      expect(styles.maxWidth).toBe("100%");
+      expect(styles.boxSizing).toBe("border-box");
+    }
+
+    expect(populatedContainer.querySelector(".card-menu-btn")).toBeTruthy();
+    expect(populatedContainer.querySelector(".card-size-badge")).toBeTruthy();
+    expect(populatedContainer.querySelector(".card-title")).toHaveTextContent("A deliberately long task title");
+  });
 });

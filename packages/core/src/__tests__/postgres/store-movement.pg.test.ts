@@ -155,4 +155,24 @@ pgTest("TaskStore moveTask autoMerge provenance (PostgreSQL)", () => {
     expect(allowsAutoMergeProcessing(inheritedMoved, { autoMerge: false })).toBe(false);
     expect(allowsAutoMergeProcessing(inheritedMoved, { autoMerge: true })).toBe(true);
   });
+
+  it("round-trips trusted mission policy without converting it to an operator override", async () => {
+    const store = h.store();
+    const created = await store.createTask({
+      title: "mission policy false",
+      description: "Mission-created shared member policy",
+      autoMerge: false,
+      autoMergeProvenance: "mission",
+    });
+
+    expect(created).toMatchObject({ autoMerge: false, autoMergeProvenance: "mission" });
+    expect(await store.getTask(created.id)).toMatchObject({ autoMerge: false, autoMergeProvenance: "mission" });
+
+    const userOverride = await store.updateTask(created.id, { autoMerge: false });
+    expect(userOverride).toMatchObject({ autoMerge: false, autoMergeProvenance: "user" });
+
+    const cleared = await store.updateTask(created.id, { autoMerge: null });
+    expect(cleared.autoMerge).toBeUndefined();
+    expect(cleared.autoMergeProvenance).toBeUndefined();
+  });
 });

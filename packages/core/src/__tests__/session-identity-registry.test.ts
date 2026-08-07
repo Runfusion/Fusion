@@ -5,6 +5,7 @@ import { join } from "node:path";
 import {
   __clearFusionSessionIdentityRegistryForTests,
   registerFusionSessionIdentity,
+  runWithFusionSessionIdentity,
   resolveFusionSessionPrincipal,
 } from "../session-identity-registry.js";
 
@@ -42,6 +43,32 @@ describe("session identity registry", () => {
     registerFusionSessionIdentity("/tmp/project-root", { agentId: "agent-2" });
     const principal = resolveFusionSessionPrincipal("/tmp/project-root");
     expect(principal.kind).toBe("ambiguous");
+  });
+
+  it("uses the invocation identity for concurrent sessions sharing a cwd", async () => {
+    const cwd = "/tmp/project-root";
+    const disposeA = registerFusionSessionIdentity(cwd, { agentId: "agent-a" });
+    const disposeB = registerFusionSessionIdentity(cwd, { agentId: "agent-b" });
+    try {
+      const principals = await Promise.all([
+        runWithFusionSessionIdentity([cwd], { agentId: "agent-a", purpose: "chat" }, async () => {
+          await Promise.resolve();
+          return resolveFusionSessionPrincipal(cwd);
+        }),
+        runWithFusionSessionIdentity([cwd], { agentId: "agent-b", purpose: "chat" }, async () => {
+          await Promise.resolve();
+          return resolveFusionSessionPrincipal(cwd);
+        }),
+      ]);
+      expect(principals).toEqual([
+        expect.objectContaining({ kind: "agent", identity: expect.objectContaining({ agentId: "agent-a" }) }),
+        expect.objectContaining({ kind: "agent", identity: expect.objectContaining({ agentId: "agent-b" }) }),
+      ]);
+      expect(resolveFusionSessionPrincipal(cwd)).toEqual(expect.objectContaining({ kind: "ambiguous" }));
+    } finally {
+      disposeA();
+      disposeB();
+    }
   });
 
   it("dispose is idempotent and only removes its own entry", () => {

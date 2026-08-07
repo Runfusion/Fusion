@@ -55,6 +55,13 @@ const mergeAbortResult = {
   context: { "node:merge:value": "aborted" },
 };
 
+const interruptedExecuteResult = {
+  interruptedAbortKind: "engine-pause",
+  interruptedNodeId: "execute",
+  visitedNodeIds: ["execute"],
+  context: {},
+};
+
 describe("executor shared-branch autoMerge:false liveness gates", () => {
   it("does not route an engine-created dissolved-group member to auto-merge retry", async () => {
     const { executor, store } = makeExecutor(null);
@@ -71,6 +78,30 @@ describe("executor shared-branch autoMerge:false liveness gates", () => {
     expect(store.getBranchGroup).toHaveBeenCalledWith("BG-STALE");
   });
 
+  it("holds a live shared-group member when an operator explicitly turns auto-merge off", async () => {
+    const { executor } = makeExecutor({ status: "open", branchName: "mission/M-1980" });
+    const task = makeInReviewTask({ autoMerge: false, autoMergeProvenance: "user" });
+
+    await expect((executor as any).isRetryableBenignMergePauseAbort(
+      task,
+      mergeAbortResult,
+      "merge-seam",
+      true,
+    )).resolves.toBe(false);
+  });
+
+  it.each(["mission", "legacy-stamp", undefined] as const)("keeps live shared-group policy or legacy false values flowing (%s)", async (autoMergeProvenance) => {
+    const { executor } = makeExecutor({ status: "open", branchName: "mission/M-1980" });
+    const task = makeInReviewTask({ autoMerge: false, autoMergeProvenance });
+
+    await expect((executor as any).isRetryableBenignMergePauseAbort(
+      task,
+      mergeAbortResult,
+      "merge-seam",
+      true,
+    )).resolves.toBe(true);
+  });
+
   it("still routes live shared-group members through the local integration retry gate", async () => {
     const { executor } = makeExecutor({ status: "open", branchName: "mission/M-1980" });
     const task = makeInReviewTask();
@@ -81,6 +112,62 @@ describe("executor shared-branch autoMerge:false liveness gates", () => {
       "merge-seam",
       true,
     )).resolves.toBe(true);
+  });
+
+  it("re-enters an interrupted mission-policy member rather than stranding its local integration", async () => {
+    const { executor } = makeExecutor({ status: "open", branchName: "mission/M-1980" });
+    const task = makeInReviewTask({
+      autoMerge: false,
+      autoMergeProvenance: "mission",
+      status: null,
+      error: null,
+    });
+
+    await expect((executor as any).isReentrantPausedAbortedInFlightNode(
+      task,
+      interruptedExecuteResult,
+      "engine-abort",
+      true,
+      false,
+    )).resolves.toBe(true);
+  });
+
+  it("does not let live pre-merge remediation reopen an operator-held member", async () => {
+    const { executor, store } = makeExecutor({ status: "open", branchName: "mission/M-1980" });
+    const task = makeInReviewTask({ autoMerge: false, autoMergeProvenance: "user" });
+    store.getTask.mockResolvedValue(task);
+    const sendBack = vi.spyOn(executor as any, "sendTaskBackForFix");
+
+    await expect((executor as any).requestPreMergeOptionalStepFix(task.id, task, {
+      stepName: "Code Review",
+      feedback: "Please revise",
+      phase: "pre-merge",
+      status: "failed",
+      verdict: "REVISE",
+      nodeId: "code-review",
+    })).resolves.toBe(false);
+
+    expect(sendBack).not.toHaveBeenCalled();
+  });
+
+  it("does not let failed-step recovery reopen an operator-held member", async () => {
+    const { executor } = makeExecutor({ status: "open", branchName: "mission/M-1980" });
+    const task = makeInReviewTask({
+      autoMerge: false,
+      autoMergeProvenance: "user",
+      workflowStepResults: [{
+        workflowStepId: "code-review",
+        workflowStepName: "Code Review",
+        phase: "pre-merge",
+        status: "failed",
+        output: "Please revise",
+      }],
+    });
+    const sendBack = vi.spyOn(executor as any, "sendTaskBackForFix");
+
+    await expect(executor.recoverFailedPreMergeWorkflowStep(task)).resolves.toBe(false);
+
+    expect(sendBack).not.toHaveBeenCalled();
   });
 
   it("holds an open shared group that would integrate directly into main", async () => {

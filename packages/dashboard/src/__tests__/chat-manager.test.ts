@@ -8,6 +8,7 @@ FN-6444 confirmed this ChatManager API-path suite is deterministic under dashboa
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { runWithFusionSessionIdentity, resolveFusionSessionPrincipal } from "@fusion/core";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
@@ -843,10 +844,22 @@ describe("ChatManager.sendMessage", () => {
     );
   });
 
-  it("passes action and permanent-agent gates to bound Mission chat sessions", async () => {
+  it("binds the durable dashboard-chat principal across the resolved-session host-tool invocation", async () => {
     let createOptions: any;
+    let hostToolPrincipal: unknown;
     __setCreateResolvedAgentSession(async (options: any) => {
       createOptions = options;
+      const identity = options.actionGateContext;
+      /*
+      FNXC:SecretsAccessApproval 2026-08-05-22:53:
+      The pi bridge runs host tools inside this invocation-scoped identity while
+      their immediate ExtensionContext has only cwd (no agentId).
+      */
+      hostToolPrincipal = await runWithFusionSessionIdentity(
+        [options.cwd],
+        { agentId: identity.agentId, agentName: identity.agentName, purpose: options.sessionPurpose },
+        () => resolveFusionSessionPrincipal(options.cwd),
+      );
       return {
         session: {
           prompt: vi.fn().mockResolvedValue(undefined),
@@ -880,9 +893,22 @@ describe("ChatManager.sendMessage", () => {
     receive the bound agent policy. The engine gating suites assert block and
     approval execution; this dashboard seam asserts chat cannot omit either context.
     */
+    /*
+    FNXC:SecretsAccessApproval 2026-08-05-21:59:
+    Production dashboard chat must forward its bound durable agent through the
+    real resolved-session boundary. Pi then registers this context for host
+    extension calls whose immediate tool context omits agentId; without this
+    handoff prompt-gated secret requests are incorrectly attributed to user.
+    */
     expect(createOptions.actionGateContext).toMatchObject({
       agentId: "agent-001",
+      agentName: "Avery",
+      isEphemeral: false,
       permissionPolicy: { rules: { task_agent_mutation: "block" } },
+    });
+    expect(hostToolPrincipal).toMatchObject({
+      kind: "agent",
+      identity: { agentId: "agent-001", agentName: "Avery", purpose: "executor" },
     });
     expect(createOptions.permanentAgentGating).toMatchObject({
       requester: { actorId: "agent-001" },

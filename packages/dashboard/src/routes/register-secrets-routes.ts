@@ -1,3 +1,4 @@
+import type { Request } from "express";
 import {
   RESERVED_SYNC_PASSPHRASE_KEY,
   clearSyncPassphrase,
@@ -38,6 +39,27 @@ function assertObject(value: unknown): asserts value is Record<string, unknown> 
   }
 }
 
+/**
+ * FNXC:Secrets 2026-08-05-21:37:
+ * Secret routes must reject absent explicit request identity before getProjectContext can resolve the daemon launch engine/store fallback. A selected project is required even for global scope, which remains stored in shared central.secrets_global.
+ */
+function getExplicitProjectId(req: Request, ctx: Parameters<ApiRouteRegistrar>[0]): string {
+  const projectId = ctx.getProjectIdFromRequest(req);
+  if (!projectId) throw badRequest("projectId is required");
+  return projectId;
+}
+
+async function getExplicitSecretsStore(req: Request, ctx: Parameters<ApiRouteRegistrar>[0]) {
+  const requestedProjectId = getExplicitProjectId(req, ctx);
+  const { store, projectId } = await ctx.getProjectContext(req);
+  /*
+  FNXC:Secrets 2026-08-05-22:08:
+  The explicit id check must happen before context resolution because a launch engine can otherwise substitute its own partition. Reject a resolver mismatch too, so a malformed context cannot redirect a scoped secret request after that precondition.
+  */
+  if (projectId !== requestedProjectId) throw badRequest("project context does not match projectId");
+  return store.getSecretsStore();
+}
+
 function emitSecretsAudit(
   req: unknown,
   ctx: Parameters<ApiRouteRegistrar>[0],
@@ -55,12 +77,11 @@ function emitSecretsAudit(
 }
 
 export const registerSecretsRoutes: ApiRouteRegistrar = (ctx) => {
-  const { router, getProjectContext, rethrowAsApiError } = ctx;
+  const { router, rethrowAsApiError } = ctx;
 
   router.get("/secrets", async (req, res) => {
     try {
-      const { store: scopedStore } = await getProjectContext(req);
-      const secretsStore = await scopedStore.getSecretsStore();
+      const secretsStore = await getExplicitSecretsStore(req, ctx);
       const secrets = await secretsStore.listSecrets();
       const visibleSecrets = secrets.filter(
         (secret) => !(secret.scope === "global" && secret.key === RESERVED_SYNC_PASSPHRASE_KEY),
@@ -75,8 +96,7 @@ export const registerSecretsRoutes: ApiRouteRegistrar = (ctx) => {
 
   router.get("/secrets/sync-passphrase", async (req, res) => {
     try {
-      const { store: scopedStore } = await getProjectContext(req);
-      const secretsStore = await scopedStore.getSecretsStore();
+      const secretsStore = await getExplicitSecretsStore(req, ctx);
       const configured = await hasSyncPassphraseConfigured(secretsStore);
       res.json({ configured });
     } catch (err: unknown) {
@@ -88,14 +108,14 @@ export const registerSecretsRoutes: ApiRouteRegistrar = (ctx) => {
 
   router.put("/secrets/sync-passphrase", async (req, res) => {
     try {
+      getExplicitProjectId(req, ctx);
       assertObject(req.body);
       const passphrase = req.body.passphrase;
       if (typeof passphrase !== "string" || passphrase.trim().length === 0) {
         res.status(400).json({ error: "invalid-passphrase" });
         return;
       }
-      const { store: scopedStore } = await getProjectContext(req);
-      const secretsStore = await scopedStore.getSecretsStore();
+      const secretsStore = await getExplicitSecretsStore(req, ctx);
       const hadConfiguredPassphrase = await hasSyncPassphraseConfigured(secretsStore);
       await setSyncPassphrase(secretsStore, passphrase);
       emitSecretsAudit(req, ctx, hadConfiguredPassphrase ? "secret:update" : "secret:create", {
@@ -112,8 +132,7 @@ export const registerSecretsRoutes: ApiRouteRegistrar = (ctx) => {
 
   router.delete("/secrets/sync-passphrase", async (req, res) => {
     try {
-      const { store: scopedStore } = await getProjectContext(req);
-      const secretsStore = await scopedStore.getSecretsStore();
+      const secretsStore = await getExplicitSecretsStore(req, ctx);
       await clearSyncPassphrase(secretsStore);
       emitSecretsAudit(req, ctx, "secret:delete", { key: RESERVED_SYNC_PASSPHRASE_KEY, scope: "global" });
       res.json({ success: true });
@@ -126,6 +145,7 @@ export const registerSecretsRoutes: ApiRouteRegistrar = (ctx) => {
 
   router.post("/secrets", async (req, res) => {
     try {
+      getExplicitProjectId(req, ctx);
       assertObject(req.body);
       const { scope, key, value, description, accessPolicy, envExportable, envExportKey } = req.body;
       const parsedScope = parseScope(scope);
@@ -143,8 +163,7 @@ export const registerSecretsRoutes: ApiRouteRegistrar = (ctx) => {
         parsedAccessPolicy = accessPolicy;
       }
 
-      const { store: scopedStore } = await getProjectContext(req);
-      const secretsStore = await scopedStore.getSecretsStore();
+      const secretsStore = await getExplicitSecretsStore(req, ctx);
       const secret = await secretsStore.createSecret({
         scope: parsedScope,
         key,
@@ -164,6 +183,7 @@ export const registerSecretsRoutes: ApiRouteRegistrar = (ctx) => {
 
   router.patch("/secrets/:scope/:id", async (req, res) => {
     try {
+      getExplicitProjectId(req, ctx);
       const scope = parseScope(req.params.scope);
       const id = String(req.params.id ?? "").trim();
       if (!id) throw badRequest("id is required");
@@ -209,8 +229,7 @@ export const registerSecretsRoutes: ApiRouteRegistrar = (ctx) => {
         }
       }
 
-      const { store: scopedStore } = await getProjectContext(req);
-      const secretsStore = await scopedStore.getSecretsStore();
+      const secretsStore = await getExplicitSecretsStore(req, ctx);
       const secret = await secretsStore.updateSecret(id, scope, patch);
       res.json(secret);
     } catch (err: unknown) {
@@ -222,11 +241,11 @@ export const registerSecretsRoutes: ApiRouteRegistrar = (ctx) => {
 
   router.delete("/secrets/:scope/:id", async (req, res) => {
     try {
+      getExplicitProjectId(req, ctx);
       const scope = parseScope(req.params.scope);
       const id = String(req.params.id ?? "").trim();
       if (!id) throw badRequest("id is required");
-      const { store: scopedStore } = await getProjectContext(req);
-      const secretsStore = await scopedStore.getSecretsStore();
+      const secretsStore = await getExplicitSecretsStore(req, ctx);
       await secretsStore.deleteSecret(id, scope);
       res.status(204).send();
     } catch (err: unknown) {
@@ -238,11 +257,11 @@ export const registerSecretsRoutes: ApiRouteRegistrar = (ctx) => {
 
   router.post("/secrets/:scope/:id/reveal", async (req, res) => {
     try {
+      getExplicitProjectId(req, ctx);
       const scope = parseScope(req.params.scope);
       const id = String(req.params.id ?? "").trim();
       if (!id) throw badRequest("id is required");
-      const { store: scopedStore } = await getProjectContext(req);
-      const secretsStore = await scopedStore.getSecretsStore();
+      const secretsStore = await getExplicitSecretsStore(req, ctx);
       const secret = await secretsStore.revealSecret(id, scope, {
         userId: null,
       });
