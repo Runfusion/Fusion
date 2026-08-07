@@ -33,6 +33,8 @@ describe("@fusion/i18n config", () => {
     expect(FALLBACK_LNG.zh).toEqual(["zh-CN"]);
     expect(FALLBACK_LNG["zh-Hans"]).toEqual(["zh-CN"]);
     expect(FALLBACK_LNG["zh-Hant"]).toEqual(["zh-TW"]);
+    expect(FALLBACK_LNG.pt).toEqual(["pt-BR"]);
+    expect(FALLBACK_LNG["pt-PT"]).toEqual(["pt-BR"]);
     expect(FALLBACK_LNG.default).toEqual(["en"]);
   });
 

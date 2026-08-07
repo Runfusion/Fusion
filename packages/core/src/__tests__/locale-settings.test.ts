@@ -12,13 +12,13 @@ import {
 } from "../index.js";
 
 describe("locale primitives", () => {
-  it("exposes exactly the six supported locale codes", () => {
-    expect([...SUPPORTED_LOCALES]).toEqual(["en", "zh-CN", "zh-TW", "fr", "es", "ko"]);
+  it("exposes exactly the seven supported locale codes", () => {
+    expect([...SUPPORTED_LOCALES]).toEqual(["en", "zh-CN", "zh-TW", "fr", "es", "ko", "pt-BR"]);
   });
 
   it("uses en as the default/source locale", () => {
     expect(DEFAULT_LOCALE).toBe("en");
-    expectTypeOf<Locale>().toEqualTypeOf<"en" | "zh-CN" | "zh-TW" | "fr" | "es" | "ko">();
+    expectTypeOf<Locale>().toEqualTypeOf<"en" | "zh-CN" | "zh-TW" | "fr" | "es" | "ko" | "pt-BR">();
   });
 
   it("narrows supported codes and rejects everything else via isLocale", () => {
@@ -26,6 +26,7 @@ describe("locale primitives", () => {
       expect(isLocale(code)).toBe(true);
     }
     expect(isLocale("zh")).toBe(false);
+    expect(isLocale("pt")).toBe(false);
     expect(isLocale("de")).toBe(false);
     expect(isLocale("")).toBe(false);
     expect(isLocale(undefined)).toBe(false);
@@ -50,6 +51,7 @@ describe("language global setting", () => {
     expect(validateLocale("zh-TW")).toBe("zh-TW");
     expect(validateLocale("fr")).toBe("fr");
     expect(validateLocale("es")).toBe("es");
+    expect(validateLocale("pt-BR")).toBe("pt-BR");
     expect(validateLocale(undefined)).toBeUndefined();
     expect(validateLocale("zh")).toBeUndefined();
     expect(validateLocale("de")).toBeUndefined();

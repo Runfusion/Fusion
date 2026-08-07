@@ -186,8 +186,11 @@ export type ColorTheme = (typeof COLOR_THEMES)[number];
  *  source-of-truth language and the fallback for all others. Adding a locale
  *  here (plus translated catalogs) is the only code change a new language
  *  needs — see `@fusion/i18n`. zh-CN and zh-TW are independent catalogs and
- *  are never auto-converted between scripts. */
-export const SUPPORTED_LOCALES = ["en", "zh-CN", "zh-TW", "fr", "es", "ko"] as const;
+ *  are never auto-converted between scripts.
+ *
+ *  FNXC:I18nLocales 2026-08-07-22:00:
+ *  Added pt-BR as a dashboard/translation-target locale; catalogs are machine-drafted pending human review. */
+export const SUPPORTED_LOCALES = ["en", "zh-CN", "zh-TW", "fr", "es", "ko", "pt-BR"] as const;
 export type Locale = (typeof SUPPORTED_LOCALES)[number];
 /** Source-of-truth language and the fallback for all locales. */
 export const DEFAULT_LOCALE: Locale = "en";

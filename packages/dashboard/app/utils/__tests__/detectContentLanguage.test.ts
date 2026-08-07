@@ -227,5 +227,6 @@ describe("localeDisplayName", () => {
     expect(localeDisplayName("en")).toBe("English");
     expect(localeDisplayName("ko")).toBe("한국어");
     expect(localeDisplayName("fr")).toBe("Français");
+    expect(localeDisplayName("pt-BR")).toBe("Português (Brasil)");
   });
 });

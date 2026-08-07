@@ -280,6 +280,8 @@ export function localeDisplayName(locale: Locale | "unknown"): string {
       return "Español";
     case "ko":
       return "한국어";
+    case "pt-BR":
+      return "Português (Brasil)";
     default:
       return locale;
   }

@@ -35,6 +35,8 @@ export const FALLBACK_LNG: FallbackLngObjList = {
   "zh-Hans": ["zh-CN"],
   "zh-Hant": ["zh-TW"],
   zh: ["zh-CN"],
+  pt: ["pt-BR"],
+  "pt-PT": ["pt-BR"],
   default: [DEFAULT_LOCALE],
 };
 
