@@ -22,9 +22,11 @@ vi.mock("@fusion/engine", () => ({
 import {
   __resetPlanningState,
   __setCreateFnAgent,
+  __validatePlanningFallbackOptionsForTests,
   __setPlanningNtfyHelpers,
   createSession,
   createSessionWithAgent,
+  formatInitialPlanRequestForAgent,
   formatInitialRunningPlanRequestForAgent,
   formatContextualCommentsForAgent,
   formatResponseForAgent,
@@ -229,13 +231,78 @@ describe("reactive Planning Mode question contract", () => {
       options: [{ id: "fast", label: "Rápido", pros: [], cons: [] }],
     }, "Quiero añadir autenticación para usuarios españoles");
 
-    expect(question.options).toHaveLength(3);
+    expect(question.options).toHaveLength(5);
     const alternatives = question.options!.filter((option) => !option.isOther);
-    expect(alternatives).toHaveLength(2);
+    expect(alternatives).toHaveLength(4);
     expect(alternatives.every((option) => option.pros!.length > 0 && option.cons!.length > 0)).toBe(true);
     expect(question.options!.filter((option) => option.isOther)).toEqual([
       expect.objectContaining({ label: "Otro (escribe tu respuesta)", isOther: true }),
     ]);
+  });
+
+  it("preserves every distinct model choice beyond normal guidance and rejects canonical collisions", () => {
+    const question = normalizePlanningQuestion({
+      type: "multi_select",
+      question: "Which direction?",
+      options: [
+        { id: "one", label: "Fast path", description: "Ship first.", pros: ["Fast"], cons: ["Risk"] },
+        { id: "two", label: "FAST—PATH", description: "Different description.", pros: ["Fast"], cons: ["Risk"] },
+        { id: "three", label: "Quality path", description: "Ｓhip first。", pros: ["Safe"], cons: ["Slow"] },
+        { id: "four", label: "Investigate", description: "Learn before committing.", pros: ["Learn"], cons: ["Delay"] },
+        { id: "five", label: "Reduced scope", description: "Deliver less first.", pros: ["Small"], cons: ["Later"] },
+        { id: "six", label: "Extra", description: "A sixth distinct choice.", pros: ["More"], cons: ["Noise"] },
+        { id: "seven", label: "Staged rollout", description: "Release the change gradually.", pros: ["Controlled"], cons: ["Slower"] },
+        { id: "eight", label: "Platform investment", description: "Strengthen shared foundations first.", pros: ["Reusable"], cons: ["Broader"] },
+      ],
+    });
+
+    const alternatives = question.options!.filter((option) => !option.isOther);
+    expect(question.type).toBe("multi_select");
+    expect(alternatives).toHaveLength(6);
+    expect(alternatives.map((option) => option.id)).toEqual(["one", "four", "five", "six", "seven", "eight"]);
+    expect(question.options!.filter((option) => option.isOther)).toHaveLength(1);
+    expect(normalizePlanningQuestion(question)).toEqual(question);
+  });
+
+  it("reserves all fallback archetypes and fails closed for invalid fallback definitions", () => {
+    const collisions = ["fallback-speed", "fallback-reliability", "fallback-scope", "fallback-investigate"].map((id) => ({
+      id,
+      label: id,
+      description: `${id} description`,
+      pros: ["Pro"],
+      cons: ["Con"],
+    }));
+    const question = normalizePlanningQuestion({ type: "single_select", question: "What next?", options: collisions });
+    const alternatives = question.options!.filter((option) => !option.isOther);
+    expect(alternatives).toHaveLength(4);
+    expect(new Set(alternatives.map((option) => option.id)).size).toBe(4);
+    expect(alternatives.every((option) => option.id.startsWith("fallback-"))).toBe(true);
+    expect(__validatePlanningFallbackOptionsForTests({
+      question: "Question", other: "Other",
+      options: [
+        { id: "same", label: "Same", description: "Same", pros: ["Pro"], cons: ["Con"] },
+        { id: "same", label: "Different", description: "Different", pros: ["Pro"], cons: ["Con"] },
+        { id: "third", label: "Third", description: "Third", pros: ["Pro"], cons: ["Con"] },
+        { id: "fourth", label: "Fourth", description: "Fourth", pros: ["Pro"], cons: ["Con"] },
+      ],
+    })).toBe(false);
+  });
+
+  it("requests flexible option breadth in every initial and continuing prompt", () => {
+    const prompts = [
+      PLANNING_SYSTEM_PROMPT,
+      formatInitialPlanRequestForAgent("The interface feels confusing"),
+      formatInitialRunningPlanRequestForAgent("The interface feels confusing"),
+      formatResponseForAgent(FIRST_QUESTION, { scope: "secure" }),
+    ];
+
+    for (const prompt of prompts) {
+      expect(prompt).toMatch(/normally 3–5/i);
+      expect(prompt).toMatch(/Two (?:directions|alternatives) are not sufficient/i);
+      expect(prompt).toMatch(/include more when genuinely useful|larger set is welcome|genuinely useful larger set/i);
+      expect(prompt).toMatch(/Other|write-your-own/i);
+      expect(prompt).not.toMatch(/exactly four|at least two/i);
+    }
   });
 
   it("deduplicates a model-authored Other option before appending the canonical one", () => {
@@ -256,7 +323,7 @@ describe("reactive Planning Mode question contract", () => {
   it("upgrades legacy text questions so every question has alternatives and Other", () => {
     const question = normalizePlanningQuestion({ type: "text", question: "What matters next?", options: [{ id: "bad" }] });
     expect(question).toEqual(expect.objectContaining({ type: "single_select", question: "What matters next?" }));
-    expect(question.options).toHaveLength(3);
+    expect(question.options).toHaveLength(5);
     expect(question.options?.at(-1)).toEqual(expect.objectContaining({ isOther: true }));
   });
 

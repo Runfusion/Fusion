@@ -147,6 +147,20 @@ describe("MessageComposer", () => {
     expect(screen.getByText("No structures available")).toBeInTheDocument();
   });
 
+  it("preserves a long structure label when attaching from the shared picker", () => {
+    const longLabel = "A deliberately long structure label that must remain available without changing attachment metadata";
+    render(<MessageComposer {...defaultProps} nativeStructureCandidates={[
+      { ref: { kind: "mission-with-a-deliberately-long-kind", id: "M-long" }, label: longLabel },
+    ]} />);
+
+    const picker = screen.getByTestId("message-composer-attach-structure");
+    expect(picker).not.toBeDisabled();
+    expect(picker).toHaveTextContent(`mission-with-a-deliberately-long-kind: ${longLabel}`);
+    fireEvent.change(picker, { target: { value: "0" } });
+
+    expect(screen.getByTestId("message-composer-attached-structures")).toHaveTextContent(longLabel);
+  });
+
   it("disables send button when content is empty", () => {
     render(<MessageComposer {...defaultProps} agents={mockAgents} />);
     const sendBtn = screen.getByTestId("message-composer-send");

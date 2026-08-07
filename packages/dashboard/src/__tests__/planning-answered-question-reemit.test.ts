@@ -9,6 +9,11 @@ auto-retry opens one), and the client's question handler reset the bounded auto-
 an unbounded loop. Invariant under test: currentQuestion is only set while the session is
 genuinely awaiting user input — cleared on answer accept, on retry, and never restored from
 non-awaiting_input persisted rows.
+
+FNXC:PlanningMode 2026-08-06-23:18:
+An awaiting-input row is the one valid restored-question surface. Its legacy model payload
+must cross the same normalization boundary as a live response, preserving four alternatives
+and one Other choice instead of trusting persisted options.
 */
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -322,6 +327,10 @@ describe("answered planning questions are never re-emittable", () => {
 
     expect((await getSession("restored-error"))?.currentQuestion).toBeUndefined();
     expect((await getSession("restored-generating"))?.currentQuestion).toBeUndefined();
-    expect((await getSession("restored-awaiting"))?.currentQuestion).toMatchObject({ id: Q1.id, question: Q1.question });
+    const restoredQuestion = (await getSession("restored-awaiting"))?.currentQuestion;
+    expect(restoredQuestion).toMatchObject({ id: Q1.id, question: Q1.question, type: "single_select" });
+    expect(restoredQuestion?.options).toHaveLength(5);
+    expect(restoredQuestion?.options?.filter((option) => !option.isOther)).toHaveLength(4);
+    expect(restoredQuestion?.options?.filter((option) => option.isOther)).toHaveLength(1);
   });
 });

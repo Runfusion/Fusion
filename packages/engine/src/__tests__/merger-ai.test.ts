@@ -741,6 +741,40 @@ describe("runAiMerge", () => {
     expect(store.moveTask).toHaveBeenCalledWith("FN-1", "done", expect.objectContaining({ moveSource: "engine", preserveProgress: true }));
   });
 
+  it("finalizes a verified intentional no-op instead of bouncing it back to todo", async () => {
+    const { dir } = initRepoWithBranch({ branch: "fusion/fn-1" });
+    git(dir, "merge -q fusion/fn-1");
+    const { store, task } = makeStore(dir, {
+      noCommitsExpected: true,
+      steps: [
+        { name: "Preflight", status: "done" },
+        { name: "Restore the invariant if needed", status: "skipped" },
+        { name: "Apply the invariant everywhere", status: "skipped" },
+        { name: "Add regressions if needed", status: "skipped" },
+        { name: "Testing & Verification", status: "done" },
+        { name: "Documentation & Delivery", status: "done" },
+      ],
+    });
+
+    const result = await runAiMerge(store, dir, "FN-1", { manual: true }, {
+      mergeAgent: vi.fn(async () => { /* nothing to do */ }),
+      reviewAgent: vi.fn(async () => "REVIEW_VERDICT: approve"),
+    });
+
+    expect(result).toMatchObject({ noOp: true, merged: false, ok: true });
+    expect(task.column).toBe("done");
+    expect(store.moveTask).toHaveBeenCalledWith(
+      "FN-1",
+      "done",
+      expect.objectContaining({ moveSource: "engine", preserveProgress: true }),
+    );
+    expect(store.moveTask).not.toHaveBeenCalledWith(
+      "FN-1",
+      "todo",
+      expect.anything(),
+    );
+  });
+
   /*
    * FN-8141 regression: the AI empty-merge lane laundered a task whose branch was empty ONLY because
    * the executor reverted its own work. A commit-expected empty branch must not finalize `done` without
