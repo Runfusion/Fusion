@@ -96,4 +96,10 @@ describe("normalizeToSupportedLocale", () => {
     expect(normalizeToSupportedLocale("de-DE")).toBeUndefined();
     expect(normalizeToSupportedLocale("")).toBeUndefined();
   });
+
+  it("resolves any-region Portuguese to pt-BR", () => {
+    expect(normalizeToSupportedLocale("pt")).toBe("pt-BR");
+    expect(normalizeToSupportedLocale("pt-PT")).toBe("pt-BR");
+    expect(normalizeToSupportedLocale("pt_PT.UTF-8")).toBe("pt-BR");
+  });
 });
