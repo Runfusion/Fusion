@@ -162,7 +162,12 @@ describe("execute seam announces the implementation phase's exit", () => {
   is wired, and that the two out-of-band ids sit with the handoff they describe.
   */
   it("every exit id has a real call site in runImplementation", () => {
-    const source = readFileSync(new URL("../executor.ts", import.meta.url), "utf8")
+    /*
+    FNXC:CodeOrganization 2026-08-03-16:20 (U4 runImplementation peel):
+    Call sites live in executor/run-implementation.ts free function, not the thin facade.
+    Scan the peel (deps.markCompletionFinalized / deps.handoffTaskToReview after transform).
+    */
+    const source = readFileSync(new URL("../executor/run-implementation.ts", import.meta.url), "utf8")
       .replace(/\/\*[\s\S]*?\*\//g, " ")
       .replace(/(^|[^:])\/\/[^\n]*/g, "$1 ");
     const ALL_EXITS: ImplementationExit[] = [
@@ -188,15 +193,28 @@ describe("execute seam announces the implementation phase's exit", () => {
         that precedes this report must be nearer to it than any earlier handoff is, which is what
         "this site's own marker" means, and the handoff must follow the report.
         */
-        const markerIdx = source.lastIndexOf("markCompletionFinalized(", idx);
-        const priorHandoffIdx = source.lastIndexOf("handoffTaskToReview(", idx);
+        const markerIdx = Math.max(
+          source.lastIndexOf("markCompletionFinalized(", idx),
+          source.lastIndexOf("deps.markCompletionFinalized(", idx),
+        );
+        const priorHandoffIdx = Math.max(
+          source.lastIndexOf("handoffTaskToReview(", idx),
+          source.lastIndexOf("deps.handoffTaskToReview(", idx),
+        );
         expect(markerIdx, `${exit} must set the durable completion-finalize marker before handing off`).toBeGreaterThan(-1);
         expect(
           markerIdx,
           `${exit}'s completion-finalize marker must belong to this site, not an earlier one`,
         ).toBeGreaterThan(priorHandoffIdx);
+        const handoffAfter = (() => {
+          const a = source.indexOf("handoffTaskToReview(", idx);
+          const b = source.indexOf("deps.handoffTaskToReview(", idx);
+          if (a === -1) return b;
+          if (b === -1) return a;
+          return Math.min(a, b);
+        })();
         expect(
-          source.indexOf("handoffTaskToReview(", idx),
+          handoffAfter,
           `${exit} must be followed by the review handoff it describes`,
         ).toBeGreaterThan(idx);
       }

@@ -40,7 +40,15 @@ Whoever next touches `execute()`'s test scaffolding should add the end-to-end ca
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 
-const source = readFileSync(new URL("../executor.ts", import.meta.url), "utf8");
+/*
+FNXC:CodeOrganization 2026-08-03-16:25 (U4 runImplementation peel):
+Active-lane stale-spec guard body lives in executor/run-implementation.ts free function
+(`deps.store`); still concatenate residual class surfaces so either shape stays greppable.
+*/
+const source = [
+  readFileSync(new URL("../executor.ts", import.meta.url), "utf8"),
+  readFileSync(new URL("../executor/run-implementation.ts", import.meta.url), "utf8"),
+].join("\n");
 
 describe("the stale-spec skip resolves the board's own active lanes", () => {
   it("resolves the task's own workflow IR before deciding the skip", () => {
@@ -62,8 +70,8 @@ describe("the stale-spec skip resolves the board's own active lanes", () => {
     behind worktree and session setup that a unit test has no business standing up. Re-pointing it is
     maintenance, not the end-to-end case it asks for.
     */
-    expect(source).toContain(
-      "const activeIr = await resolveWorkflowIrForTask(this.store, task.id);",
+    expect(source).toMatch(
+      /const activeIr = await resolveWorkflowIrForTask\((?:this|deps)\.store, task\.id\);/,
     );
   });
 

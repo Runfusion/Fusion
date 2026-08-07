@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { McpSecretReader } from "@fusion/core";
@@ -94,8 +94,19 @@ describe("MCP surface coverage", () => {
   });
 
   it("keeps every executor-owned fresh-session seam on immediate MCP re-resolution", () => {
-    const source = readFileSync(join(process.cwd(), "src/executor.ts"), "utf8");
-    const immediateResolutions = source.match(/mcpServers: await this\.resolveMcpServers\(/g) ?? [];
+    /*
+    FNXC:CodeOrganization 2026-08-03-16:25 (U4 runImplementation peel):
+    Fresh-session MCP re-resolution call sites moved into free peels
+    (`mcpServers: await deps.resolveMcpServers(...)`) under executor/*. Scan the
+    whole executor/ tree so U4 peels cannot drop a create-session MCP seam silently.
+    */
+    const executorDir = join(process.cwd(), "src/executor");
+    const peelSources = readdirSync(executorDir)
+      .filter((name) => name.endsWith(".ts") && !name.endsWith(".test.ts") && !name.endsWith(".d.ts"))
+      .map((name) => readFileSync(join(executorDir, name), "utf8"));
+    const monolith = readFileSync(join(process.cwd(), "src/executor.ts"), "utf8");
+    const source = [monolith, ...peelSources].join("\n");
+    const immediateResolutions = source.match(/mcpServers:\s*await\s+(?:this|deps)\.resolveMcpServers\(/g) ?? [];
 
     // Main executor, fresh retry, workflow/manual model seams, self-fix/review,
     // and spawned-child paths all resolve at their own create-session call.
@@ -115,6 +126,10 @@ describe("MCP surface coverage", () => {
   });
 
   it("keeps the PR response merger seam wired to resolved MCP", () => {
+    /*
+    FNXC:CodeOrganization 2026-08-03-16:25:
+    pr-response-run-ops lives under merge/, not the engine package root.
+    */
     expectResolvedMcpForwarded(
       "src/merge/pr-response-run-ops.ts",
       "const mcpServers = store ? (await resolveMcpServersForStore(store)).servers : undefined;",

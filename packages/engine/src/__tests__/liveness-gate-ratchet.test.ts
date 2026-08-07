@@ -30,10 +30,11 @@ no fixtures (FN-5048 — do not add slow tests). Production source only.
 
 const REPO_ROOT = resolve(import.meta.dirname, "../../../..");
 
-function readSource(relPath: string): string {
+function readSource(relPath: string, minLength = 1000): string {
   const source = readFileSync(join(REPO_ROOT, relPath), "utf8");
   // FAIL CLOSED: a moved/emptied file must not silently pass every assertion below.
-  expect(source.length, `${relPath} is empty or unreadable — the ratchet checked nothing`).toBeGreaterThan(1000);
+  // Peeled U4 free functions can be short pure helpers; still require non-trivial content.
+  expect(source.length, `${relPath} is empty or unreadable — the ratchet checked nothing`).toBeGreaterThan(minLength);
   return source;
 }
 
@@ -104,6 +105,14 @@ function findDiscardedCalls(source: string, name: string): string[] {
 
 const SELF_HEALING = "packages/engine/src/self-healing.ts";
 const EXECUTOR = "packages/engine/src/executor.ts";
+/*
+FNXC:CodeOrganization 2026-08-03-20:25:
+U4 peels move free-function bodies under executor/*. Source-scan ratchets must
+follow the peel (facade in executor.ts + body in the peeled module) so they do
+not re-block legitimate extractions.
+*/
+const CLEAR_PHANTOM = "packages/engine/src/executor/clear-phantom-executor-binding.ts";
+const HAS_LIVE_SESSION_SURFACE = "packages/engine/src/executor/has-live-session-surface.ts";
 const IN_PROCESS_RUNTIME = "packages/engine/src/runtimes/in-process-runtime.ts";
 
 describe("FN-6756 liveness-gate ratchet", () => {
@@ -142,19 +151,31 @@ describe("FN-6756 liveness-gate ratchet", () => {
   sweep be "fixed" without fixing the next.
   */
   it("clearPhantomExecutorBinding delegates to the shared hasLiveSessionSurface probe", () => {
-    const source = stripComments(readSource(EXECUTOR));
-    const start = source.indexOf("clearPhantomExecutorBinding(taskId: string");
-    expect(start, "clearPhantomExecutorBinding not found in executor source").toBeGreaterThan(-1);
-    const body = source.slice(start, start + 1200);
-
+    // Facade on TaskExecutor must forward to the free function (or call the probe).
+    const facadeSource = stripComments(readSource(EXECUTOR));
+    const facadeStart = facadeSource.indexOf("clearPhantomExecutorBinding(taskId: string");
+    expect(facadeStart, "clearPhantomExecutorBinding not found in executor source").toBeGreaterThan(-1);
+    const facadeBody = facadeSource.slice(facadeStart, facadeStart + 1200);
     expect(
-      body.includes("this.hasLiveSessionSurface(taskId)"),
-      "clearPhantomExecutorBinding must call the shared hasLiveSessionSurface probe, not re-derive liveness inline — a second copy can drift from the one callers gate on",
+      facadeBody.includes("this.hasLiveSessionSurface(taskId)")
+        || /hasLiveSessionSurface:\s*\(id\)\s*=>\s*this\.hasLiveSessionSurface\(id\)/.test(facadeBody)
+        || /clearPhantomExecutorBindingImpl\(/.test(facadeBody),
+      "clearPhantomExecutorBinding facade must call the shared hasLiveSessionSurface probe (directly or via peeled Impl deps), not re-derive liveness inline",
     ).toBe(true);
-
     expect(
-      /activeSessions\.has|activeStepExecutors\.has|activeWorkflowStepSessions\.has|activeCliTaskSessions\.has/.test(body),
-      "the session-map disjunction is inlined here again; it belongs only in hasLiveSessionSurface",
+      /activeSessions\.has|activeStepExecutors\.has|activeWorkflowStepSessions\.has|activeCliTaskSessions\.has/.test(facadeBody),
+      "the session-map disjunction is inlined on the facade; it belongs only in hasLiveSessionSurface",
+    ).toBe(false);
+
+    // Peeled free function must consume the hasLiveSessionSurface deps callback.
+    const peelSource = stripComments(readSource(CLEAR_PHANTOM));
+    expect(
+      peelSource.includes("deps.hasLiveSessionSurface(taskId)"),
+      "clearPhantomExecutorBinding peel must call deps.hasLiveSessionSurface, not re-derive liveness inline",
+    ).toBe(true);
+    expect(
+      /activeSessions\.has|activeStepExecutors\.has|activeWorkflowStepSessions\.has|activeCliTaskSessions\.has/.test(peelSource),
+      "the session-map disjunction is inlined in clear-phantom-executor-binding; it belongs only in hasLiveSessionSurface",
     ).toBe(false);
   });
 
@@ -202,22 +223,32 @@ describe("FN-6756 liveness-gate ratchet", () => {
   restores the exact blind spot FN-8600 and FN-6756 both went through.
   */
   it("hasLiveSessionSurface counts registered session paths, not just executor maps", () => {
-    const source = stripComments(readSource(EXECUTOR));
-    const start = source.indexOf("hasLiveSessionSurface(taskId: string): boolean");
-    expect(start, "hasLiveSessionSurface not found — the probe was removed or renamed").toBeGreaterThan(-1);
+    // Facade must remain on TaskExecutor (public API for self-healing wiring).
+    const facadeSource = stripComments(readSource(EXECUTOR));
+    const facadeStart = facadeSource.indexOf("hasLiveSessionSurface(taskId: string): boolean");
+    expect(facadeStart, "hasLiveSessionSurface not found — the probe was removed or renamed").toBeGreaterThan(-1);
     /*
     FNXC:NodeWorktreeIsolation 2026-07-29-16:20 (PR #2540 review — coderabbit):
     FAIL CLOSED on a missing boundary. `indexOf` returning -1 made `slice(start, -1)`
     scan nearly the whole of executor.ts, so an unrelated later `activeSessionRegistry`
     reference could satisfy this assertion after the probe itself was deleted.
     */
-    const end = source.indexOf("\n  }", start);
-    expect(end, "could not find the end of hasLiveSessionSurface — the ratchet would scan the whole file").toBeGreaterThan(start);
-    const body = source.slice(start, end);
-
+    const facadeEnd = facadeSource.indexOf("\n  }", facadeStart);
+    expect(facadeEnd, "could not find the end of hasLiveSessionSurface facade — the ratchet would scan the whole file").toBeGreaterThan(facadeStart);
+    const facadeBody = facadeSource.slice(facadeStart, facadeEnd);
     expect(
-      body.includes("activeSessionRegistry.pathsForTask(taskId)"),
-      "hasLiveSessionSurface no longer consults activeSessionRegistry — a triage planner is owned by TriageProcessor and appears in NO executor-owned map, so this term is the only thing that sees it",
+      facadeBody.includes("activeSessionRegistry.pathsForTask")
+        || facadeBody.includes("pathsForTask")
+        || /hasLiveSessionSurfaceImpl\(/.test(facadeBody),
+      "hasLiveSessionSurface facade must consult registry paths (directly or via peeled Impl)",
+    ).toBe(true);
+
+    // Free-function body must include the registry/paths term (FN-6756 blind spot).
+    const peelSource = stripComments(readSource(HAS_LIVE_SESSION_SURFACE, 200));
+    expect(
+      peelSource.includes("pathsForTask")
+        || peelSource.includes("activeSessionRegistry.pathsForTask"),
+      "hasLiveSessionSurface no longer consults activeSessionRegistry paths — a triage planner is owned by TriageProcessor and appears in NO executor-owned map, so this term is the only thing that sees it",
     ).toBe(true);
   });
 });
