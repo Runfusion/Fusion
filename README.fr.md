@@ -10,7 +10,7 @@ Décrivez ce que vous voulez — une équipe d'agents IA le **planifie, le const
 
 [**runfusion.ai →**](https://runfusion.ai) · [Docs](./docs/README.md) · [GitHub](https://github.com/Runfusion/Fusion) · [npm](https://www.npmjs.com/package/@runfusion/fusion) · [Discord](https://discord.gg/ksrfuy7WYR)
 
-[English](./README.md) · [简体中文](./README.zh-CN.md) · [繁體中文](./README.zh-TW.md) · **Français** · [Español](./README.es.md) · [한국어](./README.ko.md)
+[English](./README.md) · [简体中文](./README.zh-CN.md) · [繁體中文](./README.zh-TW.md) · **Français** · [Español](./README.es.md) · [한국어](./README.ko.md) · [Português (Brasil)](./README.pt-BR.md)
 
 *Traduction automatique — le README anglais fait foi.*
 
