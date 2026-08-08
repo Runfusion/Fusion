@@ -3102,8 +3102,8 @@ export function createMissionRouter(
         throw conflict("Mission must be in 'planning' status to start");
       }
 
-      const nextSlice = await missionStore.findNextPendingSlice(missionId);
-      if (!nextSlice) {
+      const initialHierarchy = await missionStore.getMissionWithHierarchy(missionId);
+      if (!initialHierarchy?.milestones.some((milestone) => milestone.slices.some((slice) => slice.status === "pending"))) {
         throw badRequest("No pending slices found");
       }
 
@@ -3115,8 +3115,9 @@ export function createMissionRouter(
         status: "active",
       }, { actor: DASHBOARD_MISSION_ACTOR });
 
-      // Activate the first pending slice (triggers auto-triage via activateSlice)
-      await missionStore.activateSlice(nextSlice.id);
+      // Atomically admit the first serially eligible slice. A concurrent resume
+      // or recovery winner has already created the only permitted active slice.
+      await missionStore.tryActivateNextPendingSlice(missionId);
 
       // Return updated mission with hierarchy
       const hierarchy = await missionStore.getMissionWithHierarchy(missionId);

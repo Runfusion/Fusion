@@ -534,7 +534,22 @@ export class WorkflowGraphExecutor {
     const startNode = startNodeId
       ? ir.nodes.find((node) => node.id === startNodeId)
       : resolveColumnResumeNode(ir, task.column) ?? ir.nodes.find((node) => node.kind === "start");
-    if (!startNode) throw new WorkflowIrError("Workflow IR missing start node");
+    /*
+     * FNXC:WorkflowExecution 2026-08-08-01:40:
+     * Name WHICH lookup failed. One message covered two unrelated causes: a genuinely
+     * malformed IR with no `start` node, and a caller asking to resume at a node id this IR
+     * does not contain — most often a foreach TEMPLATE node id, which lives under the
+     * foreach's `config.template` rather than in `ir.nodes`. Reporting the second as "missing
+     * start node" sends the reader to inspect a workflow definition that is perfectly fine.
+     */
+    if (!startNode) {
+      throw new WorkflowIrError(
+        startNodeId
+          ? `Workflow IR has no top-level node '${startNodeId}' to resume at`
+          + " (a foreach template node is not a resumable graph node)"
+          : "Workflow IR missing start node",
+      );
+    }
 
     const nodeMap = new Map(ir.nodes.map((node) => [node.id, node]));
     const outgoingMap = new Map<string, WorkflowIrEdge[]>();
@@ -1664,6 +1679,17 @@ export class WorkflowGraphExecutor {
            * the task or convert an operator-visible hold into graph failure.
            */
           if (preflight.outcome === "failure" && typeof preflight.value === "string" && preflight.value.startsWith("workflow-principal-")) {
+            /*
+             * FNXC:WorkflowAgentRouting 2026-08-07-23:05:
+             * Carry the refusal REASON out on the shared context. The suspension marker
+             * itself has no field for it, so throwing alone reduced every distinct routing
+             * refusal — unavailable owner, exhausted pool, missing agent store — to an
+             * indistinguishable `capacity` suspend at the caller. Context survives the
+             * unwind (see the catch below), which is what lets the executor recognise this
+             * as a principal hold, park the continuation `held` instead of leaving it
+             * `running` forever, and name the reason in the task log.
+             */
+            context[`node:${node.id}:principal-hold`] = preflight.value;
             throw new WorkflowGraphSuspended({
               reason: "capacity",
               nodeId: node.id,

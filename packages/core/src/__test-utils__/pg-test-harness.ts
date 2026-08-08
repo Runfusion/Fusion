@@ -693,9 +693,20 @@ export async function createTaskStoreForTest(options?: {
   readonly poolMax?: number;
   readonly prefix?: string;
   readonly copyFromGolden?: boolean;
+  /*
+  FNXC:WorkflowAgentRouting 2026-08-07-18:40:
+  Opt-in project binding. Default (undefined) preserves the historical project-agnostic
+  harness that runs with RLS bypass and writes/reads the empty-string partition. When set,
+  the runtime connection is created with `fusion.project_id` (enforced RLS, no bypass) and
+  the AsyncDataLayer carries the same projectId, so explicit-project writes, GUC-default
+  writes, and reads all agree on one partition — required by FN-8764 built-in workflow-owner
+  provisioning during AgentStore.init().
+  */
+  readonly projectId?: string;
 }): Promise<PgTestHarness> {
   const poolMax = options?.poolMax ?? 5;
   const prefix = options?.prefix ?? "fusion_test";
+  const projectId = options?.projectId;
 
   const dbName = uniqueDbName(prefix);
 
@@ -772,8 +783,9 @@ export async function createTaskStoreForTest(options?: {
   const connections = await createConnectionSetFromUrl(schemaBackend, {
     poolMax,
     connectTimeoutSeconds: 5,
+    projectId,
   });
-  const layer = createAsyncDataLayer(connections);
+  const layer = createAsyncDataLayer(connections, projectId ? { projectId } : undefined);
 
   // Admin connection for direct row inspection/seeding in tests.
   const adminSql = postgres(testUrl, {
@@ -936,7 +948,16 @@ const TRUNCATE_ALL_SQL = `TRUNCATE TABLE ${ALL_APPLICATION_TABLES.join(", ")} RE
 export function createSharedPgTaskStoreTestHarness(options?: {
   readonly poolMax?: number;
   readonly prefix?: string;
+  /*
+  FNXC:WorkflowAgentRouting 2026-08-07-18:40:
+  Opt-in project binding threaded to createTaskStoreForTest and the config re-seed below.
+  Default undefined keeps the project-agnostic (projectId "") harness every existing core
+  test relies on; the CLI extension harness sets it so FN-8764 built-in workflow-owner
+  provisioning during AgentStore.init() has a bound projectId.
+  */
+  readonly projectId?: string;
 }): SharedPgTaskStoreHarness {
+  const boundProjectId = options?.projectId ?? "";
   let harness: PgTestHarness | null = null;
   let store: TaskStore | null = null;
   // Lazily import DEFAULT_PROJECT_SETTINGS to avoid pulling the full types
@@ -1008,6 +1029,7 @@ export function createSharedPgTaskStoreTestHarness(options?: {
         ...options,
         prefix: options?.prefix ?? "fusion_shared",
         copyFromGolden: true,
+        projectId: options?.projectId,
       });
       store = harness.store;
     },
@@ -1027,9 +1049,11 @@ export function createSharedPgTaskStoreTestHarness(options?: {
         sql.raw(
           // FNXC:MultiProjectIsolation 2026-07-11: config is keyed per-project on
           // project_id (the PK) — id is no longer unique, so the upsert arbiter
-          // must be project_id. Harness stores run project-agnostic (projectId '').
+          // must be project_id. Harness stores run project-agnostic (projectId '')
+          // unless a bound projectId was requested (FNXC:WorkflowAgentRouting 2026-08-07-18:40),
+          // in which case the config row and all other writes share that partition.
           `INSERT INTO ${PROJECT_SCHEMA}.config (id, project_id, next_id, next_workflow_step_id, settings, workflow_steps, updated_at)
-           VALUES (1, '', 1, 1, '${defaultsJson.replace(/'/g, "''")}'::jsonb, '[]'::jsonb, now())
+           VALUES (1, '${boundProjectId.replace(/'/g, "''")}', 1, 1, '${defaultsJson.replace(/'/g, "''")}'::jsonb, '[]'::jsonb, now())
            ON CONFLICT (project_id) DO UPDATE SET next_id = 1, next_workflow_step_id = 1, settings = EXCLUDED.settings, workflow_steps = '[]'::jsonb, updated_at = now()`,
         ),
       );

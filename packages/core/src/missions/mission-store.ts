@@ -17,7 +17,7 @@ const severityAuditLog = createLogger("core-mission-store");
 import { EventEmitter } from "node:events";
 import type { Database } from "../db/db.js";
 import { fromJson, toJson, toJsonNullable } from "../db/db.js";
-import { FEATURE_LOOP_TRANSITIONS, normalizeMissionAssertionOrigin, normalizeMissionAssertionScope, normalizeMissionAssertionType, renderValidationCause } from "./mission-types.js";
+import { FEATURE_LOOP_TRANSITIONS, normalizeMissionAssertionOrigin, normalizeMissionAssertionScope, normalizeMissionAssertionType, renderValidationCause, selectNextSerialMissionSlice } from "./mission-types.js";
 import type { Goal, GoalStatus } from "../goals/goal-types.js";
 import type {
   Mission,
@@ -2091,6 +2091,41 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
    * @returns The activated slice
    * @throws Error if slice not found
    */
+  /**
+   * FNXC:MissionSliceAdmission 2026-08-08-03:07:
+   * Compatibility storage follows the PostgreSQL admission contract: decide
+   * and claim serial mission work atomically, then triage only the winner.
+   */
+  async tryActivateNextPendingSlice(missionId: string): Promise<Slice | undefined> {
+    let admitted: Slice | undefined;
+    this.db.transaction(() => {
+      const hierarchy = this.getMissionWithHierarchy(missionId);
+      const candidate = hierarchy ? selectNextSerialMissionSlice(hierarchy) : undefined;
+      if (!candidate) return;
+      const now = new Date().toISOString();
+      const result = this.db.prepare("UPDATE slices SET status = ?, activatedAt = ?, updatedAt = ? WHERE id = ? AND status = 'pending'")
+        .run("active", now, now, candidate.id);
+      if (result.changes !== 1) return;
+      admitted = { ...candidate, status: "active", activatedAt: now, updatedAt: now };
+    });
+    if (!admitted) return undefined;
+
+    this.db.bumpLastModified();
+    this.emit("slice:updated", admitted);
+    this.recomputeMilestoneStatus(admitted.milestoneId);
+    const milestone = this.getMilestone(admitted.milestoneId);
+    const mission = milestone ? this.getMission(milestone.missionId) : undefined;
+    if (mission?.autopilotEnabled === true || mission?.autoAdvance === true) {
+      try {
+        await this.triageSlice(admitted.id);
+      } catch (err) {
+        severityAuditLog.error(`[MissionStore] Auto-triage failed for slice ${admitted.id}:`, err);
+      }
+    }
+    this.emit("slice:activated", admitted);
+    return admitted;
+  }
+
   async activateSlice(id: string): Promise<Slice> {
     const slice = this.getSlice(id);
     if (!slice) {

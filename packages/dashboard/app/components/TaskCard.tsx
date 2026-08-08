@@ -57,7 +57,7 @@ import {
 import { ACTIVE_STATUSES, isTaskAgentActive } from "../utils/taskActivity";
 import { getPrBadgeModifierClass } from "../utils/prBadgeClass";
 import { getTotalAgentActiveMs, getEndToEndDurationMs, getTimedDurationMs, getWorkflowRuntimeMs, parseTimestampToMs } from "../utils/taskTiming";
-import { getTaskStatusBadgeLabel, type TaskStatusBadgeContext, hasTaskStatusBadge, isTaskPlanningActive } from "../utils/taskStatusBadgeLabel";
+import { getTaskStatusBadgeLabel, getTaskWipLifecycleBadgeLabel, type TaskStatusBadgeContext, hasTaskStatusBadge, isTaskPlanningActive } from "../utils/taskStatusBadgeLabel";
 import { isReviewBudgetExhaustedApproval, isTaskAwaitingPlanApproval } from "../utils/reviewBudgetApproval";
 import { canStartPrFeedbackAddressing, getTaskPrimaryPrInfo } from "../utils/prFeedback";
 import type { ToastType } from "../hooks/useToast";
@@ -3407,8 +3407,20 @@ function TaskCardComponent({
   const showQueuedBadge = !isPaused
     && !isWipColumn
     && (queued || visualStatus === "queued");
+  const wipLifecycleBadgeLabel = !isPaused
+    && !isStuck
+    && !isPlanReviewReplanCapApproval
+    && !isAwaitingApproval
+    && !showOptionalGateBadge
+    && !showReadyBadge
+    && !showQueuedToPlanBadge
+    ? getTaskWipLifecycleBadgeLabel(visualStatus, t, {
+      isWipColumn,
+      lifecycleLabel: taskActionColumnLabel(task.column),
+    })
+    : null;
   const showStatusBadge = !isPaused
-    && (hasTaskStatusBadge(visualStatus) || isTransientPlannerActive)
+    && (hasTaskStatusBadge(visualStatus) || isTransientPlannerActive || Boolean(wipLifecycleBadgeLabel))
     && visualStatus !== "queued"
     && !(suppressPlanningStatusBadge && isPlanningStatusBadge);
   /*
@@ -3440,7 +3452,8 @@ function TaskCardComponent({
               ? t("tasks.queuedToPlan", "Queued to plan")
               : showQueuedBadge
                 ? t("tasks.statusQueued", "Queued")
-              : getTaskStatusLabel(visualStatus ?? "", t, showOptionalGateBadge ? undefined : getRunningWorkflowStepLabel(task), { idle: !isAgentActive, overlapBlockedBy: task.overlapBlockedBy ?? null });
+                : wipLifecycleBadgeLabel
+                  ?? getTaskStatusLabel(visualStatus ?? "", t, showOptionalGateBadge ? undefined : getRunningWorkflowStepLabel(task), { idle: !isAgentActive, overlapBlockedBy: task.overlapBlockedBy ?? null });
   const hasCardMetaBadges = showPriorityBadge
     || task.executionMode === "fast"
     // FNXC:PlannerOversight 2026-07-04-00:00: the oversight badge is opt-in

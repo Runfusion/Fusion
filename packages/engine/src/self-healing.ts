@@ -30,7 +30,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync,
 import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
-import { type TaskMoveLanes, resolveColumnFlags, IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX, IN_REVIEW_STALL_LOG_PREFIX, IN_REVIEW_STALL_TERMINAL_LOG_PREFIX, allowsAutoMergeProcessing, hasUserAutoMergeHold, resolveEffectiveAutoMerge, countRecentIdenticalStallEntries, detectDependencyCycle, detectSelfDefeatingDependency, evaluateNoCommitsNoOpFinalize, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, getInReviewStalledSignal, getInReviewStallReason, getPrimaryPrInfo, getStalePausedReviewSignal, getStalePausedTodoSignal, getTaskHardMergeBlocker, getTaskMergeBlocker, isEphemeralAgent, isMergeRequestContractShadowEnabled, isWorkspaceTask, isSharedBranchGroupMemberIntegration, isLiveSharedBranchGroupMemberIntegration, isNearDuplicateCanonicalInactive, parseExplicitDuplicateMarker, flagTriageDuplicate, isTriageDuplicateKeepAcknowledged, resolveMaxAutoMergeRetries, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, getBuiltinWorkflow, isBuiltinWorkflowId, resolveWorkflowIrForTask, resolveWorkflowIrForTaskWithProvenance, resolveReboundTarget, resolveReboundTargetForTask, resolveArchiveTargetForTask, columnsWithFlag, resolveLifecycleColumns, resolveTaskLifecycleColumns, workflowHasColumn, planLegacyAdoption, resolveOrphanedPendingStepResults, classifyReviewLease, PLAN_REVIEW_LEASE_STALENESS_MS, DEFAULT_MAX_POST_REVIEW_FIXES, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AWAITING_APPROVAL_PAUSE_REASON, type Agent, type AgentStore, type ChatStore, type MessageStore, type TaskStore, type Settings, type Task, type MergeDetails, type TaskPriority, type MergeResult, type WorkflowStepResult, type WorkflowIr,
+import { type TaskMoveLanes, resolveColumnFlags, IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX, IN_REVIEW_STALL_LOG_PREFIX, IN_REVIEW_STALL_TERMINAL_LOG_PREFIX, allowsAutoMergeProcessing, hasSharedBranchMemberAutoMergeHold, resolveEffectiveAutoMerge, countRecentIdenticalStallEntries, detectDependencyCycle, detectSelfDefeatingDependency, evaluateNoCommitsNoOpFinalize, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, getInReviewStalledSignal, getInReviewStallReason, getPrimaryPrInfo, getStalePausedReviewSignal, getStalePausedTodoSignal, getTaskHardMergeBlocker, getTaskMergeBlocker, isEphemeralAgent, isMergeRequestContractShadowEnabled, isWorkspaceTask, isSharedBranchGroupMemberIntegration, isLiveSharedBranchGroupMemberIntegration, isNearDuplicateCanonicalInactive, parseExplicitDuplicateMarker, flagTriageDuplicate, isTriageDuplicateKeepAcknowledged, resolveMaxAutoMergeRetries, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, getBuiltinWorkflow, isBuiltinWorkflowId, resolveWorkflowIrForTask, resolveWorkflowIrForTaskWithProvenance, resolveReboundTarget, resolveReboundTargetForTask, resolveArchiveTargetForTask, columnsWithFlag, resolveLifecycleColumns, resolveTaskLifecycleColumns, workflowHasColumn, planLegacyAdoption, resolveOrphanedPendingStepResults, classifyReviewLease, PLAN_REVIEW_LEASE_STALENESS_MS, DEFAULT_MAX_POST_REVIEW_FIXES, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AWAITING_APPROVAL_PAUSE_REASON, type Agent, type AgentStore, type ChatStore, type MessageStore, type TaskStore, type Settings, type Task, type MergeDetails, type TaskPriority, type MergeResult, type WorkflowStepResult, type WorkflowIr,
   resolveNearDuplicateCanonicalFlags,
   LEGACY_COLUMN_IDS_BY_ROLE,
   TERMINAL_ROLES,
@@ -1009,7 +1009,8 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     const completedSteps = task.steps.length > 0
       && task.steps.every((step) => step.status === "done" || step.status === "skipped");
     const liveSharedBranchMember = await this.isLiveSharedMemberIntegration(task, settings);
-    const autoMergeProcessing = allowsAutoMergeProcessing(task, settings) || liveSharedBranchMember;
+    const sharedMemberHold = hasSharedBranchMemberAutoMergeHold(task, settings);
+    const autoMergeProcessing = !sharedMemberHold && (allowsAutoMergeProcessing(task, settings) || liveSharedBranchMember);
     const hasReviewProgress =
       columns.review.has(task.column)
       && autoMergeProcessing
@@ -1018,11 +1019,10 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       && completedSteps;
     const hasManualMergeHoldProgress =
       columns.review.has(task.column)
-      && (hasUserAutoMergeHold(task) || !allowsAutoMergeProcessing(task, settings) || resolveEffectiveAutoMerge(task, settings) === false)
-      // FNXC:SharedBranchMemberHold 2026-08-05-22:50: the operator's explicit
-      // Off choice is the one shared-member exception that must resume in place,
-      // rather than letting recovery re-enqueue member→group integration.
-      && (!liveSharedBranchMember || hasUserAutoMergeHold(task))
+      && (sharedMemberHold || !allowsAutoMergeProcessing(task, settings) || resolveEffectiveAutoMerge(task, settings) === false)
+      // FNXC:SharedBranchMemberHold 2026-08-08-01:58: a project-level Off is
+      // the same durable member hold as user Off at this recovery boundary.
+      && (!liveSharedBranchMember || sharedMemberHold)
       && task.mergeDetails?.mergeConfirmed !== true
       && !isTerminalMergePark
       && completedSteps;
@@ -8228,7 +8228,7 @@ const movedTask = await this.store.moveTask(task.id, completeLane);
       would enqueue a user hold when the project switch was On.
       */
       const canRecoverMergeableReviewTask = async (task: Task): Promise<boolean> => {
-        if (hasUserAutoMergeHold(task)) return false;
+        if (hasSharedBranchMemberAutoMergeHold(task, settings)) return false;
 
         const groupId = task.branchContext?.groupId?.trim();
         const branchGroup = groupId ? await this.store.getBranchGroup(groupId) : null;

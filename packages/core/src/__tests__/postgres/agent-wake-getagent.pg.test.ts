@@ -22,8 +22,11 @@ import { AgentStore } from "../../agents/agent-store.js";
 const pgTest = pgDescribe;
 
 pgTest("AgentStore.getAgent backs the async wake hook (PostgreSQL)", () => {
+  // FNXC:WorkflowAgentRouting 2026-08-07-18:40: bind a real projectId so FN-8764 built-in
+  // workflow-owner provisioning in AgentStore.init() has a partition.
   const h: SharedPgTaskStoreHarness = createSharedPgTaskStoreTestHarness({
     prefix: "fusion_agent_wake_getagent",
+    projectId: "proj_agent_wake",
   });
 
   let agentStore: AgentStore;

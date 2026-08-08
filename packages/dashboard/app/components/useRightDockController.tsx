@@ -265,7 +265,7 @@ export function useRightDockController(input: RightDockControllerInput): RightDo
       tasks={input.tasks as Task[]}
       embedded
       onRequestClose={closeDockTask}
-      onOpenDetail={(value) => input.openDetailTask(value, "chat")}
+      onOpenDetail={(value, initialTab) => input.openDetailTask(value, initialTab ?? "chat")}
       onMoveTask={input.onMoveTask}
       /* FNXC:TaskRevert 2026-08-01-20:27: Right-dock task detail uses the shared New Task draft recovery for reverted tasks. */
       onReviseTask={(task) => input.onSendSelectionToTask(task.description)}

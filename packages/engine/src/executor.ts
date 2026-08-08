@@ -16,7 +16,7 @@ import { DEFAULT_PROVIDER_INSTANCE_ID, type ProviderInstanceRef, type TaskStore,
 import { getUnmetSchedulingDependencies } from "./scheduler.js";
 import type { ImplementationExit, ImplementationExitReporter } from "./executor/implementation-exit.js";
 import { emitWorkflowLifecycleEvent } from "@fusion/core";
-import { resolveTaskLifecycleColumns, resolveProjectColumnsForRoles, resolveWipTargetForTask, resolveTerminalColumns, RetryStormError, serializeRetryStormError, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, resolveWorkflowIrForTask, columnsWithFlag, evaluateForeachMergeProof, resolveCompleteColumn, resolveMergeOrchestrationColumn, resolveReboundTarget, resolveLifecycleColumns, resolveColumnAgentBinding, resolveEffectiveAgent, instanceNodeId, getWorkflowExtensionRegistry, getBuiltinWorkflow, parseNoOpCompletionMarker, allowsAutoMergeProcessing, hasUserAutoMergeHold, resolveEffectiveAutoMerge, isLiveSharedBranchGroupMemberIntegration, resolveMaxAutoMergeRetries, resolveMaxConsecutiveToolFailureRetries, resolveConsecutiveToolFailureRetryBackoffMs, resolveConsecutiveToolFailureThreshold, resolveExecutorEscalationTarget, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, DEFAULT_MAX_POST_REVIEW_FIXES, COMPLETION_SUMMARY_NODE_ID, PLAN_REVIEW_GROUP_ID, upsertWorkflowStepResult, normalizeWorkflowReviewFindings, AWAITING_APPROVAL_PAUSE_REASON, THINKING_LEVELS, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AgentStore, classifyWorkflowAgentNode, isWorkflowAgentRole, resolveExecutorFallbackModel, resolveValidatorFallbackModel, parseExplicitDuplicateMarker, nonExecutableDuplicateRedirectReason } from "@fusion/core";
+import { resolveTaskLifecycleColumns, resolveProjectColumnsForRoles, resolveWipTargetForTask, resolveTerminalColumns, RetryStormError, serializeRetryStormError, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, resolveWorkflowIrForTask, columnsWithFlag, evaluateForeachMergeProof, resolveCompleteColumn, resolveMergeOrchestrationColumn, resolveReboundTarget, resolveLifecycleColumns, resolveColumnAgentBinding, resolveEffectiveAgent, instanceNodeId, getWorkflowExtensionRegistry, getBuiltinWorkflow, parseNoOpCompletionMarker, allowsAutoMergeProcessing, hasSharedBranchMemberAutoMergeHold, resolveEffectiveAutoMerge, isLiveSharedBranchGroupMemberIntegration, resolveMaxAutoMergeRetries, resolveMaxConsecutiveToolFailureRetries, resolveConsecutiveToolFailureRetryBackoffMs, resolveConsecutiveToolFailureThreshold, resolveExecutorEscalationTarget, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, DEFAULT_MAX_POST_REVIEW_FIXES, COMPLETION_SUMMARY_NODE_ID, PLAN_REVIEW_GROUP_ID, upsertWorkflowStepResult, normalizeWorkflowReviewFindings, AWAITING_APPROVAL_PAUSE_REASON, THINKING_LEVELS, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AgentStore, classifyWorkflowAgentNode, isWorkflowAgentRole, resolveExecutorFallbackModel, resolveValidatorFallbackModel, parseExplicitDuplicateMarker, nonExecutableDuplicateRedirectReason } from "@fusion/core";
 import {
   BLOCKED_THRASH_LIMIT,
   buildExternalBlockMetadataPatch,
@@ -5707,7 +5707,7 @@ export class TaskExecutor {
      * implementation and thereby bypass that checkpoint before the operator
      * releases or revises the held member.
      */
-    if (hasUserAutoMergeHold(liveTask)) return false;
+    if (hasSharedBranchMemberAutoMergeHold(liveTask, await this.store.getSettings())) return false;
     const missingArtifactKeys = parseRequiredArtifactMissingValue(info.failureValue);
     if (missingArtifactKeys) {
       await this.recoverMissingRequiredArtifacts(liveTask, missingArtifactKeys, {
@@ -6033,7 +6033,7 @@ export class TaskExecutor {
        * Do not let it send a user-held member back to execution: only an explicit
        * operator release or revision may advance that manual checkpoint.
        */
-      if (hasUserAutoMergeHold(task)) return false;
+      if (hasSharedBranchMemberAutoMergeHold(task, await this.store.getSettings())) return false;
       /*
       FNXC:WorkflowPostMerge 2026-06-26-14:00:
       U7c: gate-ness is now sourced from the recorded `WorkflowStepResult.status`, NOT a
@@ -6590,6 +6590,17 @@ export class TaskExecutor {
      */
     const directWorkflowPrincipalWorkItemIds = new Set<string>();
     /*
+     * FNXC:WorkflowAgentRouting 2026-08-07-23:50:
+     * The subset of the above that this run persisted as an availability HOLD. When it is
+     * non-empty the run already owns the task's single active continuation, parked `held`
+     * at the node that could not route — so the hold branch below must NOT also transition
+     * the row the run resumed on. That row was retired by the same atomic replace, and
+     * transitioning a terminal row throws (the store's terminal guard), which an earlier
+     * revision swallowed — leaving the task parked with ZERO active continuations, no
+     * error, and nothing scheduled to resume it.
+     */
+    const directWorkflowPrincipalHeldWorkItemIds = new Set<string>();
+    /*
     FNXC:GlobalConcurrencyControls 2026-07-14-18:30:
     The hold/release sweep may have already tryAcquired a global slot for this card before moving it to in-progress. Claim that pre-held slot for the full graph run so utilization stays honest between workflow nodes and triage cannot overfill the cap while this task is still graph-owned.
     */
@@ -6803,10 +6814,26 @@ export class TaskExecutor {
         beforeNodeExecution: async (node, nodeTask, context) => {
           const classifiedRole = classifyWorkflowAgentNode(node);
           if (!classifiedRole) return undefined;
-          // A classified session without the authoritative IR/agent store must
-          // fail closed; running it as an ambient executor defeats role routing.
+          /*
+           * A classified session without the authoritative IR/agent store must fail closed;
+           * running it as an ambient executor defeats role routing.
+           *
+           * FNXC:WorkflowAgentRouting 2026-08-07-23:05:
+           * Name WHICH dependency is missing and log it. Unlike every other refusal below,
+           * this one persists no held work item (the durable-hold helper needs the very IR
+           * that is missing), so it is the one routing outcome with no durable trace at all:
+           * the run suspends with a bare `capacity` marker and the card re-suspends at the
+           * same node every poll, indistinguishable from a dead engine. A missing agent-store
+           * wire deadlocked the whole board this way. Neither condition is transient — both
+           * are boot-time composition faults — so log at error, not warn.
+           */
           if (!this.options.agentStore || !columnAgentIr) {
-            return { outcome: "failure" as const, value: `workflow-principal-routing-unavailable:${classifiedRole}` };
+            const missing = !this.options.agentStore ? "no-agent-store" : "no-workflow-ir";
+            executorLog.error(
+              `[workflow-graph] ${nodeTask.id}: cannot route node '${node.id}' to a '${classifiedRole}' principal — ${missing}. `
+              + "This is a runtime composition fault, not a transient wait: the node will re-suspend every dispatch until it is repaired.",
+            );
+            return { outcome: "failure" as const, value: `workflow-principal-routing-unavailable:${missing}:${classifiedRole}` };
           }
           const agents = await this.options.agentStore.listAgents({ includeEphemeral: true });
           const activeSessions = new Map(agents.map((agent) => [agent.id, this.workflowAgentCapacity.activeSessions(agent.id, this.store.getRootDir())]));
@@ -6849,28 +6876,91 @@ export class TaskExecutor {
                 activeSessions,
               });
           if (routed.status === "unclassified") return undefined;
+          /*
+           * FNXC:WorkflowAgentRouting 2026-08-07-23:50:
+           * EVERY durable continuation write on this path goes through the atomic
+           * replace primitive, never a bare upsert.
+           *
+           * `idx_workflow_work_items_one_active_task_continuation` permits ONE active
+           * (`runnable`/`running`/`held`/`retrying`) `kind:"task"` row per task, and a
+           * plain upsert's ON CONFLICT target is a DIFFERENT constraint
+           * (run_id, task_id, node_id, kind). So a row this run has already left — the
+           * continuation it resumed on, or a previous foreach instance of the same
+           * template node, which shares `nodeId` and differs only by `runId` — does not
+           * upsert, it RAISES. That raise deadlocked the board: routing failed closed,
+           * the run re-suspended every dispatch, and only an operator bouncing the card
+           * cleared it.
+           *
+           * `replaceActiveTaskWorkflowContinuation` retires every active row that is not
+           * this exact (runId, nodeId, kind) and upserts the successor inside ONE
+           * transaction holding the task's advisory lock. That is what makes the handover
+           * atomic (no window with zero active rows), instance-aware (a sibling foreach
+           * instance has a different runId, so it is retired), and race-free against a
+           * concurrent engine (the lock serializes the read and the write). It is the
+           * repository's existing primitive for exactly this — `plan-review-continuation.ts`
+           * and `workflow-column-boundary-hooks.ts` already use it.
+           *
+           * Deliberately NOT an error-recovery path: an earlier revision reacted to a
+           * failed upsert by terminalizing other rows, which meant any transient database
+           * error destroyed a legitimate `held` continuation. Replacing unconditionally on
+           * the success path removes the need to classify errors at all.
+           */
+          const writeContinuation = async (
+            input: Parameters<NonNullable<TaskStore["upsertWorkflowWorkItem"]>>[0] & { kind: "task" },
+          ): Promise<WorkflowWorkItem | undefined> => {
+            if (typeof this.store.replaceActiveTaskWorkflowContinuation === "function") {
+              return await this.store.replaceActiveTaskWorkflowContinuation(input);
+            }
+            // Degradation for minimal/legacy stores without the atomic primitive:
+            // a bare upsert keeps the pre-primitive behavior rather than failing the run.
+            if (typeof this.store.upsertWorkflowWorkItem === "function") {
+              return await this.store.upsertWorkflowWorkItem(input);
+            }
+            return undefined;
+          };
+          /*
+           * FNXC:WorkflowAgentRouting 2026-08-07-23:50:
+           * A hold write must NEVER throw out of `beforeNodeExecution`. Only
+           * `WorkflowGraphSuspended` is rethrown by the interpreter, so any other throw
+           * here degrades a recoverable availability hold into a terminal graph failure —
+           * the card is parked failed instead of waiting for its principal. Failing to
+           * RECORD the hold is bad; failing the task because we could not record it is
+           * worse. Log and continue: the refusal value still fails the node closed.
+           */
           const holdDirectPrincipalWorkItem = async (
             reason: string,
             principalAgentId: string | null,
             authorityKind: "task-assignee" | "review-node-override" | "column-binding" | "role-pool" | null,
           ): Promise<void> => {
-            if (typeof this.store.upsertWorkflowWorkItem !== "function") return;
-            const item = await this.store.upsertWorkflowWorkItem({
-              runId: `${resolvedRunId ?? `${nodeTask.id}:workflow`}:${nodeInstanceId}`,
-              taskId: nodeTask.id,
-              nodeId: node.id,
-              nodeInstanceId,
-              kind: "task",
-              state: "held",
-              leaseOwner: null,
-              leaseExpiresAt: null,
-              blockedReason: reason,
-              lastError: reason,
-              principalAgentId,
-              workflowRole: classifiedRole,
-              authorityKind,
-            });
-            directWorkflowPrincipalWorkItemIds.add(item.id);
+            try {
+              const item = await writeContinuation({
+                runId: `${resolvedRunId ?? `${nodeTask.id}:workflow`}:${nodeInstanceId}`,
+                taskId: nodeTask.id,
+                nodeId: node.id,
+                nodeInstanceId,
+                kind: "task",
+                state: "held",
+                leaseOwner: null,
+                leaseExpiresAt: null,
+                blockedReason: reason,
+                lastError: reason,
+                principalAgentId,
+                workflowRole: classifiedRole,
+                authorityKind,
+              });
+              if (item) {
+                directWorkflowPrincipalWorkItemIds.add(item.id);
+                // The run now owns the task's single active continuation at THIS node, so
+                // the caller must not also transition the row it resumed on (that row is
+                // already retired, and transitioning a terminal row throws).
+                directWorkflowPrincipalHeldWorkItemIds.add(item.id);
+              }
+            } catch (holdErr) {
+              executorLog.error(
+                `[workflow-graph] ${nodeTask.id}: could not persist the availability hold for node '${node.id}' (${reason}): `
+                + `${holdErr instanceof Error ? holdErr.message : String(holdErr)}`,
+              );
+            }
           };
           if (routed.status === "held") {
             const reviewerOverride = classifiedRole === "reviewer" ? node.reviewerAgentId : undefined;
@@ -6894,7 +6984,17 @@ export class TaskExecutor {
             await holdDirectPrincipalWorkItem(reason, namedPrincipal ?? null, authorityKind);
             return { outcome: "failure" as const, value: reason };
           }
-          const attemptId = `${resolvedRunId}:${nodeInstanceId}`;
+          /*
+           * FNXC:WorkflowAgentRouting 2026-08-08-03:20:
+           * Use the SAME run-id fallback the two durable writes below use. `resolvedRunId` is
+           * optional by construction (a definition load failure leaves it undefined), and this
+           * interpolated it raw — producing the literal attempt id `undefined:<nodeInstance>`,
+           * shared by every task in the project that hit that failure. The capacity lease is
+           * keyed on `(projectId, attemptId)` and returns `acquired` for a pre-existing row
+           * REGARDLESS of agent, so colliding tasks bypass both the project and per-agent caps,
+           * and one task's release deletes another's live lease.
+           */
+          const attemptId = `${resolvedRunId ?? `${nodeTask.id}:workflow`}:${nodeInstanceId}`;
           /*
            * FNXC:WorkflowAgentRouting 2026-08-07-05:29:
            * Workflow-stage admission consumes the project workflow budget, while
@@ -6955,9 +7055,23 @@ export class TaskExecutor {
            * fence as a claimed continuation. A persistence failure releases the
            * just-acquired capacity and fails closed rather than running ambient.
            */
-          if (!durableWorkItemId && typeof this.store.upsertWorkflowWorkItem === "function") {
+          if (!durableWorkItemId) {
+            /*
+             * FNXC:WorkflowAgentRouting 2026-08-07-23:50:
+             * The fence is written through the atomic replace primitive (see
+             * `writeContinuation` above), so the row this run already left — the resumed
+             * continuation, or a sibling foreach instance sharing this template `nodeId` —
+             * is retired in the SAME locked transaction that installs this fence. There is
+             * therefore no conflict to react to and no window in which the task has zero
+             * active continuations.
+             *
+             * A failure here still fails CLOSED: no session may start without its durable
+             * principal record. Release the just-acquired capacity and surface the store
+             * error, whose actionable text (constraint name, NOT NULL column) the store
+             * layer puts on `cause` rather than `message`.
+             */
             try {
-              const item = await this.store.upsertWorkflowWorkItem({
+              const item = await writeContinuation({
                 runId: `${resolvedRunId ?? `${nodeTask.id}:workflow`}:${nodeInstanceId}`,
                 taskId: nodeTask.id,
                 nodeId: node.id,
@@ -6970,9 +7084,23 @@ export class TaskExecutor {
                 authorityKind: routed.route.authority,
                 nodeInstanceId,
               });
-              durableWorkItemId = item.id;
-              directWorkflowPrincipalWorkItemIds.add(item.id);
-            } catch {
+              if (item) {
+                durableWorkItemId = item.id;
+                directWorkflowPrincipalWorkItemIds.add(item.id);
+              }
+            } catch (fenceErr) {
+              const detail = fenceErr instanceof Error ? fenceErr.message : String(fenceErr);
+              const cause = fenceErr instanceof Error && fenceErr.cause instanceof Error
+                ? ` [cause: ${fenceErr.cause.message}]`
+                : "";
+              executorLog.error(
+                `[workflow-graph] ${nodeTask.id}: durable principal fence write failed for node '${node.id}' `
+                + `(role=${routed.route.role}, authority=${routed.route.authority}, agent=${routed.route.agent.id}): ${detail}${cause}`,
+              );
+              await this.store.logEntry(
+                nodeTask.id,
+                `Workflow principal fence write failed at node '${node.id}' — ${detail.slice(0, 300)}${cause}`,
+              ).catch(() => undefined);
               void this.workflowAgentCapacity.release(attemptId, this.options.agentStore.workflowProjectId ?? this.store.getRootDir());
               return { outcome: "failure" as const, value: `workflow-principal-fence-unavailable:${routed.route.role}` };
             }
@@ -7173,7 +7301,38 @@ export class TaskExecutor {
               "workflow:node-instance-id": continuation.nodeInstanceId ?? continuation.nodeId,
             }
           : undefined;
-        result = await runner.run(detail, settings, continuation?.nodeId, continuationContext);
+        /*
+         * FNXC:WorkflowExecution 2026-08-08-01:40:
+         * Only a TOP-LEVEL node id is a legal resume point.
+         *
+         * A fence written for a node inside a foreach template stores the TEMPLATE node id
+         * (`step-execute`) with the materialized instance in `nodeInstanceId`
+         * (`steps#0:step-execute`). The template node is not in `ir.nodes` — it exists only
+         * under the `steps` foreach's `config.template` — so handing it to the interpreter as
+         * a start node resolves to nothing and throws `WorkflowIrError`, which the catch below
+         * converts into a terminal graph failure. That parks a healthy card on every dispatch.
+         *
+         * Fall back to the graph ENTRY CONTRACT instead: with no explicit start node the run
+         * re-enters at the card's own column (`resolveColumnResumeNode`), so an in-progress
+         * card re-enters at `parse`, which sees the foreach already expanded and hands control
+         * back to `steps`. The instance itself resumes from its own durable row in
+         * `workflow_run_step_instances`, so nothing is replayed and no progress is lost — this
+         * is the same path a run with no continuation at all already takes.
+         *
+         * Self-healing by construction: an already-persisted template-node continuation (there
+         * are such rows in the field) resumes correctly on its next dispatch without migration.
+         */
+        const resumeNodeId = continuation?.nodeId
+          && columnAgentIr?.nodes.some((candidate) => candidate.id === continuation?.nodeId)
+          ? continuation.nodeId
+          : undefined;
+        if (continuation?.nodeId && resumeNodeId === undefined) {
+          executorLog.debug(
+            `[workflow-graph] ${task.id}: continuation node '${continuation.nodeId}' is not a top-level graph node `
+            + `(instance '${continuation.nodeInstanceId ?? "none"}') — re-entering at the column resume node`,
+          );
+        }
+        result = await runner.run(detail, settings, resumeNodeId, continuationContext);
       } catch (err) {
         if (continuation) {
           await this.store.transitionWorkflowWorkItem(continuation.id, "failed", {
@@ -7203,13 +7362,56 @@ export class TaskExecutor {
        * handling; the next direct resume must receive the same fenced identity.
        */
       if (principalHoldReason) {
-        if (continuation && typeof this.store.transitionWorkflowWorkItem === "function") {
-          await this.store.transitionWorkflowWorkItem(continuation.id, "held", {
-            leaseOwner: null,
-            leaseExpiresAt: null,
-            lastError: principalHoldReason,
-            blockedReason: principalHoldReason,
-          }).catch(() => undefined);
+        /*
+         * FNXC:WorkflowAgentRouting 2026-08-07-22:39:
+         * A principal hold is a WAIT, so it writes no task error — but it must never be
+         * INVISIBLE. `workflow-principal-routing-unavailable:*` is a misconfiguration
+         * (no agent store / no resolvable IR), not a transient wait: nothing will ever
+         * clear it, so every resume re-parks and the card deadlocks in its wip column.
+         * A missing `agentStore` wire did exactly that to every task after FN-8764, with
+         * no log line, no audit row, and no task-log entry to find it by. Log the hold —
+         * loudly for the never-clears variant — so the next occurrence is greppable.
+         */
+        const neverClears = principalHoldReason.startsWith("workflow-principal-routing-unavailable:");
+        const holdMessage = `[workflow-graph] ${task.id} held at graph node — ${principalHoldReason}`;
+        if (neverClears) {
+          executorLog.error(`${holdMessage} (workflow principal routing is unavailable; this hold cannot self-clear)`);
+        } else {
+          executorLog.warn(holdMessage);
+        }
+        await this.store.logEntry(task.id, `Workflow stage held — ${principalHoldReason}`).catch(() => undefined);
+        /*
+         * FNXC:WorkflowAgentRouting 2026-08-07-23:50:
+         * The task must end this run with EXACTLY ONE active continuation, and the hold
+         * write above may already be it.
+         *
+         * When routing persisted a `held` row, the atomic replace retired the row this run
+         * resumed on, so transitioning that resumed row here would (a) be redundant and
+         * (b) throw on the store's terminal guard. The previous `.catch(() => undefined)`
+         * hid exactly that throw and left the card parked with zero active rows, no error,
+         * and nothing to resume from — the same silent deadlock this whole change removes.
+         *
+         * So: skip when the hold is already durable. Otherwise (the fail-closed
+         * routing-unavailable path writes no row) fall back to parking the resumed
+         * continuation, and if even that fails, say so instead of swallowing it — a task
+         * with no durable continuation is stranded, and the stall watchdog only reports it.
+         */
+        if (directWorkflowPrincipalHeldWorkItemIds.size === 0
+          && continuation
+          && typeof this.store.transitionWorkflowWorkItem === "function") {
+          try {
+            await this.store.transitionWorkflowWorkItem(continuation.id, "held", {
+              leaseOwner: null,
+              leaseExpiresAt: null,
+              lastError: principalHoldReason,
+              blockedReason: principalHoldReason,
+            });
+          } catch (holdErr) {
+            executorLog.error(
+              `[workflow-graph] ${task.id}: could not park the resumed continuation as held (${principalHoldReason}); `
+              + `the task may have no active continuation to resume from: ${holdErr instanceof Error ? holdErr.message : String(holdErr)}`,
+            );
+          }
         }
         return;
       }
@@ -7238,25 +7440,77 @@ export class TaskExecutor {
         return;
       }
       if (result.disposition === "suspended") {
+        /*
+         * FNXC:WorkflowExecution 2026-08-07-22:52:
+         * A suspend is a WAIT, so it writes no task error — but a bare `return` made it
+         * INVISIBLE, and an invisible wait that never clears is indistinguishable from a
+         * dead board. `onSuspend` deliberately writes no fresh continuation when an ACTIVE
+         * work item already exists, so a card re-suspending at the SAME node leaves zero
+         * new state anywhere: no log line, no audit row, no work-item update. Operators saw
+         * only "Resuming execution after unpause" every poll forever, and the only recovery
+         * was manually bouncing the card to the hold column. Record the suspension point so
+         * the wait is answerable after the fact ("why is this card parked?") without a debug
+         * build. Metadata is ids/outcomes-only — node/run identifiers, reason, and columns.
+         */
+        const suspension = result.suspension;
+        await this.store.recordRunAuditEvent?.({
+          taskId: task.id,
+          agentId: "executor",
+          runId: resolvedRunId ?? generateSyntheticRunId("workflow-run-suspended", task.id),
+          domain: "database",
+          mutationType: "task:workflow-run-suspended",
+          target: task.id,
+          metadata: {
+            taskId: task.id,
+            nodeId: suspension?.nodeId ?? "unknown",
+            reason: suspension?.reason ?? "unknown",
+            fromColumn: suspension?.fromColumn ?? null,
+            toColumn: suspension?.toColumn ?? null,
+            continuationId: continuation?.id ?? null,
+            continuationNodeId: continuation?.nodeId ?? null,
+            continuationState: continuation?.state ?? null,
+          },
+        }).catch(() => undefined);
+        executorLog.log(
+          `[workflow-graph] ${task.id} suspended at node '${suspension?.nodeId ?? "unknown"}' (${suspension?.reason ?? "unknown"})`,
+        );
         return;
       }
-      if (result.disposition === "failed") {
-        if (continuation) {
-          await this.store.transitionWorkflowWorkItem(continuation.id, "failed", {
+      /*
+       * FNXC:WorkflowExecution 2026-08-08-03:20:
+       * Closing out the continuation is BOOKKEEPING and must never pre-empt the lifecycle
+       * action that follows it.
+       *
+       * The row is very often already terminal by the time we get here: the first fence write
+       * of the run retires the continuation it resumed on (that is what makes the handover
+       * atomic), so `succeeded -> failed` hits the store's terminal guard and THROWS. These two
+       * calls sit outside the interpreter try/catch and used to be unguarded, so that throw
+       * escaped `executeWorkflowGraph` and skipped `handleGraphFailure` entirely — leaving a
+       * failed run's card sitting in its wip column, unparked and with no error recorded. The
+       * sibling calls in this same function already tolerate it; these two did not.
+       */
+      const closeContinuation = async (state: "failed" | "succeeded"): Promise<void> => {
+        if (!continuation || typeof this.store.transitionWorkflowWorkItem !== "function") return;
+        try {
+          await this.store.transitionWorkflowWorkItem(continuation.id, state, {
             leaseOwner: null,
             leaseExpiresAt: null,
-            lastError: "workflow-continuation-failed",
+            lastError: state === "failed" ? "workflow-continuation-failed" : null,
           });
+        } catch (closeErr) {
+          // Already retired by this run's own fence write, or by a peer — either way the row is
+          // finished work and the lifecycle transition below is what actually matters.
+          executorLog.debug(
+            `[workflow-graph] ${task.id}: continuation ${continuation.id} could not be closed as ${state} `
+            + `(likely already terminal): ${closeErr instanceof Error ? closeErr.message : String(closeErr)}`,
+          );
         }
+      };
+      if (result.disposition === "failed") {
+        await closeContinuation("failed");
         await this.handleGraphFailure(task, result);
       } else if (result.disposition === "completed") {
-        if (continuation) {
-          await this.store.transitionWorkflowWorkItem(continuation.id, "succeeded", {
-            leaseOwner: null,
-            leaseExpiresAt: null,
-            lastError: null,
-          });
-        }
+        await closeContinuation("succeeded");
         const live = await this.store.getTask(task.id).catch(() => task);
         if ((live as TaskDetail).mergeDetails?.mergeConfirmed === true && (live as TaskDetail).column !== await resolveCompleteColumnFor(this.store, task.id)) {
           await this.finalizeMergeConfirmedWorkflowGraphTask(task.id, "graph-completed");
@@ -10630,7 +10884,11 @@ export class TaskExecutor {
     const failedNode = result.visitedNodeIds[result.visitedNodeIds.length - 1];
     if (failedNode !== undefined && failedNode !== "execute") return false;
 
-    if (live.steps.some((step) => step.status === "done")) return false;
+    /*
+    FNXC:GraphRestartRecovery 2026-08-07-23:36:
+    Completed earlier steps are resumable progress when a later step is still active. Only a fully terminal step list fences this bounded retry path.
+    */
+    if (live.steps.length > 0 && !hasNonTerminalWorkflowSteps(live)) return false;
 
     const failureState = live as Task & { lastError?: unknown; failureReason?: unknown };
     if (failureState.lastError != null || failureState.failureReason != null) return false;
@@ -11146,10 +11404,9 @@ export class TaskExecutor {
     } catch {
       return false;
     }
-    // FNXC:SharedBranchMemberHold 2026-08-05-22:50: FN-8811 lets only an
-    // operator-authored Off choice fence the live member fast path; policy and
-    // legacy false values retain member→group flow.
-    if (hasUserAutoMergeHold(live)) return false;
+    // FNXC:SharedBranchMemberHold 2026-08-08-01:58: project Off fences every
+    // non-opted-in member before the live intermediate-group fast path.
+    if (hasSharedBranchMemberAutoMergeHold(live, settings)) return false;
     const sharedBranchMember = await this.isLiveSharedBranchGroupMember(live);
     if (!sharedBranchMember && !allowsAutoMergeProcessing(live, settings)) return false;
     if (!sharedBranchMember && resolveEffectiveAutoMerge(live, settings) === false) return false;
@@ -11254,8 +11511,9 @@ export class TaskExecutor {
       return false;
     }
     /* FNXC:AutoMergeHold 2026-07-09-17:07: FN-7749's benign manual-hold classifier must exclude only live shared-group integrations. FN-7750 stale shared-group members are standalone manual-hold rows and should not be stranded as pause-abort failures. */
-    if (await this.isLiveSharedBranchGroupMember(live) && !hasUserAutoMergeHold(live)) return false;
-    return hasUserAutoMergeHold(live)
+    const sharedMemberHold = hasSharedBranchMemberAutoMergeHold(live, settings);
+    if (await this.isLiveSharedBranchGroupMember(live) && !sharedMemberHold) return false;
+    return sharedMemberHold
       || !allowsAutoMergeProcessing(live, settings)
       || resolveEffectiveAutoMerge(live, settings) === false;
   }
@@ -11500,11 +11758,10 @@ export class TaskExecutor {
     if (live.column === resumeLanes.review) {
       if (!settings) return false;
       const sharedBranchMember = await this.isLiveSharedBranchGroupMember(live);
-      // FNXC:SharedBranchMemberHold 2026-08-05-23:55: an interrupted live
-      // member with mission/legacy policy false must resume its local integration;
-      // only the user hold (and every stale/default-group false override) remains
-      // terminal at this recovery boundary.
-      if (hasUserAutoMergeHold(live) || (live.autoMerge === false && !sharedBranchMember)) return false;
+      // FNXC:SharedBranchMemberHold 2026-08-08-01:58: project Off holds each
+      // non-opted-in member even after a graph interruption; liveness cannot
+      // reopen that manual checkpoint.
+      if (hasSharedBranchMemberAutoMergeHold(live, settings) || (live.autoMerge === false && !sharedBranchMember)) return false;
       if (!sharedBranchMember && !allowsAutoMergeProcessing(live, settings)) return false;
       if (live.mergeDetails?.mergeConfirmed === true) return false;
     }
@@ -12632,9 +12889,38 @@ export class TaskExecutor {
             error: null,
           }, this.getRunContextFor(task.id));
           const scheduleRetry = () => {
-            this.execute(live).catch((err) =>
-              executorLog.error(`Failed transient graph resume retry for ${task.id}:`, err),
-            );
+            void (async () => {
+              try {
+                const resumeTask = await this.store.getTask(task.id);
+                const resumeFailureState = resumeTask as Task & { lastError?: unknown; failureReason?: unknown };
+                if (
+                  resumeTask.deletedAt
+                  || resumeTask.paused
+                  || resumeTask.userPaused
+                  || this.userCanceledTaskIds.has(task.id)
+                  || resumeTask.status != null
+                  || resumeTask.error != null
+                  || resumeFailureState.lastError != null
+                  || resumeFailureState.failureReason != null
+                  || resumeTask.column !== failureLanes.wip
+                  || (await resolveTerminalColumnsFor(this.store, resumeTask.id)).includes(resumeTask.column)
+                  || this.executing.has(task.id)
+                  || this.activeSessions.has(task.id)
+                  || this.activeStepExecutors.has(task.id)
+                  || this.activeWorkflowStepSessions.has(task.id)
+                  || this.activeCliTaskSessions.has(task.id)
+                  || this.activeWorkflowGraphAbortControllers.has(task.id)
+                  || this.resumingUnpaused.has(task.id)
+                  || TaskExecutor.processWideGraphRouting.has(task.id)
+                ) {
+                  executorLog.debug(`${task.id}: skipping transient graph resume retry — task is no longer in a safe WIP resume state`);
+                  return;
+                }
+                await this.execute(resumeTask);
+              } catch (err) {
+                executorLog.error(`Failed transient graph resume retry for ${task.id}:`, err);
+              }
+            })();
           };
           if (TRANSIENT_GRAPH_RESUME_RETRY_BACKOFF_MS > 0) {
             const handle = setTimeout(scheduleRetry, TRANSIENT_GRAPH_RESUME_RETRY_BACKOFF_MS);

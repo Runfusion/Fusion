@@ -400,7 +400,11 @@ describe("TaskCard", () => {
     render(<TaskCard task={staleSnapshotTask} onOpenDetail={noop} addToast={noop} />);
 
     expect(screen.queryByTestId("planner-overseer-state-badge")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("card-header-badges")).not.toBeInTheDocument();
+    if (column === "in-progress") {
+      expect(screen.getByTestId("card-header-badges")).toHaveTextContent(/in progress/i);
+    } else {
+      expect(screen.queryByTestId("card-header-badges")).not.toBeInTheDocument();
+    }
   });
 
   it("does not render an overseer badge for a stale non-idle oversight-off snapshot", () => {
@@ -2470,6 +2474,38 @@ describe("TaskCard", () => {
       />,
     );
     expect(screen.getByText("executing")).toBeDefined();
+  });
+
+  it.each([null, undefined, "   "])("restores one WIP lifecycle badge for an empty status (%s)", (status) => {
+    const { container } = render(
+      <TaskCard task={makeTask({ status: status as any })} onOpenDetail={noop} addToast={noop} />,
+    );
+
+    expect(container.querySelector(".card-status-badge")).toHaveTextContent(/in progress/i);
+    expect(container.querySelector(".card-status-badge")).toHaveClass("card-status-badge--in-progress");
+    expect(container.querySelectorAll(".card-status-badge")).toHaveLength(1);
+  });
+
+  it("uses a renamed WIP lane label without replacing richer or paused states", () => {
+    const { container, rerender } = render(
+      <TaskCard
+        task={makeTask({ column: "building" as any, status: undefined as any })}
+        taskColumnFlags={{ countsTowardWip: true }}
+        taskMoveColumns={[{ id: "building" as any, label: "Building", flags: { countsTowardWip: true } }]}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+    expect(screen.getByText("Building")).toHaveClass("card-status-badge");
+    expect(container.querySelectorAll(".card-status-badge")).toHaveLength(1);
+
+    rerender(<TaskCard task={makeTask({ status: "executing" })} onOpenDetail={noop} addToast={noop} />);
+    expect(screen.getByText("executing")).toBeInTheDocument();
+    expect(container.querySelector(".card-status-badge")).not.toHaveTextContent(/in progress/i);
+
+    rerender(<TaskCard task={makeTask({ status: undefined as any, paused: true })} onOpenDetail={noop} addToast={noop} />);
+    expect(screen.getByText("paused")).toBeInTheDocument();
+    expect(container.querySelector(".card-status-badge")).not.toHaveTextContent(/in progress/i);
   });
 
   it("FN-8493 renders the idle Queued to revise label, not Replan, for a bare needs-replan Board card", () => {

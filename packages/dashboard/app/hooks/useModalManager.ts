@@ -15,7 +15,13 @@ export type DetailTaskTab =
   | "chat"
   | "definition"
   | "logs"
+  /*
+  FNXC:SharedBranchPromotionAdvisories 2026-08-08-02:16:
+  FN-8823 routes landed-member promotion advisories directly to their persisted
+  Review items, so every Task Detail host must accept the existing review tab.
+  */
   | "changes"
+  | "review"
   | "comments"
   | "model"
   | "workflow"

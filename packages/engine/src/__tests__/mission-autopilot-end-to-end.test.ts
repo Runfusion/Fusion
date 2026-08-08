@@ -2,17 +2,20 @@ import { describe, it, expect, vi } from "vitest";
 import { Scheduler } from "../scheduler.js";
 import { MissionAutopilot } from "../missions/mission-autopilot.js";
 import { MissionExecutionLoop } from "../missions/mission-execution-loop.js";
-import type { TaskStore } from "@fusion/core";
+import { selectNextSerialMissionSlice, type TaskStore } from "@fusion/core";
 
 function makeHarness({
   withAssertions = true,
   initialFeatureStatus = "in-progress",
   initialTaskColumn = "in-progress",
+  productionSequence = false,
   runValidationImpl,
 }: {
   withAssertions?: boolean;
   initialFeatureStatus?: string;
   initialTaskColumn?: string;
+  /** Mirror #3345: M1 → M2 (two slices) → M3 without dependencies. */
+  productionSequence?: boolean;
   runValidationImpl?: () => Promise<{ status: "pass" | "error"; assertions: []; summary: string }>;
 } = {}) {
   const mission = {
@@ -37,7 +40,15 @@ function makeHarness({
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
-  const slices = new Map<string, any>([
+  const secondMilestone = { ...milestone, id: "MS-002", title: "Milestone 2", status: "planning", orderIndex: 1 };
+  const thirdMilestone = { ...milestone, id: "MS-003", title: "Milestone 3", status: "planning", orderIndex: 2 };
+  const milestones = new Map([[milestone.id, milestone], ...(productionSequence ? [[secondMilestone.id, secondMilestone], [thirdMilestone.id, thirdMilestone]] : [])]);
+  const slices = new Map<string, any>(productionSequence ? [
+    ["SL-001", { id: "SL-001", milestoneId: milestone.id, title: "M1 source", status: "active", planState: "not_started", orderIndex: 0, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }],
+    ["SL-002", { id: "SL-002", milestoneId: secondMilestone.id, title: "M2 first", status: "pending", planState: "not_started", orderIndex: 0, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }],
+    ["SL-003", { id: "SL-003", milestoneId: secondMilestone.id, title: "M2 second", status: "pending", planState: "not_started", orderIndex: 1, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }],
+    ["SL-004", { id: "SL-004", milestoneId: thirdMilestone.id, title: "M3 first", status: "pending", planState: "not_started", orderIndex: 0, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }],
+  ] : [
     ["SL-001", { id: "SL-001", milestoneId: milestone.id, title: "Slice 1", status: "active", planState: "not_started", orderIndex: 0, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }],
     ["SL-002", { id: "SL-002", milestoneId: milestone.id, title: "Slice 2", status: "pending", planState: "not_started", orderIndex: 1, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }],
   ]);
@@ -95,7 +106,7 @@ function makeHarness({
     listMissions: vi.fn(() => [mission]),
     updateMission: vi.fn((_id: string, updates: any) => ({ ...mission, ...updates })),
     logMissionEvent: vi.fn(),
-    getMilestone: vi.fn((id: string) => (id === milestone.id ? milestone : undefined)),
+    getMilestone: vi.fn((id: string) => milestones.get(id)),
     getSlice: vi.fn((id: string) => slices.get(id)),
     updateSlice: vi.fn((id: string, updates: any) => {
       const next = { ...slices.get(id), ...updates, updatedAt: new Date().toISOString() };
@@ -104,7 +115,12 @@ function makeHarness({
     }),
     getMissionWithHierarchy: vi.fn(() => ({
       ...mission,
-      milestones: [{ ...milestone, slices: [...slices.values()].map((slice) => ({ ...slice, features: [...features.values()].filter((f) => f.sliceId === slice.id) })) }],
+      milestones: [...milestones.values()].map((currentMilestone) => ({
+        ...currentMilestone,
+        slices: [...slices.values()]
+          .filter((slice) => slice.milestoneId === currentMilestone.id)
+          .map((slice) => ({ ...slice, features: [...features.values()].filter((f) => f.sliceId === slice.id) })),
+      })),
     })),
     listSlices: vi.fn(() => [...slices.values()]),
     listFeatures: vi.fn((sliceId?: string) => [...features.values()].filter((f) => !sliceId || f.sliceId === sliceId)),
@@ -121,6 +137,13 @@ function makeHarness({
         .every((f) => f.status === "done");
       if (slice && done && slice.status !== "complete") {
         slices.set(slice.id, { ...slice, status: "complete", updatedAt: new Date().toISOString() });
+        const sliceMilestone = milestones.get(slice.milestoneId);
+        const milestoneComplete = [...slices.values()]
+          .filter((candidate) => candidate.milestoneId === slice.milestoneId)
+          .every((candidate) => candidate.status === "complete");
+        if (sliceMilestone && milestoneComplete) {
+          milestones.set(sliceMilestone.id, { ...sliceMilestone, status: "complete" });
+        }
       }
       return next;
     }),
@@ -154,11 +177,15 @@ function makeHarness({
     missionExecutionLoop: loop,
     pollIntervalMs: 60_000,
   });
+  const admittedIds: string[] = [];
   const activateSpy = vi.spyOn(scheduler, "activateNextPendingSlice").mockImplementation(async (missionId: string) => {
     if (missionId !== mission.id) return null;
-    const next = slices.get("SL-002");
-    slices.set("SL-002", { ...next, status: "active", updatedAt: new Date().toISOString() });
-    return slices.get("SL-002");
+    const candidate = selectNextSerialMissionSlice(missionStore.getMissionWithHierarchy(missionId));
+    if (!candidate) return null;
+    const activated = { ...slices.get(candidate.id), status: "active", updatedAt: new Date().toISOString() };
+    slices.set(candidate.id, activated);
+    admittedIds.push(candidate.id);
+    return activated;
   });
 
   const emitTaskMoved = async (to: string) => {
@@ -169,7 +196,7 @@ function makeHarness({
 
   scheduler.start();
 
-  return { missionStore, loop, autopilot, scheduler, emitTaskMoved, slices, feature, activateSpy };
+  return { missionStore, loop, autopilot, scheduler, emitTaskMoved, milestones, slices, feature, activateSpy, admittedIds };
 }
 
 describe("mission autopilot end-to-end wiring", () => {
@@ -187,6 +214,58 @@ describe("mission autopilot end-to-end wiring", () => {
     expect(h.slices.get("SL-001").status).toBe("complete");
     expect(h.activateSpy).toHaveBeenCalledWith("M-001");
     expect(h.slices.get("SL-002").status).toBe("active");
+    h.scheduler.stop();
+  });
+
+  it("uses the watched-autopilot completion bridge only once for duplicate source completion", async () => {
+    const h = makeHarness({ withAssertions: false });
+    await h.autopilot.watchMission("M-001");
+    h.missionStore.updateFeatureStatus("F-001", "done");
+
+    // Drive the same scheduler bridge twice, matching a done/archived-equivalent
+    // duplicate completion callback after the source slice already completed.
+    await (h.scheduler as any).handleMissionTaskCompletion("FN-001", "SL-001");
+    await (h.scheduler as any).handleMissionTaskCompletion("FN-001", "SL-001");
+
+    expect(h.autopilot.isWatching("M-001")).toBe(true);
+    expect(h.admittedIds).toEqual(["SL-002"]);
+    expect(h.slices.get("SL-002").status).toBe("active");
+    h.scheduler.stop();
+  });
+
+  it("keeps the #3345 M1 → M2 → M3 progression serial across duplicate completion and recovery", async () => {
+    const h = makeHarness({ withAssertions: false, productionSequence: true });
+    await h.autopilot.watchMission("M-001");
+    h.missionStore.updateFeatureStatus("F-001", "done");
+
+    await Promise.all([
+      (h.scheduler as any).handleMissionTaskCompletion("FN-001", "SL-001"),
+      (h.scheduler as any).handleMissionTaskCompletion("FN-001", "SL-001"),
+      h.autopilot.recoverStaleMission("M-001"),
+    ]);
+
+    expect(h.admittedIds).toEqual(["SL-002"]);
+    expect(h.slices.get("SL-002").status).toBe("active");
+    expect(h.slices.get("SL-003").status).toBe("pending");
+    expect(h.slices.get("SL-004").status).toBe("pending");
+
+    h.slices.set("SL-002", { ...h.slices.get("SL-002"), status: "complete" });
+    await h.autopilot.advanceToNextSlice("M-001");
+    expect(h.admittedIds).toEqual(["SL-002", "SL-003"]);
+    expect(h.slices.get("SL-003").status).toBe("active");
+    expect(h.slices.get("SL-004").status).toBe("pending");
+
+    await Promise.all([
+      h.autopilot.advanceToNextSlice("M-001"),
+      h.autopilot.recoverStaleMission("M-001"),
+    ]);
+    expect(h.slices.get("SL-004").status).toBe("pending");
+
+    h.slices.set("SL-003", { ...h.slices.get("SL-003"), status: "complete" });
+    h.milestones.set("MS-002", { ...h.milestones.get("MS-002"), status: "complete" });
+    await h.autopilot.advanceToNextSlice("M-001");
+    expect(h.admittedIds).toEqual(["SL-002", "SL-003", "SL-004"]);
+    expect(h.slices.get("SL-004").status).toBe("active");
     h.scheduler.stop();
   });
 

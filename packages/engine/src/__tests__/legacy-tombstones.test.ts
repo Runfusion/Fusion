@@ -74,6 +74,19 @@ const DELETED_SYMBOLS: Array<{ symbol: string; why: string }> = [
   { symbol: "throwDeferredReviewerFatal", why: "deferred provider-error channel that only existed because a tool handler cannot throw" },
   { symbol: "MAX_CODE_REVIEW_UNAVAILABLE_RETRIES", why: "UNAVAILABLE budget for the deleted in-session code review" },
   /*
+  FNXC:WorkflowAgentRouting 2026-08-07-23:50:
+  The hand-rolled continuation handover. A durable continuation write that reacts to a FAILED
+  write by terminalizing other rows is the shape being tombstoned, not any particular name: it
+  cannot tell an index conflict from a transient database error, so it destroys legitimate holds;
+  it runs read-then-write across separate transactions, so a concurrent engine can lose its claim;
+  and it leaves a window with zero active rows, which strands the task silently. The repository
+  already has the correct primitive — `replaceActiveTaskWorkflowContinuation` retires
+  non-matching active rows and installs the successor under the task advisory lock in ONE
+  transaction. Reintroducing the recovery-shaped version reads as "handle the conflict", which is
+  exactly how it arrived the first time.
+  */
+  { symbol: "supersedeStaleActiveWorkItems", why: "a non-atomic, ownership-blind handover; replaceActiveTaskWorkflowContinuation does it in one locked transaction" },
+  /*
   FNXC:WorkflowCutover 2026-07-19-18:10 (U10b / R9):
   The legacy EXECUTE fallback. `maybeExecuteWorkflowGraph` returned a boolean meaning "did the
   graph claim this task", and `false` handed the run to a legacy implementation path — an

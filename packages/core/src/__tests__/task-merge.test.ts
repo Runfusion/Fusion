@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import type { PrInfo, StepStatus } from "../types.js";
 import {
   BLOCKING_TASK_STATUSES,
+  collectLandedMemberReviewAdvisories,
   HARD_BLOCKING_TASK_STATUSES,
   SCHEDULER_TRANSIENT_STATUSES,
   TASK_DONE_BYPASS_BLOCKER_MESSAGE,
@@ -15,6 +16,7 @@ import {
   allowsAutoMergeProcessing,
   isSharedBranchGroupMemberIntegration,
   isLiveSharedBranchGroupMemberIntegration,
+  hasSharedBranchMemberAutoMergeHold,
   hasUserAutoMergeHold,
   resolveEffectiveAutoMerge,
   resolveEffectiveGroupAutoMerge,
@@ -76,6 +78,24 @@ describe("resolveEffectiveAutoMerge", () => {
     expect(resolveEffectiveAutoMerge({ autoMerge: true, autoMergeProvenance: "legacy-stamp" }, { autoMerge: false })).toBe(true);
     expect(resolveEffectiveAutoMerge({ autoMerge: false, autoMergeProvenance: "user" }, { autoMerge: true })).toBe(false);
     expect(resolveEffectiveAutoMerge({ autoMerge: undefined, autoMergeProvenance: undefined }, { autoMerge: true })).toBe(true);
+  });
+});
+
+describe("hasSharedBranchMemberAutoMergeHold", () => {
+  it.each([
+    [{ autoMerge: undefined }, false, true],
+    [{ autoMerge: false, autoMergeProvenance: "user" }, false, true],
+    [{ autoMerge: false, autoMergeProvenance: "mission" }, false, true],
+    [{ autoMerge: false, autoMergeProvenance: "legacy-stamp" }, false, true],
+    [{ autoMerge: false }, false, true],
+    [{ autoMerge: true, autoMergeProvenance: "user" }, false, false],
+    [{ autoMerge: undefined }, true, false],
+    [{ autoMerge: false, autoMergeProvenance: "user" }, true, true],
+    [{ autoMerge: false, autoMergeProvenance: "mission" }, true, false],
+    [{ autoMerge: false, autoMergeProvenance: "legacy-stamp" }, true, false],
+    [{ autoMerge: false }, true, false],
+  ] as const)("holds task %o with project autoMerge %s: %s", (task, projectAutoMerge, expected) => {
+    expect(hasSharedBranchMemberAutoMergeHold(task, { autoMerge: projectAutoMerge })).toBe(expected);
   });
 });
 
@@ -158,6 +178,43 @@ describe("allowsAutoMergeProcessing", () => {
       autoMerge: undefined,
       prInfos: [prInfo({ number: 1 }), prInfo({ number: 2, manual: true })],
     }, { autoMerge: true })).toBe(false);
+  });
+});
+
+describe("collectLandedMemberReviewAdvisories", () => {
+  const group = { branchName: "mission/M-8823" };
+  const landed = {
+    id: "FN-8823",
+    mergeDetails: { mergeConfirmed: true, mergeTargetSource: "branch-group-integration", mergeTargetBranch: group.branchName },
+  } as const;
+
+  it("includes only non-clean landed pre-merge code-review results and deduplicates repeats", () => {
+    const advisory = {
+      workflowStepId: "code-review",
+      workflowStepName: "Code Review",
+      phase: "pre-merge" as const,
+      reviewKind: "code" as const,
+      status: "passed" as const,
+      verdict: "APPROVE_WITH_NOTES" as const,
+      notes: "Consider extracting this helper.",
+      findings: [{ id: "finding-1", title: "Extract helper", body: "This is duplicated." }],
+    };
+    const result = collectLandedMemberReviewAdvisories([
+      { ...landed, workflowStepResults: [advisory, advisory, { ...advisory, workflowStepId: "plan", reviewKind: "plan" as const }] },
+      { id: "FN-unlanded", mergeDetails: undefined, workflowStepResults: [advisory] },
+    ], group);
+    expect(result).toEqual([expect.objectContaining({ taskId: "FN-8823", workflowStepId: "code-review", notes: advisory.notes })]);
+  });
+
+  it("includes advisory failures but excludes clean, pending, and post-merge results", () => {
+    const result = collectLandedMemberReviewAdvisories([{ ...landed, workflowStepResults: [
+      { workflowStepId: "clean", workflowStepName: "Code", status: "passed", verdict: "APPROVE", phase: "pre-merge", reviewKind: "code" },
+      { workflowStepId: "pending", workflowStepName: "Code", status: "pending", verdict: "APPROVE_WITH_NOTES", phase: "pre-merge", reviewKind: "code" },
+      { workflowStepId: "post", workflowStepName: "Code", status: "advisory_failure", phase: "post-merge", reviewKind: "code" },
+      { workflowStepId: "advisory", workflowStepName: "Code", status: "advisory_failure", phase: "pre-merge", reviewKind: "code", notes: "Check edge case" },
+    ] }], group);
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({ workflowStepId: "advisory", notes: "Check edge case" });
   });
 });
 

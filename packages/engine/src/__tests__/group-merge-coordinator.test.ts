@@ -1357,7 +1357,12 @@ describe("resolveBranchGroupMergeRouting", () => {
     expect(unsafeTask.mergeDetails).toBeUndefined();
 
     git(repo, "git branch mission/M-3324 main");
-    const safeTask = createPostReviewTask("BG-dedicated");
+    /*
+    FNXC:SharedBranchMemberHold 2026-08-08-02:16:
+    FN-8823 makes project Off hold every non-opted-in member, including this
+    fixture's unset value. Explicit task On is the deliberate integration control.
+    */
+    const safeTask = { ...createPostReviewTask("BG-dedicated"), autoMerge: true };
     const safeStore = createPostReviewStore(safeTask, { id: "BG-dedicated", status: "open", branchName: "mission/M-3324" });
     const safeEngine = createInterpreterMergeEngine(repo, safeStore);
     safeEngine.onMerge = vi.fn(() => runAiMerge(safeStore, repo, "FN-3324", { manual: true }, {

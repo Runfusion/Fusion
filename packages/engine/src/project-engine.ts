@@ -24,7 +24,7 @@ import {
   resolveColumnFlags,
   type TraitFlags,
   allowsAutoMergeProcessing,
-  hasUserAutoMergeHold,
+  hasSharedBranchMemberAutoMergeHold,
   compareTasksByPriorityThenAgeAndId,
   emitOverseerConfirmation,
   emitOverseerEscalation,
@@ -2937,10 +2937,9 @@ export class ProjectEngine {
    * older low-priority task would start before a later urgent one.
    */
   private async allowInReviewMergeProcessing(task: Pick<Task, "branchContext" | "autoMerge" | "autoMergeProvenance">, settings: Pick<Settings, "autoMerge">, store: Partial<Pick<TaskStore, "getBranchGroup">> = this.runtime.getTaskStore()): Promise<boolean> {
-    // FNXC:SharedBranchMemberHold 2026-08-05-23:35: resolve group liveness before
-    // general admission. Only a live intermediate group may bypass false policy;
-    // a user-authored Off always remains a manual hold.
-    if (hasUserAutoMergeHold(task)) return false;
+    // FNXC:SharedBranchMemberHold 2026-08-08-01:58: project Off is operator
+    // consent for every non-opted-in member, so evaluate it before liveness.
+    if (hasSharedBranchMemberAutoMergeHold(task, settings)) return false;
 
     const groupId = task.branchContext?.groupId?.trim();
     const branchGroup = groupId ? await store.getBranchGroup?.(groupId) : null;

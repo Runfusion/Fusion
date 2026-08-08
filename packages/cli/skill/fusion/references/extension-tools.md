@@ -305,6 +305,16 @@ Assign a workflow definition to a task by workflow ID.
 | `workflow_id` | string | ✓ | The workflow definition ID to select (e.g. 'WF-003', or a 'builtin:*' id). Use fn_workflow_list to discover available IDs. |
 | `task_id` | string | — | Task to assign the workflow to. Defaults to the current task. |
 
+### fn_workflow_step_resume
+
+Resume a stuck pending workflow step on an in-review or in-progress Fusion task (operator-only, mandatory reason, audit-logged). When a prompt node (like code-review) is dispatched but never receives a verdict callback (Runfusion/Fusion#1946), the step stays in 'pending' status indefinitely. This tool transitions it to 'failed', enabling the existing fn_task_bypass_review escape hatch to clear the merge blocker. Requires a mandatory reason and step ID.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `id` | string | ✓ | Task ID (e.g. FN-001) |
+| `stepId` | string | ✓ | Workflow step ID to resume (e.g. 'code-review', 'plan-review') |
+| `reason` | string | ✓ | Mandatory justification for resuming the step (audit-logged) |
+
 ## GitHub Tools
 
 ### fn_task_import_github
@@ -577,7 +587,8 @@ Create a new non-ephemeral agent.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `name` | string | ✓ | Agent name |
-| `role` | union | ✓ | Agent role/capability |
+| `role` | union | — | Deprecated singular role; use roles for multi-role agents. |
+| `roles` | array | — | Canonical permanent-agent role tags. |
 | `soul` | string | — | Agent personality/identity text |
 | `instructions_text` | string | — | Inline custom instructions |
 | `instructions_path` | string | — | Path to instructions markdown |
@@ -585,6 +596,7 @@ Create a new non-ephemeral agent.
 | `heartbeat_interval_ms` | number | — |  |
 | `heartbeat_timeout_ms` | number | — |  |
 | `max_concurrent_runs` | number | — |  |
+| `max_workflow_sessions` | number | — | Max concurrent workflow sessions, independent of heartbeat runs |
 | `message_response_mode` | union | — |  |
 
 ### fn_agent_update
@@ -595,7 +607,8 @@ Update editable configuration for an existing non-ephemeral agent. Agent callers
 |-----------|------|----------|-------------|
 | `agent_id` | string | ✓ | Target agent ID or name to update |
 | `name` | string | — | New display name |
-| `role` | union | — | Agent role/capability |
+| `role` | union | — | Deprecated singular role; replaces roles for compatibility. |
+| `roles` | array | — | Canonical permanent-agent role tags. |
 | `title` | string | — | Optional title shown for the agent |
 | `icon` | string | — | Optional compact icon/emoji |
 | `soul` | string | — | Agent personality/identity text |
@@ -606,6 +619,7 @@ Update editable configuration for an existing non-ephemeral agent. Agent callers
 | `heartbeat_interval_ms` | number | — | Heartbeat polling interval in ms |
 | `heartbeat_timeout_ms` | number | — | Heartbeat timeout in ms |
 | `max_concurrent_runs` | number | — | Max concurrent heartbeat runs |
+| `max_workflow_sessions` | number | — | Max concurrent workflow sessions, independent of heartbeat runs |
 | `message_response_mode` | union | — | How agent responds to messages |
 
 ### fn_agent_set_instructions

@@ -1329,6 +1329,28 @@ describe("MissionAutopilot", () => {
       expect(localScheduler.activateNextPendingSlice).toHaveBeenCalledWith(mission.id);
     });
 
+    it("does not advance recovery when legacy corruption leaves another active slice incomplete", async () => {
+      const mission = createMockMission();
+      const store = createMockMissionStore([mission]);
+      const localScheduler = createMockScheduler();
+      const ap = new MissionAutopilot(taskStore as any, store as any, { scheduler: localScheduler });
+      store.getMissionWithHierarchy.mockReturnValue({
+        ...mission,
+        milestones: [{
+          ...createMockMilestone({ missionId: mission.id }),
+          slices: [
+            { ...createMockSlice({ id: "SL-DONE", status: "active" }), features: [createMockFeature({ id: "F-DONE", status: "done" })] },
+            { ...createMockSlice({ id: "SL-ACTIVE", status: "active" }), features: [createMockFeature({ id: "F-ACTIVE", status: "in-progress" })] },
+          ],
+        }],
+      });
+
+      await ap.recoverMissions(store as any);
+
+      expect(localScheduler.activateNextPendingSlice).not.toHaveBeenCalled();
+      expect(store.updateSlice).not.toHaveBeenCalledWith("SL-DONE", { status: "complete" });
+    });
+
     it("handles empty mission lists", async () => {
       const store = createMockMissionStore([]);
       const ap = new MissionAutopilot(taskStore as any, store as any, { scheduler });

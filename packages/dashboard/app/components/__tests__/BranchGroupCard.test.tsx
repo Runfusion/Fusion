@@ -1,6 +1,6 @@
 import React from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { BranchGroupCard } from "../BranchGroupCard";
 import { ApiRequestError } from "../../api";
 import { loadAllAppCssBaseOnly } from "../../test/cssFixture";
@@ -88,6 +88,42 @@ describe("BranchGroupCard", () => {
     sseSubscriptions.length = 0;
   });
 
+  it("requires advisory confirmation before sending one promotion request", async () => {
+    apiGetBranchGroup.mockResolvedValue({ group: makeGroup({
+      completion: { landed: 2, total: 2, complete: true },
+      members: [{ taskId: "FN-1", title: "one", column: "done", landed: true }],
+      advisories: [{
+        taskId: "FN-1",
+        workflowStepId: "code-review",
+        workflowStepName: "Code Review",
+        status: "passed",
+        verdict: "APPROVE_WITH_NOTES",
+        notes: "Check error path.",
+        findings: [{ id: "finding-1", title: "Handle empty response", body: "Guard the API response before reading its payload.", filePath: "src/client.ts", line: 42 }],
+      }],
+    }) });
+    apiPromoteBranchGroup.mockResolvedValue({});
+    const onOpenReviewTask = vi.fn();
+    render(<BranchGroupCard groupId="BG-1" onOpenReviewTask={onOpenReviewTask} />);
+    await expandBranchGroup();
+    fireEvent.click(screen.getByRole("button", { name: /review/i }));
+    expect(onOpenReviewTask).toHaveBeenCalledWith("FN-1");
+    fireEvent.click(screen.getByRole("button", { name: /open pr/i }));
+    const dialog = screen.getByRole("dialog", { name: /confirm group promotion/i });
+    expect(dialog).toHaveTextContent("Check error path.");
+    expect(dialog).toHaveTextContent("APPROVE_WITH_NOTES");
+    expect(dialog).toHaveTextContent("Handle empty response");
+    expect(dialog).toHaveTextContent("Guard the API response before reading its payload.");
+    expect(dialog).toHaveTextContent("src/client.ts:42");
+    fireEvent.click(within(dialog).getByRole("button", { name: /review/i }));
+    expect(onOpenReviewTask).toHaveBeenCalledTimes(2);
+    fireEvent.click(screen.getByRole("button", { name: /cancel/i }));
+    expect(apiPromoteBranchGroup).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: /open pr/i }));
+    fireEvent.click(within(screen.getByRole("dialog", { name: /confirm group promotion/i })).getByRole("button", { name: /open pr/i }));
+    await waitFor(() => expect(apiPromoteBranchGroup).toHaveBeenCalledTimes(1));
+  });
+
   it("hides promote control while incomplete", async () => {
     apiGetBranchGroup.mockResolvedValue({ group: makeGroup() });
     render(<BranchGroupCard groupId="BG-1" />);
@@ -135,6 +171,7 @@ describe("BranchGroupCard", () => {
     await expandBranchGroup();
     const button = await screen.findByRole("button", { name: /open pr/i });
     fireEvent.click(button);
+    fireEvent.click(within(await screen.findByRole("dialog", { name: /confirm group promotion/i })).getByRole("button", { name: /open pr/i }));
 
     await waitFor(() => {
       expect(apiPromoteBranchGroup).toHaveBeenCalledWith("BG-1", undefined);
@@ -376,5 +413,10 @@ describe("BranchGroupCard", () => {
     const titleBlock = css.match(/\.branch-group-card--collapsed \.branch-group-card-title\s*\{(?<block>[^}]*)\}/)?.groups?.block ?? "";
     expect(titleBlock).toContain("font-size: var(--font-size-xs)");
     expect(titleBlock).toContain("line-height: var(--line-height-tight)");
+
+    const confirmationBlock = css.match(/\.branch-group-card-confirm\s*\{(?<block>[^}]*)\}/)?.groups?.block ?? "";
+    expect(confirmationBlock).toContain("max-block-size: calc(100dvh - var(--space-lg))");
+    const advisoryListBlock = css.match(/\.branch-group-card-advisories\s*\{(?<block>[^}]*)\}/)?.groups?.block ?? "";
+    expect(advisoryListBlock).toContain("overflow-y: auto");
   });
 });

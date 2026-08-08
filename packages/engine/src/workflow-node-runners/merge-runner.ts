@@ -1,4 +1,4 @@
-import { hasUserAutoMergeHold, type Settings, type TaskDetail } from "@fusion/core";
+import { hasSharedBranchMemberAutoMergeHold, type Settings, type TaskDetail } from "@fusion/core";
 
 import type { WorkflowNodeHandler } from "../workflows/workflow-graph-executor.js";
 import type { WorkflowPrimitiveContext, WorkflowRuntimePrimitives } from "../execution/runtime-primitives.js";
@@ -51,13 +51,12 @@ export function createMergeGateHandler(deps: MergeGateHandlerDeps = {}): Workflo
     const settingsAutoMerge = (ctx.settings as Partial<Settings> | undefined)?.autoMerge;
     const settings = { autoMerge: settingsAutoMerge ?? true };
     /*
-    FNXC:SharedBranchMemberHold 2026-08-05-22:50:
-    FN-8811 requires the graph's first merge decision to preserve the live
-    member→group fast path for inherited, mission, and legacy false values.
-    Only the operator-authored false pair takes the existing manual-hold edge;
-    the live resolver also keeps stale/default-branch groups on normal policy.
+    FNXC:SharedBranchMemberHold 2026-08-08-01:58:
+    FN-8823 makes this graph gate the first authoritative consumer of the
+    canonical consent policy. Evaluate it before group liveness: a live member
+    cannot bypass project Off unless its task explicitly opted in with true.
     */
-    const autoMerge = !hasUserAutoMergeHold(ctx.task)
+    const autoMerge = !hasSharedBranchMemberAutoMergeHold(ctx.task, settings)
       && ((await deps.isLiveSharedBranchMember?.(ctx.task, settings)) === true
         || (ctx.task.autoMerge !== false && settings.autoMerge !== false));
     return {

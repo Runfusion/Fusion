@@ -112,12 +112,34 @@ pgDescribe("InProcessRuntime PostgreSQL composition", () => {
       */
       const secretsStore = await lifecycle.secretsStoreGetter?.mock.results[0]?.value;
       const runtimeConsumers = runtime as unknown as {
-        executor?: { options?: { secretsStore?: unknown } };
-        heartbeatMonitor?: { secretsStore?: unknown };
+        executor?: { options?: { secretsStore?: unknown; agentStore?: unknown } };
+        heartbeatMonitor?: { secretsStore?: unknown; configStore?: unknown };
+        scheduler?: { options?: { agentStore?: unknown } };
+        triageProcessor?: { options?: { agentStore?: unknown } };
+        selfHealingManager?: { options?: { agentStore?: unknown } };
       };
       expect(lifecycle.secretsStoreGetter).toHaveBeenCalled();
       expect(runtimeConsumers.executor?.options?.secretsStore).toBe(secretsStore);
       expect(runtimeConsumers.heartbeatMonitor?.secretsStore).toBe(secretsStore);
+
+      /*
+      FNXC:WorkflowAgentRouting 2026-08-07-22:39:
+      Every runtime consumer that resolves a permanent workflow principal must receive the ONE
+      long-lived engine AgentStore — asserted across all of them, not only the consumer that
+      regressed. FN-8764 gave the executor a fail-closed role-routing gate keyed on
+      `options.agentStore` but never wired that option, so a store the runtime had already built
+      was simply absent at the seam: every role-classified node (execute / step-execute / review /
+      merge) failed closed, the executor's `workflow-principal-*` branch swallowed it as a
+      recoverable hold, and the board deadlocked with no log, audit, or task error. The invariant
+      is the shared instance at every seam; an undefined here is the deadlock.
+      */
+      const runtimeAgentStore = runtime.getAgentStore();
+      expect(runtimeAgentStore).toBeDefined();
+      expect(runtimeConsumers.executor?.options?.agentStore).toBe(runtimeAgentStore);
+      expect(runtimeConsumers.scheduler?.options?.agentStore).toBe(runtimeAgentStore);
+      expect(runtimeConsumers.triageProcessor?.options?.agentStore).toBe(runtimeAgentStore);
+      expect(runtimeConsumers.selfHealingManager?.options?.agentStore).toBe(runtimeAgentStore);
+      expect(runtimeConsumers.heartbeatMonitor?.configStore).toBe(runtimeAgentStore);
 
       /*
       FNXC:SecretsEnvRuntimeWiring 2026-08-05-21:58:

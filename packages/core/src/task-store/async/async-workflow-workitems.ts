@@ -311,6 +311,43 @@ export async function replaceActiveTaskWorkflowContinuation(
       if (row.runId === input.runId && row.nodeId === input.nodeId && row.kind === input.kind) continue;
       await transitionWorkflowWorkItem(layer, row.id, "succeeded", { leaseOwner: null, leaseExpiresAt: null, lastError: null }, tx);
     }
+    /*
+    FNXC:WorkflowAgentRouting 2026-08-08-02:10:
+    A NEW ATTEMPT AT THE SAME NODE IS A NEW WORK ITEM.
+
+    The upsert keys on (project_id, run_id, task_id, node_id, kind), and a node's run id is
+    DERIVED, not per-attempt (`<taskId>:<workflowId>:<nodeInstanceId>`), so every attempt at a
+    given node instance lands on the same row. `upsertWorkflowWorkItem` then refuses, by design,
+    to requeue a terminal row — and a fence row is terminalized at the END OF EVERY RUN. So the
+    second visit to any node threw `is terminal (succeeded|failed|cancelled) and cannot be
+    requeued as running`, which fails the fence closed and parks the card. Retries, rework
+    (`maxReworkCycles`), and operator re-dispatch all make a second visit ordinary, so this hit
+    every task that did not finish a node on its first pass.
+
+    The guard is right; the identity was wrong. Replace is the sanctioned single writer for a
+    task continuation and its whole contract is "retire the predecessor, install the successor",
+    so it drops a TERMINAL row occupying the target key and inserts fresh. Bounded and
+    non-destructive in practice: at most one row per (task, node instance), the predecessor is
+    finished work, and its transitions are already recorded in run-audit. Only the exact target
+    key is dropped — terminal rows for other nodes are untouched, and `upsertWorkflowWorkItem`
+    keeps refusing to resurrect a terminal row for every other caller.
+    */
+    const collidingRows = await tx.select().from(schema.project.workflowWorkItems).where(and(
+      projectScopeFor(schema.project.workflowWorkItems.projectId, layer.projectId),
+      eq(schema.project.workflowWorkItems.runId, input.runId),
+      eq(schema.project.workflowWorkItems.taskId, input.taskId),
+      eq(schema.project.workflowWorkItems.nodeId, input.nodeId),
+      eq(schema.project.workflowWorkItems.kind, input.kind),
+    )).limit(1);
+    const colliding = collidingRows[0] as WorkflowWorkItemRow | undefined;
+    const collidingState = colliding ? normalizeWorkflowWorkItemState(colliding.state) : null;
+    const targetState = input.state ?? collidingState ?? "runnable";
+    if (colliding && collidingState && isTerminalWorkflowWorkItemState(collidingState) && collidingState !== targetState) {
+      await tx.delete(schema.project.workflowWorkItems).where(and(
+        projectScopeFor(schema.project.workflowWorkItems.projectId, layer.projectId),
+        eq(schema.project.workflowWorkItems.id, colliding.id),
+      ));
+    }
     return upsertWorkflowWorkItem(layer, input, tx);
   }));
 }

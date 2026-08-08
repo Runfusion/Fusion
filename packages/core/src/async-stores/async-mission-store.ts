@@ -14,7 +14,7 @@ import { EventEmitter } from "node:events";
 import { and, desc, eq, inArray, notInArray, sql } from "drizzle-orm";
 import * as schema from "../postgres/schema/index.js";
 import type { AsyncDataLayer } from "../postgres/data-layer.js";
-import { FEATURE_LOOP_TRANSITIONS, normalizeMissionAssertionType, renderValidationCause } from "../missions/mission-types.js";
+import { FEATURE_LOOP_TRANSITIONS, normalizeMissionAssertionType, renderValidationCause, selectNextSerialMissionSlice } from "../missions/mission-types.js";
 import type {
   Mission,
   Milestone,
@@ -973,6 +973,52 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
       if (slice.milestoneId !== milestoneId) throw new Error(`Slice ${id} does not belong to milestone ${milestoneId}`);
     }
     await reorderSlices(this.layer, orderedIds);
+  }
+
+  /**
+   * FNXC:MissionSliceAdmission 2026-08-08-03:07:
+   * Automatic slice progression obtains one project-scoped advisory lock before
+   * selecting and claiming work. Duplicate completion and recovery callbacks
+   * therefore lose without publishing an activation or minting more tasks.
+   */
+  async tryActivateNextPendingSlice(missionId: string): Promise<Slice | undefined> {
+    const admitted = await this.layer.transactionImmediate(async (tx) => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(
+        CONCAT('mission-slice-admission:', COALESCE(NULLIF(current_setting('fusion.project_id', true), ''), '__legacy_unscoped__'), ':', CAST(${missionId} AS text)),
+        0
+      ))`);
+      const mission = await getMission(tx, missionId);
+      if (!mission) return undefined;
+      const milestones = await listMilestones(tx, missionId);
+      const hierarchy: MissionWithHierarchy = {
+        ...mission,
+        milestones: await Promise.all(milestones.map(async (milestone) => ({
+          ...milestone,
+          slices: (await listSlices(tx, milestone.id)).map((slice) => ({ ...slice, features: [] })),
+        }))),
+      };
+      const candidate = selectNextSerialMissionSlice(hierarchy);
+      if (!candidate) return undefined;
+      const now = new Date().toISOString();
+      const updated: Slice = { ...candidate, status: "active", activatedAt: now, updatedAt: now };
+      await updateSlice(tx, updated);
+      return updated;
+    });
+    if (!admitted) return undefined;
+
+    this.emit("slice:updated", admitted);
+    await this.recomputeMilestoneStatus(admitted.milestoneId);
+    const milestone = await getMilestone(this.db, admitted.milestoneId);
+    const mission = milestone ? await getMission(this.db, milestone.missionId) : undefined;
+    if (mission?.autopilotEnabled === true || mission?.autoAdvance === true) {
+      try {
+        await this.triageSlice(admitted.id);
+      } catch (err) {
+        severityAuditLog.error(`[AsyncMissionStore] Auto-triage failed for slice ${admitted.id}:`, err);
+      }
+    }
+    this.emit("slice:activated", admitted);
+    return admitted;
   }
 
   async activateSlice(id: string): Promise<Slice> {

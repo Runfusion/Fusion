@@ -12,9 +12,11 @@ interface BranchGroupCardProps {
   taskId?: string;
   projectId?: string;
   onBranchGroupReset?: () => Promise<void> | void;
+  /** Opens a landed member in the existing Review surface. */
+  onOpenReviewTask?: (taskId: string) => void;
 }
 
-export function BranchGroupCard({ groupId, taskId, projectId, onBranchGroupReset }: BranchGroupCardProps) {
+export function BranchGroupCard({ groupId, taskId, projectId, onBranchGroupReset, onOpenReviewTask }: BranchGroupCardProps) {
   const { t } = useTranslation("app");
   const [group, setGroup] = useState<BranchGroupSummary | null>(null);
   const [loading, setLoading] = useState(true);
@@ -23,6 +25,7 @@ export function BranchGroupCard({ groupId, taskId, projectId, onBranchGroupReset
   const [resetting, setResetting] = useState(false);
   const [promoting, setPromoting] = useState(false);
   const [abandoning, setAbandoning] = useState(false);
+  const [confirmPromotion, setConfirmPromotion] = useState(false);
   /*
   FNXC:BranchGroupDetails 2026-06-30-00:00:
   Task-detail branch groups must be collapsed by default on every breakpoint while preserving the user's expand/collapse control for member and action inspection.
@@ -84,6 +87,7 @@ export function BranchGroupCard({ groupId, taskId, projectId, onBranchGroupReset
   }, [group, t]);
 
   const onPromote = useCallback(async () => {
+    setConfirmPromotion(false);
     setPromoting(true);
     try {
       await apiPromoteBranchGroup(groupId, projectId);
@@ -153,6 +157,7 @@ export function BranchGroupCard({ groupId, taskId, projectId, onBranchGroupReset
     ? (group.completion.landed / group.completion.total) * 100
     : 0;
   const complete = group.completion.complete;
+  const advisories = group.advisories ?? [];
 
   return (
     <section className={`card branch-group-card${collapsed ? " branch-group-card--collapsed" : ""}`}>
@@ -185,6 +190,11 @@ export function BranchGroupCard({ groupId, taskId, projectId, onBranchGroupReset
             <li key={member.taskId} className="branch-group-card-member">
               <span className={`status-dot ${member.landed ? "status-dot--online" : "status-dot--pending"}`} />
               <span className="branch-group-card-member-title">{member.taskId} · {member.title}</span>
+              {advisories.some((advisory) => advisory.taskId === member.taskId) && onOpenReviewTask ? (
+                <button type="button" className="btn branch-group-card-review" onClick={() => onOpenReviewTask(member.taskId)}>
+                  {t("branchGroup.reviewAdvisory", "Review")}
+                </button>
+              ) : null}
               <span className="branch-group-card-member-status">{member.landed ? <CheckCircle2 size={14} /> : <CircleDashed size={14} />}</span>
             </li>
           ))}
@@ -217,12 +227,12 @@ export function BranchGroupCard({ groupId, taskId, projectId, onBranchGroupReset
           {complete && (group.autoMerge ? (
             <span className="badge">{t("branchGroup.autoMergeEnabled", "Auto-merge enabled")}</span>
           ) : group.prState === "none" ? (
-            <button type="button" className="btn" onClick={() => void onPromote()} disabled={promoting}>
+            <button type="button" className="btn" onClick={() => setConfirmPromotion(true)} disabled={promoting}>
               {promoting ? <Loader2 size={14} className="spin" /> : <GitPullRequest size={14} />}
               {t("branchGroup.openPr", "Open PR")}
             </button>
           ) : (
-            <button type="button" className="btn" onClick={() => void onPromote()} disabled={promoting}>
+            <button type="button" className="btn" onClick={() => setConfirmPromotion(true)} disabled={promoting}>
               {promoting ? <Loader2 size={14} className="spin" /> : <GitPullRequest size={14} />}
               {t("branchGroup.mergeIntoMain", "Merge group into main")}
             </button>
@@ -233,6 +243,48 @@ export function BranchGroupCard({ groupId, taskId, projectId, onBranchGroupReset
               {t("branchGroup.abandonGroup", "Abandon group")}
             </button>
           )}
+        </div>
+      )}
+      {confirmPromotion && (
+        <div className="branch-group-card-confirm-backdrop" role="presentation">
+          <section className="card branch-group-card-confirm" role="dialog" aria-modal="true" aria-label={t("branchGroup.confirmPromotion", "Confirm group promotion")}>
+            <h3>{t("branchGroup.confirmPromotion", "Confirm group promotion")}</h3>
+            <p>{group.prState === "none"
+              ? t("branchGroup.confirmOpenPr", "Review landed member advisories before opening the group pull request.")
+              : t("branchGroup.confirmMerge", "Review landed member advisories before merging this group.")}</p>
+            {advisories.length > 0 ? (
+              <ul className="branch-group-card-advisories" aria-label={t("branchGroup.advisoryList", "Landed-member review advisories")}>
+                {advisories.map((advisory) => (
+                  <li key={`${advisory.taskId}:${advisory.workflowStepId}:${advisory.notes ?? ""}`}>
+                    <div className="branch-group-card-advisory-heading">
+                      <strong>{advisory.taskId} · {advisory.workflowStepName}</strong>
+                      {advisory.verdict ? <span className="badge">{advisory.verdict}</span> : null}
+                    </div>
+                    {advisory.notes ? <p className="branch-group-card-advisory-notes">{advisory.notes}</p> : null}
+                    {advisory.findings.length > 0 ? (
+                      <ul className="branch-group-card-advisory-findings">
+                        {advisory.findings.map((finding) => (
+                          <li key={finding.id}>
+                            <strong>{finding.title}</strong>
+                            <p>{finding.body}</p>
+                            {finding.filePath ? <span>{finding.filePath}{finding.line ? `:${finding.line}` : ""}</span> : null}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
+                    {onOpenReviewTask ? <button type="button" className="btn branch-group-card-review" onClick={() => onOpenReviewTask(advisory.taskId)}>{t("branchGroup.reviewAdvisory", "Review")}</button> : null}
+                  </li>
+                ))}
+              </ul>
+            ) : <p>{t("branchGroup.noAdvisories", "No landed-member review advisories were recorded.")}</p>}
+            <div className="branch-group-card-actions">
+              <button type="button" className="btn" onClick={() => setConfirmPromotion(false)}>{t("common.cancel", "Cancel")}</button>
+              <button type="button" className="btn btn-primary" onClick={() => void onPromote()} disabled={promoting}>
+                {promoting ? <Loader2 size={14} className="spin" /> : null}
+                {group.prState === "none" ? t("branchGroup.openPr", "Open PR") : t("branchGroup.mergeIntoMain", "Merge group into main")}
+              </button>
+            </div>
+          </section>
         </div>
       )}
     </section>

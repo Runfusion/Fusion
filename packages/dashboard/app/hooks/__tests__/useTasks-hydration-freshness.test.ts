@@ -205,6 +205,64 @@ describe("task snapshot lifecycle freshness", () => {
     });
   });
 
+  it("preserves pause lifecycle fields when a newer unrelated sparse snapshot omits them", () => {
+    const current = {
+      ...todo,
+      paused: true,
+      userPaused: true,
+      pausedByAgentId: "agent-1",
+      pausedReason: "operator",
+      status: "paused",
+      updatedAt: "2026-08-05T10:02:00.000Z",
+    } as Task;
+    const sparseEvent = {
+      id: current.id,
+      title: "New summary",
+      column: current.column,
+      updatedAt: "2026-08-05T10:03:00.000Z",
+    } as Task;
+
+    expect(mergeTaskSnapshot(current, sparseEvent)).toMatchObject({
+      paused: true,
+      userPaused: true,
+      pausedByAgentId: "agent-1",
+      pausedReason: "operator",
+      status: "paused",
+      title: "New summary",
+    });
+  });
+
+  it("clears omitted pause lifecycle fields from an equal-clock complete snapshot", () => {
+    const current = {
+      ...todo,
+      paused: true,
+      userPaused: true,
+      pausedByAgentId: "agent-1",
+      pausedReason: "operator",
+      status: "paused",
+      updatedAt: "2026-08-05T10:02:00.000Z",
+      prompt: "# Full task detail",
+    } as Task;
+    const completeFetch = JSON.parse(JSON.stringify({
+      ...current,
+      paused: undefined,
+      userPaused: undefined,
+      pausedByAgentId: undefined,
+      pausedReason: undefined,
+      status: undefined,
+      prompt: undefined,
+    })) as Task;
+
+    expect(mergeTaskSnapshot(current, completeFetch, { fullSnapshot: true })).toMatchObject({
+      paused: undefined,
+      userPaused: undefined,
+      pausedByAgentId: undefined,
+      pausedReason: undefined,
+      status: undefined,
+      prompt: "# Full task detail",
+    });
+  });
+
   it("accepts equal-clock non-lifecycle fields only from a marked complete fetch", () => {
     const current = { ...todo, updatedAt: "2026-08-05T10:02:00.000Z", title: "Cached title" };
     const completeFetch = { ...todo, updatedAt: current.updatedAt, title: "Fetched title" };

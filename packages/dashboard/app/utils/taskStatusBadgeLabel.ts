@@ -16,6 +16,30 @@ export function hasTaskStatusBadge(status: string | null | undefined): boolean {
   return typeof status === "string" && status.trim().length > 0;
 }
 
+export interface TaskWipLifecycleBadgeContext {
+  /** True when the task's resolved workflow column occupies an implementation/WIP slot. */
+  isWipColumn: boolean;
+  /** The resolved workflow column name, when board metadata has loaded. */
+  lifecycleLabel?: string | null;
+}
+
+/*
+FNXC:TaskStatusBadge 2026-08-08-03:02:
+A WIP lifecycle role supplies a badge only when the persisted status is empty: engine status,
+pause, workflow-gate, and other call-site precedence remains authoritative. Resolve WIP from
+workflow traits before calling this helper so renamed/custom implementation lanes receive their
+own lifecycle label; metadata gaps retain the safe legacy "In progress" fallback without writing
+that presentation state back to task.status.
+*/
+export function getTaskWipLifecycleBadgeLabel(
+  status: string | null | undefined,
+  t: TFunction<"app">,
+  { isWipColumn, lifecycleLabel }: TaskWipLifecycleBadgeContext,
+): string | null {
+  if (!isWipColumn || hasTaskStatusBadge(status)) return null;
+  return lifecycleLabel?.trim() || t("tasks.statusInProgress", "In progress");
+}
+
 /*
 FNXC:TaskStatusConsistency 2026-08-05-03:49:
 A planner agent-log event can reach the shared board snapshot before the status update that changes

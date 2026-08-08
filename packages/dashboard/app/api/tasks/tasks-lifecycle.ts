@@ -71,8 +71,19 @@ export interface BranchGroupMemberSummary {
   landed: boolean;
 }
 
+export interface BranchGroupReviewAdvisory {
+  taskId: string;
+  workflowStepId: string;
+  workflowStepName: string;
+  status: "passed" | "failed" | "advisory_failure" | "skipped" | "pending";
+  verdict?: "APPROVE" | "APPROVE_WITH_NOTES" | "REVISE";
+  notes?: string;
+  findings: Array<{ id: string; title: string; body: string; filePath?: string; line?: number; severity?: "low" | "medium" | "high" | "critical" }>;
+}
+
 export interface BranchGroupSummary extends BranchGroup {
   members: BranchGroupMemberSummary[];
+  advisories: BranchGroupReviewAdvisory[];
   completion: {
     landed: number;
     total: number;

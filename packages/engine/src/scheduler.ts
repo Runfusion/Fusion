@@ -3256,17 +3256,6 @@ export class Scheduler {
         return;
       }
 
-      const missionHierarchy = await missionStore.getMissionWithHierarchy(mission.id);
-      const hasActiveSlice = missionHierarchy?.milestones.some((candidateMilestone) =>
-        candidateMilestone.slices.some((candidateSlice) =>
-          candidateSlice.id !== slice.id && candidateSlice.status === "active"
-        )
-      );
-      if (hasActiveSlice) {
-        schedulerLog.log(`Mission ${mission.id} already has an active slice; skipping auto-advance`);
-        return;
-      }
-
       const nextSlice = await this.activateNextPendingSlice(mission.id);
       if (nextSlice) {
         schedulerLog.log(`Auto-advanced: activated slice ${nextSlice.id} for mission ${mission.id}`);
@@ -3290,36 +3279,15 @@ export class Scheduler {
     const missionStore = this.options.missionStore;
 
     try {
-      const mission = await missionStore.getMissionWithHierarchy(missionId);
-      if (!mission || mission.status !== "active") {
-        schedulerLog.log(`Mission ${missionId}: not active, skipping slice activation`);
-        return null;
-      }
-
-      const sortedMilestones = [...mission.milestones].sort((a, b) => a.orderIndex - b.orderIndex);
-
-      for (const milestone of sortedMilestones) {
-        const dependenciesMet = milestone.dependencies.every((dependencyId) => {
-          const dependency = mission.milestones.find((candidate) => candidate.id === dependencyId);
-          return dependency?.status === "complete";
-        });
-        if (!dependenciesMet) {
-          continue;
-        }
-
-        const pendingSlice = [...milestone.slices]
-          .sort((a, b) => a.orderIndex - b.orderIndex)
-          .find((slice) => slice.status === "pending");
-        if (!pendingSlice) {
-          continue;
-        }
-
-        const activated = await missionStore.activateSlice(pendingSlice.id);
+      // The store atomically re-reads the hierarchy and claims the candidate.
+      // A duplicate signal is an expected no-op, not a scheduler error.
+      const activated = await missionStore.tryActivateNextPendingSlice(missionId);
+      if (activated) {
         schedulerLog.log(`Activated slice ${activated.id} for mission ${missionId}`);
         return activated;
       }
 
-      schedulerLog.log(`Mission ${missionId}: no pending slices to activate`);
+      schedulerLog.log(`Mission ${missionId}: no serially eligible slice to activate`);
       return null;
     } catch (err) {
       schedulerLog.error(`Error activating next slice for mission ${missionId}:`, err);

@@ -1,6 +1,6 @@
 import { Router, type Request } from "express";
 import type { BranchGroup, Task, TaskStore } from "@fusion/core";
-import { isBranchGroupComplete, isBranchGroupMemberLanded, filterTasksByBranchGroup } from "@fusion/core";
+import { collectLandedMemberReviewAdvisories, isBranchGroupComplete, isBranchGroupMemberLanded, filterTasksByBranchGroup } from "@fusion/core";
 import { badRequest, notFound } from "../api-error.js";
 import { getProjectIdFromRequest, getScopedStore } from "./context.js";
 
@@ -74,9 +74,11 @@ async function serializeGroup(store: TaskStore, group: BranchGroup, allTasks?: T
     landed: isBranchGroupMemberLanded(task, group),
   }));
   const landedCount = memberRows.filter((member) => member.landed).length;
+  const advisories = collectLandedMemberReviewAdvisories(members, group);
   return {
     ...group,
     members: memberRows,
+    advisories,
     completion: {
       landed: landedCount,
       total: memberRows.length,
@@ -100,7 +102,10 @@ export function createBranchGroupsRouter(store: TaskStore, options?: BranchGroup
     // Fix #8/#9: fetch tasks ONCE and filter per group in memory rather than one
     // full scan per group (the old N+1). Membership semantics (incl. legacy
     // synthetic-groupId fallback) come from the shared `filterTasksByBranchGroup`.
-    const allTasks = await requestStore.listTasks({ includeArchived: false, slim: true });
+    // FNXC:SharedBranchPromotionAdvisories 2026-08-08-01:58: promotion review
+    // must include archived landed members and persisted review results while
+    // retaining the single project-scoped scan that prevents N+1 group reads.
+    const allTasks = await requestStore.listTasks({ includeArchived: true, slim: false });
     const data = await Promise.all(groups.map((group) => serializeGroup(requestStore, group, allTasks)));
     res.json({ groups: data });
   });

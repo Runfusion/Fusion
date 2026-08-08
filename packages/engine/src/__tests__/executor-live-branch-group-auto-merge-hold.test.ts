@@ -36,13 +36,16 @@ function makeInReviewTask(overrides: Partial<TaskDetail> = {}): TaskDetail {
   } as TaskDetail;
 }
 
-function makeExecutor(branchGroup: { status: "open" | "finalized" | "abandoned"; branchName: string } | null) {
+function makeExecutor(
+  branchGroup: { status: "open" | "finalized" | "abandoned"; branchName: string } | null,
+  autoMerge = false,
+) {
   const store = createMockStore();
   store.getSettings.mockResolvedValue({
     maxConcurrent: 2,
     maxWorktrees: 4,
     pollIntervalMs: 15_000,
-    autoMerge: false,
+    autoMerge,
     maxAutoMergeRetries: 3,
   });
   store.getBranchGroup = vi.fn(() => branchGroup);
@@ -75,7 +78,7 @@ describe("executor shared-branch autoMerge:false liveness gates", () => {
     );
 
     expect(retryable).toBe(false);
-    expect(store.getBranchGroup).toHaveBeenCalledWith("BG-STALE");
+    expect(store.getBranchGroup).not.toHaveBeenCalled();
   });
 
   it("holds a live shared-group member when an operator explicitly turns auto-merge off", async () => {
@@ -90,8 +93,8 @@ describe("executor shared-branch autoMerge:false liveness gates", () => {
     )).resolves.toBe(false);
   });
 
-  it.each(["mission", "legacy-stamp", undefined] as const)("keeps live shared-group policy or legacy false values flowing (%s)", async (autoMergeProvenance) => {
-    const { executor } = makeExecutor({ status: "open", branchName: "mission/M-1980" });
+  it.each(["mission", "legacy-stamp", undefined] as const)("keeps live shared-group policy or legacy false values flowing when project On (%s)", async (autoMergeProvenance) => {
+    const { executor } = makeExecutor({ status: "open", branchName: "mission/M-1980" }, true);
     const task = makeInReviewTask({ autoMerge: false, autoMergeProvenance });
 
     await expect((executor as any).isRetryableBenignMergePauseAbort(
@@ -102,8 +105,8 @@ describe("executor shared-branch autoMerge:false liveness gates", () => {
     )).resolves.toBe(true);
   });
 
-  it("still routes live shared-group members through the local integration retry gate", async () => {
-    const { executor } = makeExecutor({ status: "open", branchName: "mission/M-1980" });
+  it("still routes live shared-group members through the local integration retry gate when project On", async () => {
+    const { executor } = makeExecutor({ status: "open", branchName: "mission/M-1980" }, true);
     const task = makeInReviewTask();
 
     await expect((executor as any).isRetryableBenignMergePauseAbort(
@@ -114,8 +117,8 @@ describe("executor shared-branch autoMerge:false liveness gates", () => {
     )).resolves.toBe(true);
   });
 
-  it("re-enters an interrupted mission-policy member rather than stranding its local integration", async () => {
-    const { executor } = makeExecutor({ status: "open", branchName: "mission/M-1980" });
+  it("re-enters an interrupted mission-policy member rather than stranding its local integration when project On", async () => {
+    const { executor } = makeExecutor({ status: "open", branchName: "mission/M-1980" }, true);
     const task = makeInReviewTask({
       autoMerge: false,
       autoMergeProvenance: "mission",

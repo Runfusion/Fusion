@@ -678,6 +678,41 @@ export interface SliceWithFeatures extends Slice {
  * A Mission with complete hierarchy loaded:
  * Mission → Milestones → Slices → Features
  */
+/**
+ * FNXC:MissionSliceAdmission 2026-08-08-03:30:
+ * Automatic mission progression is serial: duplicate completion and recovery
+ * signals may admit only the first pending slice after every earlier slice is
+ * complete. Dependencies can further block admission, never bypass ordering.
+ * A blocked, empty, or stale non-complete milestone is likewise an ordered
+ * gate, so a later milestone cannot silently start before reconciliation.
+ */
+export function selectNextSerialMissionSlice(mission: MissionWithHierarchy): Slice | undefined {
+  if (mission.status !== "active") return undefined;
+  const milestones = [...mission.milestones].sort((a, b) => a.orderIndex - b.orderIndex);
+  if (milestones.some((milestone) => milestone.slices.some((slice) => slice.status === "active"))) return undefined;
+
+  for (const milestone of milestones) {
+    if (milestone.status === "blocked") return undefined;
+    const dependenciesMet = milestone.dependencies.every((dependencyId) =>
+      milestones.some((candidate) => candidate.id === dependencyId && candidate.status === "complete"),
+    );
+    if (!dependenciesMet) return undefined;
+    const slices = [...milestone.slices].sort((a, b) => a.orderIndex - b.orderIndex);
+    // An empty planning milestone has no completed slice evidence that permits
+    // crossing it; only an explicitly complete empty milestone may be passed.
+    if (slices.length === 0) {
+      if (milestone.status !== "complete") return undefined;
+      continue;
+    }
+    for (const slice of slices) {
+      if (slice.status === "complete") continue;
+      return slice.status === "pending" ? slice : undefined;
+    }
+    if (milestone.status !== "complete") return undefined;
+  }
+  return undefined;
+}
+
 export interface MissionWithHierarchy extends Mission {
   /** Goals linked to this mission */
   linkedGoals?: Goal[];

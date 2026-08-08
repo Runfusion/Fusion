@@ -107,6 +107,31 @@ pgTest("Mission autopilot loop (PostgreSQL backend mode)", () => {
     expect(autopilot.isWatching(mission.id)).toBe(false);
   });
 
+  it("serially admits one slice under simultaneous PostgreSQL progression callbacks", async () => {
+    const m = missions();
+    const mission = await createAutopilotMission(m, "Concurrent admission");
+    const firstMilestone = await m.addMilestone(mission.id, { title: "M1" });
+    const completed = await m.addSlice(firstMilestone.id, { title: "Complete source" });
+    await m.updateSlice(completed.id, { status: "complete" });
+    const secondMilestone = await m.addMilestone(mission.id, { title: "M2" });
+    const firstPending = await m.addSlice(secondMilestone.id, { title: "First pending" });
+    const laterPending = await m.addSlice(secondMilestone.id, { title: "Later pending" });
+    await m.updateMission(mission.id, { status: "active", autopilotEnabled: false, autoAdvance: false });
+
+    const activationEvents: string[] = [];
+    m.on("slice:activated", (slice) => activationEvents.push(slice.id));
+    const admissions = await Promise.all([
+      m.tryActivateNextPendingSlice(mission.id),
+      m.tryActivateNextPendingSlice(mission.id),
+    ]);
+
+    expect(admissions.filter(Boolean)).toHaveLength(1);
+    expect(admissions.find(Boolean)?.id).toBe(firstPending.id);
+    expect((await m.getSlice(firstPending.id))?.status).toBe("active");
+    expect((await m.getSlice(laterPending.id))?.status).toBe("pending");
+    expect(activationEvents).toEqual([firstPending.id]);
+  });
+
   it("recoverStaleMission runs the recover path (no scheduler) and persists a recovery event", async () => {
     const m = missions();
     const mission = await createAutopilotMission(m, "Stale mission");

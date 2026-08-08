@@ -23,8 +23,12 @@ import {
 const pgTest = pgDescribe;
 
 pgTest("task→agent routing policy (issue #2015)", () => {
+  // FNXC:WorkflowAgentRouting 2026-08-07-18:40: bind a real projectId so FN-8764 built-in
+  // workflow-owner provisioning in AgentStore.init() has a partition. The cross-project
+  // isolation case below uses a DISTINCT projectId so the two stores are genuinely separate.
   const h: SharedPgTaskStoreHarness = createSharedPgTaskStoreTestHarness({
     prefix: "fusion_agent_routing",
+    projectId: "proj_agent_routing",
   });
 
   beforeAll(h.beforeAll);
@@ -298,7 +302,7 @@ pgTest("task→agent routing policy (issue #2015)", () => {
 
   describe("project isolation", () => {
     it("an agent registered in another project's store can never be bound to this project's tasks", async () => {
-      const otherHarness = await createTaskStoreForTest({ prefix: "fusion_agent_routing_other" });
+      const otherHarness = await createTaskStoreForTest({ prefix: "fusion_agent_routing_other", projectId: "proj_agent_routing_other" });
       const otherAgentStore = new AgentStore({ rootDir: otherHarness.rootDir, asyncLayer: otherHarness.layer, taskStore: otherHarness.store });
       await otherAgentStore.init();
 

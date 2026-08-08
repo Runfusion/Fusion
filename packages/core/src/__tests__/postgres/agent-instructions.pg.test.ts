@@ -23,8 +23,12 @@ import { AgentStore } from "../../agents/agent-store.js";
 const pgTest = pgDescribe;
 
 pgTest("AgentStore instructions fields (PostgreSQL)", () => {
+  // FNXC:WorkflowAgentRouting 2026-08-07-18:40: bind a real projectId so FN-8764 built-in
+  // workflow-owner provisioning in AgentStore.init() has a partition and agent config-revision
+  // writes (GUC-default project_id) share it with the explicit agent writes.
   const h: SharedPgTaskStoreHarness = createSharedPgTaskStoreTestHarness({
     prefix: "fusion_agent_instr",
+    projectId: "proj_agent_instr",
   });
 
   let agentStore: AgentStore;

@@ -42,6 +42,49 @@ describe("MissionStore synchronous loop transitions", () => {
   });
 });
 
+describe("MissionStore serial slice admission", () => {
+  it("makes a sequential duplicate callback a no-op before events or triage", async () => {
+    let status: "pending" | "active" = "pending";
+    const db = {
+      transaction: (callback: () => void) => callback(),
+      prepare: vi.fn(() => ({
+        get: vi.fn().mockReturnValue(undefined),
+        all: vi.fn().mockReturnValue([]),
+        run: vi.fn(() => {
+          if (status !== "pending") return { changes: 0 };
+          status = "active";
+          return { changes: 1 };
+        }),
+      })),
+      bumpLastModified: vi.fn(),
+    } as unknown as Database;
+    const store = new MissionStore("/tmp/fusion-mission-store-test", db);
+    const slice = {
+      id: "SL-ONE",
+      milestoneId: "MS-ONE",
+      title: "Only eligible slice",
+      status,
+      orderIndex: 0,
+      createdAt: "2026-08-08T00:00:00.000Z",
+      updatedAt: "2026-08-08T00:00:00.000Z",
+    } as const;
+    vi.spyOn(store, "getMissionWithHierarchy").mockImplementation(() => ({
+      id: "M-ONE",
+      status: "active",
+      milestones: [{ id: "MS-ONE", status: "planning", orderIndex: 0, dependencies: [], slices: [{ ...slice, status, features: [] }] }],
+    }) as never);
+    vi.spyOn(store, "getMilestone").mockReturnValue({ id: "MS-ONE", missionId: "M-ONE" } as never);
+    vi.spyOn(store, "getMission").mockReturnValue({ id: "M-ONE", autopilotEnabled: false, autoAdvance: false } as never);
+    vi.spyOn(store as any, "recomputeMilestoneStatus").mockImplementation(() => undefined);
+    const activated = vi.fn();
+    store.on("slice:activated", activated);
+
+    expect((await store.tryActivateNextPendingSlice("M-ONE"))?.id).toBe("SL-ONE");
+    expect(await store.tryActivateNextPendingSlice("M-ONE")).toBeUndefined();
+    expect(activated).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("MissionStore synchronous assertion schema compatibility", () => {
   it("adds scope and origin before querying legacy assertion rows", () => {
     const executed: string[] = [];

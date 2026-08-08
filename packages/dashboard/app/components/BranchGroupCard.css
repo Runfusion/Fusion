@@ -134,6 +134,90 @@ Collapsed branch-group details must consume less task-detail space with token-ba
   flex-wrap: wrap;
 }
 
+/*
+FNXC:SharedBranchPromotionAdvisories 2026-08-08-03:03:
+FN-8823 manual promotion must expose every persisted advisory finding, not only
+review notes. Keep long advisory lists independently scrollable so the confirm
+and cancel controls remain reachable at the existing mobile breakpoint without
+adding another modal primitive.
+*/
+.branch-group-card-confirm-backdrop {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: var(--space-md);
+  background: color-mix(in srgb, var(--surface-0) 70%, transparent);
+  z-index: var(--z-modal);
+}
+
+.branch-group-card-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  width: 100%;
+  max-width: 100%;
+  max-block-size: calc(100dvh - var(--space-lg));
+  overflow: hidden;
+}
+
+.branch-group-card-confirm h3,
+.branch-group-card-confirm p {
+  margin: 0;
+}
+
+.branch-group-card-advisories {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: var(--space-xs);
+  min-block-size: 0;
+  margin: 0;
+  padding-inline-start: var(--space-lg);
+  overflow-y: auto;
+}
+
+.branch-group-card-advisories > li {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-xs);
+}
+
+.branch-group-card-advisory-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.branch-group-card-advisory-notes,
+.branch-group-card-advisory-findings p {
+  margin: 0;
+}
+
+.branch-group-card-advisory-findings {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-xs) / 2);
+  margin: 0;
+  padding-inline-start: var(--space-lg);
+}
+
+.branch-group-card-advisory-findings li {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-xs) / 2);
+}
+
+.branch-group-card-advisory-findings span {
+  color: var(--text-muted);
+}
+
+.branch-group-card-review {
+  flex-shrink: 0;
+}
+
 @media (max-width: 768px) {
   .branch-group-card-header {
     flex-direction: column;

@@ -1141,6 +1141,7 @@ export {
 export type { CapacityRiskSignal } from "./board/capacity.js";
 export { getPrimaryPrInfo, taskHasManualOpenPullRequest } from "./tasks/task-helpers.js";
 export {
+  collectLandedMemberReviewAdvisories,
   getTaskMergeBlocker,
   getTaskHardMergeBlocker,
   REVIEW_ELIGIBLE_SENTINEL_COLUMN,
@@ -1150,6 +1151,7 @@ export {
   getLatestFailedPreMergeReviewStep,
   isTaskReadyForMerge,
   allowsAutoMergeProcessing,
+  hasSharedBranchMemberAutoMergeHold,
   hasUserAutoMergeHold,
   isSharedBranchGroupMemberIntegration,
   isLiveSharedBranchGroupMemberIntegration,
@@ -1159,6 +1161,7 @@ export {
   AWAITING_APPROVAL_PAUSE_REASON,
   isTaskBlockedOnApproval,
   findPendingPreMergeStep,
+  type LandedMemberReviewAdvisory,
   type MergeTargetResolution,
   type MergeTargetResolverOptions,
 } from "./merge/task-merge.js";
@@ -1719,6 +1722,7 @@ export {
   VALIDATOR_RUN_STATUSES,
   VALIDATION_DIAGNOSTICS_MAX_EVIDENCE_PER_ASSERTION,
   VALIDATION_DIAGNOSTICS_MAX_TEXT_BYTES,
+  selectNextSerialMissionSlice,
   normalizeValidationDiagnostics,
   renderValidationFailureDescription,
   renderValidationCause,

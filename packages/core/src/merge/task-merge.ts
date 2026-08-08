@@ -1,5 +1,57 @@
+import { isBranchGroupMemberLanded } from "../branch/branch-group-completion.js";
 import { taskHasManualOpenPullRequest } from "../tasks/task-helpers.js";
 import type { BranchGroup, Settings, Task, WorkflowStepResult } from "../types.js";
+
+export interface LandedMemberReviewAdvisory {
+  taskId: string;
+  workflowStepId: string;
+  workflowStepName: string;
+  status: WorkflowStepResult["status"];
+  verdict?: WorkflowStepResult["verdict"];
+  notes?: string;
+  findings: NonNullable<WorkflowStepResult["findings"]>;
+}
+
+/**
+ * FNXC:SharedBranchPromotionAdvisories 2026-08-08-01:58:
+ * FN-8823 requires manual group promotion to expose non-clean, pre-merge code
+ * review output from every landed member. Derive this ephemeral summary from
+ * task rows rather than copying reviewer prose into branch-group persistence.
+ */
+export function collectLandedMemberReviewAdvisories(
+  tasks: Array<Pick<Task, "id" | "mergeDetails" | "workflowStepResults">>,
+  group: Pick<BranchGroup, "branchName">,
+): LandedMemberReviewAdvisory[] {
+  const seen = new Set<string>();
+  const advisories: LandedMemberReviewAdvisory[] = [];
+  for (const task of tasks) {
+    if (!isBranchGroupMemberLanded(task, group)) continue;
+    for (const result of task.workflowStepResults ?? []) {
+      const isPreMergeCodeReview = (result.phase ?? "pre-merge") === "pre-merge" && result.reviewKind !== "plan";
+      const nonClean = result.status === "advisory_failure"
+        || result.status === "failed"
+        || result.verdict === "APPROVE_WITH_NOTES";
+      if (!isPreMergeCodeReview || result.status === "pending" || !nonClean) continue;
+      const findings = result.findings ?? [];
+      const key = JSON.stringify([task.id, result.workflowStepId, result.status, result.verdict, result.notes, findings]);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      advisories.push({
+        taskId: task.id,
+        workflowStepId: result.workflowStepId,
+        workflowStepName: result.workflowStepName,
+        status: result.status,
+        verdict: result.verdict,
+        notes: result.notes,
+        findings,
+      });
+    }
+  }
+  return advisories.sort((left, right) =>
+    left.taskId.localeCompare(right.taskId)
+    || left.workflowStepId.localeCompare(right.workflowStepId)
+    || left.workflowStepName.localeCompare(right.workflowStepName));
+}
 
 export interface MergeTargetResolution {
   branch: string;
@@ -50,12 +102,23 @@ export function resolveEffectiveAutoMerge(
 }
 
 /**
- * FNXC:SharedBranchMemberHold 2026-08-05-22:50:
- * FN-8811 keeps live member→group integration fast by default, but an operator's
- * explicit task-level Off choice is a durable request for the existing manual
- * review hold. Mission policy, legacy stamps, and inherited values must never
- * impersonate that consent boundary.
+ * FNXC:SharedBranchMemberHold 2026-08-08-01:58:
+ * FN-8823 supersedes the prior member-integration exemption under project Off.
+ * An explicit task On opts in; otherwise the operator's project-level Off holds
+ * every member, including mission, legacy, inherited, and unset values. With
+ * project On, only a user-authored task Off is a hold; engine-authored false
+ * values retain the live intermediate-group fast path.
  */
+export function hasSharedBranchMemberAutoMergeHold(
+  task: Pick<Task, "autoMerge" | "autoMergeProvenance">,
+  settings: Pick<Settings, "autoMerge">,
+): boolean {
+  if (task.autoMerge === true) return false;
+  if (settings.autoMerge === false) return true;
+  return hasUserAutoMergeHold(task);
+}
+
+/** Returns whether an explicit task-level user Off is present. */
 export function hasUserAutoMergeHold(
   task: Pick<Task, "autoMerge" | "autoMergeProvenance">,
 ): boolean {
@@ -98,10 +161,10 @@ export function resolveEffectiveGroupAutoMerge(
 
 /**
  * Shared-branch-group members perform a soft pre-integration step:
- * member branch → shared group branch. This path is exempt from inherited and
- * mission-policy `autoMerge:false` terminal gates so member integration can
- * proceed. `hasUserAutoMergeHold` is the narrow operator opt-in that overrides
- * this exemption; shared-branch → default promotion remains separately gated.
+ * member branch → shared group branch. Under project auto-merge On, inherited
+ * and engine-authored false values remain exempt while user Off holds. Under
+ * project Off, `hasSharedBranchMemberAutoMergeHold` holds every non-opted-in
+ * member; shared-branch → default promotion remains separately gated.
  */
 export function isSharedBranchGroupMemberIntegration(
   task: Pick<Task, "branchContext">,

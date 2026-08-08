@@ -1329,6 +1329,19 @@ export class InProcessRuntime
         attribution. Reading it lazily at runner-construction time picks up the resolved id.
         */
         getLocalNodeId: () => this.localNodeId,
+        /*
+        FNXC:WorkflowAgentRouting 2026-08-07-22:39:
+        FN-8764 made every role-classified graph node (execute / step-execute / review / merge)
+        resolve a permanent principal through `options.agentStore`, and fail closed with
+        `workflow-principal-routing-unavailable:<role>` when that store is absent. The runtime built
+        the one long-lived engine AgentStore above but never handed it to the executor, so EVERY
+        task deadlocked on entry to `steps#0:step-execute`: routing failed closed, the executor's
+        `workflow-principal-*` hold branch swallowed the result as a recoverable wait, and the card
+        sat in-progress with its foreach instance pinned `in-progress` and no session, no log, and
+        no audit row. Wire the same instance the scheduler, triage, merger, and heartbeat already
+        receive — an executor without it can no longer run any classified node at all.
+        */
+        agentStore: this.agentStore,
         pool: this.worktreePool,
         usageLimitPauser: this.usageLimitPauser,
         credentialRotator: this.credentialRotator,

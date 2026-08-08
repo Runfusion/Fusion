@@ -983,8 +983,12 @@ describe("runServe", () => {
 
     // FN-8399: serve now passes an onMigrationProgress callback so the holding
     // server can expose incomplete migration status on the dashboard.
+    // FN-8685: serve also tags the shared store with the durable engine consumer
+    // identity (buildConsumerId("engine") === "engine") so its deletion cursor
+    // survives restart and cross-process deletes reach runtime observers.
     expect(mocks.createTaskStoreForBackendMock).toHaveBeenCalledWith({
       rootDir: "/repo",
+      consumerId: "engine",
       onMigrationProgress: expect.any(Function),
     });
     expect(mocks.taskStoreCtor).toHaveBeenCalledTimes(1);

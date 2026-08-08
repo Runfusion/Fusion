@@ -2,8 +2,8 @@
 FNXC:TaskDetailTabs 2026-06-17-08:20:
 FN-7324 keeps the stable internal `chat` tab as Activity for explicit legacy links, but the omitted non-done default is now planner Chat. Tests that assert Definition-only sections must opt into `initialTab="definition"` so they verify the intended surface instead of the Chat landing state.
 */
-import { describe, it, expect, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, describe, it, expect, vi } from "vitest";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import React, { type ComponentProps } from "react";
 import userEvent from "@testing-library/user-event";
 import {
@@ -34,7 +34,7 @@ TaskDetailModal.inline-editing-and-integrations.test.tsx.
 */
 
 vi.mock("../BranchGroupCard", () => ({
-  BranchGroupCard: ({ groupId, taskId, onBranchGroupReset }: { groupId: string; taskId?: string; onBranchGroupReset?: () => void }) => {
+  BranchGroupCard: ({ groupId, taskId, onBranchGroupReset, onOpenReviewTask }: { groupId: string; taskId?: string; onBranchGroupReset?: () => void; onOpenReviewTask?: (taskId: string) => void }) => {
     const [expanded, setExpanded] = React.useState(false);
     return (
       <div>
@@ -42,6 +42,7 @@ vi.mock("../BranchGroupCard", () => ({
         {taskId && <span>Mock Branch Group Task {taskId}</span>}
         <button type="button" onClick={() => setExpanded(true)}>Mock expand branch group</button>
         {onBranchGroupReset && <button type="button" onClick={onBranchGroupReset}>Mock reset stale branch group</button>}
+        {onOpenReviewTask && <button type="button" onClick={() => onOpenReviewTask("FN-landed")}>Mock open member review</button>}
         {expanded && <span>Mock branch group expanded</span>}
       </div>
     );
@@ -140,6 +141,11 @@ describe("TaskDetailModal reset confirmations", () => {
 });
 
 describe("TaskDetailModal planner Chat tab", () => {
+  afterEach(async () => {
+    const { useAgentLogs } = await import("../../hooks/useAgentLogs");
+    vi.mocked(useAgentLogs).mockReturnValue({ entries: [], loading: false, clear: vi.fn(), loadMore: vi.fn(async () => {}), hasMore: false, total: null, loadingMore: false });
+  });
+
   function renderTask(column: any = "in-progress", initialTab?: ComponentProps<typeof TaskDetailModal>["initialTab"]) {
     return render(
       <TaskDetailModal
@@ -425,7 +431,73 @@ describe("TaskDetailModal planner Chat tab", () => {
 
     await waitFor(() => expect(updateTask).toHaveBeenCalledWith("FN-099", { modelProvider: "anthropic", modelId: "claude-alternate" }, undefined));
     await waitFor(() => expect(onRetryTask).toHaveBeenCalledWith("FN-099"));
-    vi.mocked(useAgentLogs).mockReturnValue({ entries: [], loading: false, clear: vi.fn(), loadMore: vi.fn(async () => {}), hasMore: false, total: null, loadingMore: false });
+  });
+
+  it("does not attribute a recovered historical tool error to an unknown graph failure", async () => {
+    const { useAgentLogs } = await import("../../hooks/useAgentLogs");
+    vi.mocked(useAgentLogs).mockReturnValue({
+      entries: [
+        { timestamp: "2026-08-07T16:00:00Z", taskId: "FN-099", text: "edit", type: "tool_error", detail: "oldText was not unique" },
+        { timestamp: "2026-08-07T16:01:00Z", taskId: "FN-099", text: "edit", type: "tool_result", detail: "updated" },
+        { timestamp: "2026-08-07T16:02:00Z", taskId: "FN-099", text: "continued after correction", type: "text" },
+      ],
+      loading: false,
+      clear: vi.fn(),
+      loadMore: vi.fn(async () => {}),
+      hasMore: false,
+      total: 3,
+      loadingMore: false,
+    });
+
+    render(
+      <TaskDetailModal
+        initialTab="planner-chat"
+        taskDetailChatFirst
+        task={makeTask({ column: "in-progress" as any, status: "failed", error: "Workflow graph terminated with failure at node 'unknown'" })}
+        onClose={noop}
+        onMoveTask={noopMove}
+        onDeleteTask={noopDelete}
+        onMergeTask={noopMerge}
+        onOpenDetail={noopOpenDetail}
+        addToast={noop}
+      />,
+    );
+
+    expect(screen.getByText("Workflow graph terminated with failure at node 'unknown'")).toBeInTheDocument();
+    expect(document.querySelector(".detail-error-detail")).toBeNull();
+  });
+
+  it("does not fall back to an older tool error when the latest tool error detail is blank", async () => {
+    const { useAgentLogs } = await import("../../hooks/useAgentLogs");
+    vi.mocked(useAgentLogs).mockReturnValue({
+      entries: [
+        { timestamp: "2026-08-07T16:00:00Z", taskId: "FN-099", text: "edit", type: "tool_error", detail: "oldText was not unique" },
+        { timestamp: "2026-08-07T16:01:00Z", taskId: "FN-099", text: "verify", type: "tool_error", detail: "   " },
+      ],
+      loading: false,
+      clear: vi.fn(),
+      loadMore: vi.fn(async () => {}),
+      hasMore: false,
+      total: 2,
+      loadingMore: false,
+    });
+
+    render(
+      <TaskDetailModal
+        initialTab="planner-chat"
+        taskDetailChatFirst
+        task={makeTask({ column: "in-progress" as any, status: "failed", error: "Workflow graph terminated with failure at node 'unknown'" })}
+        onClose={noop}
+        onMoveTask={noopMove}
+        onDeleteTask={noopDelete}
+        onMergeTask={noopMerge}
+        onOpenDetail={noopOpenDetail}
+        addToast={noop}
+      />,
+    );
+
+    expect(screen.queryByText("oldText was not unique")).not.toBeInTheDocument();
+    expect(document.querySelector(".detail-error-detail")).toBeNull();
   });
 });
 
@@ -692,11 +764,14 @@ describe("TaskDetailModal GitHub tracking CTA", () => {
 });
 
 describe("TaskDetailModal Activity feed loading", () => {
-  function renderActivityFeedModal(task: ReturnType<typeof makeTask> | Record<string, unknown>) {
+  function renderActivityFeedModal(
+    task: ReturnType<typeof makeTask> | Record<string, unknown>,
+    initialTab: ComponentProps<typeof TaskDetailModal>["initialTab"] = "logs",
+  ) {
     return render(
       <TaskDetailModal
         task={task as any}
-        initialTab="logs"
+        initialTab={initialTab}
         onClose={noop}
         onMoveTask={noopMove}
         onDeleteTask={noopDelete}
@@ -780,6 +855,39 @@ describe("TaskDetailModal Activity feed loading", () => {
     await screen.findByText("newer entry");
     const actions = Array.from(document.querySelectorAll(".detail-log-action")).map((node) => node.textContent);
     expect(actions).toEqual(["newer entry", "older entry"]);
+    expect(screen.queryByText("(no activity)")).not.toBeInTheDocument();
+  });
+
+  /*
+  FNXC:TaskActivityFeedFreshness 2026-08-07-08:30:
+  Modal, main-panel, split-list, dock, popup, desktop, and mobile task details all render the shared
+  TaskDetailContent feed. Entering Feed must refresh its full task snapshot because board/SSE rows
+  deliberately carry log=[]; otherwise a detail opened before activity exists stays empty forever.
+  */
+  it("refreshes an empty Feed when the persisted task log has gained activity", async () => {
+    const user = userEvent.setup();
+    const { fetchTaskDetail } = await import("../../api");
+    const refresh = createDeferred<ReturnType<typeof makeTask>>();
+    vi.mocked(fetchTaskDetail).mockReset();
+    vi.mocked(fetchTaskDetail).mockReturnValueOnce(refresh.promise as any);
+
+    renderActivityFeedModal(
+      makeTask({ id: "FN-FEED-REFRESH", prompt: "# Already loaded", log: [] }),
+      "chat",
+    );
+
+    await selectActivityView(user, "feed");
+    expect(fetchTaskDetail).toHaveBeenCalledWith("FN-FEED-REFRESH", undefined);
+
+    await act(async () => {
+      refresh.resolve(makeTask({
+        id: "FN-FEED-REFRESH",
+        prompt: "# Already loaded",
+        log: [{ timestamp: "2026-08-07T08:20:00.000Z", action: "Executor started" }],
+      }));
+    });
+
+    expect(await screen.findByText("Executor started")).toBeInTheDocument();
     expect(screen.queryByText("(no activity)")).not.toBeInTheDocument();
   });
 
@@ -1062,6 +1170,27 @@ describe("TaskDetailModal branch group surfacing", () => {
 
     expect(screen.queryByText("Mock branch group expanded")).not.toBeInTheDocument();
     expect(screen.getByText("Mock Branch Group BG-1")).toBeInTheDocument();
+  });
+
+  it("opens an advisory member directly on its Review tab", async () => {
+    const { fetchTaskDetail } = await import("../../api");
+    const onOpenDetail = vi.fn();
+    vi.mocked(fetchTaskDetail).mockResolvedValueOnce(makeTask({ id: "FN-landed", column: "done" as any }));
+    render(
+      <TaskDetailModal
+        initialTab="definition"
+        task={makeTask({ id: "FN-6041", branchContext })}
+        onClose={noop}
+        onMoveTask={noopMove}
+        onDeleteTask={noopDelete}
+        onMergeTask={noopMerge}
+        onOpenDetail={onOpenDetail}
+        addToast={noop}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Mock open member review" }));
+    await waitFor(() => expect(onOpenDetail).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-landed" }), "review"));
   });
 });
 

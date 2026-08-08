@@ -13,23 +13,38 @@ function settingsOn() {
 
 describe("merge gate shared-member provenance", () => {
   const liveMember = vi.fn(async () => true);
-  const invokeGate = (taskOverride: Partial<TaskDetail>, isLiveSharedBranchMember = liveMember) =>
+  const invokeGate = (
+    taskOverride: Partial<TaskDetail>,
+    isLiveSharedBranchMember = liveMember,
+    autoMerge = false,
+  ) =>
     createMergeGateHandler({ isLiveSharedBranchMember })(
       { id: "merge-gate", kind: "merge-gate" } as never,
-      { task: { ...task, ...taskOverride }, settings: { autoMerge: false } } as never,
+      { task: { ...task, ...taskOverride }, settings: { autoMerge } } as never,
     );
 
-  it("routes only an operator-authored false override to the manual hold", async () => {
-    await expect(invokeGate({ autoMerge: false, autoMergeProvenance: "user" })).resolves.toMatchObject({ value: "auto-off" });
-    expect(liveMember).not.toHaveBeenCalled();
+  it.each([
+    [{ autoMerge: undefined }, "unset"],
+    [{ autoMerge: false, autoMergeProvenance: "user" }, "user"],
+    [{ autoMerge: false, autoMergeProvenance: "mission" }, "mission"],
+    [{ autoMerge: false, autoMergeProvenance: "legacy-stamp" }, "legacy"],
+  ] as const)("holds project-Off %s values before consulting liveness", async (taskOverride) => {
+    const resolver = vi.fn(async () => true);
+    await expect(invokeGate(taskOverride, resolver, false)).resolves.toMatchObject({ value: "auto-off" });
+    expect(resolver).not.toHaveBeenCalled();
   });
 
-  it.each(["mission", "legacy-stamp", undefined] as const)("keeps a live member flowing for non-user false provenance (%s)", async (autoMergeProvenance) => {
-    await expect(invokeGate({ autoMerge: false, autoMergeProvenance })).resolves.toMatchObject({ value: "auto-on" });
+  it("allows explicit task On under project Off", async () => {
+    await expect(invokeGate({ autoMerge: true }, liveMember, false)).resolves.toMatchObject({ value: "auto-on" });
   });
 
-  it("keeps false values on a non-live group in the normal manual policy path", async () => {
-    await expect(invokeGate({ autoMerge: false, autoMergeProvenance: "mission" }, async () => false)).resolves.toMatchObject({ value: "auto-off" });
+  it.each(["mission", "legacy-stamp", undefined] as const)("keeps a live member flowing for non-user false provenance when project On (%s)", async (autoMergeProvenance) => {
+    await expect(invokeGate({ autoMerge: false, autoMergeProvenance }, liveMember, true)).resolves.toMatchObject({ value: "auto-on" });
+  });
+
+  it("holds user Off when project On and keeps non-live false values manual", async () => {
+    await expect(invokeGate({ autoMerge: false, autoMergeProvenance: "user" }, liveMember, true)).resolves.toMatchObject({ value: "auto-off" });
+    await expect(invokeGate({ autoMerge: false, autoMergeProvenance: "mission" }, async () => false, true)).resolves.toMatchObject({ value: "auto-off" });
   });
 });
 

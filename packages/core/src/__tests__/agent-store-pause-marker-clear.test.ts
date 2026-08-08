@@ -7,8 +7,11 @@ import {
 } from "../__test-utils__/pg-test-harness.js";
 
 pgDescribe("AgentStore pause marker resume cleanup (FN-8569)", () => {
+  // FNXC:WorkflowAgentRouting 2026-08-07-18:40: bind a real projectId so FN-8764 built-in
+  // workflow-owner provisioning in AgentStore.init() has a partition.
   const h: SharedPgTaskStoreHarness = createSharedPgTaskStoreTestHarness({
     prefix: "fusion_pause_marker_clear",
+    projectId: "proj_pause_marker_clear",
   });
   let agentStore: AgentStore;
 

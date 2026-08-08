@@ -264,6 +264,8 @@ export interface TaskSnapshotMergeOptions {
   fullSnapshot?: boolean;
   /** A canonical task:moved SSE payload names its destination, even when its clock ties the visible row. */
   authoritativeMove?: boolean;
+  /** A canonical task event owns pause/status fields even when JSON omission represents a cleared value. */
+  authoritativeLifecycle?: boolean;
 }
 
 export function mergeTaskSnapshot<T extends Task>(
@@ -294,6 +296,25 @@ export function mergeTaskSnapshot<T extends Task>(
     }
   }
 
+  /*
+  FNXC:DashboardPauseState 2026-08-07-14:48:
+  TaskStore clears optional pause lifecycle fields with `undefined`, so JSON omits them from REST and
+  `task:updated` payloads. A newer full task row therefore needs omission to mean "cleared" for these
+  fields; otherwise a passive dashboard retains an older `paused: true` forever. Keep this narrow to
+  pause-owned fields so genuinely sparse payloads still preserve unrelated detail metadata.
+  */
+  const incomingOwnsLifecycleField = (field: "paused" | "userPaused" | "pausedByAgentId" | "pausedReason" | "status") =>
+    options.authoritativeLifecycle === true
+    || options.fullSnapshot === true
+    || Object.prototype.hasOwnProperty.call(incoming, field);
+  const acceptsEqualClockLifecycle = options.authoritativeLifecycle === true && updatedAtCompare === 0;
+  if (acceptsIncomingSnapshot || acceptsEqualClockFields || acceptsEqualClockLifecycle) {
+    if (incomingOwnsLifecycleField("paused")) merged.paused = incoming.paused;
+    if (incomingOwnsLifecycleField("userPaused")) merged.userPaused = incoming.userPaused;
+    if (incomingOwnsLifecycleField("pausedByAgentId")) merged.pausedByAgentId = incoming.pausedByAgentId;
+    if (incomingOwnsLifecycleField("pausedReason")) merged.pausedReason = incoming.pausedReason;
+  }
+
 
   const columnMovedAtCompare = compareTimestamps(incoming.columnMovedAt, current.columnMovedAt);
   /*
@@ -317,11 +338,12 @@ export function mergeTaskSnapshot<T extends Task>(
   // lifecycle row. Otherwise accepting its status while rejecting its column would tear the pair.
   const acceptsEqualClockStatus = acceptsEqualClockFields
     && (incoming.column === undefined || incoming.column === current.column);
-  const incomingUpdatesStatus = incoming.status !== undefined
-    && (current.status === undefined
-      || acceptsIncomingSnapshot
+  const incomingUpdatesStatus = incomingOwnsLifecycleField("status")
+    && (acceptsIncomingSnapshot
       || acceptsEqualClockStatus
-      || incomingMovesColumn);
+      || acceptsEqualClockLifecycle
+      || (incoming.status !== undefined
+        && (current.status === undefined || incomingMovesColumn)));
 
   // The lifecycle fields are evidence-owned rather than object-spread-owned.
   merged.column = incomingMovesColumn ? incoming.column : current.column;
@@ -338,8 +360,7 @@ export function mergeTaskSnapshot<T extends Task>(
   complete equal-clock fetch clears it only when that same lifecycle row proves the status changed;
   otherwise an agent-log that arrived while the fetch was in flight remains newer evidence.
   */
-  const equalClockStatusChanged = acceptsEqualClockStatus
-    && incoming.status !== undefined
+  const equalClockStatusChanged = (acceptsEqualClockStatus || acceptsEqualClockLifecycle)
     && incoming.status !== current.status;
   merged.recentAgentActivityAt = acceptsIncomingSnapshot || equalClockStatusChanged
     ? incoming.recentAgentActivityAt
@@ -1060,7 +1081,10 @@ export function useTasks(options?: UseTasksOptions) {
           return [...prev, movedTask];
         }
         const current = prev[existingIndex]!;
-        const merged = mergeIncomingTask(current, movedTask, { authoritativeMove: true });
+        const merged = mergeIncomingTask(current, movedTask, {
+          authoritativeMove: true,
+          authoritativeLifecycle: true,
+        });
         if (merged === current) return prev;
         const next = [...prev];
         next[existingIndex] = merged;
@@ -1092,7 +1116,7 @@ export function useTasks(options?: UseTasksOptions) {
           return [...prev, incoming];
         }
         const current = prev[existingIndex]!;
-        const merged = mergeIncomingTask(current, incoming);
+        const merged = mergeIncomingTask(current, incoming, { authoritativeLifecycle: true });
         if (merged === current) return prev;
         const next = [...prev];
         next[existingIndex] = merged;
@@ -1219,7 +1243,17 @@ export function useTasks(options?: UseTasksOptions) {
   hosts cannot diverge after pause or unpause.
   */
   const reconcileConfirmedTask = useCallback((confirmedTask: Task): Task => {
-    const confirmedRow = normalizeTask(confirmedTask);
+    const normalizedConfirmedRow = normalizeTask(confirmedTask);
+    // Preserve cleared lifecycle fields as own `undefined` properties so every downstream
+    // snapshot host can distinguish the confirmed deletion from an unrelated sparse update.
+    const confirmedRow: Task = {
+      ...normalizedConfirmedRow,
+      paused: normalizedConfirmedRow.paused,
+      userPaused: normalizedConfirmedRow.userPaused,
+      pausedByAgentId: normalizedConfirmedRow.pausedByAgentId,
+      pausedReason: normalizedConfirmedRow.pausedReason,
+      status: normalizedConfirmedRow.status,
+    };
     const currentTask = tasksRef.current.find((task) => task.id === confirmedRow.id);
     // A live event that arrived while the mutation was pending may be newer than its response.
     // Start from the confirmed row so equal clocks retain the mutation, then admit only newer state.

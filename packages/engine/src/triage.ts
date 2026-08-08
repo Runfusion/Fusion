@@ -7,6 +7,7 @@ import type {
   TaskAttachment,
   Settings,
   Agent,
+  WorkflowWorkItem,
   AgentPermissionPolicy,
   PermanentAgentGatingContext,
   WorkflowIr,
@@ -2588,7 +2589,18 @@ export class TriageProcessor {
             returning so recovery and operator surfaces retain the fail-closed
             reason and no synthetic planner can silently retry around it.
             */
-            await this.store.upsertWorkflowWorkItem({
+            /*
+            FNXC:WorkflowAgentRouting 2026-08-07-23:50:
+            Write the planning continuation through the ATOMIC replace, not a bare upsert.
+            `idx_workflow_work_items_one_active_task_continuation` allows one active
+            `kind:"task"` row per task, and the upsert's ON CONFLICT target is a different
+            constraint — so an active continuation left at another node (a stranded resume, or
+            a hold from a prior run) makes this write RAISE instead of upserting. In the
+            executor that raise deadlocked the board; here it fails planning with
+            `workflow-principal-fence-unavailable:triage`. Replace retires the predecessor and
+            installs this row in one locked transaction, so planning takes the slot over.
+            */
+            await this.writePlanningContinuation({
               runId: triageRunContext.runId,
               taskId: task.id,
               nodeId: planningNode.id,
@@ -2654,7 +2666,10 @@ export class TriageProcessor {
               return;
             }
             try {
-              const item = await this.store.upsertWorkflowWorkItem({
+              // FNXC:WorkflowAgentRouting 2026-08-07-23:50: same atomic-replace contract as the
+              // held write above — a predecessor continuation at another node must be retired,
+              // not collided with.
+              const item = await this.writePlanningContinuation({
                 runId: triageRunContext.runId,
                 taskId: task.id,
                 nodeId: planningNode.id,
@@ -4065,6 +4080,30 @@ export class TriageProcessor {
    * provider response. `updateTaskAtomic` holds the task lock across the live-row
    * predicate and patch, closing the scheduler-transition race.
    */
+  /**
+   * FNXC:WorkflowAgentRouting 2026-08-07-23:50:
+   * Persist a planning continuation through the atomic replace primitive.
+   *
+   * A task may hold only ONE active (`runnable`/`running`/`held`/`retrying`) `kind:"task"`
+   * work item — enforced by the partial unique index
+   * `idx_workflow_work_items_one_active_task_continuation`, which is NOT the constraint a
+   * plain upsert's ON CONFLICT targets. `replaceActiveTaskWorkflowContinuation` retires every
+   * active row that is not this exact (runId, nodeId, kind) and installs the successor inside
+   * one transaction holding the task's advisory lock, so the handover has no conflict to
+   * recover from and no window with zero active rows.
+   *
+   * Falls back to a bare upsert only for a store without the primitive (minimal/legacy test
+   * adapters), which preserves the pre-primitive behavior rather than failing the run.
+   */
+  private async writePlanningContinuation(
+    input: Parameters<NonNullable<TaskStore["upsertWorkflowWorkItem"]>>[0] & { kind: "task" },
+  ): Promise<WorkflowWorkItem> {
+    if (typeof this.store.replaceActiveTaskWorkflowContinuation === "function") {
+      return await this.store.replaceActiveTaskWorkflowContinuation(input);
+    }
+    return await this.store.upsertWorkflowWorkItem(input);
+  }
+
   private async updatePlanningStateIfStillCurrent(
     task: Task,
     patch: Parameters<TaskStore["updateTask"]>[1] | ((live: Task) => Parameters<TaskStore["updateTask"]>[1]),

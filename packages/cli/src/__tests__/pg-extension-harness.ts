@@ -120,7 +120,19 @@ export interface PgExtensionHarness {
  * entries never leak across tests.
  */
 export function createPgExtensionHarness(prefix: string): PgExtensionHarness {
-  const pg = createSharedPgTaskStoreTestHarness({ prefix });
+  /*
+  FNXC:WorkflowAgentRouting 2026-08-07-18:40:
+  FN-8764 made AgentStore.init() unconditionally provision the four durable built-in
+  workflow-owner agents, and that provisioning requires a bound asyncLayer.projectId
+  (backendProjectId rejects the empty/unbound partition to avoid mixing ownership on a
+  shared PG cluster). Bind this CLI-extension harness to a real projectId end-to-end so the
+  connection GUC `fusion.project_id`, the layer's projectId, and the seeded config row all
+  agree: agents (explicit project_id) and their config revisions (GUC-default project_id)
+  land in the SAME partition, so the (project_id, agent_id) FK on agent_config_revisions holds.
+  A project-agnostic bind (projectId "") would split those writes across partitions and
+  reintroduce the FN-8764 provisioning throw.
+  */
+  const pg = createSharedPgTaskStoreTestHarness({ prefix, projectId: `ext_${prefix}` });
   return {
     rootDir: pg.rootDir,
     store: pg.store,

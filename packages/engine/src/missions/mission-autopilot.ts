@@ -710,26 +710,22 @@ export class MissionAutopilot {
       const activeSlices = refreshedMission.milestones.flatMap((milestone) => milestone.slices)
         .filter((slice) => slice.status === "active");
 
+      // The scheduler admission boundary treats every active slice as a lease.
+      // Recovery may reconcile completed leases, but one completed-looking lease
+      // must never bypass another active slice.
+      const allActiveSlicesComplete = activeSlices.length > 0 && activeSlices.every((slice) =>
+        slice.features.length > 0 && slice.features.every((feature) => feature.status === "done"),
+      );
+      if (allActiveSlicesComplete) {
+        await Promise.all(activeSlices.map((slice) => this.missionStore.updateSlice(slice.id, { status: "complete" })));
+      }
+      // A stale snapshot may still show the slices as active after the status
+      // reconciliation above; only the all-complete case releases that lease.
+      const hasActiveSlice = activeSlices.length > 0 && !allActiveSlicesComplete;
       let advanced = false;
-
-      if (activeSlices.length > 0) {
-        const hasCompletedActiveSlice = activeSlices.some((slice) =>
-          slice.features.length > 0 && slice.features.every((feature) => feature.status === "done"),
-        );
-
-        if (hasCompletedActiveSlice) {
-          await this.advanceToNextSlice(missionId);
-          advanced = true;
-        }
-      } else {
-        const hasPendingSlice = refreshedMission.milestones.some((milestone) =>
-          milestone.slices.some((slice) => slice.status === "pending"),
-        );
-
-        if (hasPendingSlice) {
-          await this.advanceToNextSlice(missionId);
-          advanced = true;
-        }
+      if (!hasActiveSlice) {
+        await this.advanceToNextSlice(missionId);
+        advanced = true;
       }
 
       await this.logMissionEventSafe(
@@ -850,12 +846,18 @@ export class MissionAutopilot {
           continue;
         }
 
-        const hasCompletedActiveSlice = refreshedHierarchy.milestones
+        const activeSlices = refreshedHierarchy.milestones
           .flatMap((milestone) => milestone.slices)
-          .filter((slice) => slice.status === "active")
-          .some((slice) => slice.features.length > 0 && slice.features.every((feature) => feature.status === "done"));
-
-        if (hasCompletedActiveSlice) {
+          .filter((slice) => slice.status === "active");
+        const allActiveSlicesComplete = activeSlices.length > 0 && activeSlices.every((slice) =>
+          slice.features.length > 0 && slice.features.every((feature) => feature.status === "done"),
+        );
+        if (allActiveSlicesComplete) {
+          // Reconcile every finished lease before asking the shared admission
+          // boundary for the next serial slice.
+          await Promise.all(activeSlices.map((slice) => this.missionStore.updateSlice(slice.id, { status: "complete" })));
+        }
+        if (activeSlices.length === 0 || allActiveSlicesComplete) {
           await this.advanceToNextSlice(mission.id);
         }
       }

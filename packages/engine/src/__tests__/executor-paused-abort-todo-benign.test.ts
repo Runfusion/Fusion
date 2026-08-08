@@ -88,6 +88,203 @@ describe("pause-abort benign requeue-to-todo (FN-6782)", () => {
     vi.useRealTimers();
   });
 
+  it.each([
+    { action: "Resumed after engine restart", visitedNodeIds: [] },
+    { action: "Resumed after engine restart", visitedNodeIds: ["execute"] },
+    { action: "Resuming execution after unpause", visitedNodeIds: [] },
+    { action: "Resuming execution after unpause", visitedNodeIds: ["execute"] },
+  ])("auto-retries a reasonless $visitedNodeIds resume with partial step progress after '$action'", async ({ action, visitedNodeIds }) => {
+    const { store, task, executor } = makeHarness({
+      column: "in-progress",
+      steps: [
+        { name: "Implement", status: "done" },
+        { name: "Verify", status: "in-progress" },
+      ],
+      currentStep: 1,
+      log: [{ action, timestamp: now }],
+      graphResumeRetryCount: 0,
+    });
+    (executor as any).clearPausedAborted(task.id);
+    const executeSpy = vi.spyOn(executor as any, "execute").mockResolvedValue(undefined);
+
+    await invokeGraphFailure(executor, task, {
+      visitedNodeIds,
+      context: {},
+    });
+
+    expect(store.updateTask).toHaveBeenCalledWith(task.id, {
+      graphResumeRetryCount: 1,
+      status: null,
+      error: null,
+    }, undefined);
+    expect(store.updateTask).not.toHaveBeenCalledWith(
+      task.id,
+      expect.objectContaining({ status: "failed" }),
+      expect.anything(),
+    );
+    await flushScheduledRetry();
+    expect(executeSpy).toHaveBeenCalledWith(expect.objectContaining({
+      id: task.id,
+      graphResumeRetryCount: 1,
+    }));
+  });
+
+  it.each([
+    {
+      label: "fully terminal steps",
+      taskOverrides: {
+        steps: [
+          { name: "Implement", status: "done" },
+          { name: "Verify", status: "skipped" },
+        ],
+      },
+      resultOverrides: {},
+    },
+    {
+      label: "explicit graph reason",
+      taskOverrides: {},
+      resultOverrides: { reason: "provider failed" },
+    },
+    {
+      label: "durable lastError",
+      taskOverrides: { lastError: "session failed" },
+      resultOverrides: {},
+    },
+    {
+      label: "durable failureReason",
+      taskOverrides: { failureReason: "workflow rejected" },
+      resultOverrides: {},
+    },
+    {
+      label: "exhausted retry budget",
+      taskOverrides: { graphResumeRetryCount: 2 },
+      resultOverrides: {},
+    },
+  ])("does not transiently retry partial progress with $label", async ({ taskOverrides, resultOverrides }) => {
+    const { store, task, executor } = makeHarness({
+      column: "in-progress",
+      steps: [
+        { name: "Implement", status: "done" },
+        { name: "Verify", status: "in-progress" },
+      ],
+      currentStep: 1,
+      log: [{ action: "Resumed after engine restart", timestamp: now }],
+      graphResumeRetryCount: 0,
+      ...taskOverrides,
+    } as Partial<TaskDetail>);
+    (executor as any).clearPausedAborted(task.id);
+    const executeSpy = vi.spyOn(executor as any, "execute").mockResolvedValue(undefined);
+
+    await invokeGraphFailure(executor, task, {
+      visitedNodeIds: [],
+      context: {},
+      ...resultOverrides,
+    });
+    await flushScheduledRetry();
+
+    expect(store.updateTask).not.toHaveBeenCalledWith(
+      task.id,
+      expect.objectContaining({ graphResumeRetryCount: 1 }),
+      expect.anything(),
+    );
+    expect(store.updateTask).toHaveBeenCalledWith(
+      task.id,
+      expect.objectContaining({ status: "failed" }),
+      undefined,
+    );
+    expect(executeSpy).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { label: "deleted", patch: { deletedAt: "2026-08-07T23:36:00.000Z" } },
+    { label: "paused", patch: { paused: true } },
+    { label: "user-paused", patch: { userPaused: true } },
+    { label: "moved out of WIP", patch: { column: "todo" } },
+    { label: "moved to a terminal column", patch: { column: "done" } },
+    { label: "new failed status", patch: { status: "failed" } },
+    { label: "new persisted error", patch: { error: "new failure" } },
+    { label: "new durable lastError", patch: { lastError: "new session failure" } },
+    { label: "new durable failureReason", patch: { failureReason: "new workflow failure" } },
+  ])("fire-time guard: skips a transient graph retry when the task became $label", async ({ patch }) => {
+    const { store, task, executor } = makeHarness({
+      column: "in-progress",
+      steps: [
+        { name: "Implement", status: "done" },
+        { name: "Verify", status: "in-progress" },
+      ],
+      currentStep: 1,
+      log: [{ action: "Resumed after engine restart", timestamp: now }],
+    });
+    (executor as any).clearPausedAborted(task.id);
+    const executeSpy = vi.spyOn(executor as any, "execute").mockResolvedValue(undefined);
+
+    await invokeGraphFailure(executor, task, { visitedNodeIds: [], context: {} });
+    await store.updateTask(task.id, patch);
+    await flushScheduledRetry();
+
+    expect(executeSpy).not.toHaveBeenCalled();
+  });
+
+  it("fire-time guard: skips a transient graph retry when the task was canceled", async () => {
+    const { store, task, executor } = makeHarness({
+      column: "in-progress",
+      steps: [
+        { name: "Implement", status: "done" },
+        { name: "Verify", status: "in-progress" },
+      ],
+      currentStep: 1,
+      log: [{ action: "Resumed after engine restart", timestamp: now }],
+    });
+    (executor as any).clearPausedAborted(task.id);
+    const executeSpy = vi.spyOn(executor as any, "execute").mockResolvedValue(undefined);
+
+    await invokeGraphFailure(executor, task, { visitedNodeIds: [], context: {} });
+    (executor as any).userCanceledTaskIds.add(task.id);
+    await flushScheduledRetry();
+
+    expect(executeSpy).not.toHaveBeenCalled();
+  });
+
+  it("fire-time guard: skips a transient graph retry when another run is active", async () => {
+    const { task, executor } = makeHarness({
+      column: "in-progress",
+      steps: [
+        { name: "Implement", status: "done" },
+        { name: "Verify", status: "in-progress" },
+      ],
+      currentStep: 1,
+      log: [{ action: "Resumed after engine restart", timestamp: now }],
+    });
+    (executor as any).clearPausedAborted(task.id);
+    const executeSpy = vi.spyOn(executor as any, "execute").mockResolvedValue(undefined);
+
+    await invokeGraphFailure(executor, task, { visitedNodeIds: [], context: {} });
+    (executor as any).activeSessions.set(task.id, {});
+    await flushScheduledRetry();
+
+    expect(executeSpy).not.toHaveBeenCalled();
+  });
+
+  it("fire-time guard: skips a transient graph retry when the task disappeared", async () => {
+    const { store, task, executor } = makeHarness({
+      column: "in-progress",
+      steps: [
+        { name: "Implement", status: "done" },
+        { name: "Verify", status: "in-progress" },
+      ],
+      currentStep: 1,
+      log: [{ action: "Resumed after engine restart", timestamp: now }],
+    });
+    (executor as any).clearPausedAborted(task.id);
+    const executeSpy = vi.spyOn(executor as any, "execute").mockResolvedValue(undefined);
+
+    await invokeGraphFailure(executor, task, { visitedNodeIds: [], context: {} });
+    store.getTask.mockRejectedValueOnce(new Error("Task not found"));
+    await flushScheduledRetry();
+
+    expect(executeSpy).not.toHaveBeenCalled();
+  });
+
   it("auto-continues the agent session for an engine-internal abort instead of re-queueing to todo", async () => {
     // An "engine abort during pause/resume" (pausedAborted hard-cancel, no user/
     // global pause) is engine-internal churn, not an operator action — the
