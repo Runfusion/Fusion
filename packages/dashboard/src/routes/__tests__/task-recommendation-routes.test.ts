@@ -454,6 +454,44 @@ describe("recommendation task creation route", () => {
     expect(archived.store.createTask).not.toHaveBeenCalled();
   });
 
+  it("rejects a linked child in its custom workflow archived lane", async () => {
+    const archivedChild = task({ id: "FN-9", description: "Archived child", column: "boxed" as Column });
+    const custom = buildApp([
+      parent({ recommendations: [{ ...parent().recommendations![0], createdTaskId: "FN-9" }] }),
+      archivedChild,
+    ]);
+    Object.assign(custom.store, {
+      getTaskWorkflowSelection: vi.fn((id: string) => id === "FN-9" ? { workflowId: "recommendation-workflow", stepIds: [] } : undefined),
+      getTaskWorkflowSelectionAsync: vi.fn(async (id: string) => id === "FN-9" ? { workflowId: "recommendation-workflow", stepIds: [] } : undefined),
+      getWorkflowDefinition: vi.fn(async () => ({
+        id: "recommendation-workflow",
+        name: "Recommendation workflow",
+        kind: "workflow",
+        ir: {
+          version: "v2",
+          id: "recommendation-workflow",
+          name: "Recommendation workflow",
+          nodes: [{ id: "start", kind: "start", column: "backlog" }],
+          edges: [],
+          columns: [
+            { id: "backlog", name: "Backlog", traits: [{ trait: "intake" }] },
+            { id: "boxed", name: "Boxed", traits: [{ trait: "archived" }] },
+          ],
+        },
+      })),
+    });
+
+    const response = await performRequest(
+      custom.app,
+      "POST",
+      "/api/tasks/FN-1/recommendations/rec-1/create",
+      undefined,
+    );
+
+    expect(response.status).toBe(409);
+    expect(custom.store.createTask).not.toHaveBeenCalled();
+  });
+
   it.each([
     { bypassDuplicateCheck: true },
     { acknowledgedDuplicates: ["FN-9"] },
