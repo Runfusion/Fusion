@@ -135,7 +135,16 @@ function parent(overrides: Partial<Task> = {}): Task {
   });
 }
 
-function installCustomRecommendationWorkflow(store: Partial<TaskStore>, taskIds: readonly string[]): void {
+/*
+FNXC:TaskRecommendations 2026-08-08-12:49:
+Custom-workflow fixtures distinguish the traited `boxed` archived lane from an explicitly declared,
+untraited `archived` live lane while retaining undeclared legacy tombstone coverage.
+*/
+function installCustomRecommendationWorkflow(
+  store: Partial<TaskStore>,
+  taskIds: readonly string[],
+  options: { declareLegacyArchivedAsLive?: boolean } = {},
+): void {
   Object.assign(store, {
     getTaskWorkflowSelection: vi.fn((id: string) => taskIds.includes(id) ? { workflowId: "recommendation-workflow", stepIds: [] } : undefined),
     getTaskWorkflowSelectionAsync: vi.fn(async (id: string) => taskIds.includes(id) ? { workflowId: "recommendation-workflow", stepIds: [] } : undefined),
@@ -154,6 +163,9 @@ function installCustomRecommendationWorkflow(store: Partial<TaskStore>, taskIds:
           { id: "queued", name: "Queued", traits: [{ trait: "hold" }] },
           { id: "building", name: "Building", traits: [{ trait: "wip" }] },
           { id: "shipped", name: "Shipped", traits: [{ trait: "complete" }] },
+          ...(options.declareLegacyArchivedAsLive
+            ? [{ id: "archived", name: "Live archived", traits: [] }]
+            : []),
           { id: "boxed", name: "Boxed", traits: [{ trait: "archived" }] },
         ],
       },
@@ -480,6 +492,26 @@ describe("recommendation task creation route", () => {
     },
   );
 
+  it("keeps a linked child live in an explicitly declared untraited archived column", async () => {
+    const linkedChild = task({ id: "FN-9", description: "Live child", column: "archived" });
+    const custom = buildApp([
+      parent({ recommendations: [{ ...parent().recommendations![0], createdTaskId: "FN-9" }] }),
+      linkedChild,
+    ]);
+    installCustomRecommendationWorkflow(custom.store, ["FN-9"], { declareLegacyArchivedAsLive: true });
+
+    const response = await performRequest(
+      custom.app,
+      "POST",
+      "/api/tasks/FN-1/recommendations/rec-1/create",
+      undefined,
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({ task: { id: "FN-9", column: "archived" } });
+    expect(custom.store.createTask).not.toHaveBeenCalled();
+  });
+
   it("rejects an unavailable proposal claim in a custom workflow archived lane", async () => {
     const unavailableClaim = task({
       id: "FN-9",
@@ -501,6 +533,34 @@ describe("recommendation task creation route", () => {
     expect(custom.store.createTask).not.toHaveBeenCalled();
     expect(custom.store.linkTaskRecommendation).not.toHaveBeenCalled();
     expect(custom.tasks[0]?.recommendations?.[0]?.createdTaskId).toBeUndefined();
+  });
+
+  it("repairs a proposal claim from an explicitly declared untraited archived column", async () => {
+    const liveClaim = task({
+      id: "FN-9",
+      description: "Live recommendation claim",
+      column: "archived",
+      proposalClaimId: "recommendation:FN-1:rec-1",
+    });
+    const custom = buildApp([parent(), liveClaim]);
+    installCustomRecommendationWorkflow(custom.store, ["FN-9"], { declareLegacyArchivedAsLive: true });
+
+    const response = await performRequest(
+      custom.app,
+      "POST",
+      "/api/tasks/FN-1/recommendations/rec-1/create",
+      undefined,
+    );
+
+    expect(response.status).toBe(200);
+    expect(custom.store.createTask).not.toHaveBeenCalled();
+    expect(custom.store.linkTaskRecommendation).toHaveBeenCalledWith(
+      "FN-1",
+      "rec-1",
+      "FN-9",
+      expect.any(Set),
+    );
+    expect(custom.tasks[0]?.recommendations?.[0]?.createdTaskId).toBe("FN-9");
   });
 
   it("recovers a deterministic proposal claim from the legacy archived compatibility lane", async () => {
