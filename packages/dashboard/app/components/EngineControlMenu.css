@@ -2,7 +2,23 @@
   position: relative;
   display: inline-flex;
   align-items: center;
+  width: max-content;
 }
+
+/*
+FNXC:EngineControls 2026-08-08-15:40 (FN-8802 width-collapse regression, RUFU-042):
+The open popover carries the shared `.card` class, whose base now sets `min-width: 0` and
+`max-width: 100%` (FN-8802, TaskCard.css). Its containing block is this `.engine-control-menu`
+wrapper, which sizes to the narrow trigger button; `.card`'s `max-width: 100%` therefore
+clamped the intended grid width down to ~the trigger's width (~5mm), hiding all content.
+
+The selected text (width/min-width/max-width) below must beat `.card` deterministically, so it
+targets the popover in its only real mount context (the ExecutorStatusBar footer segment) with
+higher specificity — the same pattern used by `.selection-comment-panel.card`. `max-width` is
+clamped to the VIEWPORT (not the trigger wrapper), `min-width` sets the floor so it can never
+collapse to a sliver, and the footer-scoped overrides re-assert the width so later `.card` rules
+cannot win by load order.
+*/
 
 .engine-control-menu__trigger {
   color: var(--text-muted);
@@ -186,9 +202,15 @@ FN-8007 defines both desktop pseudo-thumbs locally with the marker's shared size
 }
 
 .executor-status-bar__segment--engine-controls .engine-control-menu > .engine-control-menu__popover.card {
+  /* RUFU-042 (FN-8802 regression): this footer-scoped rule (0,3,0) out-specifies the shared
+     `.card` base (0,1,0), which sets `min-width: 0; max-width: 100%` (TaskCard.css). Without
+     these re-assertions `.card` could clamp the popover to its narrow trigger wrapper (~5mm).
+     `max-width` is clamped to the VIEWPORT, not the trigger, so the grid width survives. */
   position: absolute;
   right: 0;
   bottom: calc(100% + var(--space-xs));
+  min-width: min(24rem, calc(100vw - (var(--space-lg) * 2)));
+  max-width: calc(100vw - (var(--space-lg) * 2));
 }
 
 @media (max-width: 768px) {
@@ -232,6 +254,9 @@ FN-8007 defines both desktop pseudo-thumbs locally with the marker's shared size
     right: var(--space-sm);
     bottom: var(--engine-control-mobile-bottom-stack);
     width: auto;
+    /* RUFU-042 (FN-8802 regression): reset the desktop viewport min/max floor so the phone-width gutter panel never overflows; `.card`'s max-width:100% cannot clamp the left/right-stretched panel. */
+    min-width: 0;
+    max-width: none;
     max-height: min(28rem, calc(100dvh - var(--engine-control-mobile-bottom-stack) - (var(--space-md) * 2)));
     overflow: auto;
   }
@@ -243,6 +268,8 @@ FN-8007 defines both desktop pseudo-thumbs locally with the marker's shared size
     right: var(--space-sm);
     bottom: var(--engine-control-mobile-bottom-stack);
     width: auto;
+    min-width: 0;
+    max-width: none;
     max-height: min(28rem, calc(100dvh - var(--engine-control-mobile-bottom-stack) - (var(--space-md) * 2)));
     overflow: auto;
   }
