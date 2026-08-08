@@ -2249,9 +2249,10 @@ describe("TaskDetailModal", () => {
       const mockDetail = makeTask({ id: "FN-001", description: "Dep 1" });
       const onOpenDetail = vi.fn();
 
-      // The modal fetches its own detail on mount; settle and clear that request before exercising the link.
+      // A TaskDetail prop refreshes Definition through fetchTaskPrompt. The full-detail
+      // client is reserved for the clicked dependency, so install that response directly.
       mockFetch.mockReset();
-      mockFetch.mockResolvedValue(task);
+      mockFetch.mockResolvedValue(mockDetail);
       const { baseElement: container } = render(
         <TaskDetailModal
           initialTab="definition"
@@ -2265,9 +2266,6 @@ describe("TaskDetailModal", () => {
           addToast={noop}
         />,
       );
-      await waitFor(() => expect(mockFetch).toHaveBeenCalledWith("FN-099", projectId));
-      mockFetch.mockClear();
-      mockFetch.mockResolvedValue(mockDetail);
 
       fireEvent.click(container.querySelector(".detail-dep-link")!);
 
@@ -2286,9 +2284,9 @@ describe("TaskDetailModal", () => {
       const onOpenDetail = vi.fn();
       const addToast = vi.fn();
 
-      // Isolate the rejected link request from the modal's initial detail load.
+      // Definition refresh uses fetchTaskPrompt; this rejection belongs only to the link request.
       mockFetch.mockReset();
-      mockFetch.mockResolvedValue(task);
+      mockFetch.mockRejectedValueOnce(new Error("Task not found"));
       const { baseElement: container } = render(
         <TaskDetailModal
           initialTab="definition"
@@ -2302,9 +2300,6 @@ describe("TaskDetailModal", () => {
           addToast={addToast}
         />,
       );
-      await waitFor(() => expect(mockFetch).toHaveBeenCalledWith("FN-099", projectId));
-      mockFetch.mockClear();
-      mockFetch.mockRejectedValueOnce(new Error("Task not found"));
 
       fireEvent.click(container.querySelector(".detail-dep-link")!);
 
@@ -2325,7 +2320,7 @@ describe("TaskDetailModal", () => {
       const onOpenDetail = vi.fn();
 
       mockFetch.mockReset();
-      mockFetch.mockResolvedValue(task);
+      mockFetch.mockImplementation(async (id: string) => id === "FN-001" ? upstreamDetail : blockingDetail);
       const { baseElement: container } = render(
         <TaskDetailModal
           initialTab="definition"
@@ -2340,9 +2335,6 @@ describe("TaskDetailModal", () => {
           addToast={noop}
         />,
       );
-      await waitFor(() => expect(mockFetch).toHaveBeenCalledWith("FN-099", projectId));
-      mockFetch.mockClear();
-      mockFetch.mockImplementation(async (id) => id === "FN-001" ? upstreamDetail : blockingDetail);
 
       const [upstreamLink, blockingLink] = Array.from(container.querySelectorAll<HTMLElement>(".detail-dep-link"));
       fireEvent.keyDown(upstreamLink, { key: "Enter" });
@@ -2363,7 +2355,6 @@ describe("TaskDetailModal", () => {
       const onOpenDetail = vi.fn();
 
       mockFetch.mockReset();
-      mockFetch.mockResolvedValue(task);
       render(
         <TaskDetailModal
           initialTab="definition"
@@ -2376,8 +2367,6 @@ describe("TaskDetailModal", () => {
           addToast={noop}
         />,
       );
-      await waitFor(() => expect(mockFetch).toHaveBeenCalledWith("FN-099", undefined));
-      mockFetch.mockClear();
 
       fireEvent.click(screen.getByTitle(/Remove dependency/));
 
