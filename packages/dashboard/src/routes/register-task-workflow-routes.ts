@@ -357,15 +357,16 @@ async function resolveTerminalColumnsForTask(store: TaskStore, taskId: string): 
 }
 
 /*
-FNXC:TaskRecommendations 2026-08-08-12:40:
-Workflow traits identify current archived lanes. The legacy `archived` id remains a compatibility
-tombstone for persisted pre-migration tasks; workflow-resolution failures degrade to that same id.
+FNXC:TaskRecommendations 2026-08-08-12:48:
+Workflow traits identify current archived lanes. An undeclared legacy `archived` id remains a
+compatibility tombstone for persisted pre-migration tasks, while an explicitly declared untraited
+`archived` column stays live under flags-first semantics. Resolution failures degrade to the legacy id.
 */
 async function resolveArchivedColumnsForTask(store: TaskStore, taskId: string): Promise<Set<string>> {
   try {
     const ir = await resolveWorkflowIrForTask(store, taskId);
     const archived = columnsWithFlag(ir, "archived");
-    return new Set([...archived, "archived"]);
+    return new Set(workflowHasColumn(ir, "archived") ? archived : [...archived, "archived"]);
   } catch {
     return new Set(["archived"]);
   }
