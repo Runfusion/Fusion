@@ -2256,7 +2256,18 @@ describe("TaskDetailModal", () => {
       const mockDetail = makeTask({ id: "FN-001", description: "Dep 1" });
       const onOpenDetail = vi.fn();
 
-      mockFetch.mockResolvedValue(mockDetail);
+      /*
+      FNXC:TaskDetailDependencies 2026-08-08-12:32:
+      A TaskDetail prop refreshes Definition through fetchTaskPrompt. The full-detail client is
+      reserved for the clicked dependency, so fail this fixture on any other request.
+      */
+      mockFetch.mockReset();
+      mockFetch.mockImplementation(async (id: string, requestedProjectId?: string) => {
+        if (id !== "FN-001" || requestedProjectId !== projectId) {
+          throw new Error(`Unexpected dependency detail request: ${id}`);
+        }
+        return mockDetail;
+      });
       const { baseElement: container } = render(
         <TaskDetailModal
           initialTab="definition"
@@ -2348,7 +2359,18 @@ describe("TaskDetailModal", () => {
       const onOpenDetail = vi.fn();
       const addToast = vi.fn();
 
-      mockFetch.mockRejectedValueOnce(new Error("Task not found"));
+      /*
+      FNXC:TaskDetailDependencies 2026-08-08-12:32:
+      Definition refresh uses fetchTaskPrompt. Reject the expected dependency request and fail this
+      fixture distinctly if another full-detail request appears.
+      */
+      mockFetch.mockReset();
+      mockFetch.mockImplementation(async (id: string, requestedProjectId?: string) => {
+        if (id !== "FN-001" || requestedProjectId !== projectId) {
+          throw new Error(`Unexpected dependency detail request: ${id}`);
+        }
+        throw new Error("Task not found");
+      });
       const { baseElement: container } = render(
         <TaskDetailModal
           initialTab="definition"
@@ -2382,7 +2404,15 @@ describe("TaskDetailModal", () => {
       const blockingDetail = makeTask({ id: "FN-100", description: "Blocking dependent" });
       const onOpenDetail = vi.fn();
 
-      mockFetch.mockImplementation(async (id) => id === "FN-001" ? upstreamDetail : blockingDetail);
+      mockFetch.mockReset();
+      mockFetch.mockImplementation(async (id: string, requestedProjectId?: string) => {
+        if (requestedProjectId !== projectId) {
+          throw new Error(`Unexpected dependency project: ${requestedProjectId ?? "<none>"}`);
+        }
+        if (id === "FN-001") return upstreamDetail;
+        if (id === "FN-100") return blockingDetail;
+        throw new Error(`Unexpected dependency detail request: ${id}`);
+      });
       const { baseElement: container } = render(
         <TaskDetailModal
           initialTab="definition"
