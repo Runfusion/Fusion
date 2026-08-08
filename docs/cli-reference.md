@@ -337,7 +337,7 @@ fn dashboard --lang zh-TW                   # force a UI locale for this run
 ```
 
 The terminal UI is localized. `--lang <code>` (one of `en`, `zh-CN`, `zh-TW`,
-`fr`, `es`, `ko`) takes precedence over the saved dashboard language setting and the
+`fr`, `es`, `ko`, `pt-BR`) takes precedence over the saved dashboard language setting and the
 `LC_ALL`/`LC_MESSAGES`/`LANG`/`LANGUAGE` environment. See
 [Localization contributor guide](./i18n-contributing.md).
 

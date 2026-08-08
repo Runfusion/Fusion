@@ -26,9 +26,9 @@ describe("LanguageSelector", () => {
     });
   });
 
-  it("renders all five language endonyms", () => {
+  it("renders all seven language endonyms", () => {
     render(<LanguageSelector />);
-    for (const name of ["English", "简体中文", "繁體中文", "Français", "Español"]) {
+    for (const name of ["English", "简体中文", "繁體中文", "Français", "Español", "한국어", "Português (Brasil)"]) {
       expect(screen.getByText(name)).toBeTruthy();
     }
   });

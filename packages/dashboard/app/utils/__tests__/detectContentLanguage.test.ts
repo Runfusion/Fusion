@@ -54,6 +54,21 @@ describe("detectContentLanguage", () => {
     expect(detected.family).toBe("latin");
   });
 
+  it("detects Brazilian Portuguese stopword-heavy prose", () => {
+    const text =
+      "Não podemos usar essa configuração quando o painel já está aberto, então você deve fazer uma revisão das tarefas para que tudo também funcione como esperado.";
+    const detected = detectContentLanguage(text);
+    expect(detected.locale).toBe("pt-BR");
+    expect(detected.family).toBe("latin");
+  });
+
+  it("does not mistake bare .com domains for Portuguese", () => {
+    const text =
+      "Please check github.com, gitlab.com, bitbucket.com, npmjs.com and registry.com to see if the package is published.";
+    const detected = detectContentLanguage(text);
+    expect(detected.locale).toBe("en");
+  });
+
   it("ignores fenced code and URLs when scoring", () => {
     const text = `
 ## Bug
@@ -227,5 +242,6 @@ describe("localeDisplayName", () => {
     expect(localeDisplayName("en")).toBe("English");
     expect(localeDisplayName("ko")).toBe("한국어");
     expect(localeDisplayName("fr")).toBe("Français");
+    expect(localeDisplayName("pt-BR")).toBe("Português (Brasil)");
   });
 });

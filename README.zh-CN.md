@@ -10,7 +10,7 @@
 
 [**runfusion.ai →**](https://runfusion.ai) · [文档](./docs/README.md) · [GitHub](https://github.com/Runfusion/Fusion) · [npm](https://www.npmjs.com/package/@runfusion/fusion) · [Discord](https://discord.gg/ksrfuy7WYR)
 
-[English](./README.md) · **简体中文** · [繁體中文](./README.zh-TW.md) · [Français](./README.fr.md) · [Español](./README.es.md) · [한국어](./README.ko.md)
+[English](./README.md) · **简体中文** · [繁體中文](./README.zh-TW.md) · [Français](./README.fr.md) · [Español](./README.es.md) · [한국어](./README.ko.md) · [Português (Brasil)](./README.pt-BR.md)
 
 *本文档为社区机器翻译版本，英文 README 为权威原版。*
 
