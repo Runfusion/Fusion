@@ -67,7 +67,8 @@ export function normalizeToSupportedLocale(tag: string): Locale | undefined {
   Portuguese region tag (pt, pt-PT, pt_PT.UTF-8) resolves to pt-BR, the only Portuguese
   catalog Fusion ships; exact "pt-BR" already matches via the isLocale(norm) check above.
   */
-  if (lower.startsWith("pt")) return "pt-BR";
+  const base = lower.split("-")[0];
+  if (base === "pt") return "pt-BR";
   if (lower.startsWith("zh")) {
     // An explicit Simplified script subtag wins over region: zh-Hans-HK /
     // zh-Hans-MO are valid BCP-47 for Simplified Chinese used in HK/Macau.
@@ -83,7 +84,6 @@ export function normalizeToSupportedLocale(tag: string): Locale | undefined {
     return "zh-CN";
   }
 
-  const base = lower.split("-")[0];
   return isLocale(base) ? base : undefined;
 }
 

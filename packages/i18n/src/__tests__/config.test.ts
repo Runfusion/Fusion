@@ -101,5 +101,6 @@ describe("normalizeToSupportedLocale", () => {
     expect(normalizeToSupportedLocale("pt")).toBe("pt-BR");
     expect(normalizeToSupportedLocale("pt-PT")).toBe("pt-BR");
     expect(normalizeToSupportedLocale("pt_PT.UTF-8")).toBe("pt-BR");
+    expect(normalizeToSupportedLocale("ptx")).toBeUndefined();
   });
 });
