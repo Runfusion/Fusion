@@ -101,6 +101,7 @@ import {
   prepareRevertPrBranch,
   prepareWorkspaceRevertPrBranches,
   isInReviewMissingWorktreeSessionStartFailure,
+  inspectExternalGitCheckout,
   // FN-8004 follow-up: shared with SelfHealingManager.recoverStaleMergingStatus so the manual
   // Retry gate and the automatic sweep agree on when a merge-active stamp is orphaned.
   isStaleMergeActiveStatus,
@@ -6407,6 +6408,54 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       } else {
         rethrowAsApiError(err);
       }
+    }
+  });
+
+  // Persist one operator-validated external checkout for both implementation
+  // and enforced review. Keep filesystem routing out of the user-defined
+  // workflow custom-field schema.
+  router.patch("/tasks/:id/external-checkout", async (req, res) => {
+    try {
+      const { store: scopedStore } = await getProjectContext(req);
+      const checkoutPath = (req.body as { checkoutPath?: unknown } | undefined)?.checkoutPath;
+      await scopedStore.getTask(req.params.id);
+
+      if (checkoutPath === null) {
+        const task = await scopedStore.updateTask(req.params.id, {
+          sourceMetadataPatch: {
+            externalExecutionCheckout: null,
+            externalExecutionBranch: null,
+            externalReviewCheckout: null,
+          },
+        });
+        await scopedStore.logEntry(req.params.id, "External execution/review checkout routing cleared by operator");
+        res.json(task);
+        return;
+      }
+
+      const inspection = await inspectExternalGitCheckout(checkoutPath, { requireClean: true });
+      if (!inspection.valid || !inspection.checkoutPath || !inspection.branch) {
+        throw badRequest(`Invalid external checkout: ${inspection.reason ?? "unknown error"}`);
+      }
+
+      const task = await scopedStore.updateTask(req.params.id, {
+        sourceMetadataPatch: {
+          externalExecutionCheckout: inspection.checkoutPath,
+          externalExecutionBranch: inspection.branch,
+          externalReviewCheckout: inspection.checkoutPath,
+        },
+      });
+      await scopedStore.logEntry(
+        req.params.id,
+        `External execution/review checkout routed to ${inspection.checkoutPath} (${inspection.branch}) by operator`,
+      );
+      res.json(task);
+    } catch (err: unknown) {
+      if (err instanceof ApiError) throw err;
+      if (isTaskLookupMiss(err) || (err instanceof Error ? err.message : String(err)).includes("not found")) {
+        throw notFound(err instanceof Error ? err.message : String(err));
+      }
+      rethrowAsApiError(err);
     }
   });
 

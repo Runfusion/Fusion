@@ -36,6 +36,7 @@ import { WorkflowAgentCapacity } from "./agents/workflow-agent-capacity.js";
 import { createExecutorColumnBoundaryHooks } from "./workflow-column-boundary-hooks.js";
 import { ensureWorkflowCompletionSummary } from "./workflows/workflow-completion-summary.js";
 import { createCodeNodeRunner } from "./execution/code-node-runner.js";
+import { resolveExternalExecutionCheckoutRoute } from "./execution/external-execution-checkout.js";
 import { getTaskReviewCheckoutPath, resolveReviewCheckoutCwd } from "./execution/review-checkout.js";
 import { getActiveNotificationService } from "./util/notifier.js";
 import type { ParseStepsHandlerDeps, CodeNodeRunner } from "./workflows/workflow-node-handlers.js";
@@ -8965,6 +8966,14 @@ export class TaskExecutor {
       prepareWorktree: async (_ctx, task) => {
         const live = await this.store.getTask(task.id).catch(() => null);
         const liveTask = live?.id === task.id ? live : null;
+        const routedTask = liveTask ?? task;
+        const externalRoute = await resolveExternalExecutionCheckoutRoute(routedTask);
+        if (externalRoute.configured && !externalRoute.valid) {
+          return {
+            outcome: "failure",
+            value: `external-execution-checkout-invalid: ${externalRoute.reason ?? "unknown error"}`,
+          };
+        }
         /*
         FNXC:WorkflowExecution 2026-06-23-11:49:
         The workflow execute node must not perform a second worktree acquisition ahead of the authoritative executor. Passing the repo root as a prepared worktree makes the inner execute() reject a valid fresh-worktree task as repo-root reuse; pass only an existing task worktree and let execute() acquire when none exists.
@@ -8973,8 +8982,12 @@ export class TaskExecutor {
         Upgrade safety requires the graph primitive to tolerate older or minimal stores that return null or a mismatched row during startup/cutover. Only trust the live row when it is for the requested task; otherwise fall back to the runner snapshot.
         */
         const prepared: PreparedWorktree = {
-          worktreePath: liveTask?.worktree || task.worktree || "",
-          branchName: liveTask?.branch || task.branch,
+          worktreePath: externalRoute.configured
+            ? externalRoute.checkoutPath ?? ""
+            : liveTask?.worktree || task.worktree || "",
+          branchName: externalRoute.configured
+            ? externalRoute.branch
+            : liveTask?.branch || task.branch,
         };
         return { outcome: "success", value: "worktree-ready", data: prepared };
       },
@@ -14040,6 +14053,12 @@ export class TaskExecutor {
     // Behavior-inert when nothing is customized (declaration defaults === legacy
     // defaults; absent-default lanes never override).
     const settings = await mergeEffectiveSettings(this.store, task, await this.store.getSettings());
+    const externalExecutionRoute = await resolveExternalExecutionCheckoutRoute(task);
+    if (externalExecutionRoute.configured && !externalExecutionRoute.valid) {
+      const message = `Persisted external execution checkout is invalid: ${externalExecutionRoute.reason ?? "unknown error"}`;
+      await this.store.logEntry(task.id, message, undefined, this.getRunContextFor(task.id));
+      throw new Error(message);
+    }
 
     // Keep runtime plugin workflow step templates synchronized into TaskStore.
     // TaskStore resolves plugin-prefixed workflow IDs from this injected cache
@@ -14176,7 +14195,7 @@ export class TaskExecutor {
       );
     }
 
-    if (task.column === preflightWipLane && !task.worktree) {
+    if (task.column === preflightWipLane && !task.worktree && !externalExecutionRoute.configured) {
       executorLog.error(
         `${task.id}: drift detected — task is in-progress with no worktree. ` +
           `Recovering by creating a fresh worktree. This usually indicates a partial ` +
@@ -14191,7 +14210,9 @@ export class TaskExecutor {
     }
 
     // Hoist worktreePath so it's accessible in the catch block for dep-abort cleanup
-    let worktreePath = task.worktree ?? "";
+    let worktreePath = externalExecutionRoute.configured
+      ? externalExecutionRoute.checkoutPath ?? ""
+      : task.worktree ?? "";
 
     // Set by stuck-abort handlers; the actual moveTask("todo") is deferred to
     // the finally block so this.executing is cleared first (prevents re-dispatch race).
@@ -14281,7 +14302,7 @@ export class TaskExecutor {
         }
       }
 
-      const hadAssignedWorktree = Boolean(task.worktree);
+      const hadAssignedWorktree = Boolean(task.worktree) || externalExecutionRoute.configured;
       const taskCommandAbortController = new AbortController();
       this.registerConfiguredCommandController(task.id, taskCommandAbortController);
       /*
@@ -14296,6 +14317,14 @@ export class TaskExecutor {
             hydrated: true,
             isResume: Boolean(task.sessionFile),
           }
+        : externalExecutionRoute.configured
+          ? {
+              worktreePath: externalExecutionRoute.checkoutPath ?? "",
+              branch: externalExecutionRoute.branch ?? "",
+              source: "existing",
+              hydrated: true,
+              isResume: Boolean(task.sessionFile),
+            }
         : await (async () => {
         try {
           return await acquireTaskWorktree({
@@ -14391,7 +14420,7 @@ export class TaskExecutor {
       FNXC:Workspace 2026-06-21-12:00:
       KTD1 — every preflight below (base-commit capture, contamination check, worktree-liveness gate) runs git against `worktreePath`, which equals the non-git workspace root in workspace mode. They would all fail. Gate the whole block off in workspace mode; the per-repo equivalents return in Phase B (master U3) against each acquired sub-repo worktree. The non-workspace branch is unchanged.
       */
-      if (!this.workspaceConfig) {
+      if (!this.workspaceConfig && !externalExecutionRoute.configured) {
       // Capture the base commit SHA for diff computation whenever a task
       // starts with a newly assigned worktree.
       if (!acquisition.isResume) {
@@ -18096,9 +18125,24 @@ export class TaskExecutor {
       }
       return { ok: true };
     }
-    const branchName = resolveTaskWorkingBranch(task);
+    const externalExecutionRoute = await resolveExternalExecutionCheckoutRoute(task);
+    if (externalExecutionRoute.configured && !externalExecutionRoute.valid) {
+      return {
+        ok: false,
+        reason: "wrong_toplevel",
+        observed: externalExecutionRoute.reason ?? "invalid persisted external execution checkout",
+        expected: "valid persisted external execution checkout",
+      };
+    }
+    const branchName = externalExecutionRoute.configured
+      ? externalExecutionRoute.branch ?? ""
+      : resolveTaskWorkingBranch(task);
     // Non-workspace tasks hold a one-element set; fall back to its sole member to preserve the original singular resolution.
-    const worktreePath = worktreePathOverride ?? task.worktree ?? this.getActiveWorktreePaths(task.id)[0] ?? null;
+    const worktreePath = worktreePathOverride
+      ?? (externalExecutionRoute.configured ? externalExecutionRoute.checkoutPath : undefined)
+      ?? task.worktree
+      ?? this.getActiveWorktreePaths(task.id)[0]
+      ?? null;
 
     if (!worktreePath) {
       return {
@@ -18146,12 +18190,13 @@ export class TaskExecutor {
       if (observedTopLevelRaw) {
         const observedTopLevel = canonicalizePath(observedTopLevelRaw);
 
-        if (
-          observedTopLevel === expectedRoot ||
-          !isInsideWorktreesDir(this.rootDir, observedTopLevel, settings) ||
-          observedTopLevel !== expectedWorktreeRealpath
-        ) {
-          if (allowReanchor && observedTopLevel !== expectedRoot && isInsideWorktreesDir(this.rootDir, observedTopLevel, settings)) {
+        const violatesCheckoutBoundary = externalExecutionRoute.configured
+          ? observedTopLevel !== expectedWorktreeRealpath
+          : observedTopLevel === expectedRoot
+            || !isInsideWorktreesDir(this.rootDir, observedTopLevel, settings)
+            || observedTopLevel !== expectedWorktreeRealpath;
+        if (violatesCheckoutBoundary) {
+          if (!externalExecutionRoute.configured && allowReanchor && observedTopLevel !== expectedRoot && isInsideWorktreesDir(this.rootDir, observedTopLevel, settings)) {
             const reanchor = await detectNestedWorktreeRoot(this.rootDir, worktreePath, settings);
             if (reanchor.reanchored) {
               await this.store.updateTask(task.id, { worktree: reanchor.root });

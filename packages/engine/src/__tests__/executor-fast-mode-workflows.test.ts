@@ -9,6 +9,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import "./executor-test-helpers.js";
 import { getBuiltinWorkflow } from "@fusion/core";
 import { TaskExecutor } from "../executor.js";
+import { resolveExternalExecutionCheckoutRoute } from "../execution/external-execution-checkout.js";
 import { WorkflowGraphTaskRunner } from "../workflows/workflow-graph-task-runner.js";
 import { FOREACH_ACTIVE_CONTEXT_KEY } from "../workflows/workflow-node-handlers.js";
 import {
@@ -19,6 +20,12 @@ import {
   mockedStatSync,
   resetExecutorMocks,
 } from "./executor-test-helpers.js";
+
+vi.mock("../execution/external-execution-checkout.js", () => ({
+  resolveExternalExecutionCheckoutRoute: vi.fn(async () => ({ configured: false })),
+}));
+
+const mockedResolveExternalExecutionCheckoutRoute = vi.mocked(resolveExternalExecutionCheckoutRoute);
 
 const now = "2026-06-10T00:00:00.000Z";
 
@@ -70,6 +77,8 @@ function workflowResult() {
 describe("fast mode workflow/runtime invariants", () => {
   beforeEach(() => {
     resetExecutorMocks();
+    mockedResolveExternalExecutionCheckoutRoute.mockReset();
+    mockedResolveExternalExecutionCheckoutRoute.mockResolvedValue({ configured: false });
     mockedExistsSync.mockReturnValue(true);
   });
 
@@ -244,6 +253,43 @@ describe("fast mode workflow/runtime invariants", () => {
       data: {
         worktreePath: "/tmp/right",
         branchName: "fusion/fn-6226",
+      },
+    });
+  });
+
+  it("prepares a persisted external execution checkout instead of the project task worktree", async () => {
+    const routedTask = task({
+      id: "FN-6097",
+      worktree: "/tmp/project-task-worktree",
+      branch: "fusion/fn-6097",
+      sourceMetadata: {
+        externalExecutionCheckout: "/tmp/external-runtime",
+        externalExecutionBranch: "local/runtime-fixes",
+        externalReviewCheckout: "/tmp/external-runtime",
+      },
+    });
+    const store = createMockStore();
+    store.getTask.mockResolvedValue(routedTask);
+    mockedResolveExternalExecutionCheckoutRoute.mockResolvedValueOnce({
+      configured: true,
+      valid: true,
+      checkoutPath: "/tmp/external-runtime",
+      branch: "local/runtime-fixes",
+    });
+    const executor = new TaskExecutor(store, "/tmp/project-root");
+
+    const result = await (executor as any)
+      .createAuthoritativeWorkflowPrimitives({ experimentalFeatures: { workflowGraphExecutor: true } })
+      .prepareWorktree(
+        { run: { taskId: "FN-6097" }, node: { node: { id: "execute" }, context: {} } },
+        routedTask,
+      );
+
+    expect(result).toMatchObject({
+      outcome: "success",
+      data: {
+        worktreePath: "/tmp/external-runtime",
+        branchName: "local/runtime-fixes",
       },
     });
   });
