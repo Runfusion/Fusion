@@ -173,6 +173,40 @@ function installCustomRecommendationWorkflow(
   });
 }
 
+/*
+FNXC:TaskRecommendations 2026-08-09-06:06:
+Real v1 workflow fixtures must pass through the production read-path upgrade so synthesized default
+columns keep legacy `archived` tombstone semantics instead of looking like an explicitly live lane.
+*/
+function installLegacyV1RecommendationWorkflow(
+  store: Partial<TaskStore>,
+  taskIds: readonly string[],
+): void {
+  Object.assign(store, {
+    getTaskWorkflowSelection: vi.fn((id: string) => taskIds.includes(id) ? { workflowId: "legacy-recommendation-workflow", stepIds: [] } : undefined),
+    getTaskWorkflowSelectionAsync: vi.fn(async (id: string) => taskIds.includes(id) ? { workflowId: "legacy-recommendation-workflow", stepIds: [] } : undefined),
+    getWorkflowDefinition: vi.fn(async () => ({
+      id: "legacy-recommendation-workflow",
+      name: "Legacy recommendation workflow",
+      kind: "workflow",
+      ir: JSON.stringify({
+        version: "v1",
+        name: "legacy-recommendation-workflow",
+        nodes: [
+          { id: "start", kind: "start" },
+          { id: "execute", kind: "prompt", config: { seam: "execute", prompt: "Do the work" } },
+          { id: "end", kind: "end" },
+        ],
+        edges: [
+          { from: "start", to: "execute", condition: "success" },
+          { from: "execute", to: "end", condition: "success" },
+          { from: "execute", to: "end", condition: "failure" },
+        ],
+      }),
+    })),
+  });
+}
+
 describe("recommendation task creation route", () => {
   beforeEach(() => locks?.clear());
   afterEach(() => { locks?.clear(); vi.restoreAllMocks(); });
@@ -356,7 +390,8 @@ describe("recommendation task creation route", () => {
 
     expect(recovered.status).toBe(200);
     expect(store.createTask).toHaveBeenCalledTimes(1);
-    expect(store.unarchiveTask).toHaveBeenCalledWith("FN-102");
+    expect(store.unarchiveTask).not.toHaveBeenCalled();
+    expect(store.moveTask).toHaveBeenLastCalledWith("FN-102", "todo", { recoveryRehome: true });
     expect(tasks[0]?.recommendations?.[0]?.createdTaskId).toBe("FN-102");
   });
 
@@ -379,7 +414,8 @@ describe("recommendation task creation route", () => {
     const recovered = await performRequest(app, "POST", "/api/tasks/FN-1/recommendations/rec-1/create", undefined);
 
     expect(recovered.status).toBe(200);
-    expect(store.moveTask).toHaveBeenLastCalledWith("FN-102", "backlog");
+    expect(store.unarchiveTask).not.toHaveBeenCalled();
+    expect(store.moveTask).toHaveBeenLastCalledWith("FN-102", "backlog", { recoveryRehome: true });
     expect(tasks.find((item) => item.id === "FN-102")?.column).toBe("backlog");
   });
 
@@ -512,6 +548,25 @@ describe("recommendation task creation route", () => {
     expect(custom.store.createTask).not.toHaveBeenCalled();
   });
 
+  it("treats a linked child in synthesized v1 archived state as unavailable", async () => {
+    const archivedChild = task({ id: "FN-9", description: "Legacy archived child", column: "archived" });
+    const legacy = buildApp([
+      parent({ recommendations: [{ ...parent().recommendations![0], createdTaskId: "FN-9" }] }),
+      archivedChild,
+    ]);
+    installLegacyV1RecommendationWorkflow(legacy.store, ["FN-9"]);
+
+    const response = await performRequest(
+      legacy.app,
+      "POST",
+      "/api/tasks/FN-1/recommendations/rec-1/create",
+      undefined,
+    );
+
+    expect(response.status).toBe(409);
+    expect(legacy.store.createTask).not.toHaveBeenCalled();
+  });
+
   it("rejects an unavailable proposal claim in a custom workflow archived lane", async () => {
     const unavailableClaim = task({
       id: "FN-9",
@@ -590,7 +645,8 @@ describe("recommendation task creation route", () => {
 
     expect(response.status).toBe(200);
     expect(custom.store.createTask).not.toHaveBeenCalled();
-    expect(custom.store.moveTask).toHaveBeenCalledWith("FN-10", "backlog");
+    expect(custom.store.unarchiveTask).not.toHaveBeenCalled();
+    expect(custom.store.moveTask).toHaveBeenCalledWith("FN-10", "backlog", { recoveryRehome: true });
     expect(custom.store.linkTaskRecommendation).toHaveBeenCalledWith(
       "FN-1",
       "rec-1",
@@ -598,6 +654,82 @@ describe("recommendation task creation route", () => {
       expect.any(Set),
     );
     expect(custom.tasks[0]?.recommendations?.[0]?.createdTaskId).toBe("FN-10");
+  });
+
+  it("recovers a deterministic proposal claim from a custom archived-trait lane", async () => {
+    const canonical = task({
+      id: "FN-9",
+      title: "Canonical export task",
+      description: "Canonical export work",
+      column: "done",
+    });
+    const recoverableClaim = task({
+      id: "FN-10",
+      description: "Archived recommendation claim",
+      column: "boxed" as Column,
+      proposalClaimId: "recommendation:FN-1:rec-1",
+      sourceMetadata: { deterministicDuplicateOf: "FN-9" },
+    });
+    const custom = buildApp([parent(), canonical, recoverableClaim]);
+    installCustomRecommendationWorkflow(custom.store, ["FN-10"]);
+    (custom.store.searchTasks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+
+    const response = await performRequest(
+      custom.app,
+      "POST",
+      "/api/tasks/FN-1/recommendations/rec-1/create",
+      undefined,
+    );
+
+    expect(response.status).toBe(200);
+    expect(custom.store.createTask).not.toHaveBeenCalled();
+    expect(custom.store.unarchiveTask).not.toHaveBeenCalled();
+    expect(custom.store.moveTask).toHaveBeenCalledWith("FN-10", "backlog", { recoveryRehome: true });
+    expect(custom.store.linkTaskRecommendation).toHaveBeenCalledWith(
+      "FN-1",
+      "rec-1",
+      "FN-10",
+      expect.any(Set),
+    );
+    expect(custom.tasks[0]?.recommendations?.[0]?.createdTaskId).toBe("FN-10");
+  });
+
+  it("recovers a deterministic proposal claim from synthesized v1 archived state", async () => {
+    const canonical = task({
+      id: "FN-9",
+      title: "Canonical export task",
+      description: "Canonical export work",
+      column: "done",
+    });
+    const recoverableClaim = task({
+      id: "FN-10",
+      description: "Legacy archived recommendation claim",
+      column: "archived",
+      proposalClaimId: "recommendation:FN-1:rec-1",
+      sourceMetadata: { deterministicDuplicateOf: "FN-9" },
+    });
+    const legacy = buildApp([parent(), canonical, recoverableClaim]);
+    installLegacyV1RecommendationWorkflow(legacy.store, ["FN-10"]);
+    (legacy.store.searchTasks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+
+    const response = await performRequest(
+      legacy.app,
+      "POST",
+      "/api/tasks/FN-1/recommendations/rec-1/create",
+      undefined,
+    );
+
+    expect(response.status).toBe(200);
+    expect(legacy.store.createTask).not.toHaveBeenCalled();
+    expect(legacy.store.unarchiveTask).not.toHaveBeenCalled();
+    expect(legacy.store.moveTask).toHaveBeenCalledWith("FN-10", "triage", { recoveryRehome: true });
+    expect(legacy.store.linkTaskRecommendation).toHaveBeenCalledWith(
+      "FN-1",
+      "rec-1",
+      "FN-10",
+      expect.any(Set),
+    );
+    expect(legacy.tasks[0]?.recommendations?.[0]?.createdTaskId).toBe("FN-10");
   });
 
   it.each([

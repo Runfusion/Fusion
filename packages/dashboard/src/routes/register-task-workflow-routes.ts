@@ -86,6 +86,7 @@ import {
 } from "@fusion/core";
 import { GitHubClient } from "../github.js";
 import { resolveArtifactMediaPath } from "../artifact-media.js";
+import { archivedColumnsForTask } from "../task-lifecycle-lanes.js";
 import { githubRateLimiter } from "../github-poll.js";
 import { createTrackingIssueForTask } from "../github-tracking-hook.js";
 import { parseGitHubBadgeUrl } from "./register-git-github.js";
@@ -356,23 +357,6 @@ async function resolveTerminalColumnsForTask(store: TaskStore, taskId: string): 
     return new Set(["done", "archived"]);
   }
 }
-
-/*
-FNXC:TaskRecommendations 2026-08-08-12:48:
-Workflow traits identify current archived lanes. An undeclared legacy `archived` id remains a
-compatibility tombstone for persisted pre-migration tasks, while an explicitly declared untraited
-`archived` column stays live under flags-first semantics. Resolution failures degrade to the legacy id.
-*/
-async function resolveArchivedColumnsForTask(store: TaskStore, taskId: string): Promise<Set<string>> {
-  try {
-    const ir = await resolveWorkflowIrForTask(store, taskId);
-    const archived = columnsWithFlag(ir, "archived");
-    return new Set(workflowHasColumn(ir, "archived") ? archived : [...archived, "archived"]);
-  } catch {
-    return new Set(["archived"]);
-  }
-}
-
 
 function isArtifactType(value: string): value is ArtifactType {
   return ARTIFACT_TYPES.has(value as ArtifactType);
@@ -2152,18 +2136,23 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       canonical lets the original claimed child return to its workflow-resolved intake lane.
       */
       if (trusted?.recoverArchivedProposalTask) {
-        const restoredTask = await scopedStore.unarchiveTask(trusted.recoverArchivedProposalTask.id);
         /*
         FNXC:TaskRecommendations 2026-08-08-08:44:
         A deterministic-duplicate archive is a lane move, not an operator archive, so it has no
         pre-archive history for generic restore to replay. Re-home its recovered child to that
         child's workflow intake explicitly; otherwise custom workflows can restore it to a legacy
         fallback or complete lane instead of the normal guarded-intake destination.
+
+        FNXC:TaskRecommendations 2026-08-09-06:06:
+        Never call the cold-storage unarchive path here. Deterministic reconciliation keeps the row in
+        active storage and may move it to a custom archived-trait lane; re-home that live row directly
+        through the explicit recovery bypass because archive-to-intake is intentionally non-adjacent.
         */
-        const intakeColumn = await resolveIntakeColumnForTask(scopedStore, restoredTask.id);
-        const recoveredTask = restoredTask.column === intakeColumn
-          ? restoredTask
-          : await scopedStore.moveTask(restoredTask.id, intakeColumn);
+        const archivedTask = trusted.recoverArchivedProposalTask;
+        const intakeColumn = await resolveIntakeColumnForTask(scopedStore, archivedTask.id);
+        const recoveredTask = archivedTask.column === intakeColumn
+          ? archivedTask
+          : await scopedStore.moveTask(archivedTask.id, intakeColumn, { recoveryRehome: true });
         const trustedCreateResult = await trusted.onCreated?.(recoveredTask);
         res.status(200).json(trusted.responseForCreated?.(recoveredTask, trustedCreateResult) ?? recoveredTask);
         return;
@@ -2366,7 +2355,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         }
         const linked = await scopedStore.getTask(recommendation.createdTaskId).catch(() => null);
         const linkedArchiveColumns = linked
-          ? await resolveArchivedColumnsForTask(scopedStore, linked.id)
+          ? await archivedColumnsForTask(scopedStore, linked.id)
           : new Set<string>();
         /*
         FNXC:TaskRecommendations 2026-08-08-06:34:
@@ -2390,7 +2379,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       const existing = (await scopedStore.listTasks({ slim: false, includeArchived: true, includeDeleted: true }))
         .find((task) => task.proposalClaimId === proposalClaimId);
       const existingArchiveColumns = existing
-        ? await resolveArchivedColumnsForTask(scopedStore, existing.id)
+        ? await archivedColumnsForTask(scopedStore, existing.id)
         : new Set<string>();
       /*
       FNXC:TaskRecommendations 2026-08-08-08:44:
