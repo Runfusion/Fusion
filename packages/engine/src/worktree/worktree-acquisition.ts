@@ -323,7 +323,7 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
   }
   const branchName = resolveTaskWorkingBranch(task);
   const resolveExistingWorktreeBackendKind = async (path: string): Promise<WorktreeBackend["kind"]> =>
-    opts.createWorktreeBackendKind ?? await readPersistedWorktreeBackendKind(path) ?? backend.kind;
+    (await readPersistedWorktreeBackendKind(path)) ?? opts.createWorktreeBackendKind ?? backend.kind;
   const naming = settings.worktreeNaming || "random";
   /*
    * FNXC:TaskPinnedWorktrees 2026-07-16-00:00:

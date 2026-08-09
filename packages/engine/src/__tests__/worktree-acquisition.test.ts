@@ -508,6 +508,31 @@ describe("acquireTaskWorktree", () => {
     expect(git(worktreePath, "git rev-parse HEAD")).toBe(landedBase);
   });
 
+  it("preserves a persisted Worktrunk backend when an injected native creator is available", async () => {
+    const rootDir = makeRepo();
+    const staleBase = git(rootDir, "git rev-parse HEAD");
+    const worktreePath = join(rootDir, ".worktrees", "worktrunk-fn-4");
+    git(rootDir, `git worktree add -b fusion/fn-4 ${JSON.stringify(worktreePath)} ${staleBase}`);
+    const markerPath = git(worktreePath, "git rev-parse --git-path fusion-worktree-backend-kind");
+    writeFileSync(markerPath, "worktrunk\n", "utf-8");
+    writeFileSync(join(rootDir, "dependency-output.ts"), "export const dependencyOutput = true;\n", "utf-8");
+    git(rootDir, "git add dependency-output.ts");
+    git(rootDir, 'git commit -m "land dependency"');
+
+    const result = await acquireTaskWorktree({
+      task: { ...task, id: "FN-4", worktree: worktreePath, branch: "fusion/fn-4", baseCommitSha: staleBase },
+      rootDir,
+      store,
+      settings: { worktrunk: { enabled: true } } as any,
+      backend: { kind: "worktrunk" } as any,
+      createWorktreeBackendKind: "native",
+      refreshStaleBase: true,
+    });
+
+    expect(result).toMatchObject({ source: "existing", baseRefresh: undefined });
+    expect(git(worktreePath, "git rev-parse HEAD")).toBe(staleBase);
+  });
+
   it("clears a pooled task binding before releasing a worktree that fails base refresh", async () => {
     const rootDir = makeRepo();
     const pooledPath = join(rootDir, ".worktrees", "pooled-fn-4-dirty");

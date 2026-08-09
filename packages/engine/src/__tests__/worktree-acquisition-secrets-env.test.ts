@@ -144,6 +144,8 @@ describe("worktree-acquisition secrets env hook", () => {
       target: existingWorktree,
       metadata: { taskId: "FN-1", outcome: "base-reconciliation-required", reconciliationOutcome: "git-dir-unavailable" },
     }));
+    // FNXC:SecretsEnvMaterialization 2026-08-09-03:50: Audit targets identify the affected checkout; only
+    // resolver diagnostics and secret-derived values are redacted from the fixed failure outcome.
     expect(JSON.stringify(git.mock.calls)).not.toContain("secret-derived resolver detail");
   });
 
