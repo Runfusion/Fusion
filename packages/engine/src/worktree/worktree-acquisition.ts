@@ -1,5 +1,7 @@
 import { existsSync } from "node:fs";
+import { readFile, writeFile } from "node:fs/promises";
 import { exec } from "node:child_process";
+import { isAbsolute, resolve } from "node:path";
 import { promisify } from "node:util";
 import {acquireWorktreePathReservation, canonicalizeWorktreePath, type RunMutationContext, type Settings, type Task, type TaskStore, type SecretsStore} from "@fusion/core";
 import { generateWorktreeName, resolveTaskWorkingBranch, slugify } from "./worktree-names.js";
@@ -46,6 +48,29 @@ import { activeSessionRegistry, type ActiveSessionRegistry } from "../agents/act
 import { refreshReusedWorktreeBase, type WorktreeBaseRefreshResult } from "../worktree-base-refresh.js";
 
 const execAsync = promisify(exec);
+const WORKTREE_BACKEND_MARKER = "fusion-worktree-backend-kind";
+
+async function resolveWorktreeBackendMarkerPath(worktreePath: string): Promise<string> {
+  const { stdout } = await execAsync(`git rev-parse --git-path ${JSON.stringify(WORKTREE_BACKEND_MARKER)}`, {
+    cwd: worktreePath,
+    encoding: "utf-8",
+  });
+  const markerPath = stdout.trim();
+  return isAbsolute(markerPath) ? markerPath : resolve(worktreePath, markerPath);
+}
+
+async function persistWorktreeBackendKind(worktreePath: string, backendKind: WorktreeBackend["kind"]): Promise<void> {
+  await writeFile(await resolveWorktreeBackendMarkerPath(worktreePath), `${backendKind}\n`, "utf-8");
+}
+
+async function readPersistedWorktreeBackendKind(worktreePath: string): Promise<WorktreeBackend["kind"] | undefined> {
+  try {
+    const backendKind = (await readFile(await resolveWorktreeBackendMarkerPath(worktreePath), "utf-8")).trim();
+    return backendKind === "native" || backendKind === "worktrunk" ? backendKind : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 /**
  * Worktree acquisition contract:
@@ -236,7 +261,7 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
     }
     if (!reconciliation.executionSafe) {
       const refresh: WorktreeBaseRefreshResult = { kind: "base-reconciliation-required", executionSafe: false, detail: reconciliation.outcome };
-      await audit?.git?.({ type: "worktree:base-refresh-blocked", target: task.id, metadata: { taskId: task.id, outcome: refresh.kind, reconciliationOutcome: reconciliation.outcome } });
+      await audit?.git?.({ type: "worktree:base-refresh-blocked", target: path, metadata: { taskId: task.id, outcome: refresh.kind, reconciliationOutcome: reconciliation.outcome } });
       await store.logEntry(task.id, `Worktree secrets record reconciliation blocked execution (${reconciliation.outcome})`, undefined, runContext);
       throw new WorktreeBaseRefreshError(refresh);
     }
@@ -297,6 +322,8 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
     throw error;
   }
   const branchName = resolveTaskWorkingBranch(task);
+  const resolveExistingWorktreeBackendKind = async (path: string): Promise<WorktreeBackend["kind"]> =>
+    opts.createWorktreeBackendKind ?? await readPersistedWorktreeBackendKind(path) ?? backend.kind;
   const naming = settings.worktreeNaming || "random";
   /*
    * FNXC:TaskPinnedWorktrees 2026-07-16-00:00:
@@ -429,6 +456,7 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
             metadata: { branch: created.branch },
           });
         }
+        await persistWorktreeBackendKind(created.path, backend.kind);
         return { ...created, backendKind: backend.kind };
       } catch (error) {
         if (backend.kind === "worktrunk" && error instanceof WorktrunkOperationError) {
@@ -443,6 +471,7 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
             allowSiblingBranchRename: allowRename,
           });
           const created = await handleWorktrunkFailure("create", error, fallback) as { path: string; branch: string };
+          await persistWorktreeBackendKind(created.path, "native");
           return { ...created, backendKind: "native" };
         }
         throw error;
@@ -520,9 +549,9 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
       await store.logEntry(task.id, `Worktree created at ${worktreePath}`, undefined, runContext);
     }
 
-    // Execution can recreate an existing task branch after its dependency branch
-    // was merged and deleted. Refresh fresh acquisitions too so that branch cannot
-    // resume from its stale pre-dependency tip.
+    // FNXC:WorktreeBaseRefresh 2026-08-09-03:30: Execution can recreate an existing task branch after its
+    // dependency branch was merged and deleted. Refresh fresh acquisitions too so that branch cannot resume
+    // from its stale pre-dependency tip.
     const baseRefresh = await refreshExistingWorktree(worktreePath, created.backendKind);
 
     const cleanup = await removeDesktopBuildArtifacts(worktreePath, logger);
@@ -615,7 +644,7 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
       logger,
       runContext,
     });
-    const baseRefresh = await refreshExistingWorktree(path, backend.kind);
+    const baseRefresh = await refreshExistingWorktree(path, await resolveExistingWorktreeBackendKind(path));
     return guardAcquisitionReturn({ worktreePath: path, branch: resumedBranch, source, hydrated, isResume: true, baseRefresh });
   };
 
@@ -741,7 +770,7 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
       runContext,
     });
     // FN-4912: resume path reuses the prior on-disk .env (and its fingerprint sidecar). Rewrite is owned by the next fresh acquisition.
-    const baseRefresh = await refreshExistingWorktree(worktreePath, backend.kind);
+    const baseRefresh = await refreshExistingWorktree(worktreePath, await resolveExistingWorktreeBackendKind(worktreePath));
     return guardAcquisitionReturn({ worktreePath, branch: resumedBranch, source: "existing", hydrated, isResume: true, baseRefresh });
   }
 
@@ -879,9 +908,9 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
         }
       } catch (poolErr) {
         if (poolErr instanceof WorktreeBaseRefreshError) {
-          // Clear the durable task binding before returning the checkout to the pool.
-          // If persistence fails, retain the lease so no other task can mutate it.
-          await store.updateTask(task.id, { worktree: null, branch: null });
+          // FNXC:WorktreeBaseRefresh 2026-08-09-03:30: Clear every durable resume binding before returning the
+          // checkout to the pool. If persistence fails, retain the lease so no other task can mutate it.
+          await store.updateTask(task.id, { worktree: null, branch: null, sessionFile: null });
           pool.release(pooled, task.id);
           throw poolErr;
         }

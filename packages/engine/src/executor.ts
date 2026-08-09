@@ -10456,6 +10456,8 @@ export class TaskExecutor {
         runContext: this.getRunContextFor(task.id),
         runInitCommand: true,
         createWorktree: this.createWorktree.bind(this),
+        // FNXC:WorktreeAcquisition 2026-08-09-03:30: This injected creator is native even when project settings
+        // prefer Worktrunk; retain its actual backend so stale-base refresh remains enabled on creation and reuse.
         createWorktreeBackendKind: "native",
         runConfiguredCommand: (command, cwd, timeoutMs, env) =>
           runConfiguredCommand(
@@ -14362,6 +14364,8 @@ export class TaskExecutor {
             runContext: this.getRunContextFor(task.id),
             runInitCommand: true,
             createWorktree: this.createWorktree.bind(this),
+            // FNXC:WorktreeAcquisition 2026-08-09-03:30: This injected creator is native even when project settings
+            // prefer Worktrunk; retain its actual backend so stale-base refresh remains enabled on creation and reuse.
             createWorktreeBackendKind: "native",
             runConfiguredCommand: (command, cwd, timeoutMs, env) =>
               runConfiguredCommand(
