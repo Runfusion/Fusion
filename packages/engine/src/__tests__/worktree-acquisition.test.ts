@@ -4,7 +4,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
-import { acquireTaskWorktree, RepoRootWorktreeError } from "../worktree/worktree-acquisition.js";
+import { acquireTaskWorktree, RepoRootWorktreeError, WorktreeBaseRefreshError } from "../worktree/worktree-acquisition.js";
 import { classifyTaskWorktree, PoolDoubleLeaseError } from "../worktree/worktree-pool.js";
 import * as desktopArtifacts from "../worktree/worktree-desktop-artifacts.js";
 import * as branchConflicts from "../execution/branch-conflicts.js";
@@ -342,6 +342,150 @@ describe("acquireTaskWorktree", () => {
       metadata: expect.objectContaining({ classification: "unregistered", source: "resume" }),
     }));
     expect(store.updateTask).toHaveBeenCalledWith("FN-1", { worktree: null, branch: null, sessionFile: null });
+  });
+
+  it("refreshes a recreated existing task branch after its dependency branch is deleted", async () => {
+    const rootDir = makeRepo();
+    const staleBase = git(rootDir, "git rev-parse HEAD");
+    git(rootDir, `git branch fusion/fn-4 ${staleBase}`);
+    writeFileSync(join(rootDir, "dependency-output.ts"), "export const dependencyOutput = true;\n", "utf-8");
+    git(rootDir, "git add dependency-output.ts");
+    git(rootDir, 'git commit -m "land dependency"');
+    const landedBase = git(rootDir, "git rev-parse HEAD");
+
+    const result = await acquireTaskWorktree({
+      task: {
+        ...task,
+        id: "FN-4",
+        branch: "fusion/fn-4",
+        baseCommitSha: staleBase,
+        executionStartBranch: "fusion/deleted-dependency",
+      },
+      rootDir,
+      store,
+      settings: { worktreeNaming: "task-id", recycleWorktrees: false },
+      refreshStaleBase: true,
+      createWorktree: async (branch, path) => {
+        git(rootDir, `git worktree add ${JSON.stringify(path)} ${JSON.stringify(branch)}`);
+        return { path, branch };
+      },
+    });
+
+    expect(result).toMatchObject({
+      source: "fresh",
+      baseRefresh: { kind: "reset-to-base", executionSafe: true, baseSha: landedBase },
+    });
+    expect(git(result.worktreePath, "git rev-parse HEAD")).toBe(landedBase);
+    expect(existsSync(join(result.worktreePath, "dependency-output.ts"))).toBe(true);
+    expect(store.updateTask).toHaveBeenCalledWith("FN-4", { baseCommitSha: landedBase });
+  });
+
+  it("refreshes a retained task branch acquired from the worktree pool", async () => {
+    const rootDir = makeRepo();
+    const staleBase = git(rootDir, "git rev-parse HEAD");
+    const pooledPath = join(rootDir, ".worktrees", "pooled-fn-4");
+    git(rootDir, `git worktree add -b fusion/fn-4 ${JSON.stringify(pooledPath)} ${staleBase}`);
+    writeFileSync(join(rootDir, "dependency-output.ts"), "export const dependencyOutput = true;\n", "utf-8");
+    git(rootDir, "git add dependency-output.ts");
+    git(rootDir, 'git commit -m "land dependency"');
+    const landedBase = git(rootDir, "git rev-parse HEAD");
+    const pool = {
+      acquire: vi.fn().mockReturnValue(pooledPath),
+      prepareForTask: vi.fn().mockResolvedValue({
+        branch: "fusion/fn-4",
+        worktreePath: pooledPath,
+        reclaimed: false,
+      }),
+      release: vi.fn(),
+    } as any;
+
+    const result = await acquireTaskWorktree({
+      task: { ...task, id: "FN-4", branch: "fusion/fn-4", baseCommitSha: staleBase },
+      rootDir,
+      store,
+      settings: { recycleWorktrees: true },
+      pool,
+      refreshStaleBase: true,
+    });
+
+    expect(result).toMatchObject({
+      source: "pool",
+      baseRefresh: { kind: "reset-to-base", executionSafe: true, baseSha: landedBase },
+    });
+    expect(git(pooledPath, "git rev-parse HEAD")).toBe(landedBase);
+    expect(existsSync(join(pooledPath, "dependency-output.ts"))).toBe(true);
+  });
+
+  it("does not apply the native stale-base refresh to fresh Worktrunk acquisitions", async () => {
+    const result = await acquireTaskWorktree({
+      task,
+      rootDir: process.cwd(),
+      store,
+      settings: { worktrunk: { enabled: true } } as any,
+      backend: { kind: "worktrunk" } as any,
+      createWorktreeBackendKind: "worktrunk",
+      refreshStaleBase: true,
+      createWorktree: vi.fn().mockResolvedValue({ path: "/tmp/worktrunk-fresh", branch: "fusion/fn-1" }),
+    });
+
+    expect(result).toMatchObject({ source: "fresh", baseRefresh: undefined });
+  });
+
+  it("refreshes a native fallback acquisition even when Worktrunk is enabled", async () => {
+    const rootDir = makeRepo();
+    const staleBase = git(rootDir, "git rev-parse HEAD");
+    git(rootDir, `git branch fusion/fn-4 ${staleBase}`);
+    writeFileSync(join(rootDir, "dependency-output.ts"), "export const dependencyOutput = true;\n", "utf-8");
+    git(rootDir, "git add dependency-output.ts");
+    git(rootDir, 'git commit -m "land dependency"');
+    const landedBase = git(rootDir, "git rev-parse HEAD");
+
+    const result = await acquireTaskWorktree({
+      task: { ...task, id: "FN-4", branch: "fusion/fn-4", baseCommitSha: staleBase },
+      rootDir,
+      store,
+      settings: { worktreeNaming: "task-id", recycleWorktrees: false, worktrunk: { enabled: true } } as any,
+      backend: { kind: "worktrunk" } as any,
+      createWorktreeBackendKind: "native",
+      refreshStaleBase: true,
+      createWorktree: async (branch, path) => {
+        git(rootDir, `git worktree add ${JSON.stringify(path)} ${JSON.stringify(branch)}`);
+        return { path, branch };
+      },
+    });
+
+    expect(result).toMatchObject({
+      source: "fresh",
+      baseRefresh: { kind: "reset-to-base", executionSafe: true, baseSha: landedBase },
+    });
+  });
+
+  it("clears a pooled task binding before releasing a worktree that fails base refresh", async () => {
+    const rootDir = makeRepo();
+    const pooledPath = join(rootDir, ".worktrees", "pooled-fn-4-dirty");
+    git(rootDir, `git worktree add -b fusion/fn-4-dirty ${JSON.stringify(pooledPath)}`);
+    writeFileSync(join(pooledPath, "uncommitted.ts"), "dirty\n", "utf-8");
+    const pool = {
+      acquire: vi.fn().mockReturnValue(pooledPath),
+      prepareForTask: vi.fn().mockResolvedValue({
+        branch: "fusion/fn-4-dirty",
+        worktreePath: pooledPath,
+        reclaimed: false,
+      }),
+      release: vi.fn(),
+    } as any;
+
+    await expect(acquireTaskWorktree({
+      task: { ...task, id: "FN-4", branch: "fusion/fn-4-dirty" },
+      rootDir,
+      store,
+      settings: { recycleWorktrees: true },
+      pool,
+      refreshStaleBase: true,
+    })).rejects.toThrow(WorktreeBaseRefreshError);
+
+    expect(store.updateTask).toHaveBeenCalledWith("FN-4", { worktree: null, branch: null });
+    expect(store.updateTask.mock.invocationCallOrder.at(-1)).toBeLessThan(pool.release.mock.invocationCallOrder[0]);
   });
 
   it("FN-6861 creates a fresh configured worktree when a resumed assignment points at the repo root", async () => {

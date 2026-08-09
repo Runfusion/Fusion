@@ -10456,6 +10456,7 @@ export class TaskExecutor {
         runContext: this.getRunContextFor(task.id),
         runInitCommand: true,
         createWorktree: this.createWorktree.bind(this),
+        createWorktreeBackendKind: "native",
         runConfiguredCommand: (command, cwd, timeoutMs, env) =>
           runConfiguredCommand(
             command,
@@ -14361,6 +14362,7 @@ export class TaskExecutor {
             runContext: this.getRunContextFor(task.id),
             runInitCommand: true,
             createWorktree: this.createWorktree.bind(this),
+            createWorktreeBackendKind: "native",
             runConfiguredCommand: (command, cwd, timeoutMs, env) =>
               runConfiguredCommand(
                 command,
