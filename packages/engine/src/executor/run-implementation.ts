@@ -50,6 +50,7 @@ import {
   ApprovalRequestStore,
   DEFAULT_PROVIDER_INSTANCE_ID,
   RetryStormError,
+  actorContextForAgent,
   columnsWithFlag,
   isEphemeralAgent,
   resolveEphemeralTaskCreationPolicy,
@@ -190,7 +191,7 @@ import { compactSessionContext, describeModel, formatModelMarkerDetails, promptW
 import { resolveDedicatedPlannerColumnsForTask } from "../planner-lane-resolution.js";
 import { mergeEffectiveSettings } from "../project/effective-settings.js";
 import { buildStepFailureMessage, emitProactiveStatus, sanitizeFailureReason } from "../project/proactive-status.js";
-import { createRunAuditor, generateSyntheticRunId, type EngineRunContext } from "../util/run-audit.js";
+import { createRunAuditor, generateSyntheticRunId, toRunMutationContext, type EngineRunContext } from "../util/run-audit.js";
 import { acquireTaskWorktree, WorktreeBaseRefreshError } from "../worktree/worktree-acquisition.js";
 import { resolveWorktreesDir } from "../worktree/worktree-paths.js";
 import {
@@ -418,6 +419,8 @@ export async function runImplementation(
     deps.currentRunContexts.set(task.id, {
       runId: syntheticRunId,
       agentId: task.assignedAgentId ?? "executor",
+      // FNXC:Identity 2026-08-15-22:52: an execution run acts as the assigned agent (or the generic executor lane); autonomous work leaves `actingFor` unset (R28).
+      actor: actorContextForAgent(task.assignedAgentId ?? "executor"),
     });
     // FNXC:AgentActivityStream 2026-08-09-09:09 (restored 2026-08-15-22:15 after wave-18 shell-ification dropped it):
     // FN-8864 durable task:started activity at the implementation entry; monitoring never blocks execution.
@@ -1897,10 +1900,8 @@ export async function runImplementation(
         }),
         ...createIdeationTools(deps.store),
         ...createGoalRetrievalTools(deps.store, {
-          runContext: {
-            runId: engineRunContext.runId,
-            agentId: engineRunContext.agentId,
-          },
+          // FNXC:Identity 2026-08-15-22:52: one boundary conversion instead of a hand-built partial context.
+          runContext: toRunMutationContext(engineRunContext),
           taskId: task.id,
         }),
         createWebFetchTool(),
@@ -1945,7 +1946,7 @@ export async function runImplementation(
           settings,
           logger: executorLog,
           secretsStore: deps.options.secretsStore,
-          runContext: engineRunContext,
+          runContext: toRunMutationContext(engineRunContext),
           audit,
           // FNXC:Workspace 2026-06-21-22:30: F2 — register each freshly-acquired sub-repo worktree path in this task's activeWorktrees Set (KTD2) so owner/liveness checks see live per-repo worktrees, not just the browse-only root.
           onAcquired: (worktreePath: string) => deps.addActiveWorktree(task.id, worktreePath),

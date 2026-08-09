@@ -876,7 +876,15 @@ function resolveSecretAccessPrincipal(ctx: ExtensionCallerContext):
   | { kind: "resolved"; actor: ApprovalRequestActorSnapshot; agentId: string | null; agentName?: string; taskId?: string }
   | { kind: "ambiguous" } {
   const principal = resolveExtensionCallerPrincipal(ctx);
-  if (principal.kind === "ambiguous") return { kind: "ambiguous" };
+  /*
+  FNXC:Identity 2026-08-09-03:04 (KTD16):
+  `unresolved` — no registration while identity is on — joins `ambiguous` on the fail-closed branch.
+  Both mean "we cannot name this caller", and a secret grant must never be minted or redeemed for a
+  caller we cannot name. It must NOT fall through to the operator branch below: that branch is the
+  pre-identity operator-as-absence default, and reaching it from an unresolved caller would hand a
+  nameless caller the operator's approval authority.
+  */
+  if (principal.kind === "ambiguous" || principal.kind === "unresolved") return { kind: "ambiguous" };
   if (principal.kind === "operator") {
     return {
       kind: "resolved",
@@ -2946,6 +2954,19 @@ export default function kbExtension(pi: ExtensionAPI) {
           runId: `synthetic-pi-delete-${params.id}-${Date.now()}`,
           taskId: callerTaskId,
           callerKind: "agent-tool",
+          /*
+          FNXC:Identity 2026-08-09-03:04:
+          R21 — the authenticated actor, resolved from the session-identity registry, kept as a
+          field SEPARATE from `callerKind` and never derived from it. This tool is hard-withheld
+          from agent and ambiguous principals above, so in practice the caller here is the operator
+          CLI; until U11 gives that surface a credential it is honestly the bootstrap actor.
+          */
+          actor: (() => {
+            const deletePrincipal = resolveExtensionCallerPrincipal(ctx as ExtensionCallerContext);
+            return fusionCore.actorContextForAgent(
+              deletePrincipal.kind === "agent" ? deletePrincipal.identity.agentId : undefined,
+            );
+          })(),
         },
       });
 

@@ -4,6 +4,7 @@ import type { TaskStore } from "@fusion/core";
 import type { GoalAnchoringLane } from "./goal-anchoring-audit.js";
 import { emitGoalAnchoringAudit } from "./goal-anchoring-audit.js";
 import type { EngineRunContext } from "../util/run-audit.js";
+import { toRunMutationContext } from "../util/run-audit.js";
 import type { RunAuditor } from "../util/run-audit.js";
 import { createLogger } from "../logger.js";
 
@@ -238,7 +239,8 @@ export async function emitGoalInjectionDiagnostic(
 
   if (input.store && record.taskId) {
     try {
-      await input.store.logEntry(record.taskId, formatAgentLogLine(record), undefined, input.runContext ?? undefined);
+      // FNXC:Identity 2026-08-09-03:04: the engine run context is converted at the store boundary so the log entry carries an actor.
+      await input.store.logEntry(record.taskId, formatAgentLogLine(record), undefined, input.runContext ? toRunMutationContext(input.runContext) : undefined);
     } catch (error) {
       diagnosticsLog.warn(
         `failed to append goal-injection task log for ${record.taskId}: ${error instanceof Error ? error.message : String(error)}`,

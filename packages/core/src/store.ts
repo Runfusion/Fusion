@@ -322,7 +322,14 @@ export interface MoveTaskInternalOptions {
     patch: Parameters<TaskStore["updateTask"]>[1];
     expectedColumn: ColumnId;
   };
-  runContext?: Pick<RunMutationContext, "runId" | "agentId"> | { runId?: string; agentId?: string };
+  /*
+  FNXC:Identity 2026-08-09-03:04:
+  Was `Pick<RunMutationContext,"runId"|"agentId"> | { runId?: string; agentId?: string }`. The second
+  arm of that union structurally accepts `{}`, so every field the type appeared to guarantee — the
+  actor included — was fictional: any object satisfied it. Narrowed to the real carrier. The
+  PARAMETER stays optional here; U18 makes it required across the mutating surface.
+  */
+  runContext?: RunMutationContext;
   ownerAgentId?: string | null;
   evidence?: HandoffToReviewOptions["evidence"];
   now?: string;

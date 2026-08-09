@@ -276,7 +276,7 @@ import { withRateLimitRetry } from "./errors/rate-limit-retry.js";
 import { resolveAgentInstructions, buildSystemPromptWithInstructions } from "./agents/agent-instructions.js";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { createRunAuditor, generateSyntheticRunId, type EngineRunContext, type RunAuditor } from "./util/run-audit.js";
+import { createRunAuditor, generateSyntheticRunId, toRunMutationContext, type EngineRunContext, type RunAuditor } from "./util/run-audit.js";
 import { resolveAgentActivityAttribution } from "@fusion/core";
 import { createWebFetchTool } from "./agent-tools.js";
 import {
@@ -7207,7 +7207,8 @@ export async function aiMergeTask(
       pool: options.pool,
       logger: mergerLog,
       audit,
-      runContext: engineRunContext,
+      // FNXC:Identity 2026-08-09-03:04: converted at the store boundary so the merge lane's writes carry an actor.
+      runContext: toRunMutationContext(engineRunContext),
       runInitCommand: true,
       runConfiguredCommand: async (command, cwd, timeoutMs, env) =>
         runConfiguredMergeWorktreeCommand(command, cwd, timeoutMs, env, audit),

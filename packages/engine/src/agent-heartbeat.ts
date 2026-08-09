@@ -96,6 +96,8 @@ heartbeat-model-unavailable parks from assignment/on-demand runs were terminal u
 import { acquireTaskWorktree, WorktreeBaseRefreshError } from "./worktree/worktree-acquisition.js";
 import { createRunAuditor, generateSyntheticRunId, type DatabaseMutationType, type EngineRunContext } from "./util/run-audit.js";
 import { promptWithFallback } from "./pi.js";
+// FNXC:Identity 2026-08-09-03:04: actor threading for the required RunMutationContext.actor field.
+import { actorContextForAgent } from "@fusion/core";
 import { withRateLimitRetry } from "./errors/rate-limit-retry.js";
 import type { CredentialInstanceRotator } from "./credential-instance-rotation.js";
 import { buildAgentGatedActionSummary } from "./agents/permanent-agent-gating.js";
@@ -2179,6 +2181,8 @@ export class HeartbeatMonitor {
         runId: run.id,
         agentId,
         source,
+        // FNXC:Identity 2026-08-09-03:04: a heartbeat run acts as its own agent; nothing is delegated (R28).
+        actor: actorContextForAgent(agentId),
       };
 
       // Build engine run context for audit instrumentation

@@ -9,6 +9,7 @@ import {
   type TaskStore,
   type ThinkingLevel,
 } from "@fusion/core";
+import { BOOTSTRAP_ACTOR_CONTEXT } from "@fusion/core";
 import { createAgentTask } from "@fusion/engine";
 import { normalizePlanningSummaryPayload } from "../planning.js";
 import { extractIssueImageUrls, githubImagePolicy, importIssueImagesFromUrls } from "../issue-image-attachments.js";
@@ -431,6 +432,8 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
               runId: `synthetic-planning-delete-${normalizedParentId}-${Date.now()}`,
               sessionId,
               callerKind: "engine",
+              // FNXC:Identity 2026-08-09-03:04: no authenticated HTTP actor until the identity middleware lands; the bootstrap actor is the honest, audit-visible pre-enablement value (never derived from `callerKind` — R21).
+              actor: BOOTSTRAP_ACTOR_CONTEXT,
             },
           });
           parentTaskClosed = true;

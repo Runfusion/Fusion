@@ -2874,6 +2874,77 @@ export {
   type FusionSessionPrincipal,
 } from "./session-identity-registry.js";
 
+/*
+FNXC:Identity 2026-08-09-03:04:
+The actor model (KTD1/R1). Exported from core because every package that mutates state must be able
+to name who is calling: the engine lanes, the dashboard routes, and the pi extension all construct a
+`RunMutationContext`, and a second copy of `ActorRef` in any of them would reintroduce exactly the
+vocabulary fragmentation this model exists to collapse.
+*/
+export {
+  BOOTSTRAP_ACTOR,
+  BOOTSTRAP_ACTOR_CONTEXT,
+  BOOTSTRAP_ACTOR_ID,
+  actorContextForAgent,
+  AMBIGUOUS_ACTOR_ID,
+  RESERVED_ACTOR_IDS,
+  NON_ACTIVE_ACTOR_STATUSES,
+  ReservedActorIdError,
+  isReservedActorId,
+  isActiveActor,
+  toActorRef,
+  evaluateDelegatedPermission,
+  actorKindFromApprovalActorType,
+  approvalActorTypeFromActorKind,
+  actorRefFromApprovalSnapshot,
+  approvalSnapshotFromActorRef,
+  actorRefFromConfigChangedBy,
+  configChangedByFromActorRef,
+  actorRefFromWorkflowMoveActor,
+  workflowMoveActorFromActorRef,
+  displayActorKindFromDeleteCallerKind,
+  type Actor,
+  type ActorContext,
+  type ActorKind,
+  type ActorRef,
+  type ActorStatus,
+  type DelegationDecision,
+  type DelegationDenialReason,
+} from "./identity/actor.js";
+export {
+  createActor,
+  getActor,
+  getActiveActor,
+  getActorsForAudit,
+  listActiveActors,
+  listAllActors,
+  updateActorDisplayName,
+  setActorStatus,
+  suspendActor,
+  tombstoneActor,
+  revokeActorSessions,
+  revokeActorCredentials,
+  revokeActorRoleGrants,
+  grantActorRole,
+  revokeActorRole,
+  listActiveRoleGrants,
+  listAllRoleGrants,
+  listActiveSessionIds,
+  listActiveCredentialIds,
+  type ActorRoleGrant,
+  type CreateActorInput,
+} from "./identity/actor-store.js";
+/*
+FNXC:Identity 2026-08-09-03:04:
+The `identity.enabled` gate is process-level and daemon-global (never per-project), so the flag lives
+on globalThis and both the engine and the separately-bundled extension read the same value.
+*/
+export {
+  isIdentityEnabled,
+  setIdentityEnabled,
+  __resetIdentityEnabledForTests,
+} from "./identity/identity-enabled.js";
+
 export { pruneTaskLifecycleEvents } from "./task-store/task-lifecycle-event-retention.js";
 
 export { buildConsumerId } from "./task-store/task-lifecycle-consumer-identity.js";

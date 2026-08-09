@@ -42,7 +42,7 @@ import { type TaskMoveLanes, resolveColumnFlags, IN_REVIEW_STALL_DEADLOCK_LOG_PR
   resolveEngineIncarnationId,
   resolveEngineNodeId,
 } from "@fusion/core";
-import { finalizePlanningSegment } from "@fusion/core";
+import { finalizePlanningSegment, actorContextForAgent } from "@fusion/core";
 import type { WorkspaceLandIntent } from "@fusion/core";
 import type { MeshLeaseManager } from "./project/mesh-lease-manager.js";
 import { createLogger, schedulerLog } from "./logger.js";
@@ -15521,7 +15521,7 @@ const movedTask = await this.store.moveTask(task.id, completeLane);
             continue;
           }
           if (resolution === "delete") {
-            await this.store.deleteTask(task.id, { removeLineageReferences: true, auditContext: { agentId: "self-healing", runId: generateSyntheticRunId("self-heal-explicit-duplicate", task.id), callerKind: "engine" } });
+            await this.store.deleteTask(task.id, { removeLineageReferences: true, auditContext: { agentId: "self-healing", runId: generateSyntheticRunId("self-heal-explicit-duplicate", task.id), callerKind: "engine", /* FNXC:Identity 2026-08-09-03:04: authenticated actor, separate from the self-reported `callerKind` (R21). */ actor: actorContextForAgent("self-healing") } });
           } else if (resolution === "prompt") {
             await flagTriageDuplicate(this.store, task.id, canonicalTask.id);
             await this.store.updateTask(task.id, { paused: true, pausedReason: "duplicate-decision-required", status: null });

@@ -2,6 +2,8 @@ import { TaskStore, COLUMNS, COLUMN_LABELS, resolveProjectColumnsForRoles, TERMI
 import { isInReviewMissingWorktreeSessionStartFailure, runAiMerge, landWorkspaceTask, installBaselineArchiveWorktreeDisposer } from "@fusion/engine";
 import { createInterface } from "node:readline/promises";
 import type { PlanningQuestion, PlanningSummary } from "@fusion/core";
+// FNXC:Identity 2026-08-09-03:04: pre-credential operator writes are attributed to the reserved bootstrap actor.
+import { BOOTSTRAP_ACTOR_CONTEXT } from "@fusion/core";
 import { createSession, createTaskFromPlanSession, ensureDurablePlanningSessionStore, getSession as getPlanningSession, submitResponse, validateSession, RateLimitError, SessionNotFoundError, InvalidSessionStateError } from "@fusion/dashboard/planning";
 import { watchFile, unwatchFile, statSync, existsSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
@@ -1778,6 +1780,8 @@ export async function runTaskDelete(id: string, force?: boolean, allowResurrecti
         agentId: "cli",
         runId: `synthetic-cli-delete-${id}-${Date.now()}`,
         callerKind: "operator-cli",
+        // FNXC:Identity 2026-08-09-03:04: R21 — authenticated actor as its own field. The human CLI has no credential until U11, so this is honestly the bootstrap actor rather than an invented human id derived from `callerKind`.
+        actor: BOOTSTRAP_ACTOR_CONTEXT,
       },
     }));
     console.log();

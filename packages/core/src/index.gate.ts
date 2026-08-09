@@ -2382,3 +2382,29 @@ export { promoteResearchFinding } from "./research/research-feature-promotion.js
 export type { ResearchFeaturePromotionInput } from "./research/research-feature-promotion.js";
 export { ACTIVE_WORKFLOW_WORK_ITEM_STATES } from "./types.js";
 export * from "./task-document-concurrency.js";
+/*
+FNXC:GateBarrelSync 2026-08-09-03:04:
+Identity (U3) barrel sync per the rule above — the engine-core gate bundle builds @fusion/core from
+THIS barrel, and `actorContextForAgent` is now called at runtime by triage, the executor, the
+heartbeat, self-healing, and the run-audit boundary. Omitting it here reproduces the classic
+"is not a function" gate failure rather than a compile error.
+*/
+export {
+  BOOTSTRAP_ACTOR,
+  BOOTSTRAP_ACTOR_CONTEXT,
+  BOOTSTRAP_ACTOR_ID,
+  AMBIGUOUS_ACTOR_ID,
+  RESERVED_ACTOR_IDS,
+  ReservedActorIdError,
+  actorContextForAgent,
+  isReservedActorId,
+  isActiveActor,
+  toActorRef,
+  evaluateDelegatedPermission,
+  type Actor,
+  type ActorContext,
+  type ActorKind,
+  type ActorRef,
+  type ActorStatus,
+} from "./identity/actor.js";
+export { isIdentityEnabled, setIdentityEnabled } from "./identity/identity-enabled.js";

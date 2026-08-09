@@ -251,10 +251,10 @@ import {
   buildMarkerExhaustedFailedTaskPatch,
   buildDuplicateReplanExhaustedError,
 } from "./duplicate-marker-clear.js";
-import { createRunAuditor, generateSyntheticRunId } from "./util/run-audit.js";
+import { createRunAuditor, generateSyntheticRunId, toRunMutationContext } from "./util/run-audit.js";
 import { resolveAndEmitGoalContext } from "./goals/goal-injection-diagnostics.js";
 import { accumulateSessionTokenUsage } from "./execution/session-token-usage.js";
-import { DEFAULT_PLANNING_TIMEOUT_MS, finalizePlanningSegment, startPlanningSegment } from "@fusion/core";
+import { DEFAULT_PLANNING_TIMEOUT_MS, finalizePlanningSegment, startPlanningSegment, actorContextForAgent } from "@fusion/core";
 import { collectPlanReviewFeedbackHistory, isPlanReviewRevisionLog } from "./plan-review-feedback-history.js";
 import type { AgentActionGateContext } from "./agents/agent-action-gate.js";
 import { buildAgentGatedActionSummary } from "./agents/permanent-agent-gating.js";
@@ -562,7 +562,7 @@ export class TriageProcessor {
         return latest ? { id: latest.id, status: latest.status } : null;
       },
       pauseForApproval: async ({ approvalRequestId, decision }) => {
-        await this.store.pauseTask(taskId, true, { runId, agentId: actorId, source: "triage" }, { pausedByAgentId: actorId, pausedReason: AWAITING_APPROVAL_PAUSE_REASON });
+        await this.store.pauseTask(taskId, true, { runId, agentId: actorId, source: "triage", actor: actorContextForAgent(actorId) }, { pausedByAgentId: actorId, pausedReason: AWAITING_APPROVAL_PAUSE_REASON });
         await this.store.logEntry(taskId, `Approval required for ${decision.toolName}. Request ${approvalRequestId} created; task and agent paused awaiting decision.`);
         if (agent && this.options.agentStore) {
           await this.options.agentStore.updateAgentState(agent.id, "paused");
@@ -2779,7 +2779,7 @@ export class TriageProcessor {
           }),
           createTaskDocumentWriteTool(this.store, task.id),
           createTaskDocumentReadTool(this.store, task.id),
-          createTaskPromptWriteTool(this.store, task.id, triageRunContext),
+          createTaskPromptWriteTool(this.store, task.id, toRunMutationContext(triageRunContext)),
           createWorkflowListTool(this.store),
           createWorkflowSelectTool(this.store, task.id),
           ...(isResearchToolSurfaceEnabled(settings)
@@ -2795,10 +2795,8 @@ export class TriageProcessor {
           }),
           ...createIdeationTools(this.store),
           ...createGoalRetrievalTools(this.store, {
-            runContext: {
-              runId: triageRunContext.runId,
-              agentId: triageRunContext.agentId,
-            },
+            // FNXC:Identity 2026-08-09-03:04: one boundary conversion instead of a hand-built partial context.
+            runContext: toRunMutationContext(triageRunContext),
             taskId: task.id,
           }),
           ...createMemoryTools(this.rootDir, settings, assignedAgent
@@ -3393,6 +3391,8 @@ export class TriageProcessor {
                   agentId: task.assignedAgentId ?? "triage",
                   runId: generateSyntheticRunId("triage-delete", task.id),
                   callerKind: "engine",
+                  // FNXC:Identity 2026-08-09-03:04: the authenticated actor is a SEPARATE field from `callerKind` (R21) — `callerKind` is self-reported attribution and never an authorization input.
+                  actor: actorContextForAgent(task.assignedAgentId ?? "triage"),
                 },
               });
               planLog.log(`✓ ${task.id} split into subtasks (${childTaskIds}) and closed`);
@@ -4771,7 +4771,8 @@ export class TriageProcessor {
         const result = await deleteTaskIf.call(this.store, task.id, isTaskStillInPlanningStage, {
           removeLineageReferences: true,
           // FNXC:TaskDeleteAttribution 2026-07-26-14:30: duplicate-resolution delete is engine-driven.
-          auditContext: { agentId: task.assignedAgentId ?? "triage", runId: generateSyntheticRunId("triage-delete", task.id), callerKind: "engine" },
+          // FNXC:Identity 2026-08-09-03:04: `actor` is authenticated; `callerKind` stays attribution-only (R21).
+          auditContext: { agentId: task.assignedAgentId ?? "triage", runId: generateSyntheticRunId("triage-delete", task.id), callerKind: "engine", actor: actorContextForAgent(task.assignedAgentId ?? "triage") },
         });
         if (!result.deleted) return;
         await this.store.recordActivity({
