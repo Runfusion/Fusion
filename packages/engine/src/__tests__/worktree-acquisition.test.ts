@@ -11,6 +11,7 @@ import * as branchConflicts from "../execution/branch-conflicts.js";
 import { activeSessionRegistry } from "../agents/active-session-registry.js";
 import { NativeWorktreeBackend } from "../worktree/worktree-backend.js";
 
+
 vi.mock("../worktree/worktree-pool.js", async () => {
   const actual = await vi.importActual<any>("../worktree/worktree-pool.js");
   return {
