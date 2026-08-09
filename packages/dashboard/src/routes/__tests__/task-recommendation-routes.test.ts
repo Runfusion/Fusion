@@ -138,7 +138,11 @@ function parent(overrides: Partial<Task> = {}): Task {
 function installCustomRecommendationWorkflow(
   store: Partial<TaskStore>,
   taskIds: readonly string[],
-  options: { declareLegacyArchivedAsLive?: boolean; traitlessLegacyColumns?: boolean } = {},
+  options: {
+    declareLegacyArchivedAsLive?: boolean;
+    traitlessLegacyColumns?: boolean;
+    unresolvableSelection?: boolean;
+  } = {},
 ): void {
   Object.assign(store, {
     getTaskWorkflowSelection: vi.fn((id: string) => taskIds.includes(id)
@@ -147,28 +151,31 @@ function installCustomRecommendationWorkflow(
     getTaskWorkflowSelectionAsync: vi.fn(async (id: string) => taskIds.includes(id)
       ? { workflowId: "recommendation-workflow", stepIds: [] }
       : undefined),
-    getWorkflowDefinition: vi.fn(async () => ({
-      id: "recommendation-workflow",
-      name: "Recommendation workflow",
-      kind: "workflow",
-      ir: {
-        version: "v2",
+    getWorkflowDefinition: vi.fn(async () => {
+      if (options.unresolvableSelection) throw new Error("workflow definition unavailable");
+      return {
         id: "recommendation-workflow",
         name: "Recommendation workflow",
-        nodes: [{ id: "start", kind: "start", column: "backlog" }],
-        edges: [],
-        columns: options.traitlessLegacyColumns
-          ? ["todo", "in-progress", "in-review", "done", "archived"]
-              .map((id) => ({ id, name: id, traits: [] }))
-          : [
-              { id: "backlog", name: "Backlog", traits: [{ trait: "intake" }] },
-              ...(options.declareLegacyArchivedAsLive
-                ? [{ id: "archived", name: "Live archived", traits: [] }]
-                : []),
-              { id: "boxed", name: "Boxed", traits: [{ trait: "archived" }] },
-            ],
-      },
-    })),
+        kind: "workflow",
+        ir: {
+          version: "v2",
+          id: "recommendation-workflow",
+          name: "Recommendation workflow",
+          nodes: [{ id: "start", kind: "start", column: "backlog" }],
+          edges: [],
+          columns: options.traitlessLegacyColumns
+            ? ["todo", "in-progress", "in-review", "done", "archived"]
+                .map((id) => ({ id, name: id, traits: [] }))
+            : [
+                { id: "backlog", name: "Backlog", traits: [{ trait: "intake" }] },
+                ...(options.declareLegacyArchivedAsLive
+                  ? [{ id: "archived", name: "Live archived", traits: [] }]
+                  : []),
+                { id: "boxed", name: "Boxed", traits: [{ trait: "archived" }] },
+              ],
+        },
+      };
+    }),
   });
 }
 
@@ -575,6 +582,53 @@ describe("recommendation task creation route", () => {
 
     expect(response.status).toBe(409);
     expect(legacy.store.createTask).not.toHaveBeenCalled();
+  });
+
+  it("falls back to the legacy archived tombstone when the selected workflow cannot resolve", async () => {
+    const linkedChild = task({ id: "FN-9", description: "Archived child", column: "archived" });
+    const unresolved = buildApp([
+      parent({ recommendations: [{ ...parent().recommendations![0], createdTaskId: "FN-9" }] }),
+      linkedChild,
+    ]);
+    installCustomRecommendationWorkflow(unresolved.store, ["FN-9"], { unresolvableSelection: true });
+
+    const response = await performRequest(
+      unresolved.app,
+      "POST",
+      "/api/tasks/FN-1/recommendations/rec-1/create",
+      undefined,
+    );
+
+    expect(response.status).toBe(409);
+    expect(unresolved.store.createTask).not.toHaveBeenCalled();
+  });
+
+  it("restores an archived durable claim when the selected workflow cannot resolve", async () => {
+    const claimedChild = task({
+      id: "FN-9",
+      title: "Add task export",
+      description: "Add CSV export outside this task's scope.",
+      column: "archived",
+      proposalClaimId: "recommendation:FN-1:rec-1",
+      sourceMetadata: { deterministicDuplicateOf: "FN-8" },
+    });
+    const unresolved = buildApp([parent(), claimedChild]);
+    installCustomRecommendationWorkflow(unresolved.store, ["FN-9"], { unresolvableSelection: true });
+    (unresolved.store.findRecentTasksByContentFingerprint as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (unresolved.store.searchTasks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+
+    const response = await performRequest(
+      unresolved.app,
+      "POST",
+      "/api/tasks/FN-1/recommendations/rec-1/create",
+      undefined,
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({ task: { id: "FN-9", column: "todo" } });
+    expect(unresolved.store.unarchiveTask).toHaveBeenCalledWith("FN-9");
+    expect(unresolved.store.createTask).not.toHaveBeenCalled();
+    expect(unresolved.tasks[0]?.recommendations?.[0]?.createdTaskId).toBe("FN-9");
   });
 
   it.each([

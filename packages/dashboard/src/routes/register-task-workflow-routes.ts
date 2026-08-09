@@ -367,7 +367,9 @@ failures retain the legacy terminal id.
 */
 async function resolveArchivedColumnsForTask(store: TaskStore, taskId: string): Promise<Set<string>> {
   try {
-    const ir = await resolveWorkflowIrForTask(store, taskId);
+    const resolved = await resolveWorkflowIrForTaskWithProvenance(store, taskId);
+    if (resolved.source !== "selection") return new Set(["archived"]);
+    const { ir } = resolved;
     const archived = columnsWithFlag(ir, "archived");
     if (!declaresAnyLifecycleTrait(ir)) return new Set([...archived, "archived"]);
     return new Set(workflowHasColumn(ir, "archived") ? archived : [...archived, "archived"]);
