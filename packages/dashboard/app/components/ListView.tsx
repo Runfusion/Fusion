@@ -19,7 +19,7 @@ import { isTaskStuck } from "../utils/taskStuck";
 import { hasPendingAutomaticRecovery, isTaskManuallyRetryable } from "../utils/taskRecovery";
 import type { ToastType } from "../hooks/useToast";
 import { useViewportMode } from "../hooks/useViewportMode";
-import { mergeTaskSnapshot } from "../hooks/useTasks";
+import { applyLocalTaskPatch, mergeTaskSnapshot } from "../hooks/useTasks";
 import { getScopedItem, removeScopedItem, setScopedItem } from "../utils/projectStorage";
 import { ALL_WORKFLOWS_BOARD_VIEW_ID } from "../utils/boardWorkflowSelection";
 import {
@@ -2120,7 +2120,8 @@ export function ListView({
     try {
       const updatedTask = await updateTask(task.id, { githubTracking: { enabled: true } }, projectId);
       onTasksUpdated?.([updatedTask]);
-      setSelectedTaskSnapshot((previous) => previous?.id === updatedTask.id ? mergeTaskSnapshot(previous, updatedTask) : previous);
+      // FNXC:TaskDetailStateStability 2026-08-09-07:13: updateTask returns a full Task with an id, so this PATCH-response sink intentionally keeps strict identity matching while applying local-patch semantics.
+      setSelectedTaskSnapshot((previous) => previous?.id === updatedTask.id ? applyLocalTaskPatch(previous, updatedTask) : previous);
       addToast(t("taskDetail.githubTracking.issueCreationRequested", "Requested GitHub tracking issue creation"), "info");
     } catch (err) {
       addToast(t("taskDetail.updateFailed", "Failed to update {{id}}: {{error}}", { id: task.id, error: getErrorMessage(err) }), "error");
@@ -3703,10 +3704,16 @@ export function ListView({
                       onResetTask={onResetTask}
                       onDuplicateTask={onDuplicateTask}
                       onPopOut={onPopOut ? () => onPopOut(selectedTaskSnapshot) : undefined}
+                      /*
+                      FNXC:TaskDetailStateStability 2026-08-09-07:13:
+                      Locally-authored split-detail patches accept an absent id and use applyLocalTaskPatch.
+                      Live board, SSE, and fetch snapshots remain on mergeTaskSnapshot so server clock
+                      arbitration continues to protect lifecycle state outside this local callback.
+                      */
                       onTaskUpdated={(updatedTask) => {
                         setSelectedTaskSnapshot((previous) => {
-                          if (!previous || previous.id !== updatedTask.id) return previous;
-                          return mergeTaskSnapshot(previous, updatedTask);
+                          if (!previous || (updatedTask.id !== undefined && updatedTask.id !== previous.id)) return previous;
+                          return applyLocalTaskPatch(previous, { ...updatedTask, id: previous.id });
                         });
                       }}
                       addToast={addToast}

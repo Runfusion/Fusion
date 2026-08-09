@@ -11,7 +11,8 @@ import { resolveDefaultWorkflowIr } from "../workflows/builtin-workflows.js";
  * Activity analytics: distinct active nodes/agents per day, sessions, messages,
  * and stickiness (DAU/MAU) over an arbitrary date range.
  *
- * Sessions come from `cli_sessions` (by `createdAt`); messages and node/agent
+ * Sessions come from `cli_sessions` plus `usage_events` session starts tagged
+ * `agent-session`; each session class has one writer. Messages and node/agent
  * activity come from `usage_events`. Inclusivity: `from`/`to` are inclusive,
  * matching `usage-events.ts`.
  *
@@ -127,7 +128,7 @@ export interface SignalsAnalytics {
 export interface ActivityAnalytics {
   from: string | null;
   to: string | null;
-  /** Total `session_start` events from `cli_sessions` in range. */
+  /** Total CLI sessions plus agent-session usage events in range. */
   sessions: number;
   /** Total `user_message` events in range. */
   messages: number;
@@ -375,8 +376,10 @@ async function aggregatePostgresActivityAnalytics(
     ? sql`AND project_id = ${layer.projectId}`
     : sql``;
 
-  const [sessionResult, eventSummaryResult, eventDailyResult, runStatusResult, runDailyResult, runAgentResult, monitor, funnel] = await Promise.all([
+  /* FNXC:ActivityAnalyticsPostgres 2026-08-09-10:29: Only agent-session rows count here; model-router session boundaries are routing telemetry, not user-visible sessions. */
+  const [sessionResult, agentSessionResult, eventSummaryResult, eventDailyResult, runStatusResult, runDailyResult, runAgentResult, monitor, funnel] = await Promise.all([
     layer.db.execute(sql`SELECT count(*)::int AS count FROM project.cli_sessions WHERE 1=1 ${analyticsProject} ${sessionFrom} ${sessionTo}`),
+    layer.db.execute(sql`SELECT count(*)::int AS count FROM project.usage_events WHERE kind = 'session_start' AND category = 'agent-session' ${analyticsProject} ${eventFrom} ${eventTo}`),
     layer.db.execute(sql`
       SELECT
         count(*) FILTER (WHERE kind = 'user_message')::int AS messages,
@@ -403,6 +406,7 @@ async function aggregatePostgresActivityAnalytics(
     aggregatePostgresSdlcFunnel(layer, query),
   ]);
   const sessionRows = sessionResult as unknown as Array<{ count?: number }>;
+  const agentSessionRows = agentSessionResult as unknown as Array<{ count?: number }>;
   const eventSummaryRows = eventSummaryResult as unknown as PostgresEventSummaryRow[];
   const eventDailyRows = eventDailyResult as unknown as PostgresEventDailyRow[];
   const runStatusRows = runStatusResult as unknown as Array<{ status: string; count: number }>;
@@ -447,7 +451,7 @@ async function aggregatePostgresActivityAnalytics(
   return {
     from: query.from ?? null,
     to: query.to ?? null,
-    sessions: Number(sessionRows[0]?.count ?? 0),
+    sessions: Number(sessionRows[0]?.count ?? 0) + Number(agentSessionRows[0]?.count ?? 0),
     messages: Number(eventSummary?.messages ?? 0),
     activeNodes: Number(eventSummary?.active_nodes ?? 0),
     activeAgents,

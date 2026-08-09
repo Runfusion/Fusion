@@ -532,6 +532,31 @@ export function getTaskWorkflowSelectionImpl(_store: TaskStore, _taskId: string)
 FNXC:PostgresCutover 2026-07-04-00:00:
 Async backend-mode read of a task's workflow selection (PostgreSQL). stepIds is a JSONB array, returned by Drizzle already parsed. Returns undefined when no row exists. SQLite mode delegates to the sync impl.
 */
+/*
+FNXC:WorkflowScheduling 2026-08-09-06:07:
+Issue #3364 measured a 23-second prefetch from sequential per-task workflow-selection reads against an external PostgreSQL pool capped at three connections. Keep this project-scoped batch reader as the scheduler-pass primitive so board size does not multiply round trips.
+*/
+export async function getTaskWorkflowSelectionsAsyncImpl(
+  store: TaskStore,
+  taskIds: string[],
+): Promise<Map<string, { workflowId: string; stepIds: string[] }>> {
+  const ids = [...new Set(taskIds)];
+  if (ids.length === 0) return new Map();
+  const layer = store.asyncLayer!;
+  const projectId = layer.projectId?.trim() || "__legacy_unscoped__";
+  const rows = await layer.db
+    .select({ taskId: schema.project.taskWorkflowSelection.taskId, workflowId: schema.project.taskWorkflowSelection.workflowId, stepIds: schema.project.taskWorkflowSelection.stepIds })
+    .from(schema.project.taskWorkflowSelection)
+    .where(and(
+      eq(schema.project.taskWorkflowSelection.projectId, projectId),
+      inArray(schema.project.taskWorkflowSelection.taskId, ids),
+    ));
+  return new Map(rows.map((row) => [row.taskId, {
+    workflowId: row.workflowId,
+    stepIds: Array.isArray(row.stepIds) ? row.stepIds.filter((stepId): stepId is string => typeof stepId === "string") : [],
+  }]));
+}
+
 export async function getTaskWorkflowSelectionAsyncImpl(store: TaskStore, taskId: string): Promise<{ workflowId: string; stepIds: string[] } | undefined> {
     /* FNXC:SqliteDualPathCleanup 2026-07-26-14:15: always PostgreSQL path below. */
     const layer = store.asyncLayer!;

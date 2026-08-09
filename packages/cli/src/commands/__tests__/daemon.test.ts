@@ -720,6 +720,22 @@ describe("runDaemon", () => {
     expect(mockSyncStartupModels).toHaveBeenCalledTimes(1);
   });
 
+  it("binds native auto-merge to the executing engine's store", async () => {
+    const lifecycle = await import("../task-lifecycle.js");
+    const { ProjectEngineManager } = await import("@fusion/engine");
+    await runDaemon({});
+
+    const factory = vi.mocked(ProjectEngineManager).mock.calls.at(-1)?.[1]?.createPrNodeGithubOps;
+    const otherProjectStore = { getSettings: vi.fn().mockResolvedValue({ githubNativeAutoMerge: true }) };
+    factory?.(otherProjectStore as never);
+    const resolver = vi.mocked(lifecycle.createPrNodeGithubOps).mock.calls.at(-1)?.[1]?.isNativeAutoMergeEnabled;
+
+    await expect(resolver?.({ id: "FN-shared" } as never)).resolves.toBe(true);
+    expect(otherProjectStore.getSettings).toHaveBeenCalledOnce();
+
+    await triggerSignal("SIGINT");
+  });
+
   it("registers built-in zai GLM-5.2 before refreshing models", async () => {
     await runDaemon({});
 

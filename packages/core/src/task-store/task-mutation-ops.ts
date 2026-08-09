@@ -20,6 +20,7 @@ import {mkdir, readFile, writeFile, rename, unlink} from "node:fs/promises";
 import {join} from "node:path";
 import {existsSync} from "node:fs";
 import type {Task, TaskCreateInput, TaskAttachment, BoardConfig, ActivityLogEntry, ActivityEventType, Artifact, ArtifactCreateInput, RunMutationContext, MergeQueueEntry, BranchGroup, BranchGroupUpdate, CompletionHandoffMarker, WorkflowWorkItem, WorkflowWorkItemKind, PrEntity, PrEntityUpdate, TaskRecommendation} from "../types.js";
+import { CONFIG_CHANGED_BY_SYSTEM } from "../types.js";
 import {validateSettingValuePatch, WorkflowSettingRejectionError} from "../workflows/workflow-settings.js";
 import "../builtin-traits.js";
 import {toJson} from "../db/db.js";
@@ -36,11 +37,13 @@ import {recoverExpiredMergeQueueLeases as recoverExpiredMergeQueueLeasesAsync} f
 import {updateBranchGroup as updateBranchGroupAsync, updatePrEntity as updatePrEntityAsync} from "../task-store/async/async-branch-groups.js";
 import {recordCompletionHandoff as recordCompletionHandoffAsync, getCompletionHandoffMarker as getCompletionHandoffMarkerAsync} from "../task-store/async/async-workflow-workitems.js";
 import { taskProjectScope } from "../postgres/data-layer.js";
+import type { AsyncDataLayer, DbTransaction } from "../postgres/data-layer.js";
 import {getActivityLog as getActivityLogAsync} from "../task-store/async/async-audit.js";
 import {insertArtifactRow as insertArtifactRowAsync} from "../task-store/async/async-comments-attachments.js";
 import {appendConfigurationRevision, createConfigurationRevision, getConfigurationRevision, rollbackConfiguration} from "../async-stores/async-configuration-revision-store.js";
 import {readProjectConfig, writeProjectConfig} from "./async/async-settings.js";
 import {publishSettingsUpdated} from "./settings-ops.js";
+import { mergeRestoredProjectSettings } from "../config/settings-schema.js";
 import type {ConfigChangedBy, ConfigurationRevision} from "../types.js";
 import { resolveArchivedLanes } from "../project-lane-vocabulary.js";
 import { acquireTaskAdvisoryXactLock } from "./task-advisory-lock.js";
@@ -523,7 +526,7 @@ export function getWorkflowPromptOverridesImpl(_store: TaskStore, _workflowId: s
         return {};
 }
 
-export async function updateWorkflowSettingValuesImpl(store: TaskStore, workflowId: string, projectId: string, patch: Record<string, unknown>, changedBy: ConfigChangedBy = { kind: "human", id: "local-user" },): Promise<Record<string, unknown>> {
+export async function updateWorkflowSettingValuesImpl(store: TaskStore, workflowId: string, projectId: string, patch: Record<string, unknown>, changedBy: ConfigChangedBy = CONFIG_CHANGED_BY_SYSTEM,): Promise<Record<string, unknown>> {
     /*
     FNXC:ConfigVersioning 2026-07-18-19:10:
     Workflow values are rollbackable only with the PostgreSQL target mutation
@@ -617,7 +620,21 @@ export async function updateWorkflowSettingValuesImpl(store: TaskStore, workflow
     return committed.next;
 }
 
-export async function rollbackConfigurationImpl(store: TaskStore, revisionId: string, changedBy: ConfigChangedBy = {kind: "human", id: "local-user"}): Promise<ConfigurationRevision> {
+/*
+FNXC:ConfigVersioning 2026-08-09-04:09:
+Exact project restores must retain the live heartbeat: new snapshots omit it while legacy snapshots can carry stale values that fabricate downtime. Extraction makes the same-transaction restore contract directly testable.
+*/
+export function createProjectSettingsRollbackSnapshotOps(layer: AsyncDataLayer, tx: DbTransaction) {
+  return {
+    readCurrent: async () => (await readProjectConfig(layer, tx)).settings ?? {},
+    replace: async (snapshot: unknown) => {
+      const live = (await readProjectConfig(layer, tx)).settings ?? {};
+      await writeProjectConfig(layer, mergeRestoredProjectSettings(snapshot as Record<string, unknown>, live), undefined, tx);
+    },
+  };
+}
+
+export async function rollbackConfigurationImpl(store: TaskStore, revisionId: string, changedBy: ConfigChangedBy = CONFIG_CHANGED_BY_SYSTEM): Promise<ConfigurationRevision> {
   if (!store.backendMode) throw new Error("Configuration rollback requires the PostgreSQL revision store");
   const layer = store.asyncLayer!;
   // First resolve project ownership without a bypass. The selected snapshot and
@@ -636,9 +653,11 @@ export async function rollbackConfigurationImpl(store: TaskStore, revisionId: st
     /* FNXC:ConfigVersioning 2026-07-18-02:00: read both the selected revision and current config via tx so rollback's forward `before` snapshot cannot race a concurrent settings write. */
     const revision = await getConfigurationRevision(tx, layer.projectId ?? "", revisionId);
     if (!revision) throw new Error(`Configuration revision ${revisionId} was not found`);
+    if (revision.configKind === "project-settings") {
+      return rollbackConfiguration(tx, layer.projectId ?? "", revisionId, changedBy, createProjectSettingsRollbackSnapshotOps(layer, tx));
+    }
     return rollbackConfiguration(tx, layer.projectId ?? "", revisionId, changedBy, {
     readCurrent: async () => {
-      if (revision.configKind === "project-settings") return (await readProjectConfig(layer, tx)).settings ?? {};
       if (revision.configKind === "workflow-settings") {
         const workflowId = String(revision.configTarget.workflowId);
         const projectId = String(revision.configTarget.projectId);
@@ -648,10 +667,6 @@ export async function rollbackConfigurationImpl(store: TaskStore, revisionId: st
       throw new Error(`Configuration revision ${revisionId} belongs to ${revision.configKind}; use its resource store rollback API`);
     },
     replace: async (snapshot) => {
-      if (revision.configKind === "project-settings") {
-        await writeProjectConfig(layer, snapshot as Record<string, unknown>, undefined, tx);
-        return;
-      }
       if (revision.configKind === "workflow-settings") {
         const workflowId = String(revision.configTarget.workflowId);
         const projectId = String(revision.configTarget.projectId);

@@ -17,6 +17,7 @@ import type {
   PlanningSummary,
   PlanningResponse,
   TaskPriority,
+  TaskSourceIssue,
   TaskStore,
   Settings,
   NtfyNotificationEvent,
@@ -54,6 +55,8 @@ import {
 } from "@fusion/engine";
 import * as engineModule from "@fusion/engine";
 import { createPlanningBoardTools } from "./planning-board-tools.js";
+import { buildPlanningSourceIssueContext, extractSeedIssueContext } from "./github.js";
+import { extractIssueImageUrls, githubImagePolicy, importIssueImagesFromUrls } from "./issue-image-attachments.js";
 
 // The planning lane has no ambient task; fn_workflow_select therefore has no
 // default target and an agent must pass an explicit task_id.
@@ -73,8 +76,17 @@ type PlanningMcpServers = Awaited<ReturnType<typeof resolveMcpServersForStore>>[
 FNXC:PlanningMode 2026-07-21-09:15:
 Planning questions must never create dashboard Mailbox messages. Retain the optional MessageStore input only as a source-compatible no-op for callers compiled against the prior planning API while route and session code omit every mailbox read/write path.
 */
+export type PlanningSourceIssue = TaskSourceIssue & {
+  title?: string;
+  imageUrls?: string[];
+  commentsUnavailable?: boolean;
+  droppedBodyCount?: number;
+};
+
 type PlanningSessionOptions = {
   projectId?: string;
+  /** Structured import provenance; only GitHub is accepted by the route boundary. */
+  sourceIssue?: PlanningSourceIssue;
   ntfyConfig?: PlanningNtfyConfig;
   clarificationEnabled?: boolean;
   /** Workflow selected by the planning entry point; retained for agent rebuilds. */
@@ -332,6 +344,7 @@ export interface DraftInputPayload {
   summarizedFor?: string;
   validated?: boolean;
   workflowId?: string;
+  sourceIssue?: PlanningSourceIssue;
   createdTaskId?: string;
   createClaimStatus?: "none" | "creating" | "created";
   claimOwnerToken?: string;
@@ -401,6 +414,8 @@ interface Session {
   projectId?: string;
   /** Workflow selected at session start, retained for agent reconstruction. */
   workflowId?: string;
+  /** Structured GitHub import provenance persisted in inputPayload. */
+  sourceIssue?: PlanningSourceIssue;
   /** Model override the user picked at draft-create time. Persisted in inputPayload so reopen restores it. */
   draftModelProvider?: string;
   draftModelId?: string;
@@ -472,6 +487,34 @@ interface Session {
   lastGeneratedThinking: string;
   createdAt: Date;
   updatedAt: Date;
+}
+
+/*
+FNXC:GitHubPlanningSourceIssue 2026-08-09-05:36:
+A persisted explicit source wins over seed text; only a canonical seed may enrich matching title/body.
+This keeps user prose and conflicting stale seeds from changing outward-facing GitHub provenance.
+*/
+export function resolvePlanningSourceIssue(session: Pick<Session, "initialPlan" | "sourceIssue">): ReturnType<typeof buildPlanningSourceIssueContext> | undefined {
+  const explicit = session.sourceIssue;
+  const seed = extractSeedIssueContext(session.initialPlan);
+  if (explicit) {
+    if (explicit.provider !== "github") return undefined;
+    const [owner, repo] = explicit.repository.split("/");
+    if (!owner || !repo || !Number.isFinite(explicit.issueNumber) || !explicit.url) return undefined;
+    const enrich = seed && seed.url.toLowerCase() === explicit.url.toLowerCase() ? seed : undefined;
+    return buildPlanningSourceIssueContext({ owner, repo, issueNumber: explicit.issueNumber, url: explicit.url, title: enrich?.title ?? explicit.title, body: enrich?.body });
+  }
+  return seed ? buildPlanningSourceIssueContext(seed) : undefined;
+}
+
+/** Resolve persisted planning image URLs without re-fetching issue data. */
+export function resolvePlanningIssueImageUrls(session: Pick<Session, "initialPlan" | "sourceIssue">): { urls: string[]; commentsUnavailable: boolean; droppedBodyCount: number } {
+  const persisted = session.sourceIssue;
+  // FNXC:GitHubPlanningSourceIssue 2026-08-09-14:51: An empty persisted list is an intentional post-capture result (including L2 drops), not a legacy omission eligible for seed fallback.
+  if (Array.isArray(persisted?.imageUrls)) return { urls: persisted.imageUrls, commentsUnavailable: persisted.commentsUnavailable === true, droppedBodyCount: persisted.droppedBodyCount ?? 0 };
+  const seed = extractSeedIssueContext(session.initialPlan);
+  if (!seed) return { urls: [], commentsUnavailable: false, droppedBodyCount: 0 };
+  return { urls: extractIssueImageUrls(seed.body, githubImagePolicy()), commentsUnavailable: true, droppedBodyCount: 0 };
 }
 
 interface RateLimitEntry {
@@ -789,6 +832,7 @@ function persistSession(session: Session, status: "generating" | "awaiting_input
       ...(session.draftThinkingLevel ? { thinkingLevel: session.draftThinkingLevel } : {}),
       ...(session.draftSummarizedFor ? { summarizedFor: session.draftSummarizedFor } : {}),
       ...(session.workflowId ? { workflowId: session.workflowId } : {}),
+      ...(session.sourceIssue ? { sourceIssue: session.sourceIssue } : {}),
       validated: session.validated,
       ...(session.createdTaskId ? { createdTaskId: session.createdTaskId } : {}),
       ...(session.createClaimStatus ? { createClaimStatus: session.createClaimStatus } : {}),
@@ -954,6 +998,7 @@ function buildSessionFromRow(row: AiSessionRow): Session {
     title: row.title,
     projectId: row.projectId ?? undefined,
     workflowId: payload.workflowId,
+    sourceIssue: payload.sourceIssue,
     draftModelProvider: payload.modelProvider,
     draftModelId: payload.modelId,
     draftThinkingLevel: thinkingLevel,
@@ -1279,7 +1324,7 @@ export async function createSession(
   rootDir?: string,
   promptOverrides?: PromptOverrideMap,
   pluginRunner?: SkillPluginRunner,
-  options?: Pick<PlanningSessionOptions, "ntfyConfig" | "messageStore" | "clarificationEnabled" | "workflowId">,
+  options?: Pick<PlanningSessionOptions, "ntfyConfig" | "messageStore" | "clarificationEnabled" | "workflowId" | "sourceIssue">,
 ): Promise<{ sessionId: string; firstQuestion: PlanningQuestion; summary: PlanningSummary; validated: boolean }> {
   // Check rate limit
   if (!checkRateLimit(ip)) {
@@ -1316,6 +1361,7 @@ export async function createSession(
     pluginRunner,
     clarificationEnabled: options?.clarificationEnabled === true,
     workflowId: options?.workflowId,
+    sourceIssue: options?.sourceIssue,
     ntfyConfig: options?.ntfyConfig,
   };
 
@@ -1773,7 +1819,7 @@ export async function startExistingSession(
   thinkingLevelOrPromptOverrides?: ThinkingLevel | PromptOverrideMap,
   promptOverridesOrPluginRunner?: PromptOverrideMap | SkillPluginRunner,
   pluginRunnerMaybe?: SkillPluginRunner,
-  runtimeOptions?: Pick<PlanningSessionOptions, "ntfyConfig" | "messageStore" | "clarificationEnabled" | "workflowId">,
+  runtimeOptions?: Pick<PlanningSessionOptions, "ntfyConfig" | "messageStore" | "clarificationEnabled" | "workflowId" | "sourceIssue">,
 ): Promise<void> {
   const thinkingLevel = isThinkingLevel(thinkingLevelOrPromptOverrides) ? thinkingLevelOrPromptOverrides : undefined;
   const promptOverrides = isThinkingLevel(thinkingLevelOrPromptOverrides)
@@ -1782,6 +1828,7 @@ export async function startExistingSession(
   const pluginRunner = (isThinkingLevel(thinkingLevelOrPromptOverrides) ? pluginRunnerMaybe : promptOverridesOrPluginRunner) as SkillPluginRunner | undefined;
   let session = sessions.get(sessionId);
   if (session && runtimeOptions?.workflowId) session.workflowId = runtimeOptions.workflowId;
+  if (session && runtimeOptions?.sourceIssue) session.sourceIssue = runtimeOptions.sourceIssue;
 
   // Draft sessions aren't included in rehydrateFromStore (which only loads
   // recoverable in-flight sessions), and a backend restart drops the in-memory
@@ -1807,6 +1854,7 @@ export async function startExistingSession(
     throw new SessionNotFoundError(`Planning session ${sessionId} not found or expired`);
   }
   if (runtimeOptions?.workflowId) session.workflowId = runtimeOptions.workflowId;
+  if (runtimeOptions?.sourceIssue) session.sourceIssue = runtimeOptions.sourceIssue;
 
   // Drafts are sync'd via aiSessionStore.updateDraft, which only writes
   // SQLite. Pull the latest initialPlan + persisted model override + the
@@ -1954,6 +2002,7 @@ export async function createSessionWithAgent(
     title: initialPlan.slice(0, 120),
     projectId: options?.projectId,
     workflowId: options?.workflowId,
+    sourceIssue: options?.sourceIssue,
     ntfyConfig: options?.ntfyConfig
       ? {
           enabled: options.ntfyConfig.enabled,
@@ -4364,12 +4413,16 @@ export async function createTaskFromPlanSession(
   try {
     const planMd = formatPlanningTaskHandoff(summary, session.history);
     const originalRequest = session.initialPlan?.trim() || summary.description.trim();
+    const sourceContext = resolvePlanningSourceIssue(session);
+    const trackingDecision = sourceContext
+      ? await (await import("./github-tracking.js")).resolvePlanningGithubTrackingDecision(store, await store.getSettings(), { owner: sourceContext.sourceIssue.repository.split("/")[0], repo: sourceContext.sourceIssue.repository.split("/")[1], issueNumber: sourceContext.sourceIssue.issueNumber, url: sourceContext.sourceIssue.url ?? "" })
+      : undefined;
     const task = await store.createTask({
       title: summary.title,
-      description: planMd,
+      description: sourceContext ? (await import("./github.js")).appendSourceIssueBlock(planMd, sourceContext.markdown, sourceContext.sourceIssue.url ?? "") : planMd,
       dependencies: summary.suggestedDependencies?.length ? summary.suggestedDependencies : undefined,
       priority: isTaskPriority(summary.priority) ? summary.priority : DEFAULT_TASK_PRIORITY,
-      source: { sourceType: options?.sourceType ?? "cli" },
+      ...(sourceContext ? { sourceIssue: sourceContext.sourceIssue, source: { sourceType: "github_import" as const, sourceMetadata: sourceContext.sourceMetadata }, ...(trackingDecision?.githubTracking ? { githubTracking: trackingDecision.githubTracking } : {}) } : { source: { sourceType: options?.sourceType ?? "cli" } }),
       ...(options?.baseBranch?.trim() ? { baseBranch: options.baseBranch.trim() } : {}),
       proposalClaimId: currentProposalClaimId(),
     });
@@ -4389,6 +4442,18 @@ export async function createTaskFromPlanSession(
     if (originalRequest) {
       await sideEffect("Planning create-task original description document write failed", () => store.upsertTaskDocument?.(task.id, { key: "original-description", content: originalRequest, author: "planning", metadata: { planningSessionId: sessionId, source: "planning-mode-initial-plan" } }));
     }
+    if (sourceContext) {
+      await sideEffect("Planning create-task GitHub issue document write failed", () => store.upsertTaskDocument?.(task.id, { key: "github-issue", content: sourceContext.markdown, author: "planning", metadata: { planningSessionId: sessionId, source: "github-source-issue" } }));
+      await sideEffect("Planning create-task GitHub source log failed", () => store.logEntry?.(task.id, "Imported from GitHub", sourceContext.sourceIssue.url));
+      const images = resolvePlanningIssueImageUrls(session);
+      /* FNXC:GitHubPlanningSourceIssue 2026-08-09-14:09: CLI planning shares post-create best-effort image download and never reads GitHub at creation time. */
+      await sideEffect("Planning create-task GitHub image import failed", async () => {
+        const result = await importIssueImagesFromUrls(store, task.id, images.urls, githubImagePolicy());
+        if (result.attached) await store.logEntry?.(task.id, `Imported ${result.attached} image attachment${result.attached === 1 ? "" : "s"} from GitHub issue`, sourceContext.sourceIssue.url);
+      });
+      if (images.commentsUnavailable || images.droppedBodyCount) diagnostics.warn("Planning GitHub image capture was partial", { taskId: task.id, issueUrl: sourceContext.sourceIssue.url, commentsUnavailable: images.commentsUnavailable, droppedBodyCount: images.droppedBodyCount });
+    }
+    if (trackingDecision?.suppressedByTaskId) await sideEffect("Planning create-task duplicate source issue log failed", () => store.logEntry?.(task.id, `Source issue already tracked by ${trackingDecision.suppressedByTaskId}`));
     await sideEffect("Planning create-task log entry failed", () => store.logEntry?.(task.id, "Created via Planning Mode", `Initial plan: ${(session?.initialPlan ?? "").slice(0, 200)}`));
     await finalizePlanningTaskCreation(sessionId, claimOwnerToken, task.id, claimEpoch);
     await markSessionComplete();

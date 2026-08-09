@@ -102,6 +102,12 @@ function storeWith(current: Task, ir: WorkflowIr | undefined): TaskStore {
     updateTask: vi.fn(async () => current),
     moveTask: vi.fn(async () => current),
     logEntry: vi.fn(async () => undefined),
+    /*
+    FNXC:MergeQueue 2026-08-09-22:51:
+    A fake store that drives runAiMerge into the merger AI lane must expose emitUsageEvent because
+    session telemetry is defensive in production. Stores rejected at the workspace guard do not reach it.
+    */
+    emitUsageEvent: vi.fn(async () => true),
     recordRunAuditEvent: vi.fn(async () => undefined),
     getTaskWorkflowSelection: vi.fn(() => selection),
     getTaskWorkflowSelectionAsync: vi.fn(async () => selection),

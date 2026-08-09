@@ -174,7 +174,7 @@ describe("TaskCard footer wrapping (FN-5210)", () => {
   it("places workflow badges after footer and action rows in DOM order", () => {
     const { container } = render(
       <TaskCard
-        task={makeTask()}
+        task={makeTask({ awaitingPlanning: false, steps: [{ name: "Implement", status: "pending" }] as any })}
         onOpenDetail={noop}
         addToast={noop}
         onOpenDetailWithTab={noop}

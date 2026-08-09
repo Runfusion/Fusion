@@ -125,7 +125,7 @@ export function startPlanningStreaming(
   initialPlan: string,
   projectId?: string,
   modelOverride?: { planningModelProvider?: string; planningModelId?: string; thinkingLevel?: ThinkingLevel },
-  planningOptions?: { clarificationEnabled?: boolean; workflowId?: string | null },
+  planningOptions?: { clarificationEnabled?: boolean; workflowId?: string | null; sourceIssue?: { provider: "github"; repository: string; issueNumber: number; url: string; title?: string } },
   existingSessionId?: string,
 ): Promise<{ sessionId: string }> {
   return api<{ sessionId: string }>(withProjectId("/planning/start-streaming", projectId), {
@@ -137,6 +137,7 @@ export function startPlanningStreaming(
       thinkingLevel: modelOverride?.thinkingLevel,
       clarificationEnabled: planningOptions?.clarificationEnabled,
       ...(planningOptions?.workflowId ? { workflowId: planningOptions.workflowId } : {}),
+      ...(planningOptions?.sourceIssue ? { sourceIssue: planningOptions.sourceIssue } : {}),
       ...(existingSessionId ? { existingSessionId } : {}),
     }),
   });

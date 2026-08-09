@@ -2214,16 +2214,28 @@ export class Scheduler {
       falls back to the legacy literal "in-progress" check per task.
       */
       const wipIrCache = new Map<string, WorkflowIr>();
+      // FNXC:WorkflowScheduling 2026-08-09-06:07: Share this pass-local selection cache with the hold sweep and reservation path; a persistent cache would hide mutable selection writes.
+      const selectionCache = new Map<string, { workflowId: string; stepIds: string[] } | undefined>();
       const workflowIdByTaskId = new Map<string, string>();
-      await Promise.all(tasks.map(async (task) => {
-        try {
-          const selection = await this.store.getTaskWorkflowSelectionAsync(task.id);
-          workflowIdByTaskId.set(task.id, selection?.workflowId ?? "builtin:coding");
-        } catch {
-          // Same degradation as resolveWorkflowIrForTask: selection failure → default coding workflow.
-          workflowIdByTaskId.set(task.id, "builtin:coding");
+      const taskIds = [...new Set(tasks.map((task) => task.id))];
+      try {
+        if (this.store.getTaskWorkflowSelectionsAsync) {
+          const selections = await this.store.getTaskWorkflowSelectionsAsync(taskIds);
+          for (const taskId of taskIds) selectionCache.set(taskId, selections.get(taskId));
+        } else {
+          await Promise.all(taskIds.map(async (taskId) => {
+            try { selectionCache.set(taskId, await this.store.getTaskWorkflowSelectionAsync(taskId)); } catch { /* default below */ }
+          }));
         }
-      }));
+      } catch {
+        // FNXC:WorkflowScheduling 2026-08-09-08:16: a batch transport failure
+        // must retain the legacy per-task retry path. Defaulting the entire pass
+        // merges distinct capacity pools before the sweep can retry each row.
+        await Promise.all(taskIds.map(async (taskId) => {
+          try { selectionCache.set(taskId, await this.store.getTaskWorkflowSelectionAsync(taskId)); } catch { /* default below */ }
+        }));
+      }
+      for (const task of tasks) workflowIdByTaskId.set(task.id, selectionCache.get(task.id)?.workflowId ?? "builtin:coding");
       /*
       FNXC:WorkflowResolvedColumns 2026-07-30-15:40 (fleet conversion, scheduler.ts):
       Per distinct workflow: columnId → resolved trait flags; null when the IR failed to resolve or
@@ -2283,7 +2295,30 @@ export class Scheduler {
       shared with the board; planning, WIP, and active review count, while queued/paused/terminal
       tasks do not. Same-sweep reservations below keep newly released tasks visible immediately.
       */
-      const activeWorktreeTaskIds = await persistedTopLevelAgentTaskIdsFromStore(this.store, tasks);
+      /*
+      FNXC:WorkflowScheduling 2026-08-09-11:01:
+      The active-worktree count resolves every task's IR before the hold sweep. It
+      must read the same pass-scoped selection cache rather than silently adding
+      one selection query per card after the batch; otherwise this production
+      path recreates issue #3364's three-connection-pool saturation.
+      */
+      const selectionCachedStore = new Proxy(this.store, {
+        get: (target, property, receiver) => {
+          if (property === "getTaskWorkflowSelectionAsync") {
+            return async (taskId: string) => selectionCache.has(taskId)
+              ? selectionCache.get(taskId)
+              : await target.getTaskWorkflowSelectionAsync(taskId);
+          }
+          if (property === "getTaskWorkflowSelection") {
+            return (taskId: string) => selectionCache.has(taskId)
+              ? selectionCache.get(taskId)
+              : target.getTaskWorkflowSelection(taskId);
+          }
+          const value = Reflect.get(target, property, receiver);
+          return typeof value === "function" ? value.bind(target) : value;
+        },
+      });
+      const activeWorktreeTaskIds = await persistedTopLevelAgentTaskIdsFromStore(selectionCachedStore, tasks);
       let reservedWorktreeSlots = activeWorktreeTaskIds.length;
       let reservedConcurrentSlots = wipTaskIds.length;
       const dispatchPrepByTaskId = new Map<string, {
@@ -2391,6 +2426,7 @@ export class Scheduler {
 
       const result = await runHoldReleaseSweep(this.store, {
         now: () => Date.now(),
+        selectionCache,
         reserveSlot: async (task): Promise<SlotReservation | null> => {
           let reservedScope = false;
 
@@ -2399,7 +2435,7 @@ export class Scheduler {
           The workflow-column dispatch path is the only dispatcher when the flag is on, so the planning/bootstrap guards from the legacy todo filter must also apply here — and they must be TRAIT-based, not keyed on the literal "todo" column id. A custom workflow's intake/planning column can be renamed (`ideas`, `Inbox`, the default workflow's renamed "Planning"), so gating this guard on `task.column === "todo"` alone let an unplanned card in a renamed intake column bypass the stub check and release straight into execution (FN-7648). `isUnplannedForExecution` resolves the intake trait on the task's OWN resolved workflow IR so every renamed variant is covered.
           */
           try {
-            const ir = await resolveWorkflowIrForTask(this.store, task.id);
+            const ir = await resolveWorkflowIrForTask(this.store, task.id, wipIrCache, selectionCache);
             if (await isUnplannedForExecution(this.store, task, ir)) {
               await checkAndRecordUnplannedExecutionBlock(this.store, task, ir);
               return null;

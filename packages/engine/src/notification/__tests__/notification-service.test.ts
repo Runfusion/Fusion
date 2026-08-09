@@ -170,6 +170,54 @@ describe("NotificationService deferred failure notifications", () => {
     await restarted.stop();
   });
 
+  it("deduplicates durable awaiting-approval messages across policy re-parks and restart", async () => {
+    const store = createStore();
+    const messageKeys = new Set<string>();
+    let insertedCount = 0;
+    const sendMessageOnce = vi.fn(async (_input: unknown, idempotencyKey: string) => {
+      const inserted = !messageKeys.has(idempotencyKey);
+      messageKeys.add(idempotencyKey);
+      if (inserted) insertedCount += 1;
+      return { message: {} as any, inserted };
+    });
+    const service = new NotificationService(store as any, {
+      messageStore: { on: () => undefined, sendMessageOnce } as any,
+    });
+    await service.start();
+    const policyHold = task({
+      id: "FN-policy-hold",
+      column: "in-review",
+      status: "awaiting-approval",
+      error: "Pull request is blocked by branch protection.",
+      awaitingApprovalReason: "merge-blocked-by-policy",
+    });
+
+    store.emit("task:updated", policyHold);
+    store.emit("task:updated", policyHold);
+    await vi.waitFor(() => expect(sendMessageOnce).toHaveBeenCalledTimes(2));
+    expect(insertedCount).toBe(1);
+    expect(sendMessageOnce).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        content: expect.stringContaining("pull-request merge is blocked"),
+        metadata: expect.objectContaining({
+          taskId: "FN-policy-hold",
+          awaitingApprovalReason: "merge-blocked-by-policy",
+        }),
+      }),
+      "merge-policy-block:FN-policy-hold",
+    );
+
+    await service.stop();
+    const restarted = new NotificationService(store as any, {
+      messageStore: { on: () => undefined, sendMessageOnce } as any,
+    });
+    await restarted.start();
+    store.emit("task:updated", policyHold);
+    await vi.waitFor(() => expect(sendMessageOnce).toHaveBeenCalledTimes(3));
+    expect(insertedCount).toBe(1);
+    await restarted.stop();
+  });
+
   it("Failure that persists past grace dispatches exactly once", async () => {
     const { store, service, sendNotification } = await setup();
     store.setTask(task({ id: "FN-1", status: "failed" }));
@@ -182,7 +230,7 @@ describe("NotificationService deferred failure notifications", () => {
     await service.stop();
   });
 
-  it("delivers a new wedge episode when an opaque terminal failure gains a specific cause", async () => {
+  it("delivers only the live wedge cause when a snapshot is superseded", async () => {
     const { store, service, sendNotification } = await setup();
     const genericFailure = task({ id: "FN-wedge", status: "failed", error: "unexpected failure" });
     store.setTask(genericFailure);
@@ -198,11 +246,8 @@ describe("NotificationService deferred failure notifications", () => {
     store.emit("task:updated", wedge);
     await vi.advanceTimersByTimeAsync(100);
 
-    expect(sendNotification).toHaveBeenCalledTimes(2);
-    expect(sendNotification).toHaveBeenCalledWith("task-wedged", expect.objectContaining({
-      taskId: "FN-wedge",
-      metadata: expect.objectContaining({ wedgeReason: "terminal-failed" }),
-    }));
+    // FNXC:TaskWedgeNotifications 2026-08-09-06:30: A superseded snapshot must not claim an obsolete episode.
+    expect(sendNotification).toHaveBeenCalledTimes(1);
     expect(sendNotification).toHaveBeenCalledWith("task-wedged", expect.objectContaining({
       taskId: "FN-wedge",
       metadata: expect.objectContaining({ wedgeReason: "merge-blocked:changeset-format" }),

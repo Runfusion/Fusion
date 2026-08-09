@@ -111,6 +111,7 @@ function makeStore(taskId = "FN-1") {
     emit: vi.fn(),
     logEntry: vi.fn(async (_id: string, message: string) => { logs.push(message); }),
     appendAgentLog: vi.fn(async (_id: string, message: string) => { logs.push(message); }),
+    emitUsageEvent: vi.fn(async () => true),
     recordRunAuditEvent: vi.fn(async (event: any) => { audits.push(event); }),
   };
   return { store, audits, logs };

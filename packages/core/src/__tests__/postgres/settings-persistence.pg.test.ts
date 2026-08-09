@@ -12,6 +12,7 @@ import {
   type SharedPgTaskStoreHarness,
 } from "../../__test-utils__/pg-test-harness.js";
 import { GLOBAL_SETTINGS_KEYS, PROJECT_SETTINGS_KEYS } from "../../config/settings-schema.js";
+import { sql } from "drizzle-orm";
 
 const credentialLaneKeys = [
   ["defaultProvider", "defaultCredentialInstanceId"],
@@ -54,6 +55,22 @@ pgTest("VAL-CROSS-004: Settings persistence (PostgreSQL)", () => {
     const settings = await store.getSettings();
     expect(settings.worktreeInitCommand).toBe("pnpm install");
     expect(settings.autoMerge).toBe(false);
+  });
+
+  it("records omitted settings actors as the honest system fallback", async () => {
+    const store = h.store();
+    await store.updateSettings({ taskPrefix: "ATTR" });
+    await store.updateGlobalSettings({ defaultModelId: "attribution-model" });
+
+    const revisions = await h.adminDb().execute(sql`
+      SELECT changed_by AS "changedBy"
+      FROM project.configuration_revisions
+      ORDER BY sequence ASC
+    `);
+    const actors = revisions.map((row) => row.changedBy);
+
+    expect(actors).toContainEqual({ kind: "system", id: "fusion-system" });
+    expect(actors).not.toContainEqual(expect.objectContaining({ kind: "human" }));
   });
 
   it("discards retired ephemeral compatibility patches while preserving active project settings", async () => {

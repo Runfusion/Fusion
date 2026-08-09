@@ -594,6 +594,23 @@ export const taskLifecycleEventSeq = projectSchema.table("task_lifecycle_event_s
   lastSeq: bigint("last_seq", { mode: "bigint" }).notNull().default(sql`0`),
 }, (t) => [primaryKey({ columns: [t.projectId] })]);
 
+
+/* FNXC:AgentActivityStream 2026-08-09-09:09: durable project-scoped agent activity uses a transactional counter so commit order is the cursor order. */
+export const agentActivityEvents = projectSchema.table("agent_activity_events", {
+  projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
+  seq: bigint("seq", { mode: "bigint" }).notNull(), eventId: text("event_id").notNull(),
+  agentId: text("agent_id").notNull(), agentAttribution: text("agent_attribution").notNull(),
+  taskId: text("task_id"), type: text("type").notNull(), fromAgentId: text("from_agent_id"), toAgentId: text("to_agent_id"),
+  summary: text("summary").notNull(), occurredAt: text("occurred_at").notNull(), createdAt: text("created_at").notNull(), metadata: jsonb("metadata"),
+}, (t) => [
+  primaryKey({ columns: [t.projectId, t.seq] }), unique("agent_activity_events_project_event_unique").on(t.projectId, t.eventId),
+  index("idxAgentActivityEventsSeq").on(t.projectId, t.seq), index("idxAgentActivityEventsAgentSeq").on(t.projectId, t.agentId, t.seq),
+  index("idxAgentActivityEventsTaskSeq").on(t.projectId, t.taskId, t.seq), index("idxAgentActivityEventsTypeSeq").on(t.projectId, t.type, t.seq),
+]);
+export const agentActivityEventSeq = projectSchema.table("agent_activity_event_seq", {
+  projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`), lastSeq: bigint("last_seq", { mode: "bigint" }).notNull().default(sql`0`),
+}, (t) => [primaryKey({ columns: [t.projectId] })]);
+
 /*
 FNXC:CrossProcessDeleteObservation 2026-08-01-11:39:
 The transactional delete outbox needs durable state per independently observing identity.
@@ -1890,6 +1907,33 @@ export const deployments = projectSchema.table("deployments", {
   index("idxDeploymentsService").on(t.service),
 ]);
 
+/*
+FNXC:PrMergeEventDrivenChecks 2026-08-09-14:35:
+Persist terminal GitHub CI by mandatory project, repository, and commit identity so event-driven
+required checks cannot admit stale or cross-project results; received_at supports scheduled retention.
+*/
+export const githubCheckStates = projectSchema.table("github_check_states", {
+  id: integer("id").generatedAlwaysAsIdentity().notNull(),
+  projectId: text("project_id").notNull().default(""),
+  repo: text("repo").notNull(),
+  headSha: text("head_sha").notNull(),
+  checkName: text("check_name").notNull(),
+  state: text("state").notNull(),
+  eventKind: text("event_kind"),
+  externalId: text("external_id"),
+  detailsUrl: text("details_url"),
+  reportedAt: text("reported_at").notNull(),
+  receivedAt: text("received_at").notNull(),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+  meta: jsonb("meta"),
+}, (t) => [
+  primaryKey({ columns: [t.projectId, t.id], name: "github_check_states_pkey" }),
+  uniqueIndex("idxGithubCheckStatesIdentity").on(t.projectId, t.repo, t.headSha, t.checkName),
+  index("idxGithubCheckStatesProjectCommit").on(t.projectId, t.repo, t.headSha),
+  index("idxGithubCheckStatesProjectReceived").on(t.projectId, t.receivedAt),
+]);
+
 export const incidents = projectSchema.table("incidents", {
   id: integer("id").generatedAlwaysAsIdentity().primaryKey(),
   projectId: text("project_id").notNull().default(""),
@@ -2398,12 +2442,12 @@ export const projectTableNames = [
   "milestones", "slices", "mission_features", "ideation_sessions", "ideation_candidates", "mission_events", "plugins",
   "routines", "project_insights", "project_insight_runs", "project_insight_run_events",
   "todo_lists", "todo_items", "usage_events", "plugin_activations",
-  "knowledge_pages", "deployments", "incidents", "ai_sessions", "messages",
+  "knowledge_pages", "deployments", "github_check_states", "incidents", "ai_sessions", "messages",
   "agent_ratings", "chat_sessions", "cli_sessions", "chat_messages",
   "run_audit_events", "mission_contract_assertions", "mission_feature_assertions",
   "mission_validator_runs", "mission_validator_failures",
   "mission_fix_feature_lineage", "verification_cache", "import_translation_cache",
   "approval_requests",
-  "approval_request_audit_events", "chat_rooms", "chat_room_members",
+  "approval_request_audit_events", "agent_activity_events", "agent_activity_event_seq", "chat_rooms", "chat_room_members",
   "chat_room_messages", "chat_token_usage",
 ] as const;

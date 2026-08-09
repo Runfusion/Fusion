@@ -26,7 +26,7 @@
  *   consume.
  */
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, gte, isNull, notLike, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNull, notLike, sql } from "drizzle-orm";
 import * as schema from "../../postgres/schema/index.js";
 import type { AsyncDataLayer, DbTransaction } from "../../postgres/data-layer.js";
 
@@ -336,14 +336,11 @@ export async function ingestIncidentSignalAsync(
   return { incident, created: true };
 }
 
-/**
- * Resolve an open incident for a grouping key (sets `status = resolved` +
- * `resolvedAt`). Returns the resolved incident, or null if none was open.
- *
- * @param db The Drizzle instance (or transaction handle) from the AsyncDataLayer.
- * @param groupingKey The signal grouping key.
- * @param at Optional resolution timestamp (ISO-8601); defaults to now.
- */
+/*
+FNXC:Monitor 2026-08-09-13:23:
+Recovery-only GitHub CI signals have no task-marker dedup. Resolve exactly the newest open incident in one status-gated UPDATE: MVCC locks make a concurrent loser re-check `status = 'open'` and change nothing, so resolvedAt is written once. The LIMIT 1 selection deliberately preserves older open rows because schema permits multiple rows per key; claimIncidentForFixTaskAsync is the sibling conditional-update precedent.
+*/
+/** Resolves the newest open incident for a grouping key in one conditional UPDATE (at most one row). Older open rows remain untouched; only the caller whose statement changed a row receives it, and every loser/no-open caller receives null. */
 export async function resolveIncidentAsync(
   db: AsyncDataLayer["db"] | DbTransaction,
   groupingKey: string,
@@ -351,14 +348,19 @@ export async function resolveIncidentAsync(
   projectId = "",
 ): Promise<Incident | null> {
   const ownerProjectId = monitorProjectPartition(projectId);
-  const open = await getOpenIncidentByGroupingKeyAsync(db, groupingKey, ownerProjectId);
-  if (!open) return null;
   const now = at ?? new Date().toISOString();
-  await db
+  const newestOpen = db
+    .select({ incidentId: schema.project.incidents.incidentId })
+    .from(schema.project.incidents)
+    .where(and(eq(schema.project.incidents.projectId, ownerProjectId), eq(schema.project.incidents.groupingKey, groupingKey), eq(schema.project.incidents.status, "open")))
+    .orderBy(desc(schema.project.incidents.openedAt), desc(schema.project.incidents.id))
+    .limit(1);
+  const rows = await db
     .update(schema.project.incidents)
     .set({ status: "resolved", resolvedAt: now, updatedAt: now })
-    .where(and(eq(schema.project.incidents.projectId, ownerProjectId), eq(schema.project.incidents.incidentId, open.incidentId)));
-  return getIncidentAsync(db, open.incidentId, ownerProjectId);
+    .where(and(eq(schema.project.incidents.projectId, ownerProjectId), eq(schema.project.incidents.status, "open"), inArray(schema.project.incidents.incidentId, newestOpen)))
+    .returning();
+  return rows[0] ? incidentFromRow(rows[0]) : null;
 }
 
 /**

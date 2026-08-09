@@ -22,6 +22,7 @@ import {
   PinOff,
   MoreHorizontal,
   Tag,
+  FileText,
 } from "lucide-react";
 import { FN_AGENT_ID, TASK_PLANNER_CHAT_AGENT_ID_PREFIX, useChat, type ChatMessageInfo } from "../hooks/useChat";
 import { RoomMessageDeliveredButReplyFailedError, useChatRooms } from "../hooks/useChatRooms";
@@ -59,6 +60,7 @@ import {
   StandardStreamingMessage,
   formatModelTag,
 } from "./StandardChatSurface";
+import { buildChatReportHandoff, type ChatReportHandoff } from "./chatReportHandoff";
 import { CHAT_COMMANDS, matchChatCommand, filterChatCommands, getSlashTriggerMatch, type ChatCommand } from "./chat-commands";
 
 /**
@@ -105,6 +107,7 @@ export interface ChatViewProps {
   /** Optional external composer seed; paired with a nonce so repeated opens reseed intentionally. */
   initialComposerDraft?: string;
   initialComposerDraftNonce?: number;
+  onSendAsReport?: (handoff: ChatReportHandoff) => void;
 }
 
 // Keep a generous cap so pasted multi-paragraph text stays visible while
@@ -542,7 +545,7 @@ interface RoomContext {
   memberIds: ReadonlySet<string>;
 }
 
-export function ChatView({ projectId, addToast, floating = false, compactLayout = false, onPopOut, onMaximize, onMinimize, onClose, chatCommandContext, initialComposerDraft, initialComposerDraftNonce }: ChatViewProps) {
+export function ChatView({ projectId, addToast, floating = false, compactLayout = false, onPopOut, onMaximize, onMinimize, onClose, chatCommandContext, initialComposerDraft, initialComposerDraftNonce, onSendAsReport }: ChatViewProps) {
   const { t } = useTranslation("app");
   useEffect(() => {
     recordResumeEvent({
@@ -2809,19 +2812,17 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
 
   const showProviderResponseCopy = activeSession?.agentId === FN_AGENT_ID;
 
-  const renderCopyAction = useCallback((messageId: string, content: string, testId?: string) => (
-    <button
-      type="button"
-      className={`btn-icon chat-message-copy-action${copyFeedbackByMessageId[messageId] === "success" ? " chat-message-copy-action--success" : ""}${copyFeedbackByMessageId[messageId] === "error" ? " chat-message-copy-action--error" : ""}`}
-      data-testid={testId ?? `chat-copy-response-${messageId}`}
-      aria-label={copyFeedbackByMessageId[messageId] === "success" ? t("chat.responseCopied", "Response copied") : copyFeedbackByMessageId[messageId] === "error" ? t("chat.copyFailed", "Copy failed") : t("chat.copyResponse", "Copy response")}
-      onClick={() => {
-        void handleCopyResponse(messageId, content);
-      }}
-    >
-      {copyFeedbackByMessageId[messageId] === "success" ? <Check size={14} /> : <Copy size={14} />}
-    </button>
-  ), [copyFeedbackByMessageId, handleCopyResponse]);
+  const renderMessageActions = useCallback((messageId: string, content: string, role: "assistant" | "user" | "system", testId?: string, allowReport = true) => {
+    const canCopy = showProviderResponseCopy && role === "assistant";
+    const report = allowReport && role === "assistant" && onSendAsReport ? buildChatReportHandoff(content, t("chat.reportFallbackTitle", "Chat report")) : null;
+    if (!canCopy && !report?.handoff) return undefined;
+    return <>
+      {canCopy && <button type="button" className={`btn-icon chat-message-copy-action${copyFeedbackByMessageId[messageId] === "success" ? " chat-message-copy-action--success" : ""}${copyFeedbackByMessageId[messageId] === "error" ? " chat-message-copy-action--error" : ""}`} data-testid={testId ?? `chat-copy-response-${messageId}`} aria-label={copyFeedbackByMessageId[messageId] === "success" ? t("chat.responseCopied", "Response copied") : copyFeedbackByMessageId[messageId] === "error" ? t("chat.copyFailed", "Copy failed") : t("chat.copyResponse", "Copy response")} onClick={() => { void handleCopyResponse(messageId, content); }}>
+        {copyFeedbackByMessageId[messageId] === "success" ? <Check size={14} /> : <Copy size={14} />}
+      </button>}
+      {report?.handoff && <button type="button" className="btn-icon" data-testid={`chat-send-as-report-${messageId}`} aria-label={t("chat.sendAsReport", "Send as report")} onClick={() => { if (report.truncated) addToast(t("chat.reportTrimmed", "Message trimmed to 2000 characters for mail"), "warning"); onSendAsReport?.(report.handoff!); }}><FileText size={14} /></button>}
+    </>;
+  }, [addToast, copyFeedbackByMessageId, handleCopyResponse, onSendAsReport, showProviderResponseCopy, t]);
 
   const handleScrollMessageToTop = useCallback((messageId: string) => {
     const containerEl = messagesContainerRef.current;
@@ -2886,7 +2887,7 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
               projectId={projectId}
               mentionAgentsByName={mentionAgentsByName}
               roomContext={null}
-              copyAction={showProviderResponseCopy && message.role === "assistant" ? renderCopyAction(message.id, message.content) : undefined}
+              copyAction={renderMessageActions(message.id, message.content, message.role)}
               onScrollToTop={handleScrollMessageToTop}
               isTopClipped={topClippedMessageIds.has(message.id)}
               isAwaitingQuestionAnswer={message.role === "assistant" && index === messages.length - 1 && !isStreaming}
@@ -2906,7 +2907,8 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
             showAssistantModelTag={showAssistantModelTag}
             activeModelTag={activeModelTag}
             activeModelProvider={activeModelProvider}
-            copyAction={showProviderResponseCopy && streamingText ? renderCopyAction("__streaming__", streamingText, "chat-copy-response-streaming") : undefined}
+            /* FNXC:StructuralMail 2026-08-09-09:09: A streaming answer is unfinished and must never be routed as a report. */
+            copyAction={showProviderResponseCopy && streamingText ? renderMessageActions("__streaming__", streamingText, "assistant", "chat-copy-response-streaming", false) : undefined}
             onQuestionSubmit={handleQuestionSubmit}
           />
         </>
@@ -2932,7 +2934,7 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
               projectId={projectId}
               mentionAgentsByName={mentionAgentsByName}
               roomContext={null}
-              copyAction={showProviderResponseCopy && message.role === "assistant" ? renderCopyAction(message.id, message.content) : undefined}
+              copyAction={renderMessageActions(message.id, message.content, message.role)}
               onScrollToTop={handleScrollMessageToTop}
               isTopClipped={topClippedMessageIds.has(message.id)}
               isAwaitingQuestionAnswer={message.role === "assistant" && index === messages.length - 1 && !isStreaming}

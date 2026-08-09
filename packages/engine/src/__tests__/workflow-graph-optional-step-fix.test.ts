@@ -369,6 +369,71 @@ describe("TaskExecutor pre-merge optional-step fix seam", () => {
     expect((executor as any).pausedAborted.has("FN-7066")).toBe(false);
   });
 
+  it("replans a standalone Plan Review REVISE with the default project-Off settings", async () => {
+    const store = createMockStore();
+    const liveTask = task({ column: "in-progress", status: null });
+    store.getTask.mockResolvedValue(liveTask);
+    const executor = new TaskExecutor(store, "/tmp/test");
+
+    await expect((executor as any).requestPreMergeOptionalStepFix(liveTask.id, liveTask, {
+      stepName: "Plan Review",
+      feedback: "Revise the task specification.",
+      phase: "pre-merge",
+      status: "failed",
+      verdict: "REVISE",
+      nodeId: "plan-review",
+    })).resolves.toBe(true);
+
+    expect(store.moveTask).toHaveBeenCalledWith(liveTask.id, "todo", { preserveWorktree: true });
+    expect(store.updateTask).toHaveBeenCalledWith(liveTask.id, expect.objectContaining({ status: "needs-replan" }), undefined);
+  });
+
+  it("holds only user-held tasks during project-Off Plan Review remediation", async () => {
+    for (const overrides of [
+      { autoMerge: false, autoMergeProvenance: "user" as const },
+    ]) {
+      const store = createMockStore();
+      const liveTask = task({ column: "in-progress", status: null, ...overrides });
+      store.getTask.mockResolvedValue(liveTask);
+      const executor = new TaskExecutor(store, "/tmp/test");
+
+      await expect((executor as any).requestPreMergeOptionalStepFix(liveTask.id, liveTask, {
+        stepName: "Plan Review",
+        feedback: "Revise the task specification.",
+        phase: "pre-merge",
+        status: "failed",
+        verdict: "REVISE",
+        nodeId: "plan-review",
+      })).resolves.toBe(false);
+
+      expect(store.moveTask).not.toHaveBeenCalled();
+      expect(store.updateTask).not.toHaveBeenCalled();
+      expect(store.logEntry).toHaveBeenCalledWith(
+        liveTask.id,
+        expect.stringContaining("operator task hold"),
+        expect.stringContaining("operator-authored task-level auto-merge Off"),
+        undefined,
+      );
+    }
+  });
+
+  it("remediates a mission-policy shared member when project auto-merge is On", async () => {
+    const store = createMockStore();
+    const liveTask = task({
+      branchContext: { assignmentMode: "shared", groupId: "BG-1" },
+      autoMerge: false,
+      autoMergeProvenance: "mission",
+    });
+    store.getTask.mockResolvedValue(liveTask);
+    store.getSettings.mockResolvedValue({ autoMerge: true });
+    const executor = new TaskExecutor(store, "/tmp/test");
+    const sendBack = vi.spyOn(executor as any, "sendTaskBackForFix").mockResolvedValue(undefined);
+
+    await expect((executor as any).requestPreMergeOptionalStepFix(liveTask.id, liveTask, reviseInfo)).resolves.toBe(true);
+
+    expect(sendBack).toHaveBeenCalledOnce();
+  });
+
   it("does not hard-cancel the graph that performs its own Plan Review replan move", async () => {
     const store = createMockStore();
     const liveTask = task({ postReviewFixCount: 0, column: "in-progress", status: null });
@@ -748,6 +813,57 @@ describe("TaskExecutor pre-merge optional-step fix seam", () => {
     }
   });
 
+  it("recovers a standalone failed Code Review with the default project-Off settings", async () => {
+    const store = createMockStore();
+    const liveTask = task({
+      column: "in-review",
+      workflowStepResults: [{
+        workflowStepId: "code-review",
+        workflowStepName: "Code Review",
+        phase: "pre-merge",
+        status: "failed",
+        output: "Fix the review finding.",
+      }],
+    });
+    const executor = new TaskExecutor(store, "/tmp/test");
+    const sendBack = vi.spyOn(executor as any, "sendTaskBackForFix").mockResolvedValue(undefined);
+
+    await expect(executor.recoverFailedPreMergeWorkflowStep(liveTask)).resolves.toBe(true);
+
+    expect(sendBack).toHaveBeenCalledOnce();
+    expect(store.logEntry).not.toHaveBeenCalledWith(
+      liveTask.id,
+      expect.stringContaining("recovery not scheduled — revision budget"),
+      expect.anything(),
+      undefined,
+    );
+  });
+
+  it("does not recover user-held tasks during project-Off failed-step recovery", async () => {
+    for (const overrides of [
+      { autoMerge: false, autoMergeProvenance: "user" as const },
+    ]) {
+      const store = createMockStore();
+      const liveTask = task({
+        column: "in-review",
+        ...overrides,
+        workflowStepResults: [{
+          workflowStepId: "code-review",
+          workflowStepName: "Code Review",
+          phase: "pre-merge",
+          status: "failed",
+          output: "Fix the review finding.",
+        }],
+      });
+      const executor = new TaskExecutor(store, "/tmp/test");
+      const sendBack = vi.spyOn(executor as any, "sendTaskBackForFix");
+
+      await expect(executor.recoverFailedPreMergeWorkflowStep(liveTask)).resolves.toBe(false);
+
+      expect(sendBack).not.toHaveBeenCalled();
+    }
+  });
+
   it("keeps the retry presentation aligned with the next attempt during failed-step recovery", async () => {
     const store = createMockStore();
     const liveTask = task({
@@ -810,6 +926,12 @@ describe("TaskExecutor pre-merge optional-step fix seam", () => {
     await expect(executor.recoverFailedPreMergeWorkflowStep(liveTask)).resolves.toBe(false);
 
     expect(sendBack).not.toHaveBeenCalled();
+    expect(store.logEntry).toHaveBeenCalledWith(
+      liveTask.id,
+      expect.stringContaining(codeReviewMaxRevisions === 0 ? "zero/invalid" : "exhausted"),
+      expect.stringContaining(`Attempts: ${attempts}\nMax: ${codeReviewMaxRevisions}`),
+      undefined,
+    );
   });
 
   it("writes an unbounded retry label into Code Review remediation instructions", async () => {

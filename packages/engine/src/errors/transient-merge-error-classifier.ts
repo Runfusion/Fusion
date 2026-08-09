@@ -29,10 +29,14 @@
  *        commit does not descend from the current integration ref. The error
  *        carries the same SHA in both the "expected" and "observed" slots
  *        because the pre-advance rev-parse captured the ref state and
- *        update-ref refused without moving it. On the next merge attempt,
- *        the safety-fallback auto-prerebase (`merger-auto-prerebase.ts`,
- *        FN-5627) rebases the task branch onto current main, so the retry
- *        succeeds.
+ *        update-ref refused without moving it. Under `runAiMerge`, the next
+ *        attempt builds a fresh clean-room worktree at the current integration
+ *        tip, so the retry succeeds. The safety-fallback auto-prerebase
+ *        (`merger-auto-prerebase.ts`, FN-5627) describes only the legacy,
+ *        soft-deprecated aiMergeTask pipeline.
+ *
+ * FNXC:MergerUnification 2026-08-09-12:04: Production retries rebuild the
+ * clean room; legacy prerebase is retained but not a live retry mechanism.
  *
  *  - `process-spawn-failure`: Node/OS process launch failed while the merger
  *    was operating from an integration cwd (`spawn ENOTDIR`, `spawn git ENOENT`,

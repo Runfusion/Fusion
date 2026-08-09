@@ -829,9 +829,11 @@ Tasks execute on an effective node selected by routing precedence:
 2. **Project default node** (`defaultNodeId` in project settings)
 3. **Local execution** (no node configured)
 
-At dispatch time, scheduler routing is persisted on the task as:
+At dispatch time, scheduler routing is persisted on the task as the snapshot pair:
 - `effectiveNodeId`
 - `effectiveNodeSource` (`task-override`, `project-default`, or `local`)
+
+When a non-checked-out task's `nodeId` override changes, this persisted pair is invalidated unless the update explicitly replaces its fields. The next dispatch resolves routing again and writes a fresh snapshot pair.
 
 ### Create-time routing semantics
 

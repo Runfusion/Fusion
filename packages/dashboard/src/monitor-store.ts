@@ -331,14 +331,11 @@ export async function ingestIncidentSignal(
   return { incident, created: true };
 }
 
-/**
- * Resolve an open incident for a grouping key (sets `status = resolved` +
- * `resolvedAt`). Returns the resolved incident, or null if none was open. The
- * resolution feeds MTTR via {@link aggregateMonitorMetrics}.
- *
- * FNXC:RuntimeSatelliteAsync 2026-06-24-13:25:
- * Backend dual-path: delegates to resolveIncidentAsync when AsyncDataLayer.
- */
+/*
+FNXC:Monitor 2026-08-09-13:23:
+Taskless GitHub CI recovery relies on persisted resolution rather than nonce dedup. The conditional status predicate makes concurrent SQLite/Postgres resolvers safe, while the LIMIT 1 subquery preserves the longstanding newest-one contract: multiple open rows are legal and older rows must not be mass-resolved.
+*/
+/** Resolves the newest open incident for a grouping key in one conditional UPDATE (at most one row). The winning caller receives that row; already-resolved/no-open/racing callers receive null and resolvedAt is written once. */
 export async function resolveIncident(
   db: Database | AsyncDataLayer,
   groupingKey: string,
@@ -352,14 +349,17 @@ export async function resolveIncident(
     return resolveIncidentAsync(layer.db, groupingKey, at, monitorProjectId(layer));
   }
   const sqliteDb = db as Database;
-  const open = getOpenIncidentByGroupingKey(sqliteDb, groupingKey);
-  if (!open) return null;
   const now = at ?? new Date().toISOString();
-  sqliteDb.prepare(
-    `UPDATE incidents SET status = 'resolved', resolvedAt = ?, updatedAt = ? WHERE incidentId = ?`,
-  ).run(now, now, open.incidentId);
+  const result = sqliteDb.prepare(
+    `UPDATE incidents SET status = 'resolved', resolvedAt = ?, updatedAt = ?
+     WHERE status = 'open' AND incidentId = (
+       SELECT incidentId FROM incidents WHERE groupingKey = ? AND status = 'open'
+       ORDER BY openedAt DESC, id DESC LIMIT 1
+     ) RETURNING incidentId`,
+  ).get(now, now, groupingKey) as { incidentId: string } | undefined;
+  if (!result) return null;
   sqliteDb.bumpLastModified();
-  return getIncident(sqliteDb, open.incidentId);
+  return getIncident(sqliteDb, result.incidentId);
 }
 
 /**

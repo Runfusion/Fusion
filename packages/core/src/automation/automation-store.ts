@@ -14,6 +14,7 @@ import { assertProjectRootDir } from "../central/project-root-guard.js";
 import type { AsyncDataLayer } from "../postgres/data-layer.js";
 import { appendConfigurationRevision, createConfigurationRevision, getConfigurationRevision, rollbackConfiguration } from "../async-stores/async-configuration-revision-store.js";
 import type { ConfigChangedBy, ConfigurationRevision } from "../types.js";
+import { CONFIG_CHANGED_BY_SYSTEM } from "../types.js";
 /*
  * FNXC:PhysicalDeleteSqliteClass 2026-06-26-14:00:
  * Async Drizzle helpers for backend-mode (PostgreSQL) AutomationStore operations.
@@ -261,7 +262,7 @@ export class AutomationStore extends EventEmitter<AutomationStoreEvents> {
    * callers must not lose their pre-existing ability to manage automations.
    */
 
-  async createSchedule(input: ScheduledTaskCreateInput, changedBy: ConfigChangedBy = { kind: "human", id: "local-user" }): Promise<ScheduledTask> {
+  async createSchedule(input: ScheduledTaskCreateInput, changedBy: ConfigChangedBy = CONFIG_CHANGED_BY_SYSTEM): Promise<ScheduledTask> {
     this.requireVersionedConfigurationBackend();
     if (!input.name?.trim()) {
       throw new Error("Name is required and cannot be empty");
@@ -323,7 +324,7 @@ export class AutomationStore extends EventEmitter<AutomationStoreEvents> {
   }
 
   /** Restore an automation snapshot by stable id and append one rollback revision. */
-  async rollbackConfiguration(revisionId: string, changedBy: ConfigChangedBy = { kind: "human", id: "local-user" }): Promise<ConfigurationRevision> {
+  async rollbackConfiguration(revisionId: string, changedBy: ConfigChangedBy = CONFIG_CHANGED_BY_SYSTEM): Promise<ConfigurationRevision> {
     if (!this.backendMode) throw new Error("Configuration rollback requires the PostgreSQL revision store");
     const layer = this.asyncLayer!;
     return layer.transactionImmediate((tx) => rollbackConfiguration(tx, layer.projectId ?? "", revisionId, changedBy, {
@@ -353,7 +354,7 @@ export class AutomationStore extends EventEmitter<AutomationStoreEvents> {
         return listSchedulesAsync(this.asyncLayer!);
 }
 
-  async updateSchedule(id: string, updates: ScheduledTaskUpdateInput, changedBy: ConfigChangedBy = { kind: "human", id: "local-user" }): Promise<ScheduledTask> {
+  async updateSchedule(id: string, updates: ScheduledTaskUpdateInput, changedBy: ConfigChangedBy = CONFIG_CHANGED_BY_SYSTEM): Promise<ScheduledTask> {
     this.requireVersionedConfigurationBackend();
     return this.withScheduleLock(id, async () => {
       const schedule = await this.getSchedule(id);
@@ -437,7 +438,7 @@ export class AutomationStore extends EventEmitter<AutomationStoreEvents> {
    * Reorder the steps of a schedule by providing the step IDs in the desired order.
    * The `stepIds` array must contain exactly the same IDs as the current steps.
    */
-  async reorderSteps(scheduleId: string, stepIds: string[], changedBy: ConfigChangedBy = { kind: "human", id: "local-user" }): Promise<ScheduledTask> {
+  async reorderSteps(scheduleId: string, stepIds: string[], changedBy: ConfigChangedBy = CONFIG_CHANGED_BY_SYSTEM): Promise<ScheduledTask> {
     this.requireVersionedConfigurationBackend();
     return this.withScheduleLock(scheduleId, async () => {
       const schedule = await this.getSchedule(scheduleId);
@@ -474,7 +475,7 @@ export class AutomationStore extends EventEmitter<AutomationStoreEvents> {
     });
   }
 
-  async deleteSchedule(id: string, changedBy: ConfigChangedBy = { kind: "human", id: "local-user" }): Promise<ScheduledTask> {
+  async deleteSchedule(id: string, changedBy: ConfigChangedBy = CONFIG_CHANGED_BY_SYSTEM): Promise<ScheduledTask> {
     this.requireVersionedConfigurationBackend();
     return this.withScheduleLock(id, async () => {
       const schedule = await this.getSchedule(id);

@@ -15,8 +15,8 @@ import { readFile, rm, writeFile } from "node:fs/promises";
 import { DEFAULT_PROVIDER_INSTANCE_ID, type ProviderInstanceRef, type TaskStore, type Task, type TaskDetail, type TaskRecommendation, type TaskTokenUsage, type StepStatus, type Settings, type WorkflowStep, type MissionStore, type AsyncMissionStore, type Slice, type AgentState, type AgentCapability, type RunMutationContext, type AgentHeartbeatConfig, type Agent, type AgentMemoryInclusionMode, type ProjectSettings, type MergeResult, type WorkflowIrNode, type WorkflowIrNodeKind, type WorkflowStepResult as CoreWorkflowStepResult, type WorkflowReviewFinding, type ThinkingLevel } from "@fusion/core";
 import { getUnmetSchedulingDependencies } from "./scheduler.js";
 import type { ImplementationExit, ImplementationExitReporter } from "./executor/implementation-exit.js";
-import { emitWorkflowLifecycleEvent } from "@fusion/core";
-import { resolveTaskLifecycleColumns, resolveProjectColumnsForRoles, resolveWipTargetForTask, resolveTerminalColumns, RetryStormError, serializeRetryStormError, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, resolveWorkflowIrForTask, columnsWithFlag, evaluateForeachMergeProof, resolveCompleteColumn, resolveMergeOrchestrationColumn, resolveReboundTarget, resolveLifecycleColumns, resolveColumnAgentBinding, resolveEffectiveAgent, instanceNodeId, getWorkflowExtensionRegistry, getBuiltinWorkflow, parseNoOpCompletionMarker, allowsAutoMergeProcessing, hasSharedBranchMemberAutoMergeHold, resolveEffectiveAutoMerge, isLiveSharedBranchGroupMemberIntegration, resolveMaxAutoMergeRetries, resolveMaxConsecutiveToolFailureRetries, resolveConsecutiveToolFailureRetryBackoffMs, resolveConsecutiveToolFailureThreshold, resolveExecutorEscalationTarget, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, DEFAULT_MAX_POST_REVIEW_FIXES, COMPLETION_SUMMARY_NODE_ID, PLAN_REVIEW_GROUP_ID, upsertWorkflowStepResult, normalizeWorkflowReviewFindings, AWAITING_APPROVAL_PAUSE_REASON, THINKING_LEVELS, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AgentStore, classifyWorkflowAgentNode, isWorkflowAgentRole, resolveExecutorFallbackModel, resolveValidatorFallbackModel, resolveExplicitDuplicateMarker, nonExecutableDuplicateRedirectReason } from "@fusion/core";
+import { emitWorkflowLifecycleEvent, resolveAgentActivityAttribution } from "@fusion/core";
+import { resolveTaskLifecycleColumns, resolveProjectColumnsForRoles, resolveWipTargetForTask, resolveTerminalColumns, RetryStormError, serializeRetryStormError, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, resolveWorkflowIrForTask, columnsWithFlag, evaluateForeachMergeProof, resolveCompleteColumn, resolveMergeOrchestrationColumn, resolveReboundTarget, resolveLifecycleColumns, resolveColumnAgentBinding, resolveEffectiveAgent, instanceNodeId, getWorkflowExtensionRegistry, getBuiltinWorkflow, parseNoOpCompletionMarker, allowsAutoMergeProcessing, hasSharedBranchMemberAutoMergeHold, hasPreMergeRemediationAutoMergeHold, resolveEffectiveAutoMerge, isLiveSharedBranchGroupMemberIntegration, resolveMaxAutoMergeRetries, resolveMaxConsecutiveToolFailureRetries, resolveConsecutiveToolFailureRetryBackoffMs, resolveConsecutiveToolFailureThreshold, resolveExecutorEscalationTarget, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, DEFAULT_MAX_POST_REVIEW_FIXES, COMPLETION_SUMMARY_NODE_ID, PLAN_REVIEW_GROUP_ID, upsertWorkflowStepResult, isTerminalStepResult, normalizeWorkflowReviewFindings, AWAITING_APPROVAL_PAUSE_REASON, THINKING_LEVELS, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AgentStore, classifyWorkflowAgentNode, isWorkflowAgentRole, resolveExecutorFallbackModel, resolveValidatorFallbackModel, resolveExplicitDuplicateMarker, nonExecutableDuplicateRedirectReason } from "@fusion/core";
 import {
   BLOCKED_THRASH_LIMIT,
   buildExternalBlockMetadataPatch,
@@ -99,6 +99,19 @@ import {
   FUSION_RUNTIME_SELF_AWARENESS,
 } from "@fusion/core";
 import { findWorktreeUser, getConflictedFiles } from "./merger.js";
+
+/*
+FNXC:AgentActivityStream 2026-08-09-13:30:
+Workflow-gate activity must credit the routed node principal, because that route carries a
+reviewer override or column binding that task assignment alone cannot express. The outbox
+boundary still roster-proves this claim before it can become an org-map agent attribution.
+*/
+export function resolveWorkflowGateActivityClaim(routedPrincipalAgentId: string | undefined, assignedAgentId: string | undefined) {
+  const agentId = routedPrincipalAgentId ?? assignedAgentId ?? "executor";
+  return resolveAgentActivityAttribution([
+    { id: agentId, provenance: routedPrincipalAgentId || assignedAgentId ? "roster" : "lane" },
+  ], "executor");
+}
 import {
   runVerificationCommand,
   summarizeVerificationOutput,
@@ -204,6 +217,8 @@ import {
 import { BranchAttributionError, filterFilesToOwnTaskCommits } from "./execution/branch-attribution.js";
 import { resolveIntegrationBranch } from "./merge/integration-branch.js";
 import { AgentLogger } from "./agents/agent-logger.js";
+import { attachAgentUsageTelemetry, emitAgentSessionStart } from "./agents/agent-usage-telemetry.js";
+import { emitApprovalMail } from "./agents/approval-mail.js";
 import { createLogger, executorLog, reviewerLog, formatError } from "./logger.js";
 import { TokenCapDetector } from "./errors/token-cap-detector.js";
 import { isUsageLimitError, checkSessionError, type UsageLimitPauser } from "./errors/usage-limit-detector.js";
@@ -1559,8 +1574,15 @@ This path exists specifically to prevent the executor from looping when PROMPT.m
 
 **Logging important actions:** \`fn_task_log(message="what happened")\`
 
-**Out-of-scope work found during execution:** \`fn_task_create(description="what needs doing")\`
-When creating multiple related tasks, declare dependencies between them:
+/*
+FNXC:TaskRecommendations 2026-08-09-04:06:
+FN-8850 requires optional, non-blocking discoveries to be captured only at the explicit accepted
+completion boundary. Immediate task creation remains for required dependency coordination or an
+operator-directed filing, while workflow step sessions remain unable to write recommendations.
+*/
+**Out-of-scope findings at completion:** Do not automatically create a task for optional, non-blocking work discovered outside this task. When recommendation capture is enabled, at the final accepted \`fn_task_done(outcome="completed")\` checkpoint evaluate genuine task-ready follow-ups and send \`recommendations\` (or \`recommendations: []\` when none qualify). Each recommendation needs a stable unique \`id\`, \`title\`, \`description\`, and \`category\`; never use it for a required current-task fix, blocker, secret, executable command, reasoning transcript, or filler.
+
+Use \`fn_task_create\` or \`fn_delegate_task\` only when the task explicitly requires immediate filing, necessary dependency coordination, or the operator directs it. When creating multiple related tasks, declare dependencies between them:
 \`fn_task_create(description="load door sounds", dependencies=[])\` → returns KB-050
 \`fn_task_create(description="play sound on door open/close", dependencies=["KB-050"])\`
 
@@ -1734,12 +1756,31 @@ policy rather than malfunction. It is appended last so it wins over the base tex
 applies to a custom operator prompt too (an operator who overrode the prompt still gets a
 truthful statement of what this session may do).
 */
-function getWithheldTaskCreationGuidance(taskCreateWithheld: boolean, delegateWithheld: boolean): string {
+function getCompletionRecommendationGuidance(maximum: number): string {
+  /*
+  FNXC:TaskRecommendations 2026-08-09-04:06:
+  Engine-appended guidance preserves the accepted-completion recommendation contract even when an
+  operator customizes the executor prompt. A disabled cap must not invite unavailable writes.
+  */
+  if (maximum === 0) {
+    return `## Completion recommendations
+
+Recommendation capture is disabled for this project (maxRecommendationsPerTask is 0). Ignore any earlier generic recommendation guidance: do not send recommendations, including \`recommendations: []\`; use an honest summary or task log for non-blocking context, and do not fabricate a finding.`;
+  }
+  return `## Completion recommendations
+
+At the final accepted \`fn_task_done(outcome="completed")\` checkpoint, evaluate optional, non-blocking work discovered outside this task. Send at most ${maximum} task-ready recommendations, each with a stable unique \`id\`, \`title\`, \`description\`, and \`category\`, or explicitly send \`recommendations: []\` when none genuinely qualify. Example populated payload: \`recommendations: [{ id: "follow-up-export", title: "Add task export", description: "Provide a CSV export for completed tasks.", category: "feature" }]\`. Do not fabricate filler or include required current-task work, blockers, secrets, executable commands, reasoning, or duplicate ids. Recommendations are only for completed outcomes; never send them with \`outcome="blocked"\`. Use immediate task creation/delegation only for an explicit task requirement, necessary dependency coordination, or operator direction.`;
+}
+
+function getWithheldTaskCreationGuidance(taskCreateWithheld: boolean, delegateWithheld: boolean, maximum: number): string {
   if (!taskCreateWithheld && !delegateWithheld) return "";
   const withheld = [
     ...(taskCreateWithheld ? ["`fn_task_create`"] : []),
     ...(delegateWithheld ? ["`fn_delegate_task`"] : []),
   ].join(" and ");
+  const recommendationRoute = maximum > 0
+    ? `For optional, non-blocking discoveries, use the available completion recommendation route at accepted completion (or \`recommendations: []\` if none qualify).`
+    : "Recommendation capture is disabled, so retain non-blocking context in an honest task log or completion summary without inventing a follow-up.";
   return `## Follow-up task creation is disabled for this session
 
 This project's "Ephemeral agent follow-up tasks" policy withholds ${withheld}. ${
@@ -1748,7 +1789,7 @@ This project's "Ephemeral agent follow-up tasks" policy withholds ${withheld}. $
     taskCreateWithheld && delegateWithheld ? "them" : "it"
   }, and do not retry.
 
-Ignore any instruction above that tells you to file follow-up work with ${withheld}. When you find out-of-scope work, record it instead with \`fn_task_log(message="follow-up: ...")\` and include it in your \`fn_task_done\` summary so the operator sees it. If the work genuinely blocks this task, use \`fn_task_done(outcome="blocked", reason="...")\` rather than trying to create a task for it.`;
+Ignore any instruction above that tells you to file follow-up work with ${withheld}. ${recommendationRoute} If the work genuinely blocks this task, use \`fn_task_done(outcome="blocked", reason="...")\` rather than trying to create a task for it.`;
 }
 
 /** Resolve the executor system prompt from settings, falling back to the hardcoded constant. */
@@ -1758,12 +1799,15 @@ export function getExecutorSystemPrompt(
 ): string {
   const customPrompt = resolveAgentPrompt("executor", settings.agentPrompts);
   const basePrompt = customPrompt || EXECUTOR_SYSTEM_PROMPT;
+  const maximumRecommendations = settings.maxRecommendationsPerTask ?? 3;
   const sections = [
     basePrompt,
     isResearchToolSurfaceEnabled(settings) ? getResearchGuidanceForSurface("executor") : "",
+    getCompletionRecommendationGuidance(maximumRecommendations),
     getWithheldTaskCreationGuidance(
       toolAvailability?.taskCreateWithheld === true,
       toolAvailability?.delegateWithheld === true,
+      maximumRecommendations,
     ),
   ].filter((section) => section.trim());
   return sections.join("\n\n");
@@ -2054,6 +2098,14 @@ export class TaskExecutor {
    * column/pool principal cannot inherit task-assignee tool privileges.
    */
   private readonly activeWorkflowPrincipals = new Map<string, { agentId: string; nodeInstanceId: string }>();
+
+  /*
+   * FNXC:AgentActivityStream 2026-08-09-13:59:
+   * Graph runtimes release the live principal before some terminal step-result sinks run. Retain
+   * the routed principal by task and step until that sink records its activity row, so reviewer
+   * overrides and column routes cannot fall back to the task assignee after normal cleanup.
+   */
+  private readonly workflowGateActivityPrincipals = new Map<string, string>();
 
   /**
    * FNXC:Workspace 2026-06-21-12:00: Register a worktree path under a task's active set, creating the set on first add (KTD2). Single-repo tasks call this once → one-element set.
@@ -2699,6 +2751,7 @@ export class TaskExecutor {
       });
     }
 
+    try { await this.store.recordAgentActivity({ type: "task:handed-off", attributionClaim: resolveAgentActivityAttribution([{ id: agentId ?? task.assignedAgentId ?? "executor", provenance: agentId || task.assignedAgentId ? "roster" : "lane" }], "executor"), taskId: task.id, occurredAt: new Date().toISOString(), discriminator: `${runId ?? ""}:${reason}`, metadata: { runId, reason, source: "executor" } }); } catch { /* monitoring never blocks review handoff */ }
     return handedOff;
   }
 
@@ -2908,6 +2961,7 @@ export class TaskExecutor {
             executorLog.warn(`${taskId}: failed to suspend in-flight session while awaiting approval: ${error instanceof Error ? error.message : String(error)}`);
           });
         }
+        void emitApprovalMail({ messageStore: this.options.messageStore, approvalRequestId, toolName: decision.toolName, taskId, agentId: actorId, agentName: actorName });
         if (agent && this.options.agentStore) {
           await this.options.agentStore.updateAgentState(agent.id, "paused");
           await this.options.agentStore.updateAgent(agent.id, { pauseReason: "awaiting-approval" });
@@ -2999,6 +3053,7 @@ export class TaskExecutor {
           this.approvalSuspended.delete(taskId);
           throw error;
         }
+        void emitApprovalMail({ messageStore: this.options.messageStore, approvalRequestId, toolName, taskId, agentId: actorId, agentName: actorName });
       },
     };
   }
@@ -5964,8 +6019,23 @@ export class TaskExecutor {
      * an auto-merge admission preference. Pre-merge remediation must not reopen
      * implementation and thereby bypass that checkpoint before the operator
      * releases or revises the held member.
+     *
+     * FNXC:SharedBranchMemberHold 2026-08-09-21:41:
+     * FN-8910: remediation reopens implementation rather than merging. The
+     * merge boundary independently enforces project Off, so this seam fences
+     * only an operator-authored task-level Off and records every refusal.
      */
-    if (hasSharedBranchMemberAutoMergeHold(liveTask, await this.store.getSettings())) return false;
+    if (hasPreMergeRemediationAutoMergeHold(liveTask, await this.store.getSettings())) {
+      const reason = "operator-authored task-level auto-merge Off holds pre-merge remediation";
+      executorLog.warn(`${taskId}: pre-merge remediation NOT scheduled for step "${info.stepName}" — ${reason}. Card left parked.`);
+      await this.store.logEntry(
+        taskId,
+        "Pre-merge remediation not scheduled — operator task hold",
+        `Step/node: ${info.nodeId ?? info.stepName}\nReason: ${reason}`,
+        this.getRunContextFor(taskId),
+      );
+      return false;
+    }
     const missingArtifactKeys = parseRequiredArtifactMissingValue(info.failureValue);
     if (missingArtifactKeys) {
       await this.recoverMissingRequiredArtifacts(liveTask, missingArtifactKeys, {
@@ -6290,8 +6360,23 @@ export class TaskExecutor {
        * Startup/self-healing recovery is another pre-merge remediation requester.
        * Do not let it send a user-held member back to execution: only an explicit
        * operator release or revision may advance that manual checkpoint.
+       *
+       * FNXC:SharedBranchMemberHold 2026-08-09-21:41:
+       * FN-8910: recovery reopens implementation rather than merging. Project
+       * Off remains enforced at merge admission; only an operator task Off
+       * fences this seam, and a refusal must be visible to the operator.
        */
-      if (hasSharedBranchMemberAutoMergeHold(task, await this.store.getSettings())) return false;
+      if (hasPreMergeRemediationAutoMergeHold(task, await this.store.getSettings())) {
+        const reason = "operator-authored task-level auto-merge Off holds failed-step recovery";
+        executorLog.warn(`${task.id}: failed pre-merge step recovery NOT scheduled — ${reason}. Card left parked.`);
+        await this.store.logEntry(
+          task.id,
+          "Failed pre-merge step recovery not scheduled — operator task hold",
+          `Reason: ${reason}`,
+          this.getRunContextFor(task.id),
+        );
+        return false;
+      }
       /*
       FNXC:WorkflowPostMerge 2026-06-26-14:00:
       U7c: gate-ness is now sourced from the recorded `WorkflowStepResult.status`, NOT a
@@ -6328,9 +6413,31 @@ export class TaskExecutor {
        * unlimited, while zero or an exhausted explicit cap cannot silently send
        * work back for another fix. Progress-loop termination stays owned by the
        * graph executor's signature guard rather than this budget check.
+       *
+       * FNXC:WorkflowRevisionBudget 2026-08-09-21:41:
+       * FN-8910: recovery-budget refusals park a card with no new session, so
+       * they must log their concrete attempt/max values before returning false.
        */
-      if (!budget.unbounded && (!Number.isFinite(budget.max) || budget.max <= 0)) return false;
-      if (!budget.unbounded && budget.attempts >= budget.max) return false;
+      if (!budget.unbounded && (!Number.isFinite(budget.max) || budget.max <= 0)) {
+        executorLog.warn(`${task.id}: failed pre-merge step recovery NOT scheduled for "${stepName}" — revision budget is zero/invalid (attempts=${budget.attempts}, max=${String(budget.max)}). Card left parked.`);
+        await this.store.logEntry(
+          task.id,
+          "Failed pre-merge step recovery not scheduled — revision budget zero/invalid",
+          `Step: ${stepName}\nAttempts: ${budget.attempts}\nMax: ${String(budget.max)}`,
+          this.getRunContextFor(task.id),
+        );
+        return false;
+      }
+      if (!budget.unbounded && budget.attempts >= budget.max) {
+        executorLog.warn(`${task.id}: failed pre-merge step recovery NOT scheduled for "${stepName}" — revision budget exhausted (attempts=${budget.attempts}, max=${String(budget.max)}). Card left parked.`);
+        await this.store.logEntry(
+          task.id,
+          "Failed pre-merge step recovery not scheduled — revision budget exhausted",
+          `Step: ${stepName}\nAttempts: ${budget.attempts}\nMax: ${String(budget.max)}`,
+          this.getRunContextFor(task.id),
+        );
+        return false;
+      }
 
       await this.sendTaskBackForFix(
         task,
@@ -7371,6 +7478,13 @@ export class TaskExecutor {
             agentId: routed.route.agent.id,
             nodeInstanceId,
           });
+          /*
+           * FNXC:AgentActivityStream 2026-08-09-13:59:
+           * Keep this node-scoped record past release-principal. The graph can emit its terminal
+           * result after the per-attempt reservation is released, while the activity outbox must
+           * still attribute that gate to this exact routed principal.
+           */
+          this.workflowGateActivityPrincipals.set(`${nodeTask.id}\0${node.id}`, routed.route.agent.id);
           if (durableWorkItemId) context["workflow:work-item-id"] = durableWorkItemId;
           context["workflow:principal-agent-id"] = routed.route.agent.id;
           context["workflow:principal-role"] = routed.route.role;
@@ -7512,14 +7626,79 @@ export class TaskExecutor {
                   ),
                 }
               : result;
-            const existing = upsertWorkflowStepResult(
+            const workflowStepResults = upsertWorkflowStepResult(
               live?.workflowStepResults,
               resultToPersist,
               isPlanReviewResult ? { maxPriorAttempts: PLAN_REVIEW_FEEDBACK_HISTORY_LIMIT } : undefined,
             );
-            await this.store.updateTask(taskId, { workflowStepResults: existing }, this.getRunContextFor(taskId));
-          } catch {
-            // Result recording is additive visibility — never affect the run.
+            const persistedResult = workflowStepResults.find((entry) => entry.workflowStepId === result.workflowStepId) ?? resultToPersist;
+            await this.store.updateTask(taskId, { workflowStepResults }, this.getRunContextFor(taskId));
+            /*
+            FNXC:AgentActivityStream 2026-08-09-09:38:
+            Terminal graph gate results are emitted at this shared persistence sink, not at individual node implementations. Node ids are operator-authored, so metadata sanitation records unknown ids as the closed `custom` enum rather than retaining prose.
+            */
+            if (isTerminalStepResult(result)) {
+              /*
+              FNXC:AgentActivityStream 2026-08-09-11:50:
+              Workflow `skipped` is terminal and non-blocking, so it is a passed gate for activity consumers; advisory failures and failures remain failed. Preserve the exact closed status in metadata rather than deriving a replacement that loses the gate outcome.
+              */
+              const passed = result.status === "passed"
+                || result.status === "skipped"
+                || result.verdict === "APPROVE"
+                || result.verdict === "APPROVE_WITH_NOTES"
+                || result.verdict === "CLOSE_NO_OP";
+              try {
+                await this.store.recordAgentActivity({
+                  type: passed ? "workflow:gate-passed" : "workflow:gate-failed",
+                  /*
+                  FNXC:AgentActivityStream 2026-08-09-13:30:
+                  A workflow gate belongs to the principal that actually ran its node. The active
+                  routing fence preserves reviewer overrides and column bindings; falling back to
+                  the task assignee is only for unclassified nodes that have no routed principal.
+                  */
+                  attributionClaim: resolveWorkflowGateActivityClaim(
+                    this.workflowGateActivityPrincipals.get(`${taskId}\0${result.workflowStepId}`)
+                      ?? this.activeWorkflowPrincipals.get(taskId)?.agentId,
+                    live?.assignedAgentId,
+                  ),
+                  taskId,
+                  occurredAt: result.completedAt ?? result.startedAt ?? new Date().toISOString(),
+                  /*
+                  FNXC:AgentActivityStream 2026-08-09-19:03:
+                  `priorAttempts` is intentionally bounded, so its length cannot identify retries:
+                  after the retention cap it would make later gate attempts collide and disappear.
+                  A graph attempt's persisted startedAt is its natural, replay-stable identity;
+                  pending→terminal updates keep that value while a new dispatch gets a new one.
+                  */
+                  discriminator: `${result.workflowStepId}:${result.startedAt ?? result.completedAt ?? result.status}`,
+                  metadata: {
+                    stepId: result.workflowStepId,
+                    status: result.status,
+                    attempt: persistedResult.priorAttempts?.length ?? 0,
+                  },
+                });
+                /*
+                FNXC:AgentActivityStream 2026-08-09-13:59:
+                Once the terminal event is durable, discard the retained node identity so a later
+                run cannot inherit an earlier gate's routed principal.
+                */
+                this.workflowGateActivityPrincipals.delete(`${taskId}\0${result.workflowStepId}`);
+              } catch (error) {
+                /*
+                FNXC:AgentActivityStream 2026-08-09-13:43:
+                Activity is observability only: warn so a failed append is diagnosable, but never
+                let it change the workflow gate result or interrupt graph execution.
+                */
+                executorLog.warn(`[agent-activity] ${taskId}: failed to record workflow gate activity: ${error instanceof Error ? error.message : String(error)}`);
+              }
+            }
+          } catch (error) {
+            /*
+            FNXC:AgentActivityStream 2026-08-09-13:43:
+            Persisting the underlying step and its activity row is additive visibility. Log a
+            failed persistence attempt without converting an otherwise valid graph run into a failure.
+            */
+            executorLog.warn(`[agent-activity] ${taskId}: failed to persist workflow step result: ${error instanceof Error ? error.message : String(error)}`);
           }
         },
         requestPreMergeOptionalStepFix: (taskId, info) => this.requestPreMergeOptionalStepFix(taskId, task, info),
@@ -7820,6 +7999,9 @@ export class TaskExecutor {
       for (const attemptId of workflowCapacityAttemptIds) void this.workflowAgentCapacity.release(attemptId, this.options.agentStore?.workflowProjectId ?? this.store.getRootDir());
       this.activeWorkflowAuthorities.delete(task.id);
       this.activeWorkflowPrincipals.delete(task.id);
+      for (const key of this.workflowGateActivityPrincipals.keys()) {
+        if (key.startsWith(`${task.id}\0`)) this.workflowGateActivityPrincipals.delete(key);
+      }
       if (graphAbortController && this.activeWorkflowGraphAbortControllers.get(task.id) === graphAbortController) {
         this.activeWorkflowGraphAbortControllers.delete(task.id);
       }
@@ -13433,6 +13615,16 @@ export class TaskExecutor {
      */
     if (failedNode === COMPLETION_SUMMARY_NODE_ID) return false;
     const incompleteSteps = hasNonTerminalWorkflowSteps(live);
+    /*
+     * FNXC:WorkflowRemediation 2026-08-09-21:41:
+     * FN-8910: fire-and-forget remediation nodes have no failure edge. A policy
+     * or budget refusal after implementation is complete must park visibly in
+     * the resolved review lane, not clear blockers and eject the card to planning.
+     * IR workflowAction detection keeps custom renamed remediation nodes covered.
+     */
+    if (!incompleteSteps
+      && (failureValue === "remediation-not-scheduled" || failureValue === "missing-remediation-context")
+      && await this.isRemediationGraphNode(live.id, failedNode)) return false;
     const implementationIncompleteMergeFailure = this.isMergeGraphFailure(failedNode) && failureValue === "implementation-incomplete";
     if (implementationIncompleteMergeFailure && !incompleteSteps) return false;
     const prematureMergeWithIncompleteSteps = implementationIncompleteMergeFailure && incompleteSteps;
@@ -13917,6 +14109,7 @@ export class TaskExecutor {
       runId: syntheticRunId,
       agentId: task.assignedAgentId ?? "executor",
     });
+    try { await this.store.recordAgentActivity({ type: "task:started", attributionClaim: resolveAgentActivityAttribution([{ id: task.assignedAgentId ?? "executor", provenance: task.assignedAgentId ? "roster" : "lane" }], "executor"), taskId: task.id, occurredAt: new Date().toISOString(), discriminator: syntheticRunId, metadata: { runId: syntheticRunId } }); } catch { /* FNXC:AgentActivityStream 2026-08-09-09:09: monitoring never blocks execution. */ }
 
     // Build engine run context for audit instrumentation (FN-1404)
     const engineRunContext: EngineRunContext = {
@@ -15452,6 +15645,8 @@ export class TaskExecutor {
           }
         },
       });
+    { attachAgentUsageTelemetry(agentLogger, { store: this.store, agentId: engineRunContext.agentId ?? null, taskId: task.id, nodeId: task.effectiveNodeId ?? task.nodeId ?? null, lane: "executor" }); }
+
 
       let agentRotationEvent: import("./credential-instance-rotation.js").RotationEvent | undefined;
       let agentRotationDeclined = false;
@@ -15504,13 +15699,15 @@ export class TaskExecutor {
         // give the agent logger the context it needs to emit usage_events tool
         // rows (KTD3). nodeId is sourced from the routed/effective node, null
         // when the task has no node context.
-        agentLogger.setUsageContext({
+        attachAgentUsageTelemetry(agentLogger, {
+          store: this.store,
           model: executorModelId ?? null,
           provider: executorProvider ?? null,
           nodeId: detail.effectiveNodeId ?? detail.nodeId ?? null,
           agentId: engineRunContext.agentId ?? null,
+          taskId: task.id,
+          lane: "executor",
         });
-
         // Determine whether we're resuming a previous session (pause/resume)
         // or starting fresh. Use file-based sessions so conversation state
         // persists across pause/unpause cycles. Resume is allowed only when
@@ -15628,6 +15825,14 @@ export class TaskExecutor {
           });
           session = createdSession.session;
           sessionFile = createdSession.sessionFile;
+          /*
+          FNXC:CommandCenterActivity 2026-08-09-15:06:
+          Reopening a persisted executor session after pause continues one logical AgentSession.
+          Emit its session boundary only for a fresh manager so resumed work cannot inflate Sessions.
+          */
+          if (!isResuming) {
+            emitAgentSessionStart({ store: this.store, agentId: engineRunContext.agentId ?? null, taskId: task.id, nodeId: detail.effectiveNodeId ?? detail.nodeId ?? null, model: executorModelId ?? null, provider: executorProvider ?? null, lane: "executor" });
+          }
         } catch (sessionStartError) {
           if (await this.recoverMissingWorktreeSessionStartFailure(task, worktreePath, sessionStartError, audit)) {
             return;
@@ -16064,6 +16269,8 @@ export class TaskExecutor {
                   taskId: task.id,
                 });
                 retrySession = createdRetrySession.session;
+                // FNXC:CommandCenterActivity 2026-08-09-15:18: A retry builds a distinct runtime session, so it needs its own boundary only after construction succeeds.
+                emitAgentSessionStart({ store: this.store, agentId: engineRunContext.agentId ?? null, taskId: task.id, nodeId: detail.effectiveNodeId ?? detail.nodeId ?? null, model: executorModelId ?? null, provider: executorProvider ?? null, lane: "executor" });
                 await this.captureExecutorTokenUsageBaseline(task.id, retrySession);
                 captureSessionTokenBaseline(retrySession);
                 if (createdRetrySession.sessionFile) {
@@ -18397,7 +18604,10 @@ export class TaskExecutor {
       description:
         "End the task. With outcome=\"completed\" (default): signal that all steps are complete, tests pass, and " +
         "documentation is updated — call as the final action after finishing all work; automatically marks all " +
-        "remaining steps as done; optionally provide a summary of what was changed/fixed. " +
+        "remaining steps as done. At this accepted final checkpoint, when recommendation capture is enabled, submit up to " +
+        "the project cap of genuine, task-ready out-of-scope recommendations with stable unique ids, or explicitly send " +
+        "recommendations: [] when none qualify; at cap 0, omit recommendations (an empty list is accepted for compatibility). " +
+        "Do not use recommendations for required fixes, blockers, secrets, commands, or reasoning. " +
         "With outcome=\"blocked\": honestly park the task when the work genuinely cannot proceed (upstream API break, " +
         "missing dependency task, unresolvable external blocker). Blocked is NOT a completion claim — it does not " +
         "trip the review/completion gates, does not auto-complete or auto-skip steps, and preserves your worktree/" +
@@ -18412,7 +18622,7 @@ export class TaskExecutor {
           title: Type.String(),
           description: Type.String(),
           category: Type.Union([Type.Literal("improvement"), Type.Literal("feature"), Type.Literal("bug"), Type.Literal("other")]),
-        }), { description: "Optional bounded out-of-scope, task-ready follow-up suggestions. Do not include mandatory fixes, secrets, commands, or execution reasoning." })),
+        }), { description: "For accepted completed outcomes when capture is enabled: submit at most the project cap of task-ready out-of-scope suggestions with unique stable ids, or [] when none qualify. At cap 0, omit this field; an empty list is accepted for compatibility but populated input is rejected. Never send for blocked/refused outcomes or include mandatory fixes, secrets, executable commands, or reasoning." })),
         /*
         FNXC:Lifecycle 2026-07-16-10:20:
         FN-8141 laundered a genuinely-impossible task into `done`: fn_task_done only expressed success, the bulk-completion
@@ -19065,6 +19275,8 @@ export class TaskExecutor {
         onAgentText: this.options.onAgentText,
         onAgentTool: this.options.onAgentTool,
       });
+    { attachAgentUsageTelemetry(logger, { store: this.store, agentId: task.assignedAgentId ?? null, taskId: task.id, nodeId: task.effectiveNodeId ?? task.nodeId ?? null, lane: "executor" }); }
+
 
       // Build skill selection context
       let skillContext: Awaited<ReturnType<typeof buildSessionSkillContext>> | undefined;
@@ -19092,6 +19304,7 @@ export class TaskExecutor {
         task.credentialInstanceId,
       );
       const { provider: executorProvider, modelId: executorModelId } = executorSessionModel;
+      attachAgentUsageTelemetry(logger, { store: this.store, agentId: task.assignedAgentId ?? null, taskId: task.id, nodeId: task.effectiveNodeId ?? task.nodeId ?? null, model: executorModelId ?? null, provider: executorProvider ?? null, lane: "executor" });
 
       const executorFallback = resolveExecutorFallbackModel(settings);
 
@@ -19140,6 +19353,7 @@ Do not refactor, rename broadly, or make opportunistic improvements.
         ...(skillContext?.skillSelectionContext ? { skillSelection: skillContext.skillSelectionContext } : {}),
         ...(skillContext && skillContext.additionalSkillPaths.length > 0 ? { additionalSkillPaths: skillContext.additionalSkillPaths } : {}),
       });
+      emitAgentSessionStart({ store: this.store, agentId: task.assignedAgentId ?? null, taskId: task.id, nodeId: task.effectiveNodeId ?? task.nodeId ?? null, model: executorModelId ?? null, provider: executorProvider ?? null, lane: "executor" });
 
       await this.store.logEntry(
         task.id,
@@ -20134,6 +20348,8 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
         this.options.onAgentTool?.(taskId, toolName, detail);
       },
     });
+    { attachAgentUsageTelemetry(agentLogger, { store: this.store, agentId: sessionTask.assignedAgentId ?? null, taskId: task.id, nodeId: task.effectiveNodeId ?? task.nodeId ?? null, lane: "executor" }); }
+
 
     // Determine primary model and an explicit fallback. Review-type workflow
     // steps use the validator lane; ordinary workflow prompts use the executor
@@ -20164,6 +20380,7 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
     const primaryModelId = useOverride ? workflowStep.modelId : laneModel.modelId;
     // FNXC:ProviderAuth 2026-08-01-08:39: A workflow-step model override has no paired instance selection, so only the resolved primary task lane may carry its requested credential instance. Fallback attempts must retain their provider-default behavior rather than inheriting a primary-provider identity.
     const primaryCredentialInstanceId = useOverride ? undefined : laneModel.credentialInstanceId;
+    attachAgentUsageTelemetry(agentLogger, { store: this.store, agentId: sessionTask.assignedAgentId ?? null, taskId: task.id, nodeId: task.effectiveNodeId ?? task.nodeId ?? null, model: primaryModelId ?? null, provider: primaryProvider ?? null, lane: "executor" });
 
     const workflowFallback = isReviewTypeWorkflowStep
       ? resolveValidatorFallbackModel(settings)
@@ -20364,6 +20581,7 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
         ...(additionalSkillPaths ? { additionalSkillPaths } : {}),
         ...(readonlyCustomTools.allowed.length > 0 ? { customTools: readonlyCustomTools.allowed } : {}),
       });
+      emitAgentSessionStart({ store: this.store, agentId: sessionTask.assignedAgentId ?? null, taskId: task.id, nodeId: task.effectiveNodeId ?? task.nodeId ?? null, model: primaryModelId ?? null, provider: primaryProvider ?? null, lane: "executor" });
 
       const workflowModelDetails = formatModelMarkerDetails(
         describeModel(session),

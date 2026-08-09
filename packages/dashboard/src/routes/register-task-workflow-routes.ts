@@ -1,4 +1,4 @@
-import { createLogger } from "@fusion/core";
+import { createIngestedCheckResolver, createLogger, resolveRequiredCheckNames } from "@fusion/core";
 import type { Request, Response } from "express";
 
 const severityAuditLog = createLogger("dashboard-register-task-workflow-routes");
@@ -1630,6 +1630,8 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         breakIntoSubtasks,
         enabledWorkflowSteps,
         workflowId,
+        agentId,
+        assignedAgentId,
         modelPresetId,
         modelProvider,
         modelId,
@@ -1741,6 +1743,12 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       // the store below (mapped to 4xx in the catch handler).
       if (workflowId !== undefined && workflowId !== null && typeof workflowId !== "string") {
         throw badRequest("workflowId must be a string or null");
+      }
+
+      // The public aliases normalize once; owner eligibility is enforced by the shared store boundary.
+      const requestedOwnerId = assignedAgentId ?? agentId;
+      if (requestedOwnerId !== undefined && (typeof requestedOwnerId !== "string" || requestedOwnerId.trim() === "")) {
+        throw badRequest("agentId must be a non-empty string");
       }
 
       // Check for summarize flag in request
@@ -2076,6 +2084,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         // U6/R3: forward only when the client set it (string | null). Leaving it
         // absent preserves the project-default inheritance behavior.
         ...(workflowId !== undefined ? { workflowId: workflowId as string | null } : {}),
+        ...(typeof requestedOwnerId === "string" ? { assignedAgentId: requestedOwnerId.trim() } : {}),
         modelPresetId: validateOptionalModelField(modelPresetId, "modelPresetId"),
         modelProvider: executorModel.provider ?? undefined,
         modelId: executorModel.modelId ?? undefined,
@@ -2241,7 +2250,8 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         message.includes("must be a string")
         || message.includes("must be an array of strings")
         || /^Workflow '.*' not found$/.test(message)
-        || /is a fragment and cannot be selected/.test(message);
+        || /is a fragment and cannot be selected/.test(message)
+        || message.startsWith("Task intake owner resolution failed:");
       const status = isClientError ? 400 : 500;
       throw new ApiError(status, message);
     }
@@ -6484,7 +6494,9 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         if (!owner || !repo) {
           throw badRequest("Could not determine GitHub repository for PR review fetch");
         }
-        reviewData = await new GitHubClient(options?.githubToken ?? process.env.GITHUB_TOKEN).getPrReviewDetails(owner, repo, task.prInfo.number);
+        const requiredCheckNames = resolveRequiredCheckNames(await scopedStore.getSettings());
+        const resolveIngestedChecks = createIngestedCheckResolver(scopedStore.getAsyncLayer?.());
+        reviewData = await new GitHubClient(options?.githubToken ?? process.env.GITHUB_TOKEN).getPrReviewDetails(owner, repo, task.prInfo.number, { requiredCheckNames, ...(resolveIngestedChecks ? { resolveIngestedChecks } : {}) });
       } else {
         reviewData = await buildDirectTaskReviewData(task, scopedStore);
       }
@@ -6512,7 +6524,9 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         if (!owner || !repo) {
           throw badRequest("Could not determine GitHub repository for PR review refresh");
         }
-        reviewData = await new GitHubClient(options?.githubToken ?? process.env.GITHUB_TOKEN).getPrReviewDetails(owner, repo, task.prInfo.number);
+        const requiredCheckNames = resolveRequiredCheckNames(await scopedStore.getSettings());
+        const resolveIngestedChecks = createIngestedCheckResolver(scopedStore.getAsyncLayer?.());
+        reviewData = await new GitHubClient(options?.githubToken ?? process.env.GITHUB_TOKEN).getPrReviewDetails(owner, repo, task.prInfo.number, { requiredCheckNames, ...(resolveIngestedChecks ? { resolveIngestedChecks } : {}) });
       } else {
         reviewData = await buildDirectTaskReviewData(task, scopedStore);
       }
@@ -6561,7 +6575,9 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         if (!owner || !repo) {
           throw badRequest("Could not determine GitHub repository for PR review fetch");
         }
-        canonicalReviewData = await new GitHubClient(options?.githubToken ?? process.env.GITHUB_TOKEN).getPrReviewDetails(owner, repo, task.prInfo.number);
+        const requiredCheckNames = resolveRequiredCheckNames(await scopedStore.getSettings());
+        const resolveIngestedChecks = createIngestedCheckResolver(scopedStore.getAsyncLayer?.());
+        canonicalReviewData = await new GitHubClient(options?.githubToken ?? process.env.GITHUB_TOKEN).getPrReviewDetails(owner, repo, task.prInfo.number, { requiredCheckNames, ...(resolveIngestedChecks ? { resolveIngestedChecks } : {}) });
       } else {
         canonicalReviewData = await buildDirectTaskReviewData(task, scopedStore);
       }
