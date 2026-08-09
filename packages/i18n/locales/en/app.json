@@ -3656,6 +3656,7 @@
     "assertionUpdateFailed": "Failed to update assertion",
     "attemptRetries_one": "Attempt {{attempt}} · {{count}} {{label}} left",
     "attemptRetries_other": "Attempt {{attempt}} · {{count}} {{label}} left",
+    "autoMergeOverrideDescription": "Inherited follows the project setting. Auto-merge lands each feature as it passes. Single pull request keeps every feature on one shared branch for joint review and merge.",
     "autopilotActivatingSlice": "Activating slice",
     "autopilotCompleting": "Completing",
     "autopilotDescription": "When on, Fusion automatically activates the next slice and plans its features as work completes.",
@@ -5966,8 +5967,6 @@
       "updating": "Updating…",
       "upperBoundOnMessagesFetchedFromTheRoom": "Upper bound on messages fetched from the room store for compaction consideration. Default: 200.",
       "upToDate": "You're up to date ✓",
-      "useEphemeralTaskWorkerAgents": " Use ephemeral task-worker agents ",
-      "ephemeralAgentsCompatibilityHint": "Retained for configuration compatibility. Default: enabled. This setting does not affect scheduler assignment or admission, executor workflow dispatch or re-entry, mission start, or workflow-stage principal routing.",
       "warnOnTheBoardWhenTodoWorkExceeds": "Warn on the board when todo work exceeds the threshold and no idle agents are available. Default: disabled.",
       "whenEnabledDefaultFusionSpawnsShortLived": " When enabled (default), Fusion spawns short-lived ",
       "whenEnabledFusionChecksOpenAndClosedIssues": " When enabled, Fusion checks open and closed issues in the target repo for likely duplicates (using File Scope paths and key symptoms) before creating a new tracking issue. Uncheck to always create a new issue. Default: enabled. ",
@@ -6376,7 +6375,11 @@
       "gitRemoteThatMergedResultsArePushedTo": "Git remote that merged results are pushed to. Default: \"origin\".",
       "pushTargetBranch": "Push target branch",
       "sameAsIntegrationBranchDefault": "(same as integration branch — default)",
-      "pushTargetBranchHelp": "Branch on the remote that merged results are pushed to. Leave on the default to push the integration branch to its same-named remote branch; pick a listed remote branch or choose Custom… to type one that doesn't exist on the remote yet (the push creates it)."
+      "pushTargetBranchHelp": "Branch on the remote that merged results are pushed to. Leave on the default to push the integration branch to its same-named remote branch; pick a listed remote branch or choose Custom… to type one that doesn't exist on the remote yet (the push creates it).",
+      "requiredChecks": "Required pull-request checks",
+      "requiredChecksHelp": "No default — unset. Comma-separated check names match GitHub exactly (case-sensitive). Leaving this empty uses GitHub required-status checks only; a named check that never reports blocks the merge.",
+      "githubNativeAutoMerge": "Use GitHub native auto-merge",
+      "githubNativeAutoMergeHelp": "GitHub waits for its full ruleset before merging. The repository must allow auto-merge; Fusion fails closed if it is unavailable. Default: disabled."
     },
     "mergeManually": "Merge Manually",
     "mobileNav": {
@@ -8139,6 +8142,7 @@
     },
     "recommendations": {
       "title": "Recommendations",
+      "empty": "No recommendations were produced for this task.",
       "created": "Created {{taskId}}",
       "creating": "Creating…",
       "retry": "Retry creating task",

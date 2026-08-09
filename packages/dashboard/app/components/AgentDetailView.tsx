@@ -2612,7 +2612,7 @@ function TasksTab({
       .catch((err) => {
         if (!cancelled) {
           setTasks([]);
-          addToast(t("agents.loadTasksFailed", "Failed to load assigned tasks: {{error}}", { error: getErrorMessage(err) }), "error");
+          addToast(t("agents.loadTasksFailed", "Failed to load agent tasks: {{error}}", { error: getErrorMessage(err) }), "error");
         }
       })
       .finally(() => {
@@ -2630,7 +2630,7 @@ function TasksTab({
     return (
       <div className="agent-tasks-empty">
         <Loader2 size={16} className="animate-spin" />
-        <p>{t("agents.loadingTasks", "Loading assigned tasks...")}</p>
+        <p>{t("agents.loadingTasks", "Loading agent tasks...")}</p>
       </div>
     );
   }
@@ -2639,7 +2639,7 @@ function TasksTab({
     return (
       <div className="agent-tasks-empty">
         <ListChecks size={18} />
-        <p>{t("agents.noTasksAssigned", "No tasks assigned to this agent")}</p>
+        <p>{t("agents.noVisibleTasks", "No assigned or active workflow tasks for this agent")}</p>
       </div>
     );
   }

@@ -22,6 +22,7 @@ import { getPluginNavIcon } from "./pluginNavIcon";
 import { ActivityLogModal } from "./ActivityLogModal";
 import { GitManagerModal } from "./GitManagerModal";
 import { DockTaskList } from "./DockTaskList";
+import { attachNativeStructureRefToDrag } from "../utils/nativeStructureDrag";
 
 /*
 FNXC:Navigation 2026-06-22-00:40:
@@ -286,18 +287,27 @@ function buildPluginOverflowViewEntries(pluginDashboardViews: PluginDashboardVie
         render: (props: OverflowViewRenderProps) => wrapOverflowView(
           <PluginDashboardViewHost
             taskView={pluginTaskView}
-            context={props.pluginContext ?? {
-              projectId: props.projectId,
-              tasks: (props.tasks ?? []) as Task[],
-              workflowSteps: props.workflowSteps ?? [],
-              subscribePluginEvents: props.subscribePluginEvents,
-              openTaskDetail: props.onOpenDetail ?? (() => undefined),
-              openFile: props.openFile ?? (() => undefined),
-              renderTaskCard: props.renderTaskCard,
-              addToast: props.addToast,
-              openPlanningMode: props.onPlanningMode,
-              onTaskCreated: props.onTaskCreated,
-            }}
+            context={props.pluginContext
+              ? {
+                ...props.pluginContext,
+                // FNXC:NativeStructurePluginDrag 2026-08-09-05:48: Right-dock callers pass a
+                // prebuilt context, so inject the host drag seam here too rather than letting that
+                // path bypass the fallback context below.
+                beginNativeStructureDrag: props.pluginContext.beginNativeStructureDrag ?? attachNativeStructureRefToDrag,
+              }
+              : {
+                projectId: props.projectId,
+                tasks: (props.tasks ?? []) as Task[],
+                workflowSteps: props.workflowSteps ?? [],
+                subscribePluginEvents: props.subscribePluginEvents,
+                openTaskDetail: props.onOpenDetail ?? (() => undefined),
+                openFile: props.openFile ?? (() => undefined),
+                beginNativeStructureDrag: attachNativeStructureRefToDrag,
+                renderTaskCard: props.renderTaskCard,
+                addToast: props.addToast,
+                openPlanningMode: props.onPlanningMode,
+                onTaskCreated: props.onTaskCreated,
+              }}
           />,
         ),
       } satisfies OverflowViewEntry;

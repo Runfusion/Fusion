@@ -2,6 +2,47 @@
 
 User-facing release notes aggregated across all packages. This file is auto-synced from each `packages/*/CHANGELOG.md` by `scripts/release.mjs` — do not edit by hand.
 
+## 0.76.0-beta.0
+
+### Highlights
+
+- Workflow stages now run on durable multi-role agents instead of ephemeral workers
+- Dashboard no longer freezes on a startup connection-pool deadlock
+- Tasks no longer stall in progress with no session after the role-agent rollout
+- Completed tasks can suggest follow-ups with guarded one-click creation
+- New fn_workflow_step_resume unsticks merge review steps stuck pending forever
+
+### New
+
+- Workflow stages are routed through durable multi-role agents rather than ephemeral workflow workers. Existing single-role configuration keeps working.
+- Completed tasks now produce recommendations you can turn into new tasks in one click. The project setting `maxRecommendationsPerTask` caps how many you can accept.
+- `fn_workflow_step_resume` is a new operator-only CLI and pi-extension tool that moves a permanently-pending pre-merge review step to failed, so `fn_task_bypass_review` can clear the merge blocker. Every resume is audit-logged.
+
+### Fixed
+
+- The dashboard could stop answering every request at startup because built-in role-agent provisioning held a lock while waiting on a second connection from a three-connection pool. It now runs on the locking transaction.
+- Tasks could sit in progress forever with no session after the role-agent rollout, caused by two silent deadlocks in role routing and durable continuation writes. Suspended runs are now recorded in the run audit instead of vanishing.
+- Extension-host task stores are warmed for every registered project at dashboard startup, so `fn_task_*` tools no longer risk a timeout booting a second connection pool.
+- Pausing or unpausing a task now propagates to every open dashboard.
+- Stale Planning badges clear once refreshed task state shows execution has moved on, without erasing newer planner activity.
+- The In progress badge is back on active tasks that have no transient status, across board and list views.
+- An empty task Activity Feed now refetches when you open it after execution has already started.
+- Partially completed tasks resume after a restart instead of reporting a false failure.
+- Verified no-op tasks no longer bounce repeatedly between lifecycle states.
+- Execution retries once after the first terminal tool-call failure by default; the project threshold stays configurable and existing overrides are preserved.
+- Planning Mode keeps working when browser storage is unavailable, evicting only its own key and retrying once.
+- Planning Mode shows four distinct responses plus a write-your-own choice, and prompts now guide 3-5 alternatives without truncating larger valid option sets.
+- Messages structure selection stays inside narrow mobile composers in both full-page and modal Messages.
+- Inactive retained worktrees no longer eat live task capacity; worktree admission is shared across execution, planning, merge, and workflow continuation lanes.
+- Shared branch-group members honor project auto-merge consent, and review advisories appear before promotion.
+- Mission autopilot slice progression stays serial and milestone ordered even with duplicate completion or recovery signals.
+- Mission detail explains merge behavior and shows read-only shared branch status, validating branch-group ownership before displaying branch, member, and PR data.
+- Secrets environment fingerprint records stay out of task worktrees.
+- The legacy agent setting no longer influences mission or workflow routing.
+- Built-in workflow agents get detailed identities backfilled non-destructively, with duplicate provenance reconciled.
+- Settings now states the enabled default for the ephemeral-agent compatibility setting.
+- The Todo Lists and Roadmaps plugins appear in dashboard navigation once enabled.
+
 ## 0.75.1
 
 ### Highlights

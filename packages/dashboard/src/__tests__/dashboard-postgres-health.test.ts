@@ -115,6 +115,82 @@ describe("evaluateDashboardPostgresHealth", () => {
     });
   });
 
+  it("returns a probe-timeout degradation instead of waiting for a saturated pool", async () => {
+    vi.useFakeTimers();
+    const store = { getAsyncLayer: () => layer } as TaskStore;
+    healthMocks.checkPostgresHealth.mockImplementation(() => new Promise(() => {}));
+
+    const pending = evaluateDashboardPostgresHealth(store, undefined, { probeTimeoutMs: 25 });
+    await vi.advanceTimersByTimeAsync(25);
+    const result = await pending;
+
+    expect(result.database.corruptionErrors).toEqual([
+      "PostgreSQL health probe timed out after 25ms (connection pool saturated?)",
+    ]);
+    vi.useRealTimers();
+  });
+
+  it("degrades when the authoritative task-ID integrity probe times out", async () => {
+    vi.useFakeTimers();
+    const store = { getAsyncLayer: () => layer } as TaskStore;
+    healthMocks.detectTaskIdIntegrityAnomaliesAsync.mockImplementation(() => new Promise(() => {}));
+
+    const pending = evaluateDashboardPostgresHealth(store, undefined, { probeTimeoutMs: 25 });
+    await vi.advanceTimersByTimeAsync(25);
+    const result = await pending;
+
+    expect(result.database.corruptionErrors).toEqual([
+      "PostgreSQL task-ID integrity probe timed out after 25ms (connection pool saturated?)",
+    ]);
+    vi.useRealTimers();
+  });
+
+  it("keeps a timed-out migration probe advisory", async () => {
+    vi.useFakeTimers();
+    const store = { getAsyncLayer: () => layer, getRootDir: () => "/repo" } as TaskStore;
+    healthMocks.getSqliteMigrationState.mockImplementation(() => new Promise(() => {}));
+
+    const pending = evaluateDashboardPostgresHealth(store, undefined, { probeTimeoutMs: 25 });
+    await vi.advanceTimersByTimeAsync(25);
+    const result = await pending;
+
+    expect(result.database.healthy).toBe(true);
+    expect(result.taskIdIntegrity.status).toBe("ok");
+    expect(result.migration).toBeUndefined();
+    vi.useRealTimers();
+  });
+
+  it("keeps a slow probe that finishes within its shared budget healthy", async () => {
+    vi.useFakeTimers();
+    const store = { getAsyncLayer: () => layer } as TaskStore;
+    healthMocks.checkPostgresHealth.mockImplementation(() => new Promise((resolve) => {
+      setTimeout(() => resolve([]), 10);
+    }));
+
+    const pending = evaluateDashboardPostgresHealth(store, undefined, { probeTimeoutMs: 25 });
+    await vi.advanceTimersByTimeAsync(10);
+    const result = await pending;
+
+    expect(result.database.healthy).toBe(true);
+    expect(result.taskIdIntegrity.status).toBe("ok");
+    vi.useRealTimers();
+  });
+
+  it("applies the default deadline when no context is supplied", async () => {
+    vi.useFakeTimers();
+    const store = { getAsyncLayer: () => layer } as TaskStore;
+    healthMocks.checkPostgresHealth.mockImplementation(() => new Promise(() => {}));
+
+    const pending = evaluateDashboardPostgresHealth(store);
+    await vi.advanceTimersByTimeAsync(5_000);
+    const result = await pending;
+
+    expect(result.database.corruptionErrors).toEqual([
+      "PostgreSQL health probe timed out after 5000ms (connection pool saturated?)",
+    ]);
+    vi.useRealTimers();
+  });
+
   it("degrades health when task-ID integrity detection throws", async () => {
     const store = { getAsyncLayer: () => layer } as TaskStore;
     healthMocks.detectTaskIdIntegrityAnomaliesAsync.mockRejectedValue(new Error("integrity query timed out"));

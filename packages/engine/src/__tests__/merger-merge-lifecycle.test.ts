@@ -217,6 +217,7 @@ function createMockStore(taskOverrides: Partial<Task> = {}, allTasks: Task[] = [
     moveTask: vi.fn().mockResolvedValue(baseTask),
     logEntry: vi.fn().mockResolvedValue(undefined),
     appendAgentLog: vi.fn().mockResolvedValue(undefined),
+    emitUsageEvent: vi.fn().mockResolvedValue(undefined),
     updateSettings: vi.fn().mockResolvedValue({}),
     getSettings: vi.fn().mockResolvedValue({
       ...DEFAULT_SETTINGS,
@@ -1914,11 +1915,15 @@ describe("aiMergeTask — retry logic with escalating strategies", () => {
     });
 
     // Agent will be called and will fail
-    mockedCreateFnAgent.mockImplementation(() => {
+    mockedCreateFnAgent.mockImplementation((options: any) => {
       agentCallCount++;
       return Promise.resolve({
         session: {
-          prompt: vi.fn().mockRejectedValue(new Error("Agent failed")),
+          prompt: vi.fn().mockImplementation(async () => {
+            options.onToolStart?.("read", { path: "src/file.ts" });
+            options.onToolEnd?.("read", false, "file contents");
+            throw new Error("Agent failed");
+          }),
           dispose: vi.fn(),
         },
       } as any);
@@ -1928,6 +1933,18 @@ describe("aiMergeTask — retry logic with escalating strategies", () => {
 
     // Should have called agent exactly once (no retries since autoResolve is disabled)
     expect(agentCallCount).toBe(1);
+    /*
+    FNXC:CommandCenterActivity 2026-08-09-15:55:
+    A conflict-resolution session is a production merger.ts lane rather than merger-ai.ts.
+    Its live session boundary and tool callbacks must publish usage rows even when the merge fails.
+    */
+    const usageEvents = (store.emitUsageEvent as ReturnType<typeof vi.fn>).mock.calls
+      .map(([event]: [{ kind: string; category?: string; taskId?: string | null; toolName?: string }]) => event);
+    expect(usageEvents).toContainEqual(expect.objectContaining({
+      kind: "session_start", category: "agent-session", taskId: "FN-050", meta: expect.objectContaining({ lane: "merger" }),
+    }));
+    expect(usageEvents).toContainEqual(expect.objectContaining({ kind: "tool_call", toolName: "read", taskId: "FN-050" }));
+    expect(usageEvents).toContainEqual(expect.objectContaining({ kind: "tool_result", toolName: "read", taskId: "FN-050" }));
   });
 
   it("attempt 2 throws when squash fails for a non-conflict reason (no U files)", async () => {

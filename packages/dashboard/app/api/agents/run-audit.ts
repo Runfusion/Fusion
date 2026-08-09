@@ -344,7 +344,14 @@ export function returnTaskToAgent(taskId: string, projectId?: string): Promise<T
   });
 }
 
-/** Fetch tasks explicitly assigned to an agent */
+/**
+ * Fetch an agent's explicitly assigned tasks plus its active workflow-linked task.
+ *
+ * FNXC:AgentTasks 2026-08-09-01:03:
+ * The endpoint resolves both durable `assignedAgentId` ownership and the
+ * runtime `agent.taskId` link within the selected project; callers receive a
+ * deduplicated task list regardless of the agent's role.
+ */
 export function fetchAgentTasks(agentId: string, projectId?: string): Promise<Task[]> {
   return api<Task[]>(withProjectId(`/agents/${encodeURIComponent(agentId)}/tasks`, projectId));
 }

@@ -8,7 +8,7 @@ import { Board } from "../Board";
 import { TaskCard } from "../TaskCard";
 import { ListView } from "../ListView";
 import { TaskDetailContent } from "../TaskDetailModal";
-import { mergeTaskSnapshot } from "../../hooks/useTasks";
+import { applyLocalTaskPatch, mergeTaskSnapshot } from "../../hooks/useTasks";
 import { ProjectOverview } from "../ProjectOverview";
 import { MissionManager } from "../MissionManager";
 import { MailboxView } from "../MailboxView";
@@ -20,9 +20,10 @@ import { CapacityRiskBanner } from "../CapacityRiskBanner";
 import { HeaderWorkflowSwitcherSlot } from "../HeaderWorkflowSwitcherSlot";
 import { GraphWorkflowSwitcherSlot, filterTasksByGraphWorkflowSelection } from "../GraphWorkflowSwitcherSlot";
 import { PluginDashboardViewHost } from "../../plugins/PluginDashboardViewHost";
-import { isPluginViewId } from "../../plugins/pluginViewRegistry";
+import { getPluginViewId, isPluginViewId } from "../../plugins/pluginViewRegistry";
 import { isNearDuplicateCanonicalInactive } from "../../../../core/src/duplicates/near-duplicate-canonical";
 import { fetchMission, fetchMissions, fetchInsights, fetchTaskDetail, listEvals } from "../../api";
+import { attachNativeStructureRefToDrag } from "../../utils/nativeStructureDrag";
 import type { DetailTaskTab } from "../../hooks/useModalManager";
 import type { SectionId } from "../SettingsModal";
 import type { MainContentProps } from "./types";
@@ -84,6 +85,8 @@ export function MainContent({
   experimentalFeatures,
   setQuickChatOpen,
   chatComposerPrefill,
+  mailComposerPrefill,
+  onSendAsReport,
   onOpenChatWithPrefill,
   setMailboxUnreadCount,
   setMissionTargetId,
@@ -207,10 +210,21 @@ export function MainContent({
       fetch(projectId ? `/api/goals?projectId=${encodeURIComponent(projectId)}` : "/api/goals")
         .then(async (response) => response.ok ? response.json() as Promise<{ goals?: Array<{ id: string; title: string }> }> : { goals: [] })
         .catch(() => ({ goals: [] })),
-    ]).then(async ([missions, insights, evals, goalsResponse]) => {
+      fetch(projectId ? `/api/plugins/fusion-plugin-roadmap/roadmaps?projectId=${encodeURIComponent(projectId)}` : "/api/plugins/fusion-plugin-roadmap/roadmaps")
+        .then(async (response) => response.ok ? response.json() as Promise<Array<{ id: string }>> : [])
+        .catch(() => [] as Array<{ id: string }>),
+    ]).then(async ([missions, insights, evals, goalsResponse, roadmaps]) => {
       const missionHierarchies = await Promise.all(missions.map(async (mission) => {
         try {
           return await fetchMission(mission.id, projectId);
+        } catch {
+          return undefined;
+        }
+      }));
+      const roadmapHierarchies = await Promise.all(roadmaps.map(async (roadmap) => {
+        try {
+          const response = await fetch(`/api/plugins/fusion-plugin-roadmap/roadmaps/${encodeURIComponent(roadmap.id)}${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ""}`);
+          return response.ok ? await response.json() as { milestones?: Array<{ features?: Array<{ id: string; title: string }> }> } : undefined;
         } catch {
           return undefined;
         }
@@ -223,6 +237,7 @@ export function MainContent({
         ...insights.insights.map((insight) => ({ ref: ref("research-finding", insight.id), label: insight.title })),
         ...evals.results.map((result) => ({ ref: ref("eval-result", result.id), label: result.taskSnapshot.title || result.taskId })),
         ...(Array.isArray(goalsResponse.goals) ? goalsResponse.goals : []).map((goal) => ({ ref: ref("goal", goal.id), label: goal.title })),
+        ...roadmapHierarchies.flatMap((roadmap) => roadmap?.milestones?.flatMap((milestone) => milestone.features ?? []) ?? []).map((feature) => ({ ref: ref("roadmap-item", feature.id), label: feature.title })),
       ];
       setNativeStructureCandidates(candidates);
     });
@@ -251,6 +266,10 @@ export function MainContent({
         break;
       case "eval-result":
         handleChangeTaskView("evals");
+        break;
+      case "roadmap-item":
+        // FNXC:NativeStructureEmbed 2026-08-09-05:13: Mail and chat must share the hosted Roadmaps destination; this switch previously drifted.
+        handleChangeTaskView(getPluginViewId("fusion-plugin-roadmap", "roadmaps"));
         break;
     }
   }, [handleChangeTaskView, setGoalAnchorId, setMissionTargetId]);
@@ -386,6 +405,7 @@ export function MainContent({
             subscribePluginEvents,
             openTaskDetail: openPluginTaskDetail,
             openFile: openFileInBrowser,
+            beginNativeStructureDrag: attachNativeStructureRefToDrag,
             renderTaskCard: (task: Task | TaskDetail) => (
               <TaskCard
                 task={task}
@@ -456,6 +476,7 @@ export function MainContent({
             initialComposerDraft={chatComposerPrefill?.text}
             initialComposerDraftNonce={chatComposerPrefill?.nonce}
             onPopOut={() => setQuickChatOpen(true)}
+            onSendAsReport={onSendAsReport}
           />
         </Suspense>
       </PageErrorBoundary>
@@ -491,6 +512,7 @@ export function MainContent({
           onUnreadCountChange={setMailboxUnreadCount}
           onOpenNativeStructure={onOpenNativeStructure}
           nativeStructureCandidates={nativeStructureCandidates}
+          composePrefill={mailComposerPrefill ?? undefined}
         />
       </PageErrorBoundary>
     );
@@ -919,8 +941,8 @@ export function MainContent({
               onRequestClose={closeTaskDetailMainPanel}
               onTaskUpdated={(updatedTask) => {
                 setMainPanelDetailTask((previous) => {
-                  if (!previous || previous.id !== updatedTask.id) return previous;
-                  return mergeTaskSnapshot(previous, updatedTask);
+                  if (!previous || (updatedTask.id !== undefined && updatedTask.id !== previous.id)) return previous;
+                  return applyLocalTaskPatch(previous, { ...updatedTask, id: previous.id });
                 });
               }}
               addToast={addToast}

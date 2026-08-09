@@ -15,9 +15,19 @@ export type GhErrorCode =
   | "network"
   | "permission"
   | "merge-conflict"
+  | "merge-blocked-by-policy"
   | "validation"
   | "timeout"
   | "unknown";
+
+export interface GhErrorClassificationContext {
+  /** Merge state supplied by a post-failure GitHub refresh; dashboard types stay out of core. */
+  mergeable?: string;
+  /** GitHub's review decision when it explains a protected-branch block. */
+  reviewDecision?: string | null;
+  /** Safe, operator-facing reasons returned by GitHub for a blocked merge. */
+  blockingReasons?: readonly string[];
+}
 
 export interface StructuredGhError {
   code: GhErrorCode;
@@ -338,7 +348,10 @@ function normalizeGhErrorParts(error: unknown): { message: string; stderr: strin
   return { message: String(error), stderr: "", stdout: "", exitCode: null };
 }
 
-export function classifyGhError(error: unknown): StructuredGhError {
+export function classifyGhError(
+  error: unknown,
+  context: GhErrorClassificationContext = {},
+): StructuredGhError {
   const parts = normalizeGhErrorParts(error);
   const haystack = `${parts.message}\n${parts.stderr}\n${parts.stdout}`.toLowerCase();
   const baseCause = {
@@ -397,10 +410,49 @@ export function classifyGhError(error: unknown): StructuredGhError {
     });
   }
 
-  if (haystack.includes("merge conflict") || haystack.includes("not mergeable")) {
+  const mergeable = context.mergeable?.toUpperCase();
+  const hasExplicitConflict = haystack.includes("merge conflict") || haystack.includes("cannot be cleanly created");
+
+  /*
+  FNXC:GitHubPrMerge 2026-08-09-01:02:
+  GitHub CLI's "not mergeable" text is ambiguous: branch protection emits it too.
+  Only explicit conflict text or refreshed DIRTY/CONFLICTING state may diagnose a
+  conflict; refreshed BLOCKED state must preserve the operator's policy blocker.
+  */
+  if (hasExplicitConflict || mergeable === "DIRTY" || mergeable === "CONFLICTING") {
     return withCause({
       code: "merge-conflict",
       message: "Pull request cannot be merged due to conflicts.",
+      retryable: false,
+    });
+  }
+
+  if (mergeable === "BLOCKED") {
+    const uniqueReasons = new Map<string, string>();
+    for (const reason of context.blockingReasons ?? []) {
+      const normalized = reason.trim().replace(/\s+/g, " ");
+      if (normalized && !uniqueReasons.has(normalized.toLowerCase())) {
+        uniqueReasons.set(normalized.toLowerCase(), normalized);
+      }
+    }
+    const reasons = [...uniqueReasons.values()].sort((left, right) => {
+      const normalizedLeft = left.toLowerCase();
+      const normalizedRight = right.toLowerCase();
+      return normalizedLeft < normalizedRight ? -1 : normalizedLeft > normalizedRight ? 1 : 0;
+    });
+    const reviewRequired = context.reviewDecision?.toUpperCase() === "REVIEW_REQUIRED";
+
+    // FNXC:GitHubPrMerge 2026-08-09-01:35: Keep every sanitized blocker because GitHub can report review and check policy blocks together.
+    const blockers = [
+      ...(reviewRequired ? ["review approval is required"] : []),
+      ...reasons,
+    ];
+    const message = blockers.length > 0
+      ? `Pull request is blocked by branch protection: ${blockers.join("; ")}.`
+      : "Pull request is blocked by branch protection.";
+    return withCause({
+      code: "merge-blocked-by-policy",
+      message,
       retryable: false,
     });
   }
@@ -441,8 +493,8 @@ export function classifyGhError(error: unknown): StructuredGhError {
  * Get a human-readable error message from a gh CLI error.
  * Extracts the most relevant error information.
  */
-export function getGhErrorMessage(error: unknown): string {
-  return classifyGhError(error).message;
+export function getGhErrorMessage(error: unknown, context?: GhErrorClassificationContext): string {
+  return classifyGhError(error, context).message;
 }
 
 /**

@@ -17,6 +17,7 @@ import {
   mockConfirm,
   mockUsePluginUiSlots,
   expectBaseRule,
+  expectSingleStatsRuntimeStatus,
   readDashboardStylesSource,
   setupTaskDetailModalHooks,
 } from "./TaskDetailModal.test-helpers";
@@ -83,6 +84,11 @@ function getRuleBlockFromSelectorList(css: string, selector: string): string {
   return ruleEnd === -1 ? "" : css.slice(ruleStart + 1, ruleEnd);
 }
 
+/*
+FNXC:TaskDetailStatsAssertions 2026-08-09-16:50:
+FN-8906 requires Stats-tab runtime-status assertions to be scoped to the named Stats region because
+the modal header lifecycle badge intentionally renders the same raw status string.
+*/
 describe("TaskDetailModal", () => {
   describe("source issue metadata", () => {
     beforeEach(() => {
@@ -2440,7 +2446,7 @@ describe("TaskDetailModal", () => {
       expect(screen.getByText("Execution Details")).toBeInTheDocument();
       expect(screen.getByText("Loading token statistics…")).toBeDefined();
       expect(screen.getAllByText("Fast").length).toBeGreaterThan(0);
-      expect(screen.getByText("executing")).toBeInTheDocument();
+      expectSingleStatsRuntimeStatus("executing");
     });
 
     it("shows spec content after fetchTaskDetail resolves", async () => {
@@ -2529,7 +2535,7 @@ describe("TaskDetailModal", () => {
       expect(screen.getByText("Execution mode")).toBeInTheDocument();
       expect(screen.getByText("Runtime status")).toBeInTheDocument();
       expect(screen.getAllByText("Fast").length).toBeGreaterThan(0);
-      expect(screen.getByText("executing")).toBeInTheDocument();
+      expectSingleStatsRuntimeStatus("executing");
       expect(screen.getByText((1200).toLocaleString())).toBeInTheDocument();
       expect(screen.getByText((450).toLocaleString())).toBeInTheDocument();
       expect(screen.getByText((210).toLocaleString())).toBeInTheDocument();

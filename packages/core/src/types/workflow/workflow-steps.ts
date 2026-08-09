@@ -281,7 +281,7 @@ export interface WorkflowStepResult {
    * Machine-readable verdict from prompt-mode structured output.
    * Absent for script-mode steps and legacy prose-only prompt outputs.
    */
-  verdict?: "APPROVE" | "APPROVE_WITH_NOTES" | "REVISE";
+  verdict?: "APPROVE" | "APPROVE_WITH_NOTES" | "REVISE" | "CLOSE_NO_OP";
   /**
    * Optional notes from prompt-mode structured output.
    * Absent for script-mode steps and legacy prose-only prompt outputs.

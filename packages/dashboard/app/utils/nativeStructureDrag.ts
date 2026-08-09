@@ -8,18 +8,30 @@ const NATIVE_STRUCTURE_KINDS: readonly NativeStructureRef["kind"][] = [
   "goal",
   "research-finding",
   "eval-result",
+  "roadmap-item",
 ];
 
 /**
- * FNXC:NativeStructureEmbed 2026-07-22-10:30:
+ * FNXC:NativeStructureEmbed 2026-08-09-05:13:
  * Mail and every native-structure owner exchange this one DataTransfer protocol rather than
- * inventing per-view payloads. It intentionally accepts only the five persisted preview kinds:
- * mission, milestone, goal, research-finding, and eval-result.
+ * inventing per-view payloads. It accepts every persisted preview kind, including roadmap items.
  */
 export function serializeNativeStructureRef(dataTransfer: DataTransfer, ref: NativeStructureRef): void {
   dataTransfer.setData(NATIVE_STRUCTURE_DRAG_MIME, JSON.stringify(ref));
   dataTransfer.setData("text/plain", `fusion://${ref.kind}/${ref.id}`);
   dataTransfer.effectAllowed = "copy";
+}
+
+/**
+ * FNXC:RoadmapNativeStructureDrag 2026-08-09-05:13:
+ * Roadmap feature rows already own text/plain for feature:<id> reordering, so this helper writes
+ * only the host MIME and preserves their payload and effectAllowed. Its result lets a row that is
+ * draggable for reordering widen effectAllowed only when a native structure payload was attached.
+ */
+export function attachNativeStructureRefToDrag(dataTransfer: DataTransfer, ref: NativeStructureRef): boolean {
+  if (!isNativeStructureDragEnabled()) return false;
+  dataTransfer.setData(NATIVE_STRUCTURE_DRAG_MIME, JSON.stringify(ref));
+  return true;
 }
 
 /** Reads and validates an untrusted browser drag payload. */

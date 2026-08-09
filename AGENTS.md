@@ -251,7 +251,7 @@ Use `superviseSpawn(...)` from `@fusion/core` for managed child processes; do no
 7. **Enforce pre-commit diff-volume gate.** Block suspicious shrinkage before squash commit.
 8. **Smart-prefer-main overlap guard.** Recent overlapping main commits can flip to prefer-branch.
 9. **Layer-3 scope partition.** Out-of-scope conflicts resolve to main before AI arbitration unless `task.scopeOverride=true`.
-10. **Auto-prerebase on divergence/hot files.** Fail-soft and continue normal conflict stack.
+10. **Legacy auto-prerebase is inert.** It belonged to the soft-deprecated `aiMergeTask` pipeline; unified `runAiMerge` does not use it.
 
 ### Gitignored-path guard on squash merges
 
@@ -267,7 +267,7 @@ Per-task opt-out exists: `task.scopeOverride = true` (log the reason).
 
 When `settings.autoMerge: false`, `in-review` is terminal-until-merged by a human. Lifecycle-mutating self-healing must not move these tasks backward, pause/fail them, or re-enqueue them for execution.
 
-Scoped exception (FN-5819): shared-branch-group members (`branchContext.assignmentMode === "shared"`) still run the member→shared-branch local integration step while auto-merge is off. This exception is only for assembling `branch_groups.branchName`; shared-branch → default-branch promotion remains gated by group/global auto-merge.
+Scoped exception (FN-5819/FN-8823): while project auto-merge is On, shared-branch-group members (`branchContext.assignmentMode === "shared"`) still run the member→shared-branch local integration step subject to the user-Off hold. Under project auto-merge Off, every member is held unless its task explicitly sets `autoMerge: true`; shared-branch → default-branch promotion remains separately gated by group/global auto-merge.
 
 ### Mock provider (test mode)
 
@@ -337,6 +337,7 @@ Scoped exception (FN-5819): shared-branch-group members (`branchContext.assignme
 - `./docs/workflow-steps.md` — prompt/script gates and merge-blocking behavior.
 - `./docs/secrets.md` — secrets policy and tooling behavior.
 - `./docs/diagnostics.md` — engine diagnostic logging conventions.
+- `./docs/agent-activity-contract.md` — inspectable `/api/agent-activity` wire, cursor, and retention contract.
 - `./docs/task-management.md` — archive cleanup and restore semantics.
 - `./docs/soft-delete-verification-matrix.md` — mandatory soft-delete verification matrix.
 - `./docs/cli-reference.md` — CLI and terminal UI reference.

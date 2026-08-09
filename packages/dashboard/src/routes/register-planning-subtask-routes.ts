@@ -11,6 +11,8 @@ import {
 } from "@fusion/core";
 import { createAgentTask } from "@fusion/engine";
 import { normalizePlanningSummaryPayload } from "../planning.js";
+import { extractIssueImageUrls, githubImagePolicy, importIssueImagesFromUrls } from "../issue-image-attachments.js";
+import { PER_BODY_MAX_CHARS, TRANSPORT_MAX_CHARS } from "../issue-image-markup.js";
 import { ApiError, badRequest, conflict, notFound, rateLimited } from "../api-error.js";
 import { writeSSEEvent, type SessionBufferedEvent } from "../sse-buffer.js";
 import type { AiSessionStore } from "../ai-session-store.js";
@@ -666,6 +668,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
         thinkingLevel,
         clarificationEnabled,
         workflowId,
+        sourceIssue,
       } = req.body;
 
       if (!initialPlan || typeof initialPlan !== "string") {
@@ -692,6 +695,28 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
       if (existingSessionId !== undefined && typeof existingSessionId !== "string") {
         throw badRequest("existingSessionId must be a string when provided");
       }
+
+      const validatedSourceIssue = (() => {
+        if (sourceIssue === undefined) return undefined;
+        if (!sourceIssue || typeof sourceIssue !== "object" || (sourceIssue as { provider?: unknown }).provider !== "github") throw badRequest("sourceIssue must be a GitHub issue");
+        const value = sourceIssue as { repository?: unknown; issueNumber?: unknown; url?: unknown; title?: unknown; imageBodies?: unknown; commentsUnavailable?: unknown; droppedBodyCount?: unknown };
+        if (typeof value.repository !== "string" || typeof value.issueNumber !== "number" || !Number.isInteger(value.issueNumber) || value.issueNumber <= 0 || typeof value.url !== "string") throw badRequest("sourceIssue is malformed");
+        if (value.imageBodies !== undefined && (!Array.isArray(value.imageBodies) || value.imageBodies.some((body) => typeof body !== "string"))) throw badRequest("sourceIssue imageBodies must be strings");
+        if (value.commentsUnavailable !== undefined && typeof value.commentsUnavailable !== "boolean") throw badRequest("sourceIssue commentsUnavailable must be boolean");
+        if (value.droppedBodyCount !== undefined && (typeof value.droppedBodyCount !== "number" || !Number.isInteger(value.droppedBodyCount) || value.droppedBodyCount < 0)) throw badRequest("sourceIssue droppedBodyCount must be a non-negative integer");
+        const match = value.url.match(/^https:\/\/github\.com\/([^/]+)\/([^/]+)\/issues\/(\d+)\/?$/i);
+        if (!match || match[3] !== String(value.issueNumber) || `${match[1]}/${match[2]}`.toLowerCase() !== value.repository.toLowerCase()) throw badRequest("sourceIssue URL must match repository and issue number");
+        let totalChars = 0;
+        let droppedBodyCount = value.droppedBodyCount ?? 0;
+        const bodies = (value.imageBodies ?? []).flatMap((body) => {
+          if (body.length > PER_BODY_MAX_CHARS || totalChars + body.length > TRANSPORT_MAX_CHARS) { droppedBodyCount++; return []; }
+          totalChars += body.length;
+          return [body];
+        });
+        /* FNXC:GitHubPlanningSourceIssue 2026-08-09-14:09: Bodies are transport-only; server-side policy resolution applies the SSRF boundary and authoritative cap before session persistence. */
+        /* FNXC:GitHubPlanningSourceIssue 2026-08-09-14:51: Every newly captured context persists an array, including empty, so L2-dropped bodies cannot fall through to the legacy seed parser and bypass the recorded capture limit. */
+        return { provider: "github" as const, repository: value.repository, externalIssueId: String(value.issueNumber), issueNumber: value.issueNumber, url: value.url, ...(typeof value.title === "string" ? { title: value.title } : {}), imageUrls: extractIssueImageUrls(bodies, githubImagePolicy()), ...(value.commentsUnavailable === true ? { commentsUnavailable: true } : {}), ...(droppedBodyCount > 0 ? { droppedBodyCount } : {}) };
+      })();
 
       if (thinkingLevel !== undefined && !THINKING_LEVELS.includes(thinkingLevel as ThinkingLevel)) {
         throw badRequest("thinkingLevel must be one of: " + THINKING_LEVELS.join(", "));
@@ -776,7 +801,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
             validatedThinkingLevel,
             settings.promptOverrides,
             ctx.options?.pluginRunner as SkillPluginRunner,
-            { ...runtime, workflowId },
+            { ...runtime, workflowId, sourceIssue: validatedSourceIssue },
           );
         } else {
           await startExistingSession(
@@ -788,7 +813,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
             settings.promptOverrides,
             ctx.options?.pluginRunner as SkillPluginRunner,
             undefined,
-            { ...runtime, workflowId },
+            { ...runtime, workflowId, sourceIssue: validatedSourceIssue },
           );
         }
         res.status(201).json({ sessionId: existingSessionId });
@@ -799,6 +824,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
       const planningOptions = {
         projectId,
         workflowId,
+        ...(validatedSourceIssue ? { sourceIssue: validatedSourceIssue } : {}),
         ...runtime,
         pluginRunner: ctx.options?.pluginRunner as SkillPluginRunner,
       };
@@ -1196,6 +1222,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
       const summaryOverride = parsePlanningSummaryOverride(summaryInput);
 
       const { store: scopedStore } = await getProjectContext(req);
+      const projectSettings = await scopedStore.getSettings();
       const {
         getSession,
         getSummary,
@@ -1210,6 +1237,15 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
         planningProposalClaimId,
         formatPlanningTaskHandoff,
       } = await import("../planning.js");
+      const planningSourceModule = await import("../planning.js");
+      const resolvePlanningSourceIssue = "resolvePlanningSourceIssue" in planningSourceModule
+        ? planningSourceModule.resolvePlanningSourceIssue
+        : undefined;
+      const resolvePlanningIssueImageUrls = "resolvePlanningIssueImageUrls" in planningSourceModule
+        ? planningSourceModule.resolvePlanningIssueImageUrls
+        : undefined;
+      const { resolvePlanningGithubTrackingDecision } = await import("../github-tracking.js");
+      const { appendSourceIssueBlock } = await import("../github.js");
 
       let session = await getSession(sessionId);
       let summary = summaryOverride ?? getSummary(sessionId);
@@ -1459,13 +1495,24 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
       const originalRequest = typeof initialPlan === "string" && initialPlan.trim()
         ? initialPlan.trim()
         : summary.description.trim();
-      // Create the task
+      /*
+      FNXC:GitHubPlanningSourceIssue 2026-08-09-08:09:
+      Planning creates truthful GitHub provenance from only persisted structured context or a canonical
+      seed. A live holder suppresses tracking rather than blocking the task, while post-create adoption
+      remains the cross-process authority that prevents duplicate GitHub tracking streams.
+      */
+      // Older route harnesses and pre-rollout planning adapters do not export the additive resolver.
+      const sourceContext = session && typeof resolvePlanningSourceIssue === "function" ? resolvePlanningSourceIssue(session) : undefined;
+      const trackingDecision = sourceContext
+        ? await resolvePlanningGithubTrackingDecision(scopedStore, projectSettings, { owner: sourceContext.sourceIssue.repository.split("/")[0], repo: sourceContext.sourceIssue.repository.split("/")[1], issueNumber: sourceContext.sourceIssue.issueNumber, url: sourceContext.sourceIssue.url ?? "" })
+        : undefined;
+      // Create the task. Provenance is truthful even when a live importer suppresses tracking.
       const task = await scopedStore.createTask({
         title: summary.title,
-        description: planMd,
+        description: sourceContext ? appendSourceIssueBlock(planMd, sourceContext.markdown, sourceContext.sourceIssue.url ?? "") : planMd,
         dependencies: summary.suggestedDependencies.length > 0 ? summary.suggestedDependencies : undefined,
         priority: isTaskPriority(summary.priority) ? summary.priority : DEFAULT_TASK_PRIORITY,
-        source: { sourceType: "api" },
+        ...(sourceContext ? { sourceIssue: sourceContext.sourceIssue, source: { sourceType: "github_import" as const, sourceMetadata: sourceContext.sourceMetadata }, ...(trackingDecision?.githubTracking ? { githubTracking: trackingDecision.githubTracking } : {}) } : { source: { sourceType: "api" as const } }),
         branch: resolvedBranch,
         baseBranch: resolvedBaseBranch,
         /*
@@ -1496,6 +1543,29 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
           () => scopedStore.upsertTaskDocument(task.id, { key: "original-description", content: originalRequest, author: "planning", metadata: { planningSessionId: sessionId, source: "planning-mode-initial-plan" } }),
           { taskId: task.id, sessionId },
         );
+      }
+
+      if (sourceContext) {
+        await runPlanningCreateSideEffect(
+          "Planning create-task GitHub issue document write failed",
+          () => scopedStore.upsertTaskDocument(task.id, { key: "github-issue", content: sourceContext.markdown, author: "planning", metadata: { planningSessionId: sessionId, source: "github-source-issue" } }),
+          { taskId: task.id, sessionId },
+        );
+        await runPlanningCreateSideEffect(
+          "Planning create-task GitHub source log failed",
+          () => scopedStore.logEntry(task.id, "Imported from GitHub", sourceContext.sourceIssue.url),
+          { taskId: task.id, sessionId },
+        );
+        if (trackingDecision?.suppressedByTaskId) {
+          await runPlanningCreateSideEffect("Planning create-task duplicate source issue log failed", () => scopedStore.logEntry(task.id, `Source issue already tracked by ${trackingDecision.suppressedByTaskId}`), { taskId: task.id, sessionId });
+        }
+        const images = resolvePlanningIssueImageUrls && session ? resolvePlanningIssueImageUrls(session) : { urls: [], commentsUnavailable: false, droppedBodyCount: 0 };
+        /* FNXC:GitHubPlanningSourceIssue 2026-08-09-14:09: Attach only after a new task exists; downloads are best-effort and never re-fetch GitHub issue/comment APIs. */
+        await runPlanningCreateSideEffect("Planning create-task GitHub image import failed", async () => {
+          const result = await importIssueImagesFromUrls(scopedStore, task.id, images.urls, githubImagePolicy());
+          if (result.attached) await scopedStore.logEntry(task.id, `Imported ${result.attached} image attachment${result.attached === 1 ? "" : "s"} from GitHub issue`, sourceContext.sourceIssue.url);
+        }, { taskId: task.id, sessionId });
+        if (images.commentsUnavailable || images.droppedBodyCount) planningLogger.warn("Planning GitHub image capture was partial", { taskId: task.id, issueUrl: sourceContext.sourceIssue.url, commentsUnavailable: images.commentsUnavailable, droppedBodyCount: images.droppedBodyCount });
       }
 
       // Log the planning mode creation.
@@ -1619,6 +1689,11 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
 
       const { store: scopedStore } = await getProjectContext(req);
       const { getSession, releaseSession, formatInterviewQA, formatPlanningTaskHandoff, mergePlanningSubtaskDrafts } = await import("../planning.js");
+      const planningSourceModule = await import("../planning.js");
+      const resolvePlanningSourceIssue = "resolvePlanningSourceIssue" in planningSourceModule
+        ? planningSourceModule.resolvePlanningSourceIssue
+        : undefined;
+      const { appendSourceIssueBlock } = await import("../github.js");
 
       const session = await getSession(planningSessionId);
       if (!session) {
@@ -1630,6 +1705,12 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
         throw badRequest("Planning session is not complete");
       }
 
+      /*
+      FNXC:GitHubPlanningSourceIssue 2026-08-09-05:36:
+      A planning breakdown preserves the source text on every child but must not create N source
+      links or tracking streams for one GitHub issue.
+      */
+      const sourceContext = typeof resolvePlanningSourceIssue === "function" ? resolvePlanningSourceIssue(session) : undefined;
       const qaSection = formatInterviewQA(session.history);
       const logDetails = qaSection
         ? `Source: ${session.initialPlan.slice(0, 200)}\n\n${qaSection}`
@@ -1737,7 +1818,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
         */
         const task = await scopedStore.createTask({
           title: item.title.trim(),
-          description: planMd,
+          description: sourceContext ? appendSourceIssueBlock(planMd, sourceContext.markdown, sourceContext.sourceIssue.url ?? "") : planMd,
           dependencies: undefined,
           priority: isTaskPriority(item.priority) ? item.priority : DEFAULT_TASK_PRIORITY,
           source: { sourceType: "api", sourceMetadata: { planningSessionId } },

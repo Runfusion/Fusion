@@ -29,7 +29,7 @@ function completionTask() {
   };
 }
 
-function createProductionTaskDoneTool() {
+function createProductionTaskDoneTool(maximum: number | undefined = 3) {
   const store = createMockStore();
   const task = completionTask();
   store._setRow(task.id, task);
@@ -40,7 +40,7 @@ function createProductionTaskDoneTool() {
     groupOverlappingFiles: false,
     autoMerge: false,
     worktreeInitCommand: undefined,
-    maxRecommendationsPerTask: 3,
+    ...(maximum === undefined ? {} : { maxRecommendationsPerTask: maximum }),
   });
   const executor = new TaskExecutor(store as any, "/repo");
   const tool = (executor as any).createTaskDoneTool(
@@ -89,6 +89,41 @@ describe("fn_task_done recommendation validation", () => {
     const replacement = { ...recommendation, id: "rec-replacement", title: "Improve task exports" };
     await tool.execute("call-2", { recommendations: [replacement] });
     expect((await store.getTask(task.id)).recommendations).toEqual([replacement]);
+  });
+
+
+  it("persists an honest empty list and uses the default cap when the setting is absent", async () => {
+    const { store, task, tool } = createProductionTaskDoneTool(undefined);
+    const empty = await tool.execute("call-empty", { recommendations: [] });
+    expect(empty.content[0].text).toContain("Task marked complete");
+    expect((await store.getTask(task.id)).recommendations).toEqual([]);
+
+    const { store: defaultStore, task: defaultTask, tool: defaultTool } = createProductionTaskDoneTool(undefined);
+    await defaultTool.execute("call-default", { recommendations: [recommendation, { ...recommendation, id: "rec-second" }, { ...recommendation, id: "rec-third" }] });
+    expect((await defaultStore.getTask(defaultTask.id)).recommendations).toHaveLength(3);
+  });
+
+  it("accepts an empty list but rejects populated input when capture is disabled", async () => {
+    const { store, task, tool } = createProductionTaskDoneTool(0);
+    const empty = await tool.execute("call-disabled-empty", { recommendations: [] });
+    expect(empty.content[0].text).toContain("Task marked complete");
+    expect((await store.getTask(task.id)).recommendations).toEqual([]);
+
+    const { store: rejectedStore, task: rejectedTask, tool: rejectedTool } = createProductionTaskDoneTool(0);
+    const rejected = await rejectedTool.execute("call-disabled-populated", { recommendations: [recommendation] });
+    expect(rejected.content[0].text).toContain("maximum of 0");
+    expect((await rejectedStore.getTask(rejectedTask.id)).recommendations).toBeUndefined();
+  });
+
+  it("documents the prompted payload and persists its equivalent through the production tool", async () => {
+    const { store, task, tool } = createProductionTaskDoneTool();
+    expect(tool.description).toContain("recommendations: []");
+    expect(tool.description).toContain("empty list is accepted for compatibility");
+    expect(tool.parameters.properties.recommendations.description).toContain("unique stable ids");
+    expect(tool.parameters.properties.recommendations.description).toContain("populated input is rejected");
+
+    await tool.execute("call-prompt-shape", { recommendations: [recommendation] });
+    expect((await store.getTask(task.id)).recommendations).toEqual([recommendation]);
   });
 
   it("does not persist recommendations when production completion is refused or blocked", async () => {

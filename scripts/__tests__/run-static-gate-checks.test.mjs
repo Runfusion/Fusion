@@ -16,6 +16,7 @@ const EXPECTED_GATE_CHECKS = [
   check("no-cwd-relative-dashboard-test-reads"),
   check(["no-", "kill-", "40" + "40"].join("")),
   check("no-getdatabase"),
+  check("prerebase-inert"),
   check("capacity-pool-id"),
   check("no-node-only-core-imports-in-dashboard"),
   check("pi-versions-pinned"),

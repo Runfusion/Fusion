@@ -122,6 +122,30 @@ describe("built-in workflows", () => {
     expect(quickFixPlanReview.requireExternalIntegrationEvidence).toBeUndefined();
   });
 
+  it("routes Plan Review CLOSE_NO_OP to the terminal no-op action in every executable consumer", () => {
+    const workflows = [
+      BUILTIN_CODING_WORKFLOW_IR,
+      BUILTIN_STEPWISE_CODING_WORKFLOW_IR,
+      BUILTIN_STEPWISE_FINAL_REVIEW_CODING_WORKFLOW_IR,
+    ];
+    for (const ir of workflows) {
+      expect(ir.nodes.find((node) => node.id === "plan-review-no-op"), ir.name).toMatchObject({
+        kind: "gate",
+        config: { workflowAction: "plan-review-no-op" },
+      });
+      expect(ir.edges, ir.name).toContainEqual({
+        from: PLAN_REVIEW_GROUP_ID,
+        to: "plan-review-no-op",
+        condition: "outcome:close-no-op",
+      });
+      expect(ir.edges, ir.name).toContainEqual({
+        from: "plan-review-no-op",
+        to: "end",
+        condition: "success",
+      });
+    }
+  });
+
   it("all built-in Code Review optional groups are blocking gates", () => {
     for (const workflow of BUILTIN_WORKFLOWS) {
       const codeReview = workflow.ir.nodes.find((node) => node.id === "code-review");

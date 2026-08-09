@@ -40,6 +40,10 @@ export type CreateGroupPrFn = (input: {
   headBranch: string;
   /** Base branch — the integration/default target. */
   baseBranch: string;
+  /** Explicit project integration remote, when configured. */
+  integrationRemote?: string;
+  /** Cancels a queued promotion before it can mutate GitHub. */
+  signal?: AbortSignal;
 }) => Promise<{ prNumber: number; prUrl: string; prState: BranchGroupPrState }>;
 
 /** Result shape shared by group-PR sync/close callbacks. */
@@ -204,6 +208,18 @@ async function ensureGroupBranchExists(rootDir: string, branchName: string, star
  */
 const promotionLocks = new Map<string, Promise<unknown>>();
 
+/*
+FNXC:PullRequestFreshness 2026-08-09-03:20:
+PR-mode promotion must not alter the project-root checkout before the verified
+head refresh. Cancellation is checked at the coordinator boundary so an aborted
+claim cannot reach an injected GitHub creator or the legacy root-checkout merge.
+*/
+function throwIfPromotionAborted(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) {
+    throw signal.reason instanceof Error ? signal.reason : new Error("Branch-group promotion cancelled");
+  }
+}
+
 /**
  * The only entrypoint allowed to perform shared-branch-group → default-branch promotion.
  * Promotion is intentionally idempotent and must never run inline in aiMergeTask.
@@ -214,13 +230,15 @@ export interface PromoteBranchGroupInput {
   store: Pick<TaskStore, "getBranchGroup" | "getBranchGroupByBranchName" | "listTasksByBranchGroup" | "updateBranchGroup">;
   rootDir: string;
   groupId: string;
-  settings: Pick<Settings, "autoMerge" | "globalPause" | "enginePaused"> & Partial<Pick<Settings, "mergeStrategy" | "integrationBranch" | "baseBranch">>;
+  settings: Pick<Settings, "autoMerge" | "globalPause" | "enginePaused"> & Partial<Pick<Settings, "mergeStrategy" | "integrationBranch" | "baseBranch" | "worktreeRebaseRemote">>;
   /**
    * Injected GitHub PR creator (KTD7). When PR mode is active and the group is
    * complete, the coordinator uses this to create the single managed PR. Omitted
    * for direct-merge mode and in tests that don't exercise PR creation.
    */
   createGroupPr?: CreateGroupPrFn;
+  /** Merge-queue cancellation propagated to the automated PR creation boundary. */
+  signal?: AbortSignal;
   recordAudit?: (event: {
     domain: string;
     mutationType: string;
@@ -253,6 +271,7 @@ export async function promoteBranchGroup(input: PromoteBranchGroupInput): Promis
 }
 
 async function promoteBranchGroupInner(input: PromoteBranchGroupInput): Promise<BranchGroupPromotionResult> {
+  throwIfPromotionAborted(input.signal);
   const group = await input.store.getBranchGroup(input.groupId);
   if (!group) {
     return {
@@ -356,15 +375,19 @@ async function promoteBranchGroupInner(input: PromoteBranchGroupInput): Promise<
   }
 
   const integrationBranch = await resolveIntegrationBranch(input.rootDir, input.settings);
-  if (!needsPrRepair) {
+  if (!needsPrRepair && !isPrMode) {
+    throwIfPromotionAborted(input.signal);
     await ensureGroupBranchExists(input.rootDir, group.branchName, integrationBranch);
     const currentBranch = (
       await execFileAsync("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: input.rootDir })
     ).stdout.trim();
     try {
-      await execFileAsync("git", ["checkout", integrationBranch], { cwd: input.rootDir });
-      await execFileAsync("git", ["merge", "--no-ff", "--no-edit", group.branchName], { cwd: input.rootDir });
+      throwIfPromotionAborted(input.signal);
+      await execFileAsync("git", ["checkout", integrationBranch], { cwd: input.rootDir, signal: input.signal });
+      throwIfPromotionAborted(input.signal);
+      await execFileAsync("git", ["merge", "--no-ff", "--no-edit", group.branchName], { cwd: input.rootDir, signal: input.signal });
     } finally {
+      // Restore the direct-merge caller's checkout even after cancellation.
       await execFileAsync("git", ["checkout", currentBranch], { cwd: input.rootDir });
     }
   }
@@ -399,12 +422,15 @@ async function promoteBranchGroupInner(input: PromoteBranchGroupInput): Promise<
       // GitHub failure must leave the group recoverable: do NOT flip prState to a
       // lie. The group is already merged to the integration branch locally; we
       // surface the error so the caller can retry promotion (which is idempotent).
+      throwIfPromotionAborted(input.signal);
       const created = await input.createGroupPr({
         cwd: input.rootDir,
         group,
         members,
         headBranch: group.branchName,
         baseBranch: integrationBranch,
+        integrationRemote: input.settings.worktreeRebaseRemote,
+        signal: input.signal,
       });
       prNumber = created.prNumber;
       prUrl = created.prUrl;

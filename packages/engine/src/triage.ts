@@ -22,7 +22,7 @@ import {
   isUnplannedSeedPrompt,
   isTaskAwaitingPlanning,
   getTaskDuplicateLineage,
-  parseExplicitDuplicateMarker,
+  resolveExplicitDuplicateMarker,
   resolveAgentPrompt,
   buildPlanningDuplicatePolicyInstruction,
   builtinSeamPrompt,
@@ -84,6 +84,24 @@ workflows; metadata is the only authoritative renamed-lane answer in this event 
 */
 const LEGACY_PLANNER_WAKE_COLUMNS = new Set(["todo", "triage"]);
 const LEGACY_PLANNER_COLUMNS = new Set([...LEGACY_PLANNER_WAKE_COLUMNS, "in-progress"]);
+
+const PLANNING_LIFECYCLE_LOCK_TRANSPORT_FAILURE_KEY = "planning.lifecycleLockTransportFailure";
+
+type PlanningLifecycleLockTransportFailure = { message: string; at: string; attempt: number | null };
+
+function getPlanningLifecycleLockTransportFailure(task: Task): PlanningLifecycleLockTransportFailure | null {
+  const candidate = task.customFields?.[PLANNING_LIFECYCLE_LOCK_TRANSPORT_FAILURE_KEY];
+  if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return null;
+  const marker = candidate as Partial<PlanningLifecycleLockTransportFailure>;
+  return typeof marker.message === "string" && typeof marker.at === "string"
+    ? { message: marker.message, at: marker.at, attempt: typeof marker.attempt === "number" ? marker.attempt : null }
+    : null;
+}
+
+function isPlanningLifecycleLockTransportError(error: unknown): error is Error {
+  return error instanceof fusionCore.PlanningLifecycleLockTransportError
+    || (error instanceof Error && error.name === "PlanningLifecycleLockTransportError");
+}
 
 /*
 FNXC:PlanReviewReplan 2026-07-13-00:00:
@@ -165,6 +183,8 @@ import {
   type AgentSemaphore,
 } from "./concurrency/concurrency.js";
 import { AgentLogger } from "./agents/agent-logger.js";
+import { attachAgentUsageTelemetry, emitAgentSessionStart } from "./agents/agent-usage-telemetry.js";
+import { emitApprovalMail } from "./agents/approval-mail.js";
 import { acquireActiveSessionPath, activeSessionRegistry } from "./agents/active-session-registry.js";
 import {
   resolveAgentInstructions,
@@ -270,6 +290,12 @@ export interface TriageProcessorOptions {
   onAgentText?: (taskId: string, delta: string) => void;
   /** AgentStore for resolving per-agent custom instructions. */
   agentStore?: import("@fusion/core").AgentStore;
+  /*
+  FNXC:StructuralMail 2026-08-09-09:57:
+  The triage approval gate receives this store solely to deliver its mailbox item. It remains optional so
+  existing callers and tests stay compatible; without it, approval mail is a no-op rather than a failure.
+  */
+  messageStore?: import("@fusion/core").MessageStore;
   /** Plugin runner for runtime selection. When provided, enables plugin runtime lookup. */
   pluginRunner?: import("./plugins/plugin-runner.js").PluginRunner;
   /*
@@ -530,6 +556,13 @@ export class TriageProcessor {
           await this.options.agentStore.updateAgentState(agent.id, "paused");
           await this.options.agentStore.updateAgent(agent.id, { pauseReason: "awaiting-approval" });
         }
+        /*
+        FNXC:StructuralMail 2026-08-09-09:57:
+        FN-8870 deliberately left triage out of its approval-mail coverage. The shared helper owns
+        `approval-mail:<approvalRequestId>` idempotency and fail-soft behavior; do not recreate either here.
+        Without a message store it is a silent no-op, preserving the approval-pause path.
+        */
+        void emitApprovalMail({ messageStore: this.options.messageStore, approvalRequestId, toolName: decision.toolName, taskId, agentId: agent?.id ?? actorId, agentName: agent?.name ?? actorName });
         queueMicrotask(() => this.activeSessions.get(taskId)?.dispose());
       },
       markApprovalCompleted: async (approvalRequestId) => {
@@ -1427,7 +1460,7 @@ export class TriageProcessor {
     to flag/delete/clear in finalizeApprovedTask. Requiring step headings for those markers
     withheld recovery forever (empty steps) so the marker path never ran.
     */
-    const isExplicitDuplicateRedirect = Boolean(parseExplicitDuplicateMarker(written));
+    const isExplicitDuplicateRedirect = Boolean(resolveExplicitDuplicateMarker(written, task.title).marker);
     const workflow = await resolveWorkflowIrForTask(this.store, task.id).catch(() => undefined);
     const requiresPromptImplementationSteps = workflow?.nodes.some((node) =>
       node.kind === "parse-steps"
@@ -2435,6 +2468,45 @@ export class TriageProcessor {
     }
   }
 
+  /**
+   * Resolves an exact prompt/title redirect before this task claims any planning capacity.
+   *
+   * FNXC:DuplicateIntake 2026-08-09-01:31:
+   * FN-8840 requires title redirects to take the same duplicate-decision route as prompt
+   * redirects before `specifyTask()` can start a planner session. Reading the prompt here is
+   * required only to detect a conflicting exact marker; a missing or unreadable prompt leaves
+   * a title-only redirect actionable and never lets it consume an implementation session.
+   */
+  private async finalizeExplicitDuplicateBeforePlanning(task: Task): Promise<boolean> {
+    try {
+      const liveTask = await this.store.getTask(task.id).catch(() => null);
+      if (!liveTask || liveTask.paused === true || liveTask.userPaused === true) return false;
+
+      const promptPath = join(this.rootDir, ".fusion", "tasks", liveTask.id, "PROMPT.md");
+      const written = await readFile(promptPath, "utf-8").catch(() => "");
+      const duplicateResolution = resolveExplicitDuplicateMarker(written, liveTask.title);
+      if (!duplicateResolution.marker && !duplicateResolution.conflict) return false;
+
+      const settings = await mergeEffectiveSettings(this.store, liveTask, await this.store.getSettings());
+      if (duplicateResolution.conflict) {
+        await this.finalizeApprovedTask(liveTask, written, settings);
+        return true;
+      }
+
+      return await this.tryFinalizeExplicitDuplicateMarker(liveTask, written, settings);
+    } catch (error: unknown) {
+      /*
+      FNXC:DuplicateIntake 2026-08-09-01:49:
+      Duplicate detection is an admission optimization, not a second source of planning failure.
+      If settings or lifecycle finalization is unavailable, retain the existing fail-open planner
+      path so a pre-held coordinator slot cannot leak before `specifyTask()` reaches its cleanup.
+      */
+      const message = error instanceof Error ? error.message : String(error);
+      planLog.warn(`${task.id}: pre-planning duplicate resolution failed open: ${message}`);
+      return false;
+    }
+  }
+
   async specifyTask(task: Task): Promise<void> {
     /*
     FNXC:TriageStuckKill 2026-07-18-21:05:
@@ -2450,6 +2522,12 @@ export class TriageProcessor {
       // FNXC:ConcurrencyAdmission 2026-08-03-09:00:
       // A coordinator winner owns a real pre-held host slot. A duplicate/stale
       // planner handoff must return it instead of pinning max concurrency.
+      if (dropPreHeldExecutorSlot(task.id)) this.options.semaphore?.release();
+      this.coordinatorAdmittedTaskIds.delete(task.id);
+      return;
+    }
+
+    if (await this.finalizeExplicitDuplicateBeforePlanning(task)) {
       if (dropPreHeldExecutorSlot(task.id)) this.options.semaphore?.release();
       this.coordinatorAdmittedTaskIds.delete(task.id);
       return;
@@ -2558,6 +2636,8 @@ export class TriageProcessor {
             // for fn task logs and agent log history — no stdout spam
           },
         });
+    { attachAgentUsageTelemetry(agentLogger, { store: this.store, agentId: task.assignedAgentId ?? "triage", taskId: task.id, nodeId: task.effectiveNodeId ?? task.nodeId ?? null, lane: "triage" }); }
+
 
         // Track subtasks created during triage when breakIntoSubtasks was requested.
         const createdSubtasksRef: { current: string[] } = { current: [] };
@@ -2926,6 +3006,7 @@ export class TriageProcessor {
           task.planningCredentialInstanceId,
         );
         activePlanningProvider = planningModel.provider;
+        attachAgentUsageTelemetry(agentLogger, { store: this.store, agentId: task.assignedAgentId ?? "triage", taskId: task.id, nodeId: task.effectiveNodeId ?? task.nodeId ?? null, model: planningModel.modelId ?? null, provider: planningModel.provider ?? null, lane: "triage" });
 
         const planningSessionModelOptions = {
           defaultProvider: planningModel.provider,
@@ -3110,6 +3191,7 @@ export class TriageProcessor {
           permanentAgentGating: this.buildPermanentAgentGatingContext(task.id, triageRunContext.runId, assignedAgent, settings.defaultAgentPermissionPolicy),
           onFallbackModelUsed,
         });
+        emitAgentSessionStart({ store: this.store, agentId: task.assignedAgentId ?? "triage", taskId: task.id, nodeId: task.effectiveNodeId ?? task.nodeId ?? null, model: planningModel.modelId ?? null, provider: planningModel.provider ?? null, lane: "triage" });
 
         const modelDesc = formatModelMarkerDetails(describeModel(session), resolvePlanningThinkingLevel(settings, task.planningThinkingLevel ?? task.thinkingLevel));
         /*
@@ -3429,11 +3511,15 @@ export class TriageProcessor {
           }
           const artifactChangedByAttempt = planningAttempt.baseline !== written;
           if (fallbackDispatchBoundaryMissing || planningAttempt.fallbackEngaged || !artifactChangedByAttempt) {
-            const failure = fallbackDispatchBoundaryMissing
-              ? `Planner runtime ${runtimeId} did not provide a fallback-dispatch settlement boundary for attempt ${planningAttempt.id}`
-              : planningAttempt.fallbackEngaged
-                ? `Planner fallback engaged during attempt ${planningAttempt.id}`
-                : `Planner did not update the authoritative PROMPT.md during attempt ${planningAttempt.id}`;
+            const liveTask = await Promise.resolve(this.store.getTask(task.id)).catch(() => task) ?? task;
+            const transportFailure = getPlanningLifecycleLockTransportFailure(liveTask);
+            const failure = transportFailure
+              ? `Planning lifecycle lock transport failure recorded at ${transportFailure.at}: ${transportFailure.message}`
+              : fallbackDispatchBoundaryMissing
+                ? `Planner runtime ${runtimeId} did not provide a fallback-dispatch settlement boundary for attempt ${planningAttempt.id}`
+                : planningAttempt.fallbackEngaged
+                  ? `Planner fallback engaged during attempt ${planningAttempt.id}`
+                  : `Planner did not update the authoritative PROMPT.md during attempt ${planningAttempt.id}`;
             const decision = computeRecoveryDecision({
               recoveryRetryCount: task.recoveryRetryCount,
               nextRecoveryAt: task.nextRecoveryAt,
@@ -3455,11 +3541,16 @@ export class TriageProcessor {
             const failureMessage = `${failure} after ${MAX_RECOVERY_RETRIES} retries. Retry after adjusting the task prompt or model.`;
             planLog.error(`${task.id} clean planning attempt retry budget exhausted`);
             await this.store.logEntry(task.id, failureMessage);
-            if (await this.updatePlanningStateIfStillCurrent(task, {
-              status: "failed",
-              error: failureMessage,
-              recoveryRetryCount: null,
-              nextRecoveryAt: null,
+            if (await this.updatePlanningStateIfStillCurrent(task, (live) => {
+              const customFields = { ...(live.customFields ?? {}) };
+              delete customFields[PLANNING_LIFECYCLE_LOCK_TRANSPORT_FAILURE_KEY];
+              return {
+                status: "failed",
+                error: failureMessage,
+                recoveryRetryCount: null,
+                nextRecoveryAt: null,
+                customFields,
+              };
             })) {
               await this.backfillBlankTitleAfterTerminalTriageFailure(task);
             }
@@ -3667,6 +3758,49 @@ export class TriageProcessor {
           if (!persisted) return;
           await this.backfillBlankTitleAfterTerminalTriageFailure(task);
           this.options.onSpecifyError?.(task, err instanceof Error ? err : new Error(errorMessage));
+          return;
+        } else if (isPlanningLifecycleLockTransportError(err)) {
+          /*
+          FNXC:PlanningDependencyReseed 2026-08-09-21:53:
+          A fail-closed lifecycle-lock transport rejection is infrastructure, not planner authoring.
+          Issue #3394 showed retries could turn a complete spec into a false unchanged-PROMPT verdict;
+          persist its marker because retry ownership can move across processes and restarts.
+          */
+          const failureMessage = `Planning lifecycle lock transport failure: ${errorMessage}`;
+          const decision = computeRecoveryDecision({
+            recoveryRetryCount: task.recoveryRetryCount,
+            nextRecoveryAt: task.nextRecoveryAt,
+          });
+          const persistMarker = (live: Task) => ({
+            customFields: {
+              ...(live.customFields ?? {}),
+              [PLANNING_LIFECYCLE_LOCK_TRANSPORT_FAILURE_KEY]: {
+                message: errorMessage,
+                at: new Date().toISOString(),
+                attempt: decision.nextState.recoveryRetryCount,
+              },
+            },
+          });
+          if (decision.shouldRetry) {
+            const retryMessage = `${failureMessage} — retry ${decision.nextState.recoveryRetryCount}/${MAX_RECOVERY_RETRIES} in ${formatDelay(decision.delayMs)}.`;
+            planLog.warn(`${task.id} ${retryMessage}`);
+            await this.store.logEntry(task.id, retryMessage).catch(() => undefined);
+            await this.updatePlanningStateIfStillCurrent(task, (live) => ({
+              ...persistMarker(live),
+              status: this.restoreStatusAfterInterruptedTriageWork(task),
+              error: null,
+              recoveryRetryCount: decision.nextState.recoveryRetryCount,
+              nextRecoveryAt: decision.nextState.nextRecoveryAt,
+            }));
+            return;
+          }
+          await this.store.logEntry(task.id, failureMessage).catch(() => undefined);
+          await this.updatePlanningStateIfStillCurrent(task, (live) => {
+            const customFields = { ...(live.customFields ?? {}) };
+            delete customFields[PLANNING_LIFECYCLE_LOCK_TRANSPORT_FAILURE_KEY];
+            return { status: "failed", error: failureMessage, recoveryRetryCount: null, nextRecoveryAt: null, customFields };
+          });
+          await this.backfillBlankTitleAfterTerminalTriageFailure(task);
           return;
         } else if (isTransientError(errorMessage)) {
           // Transient network/infrastructure error — use bounded recovery policy
@@ -4251,12 +4385,12 @@ export class TriageProcessor {
     report: PlanningHandoffReport = { outcome: "parked" },
   ): Promise<boolean> {
     try {
-      const explicitDuplicateMarker = parseExplicitDuplicateMarker(written);
-      if (!explicitDuplicateMarker) {
+      const duplicateResolution = resolveExplicitDuplicateMarker(written, task.title);
+      if (!duplicateResolution.marker || duplicateResolution.conflict) {
         return false;
       }
 
-      const canonicalId = explicitDuplicateMarker.canonicalId;
+      const canonicalId = duplicateResolution.marker.canonicalId;
       // A transient lookup failure must still fail open; only a genuine missing row is inactive.
       const canonicalTask = await this.store.getTask(canonicalId);
       if (canonicalTask?.id.toLowerCase() === task.id.toLowerCase()) {
@@ -4446,10 +4580,23 @@ export class TriageProcessor {
     task: Task,
     canonicalId: string,
     feedback: string,
-    options?: { exhausted?: boolean; priorClearCount?: number },
+    options?: { exhausted?: boolean; priorClearCount?: number; source?: "prompt" | "title" },
   ): Promise<boolean> {
     if (!await this.runIfStillPlanningUnderTaskLock(task, async () => {
-      await rm(join(this.rootDir, ".fusion", "tasks", task.id, "PROMPT.md"), { force: true });
+      /*
+      FNXC:DuplicateIntake 2026-08-09-02:14:
+      A title-only redirect can coexist with a complete operator-authored PROMPT.md. Keep that
+      plan when clearing the title source; deleting it would turn an acknowledged redirect into
+      avoidable user-work loss. A prompt source (including same-ID dual sources) still clears the
+      marker-only file, and the matching title is cleared with it.
+      */
+      if (options?.source !== "title") {
+        await rm(join(this.rootDir, ".fusion", "tasks", task.id, "PROMPT.md"), { force: true });
+      }
+      // Same-ID dual-source redirects are one decision; clear both exact sources together.
+      if (resolveExplicitDuplicateMarker(null, task.title).marker?.canonicalId === canonicalId) {
+        await this.store.updateTask(task.id, { title: `Duplicate redirect cleared: ${canonicalId}` });
+      }
     })) return false;
 
     const priorClearCount = options?.priorClearCount ?? 0;
@@ -4494,11 +4641,21 @@ export class TriageProcessor {
     report: PlanningHandoffReport = { outcome: "parked" },
   ): Promise<void> {
     let written = writtenInput;
-    // FNXC:WorkflowArtifacts 2026-07-21-17:00: Confirm the authoritative plan
-    // exists before persisting any dependencies, steps, metadata, or review state
-    // derived from it; a missing plan must leave no partially accepted projection.
-    if (await this.recoverMissingPromptBeforeRelease(task)) return;
-    const explicitDuplicateMarker = parseExplicitDuplicateMarker(written);
+    const duplicateResolution = resolveExplicitDuplicateMarker(written, task.title);
+    if (duplicateResolution.conflict) {
+      /*
+      FNXC:DuplicateIntake 2026-08-09-01:02:
+      Conflicting exact title and prompt redirects must never select a canonical implicitly.
+      Keep the card in planning for operator correction rather than admitting it or inventing a
+      duplicate decision.
+      */
+      await this.updatePlanningStateIfStillCurrent(task, { status: "needs-replan", error: null });
+      await this.store.logEntry(task.id, "Duplicate redirect sources conflict", "PROMPT.md and task title name different canonical tasks; correct one exact redirect before planning.");
+      return;
+    }
+    // A title-only redirect is authoritative even when there is no prompt file to recover.
+    if (!duplicateResolution.marker && await this.recoverMissingPromptBeforeRelease(task)) return;
+    const explicitDuplicateMarker = duplicateResolution.marker;
 
     /*
      * FNXC:DuplicateIntake 2026-07-16-13:00:
@@ -4506,7 +4663,13 @@ export class TriageProcessor {
      * near-duplicate decision; keep removes the marker before the next real plan.
      */
     if (explicitDuplicateMarker) {
+      await this.updatePlanningStateIfStillCurrent(task, (live) => {
+        const customFields = { ...(live.customFields ?? {}) };
+        delete customFields[PLANNING_LIFECYCLE_LOCK_TRANSPORT_FAILURE_KEY];
+        return { customFields };
+      });
       const canonicalId = explicitDuplicateMarker.canonicalId;
+      const duplicateSource = duplicateResolution.source ?? "prompt";
       const canonicalTask = await this.store.getTask(canonicalId).catch(() => null);
       const canClearInactiveMarker = task.userPaused !== true
         && (task.paused !== true || task.pausedReason === "duplicate-decision-required")
@@ -4540,7 +4703,7 @@ export class TriageProcessor {
             task,
             canonicalId,
             buildInactiveDuplicateClearFeedback(canonicalId),
-            { exhausted: false, priorClearCount },
+            { exhausted: false, priorClearCount, source: duplicateSource },
           );
         }
         return;
@@ -4561,7 +4724,7 @@ export class TriageProcessor {
             task,
             canonicalId,
             buildKeepDuplicateClearFeedback(canonicalId),
-            { exhausted: priorClearCount >= 1, priorClearCount },
+            { exhausted: priorClearCount >= 1, priorClearCount, source: duplicateSource },
           );
         }
         return;
@@ -4598,6 +4761,7 @@ export class TriageProcessor {
         task,
         canonicalId,
         buildKeepDuplicateClearFeedback(canonicalId),
+        { source: duplicateSource },
       );
       return;
     }
@@ -5103,6 +5267,11 @@ export class TriageProcessor {
     in the bookkeeping that follows does not un-hand-off a card that has already moved.
     */
     report.outcome = "released";
+    await this.updatePlanningStateIfStillCurrent(task, (live) => {
+      const customFields = { ...(live.customFields ?? {}) };
+      delete customFields[PLANNING_LIFECYCLE_LOCK_TRANSPORT_FAILURE_KEY];
+      return { customFields };
+    });
 
     /*
     FNXC:TriageStuckKill 2026-07-18-21:05:

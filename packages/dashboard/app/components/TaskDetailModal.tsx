@@ -1202,17 +1202,18 @@ export function TaskDetailContent({
   }, [activeTab, task.column, isDoneColumn, detailFlagsAreForThisTask]);
 
   /*
-  FNXC:TaskRecommendations 2026-08-08-05:10:
-  Recommendations only exist for a completed task with accepted records. Refreshes and reopen
-  transitions must return a now-invalid tab to Summary so every shared TaskDetailContent host has
-  one empty-state-free affordance contract.
+  FNXC:TaskRecommendations 2026-08-09-01:21:
+  Completed tasks always expose Recommendations, even when the executor produced no records, so
+  operators can distinguish an empty result from unavailable functionality. Reconcile away only
+  after this task's resolved complete-role result says the card left completion; waiting preserves
+  a deliberate tab selection while workflow metadata is still unresolved.
   */
-  const hasRecommendations = isDoneColumn && (workingTask.recommendations?.length ?? 0) > 0;
+  const hasRecommendations = isDoneColumn;
   useEffect(() => {
     if (detailFlagsAreForThisTask && activeTab === "recommendations" && !hasRecommendations) {
-      setActiveTab(isDoneColumn ? "summary" : "definition");
+      setActiveTab("definition");
     }
-  }, [activeTab, detailFlagsAreForThisTask, hasRecommendations, isDoneColumn]);
+  }, [activeTab, detailFlagsAreForThisTask, hasRecommendations]);
 
   // Reset planner-chat focus when the operator opens a different task.
   useEffect(() => {

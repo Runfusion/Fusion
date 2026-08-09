@@ -15,6 +15,12 @@ import type { IncomingMessage } from "node:http";
  * `?fn_token=<token>` on those URLs.
  */
 export const TOKEN_QUERY_PARAM = "fn_token";
+const verifiedDaemonRequest = Symbol("verifiedDaemonRequest");
+
+/** True only when createAuthMiddleware completed a daemon-token check. */
+export function hasVerifiedDaemonRequest(req: Request): boolean {
+  return (req as Request & { [verifiedDaemonRequest]?: boolean })[verifiedDaemonRequest] === true;
+}
 
 /**
  * Paths exempt from the daemon bearer-token middleware.
@@ -183,6 +189,8 @@ export function createAuthMiddleware(token: string) {
       return;
     }
 
+    /* FNXC:ConfigVersioning 2026-08-09-04:06: only a successful constant-time daemon token check may establish verified API provenance. */
+    (req as Request & { [verifiedDaemonRequest]?: boolean })[verifiedDaemonRequest] = true;
     next();
   };
 }

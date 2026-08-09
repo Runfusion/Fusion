@@ -238,6 +238,20 @@ vi.mock("../worktree/worktree-hooks.js", () => ({
   IDENTITY_GUARD_BYPASS_ENV: "FUSION_MERGER_BYPASS_IDENTITY_GUARD",
 }));
 
+/*
+FNXC:EngineTests 2026-08-09-12:02:
+Executor harnesses model already-acquired worktrees, not git reconciliation. Graph-owned execution
+now refreshes a reused worktree before step-execute; keep that external git seam safely up-to-date so
+resume and stale-assistant lifecycle tests reach their implementation session instead of failing before it.
+*/
+vi.mock("../worktree-base-refresh.js", () => ({
+  refreshReusedWorktreeBase: vi.fn().mockResolvedValue({ kind: "up-to-date", executionSafe: true }),
+}));
+vi.mock("../worktree/secrets-env-writer.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../worktree/secrets-env-writer.js")>()),
+  reconcileSecretsEnvFingerprint: vi.fn().mockResolvedValue({ executionSafe: true, outcome: "up-to-date" }),
+}));
+
 vi.mock("../worktree/worktree-stale-lock.js", async () => {
   const actual = await vi.importActual<typeof import("../worktree/worktree-stale-lock.js")>("../worktree/worktree-stale-lock.js");
   return {
@@ -770,23 +784,36 @@ FNXC:TaskVerificationRequest 2026-07-19-04:30 (merged with U5f 2026-07-19-06:00)
   return store as any;
 }
 
-/** Minimal durable routing seam for production-path executor fixture tests. */
-export function createWorkflowRoutingAgentStore(store: Pick<any, "getTask" | "updateTask">) {
+/*
+FNXC:EngineTests 2026-08-09-05:51:
+Graph-owned coding workflows route planning, execution, and review nodes by role before opening an
+implementation session. The durable fixture advertises all three graph lanes so todo/planning tests
+cannot suspend at triage before their executor assertion; ephemeral-gate coverage still opts into a
+task-executor-managed runtime identity for its policy check.
+*/
+export function createWorkflowRoutingAgentStore(
+  store: Pick<any, "getTask" | "updateTask">,
+  options: { ephemeral?: boolean } = {},
+) {
   const leases = new Map<string, string>();
   const agent = {
     id: "workflow-test-executor",
     name: "Workflow Test Executor",
     role: "executor",
-    roles: ["executor"],
+    roles: ["triage", "executor", "reviewer"],
     state: "active",
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
     runtimeConfig: {},
+    ...(options.ephemeral ? { metadata: { managedBy: "task-executor" } } : {}),
   };
+  // Role-pool admission deliberately accepts durable agents only. For an ephemeral session-identity
+  // test, advertise a durable routing record and resolve its same-ID runtime identity as ephemeral.
+  const routingAgent = options.ephemeral ? { ...agent, metadata: undefined } : agent;
   const countAgentLeases = (agentId: string) => [...leases.values()].filter((holder) => holder === agentId).length;
   const agentStore = {
     workflowProjectId: "executor-worktree-test-project",
-    listAgents: vi.fn(async () => [agent]),
+    listAgents: vi.fn(async () => [routingAgent]),
     getAgent: vi.fn(async (agentId: string) => agentId === agent.id ? agent : null),
     acquireWorkflowSessionCapacity: vi.fn(async (input: {
       agentId: string;
@@ -854,6 +881,27 @@ export function captureNamedTool<T extends { name: string }>(
   previous: T | undefined,
 ): T | undefined {
   return customTools?.find((tool) => tool.name === name) ?? previous;
+}
+
+/*
+FNXC:EngineTests 2026-08-09-05:51:
+Graph runs can open review and implementation sessions in either order and can retry implementation.
+`fn_task_done` belongs only to implementation sessions, so select the first positive match rather
+than relying on call order or excluding review prompts. Throwing on no match turns an unwired routing
+agent store into an immediate harness failure instead of a vacuous empty tool/prompt capture.
+*/
+export function implementationSessionCalls<T extends { customTools?: Array<{ name?: string }> }>(calls: T[]): T[] {
+  return calls.filter((call) => call.customTools?.some((tool) => tool.name === "fn_task_done"));
+}
+
+export function selectImplementationSessionCall<T extends { customTools?: Array<{ name?: string }> }>(calls: T[]): T {
+  const call = implementationSessionCalls(calls)[0];
+  if (!call) {
+    throw new Error(
+      "No implementation session was opened (fn_task_done missing); graph routing likely suspended because the TaskExecutor has no agentStore.",
+    );
+  }
+  return call;
 }
 
 export function resetExecutorMocks() {

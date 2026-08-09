@@ -1,6 +1,19 @@
-import { describe, expect, it } from "vitest";
+import { render } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 import { getVisibleOverflowViewEntries, STATIC_OVERFLOW_VIEW_ENTRIES } from "../overflowViewRegistry";
 import type { PluginDashboardViewEntry } from "../../api";
+import { NATIVE_STRUCTURE_DRAG_MIME } from "../../utils/nativeStructureDrag";
+
+const { receivedPluginContexts } = vi.hoisted(() => ({
+  receivedPluginContexts: [] as Array<{ beginNativeStructureDrag?: (dataTransfer: DataTransfer, ref: { kind: "roadmap-item"; id: string; projectId?: string }) => boolean }>,
+}));
+
+vi.mock("../../plugins/PluginDashboardViewHost", () => ({
+  PluginDashboardViewHost: ({ context }: { context: (typeof receivedPluginContexts)[number] }) => {
+    receivedPluginContexts.push(context);
+    return null;
+  },
+}));
 
 describe("overflowViewRegistry", () => {
   it("exposes static right-dock tools in order", () => {
@@ -59,5 +72,58 @@ describe("overflowViewRegistry", () => {
     const keys = getVisibleOverflowViewEntries({ pluginDashboardViews }).map((entry) => entry.key);
     expect(keys).not.toContain("plugin:fusion-plugin-dependency-graph:graph");
     expect(keys).toContain("plugin:plugin-c:report");
+  });
+
+  it("injects the native-structure drag hook into a prebuilt right-dock plugin context", () => {
+    receivedPluginContexts.length = 0;
+    const entry = getVisibleOverflowViewEntries({
+      pluginDashboardViews: [{ pluginId: "fusion-plugin-roadmap", view: { viewId: "roadmaps", label: "Roadmaps", placement: "overflow" } }],
+    }).find((candidate) => candidate.key === "plugin:fusion-plugin-roadmap:roadmaps");
+    expect(entry?.render).toBeTypeOf("function");
+
+    render(<>{entry?.render?.({
+      projectId: "project-1",
+      addToast: vi.fn(),
+      pluginContext: {
+        projectId: "project-1",
+        tasks: [],
+        workflowSteps: [],
+        openTaskDetail: vi.fn(),
+        openFile: vi.fn(),
+      },
+    })}</>);
+
+    const beginNativeStructureDrag = receivedPluginContexts.at(-1)?.beginNativeStructureDrag;
+    expect(beginNativeStructureDrag).toBeTypeOf("function");
+    const values = new Map<string, string>();
+    const dataTransfer = {
+      effectAllowed: "move",
+      setData: (type: string, value: string) => values.set(type, value),
+      getData: (type: string) => values.get(type) ?? "",
+    } as unknown as DataTransfer;
+
+    expect(beginNativeStructureDrag?.(dataTransfer, { kind: "roadmap-item", id: "RF-1", projectId: "project-1" })).toBe(true);
+    expect(dataTransfer.getData(NATIVE_STRUCTURE_DRAG_MIME)).toBe(JSON.stringify({ kind: "roadmap-item", id: "RF-1", projectId: "project-1" }));
+  });
+
+  it("keeps right-dock plugin drag payloads inert on coarse pointers", () => {
+    receivedPluginContexts.length = 0;
+    vi.stubGlobal("matchMedia", vi.fn(() => ({ matches: true })));
+    const entry = getVisibleOverflowViewEntries({
+      pluginDashboardViews: [{ pluginId: "fusion-plugin-roadmap", view: { viewId: "roadmaps", label: "Roadmaps", placement: "overflow" } }],
+    }).find((candidate) => candidate.key === "plugin:fusion-plugin-roadmap:roadmaps");
+
+    render(<>{entry?.render?.({ projectId: "project-1", addToast: vi.fn() })}</>);
+    const values = new Map<string, string>();
+    const dataTransfer = {
+      effectAllowed: "move",
+      setData: (type: string, value: string) => values.set(type, value),
+      getData: (type: string) => values.get(type) ?? "",
+    } as unknown as DataTransfer;
+
+    expect(receivedPluginContexts.at(-1)?.beginNativeStructureDrag?.(dataTransfer, { kind: "roadmap-item", id: "RF-1" })).toBe(false);
+    expect(values.size).toBe(0);
+    expect(dataTransfer.effectAllowed).toBe("move");
+    vi.unstubAllGlobals();
   });
 });

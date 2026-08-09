@@ -36,6 +36,19 @@ export interface DashboardPostgresHealthResult {
 /** Typed server-owned context for health probes that need project partitioning. */
 export interface DashboardPostgresHealthContext {
   projectId?: string;
+  probeTimeoutMs?: number;
+}
+
+class HealthProbeTimeoutError extends Error {}
+
+function withDeadline<T>(start: () => Promise<T>, remainingMs: number, label: string): Promise<T> {
+  if (remainingMs <= 0) return Promise.reject(new HealthProbeTimeoutError(`${label} timed out after ${remainingMs}ms`));
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new HealthProbeTimeoutError(`${label} timed out after ${remainingMs}ms`)), remainingMs);
+    // Start only while budget remains; a later stage must not queue a new DB
+    // request after an earlier stage used the shared health-probe deadline.
+    void start().then((value) => { clearTimeout(timer); resolve(value); }, (error) => { clearTimeout(timer); reject(error); });
+  });
 }
 
 /** Resolve the production TaskStore layer while retaining an explicit integration override. */
@@ -59,7 +72,14 @@ export async function evaluateDashboardPostgresHealth(
   overrideLayer?: AsyncDataLayer,
   context?: DashboardPostgresHealthContext,
 ): Promise<DashboardPostgresHealthResult> {
+  /*
+  FNXC:PostgresHealth 2026-08-09-06:07:
+  A liveness probe must answer when scheduler work saturates the runtime pool. Return a timeout degradation rather than leaving the HTTP request unanswered; migration state remains advisory and cannot make a healthy readiness result fail.
+  */
   const checkedAt = new Date();
+  const timeoutMs = context?.probeTimeoutMs ?? 5_000;
+  const deadlineMs = Date.now() + timeoutMs;
+  const remaining = () => Math.max(0, deadlineMs - Date.now());
   let layer: AsyncDataLayer | null = null;
   try {
     layer = resolveDashboardPostgresLayer(store, overrideLayer);
@@ -70,23 +90,27 @@ export async function evaluateDashboardPostgresHealth(
 
   if (!layer) return failedHealth(checkedAt, "PostgreSQL health layer unavailable");
 
-  const errors = await checkPostgresHealth(layer).catch((error: unknown) => [
-    `PostgreSQL health check failed: ${errorMessage(error)}`,
+  const errors = await withDeadline(() => checkPostgresHealth(layer), remaining(), "PostgreSQL health probe").catch((error: unknown) => [
+    error instanceof HealthProbeTimeoutError
+      ? `PostgreSQL health probe timed out after ${timeoutMs}ms (connection pool saturated?)`
+      : `PostgreSQL health check failed: ${errorMessage(error)}`,
   ]);
   if (errors.length > 0) return failedHealth(checkedAt, ...errors);
 
   let taskIdIntegrity: DashboardTaskIdIntegrityHealth;
   try {
-    taskIdIntegrity = await detectTaskIdIntegrityAnomaliesAsync(layer.db);
+    taskIdIntegrity = await withDeadline(() => detectTaskIdIntegrityAnomaliesAsync(layer.db), remaining(), "PostgreSQL task-ID integrity probe");
   } catch (error) {
     return failedHealth(
       checkedAt,
-      `PostgreSQL task-ID integrity check failed: ${errorMessage(error)}`,
+      error instanceof HealthProbeTimeoutError
+        ? `PostgreSQL task-ID integrity probe timed out after ${timeoutMs}ms (connection pool saturated?)`
+        : `PostgreSQL task-ID integrity check failed: ${errorMessage(error)}`,
     );
   }
 
   try {
-    const migration = await resolveDashboardMigrationHealth(store, layer, context);
+    const migration = await withDeadline(() => resolveDashboardMigrationHealth(store, layer, context), remaining(), "PostgreSQL migration health probe");
     return {
       database: healthyDatabase(checkedAt),
       taskIdIntegrity,

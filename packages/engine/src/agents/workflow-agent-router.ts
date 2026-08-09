@@ -1,4 +1,5 @@
 import {
+  canAgentReceiveImplementationTasks,
   classifyWorkflowAgentNode,
   isEphemeralAgent,
   resolveColumnAgentBinding,
@@ -94,7 +95,9 @@ export function validateFencedWorkflowPrincipal(input: {
   if (classifiedRole !== input.role) {
     return { status: "held", role: input.role, reason: "named-principal-unavailable" };
   }
-  if (input.authority === "task-assignee" && input.task.assignedAgentId !== input.principalAgentId) {
+  if (input.authority === "task-assignee" && (
+    input.role !== "executor" || input.task.assignedAgentId !== input.principalAgentId
+  )) {
     return { status: "held", role: input.role, reason: "named-principal-unavailable" };
   }
   if (input.authority === "review-node-override" && (
@@ -115,6 +118,8 @@ export function validateFencedWorkflowPrincipal(input: {
   }
   const agent = input.agents.find((candidate) => candidate.id === input.principalAgentId);
   return available(agent, input.activeSessions ?? new Map())
+    && agent.roles.includes(input.role)
+    && (input.role !== "executor" || canAgentReceiveImplementationTasks(agent))
     ? { status: "routed", route: { agent, role: input.role, authority: input.authority } }
     : { status: "held", role: input.role, reason: "named-principal-unavailable" };
 }
@@ -128,7 +133,13 @@ function available(agent: Agent | undefined, activeSessions: ReadonlyMap<string,
    * never satisfy a role-pool route, even when their singular compatibility role
    * matches. A named transient identity is likewise unavailable and holds closed.
    */
-  if (!agent || isEphemeralAgent(agent) || agent.state === "paused" || agent.state === "error") return false;
+  if (
+    !agent
+    || isEphemeralAgent(agent)
+    || agent.runtimeConfig?.enabled === false
+    || agent.state === "paused"
+    || agent.state === "error"
+  ) return false;
   const max = agent.runtimeConfig?.maxWorkflowSessions;
   return typeof max !== "number" || activeSessions.get(agent.id) === undefined || activeSessions.get(agent.id)! < max;
 }
@@ -160,7 +171,18 @@ export function routeWorkflowPrincipal(input: {
   const named = (id: string | undefined, authority: WorkflowPrincipalAuthority): WorkflowPrincipalRouteResult | undefined => {
     if (!id) return undefined;
     const agent = byId.get(id);
+    /*
+    FNXC:IntakeOwnership 2026-08-09-09:55:
+    A durable task owner is only authority for an executor node when it still has
+    the executor role. This revalidation protects legacy rows and concurrent
+    reassignment from dispatching implementation work through a stale non-executor owner.
+    */
+    // FNXC:IntakeOwnership 2026-08-09-18:15: A persisted executor owner is
+    // revalidated at dispatch. Runtime disablement and assignment policy changes
+    // revoke implementation authority instead of letting a stale owner run work.
     return available(agent, activeSessions)
+      && agent.roles.includes(role)
+      && (role !== "executor" || canAgentReceiveImplementationTasks(agent))
       ? { status: "routed", route: { agent, role, authority } }
       : { status: "held", role, reason: "named-principal-unavailable" };
   };
@@ -168,8 +190,15 @@ export function routeWorkflowPrincipal(input: {
     const overridden = named(input.node.reviewerAgentId, "review-node-override");
     if (overridden) return overridden;
   }
-  const owner = named(input.task.assignedAgentId, "task-assignee");
-  if (owner) return owner;
+  /*
+  FNXC:IntakeOwnership 2026-08-09-08:49:
+  Durable task ownership names an executor only. Planning and review must retain their separately
+  fenced stage principals; treating the owner as authority there would route planners to executors.
+  */
+  if (role === "executor") {
+    const owner = named(input.task.assignedAgentId, "task-assignee");
+    if (owner) return owner;
+  }
   const column = resolveColumnAgentBinding(input.ir, input.node.id);
   const bound = named(column?.agentId, "column-binding");
   if (bound) return bound;

@@ -42,6 +42,8 @@ import { MailboxArtifactAttachment } from "./MailboxArtifactAttachment";
 import { MailboxRelatedWorkLink, hasRelatedTaskLink } from "./MailboxRelatedWorkLink";
 import { MailboxNativeStructureEmbeds } from "./MailboxNativeStructureEmbeds";
 import { MailboxTaskProposal } from "./MailboxTaskProposal";
+import { MailboxKindBadge, MailboxStructuralItem, isStructuralMail } from "./MailboxStructuralItem";
+import type { ChatReportHandoff } from "./chatReportHandoff";
 import { MessageComposer, type NativeStructureCandidate } from "./MessageComposer";
 import { ViewHeader } from "./ViewHeader";
 import { WorktrunkInstallApprovalDetails } from "./WorktrunkInstallApprovalDetails";
@@ -67,6 +69,7 @@ interface MailboxViewProps {
   nativeStructureCandidates: NativeStructureCandidate[];
   /** Callback when unread count changes (for header badge updates) */
   onUnreadCountChange?: (count: number) => void;
+  composePrefill?: ChatReportHandoff & { nonce: number };
 }
 
 const ALL_AGENTS_MAILBOX_ID = "__all_agents__";
@@ -227,10 +230,15 @@ export function MailboxView({
   onOpenNativeStructure,
   nativeStructureCandidates,
   onUnreadCountChange,
+  composePrefill,
 }: MailboxViewProps) {
   const { t } = useTranslation("app");
   const [activeTab, setActiveTab] = useState<MailboxTab>("inbox");
   const [inbox, setInbox] = useState<InboxResponse | null>(null);
+  // FNXC:StructuralMail 2026-08-09-10:27: A consumed handoff must not leak into a later manually opened Quick composer.
+  const [activeComposePrefill, setActiveComposePrefill] = useState<(ChatReportHandoff & { nonce: number }) | null>(null);
+  const consumedComposePrefillNonceRef = useRef<number | null>(null);
+  const [structuralFilter, setStructuralFilter] = useState<"all" | "structural">("all");
   const [outbox, setOutbox] = useState<OutboxResponse | null>(null);
   const [unreadCount, setUnreadCount] = useState(0);
   const [isLoading, setIsLoading] = useState(false);
@@ -618,6 +626,14 @@ export function MailboxView({
     if (source === "user") {
       consumeCurrentDeepLink();
     }
+    /*
+    FNXC:StructuralMail 2026-08-09-09:57:
+    A deep link resolves against the unfiltered inbox. Reset a structural-only filter when its target
+    is ordinary mail so the selected message always retains a visible list context.
+    */
+    if (source === "deep-link" && activeTab === "inbox" && !isStructuralMail(message.metadata)) {
+      setStructuralFilter("all");
+    }
     setSelectedMessage(message);
     // Only auto-mark as read when viewing the dashboard user's own inbox.
     // Browsing another agent's mailbox must not consume their unread messages
@@ -759,6 +775,7 @@ export function MailboxView({
   const handleCloseComposer = useCallback(() => {
     consumeCurrentDeepLink();
     setShowComposer(false);
+    setActiveComposePrefill(null);
     setComposeRecipient(null);
     setComposeReplyContext(null);
   }, [consumeCurrentDeepLink]);
@@ -792,6 +809,13 @@ export function MailboxView({
     setComposeReplyContext(null);
     setShowComposer(true);
   }, [activeTab, selectedAgentId, consumeCurrentDeepLink, dismissMessage, isMobile, selectedMessage]);
+
+  useEffect(() => {
+    if (!composePrefill || composePrefill.nonce === consumedComposePrefillNonceRef.current) return;
+    consumedComposePrefillNonceRef.current = composePrefill.nonce;
+    setActiveComposePrefill(composePrefill);
+    handleOpenCompose();
+  }, [composePrefill, handleOpenCompose]);
 
   const handleComposeCancel = dismissComposer;
 
@@ -881,6 +905,8 @@ export function MailboxView({
     setAgentSubTab(tab);
   }, [consumeCurrentDeepLink, dismissMessage]);
 
+  const filteredInboxMessages = useMemo(() => structuralFilter === "structural" ? (inbox?.messages.filter((message) => isStructuralMail(message.metadata)) ?? []) : (inbox?.messages ?? []), [inbox, structuralFilter]);
+
   // ── Render ────────────────────────────────────────────────────────────
 
   const renderMessageDetail = () => {
@@ -902,6 +928,7 @@ export function MailboxView({
           )}
           <div className="mailbox-message-detail-meta">
             <span className="mailbox-message-type">{messageTypeLabel(selectedMessage.type)}</span>
+            <MailboxKindBadge metadata={selectedMessage.metadata} />
             <span className="mailbox-message-time">{formatTimestamp(selectedMessage.createdAt, t)}</span>
           </div>
           <div className="mailbox-message-detail-actions">
@@ -970,6 +997,7 @@ export function MailboxView({
                     className="mailbox-conversation-msg-body"
                     onOpenTask={onOpenTask}
                   />
+                  <MailboxStructuralItem metadata={msg.metadata} projectId={projectId} onOpenTask={onOpenTask} addToast={addToast} onDecided={() => { void loadInbox(); void loadApprovals(approvalSubTab); }} />
                   <MailboxRelatedWorkLink
                     metadata={msg.metadata}
                     onOpenTask={onOpenTask}
@@ -1005,6 +1033,7 @@ export function MailboxView({
               testId="mailbox-message-body"
               onOpenTask={onOpenTask}
             />
+            <MailboxStructuralItem metadata={selectedMessage.metadata} projectId={projectId} onOpenTask={onOpenTask} addToast={addToast} onDecided={() => { void loadInbox(); void loadApprovals(approvalSubTab); }} />
             <MailboxRelatedWorkLink
               metadata={selectedMessage.metadata}
               onOpenTask={onOpenTask}
@@ -1032,6 +1061,10 @@ export function MailboxView({
     <>
       {activeTab === "inbox" && (
         <div className="mailbox-list" data-testid="mailbox-inbox-list">
+          <div className="mailbox-structural-filter" role="group" aria-label="Inbox filter">
+            <button type="button" className="btn btn-sm btn-secondary" aria-pressed={structuralFilter === "all"} data-testid="mailbox-structural-filter-all" onClick={() => setStructuralFilter("all")}>All</button>
+            <button type="button" className="btn btn-sm btn-secondary" aria-pressed={structuralFilter === "structural"} data-testid="mailbox-structural-filter-structural" onClick={() => setStructuralFilter("structural")}>Reports & approvals</button>
+          </div>
           {isLoading && !inbox && <MailboxSkeleton />}
           {inbox && inbox.messages.length === 0 && (
             <div className="mailbox-empty" data-testid="mailbox-inbox-empty">
@@ -1039,7 +1072,13 @@ export function MailboxView({
               <p>{t("mailbox.noMessagesInbox", "No messages in your inbox")}</p>
             </div>
           )}
-          {inbox?.messages.map((msg) => (
+          {inbox && inbox.messages.length > 0 && filteredInboxMessages.length === 0 && (
+            <div className="mailbox-empty" data-testid="mailbox-structural-filter-empty">
+              <InboxIcon size={32} />
+              <p>{t("mailbox.noStructuralMessages", "No reports or approvals in your inbox")}</p>
+            </div>
+          )}
+          {filteredInboxMessages.map((msg) => (
             <div
               key={msg.id}
               id={listMessageAnchorId(msg.id)}
@@ -1055,6 +1094,7 @@ export function MailboxView({
                   <span className="mailbox-item-from">
                     {getParticipantLabel(msg.fromId, msg.fromType)}
                   </span>
+                  <MailboxKindBadge metadata={msg.metadata} />
                   <span className="mailbox-item-time">{formatTimestamp(msg.createdAt, t)}</span>
                 </div>
                 <div className="mailbox-item-preview">{msg.content.slice(0, 80)}{msg.content.length > 80 ? "…" : ""}</div>
@@ -1310,6 +1350,10 @@ export function MailboxView({
           agents={agents}
           projectId={projectId}
           nativeStructureCandidates={nativeStructureCandidates}
+          initialMode={activeComposePrefill ? "report" : undefined}
+          initialContent={activeComposePrefill?.body}
+          initialReportTitle={activeComposePrefill?.title}
+          prefillNonce={activeComposePrefill?.nonce}
           onSend={handleMessageSent}
           onCancel={handleComposeCancel}
           addToast={addToast}
@@ -1536,6 +1580,10 @@ export function MailboxView({
                 agents={agents}
                 projectId={projectId}
                 nativeStructureCandidates={nativeStructureCandidates}
+                initialMode={activeComposePrefill ? "report" : undefined}
+                initialContent={activeComposePrefill?.body}
+                initialReportTitle={activeComposePrefill?.title}
+                prefillNonce={activeComposePrefill?.nonce}
                 onSend={handleMessageSent}
                 onCancel={handleComposeCancel}
                 addToast={addToast}

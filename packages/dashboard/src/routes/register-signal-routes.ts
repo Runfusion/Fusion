@@ -1,4 +1,4 @@
-import { createLogger } from "@fusion/core";
+import { createLogger, recordGitHubCheckStateAsync } from "@fusion/core";
 
 const severityAuditLog = createLogger("dashboard-register-signal-routes");
 import type { Request, Response } from "express";
@@ -18,6 +18,7 @@ import { sentrySource } from "../signal-sources/sentry.js";
 import { datadogSource } from "../signal-sources/datadog.js";
 import { pagerdutySource } from "../signal-sources/pagerduty.js";
 import { gitlabSource } from "../signal-sources/gitlab.js";
+import { githubSource } from "../signal-sources/github.js";
 import type { ApiRouteRegistrar } from "./types.js";
 import { requireAsyncLayer } from "../require-async-layer.js";
 
@@ -48,6 +49,7 @@ const SIGNAL_SOURCES: Record<SignalProvider, SignalSource> = {
   datadog: datadogSource,
   pagerduty: pagerdutySource,
   gitlab: gitlabSource,
+  github: githubSource,
 };
 
 export function getSignalSource(provider: string): SignalSource | undefined {
@@ -172,6 +174,8 @@ export interface SignalIngestResult {
   status: number;
   taskId?: string;
   deduped?: boolean;
+  /** True only when this delivery's conditional update resolved the newest open incident. */
+  recoveryResolved?: boolean;
   error?: string;
 }
 
@@ -206,6 +210,30 @@ export async function ingestSignal(deps: SignalIngestDeps): Promise<SignalIngest
   const existing = await findExistingSignalTask(store, signal.source, signal.externalId);
   if (existing) {
     return { status: 200, taskId: existing.id, deduped: true };
+  }
+
+  /*
+  FNXC:CommandCenterSignals 2026-08-09-13:23:
+  Green GitHub CI must not create a triage card. It has no task-marker dedup and
+  nonce memory is process-local, so recording it would manufacture duplicate
+  short-lived resolved incidents and poison MTTR. Persisted atomic resolve is a
+  durable no-op for cold, redelivered, and concurrent greens; existing resolved
+  signals retain their record-then-resolve cold-resolve behavior.
+  */
+  if (signal.recoveryOnly === true) {
+    try {
+      const at = signalTimestampToIso(signal.timestamp) ?? new Date().toISOString();
+      const layer = requireAsyncLayer(store, "Signal incident storage");
+      if (signal.ciCheck && layer.projectId?.trim()) {
+        /* FNXC:PrMergeEventDrivenChecks 2026-08-09-14:35: webhook writes are best-effort; scheduled self-healing, not delivery traffic, owns expiry. */
+        await recordGitHubCheckStateAsync(layer, { ...signal.ciCheck, reportedAt: signal.ciCheck.reportedAt ?? at, detailsUrl: signal.ciCheck.detailsUrl ?? signal.link, externalId: signal.externalId }, layer.projectId);
+      }
+      const resolved = await resolveIncident(layer, signal.groupingKey, at);
+      return { status: 200, recoveryResolved: resolved !== null };
+    } catch (err) {
+      severityAuditLog.error("[signal-incident-bridge] Failed to resolve connector recovery", err);
+      return { status: 200, recoveryResolved: false };
+    }
   }
 
   // 5. Create the triage task.
@@ -243,6 +271,10 @@ export async function ingestSignal(deps: SignalIngestDeps): Promise<SignalIngest
     });
     if (signal.resolution === "resolved") {
       await resolveIncident(layer, signal.groupingKey, at);
+    }
+    if (signal.ciCheck && layer.projectId?.trim()) {
+      /* FNXC:PrMergeEventDrivenChecks 2026-08-09-14:35: retain via engine maintenance so quiet repositories expire too; never prune on ingestion. */
+      await recordGitHubCheckStateAsync(layer, { ...signal.ciCheck, reportedAt: signal.ciCheck.reportedAt ?? at, detailsUrl: signal.ciCheck.detailsUrl ?? signal.link, externalId: signal.externalId }, layer.projectId);
     }
   } catch (err) {
     severityAuditLog.error("[signal-incident-bridge] Failed to record connector signal", err);
@@ -311,6 +343,7 @@ export const registerSignalRoutes: ApiRouteRegistrar = (ctx) => {
       ok: result.status < 400,
       taskId: result.taskId,
       deduped: result.deduped ?? false,
+      recoveryResolved: result.recoveryResolved ?? false,
     });
   });
 };

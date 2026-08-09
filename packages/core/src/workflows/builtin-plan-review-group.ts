@@ -38,8 +38,9 @@ Be specific: cite the plan section or file path for every finding and explain th
 - APPROVE: the plan is ready for execution.
 - APPROVE_WITH_NOTES: execution may proceed, but include non-blocking advisory notes.
 - REVISE: the plan should be corrected before execution; include every blocking finding and needed change in the JSON notes, not only in preceding prose.
+- CLOSE_NO_OP: implementation must not proceed because the premise is stale, the work is already satisfied, redundant, or a duplicate. The notes field MUST begin with exactly one existing completion sentinel: PREMISE STALE:, NO-OP:, NOOP:, REDUNDANT:, or DUPLICATE:. For duplicates, use DUPLICATE: FN-NNNN ... when the canonical task is known.
 - Final output: output exactly one trailing JSON object on the final line (no markdown fences, no surrounding prose):
-{"verdict":"APPROVE|APPROVE_WITH_NOTES|REVISE","notes":"..."}`;
+{"verdict":"APPROVE|APPROVE_WITH_NOTES|REVISE|CLOSE_NO_OP","notes":"..."}`;
 
 /*
 FNXC:PlanReviewStep 2026-07-27-06:10:

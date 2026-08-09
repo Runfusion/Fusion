@@ -18,6 +18,11 @@ export interface PrInfo {
   status: PrStatus;
   title: string;
   headBranch: string;
+  /**
+   * FNXC:DashboardPrMergeGate 2026-08-09-08:26:
+   * Git object ID captured with merge readiness to prevent a push/merge race.
+   */
+  headOid?: string;
   baseBranch: string;
   commentCount: number;
   isDraft?: boolean;

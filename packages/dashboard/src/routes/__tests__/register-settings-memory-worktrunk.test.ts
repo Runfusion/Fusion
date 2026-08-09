@@ -2,6 +2,7 @@
 
 import express from "express";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createAuthMiddleware } from "../../auth-middleware.js";
 import {
   __resetCreateFnAgentForInsights,
   __setCreateFnAgentForInsights,
@@ -58,7 +59,7 @@ vi.mock("@fusion/engine", async () => {
   };
 });
 
-function createApp(pluginRunner?: Record<string, unknown>) {
+function createApp(pluginRunner?: Record<string, unknown>, daemonToken?: string) {
   const router = express.Router();
   const scopedStore = {
     getSettings: vi.fn(async () => ({ worktrunk: { enabled: false }, memoryDreamsEnabled: true })),
@@ -103,6 +104,7 @@ function createApp(pluginRunner?: Record<string, unknown>) {
 
   const app = express();
   app.use(express.json());
+  if (daemonToken) app.use(createAuthMiddleware(daemonToken));
   app.use("/api", router);
   app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
     res.status(err?.statusCode ?? 500).json({ error: err?.message ?? String(err) });
@@ -152,7 +154,10 @@ describe("register-settings-memory-routes worktrunk gate", () => {
 
     expect(res.status).toBe(200);
     expect(scopedStore.updateSettings).toHaveBeenCalledTimes(1);
-    expect(scopedStore.updateSettings).toHaveBeenCalledWith({ worktrunk: { enabled: true } });
+    expect(scopedStore.updateSettings).toHaveBeenCalledWith(
+      { worktrunk: { enabled: true } },
+      { kind: "api", id: "http:unverified" },
+    );
   });
 
   it("accepts worktrunk.enabled=false without verification", async () => {
@@ -205,7 +210,41 @@ describe("register-settings-memory-routes worktrunk gate", () => {
     const res = await patchSettings(app, { worktreeNaming: "task-id" });
 
     expect(res.status).toBe(200);
-    expect(scopedStore.updateSettings).toHaveBeenCalledWith({ worktreeNaming: "task-id" });
+    expect(scopedStore.updateSettings).toHaveBeenCalledWith(
+      { worktreeNaming: "task-id" },
+      { kind: "api", id: "http:unverified" },
+    );
+  });
+
+  it("records unverified API provenance for populated and null-delete patches", async () => {
+    const { app, scopedStore } = createApp();
+
+    await patchSettings(app, { autoMerge: true });
+    await patchSettings(app, { autoMerge: null, changedBy: { kind: "human", id: "forged" } });
+
+    expect(scopedStore.updateSettings).toHaveBeenNthCalledWith(
+      1,
+      { autoMerge: true },
+      { kind: "api", id: "http:unverified" },
+    );
+    expect(scopedStore.updateSettings).toHaveBeenNthCalledWith(
+      2,
+      { autoMerge: null, changedBy: { kind: "human", id: "forged" } },
+      { kind: "api", id: "http:unverified" },
+    );
+  });
+
+  it("records verified API provenance only after daemon authentication", async () => {
+    const { app, scopedStore } = createApp(undefined, "shared-token");
+    const response = await performRequest(app, "PUT", "/api/settings", JSON.stringify({ autoMerge: true }), {
+      authorization: "Bearer shared-token", "Content-Type": "application/json",
+    });
+
+    expect(response.status).toBe(200);
+    expect(scopedStore.updateSettings).toHaveBeenCalledWith(
+      { autoMerge: true },
+      { kind: "api", id: "http:verified-token" },
+    );
   });
 
   it("maps the store backstop 'mutually exclusive' error to 400 (not 500)", async () => {

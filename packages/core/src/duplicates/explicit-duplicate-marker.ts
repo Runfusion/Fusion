@@ -2,6 +2,16 @@ export interface ExplicitDuplicateMarker {
   canonicalId: string;
 }
 
+export type ExplicitDuplicateMarkerSource = "prompt" | "title";
+
+export interface ExplicitDuplicateMarkerResolution {
+  marker: ExplicitDuplicateMarker | null;
+  source: ExplicitDuplicateMarkerSource | null;
+  conflict: boolean;
+}
+
+const DUPLICATE_MARKER_PATTERN = /^DUPLICATE:\s*([A-Z]+-\d+)\s*$/i;
+
 function stripCodeFenceLayer(content: string): string {
   const fenceMatch = content.match(/^```(?:[\t ]*(?:text|markdown))?[\t ]*\n([\s\S]*?)\n```$/i);
   if (!fenceMatch) {
@@ -41,7 +51,7 @@ export function parseExplicitDuplicateMarker(content: string): ExplicitDuplicate
   }
 
   const candidate = stripSingleWrapper(nonBlankLines[0] ?? "");
-  const match = candidate.match(/^DUPLICATE:\s*(FN-\d+)\s*$/i);
+  const match = candidate.match(DUPLICATE_MARKER_PATTERN);
   if (!match) {
     return null;
   }
@@ -52,26 +62,44 @@ export function parseExplicitDuplicateMarker(content: string): ExplicitDuplicate
 }
 
 /*
-FNXC:DuplicateIntake 2026-08-01-19:24:
-A PROMPT.md whose entire body is `DUPLICATE: FN-####` is a triage redirect verdict, not an
-executable plan. FN-8704 was admitted into WIP because filesystem validation only required
-non-empty content; the graph then failed at the `parse` node and parked failed in-progress in a
-loop. Shared predicate so dispatch, hold-release, awaiting-planning badges, and graph-failure
-recovery all reject this shape the same way.
+FNXC:DuplicateIntake 2026-08-09-01:02:
+FN-8840 requires every duplicate-decision and admission surface to evaluate the exact marker in
+both PROMPT.md and the task title. Prompt wins only when both sources name the same canonical ID;
+conflicting redirects fail closed so Fusion never silently chooses an operator's target.
 */
-/** True when content is solely an explicit triage duplicate redirect (not a real plan body). */
-export function isDuplicateRedirectOnlyPrompt(content: string): boolean {
-  return parseExplicitDuplicateMarker(content) !== null;
+export function resolveExplicitDuplicateMarker(
+  promptContent: string | null | undefined,
+  title: string | null | undefined,
+): ExplicitDuplicateMarkerResolution {
+  const promptMarker = typeof promptContent === "string" ? parseExplicitDuplicateMarker(promptContent) : null;
+  const titleMarker = typeof title === "string" ? parseExplicitDuplicateMarker(title) : null;
+
+  if (promptMarker && titleMarker && promptMarker.canonicalId !== titleMarker.canonicalId) {
+    return { marker: null, source: null, conflict: true };
+  }
+  if (promptMarker) return { marker: promptMarker, source: "prompt", conflict: false };
+  if (titleMarker) return { marker: titleMarker, source: "title", conflict: false };
+  return { marker: null, source: null, conflict: false };
 }
 
-/**
- * Operator-facing reason for rejecting a non-executable PROMPT at dispatch, or null when content
- * is not a duplicate-only redirect.
- */
-export function nonExecutableDuplicateRedirectReason(content: string): string | null {
-  const marker = parseExplicitDuplicateMarker(content);
-  if (!marker) return null;
-  return `PROMPT.md is a duplicate redirect marker (DUPLICATE: ${marker.canonicalId}), not an executable plan`;
+/** True when the exact prompt/title contract blocks execution pending duplicate resolution. */
+export function isDuplicateRedirectOnlyPrompt(content: string | null | undefined, title?: string | null): boolean {
+  const resolution = resolveExplicitDuplicateMarker(content, title);
+  return resolution.marker !== null || resolution.conflict;
+}
+
+/** Operator-facing dispatch refusal reason, preserving the source that declared the redirect. */
+export function nonExecutableDuplicateRedirectReason(
+  content: string | null | undefined,
+  title?: string | null,
+): string | null {
+  const resolution = resolveExplicitDuplicateMarker(content, title);
+  if (resolution.conflict) {
+    return "PROMPT.md and task title declare conflicting duplicate redirects; resolve the conflict before execution";
+  }
+  if (!resolution.marker || !resolution.source) return null;
+  const source = resolution.source === "prompt" ? "PROMPT.md" : "task title";
+  return `${source} is a duplicate redirect marker (DUPLICATE: ${resolution.marker.canonicalId}), not an executable plan`;
 }
 
 /*
@@ -95,7 +123,7 @@ export function parseDuplicateMarkerFromSessionText(text: string): ExplicitDupli
 
   for (const rawLine of text.split("\n")) {
     const candidate = stripSingleWrapper(rawLine.trim());
-    const match = candidate.match(/^DUPLICATE:\s*(FN-\d+)\s*$/i);
+    const match = candidate.match(DUPLICATE_MARKER_PATTERN);
     if (match) {
       return { canonicalId: match[1].toUpperCase() };
     }

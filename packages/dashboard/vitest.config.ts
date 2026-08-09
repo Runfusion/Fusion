@@ -343,20 +343,13 @@ FN-8533 restores planning-browser-e2e after its teardown now closes Vite's liste
 HMR channel, watcher, and plugin container deterministically. Browser viewport assertions are a
 required responsive acceptance lane, so the test must not remain excluded from dashboard-api.
 */
+/*
+FNXC:DashboardTestQuarantine 2026-08-09-10:27:
+FN-8900 resolves the Kimi K3 quarantine before its 2026-08-15 ratchet deadline. The route test now
+uses pi-ai's real bundled catalog behind a no-refresh registry seam, after live refresh reproduced a
+roughly 300-second stall. Its paired ledger entry is removed in the same commit; no timeout or retry changed.
+*/
 const quarantinedDashboardTests: string[] = [
-  /*
-  FNXC:DashboardTestQuarantine 2026-08-01-05:17:
-  FN-8647 observed the real Pi ModelRuntime Kimi K3 catalog test timing out in 2/6
-  loaded CI samples. Quarantine it with the ledger row rather than widen its 15s
-  budget; the reusable beforeAll seam is landed, while FN-8669 owns the budget
-  decision and CI re-measurement before the deletion deadline.
-
-  FNXC:DashboardTestQuarantine 2026-08-04-06:33:
-  FN-8774 must retain the Kimi K3 route test, its exclusion, and its ledger row
-  through the 2026-08-15 deletion-ratchet deadline. Do not delete dashboard
-  /api/models coverage or remove the paired quarantine records before then.
-  */
-  "src/__tests__/register-model-routes-kimi-k3-supplemental.test.ts",
   /*
   FNXC:DashboardTestQuarantine 2026-08-06-15:08:
   FN-8816 observed PlanningModeModal's direct task-handoff test fail a second time only under a loaded planning-flow file, after its first-sighting register entry. Quarantine the entire file with its ledger row rather than weaken user-flow assertions or add timing retries; delete it at the ratchet deadline unless a root-cause rescue restores stable coverage.

@@ -2747,7 +2747,13 @@ describe("ProjectEngine paused in-review auto-merge behavior", () => {
     await engine.stop();
   });
 
-  it("startup merge sweep enqueues shared-group members when autoMerge is false", async () => {
+  /*
+  FNXC:SharedBranchMemberHold 2026-08-09-09:09:
+  FN-8823 applies the project-Off consent rule to startup merge recovery as well
+  as direct admission. An explicit per-task On remains eligible, but group
+  liveness cannot re-admit a non-opted-in shared member.
+  */
+  it("startup merge sweep holds non-opted-in shared-group members when autoMerge is false", async () => {
     const mockStore = createMockStore({ ...baseSettings, autoMerge: false });
     mockStore.store.getBranchGroup.mockReturnValue({ id: "BG-5819", status: "open", branchName: "fusion/groups/bg-5819" });
     const inReviewTasks = [
@@ -2759,6 +2765,7 @@ describe("ProjectEngine paused in-review auto-merge behavior", () => {
         status: null,
         branchContext: { assignmentMode: "shared", groupId: "BG-5819", source: "planning" },
       },
+      { id: "FN-opted-in", column: "in-review", paused: false, mergeRetries: 0, status: null, autoMerge: true, branchContext: { assignmentMode: "shared", groupId: "BG-5819", source: "planning" } },
       { id: "FN-plain", column: "in-review", paused: false, mergeRetries: 0, status: null },
     ];
     // Critical stale-status cleanup reads first; deferred startup then evaluates eligibility.
@@ -2769,9 +2776,10 @@ describe("ProjectEngine paused in-review auto-merge behavior", () => {
     const enqueueSpy = vi.spyOn(privateEngine, "internalEnqueueMerge");
 
     await engine.start();
-    await vi.waitFor(() => expect(enqueueSpy).toHaveBeenCalledWith("FN-shared"));
+    await vi.waitFor(() => expect(enqueueSpy).toHaveBeenCalledWith("FN-opted-in"));
 
-    expect(enqueueSpy).toHaveBeenCalledWith("FN-shared");
+    expect(enqueueSpy).toHaveBeenCalledWith("FN-opted-in");
+    expect(enqueueSpy).not.toHaveBeenCalledWith("FN-shared");
     expect(enqueueSpy).not.toHaveBeenCalledWith("FN-plain");
 
     await engine.stop();
@@ -3689,23 +3697,30 @@ describe("allowInReviewMergeProcessing per-task autoMerge override", () => {
     await expect(gate({ autoMerge: false }, { autoMerge: true })).resolves.toBe(true);
   });
 
-  it("still exempts live shared-branch-group member integration on an intermediate branch when the global setting is off", async () => {
-    await expect(gate(
-      { branchContext: { assignmentMode: "shared", groupId: "grp-1" } as Task["branchContext"] },
-      { autoMerge: false, integrationBranch: "main" },
-      { status: "open", branchName: "mission/M-3324" },
-    )).resolves.toBe(true);
+  /*
+  FNXC:SharedBranchMemberHold 2026-08-09-09:09:
+  FN-8823 supersedes the FN-5819 live-member exemption when project auto-merge
+  is Off. Every non-opted-in member is held before liveness is considered; an
+  explicit task-level On is the sole consent path through this requester.
+  */
+  it("holds live shared-branch-group member integration on an intermediate branch when the global setting is off", async () => {
+    const shared = { branchContext: { assignmentMode: "shared", groupId: "grp-1" } as Task["branchContext"] };
+    const settings = { autoMerge: false, integrationBranch: "main" };
+    const group = { status: "open" as const, branchName: "mission/M-3324" };
+
+    await expect(gate(shared, settings, group)).resolves.toBe(false);
+    await expect(gate({ ...shared, autoMerge: true }, settings, group)).resolves.toBe(true);
   });
 
-  it("holds only an operator-authored false override before live member integration", async () => {
+  it("holds every non-opted-in provenance before live member integration when global auto-merge is off", async () => {
     const shared = { branchContext: { assignmentMode: "shared", groupId: "grp-1" } as Task["branchContext"] };
     const settings = { autoMerge: false, integrationBranch: "main" };
     const group = { status: "open" as const, branchName: "mission/M-3324" };
 
     await expect(gate({ ...shared, autoMerge: false, autoMergeProvenance: "user" }, settings, group)).resolves.toBe(false);
-    await expect(gate({ ...shared, autoMerge: false, autoMergeProvenance: "mission" }, settings, group)).resolves.toBe(true);
-    await expect(gate({ ...shared, autoMerge: false, autoMergeProvenance: "legacy-stamp" }, settings, group)).resolves.toBe(true);
-    await expect(gate({ ...shared, autoMerge: false }, settings, group)).resolves.toBe(true);
+    await expect(gate({ ...shared, autoMerge: false, autoMergeProvenance: "mission" }, settings, group)).resolves.toBe(false);
+    await expect(gate({ ...shared, autoMerge: false, autoMergeProvenance: "legacy-stamp" }, settings, group)).resolves.toBe(false);
+    await expect(gate({ ...shared, autoMerge: false }, settings, group)).resolves.toBe(false);
   });
 
   it("keeps live shared-branch-group member integration on the default branch behind the manual gate", async () => {

@@ -1,4 +1,5 @@
 import { createLogger } from "@fusion/core";
+import { resolveRequestActor } from "../request-actor.js";
 
 const severityAuditLog = createLogger("dashboard-register-settings-memory-routes");
 import {
@@ -738,7 +739,7 @@ export function registerSettingsMemoryRoutes(ctx: ApiRoutesContext, deps: Settin
         }
       }
 
-      const settings = await scopedStore.updateSettings(clientSettings);
+      const settings = await scopedStore.updateSettings(clientSettings, resolveRequestActor(req));
       
       res.json(settings);
     } catch (err: unknown) {

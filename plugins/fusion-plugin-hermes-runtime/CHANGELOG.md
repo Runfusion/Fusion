@@ -1,5 +1,11 @@
 # @fusion-plugin-examples/hermes-runtime
 
+## 0.2.85-beta.0
+
+### Patch Changes
+
+- @fusion/plugin-sdk@0.76.0-beta.0
+
 ## 0.2.84
 
 ### Patch Changes

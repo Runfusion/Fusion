@@ -37,6 +37,7 @@ import { installTaskWorktreeIdentityGuard } from "../worktree/worktree-hooks.js"
 import { AgentSemaphore } from "../concurrency/concurrency.js";
 import { StuckTaskDetector } from "../healing/stuck-task-detector.js";
 import { AgentLogger, summarizeToolArgs } from "../agents/agent-logger.js";
+import { attachAgentUsageTelemetry, emitAgentSessionStart } from "../agents/agent-usage-telemetry.js";
 import { createLogger } from "../logger.js";
 import { createFallbackModelObserver } from "../auth/fallback-model-observer.js";
 import { createRunAuditor, generateSyntheticRunId } from "../util/run-audit.js";
@@ -1357,6 +1358,8 @@ export class StepSessionExecutor {
           // Step-session workers are task-scoped ephemeral agents.
           persistAgentThinkingLog: resolvePersistAgentThinkingLog(settings, { ephemeral: true }),
         });
+    { attachAgentUsageTelemetry(agentLogger, { store: this.store, agentId: taskDetail.assignedAgentId ?? null, taskId: taskDetail.id, nodeId: taskDetail.effectiveNodeId ?? taskDetail.nodeId ?? null, lane: "workflow-step" }); }
+
         let session: AgentSession | null = null;
         const localTelemetry = { agentLogger, trackingKey };
 
@@ -1439,6 +1442,8 @@ export class StepSessionExecutor {
             this.options.assignedAgentRuntimeConfig,
             this.credentialInstanceId,
           );
+
+          attachAgentUsageTelemetry(agentLogger, { store: this.store, agentId: taskDetail.assignedAgentId ?? null, taskId: taskDetail.id, nodeId: taskDetail.effectiveNodeId ?? taskDetail.nodeId ?? null, model: executorModelId ?? null, provider: executorProvider ?? null, lane: "workflow-step", ephemeral: true });
 
           if (reusePrimarySession && this.reusablePrimarySession) {
             session = this.reusablePrimarySession;
@@ -1539,6 +1544,13 @@ Follow instructions precisely and avoid unrelated changes.`,
               taskEnv: this.options.taskEnv,
             });
             session = createResult.session;
+            /*
+            FNXC:CommandCenterActivity 2026-08-09-15:06:
+            A reusable primary workflow session can execute multiple steps through one live
+            AgentSession. Record its boundary only when that session is constructed, not on each
+            reuse, so the Activity Sessions metric remains a session count rather than a step count.
+            */
+            emitAgentSessionStart({ store: this.store, agentId: taskDetail.assignedAgentId ?? null, taskId: taskDetail.id, nodeId: taskDetail.effectiveNodeId ?? taskDetail.nodeId ?? null, model: executorModelId ?? null, provider: executorProvider ?? null, lane: "workflow-step", ephemeral: true });
             if (reusePrimarySession) {
               this.reusablePrimarySession = session;
             }

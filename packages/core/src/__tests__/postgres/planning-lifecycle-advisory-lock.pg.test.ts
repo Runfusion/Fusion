@@ -9,6 +9,7 @@ import {
   PlanningLifecycleLockTransportError,
   withPlanningLifecycleAdvisoryLock,
 } from "../../postgres/advisory-locks.js";
+import { resolveBackendWithOptions } from "../../postgres/backend-resolver.js";
 
 const h: SharedPgTaskStoreHarness = createSharedPgTaskStoreTestHarness({
   prefix: "fusion_planning_lock",
@@ -111,6 +112,28 @@ pgDescribe("planning lifecycle advisory lock", () => {
     },
   );
 
+  it("uses a direct-only runtime URL to acquire and release the lock", async () => {
+    const backend = resolveBackendWithOptions({ databaseUrl: h.testUrl() });
+    let callbackRan = false;
+    await withPlanningLifecycleAdvisoryLock({
+      projectId: "project-a",
+      taskId: "FN-runtime-direct",
+      directSessionUrl: backend.directSessionUrl ?? null,
+      provenance: backend.directSessionProvenance ?? null,
+      runtimeUrl: backend.runtimeUrl,
+      migrationUrl: backend.migrationUrl,
+    }, async () => { callbackRan = true; });
+    expect(callbackRan).toBe(true);
+    await expect(withPlanningLifecycleAdvisoryLock({
+      projectId: "project-a",
+      taskId: "FN-runtime-direct",
+      directSessionUrl: backend.directSessionUrl ?? null,
+      provenance: backend.directSessionProvenance ?? null,
+      runtimeUrl: backend.runtimeUrl,
+      migrationUrl: backend.migrationUrl,
+    }, async () => {})).resolves.toBeUndefined();
+  });
+
   it("bounds lock contention with a typed transport error", async () => {
     let releaseFirst!: () => void;
     const firstCanFinish = new Promise<void>((resolve) => { releaseFirst = resolve; });
@@ -151,9 +174,10 @@ pgDescribe("planning lifecycle advisory lock", () => {
     }, callback)).rejects.toBeInstanceOf(PlanningLifecycleLockTransportError);
     await expect(withPlanningLifecycleAdvisoryLock({
       ...base,
-      directSessionUrl: h.testUrl(),
+      directSessionUrl: `${h.testUrl()}_other`,
+      provenance: "runtime-direct",
       runtimeUrl: h.testUrl(),
-      migrationUrl: `${h.testUrl()}_other`,
+      migrationUrl: h.testUrl(),
     }, callback)).rejects.toBeInstanceOf(PlanningLifecycleLockTransportError);
     await expect(withPlanningLifecycleAdvisoryLock({
       ...base,

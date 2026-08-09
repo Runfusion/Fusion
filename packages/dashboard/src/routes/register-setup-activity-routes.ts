@@ -1,4 +1,5 @@
-import { createLogger } from "@fusion/core";
+import { createLogger, AGENT_ACTIVITY_EVENT_TYPES, isAgentActivityEventType } from "@fusion/core";
+import { queryAgentActivityEvents } from "@fusion/core";
 
 const severityAuditLog = createLogger("dashboard-register-setup-activity-routes");
 import type { ActivityEventType } from "@fusion/core";
@@ -53,6 +54,22 @@ router.get("/activity", async (req, res) => {
     }
     rethrowAsApiError(err);
   }
+});
+
+/* FNXC:AgentActivityStream 2026-08-09-09:09: activity history is a seq cursor, never a timestamp, so identical writer timestamps remain totally ordered. */
+router.get("/agent-activity", async (req, res) => {
+  try {
+    const { store } = await getProjectContext(req); const layer = store.getAsyncLayer();
+    if (!layer) throw new Error("agent activity requires project data layer");
+    const string = (value: unknown) => typeof value === "string" ? value : undefined;
+    const limitRaw = string(req.query.limit); let limit = 100;
+    if (limitRaw !== undefined) { if (!/^\d+$/.test(limitRaw)) throw badRequest("limit must be a non-negative integer"); limit = Math.min(Number(limitRaw), 1000); }
+    const before = string(req.query.before); const since = string(req.query.since);
+    if (before !== undefined && !/^\d+$/.test(before)) throw badRequest("before must be a decimal cursor");
+    if (since !== undefined && !/^\d+$/.test(since)) throw badRequest("since must be a decimal cursor");
+    const type = string(req.query.type); if (type !== undefined && !isAgentActivityEventType(type)) throw badRequest(`Invalid type. Must be one of: ${AGENT_ACTIVITY_EVENT_TYPES.join(", ")}`);
+    res.json(await queryAgentActivityEvents(layer, { limit, before, since, agentId: string(req.query.agentId), taskId: string(req.query.taskId), type }));
+  } catch (err: unknown) { if (err instanceof ApiError) throw err; rethrowAsApiError(err); }
 });
 
 /**

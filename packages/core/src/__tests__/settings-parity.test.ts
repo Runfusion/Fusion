@@ -288,12 +288,22 @@ describe("settings key parity", () => {
     expect(isGlobalSettingsKey("executorAllowSiblingBranchRename")).toBe(false);
   });
 
-  it("defaults the routing-inert ephemeral compatibility input and keeps it project-scoped", () => {
-    expect(DEFAULT_PROJECT_SETTINGS.ephemeralAgentsEnabled).toBe(true);
-    expect(isProjectSettingsKey("ephemeralAgentsEnabled")).toBe(true);
+  it("removes the retired ephemeral compatibility input from settings and canonicalizes stale values", () => {
+    expect(DEFAULT_PROJECT_SETTINGS).not.toHaveProperty("ephemeralAgentsEnabled");
+    expect(isProjectSettingsKey("ephemeralAgentsEnabled")).toBe(false);
     expect(isGlobalSettingsKey("ephemeralAgentsEnabled")).toBe(false);
-    expect(canonicalizeSettings({ ephemeralAgentsEnabled: false } as import("../types.js").Settings))
-      .toMatchObject({ ephemeralAgentsEnabled: false });
+
+    for (const retiredValue of [true, false]) {
+      const persisted = { ephemeralAgentsEnabled: retiredValue, taskPrefix: "SURVIVES" } as import("../types.js").Settings;
+      const canonical = canonicalizeSettings(persisted);
+      expect(canonical).not.toHaveProperty("ephemeralAgentsEnabled");
+      expect(canonical.taskPrefix).toBe("SURVIVES");
+      expect(persisted).toHaveProperty("ephemeralAgentsEnabled", retiredValue);
+    }
+
+    const absent = { taskPrefix: "UNCHANGED" } as import("../types.js").Settings;
+    expect(canonicalizeSettings(absent)).not.toHaveProperty("ephemeralAgentsEnabled");
+    expect(canonicalizeSettings(absent).taskPrefix).toBe("UNCHANGED");
   });
 
   it("defaults ephemeralAgentsCanCreateTasks to true and keeps it project-scoped", () => {

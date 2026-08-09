@@ -560,6 +560,13 @@ export const sendMessageParams = Type.Object({
   reply_to_message_id: Type.Optional(
     Type.String({ description: "Optional ID of the message you are replying to. Parent-based recipient inference is allowed only when that message was addressed to you." }),
   ),
+  mail_kind: Type.Optional(Type.Union([
+    Type.Literal("message"), Type.Literal("report"), Type.Literal("approval"),
+  ], { description: "Structural mail kind. Use report for a composed writeup; approval is engine-managed." })),
+  report: Type.Optional(Type.Object({
+    title: Type.String({ description: "Report title" }),
+    sections: Type.Array(Type.Object({ heading: Type.String(), body: Type.String() }), { description: "Non-empty report sections" }),
+  }, { description: "Structured report payload for mail" })),
 });
 
 export const readMessagesParams = Type.Object({
@@ -5648,7 +5655,7 @@ export function createSendMessageTool(
       "Send a message to another agent or user. The recipient will be woken if they have " +
       "`messageResponseMode: 'immediate'` configured. When replying, include `reply_to_message_id`; omit " +
       "`to_id` to reply to that message's sender only when the parent was addressed to you. Otherwise provide " +
-      "the exact recipient ID and appropriate type explicitly.",
+      "the exact recipient ID and appropriate type explicitly. Use mail for structured reports and approval items; use chat for quick back-and-forth.",
     parameters: sendMessageParams,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     execute: async (_id: string, params: Static<typeof sendMessageParams>, _signal?: any, _onUpdate?: any, _ctx?: any) => {
@@ -5667,6 +5674,17 @@ export function createSendMessageTool(
       }
 
       try {
+        if (params.mail_kind === "approval") {
+          return { content: [{ type: "text" as const, text: "ERROR: approval mail is emitted by the engine only" }], details: {} };
+        }
+        if (params.mail_kind === "report" && !params.report) {
+          return { content: [{ type: "text" as const, text: "ERROR: mail_kind report requires report" }], details: {} };
+        }
+        if (params.report) {
+          if (!params.report.title.trim()) return { content: [{ type: "text" as const, text: "ERROR: report.title must be a non-empty string" }], details: {} };
+          if (params.report.sections.length === 0) return { content: [{ type: "text" as const, text: "ERROR: report.sections must not be empty" }], details: {} };
+          if (params.report.sections.some((section) => !section.heading.trim() || !section.body.trim())) return { content: [{ type: "text" as const, text: "ERROR: report sections require non-empty heading and body" }], details: {} };
+        }
         const replyToMessageId = params.reply_to_message_id?.trim();
 
         if (params.reply_to_message_id !== undefined && !replyToMessageId) {
@@ -5753,7 +5771,13 @@ export function createSendMessageTool(
             toType: recipient.type,
             content,
             type: messageType,
-            ...(replyToMessageId ? { metadata: { replyTo: { messageId: replyToMessageId } } } : {}),
+            ...((replyToMessageId || params.mail_kind || params.report) ? {
+              metadata: {
+                ...(replyToMessageId ? { replyTo: { messageId: replyToMessageId } } : {}),
+                ...(params.mail_kind ? { mailKind: params.mail_kind } : {}),
+                ...(params.report ? { report: params.report } : {}),
+              },
+            } : {}),
           }),
           correlation: { kind: "direct", fromAgentId, toId: recipient.id },
         }, options?.autoRecovery ?? { mode: "deterministic-only", maxRetries: 3 }, async () => {

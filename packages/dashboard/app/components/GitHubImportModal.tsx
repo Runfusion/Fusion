@@ -44,13 +44,14 @@ import { useEmbeddedPresentation, type ModalPresentation } from "../hooks/useEmb
 import { getGitHubImportState, saveGitHubImportState } from "../hooks/modalPersistence";
 import { FloatingWindow } from "./FloatingWindow";
 import { NavigationHistoryContext } from "../hooks/useNavigationHistory";
+import { containsIssueImageMarkup, PER_BODY_MAX_CHARS, TRANSPORT_MAX_CHARS } from "../../src/issue-image-markup";
 
 interface GitHubImportModalProps {
   isOpen: boolean;
   onClose: () => void;
   onImport: (task: Task) => void;
   /** Optional because callers without Planning Mode retain the direct-import-only surface. */
-  onPlanningMode?: (initialPlan: string, workflowId?: string | null) => void;
+  onPlanningMode?: (initialPlan: string, workflowId?: string | null, sourceIssue?: { provider: "github"; repository: string; issueNumber: number; url: string; title?: string; imageBodies?: string[]; commentsUnavailable?: boolean; droppedBodyCount?: number }) => void;
   /*
   FNXC:GitHubImport 2026-07-30-12:00:
   Chat is deliberately separate from direct import: it seeds a GitHub issue/PR link in the composer,
@@ -70,6 +71,13 @@ interface GitHubImportModalProps {
 type TabType = "issues" | "pulls";
 type ImportProvider = "github" | "gitlab";
 type GitLabResourceTab = "project_issue" | "group_issue" | "merge_request";
+
+/**
+ * FNXC:GitHubPlanningSourceIssue 2026-08-09-14:59: Cache identity includes the remote because GitHub issue numbers are repository-local.
+ */
+function issueDetailCacheKey(owner: string, repo: string, issueNumber: number): string {
+  return `${owner.trim().toLowerCase()}/${repo.trim().toLowerCase()}#${issueNumber}`;
+}
 
 /*
 FNXC:GitHubImport 2026-06-23-03:30:
@@ -376,10 +384,9 @@ const ISSUES_PAGE_SIZE = 30;
  * Keep this prompt composition pure so every check row carries its repository, PR, branch, status, and details-link evidence.
  */
 /*
-FNXC:GitHubImport 2026-07-30-00:00:
-Operators can choose direct task import or Planning Mode for GitHub issues. Planning receives a
-self-contained issue seed, including the source URL, but intentionally does not establish GitHub
-sourceIssue tracking or deduplication; those remain exclusive to direct import.
+FNXC:GitHubImport 2026-08-09-05:36:
+Planning receives both the canonical seed and structured GitHub provenance so the server can preserve
+issue context and safely adopt the source issue without treating arbitrary prose URLs as links.
 */
 export function buildIssuePlanningSeed(issue: GitHubIssue): string {
   return [
@@ -560,9 +567,13 @@ export function GitHubImportModal({ isOpen, onClose, onImport, onPlanningMode, o
   /*
   FNXC:GitHubImport 2026-06-23-03:15:
   The issue preview pane mirrors the PR preview: the SELECTED issue's full comment thread is fetched ON SELECTION (issues have no checks rollup, so comments only).
-  Cached by issue number in a ref so re-selecting does not refetch; the body renders immediately while comments stream in (loading/error tracked separately, never blocking the body).
+  Cached by repository plus issue number in a ref so re-selecting does not refetch; the body renders immediately while comments stream in (loading/error tracked separately, never blocking the body).
+
+  FNXC:GitHubPlanningSourceIssue 2026-08-09-14:59:
+  Planning capture must never carry comments from another repository that happens to reuse an issue number.
+  The cache key therefore includes the normalized repository as well as the issue number.
   */
-  const issueDetailCacheRef = useRef<Map<number, GitHubIssueDetail>>(new Map());
+  const issueDetailCacheRef = useRef<Map<string, GitHubIssueDetail>>(new Map());
   const [issueDetail, setIssueDetail] = useState<GitHubIssueDetail | null>(null);
   const [issueDetailLoading, setIssueDetailLoading] = useState(false);
   const [issueDetailError, setIssueDetailError] = useState<string | null>(null);
@@ -1189,10 +1200,23 @@ export function GitHubImportModal({ isOpen, onClose, onImport, onPlanningMode, o
     if (!selectedIssue || !onPlanningMode || importing || isUrlImported(selectedIssue.html_url)) return;
 
     const seed = buildIssuePlanningSeed(selectedIssue);
+    // FNXC:GitHubPlanningSourceIssue 2026-08-09-14:30: State can briefly retain the prior selection, so only the repository-and-number cache proves captured comments belong to this issue.
+    const detail = issueDetailCacheRef.current.get(issueDetailCacheKey(owner, repo, selectedIssue.number));
+    // FNXC:GitHubPlanningSourceIssue 2026-08-09-14:51: Availability is scoped to the selected issue's cache; global loading/error state can belong to a different, newly selected issue.
+    const commentsUnavailable = !detail;
+    const candidates = [selectedIssue.body ?? "", ...(detail?.comments ?? []).map((comment) => comment.body ?? "")].filter(containsIssueImageMarkup);
+    let transportedChars = 0;
+    let droppedBodyCount = 0;
+    const imageBodies = candidates.flatMap((body) => {
+      if (body.length > PER_BODY_MAX_CHARS || transportedChars + body.length > TRANSPORT_MAX_CHARS) { droppedBodyCount++; return []; }
+      transportedChars += body.length;
+      return [body];
+    });
+    /* FNXC:GitHubPlanningSourceIssue 2026-08-09-14:09: Plan must not await or re-fetch comments; transport ordered image-bearing bodies only, while the server resolves URLs and records partial capture. */
     // FNXC:GitHubImport 2026-07-30-00:00: Embedded close navigates to Board, so close first and open Planning last to preserve Planning as the final destination.
     onClose();
-    onPlanningMode(seed);
-  }, [activeTab, importing, isUrlImported, issues, onClose, onPlanningMode, selectedIssueNumber]);
+    onPlanningMode(seed, undefined, { provider: "github", repository: `${owner}/${repo}`, issueNumber: selectedIssue.number, url: selectedIssue.html_url, title: selectedIssue.title, ...(imageBodies.length ? { imageBodies } : {}), ...(commentsUnavailable ? { commentsUnavailable: true } : {}), ...(droppedBodyCount ? { droppedBodyCount } : {}) });
+  }, [activeTab, importing, isUrlImported, issues, onClose, onPlanningMode, owner, repo, selectedIssueNumber]);
 
   const fetchPullDetail = useCallback((force: boolean) => {
     const requestId = ++pullDetailRequestRef.current;
@@ -1261,7 +1285,8 @@ export function GitHubImportModal({ isOpen, onClose, onImport, onPlanningMode, o
       return;
     }
 
-    const cached = issueDetailCacheRef.current.get(selectedIssueNumber);
+    const cacheKey = issueDetailCacheKey(owner, repo, selectedIssueNumber);
+    const cached = issueDetailCacheRef.current.get(cacheKey);
     if (cached) {
       setIssueDetail(cached);
       setIssueDetailLoading(false);
@@ -1276,7 +1301,7 @@ export function GitHubImportModal({ isOpen, onClose, onImport, onPlanningMode, o
 
     apiFetchGitHubIssueDetail(`${owner.trim()}/${repo.trim()}`, selectedIssueNumber)
       .then((detail) => {
-        issueDetailCacheRef.current.set(selectedIssueNumber, detail);
+        issueDetailCacheRef.current.set(cacheKey, detail);
         if (issueDetailRequestRef.current !== requestId) return;
         setIssueDetail(detail);
         setIssueDetailLoading(false);
@@ -1346,6 +1371,7 @@ export function GitHubImportModal({ isOpen, onClose, onImport, onPlanningMode, o
 
     const issueNumber = selectedIssueNumber;
     const repository = `${owner.trim()}/${repo.trim()}`;
+    const cacheKey = issueDetailCacheKey(owner, repo, issueNumber);
     setAddingComment(true);
     if (closeToastTimerRef.current) clearTimeout(closeToastTimerRef.current);
     setCloseToast(null);
@@ -1357,8 +1383,8 @@ export function GitHubImportModal({ isOpen, onClose, onImport, onPlanningMode, o
         createdAt: new Date().toISOString(),
         authorIsBot: false,
       };
-      const cachedDetail = issueDetailCacheRef.current.get(issueNumber) ?? { comments: [] };
-      issueDetailCacheRef.current.set(issueNumber, {
+      const cachedDetail = issueDetailCacheRef.current.get(cacheKey) ?? { comments: [] };
+      issueDetailCacheRef.current.set(cacheKey, {
         ...cachedDetail,
         comments: [...cachedDetail.comments, postedComment],
       });

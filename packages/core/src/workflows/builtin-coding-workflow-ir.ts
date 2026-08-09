@@ -82,6 +82,7 @@ const RAW_BUILTIN_CODING_WORKFLOW_IR: WorkflowIr = {
     // builtin-stepwise-coding-workflow-ir.ts.
     planReviewOptionalGroupNode("todo"),
     planReplanNode("todo"),
+    { id: "plan-review-no-op", kind: "gate", column: "todo", config: { workflowAction: "plan-review-no-op" } },
     {
       id: "execute",
       kind: "prompt",
@@ -147,6 +148,8 @@ const RAW_BUILTIN_CODING_WORKFLOW_IR: WorkflowIr = {
     { from: "start", to: "planning" },
     { from: "planning", to: "plan-review", condition: "success" },
     { from: "plan-review", to: "execute", condition: "success" },
+    { from: "plan-review", to: "plan-review-no-op", condition: "outcome:close-no-op" },
+    { from: "plan-review-no-op", to: "end", condition: "success" },
     // execute → browser-verification (optional-group) → review. When the group is
     // disabled it passes through with outcome=success and routes straight to review.
     { from: "execute", to: "browser-verification", condition: "success" },

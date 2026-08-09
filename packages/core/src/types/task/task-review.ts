@@ -6,7 +6,12 @@
 export type TaskReviewMode = "pull-request" | "direct";
 export type TaskReviewSource = "github-pr" | "reviewer-agent";
 export type TaskReviewDecision = "approved" | "changes-requested" | "commented" | "pending";
-export type TaskReviewVerdict = "APPROVE" | "APPROVE_WITH_NOTES" | "REVISE" | "RETHINK" | "UNAVAILABLE";
+/*
+ * FNXC:PlanReviewNoOp 2026-08-09-01:17:
+ * The Review data projection must retain the Plan-Review-only close verdict as audit evidence;
+ * consumers render it as a terminal review decision rather than converting it into a revision.
+ */
+export type TaskReviewVerdict = "APPROVE" | "APPROVE_WITH_NOTES" | "REVISE" | "RETHINK" | "UNAVAILABLE" | "CLOSE_NO_OP";
 export type TaskReviewerType = "plan" | "code";
 export type TaskReviewItemStatus = "queued" | "in-progress" | "addressed" | "failed";
 export type TaskReviewFindingSeverity = "low" | "medium" | "high" | "critical";

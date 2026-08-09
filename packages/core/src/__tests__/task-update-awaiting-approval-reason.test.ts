@@ -67,6 +67,15 @@ describe("awaitingApprovalReason survives updateTask", () => {
     expect(row.awaitingApprovalReason).toBe("plan-review-replan-cap");
   });
 
+  it("persists the structured PR policy-block reason alongside its human hold", async () => {
+    const { store, row } = harness({ status: null });
+
+    await run(store, { status: "awaiting-approval", awaitingApprovalReason: "merge-blocked-by-policy" });
+
+    expect(row.status).toBe("awaiting-approval");
+    expect(row.awaitingApprovalReason).toBe("merge-blocked-by-policy");
+  });
+
   it("clears the reason on an explicit null (the manual plan gate's stale-reason guard)", async () => {
     const { store, row } = harness({
       status: "needs-replan",

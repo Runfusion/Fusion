@@ -2920,6 +2920,173 @@ describe("Merger worktree pool integration", () => {
   // which tests aiMergeTask with real implementation
 });
 
+describe("fresh worktree integration rebase", () => {
+  beforeEach(() => {
+    resetExecutorMocks();
+  });
+
+  function mockGitCommands(respond: (command: string) => Error | null) {
+    mockedExec.mockImplementation(((command: string, _options: unknown, callback: (error: Error | null, stdout: string, stderr: string) => void) => {
+      callback(respond(command), "", "");
+      return {} as any;
+    }) as any);
+  }
+
+  it("rebases onto configured integrationBranch instead of remote or ambient HEAD", async () => {
+    const store = createMockStore();
+    store.getSettings.mockResolvedValue({
+      worktreeRebaseBeforeMerge: true,
+      worktreeRebaseRemote: "origin",
+      integrationBranch: "develop",
+    });
+    mockGitCommands(() => null);
+    const executor = createWorktreeExecutor(store, "/repo");
+
+    await (executor as any).rebaseNewWorktreeOntoRemote("/repo/.worktrees/fn-8839", "fusion/fn-8839", "FN-8839");
+
+    const commands = mockedExec.mock.calls.map(([command]) => String(command));
+    expect(commands).toContain("git fetch 'origin' 'develop'");
+    expect(commands).toContain("git rebase 'origin/develop'");
+    expect(commands).not.toContain(expect.stringContaining("rev-parse --abbrev-ref HEAD"));
+    expect(commands).not.toContain(expect.stringContaining("origin/HEAD"));
+    expect(store.logEntry).toHaveBeenCalledWith(
+      "FN-8839",
+      "Rebased new worktree branch fusion/fn-8839 onto origin/develop",
+      undefined,
+      undefined,
+    );
+  });
+
+  it("uses the canonical resolver's origin HEAD and fixed fallback without ambient HEAD", async () => {
+    const store = createMockStore();
+    store.getSettings.mockResolvedValue({
+      worktreeRebaseBeforeMerge: true,
+      worktreeRebaseRemote: "origin",
+    });
+    mockedExec.mockImplementation(((command: string, _options: unknown, callback: (error: Error | null, stdout: string, stderr: string) => void) => {
+      callback(null, command.includes("refs/remotes/origin/HEAD") ? "origin/release\n" : "", "");
+      return {} as any;
+    }) as any);
+    const executor = createWorktreeExecutor(store, "/repo");
+
+    await (executor as any).rebaseNewWorktreeOntoRemote("/worktree", "fusion/fn-8839", "FN-8839");
+
+    expect(mockedExec.mock.calls.map(([command]) => String(command))).toEqual(expect.arrayContaining([
+      "git symbolic-ref --short refs/remotes/origin/HEAD",
+      "git fetch 'origin' 'release'",
+      "git rebase 'origin/release'",
+    ]));
+
+    resetExecutorMocks();
+    const fallbackStore = createMockStore();
+    fallbackStore.getSettings.mockResolvedValue({
+      worktreeRebaseBeforeMerge: true,
+      worktreeRebaseRemote: "origin",
+    });
+    mockedExec.mockImplementation(((command: string, _options: unknown, callback: (error: Error | null, stdout: string, stderr: string) => void) => {
+      callback(command.includes("refs/remotes/origin/HEAD") ? new Error("origin HEAD unset") : null, "", "");
+      return {} as any;
+    }) as any);
+
+    await (createWorktreeExecutor(fallbackStore, "/repo") as any).rebaseNewWorktreeOntoRemote("/worktree", "fusion/fn-8839", "FN-8839");
+
+    const fallbackCommands = mockedExec.mock.calls.map(([command]) => String(command));
+    expect(fallbackCommands).toContain("git fetch 'origin' 'main'");
+    expect(fallbackCommands).toContain("git rebase 'origin/main'");
+    expect(fallbackCommands).not.toContain(expect.stringContaining("rev-parse --abbrev-ref HEAD"));
+  });
+
+  it("logs an enabled refresh skip when no remote is resolvable", async () => {
+    const store = createMockStore();
+    store.getSettings.mockResolvedValue({ worktreeRebaseBeforeMerge: true });
+    mockGitCommands((command) => command === "git remote" ? null : new Error(`unexpected ${command}`));
+    const executor = createWorktreeExecutor(store, "/repo");
+
+    await (executor as any).rebaseNewWorktreeOntoRemote("/worktree", "fusion/fn-8839", "FN-8839");
+
+    expect(mockedExec).toHaveBeenCalledWith("git remote", { cwd: "/repo" }, expect.any(Function));
+    expect(store.logEntry).toHaveBeenCalledWith(
+      "FN-8839",
+      "Skipped new worktree rebase refresh — no remote was resolvable",
+      undefined,
+      undefined,
+    );
+  });
+
+  it("logs fetch failures without rebasing or failing worktree setup", async () => {
+    const store = createMockStore();
+    store.getSettings.mockResolvedValue({
+      worktreeRebaseBeforeMerge: true,
+      worktreeRebaseRemote: "origin",
+      integrationBranch: "develop",
+    });
+    mockGitCommands((command) => command.includes("git fetch") ? new Error("network unavailable") : null);
+    const executor = createWorktreeExecutor(store, "/repo");
+
+    await expect((executor as any).rebaseNewWorktreeOntoRemote("/worktree", "fusion/fn-8839", "FN-8839")).resolves.toBeUndefined();
+
+    const commands = mockedExec.mock.calls.map(([command]) => String(command));
+    expect(commands).toContain("git fetch 'origin' 'develop'");
+    expect(commands).not.toContain("git rebase 'origin/develop'");
+    expect(store.logEntry).toHaveBeenCalledWith(
+      "FN-8839",
+      "Could not refresh new worktree rebase target origin/develop — fetch failed; kept local base.",
+      undefined,
+      undefined,
+    );
+  });
+
+  it("keeps a successful rebase successful when its task-log write fails", async () => {
+    const store = createMockStore();
+    store.getSettings.mockResolvedValue({
+      worktreeRebaseBeforeMerge: true,
+      worktreeRebaseRemote: "origin",
+      integrationBranch: "develop",
+    });
+    store.logEntry.mockRejectedValue(new Error("task log unavailable"));
+    mockGitCommands(() => null);
+    const executor = createWorktreeExecutor(store, "/repo");
+
+    await expect((executor as any).rebaseNewWorktreeOntoRemote("/worktree", "fusion/fn-8839", "FN-8839")).resolves.toBeUndefined();
+    await Promise.resolve();
+
+    const commands = mockedExec.mock.calls.map(([command]) => String(command));
+    expect(commands).toContain("git rebase 'origin/develop'");
+    expect(commands).not.toContain("git rebase --abort");
+  });
+
+  it("aborts a conflicting rebase, retains the local-base log, and keeps disabled mode silent", async () => {
+    const store = createMockStore();
+    store.getSettings.mockResolvedValue({
+      worktreeRebaseBeforeMerge: true,
+      worktreeRebaseRemote: "origin",
+      integrationBranch: "develop",
+    });
+    mockGitCommands((command) => command === "git rebase 'origin/develop'" || command === "git rebase --abort"
+      ? new Error("conflict")
+      : null);
+    const executor = createWorktreeExecutor(store, "/repo");
+
+    await (executor as any).rebaseNewWorktreeOntoRemote("/worktree", "fusion/fn-8839", "FN-8839");
+
+    expect(mockedExec.mock.calls.map(([command]) => String(command))).toContain("git rebase --abort");
+    expect(store.logEntry).toHaveBeenCalledWith(
+      "FN-8839",
+      "Could not rebase new worktree onto origin/develop — kept local base. The merge-time rebase will retry with conflict resolution.",
+      undefined,
+      undefined,
+    );
+
+    resetExecutorMocks();
+    const disabledStore = createMockStore();
+    disabledStore.getSettings.mockResolvedValue({ worktreeRebaseBeforeMerge: false });
+    const disabledExecutor = createWorktreeExecutor(disabledStore, "/repo");
+    await (disabledExecutor as any).rebaseNewWorktreeOntoRemote("/worktree", "fusion/fn-8839", "FN-8839");
+    expect(mockedExec).not.toHaveBeenCalled();
+    expect(disabledStore.logEntry).not.toHaveBeenCalled();
+  });
+});
+
 function createMockTaskDetail(overrides: Partial<TaskDetail> = {}): TaskDetail {
   return {
     id: "FN-001",

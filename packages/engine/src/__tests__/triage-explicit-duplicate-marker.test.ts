@@ -1,4 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { Settings, Task, TaskStore } from "@fusion/core";
 
 import { TriageProcessor } from "../triage.js";
@@ -76,6 +79,25 @@ describe("triage explicit duplicate marker short-circuit", () => {
   });
 
 
+  it("resolves an exact title redirect before starting a planner session", async () => {
+    const canonical = createTask({ id: "KB-123", title: "Canonical task", column: "todo" });
+    const task = createTask({ title: "DUPLICATE: KB-123", status: null });
+    const onSpecifyStart = vi.fn();
+    const store = createMockStore({
+      getTask: vi.fn().mockImplementation(async (id: string) => id === canonical.id ? canonical : task),
+    });
+    const processor = new TriageProcessor(store, rootDir, { onSpecifyStart });
+
+    await processor.specifyTask(task);
+
+    expect(onSpecifyStart).not.toHaveBeenCalled();
+    expect(store.updateTask).toHaveBeenCalledWith("FN-002", expect.objectContaining({
+      paused: true,
+      pausedReason: "duplicate-decision-required",
+      sourceMetadataPatch: expect.objectContaining({ nearDuplicateOf: "KB-123" }),
+    }));
+  });
+
   it("flags and system-pauses duplicates by default instead of deleting", async () => {
     const canonical = createTask({ id: "FN-001", column: "todo" });
     const task = createTask();
@@ -125,6 +147,35 @@ describe("triage explicit duplicate marker short-circuit", () => {
       "Duplicate marker cleared for re-specification",
       expect.stringContaining("FN-001"),
     );
+  });
+
+  it("keeps an executable prompt when clearing a title-only redirect", async () => {
+    const task = createTask({ title: "DUPLICATE: KB-123" });
+    const canonical = createTask({ id: "KB-123", title: "Canonical task", column: "todo" });
+    const root = await mkdtemp(join(tmpdir(), "fusion-title-redirect-"));
+    const promptPath = join(root, ".fusion", "tasks", task.id, "PROMPT.md");
+    await mkdir(join(root, ".fusion", "tasks", task.id), { recursive: true });
+    await writeFile(promptPath, "# Complete operator-authored plan\n", "utf8");
+    const store = createMockStore({
+      getTask: vi.fn().mockImplementation(async (id: string) => id === canonical.id ? canonical : task),
+      withTaskLock: vi.fn().mockImplementation(async (_id: string, operation: () => Promise<unknown>) => await operation()),
+      readTaskForMove: vi.fn().mockResolvedValue(task),
+    });
+
+    try {
+      const processor = new TriageProcessor(store, root);
+      await expect((processor as any).tryFinalizeExplicitDuplicateMarker(
+        task,
+        "# Complete operator-authored plan\n",
+        { ...settings, triageDuplicateResolution: "keep" },
+        {},
+      )).resolves.toBe(true);
+
+      await expect(readFile(promptPath, "utf8")).resolves.toBe("# Complete operator-authored plan\n");
+      expect(store.updateTask).toHaveBeenCalledWith(task.id, { title: "Duplicate redirect cleared: KB-123" });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it("does not re-pause a same-canonical Keep acknowledgement after marker reprocessing", async () => {

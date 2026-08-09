@@ -1,5 +1,11 @@
 # @fusion/plugin-sdk
 
+## 0.76.0-beta.0
+
+### Patch Changes
+
+- @fusion/core@0.76.0-beta.0
+
 ## 0.75.1
 
 ### Patch Changes

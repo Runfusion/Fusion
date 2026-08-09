@@ -361,15 +361,22 @@ export async function runDaemon(opts: DaemonOptions = {}) {
   const resolvedCliPackageVersion = getCliPackageVersion(import.meta.url);
   const cliPackageVersion = isUnresolvedCliPackageVersion(resolvedCliPackageVersion) ? undefined : resolvedCliPackageVersion;
 
-  const engineManager = new ProjectEngineManager(sharedCentralCore, {
+  const engineManager: ProjectEngineManager = new ProjectEngineManager(sharedCentralCore, {
     onMigrationProgress: (event) => migrationHoldingServer?.setMigrationProgress(event),
     cliPackageVersion,
     getMergeStrategy,
-    processPullRequestMerge: (s, wd, taskId, pool) =>
-      processPullRequestMergeTask(s, wd, taskId, githubClient, getTaskMergeBlocker, pool),
+    processPullRequestMerge: (s, wd, taskId, pool, signal) =>
+      processPullRequestMergeTask(s, wd, taskId, githubClient, getTaskMergeBlocker, pool, signal),
     createGroupPr: createGroupPrCallback(githubClient),
     syncGroupPr: syncGroupPrCallback(githubClient),
-    prNodeGithubOps: createPrNodeGithubOps(githubClient),
+    /*
+    FNXC:PrMergeAutoMerge 2026-08-09-10:59:
+    Each daemon engine supplies its own TaskStore to this factory. Never infer
+    the project from a task ID because IDs are only project-scoped.
+    */
+    createPrNodeGithubOps: (taskStore) => createPrNodeGithubOps(githubClient, {
+      isNativeAutoMergeEnabled: async () => (await taskStore.getSettings()).githubNativeAutoMerge === true,
+    }),
     prReconcileGithubOps: createPrReconcileGithubOps(githubClient),
     getTaskMergeBlocker,
     onInsightRunProcessed: (s: unknown, r: unknown) => onMemoryInsightRunProcessed(s as ScheduledTask, r as AutomationRunResult),

@@ -38,7 +38,8 @@ function taskWithUsage(overrides: Partial<Task> = {}): Task {
     title: "Cost badge fixture",
     description: "",
     column: "todo",
-    steps: [],
+    steps: [{ name: "Implement", status: "pending" }] as any,
+    awaitingPlanning: false,
     dependencies: [],
     tokenUsage: {
       inputTokens: 1_000_000,

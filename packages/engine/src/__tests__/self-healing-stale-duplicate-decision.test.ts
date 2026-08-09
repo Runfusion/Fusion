@@ -1,5 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { EventEmitter } from "node:events";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { Settings, Task, TaskStore } from "@fusion/core";
 
 const { recordRunAuditEventMock } = vi.hoisted(() => ({
@@ -129,6 +132,70 @@ describe("FN-8356: reconcile stale duplicate-decision pauses", () => {
   Differential: `shipped` collides with no legacy literal, so a surviving `"done"` cannot pass here
   by luck, and the control above proves the default vocabulary still works.
   */
+  it("preserves an executable prompt while clearing an inactive title-only redirect", async () => {
+    const root = await mkdtemp(join(tmpdir(), "fusion-stale-title-redirect-"));
+    const card = stranded("KB-1", "KB-404", { title: "DUPLICATE: KB-404" });
+    const promptPath = join(root, ".fusion", "tasks", card.id, "PROMPT.md");
+    await mkdir(join(root, ".fusion", "tasks", card.id), { recursive: true });
+    await writeFile(promptPath, "# Operator-authored plan\n", "utf8");
+    const store = storeFor([card]);
+    const manager = new SelfHealingManager(store, { rootDir: root });
+
+    try {
+      expect(await manager.reconcileStaleDuplicateDecisionPause()).toBe(1);
+      await expect(readFile(promptPath, "utf8")).resolves.toBe("# Operator-authored plan\n");
+      expect(await store.getTask(card.id)).toMatchObject({ title: "Duplicate redirect cleared: KB-404" });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed when stale metadata conflicts with prompt and title redirects", async () => {
+    const root = await mkdtemp(join(tmpdir(), "fusion-stale-duplicate-conflict-"));
+    const card = stranded("KB-1", "KB-404", { title: "DUPLICATE: KB-404" });
+    const promptPath = join(root, ".fusion", "tasks", card.id, "PROMPT.md");
+    await mkdir(join(root, ".fusion", "tasks", card.id), { recursive: true });
+    await writeFile(promptPath, "DUPLICATE: KB-405\n", "utf8");
+    const store = storeFor([card]);
+    const manager = new SelfHealingManager(store, { rootDir: root });
+
+    try {
+      expect(await manager.reconcileStaleDuplicateDecisionPause()).toBe(0);
+      await expect(readFile(promptPath, "utf8")).resolves.toBe("DUPLICATE: KB-405\n");
+      expect(await store.getTask(card.id)).toMatchObject({
+        title: "DUPLICATE: KB-404",
+        paused: true,
+        pausedReason: "duplicate-decision-required",
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("self-healing resolves a title-only custom-prefix redirect without discarding its plan", async () => {
+    const root = await mkdtemp(join(tmpdir(), "fusion-title-marker-sweep-"));
+    const card = task("KB-1", { title: "DUPLICATE: KB-123" });
+    const canonical = task("KB-123", { column: "todo" });
+    const promptPath = join(root, ".fusion", "tasks", card.id, "PROMPT.md");
+    await mkdir(join(root, ".fusion", "tasks", card.id), { recursive: true });
+    await writeFile(promptPath, "# Operator-authored plan\n", "utf8");
+    const store = storeFor([card, canonical]);
+    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({ triageDuplicateResolution: "keep" } as Settings);
+    const manager = new SelfHealingManager(store, { rootDir: root });
+    vi.spyOn(manager as any, "filterByPreWipRole").mockResolvedValue([card]);
+
+    try {
+      expect(await manager.resolveExplicitDuplicateMarkerTasks()).toBe(1);
+      await expect(readFile(promptPath, "utf8")).resolves.toBe("# Operator-authored plan\n");
+      expect(await store.getTask(card.id)).toMatchObject({
+        title: "Duplicate redirect cleared: KB-123",
+        status: "needs-replan",
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("renamed vocabulary: clears the decision for a canonical resting in a RENAMED complete column", async () => {
     const shipped = task("FN-SHIPPED", { column: "shipped" });
     const strandedCard = stranded("FN-1", shipped.id, { column: "drafting" });

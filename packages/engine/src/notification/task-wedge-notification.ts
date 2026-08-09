@@ -109,20 +109,34 @@ export function describeSelfHealingNoActionWedge(task: Task, stage: string, meta
 }
 
 /*
+FNXC:TaskWedgeNotifications 2026-08-09-06:30:
+Resume paths deliberately retain pause markers for await-input and CLI-approval
+protocols. A stale marker without real pause state, or any actively progressing
+lifecycle state, is not an operator-actionable terminal wedge.
+*/
+export function isTaskProgressing(task: Task): boolean {
+  return task.paused !== true
+    && task.status !== "paused"
+    && ["queued", "planning", "in-progress", "merging", "merging-pr", "merging-fix", "merged", "done"].includes(task.status ?? "");
+}
+
+/*
 FNXC:TaskWedgeNotifications 2026-07-22-12:00:
 Terminal task updates are the shared delivery seam for merger, executor, heartbeat,
 and self-healing writers. Classify only states that have no scheduled owner; raw
 error output is never used as an idempotency key or forwarded into audit metadata.
 */
 export function describeTaskWedge(task: Task): TaskWedgeDescriptor | null {
+  if (isTaskProgressing(task)) return null;
   const error = task.error ?? "";
-  if (task.pausedReason === "completed-blocked") {
+  const hasPauseProof = task.paused === true || task.status === "paused";
+  if (hasPauseProof && task.pausedReason === "completed-blocked") {
     return { reasonKey: "completion-blocked", reason: "Completed work is blocked from advancing to review.", action: "Clear the blocker or reset the task to todo." };
   }
-  if (task.pausedReason === "error-retry-exhausted") {
+  if (hasPauseProof && task.pausedReason === "error-retry-exhausted") {
     return { reasonKey: "heartbeat-retry-exhausted", reason: "The assigned agent exhausted its heartbeat recovery budget.", action: "Repair the agent configuration, then retry the task." };
   }
-  if (task.pausedReason === "error-unrecoverable") {
+  if (hasPauseProof && task.pausedReason === "error-unrecoverable") {
     return { reasonKey: "heartbeat-error-unrecoverable", reason: "The assigned agent needs operator repair before it can resume.", action: "Repair credentials, access, or configuration, then retry the task." };
   }
   /*
@@ -140,7 +154,7 @@ export function describeTaskWedge(task: Task): TaskWedgeDescriptor | null {
     "non-retryable-provider-error": { reasonKey: "non-retryable-provider-error", reason: "A non-retryable provider error stopped the task.", action: "Repair provider access or configuration, then retry the task." },
     "in-review-stall-deadlock": { reasonKey: "in-review-stall-deadlock", reason: "Review stalled in a deadlock that needs operator intervention.", action: "Inspect review ownership and retry or reset to todo." },
   };
-  if (task.pausedReason && pausedDescriptors[task.pausedReason]) return pausedDescriptors[task.pausedReason];
+  if (hasPauseProof && task.pausedReason && pausedDescriptors[task.pausedReason]) return pausedDescriptors[task.pausedReason];
   if (task.status !== "failed") return null;
   if (error.startsWith("EXECUTION_DISPATCH_LOOP_EXHAUSTED")) {
     return { reasonKey: "execution-dispatch-loop-exhausted", reason: "Execution re-queued without progress until its retry budget was exhausted.", action: "Retry, decompose, or rescope the task." };

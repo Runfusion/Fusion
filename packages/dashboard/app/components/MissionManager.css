@@ -243,6 +243,28 @@ Title metric matches the shared ViewHeader (1.125rem) so the Missions header rea
   font-size: inherit;
 }
 
+/*
+FNXC:MissionAutoMerge 2026-08-08-17:21:
+Manual creation is a secondary text link so Plan New Mission remains the sole
+primary CTA while every production presentation can open the merge-aware form.
+*/
+.mission-list__manual-create-link {
+  align-self: center;
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  text-decoration: underline;
+  text-underline-offset: var(--space-xxs);
+}
+
+.mission-list__manual-create-link:hover {
+  color: var(--text);
+}
+
+.mission-list__manual-create-link:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
 /* Hide duplicate sidebar title; the shared header already labels this view. */
 .mission-manager__sidebar-title {
   display: none;
@@ -580,6 +602,10 @@ Narrow/mobile Missions puts Plan New Mission at the bottom of the list, using th
 /* Desktop split-only: list footer actions live in sidebar header, so hide duplicated footer buttons. */
 .mission-manager__sidebar .mission-list__footer-actions {
   display: none;
+}
+
+.mission-list__footer-actions .mission-list__manual-create-link {
+  align-self: center;
 }
 
 /* ── Inline Form Card ── */

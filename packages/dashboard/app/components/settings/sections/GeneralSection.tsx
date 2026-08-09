@@ -298,23 +298,6 @@ export function GeneralSection({ form, setForm, projectId, addToast, prefixError
           {!isKnownSelectableWorkflow(refinementTaskWorkflowValue) && (<option value={refinementTaskWorkflowValue}>{refinementTaskWorkflowValue}</option>)}
         </select>
       </div>
-      <div className="form-group">
-        <div className="settings-field-label-row">
-          {/*
-          FNXC:EphemeralAgentCompatibility 2026-08-08-06:12:
-          FN-8831 requires this visible compatibility input to state its canonical enabled default in the shared help tip. It remains routing-inert: the saved value never controls scheduler admission, executor dispatch or re-entry, mission start, or workflow-stage principal routing.
-          */}
-          <label htmlFor="ephemeralAgentsEnabled" className="checkbox-label">
-            <input id="ephemeralAgentsEnabled" type="checkbox" checked={form.ephemeralAgentsEnabled !== false} onChange={(e) => setForm((f) => ({ ...f, ephemeralAgentsEnabled: e.target.checked }))}/>{t("settings.general.useEphemeralTaskWorkerAgents", " Use ephemeral task-worker agents ")}
-          </label>
-          <SettingsHelpTip settingKey="ephemeralAgentsEnabled">{t("settings.general.ephemeralAgentsCompatibilityHint", " Retained for configuration compatibility. Default: enabled. This setting does not affect scheduler assignment or admission, executor workflow dispatch or re-entry, mission start, or workflow-stage principal routing. ")}</SettingsHelpTip>
-        </div>
-      </div>
-      {/*
-        FNXC:WorkflowAgentRouting 2026-08-07-08:45:
-        Retain this project setting's UI round trip for operators with existing configuration.
-        Its value is intentionally routing-inert: durable workflow principals decide all stages.
-      */}
       {/*
         FNXC:EphemeralAgentTaskCreation 2026-07-30-12:00:
         Operators choose free creation, an operator-mailbox proposal, or denial for ephemeral worker follow-ups.

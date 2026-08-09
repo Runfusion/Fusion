@@ -8,6 +8,7 @@
  */
 import {TaskStore, storeLog} from "../store.js";
 import type {BoardConfig, Settings, GlobalSettings, ConfigChangedBy} from "../types.js";
+import { CONFIG_CHANGED_BY_SYSTEM } from "../types.js";
 import {DEFAULT_SETTINGS, isGlobalOnlySettingsKey} from "../types.js";
 import {MOVED_SETTINGS_KEYS, stripMovedSettingsKeys, patchContainsMovedKey} from "../config/moved-settings.js";
 import "../builtin-traits.js";
@@ -71,7 +72,7 @@ export async function publishSettingsUpdated(store: TaskStore, previous: Setting
   }
 }
 
-export async function updateSettingsImpl(store: TaskStore, patch: Partial<Settings>, changedBy: ConfigChangedBy = { kind: "human", id: "local-user" }): Promise<Settings> {
+export async function updateSettingsImpl(store: TaskStore, patch: Partial<Settings>, changedBy: ConfigChangedBy = CONFIG_CHANGED_BY_SYSTEM): Promise<Settings> {
     assertValidRecommendationSettingsPatch(patch as Record<string, unknown>);
     assertValidCredentialInstanceSettingsPatch(patch as Record<string, unknown>);
     /*
@@ -104,14 +105,15 @@ export async function updateSettingsImpl(store: TaskStore, patch: Partial<Settin
           })()
         : patch;
     /*
-    FNXC:WorkflowAgentRouting 2026-08-07-08:45:
-    Preserve ephemeralAgentsEnabled in project updates for configuration compatibility. Its
-    routing-inert behavior is enforced exclusively by scheduler, executor, and mission consumers.
+    FNXC:WorkflowAgentRouting 2026-08-09-01:04:
+    FN-8847 rejects the retired ephemeralAgentsEnabled client patch before the configuration
+    revision transaction. Canonicalization also removes stale stored copies, while active
+    ephemeral task-creation policy fields keep their normal project-setting behavior.
     */
-    // Filter out global-only fields — they should go through updateGlobalSettings().
+    // Filter out global-only and retired project fields before writing a configuration revision.
     const projectPatch: Partial<Settings> = {};
     for (const [key, value] of Object.entries(guardedPatch)) {
-      if (!isGlobalOnlySettingsKey(key)) {
+      if (!isGlobalOnlySettingsKey(key) && key !== "ephemeralAgentsEnabled") {
         (projectPatch as Record<string, unknown>)[key] = value;
       }
     }
@@ -212,7 +214,7 @@ export async function updateSettingsImpl(store: TaskStore, patch: Partial<Settin
     });
   }
 
-export async function updateGlobalSettingsImpl(store: TaskStore, patch: Partial<GlobalSettings>, changedBy: ConfigChangedBy = { kind: "human", id: "local-user" }): Promise<Settings> {
+export async function updateGlobalSettingsImpl(store: TaskStore, patch: Partial<GlobalSettings>, changedBy: ConfigChangedBy = CONFIG_CHANGED_BY_SYSTEM): Promise<Settings> {
     assertValidCredentialInstanceSettingsPatch(patch as Record<string, unknown>);
     // Read previous state BEFORE writing so the diff is correct
     const previousGlobal = await store.globalSettingsStore.getSettings();

@@ -2,6 +2,7 @@ import { and, desc, eq, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { schema } from "../postgres/index.js";
 import type { AsyncDataLayer, DbTransaction } from "../postgres/data-layer.js";
+import { isNonVersionedSettingsKey } from "../config/settings-schema.js";
 
 type QueryHandle = AsyncDataLayer["db"] | DbTransaction;
 import type {
@@ -44,7 +45,14 @@ export function createConfigurationRevision(input: {
   rollbackToRevisionId?: string;
   createdAt?: string;
 }): ConfigurationRevision | null {
-  const diffs = diffConfigurationSnapshots(input.before, input.after);
+  const projectSettings = input.configKind === "project-settings";
+  const strip = (value: unknown) => value && typeof value === "object" && !Array.isArray(value)
+    ? Object.fromEntries(Object.entries(value as Record<string, unknown>).filter(([key]) => !isNonVersionedSettingsKey(key)))
+    : value;
+  const before = projectSettings ? strip(input.before) : input.before;
+  const after = projectSettings ? strip(input.after) : input.after;
+  const diffs = diffConfigurationSnapshots(input.before, input.after)
+    .filter((diff) => !projectSettings || !isNonVersionedSettingsKey(diff.field));
   if (diffs.length === 0) return null;
   return {
     id: randomUUID(),
@@ -53,8 +61,8 @@ export function createConfigurationRevision(input: {
     configKind: input.configKind,
     configTarget: input.configTarget,
     configTargetKey: configurationTargetKey(input.configTarget),
-    before: input.before,
-    after: input.after,
+    before,
+    after,
     diffs,
     changedBy: input.changedBy,
     source: input.source ?? "mutation",
@@ -118,7 +126,7 @@ export async function listGlobalConfigurationRevisions(
   layer: AsyncDataLayer,
   configKind: ConfigKind,
   configTarget: ConfigurationTarget,
-  limit?: number,
+  paging?: number | { limit?: number; offset?: number },
 ): Promise<ConfigurationRevision[]> {
   return layer.transactionImmediate(async (tx) => {
     /* FNXC:ConfigVersioning 2026-07-18-02:00: global history listing is privileged only for the reserved central owner, matching the writer and preserving newest-first target filtering. */
@@ -127,9 +135,32 @@ export async function listGlobalConfigurationRevisions(
       projectId: GLOBAL_CONFIGURATION_OWNER_ID,
       configKind,
       configTarget,
-      limit,
+      ...(typeof paging === "number" ? { limit: paging } : paging),
     });
   });
+}
+
+export async function listConfigurationRevisionsPage(handle: QueryHandle, params: {
+  projectId: string;
+  configKind: ConfigKind;
+  configTarget: ConfigurationTarget;
+  limit?: number;
+  offset?: number;
+}): Promise<{ revisions: ConfigurationRevision[]; hasMore: boolean }> {
+  /* FNXC:ConfigVersioning 2026-08-09-04:09: Paging prevents the former 100-row window from hiding history. Clamp at the core boundary and use a limit+1 probe rather than COUNT; append-only offset pages can duplicate a row after concurrent appends but never silently skip history. */
+  const clampInteger = (value: number | undefined, fallback: number, minimum: number, maximum = Number.MAX_SAFE_INTEGER) => {
+    const integer = typeof value === "number" && Number.isFinite(value) ? Math.trunc(value) : fallback;
+    return Math.min(maximum, Math.max(minimum, integer));
+  };
+  const limit = clampInteger(params.limit, 100, 1, 500);
+  const offset = clampInteger(params.offset, 0, 0);
+  const rows = await handle.select().from(schema.project.configurationRevisions).where(and(
+    eq(schema.project.configurationRevisions.projectId, params.projectId),
+    eq(schema.project.configurationRevisions.configKind, params.configKind),
+    eq(schema.project.configurationRevisions.configTargetKey, configurationTargetKey(params.configTarget)),
+  )).orderBy(desc(schema.project.configurationRevisions.createdAt), desc(schema.project.configurationRevisions.sequence)).limit(limit + 1).offset(offset);
+  const hasMore = rows.length > limit;
+  return { revisions: rows.slice(0, limit).map((row) => ({ ...row, configTarget: row.configTarget as ConfigurationTarget, before: row.before, after: row.after, diffs: row.diffs as RevisionFieldDiff[], changedBy: row.changedBy as ConfigChangedBy, ownerScope: row.ownerScope as ConfigurationOwnerScope, configKind: row.configKind as ConfigKind, source: row.source as "mutation" | "rollback", rollbackToRevisionId: row.rollbackToRevisionId ?? undefined })), hasMore };
 }
 
 export async function listConfigurationRevisions(handle: QueryHandle, params: {
@@ -137,14 +168,9 @@ export async function listConfigurationRevisions(handle: QueryHandle, params: {
   configKind: ConfigKind;
   configTarget: ConfigurationTarget;
   limit?: number;
+  offset?: number;
 }): Promise<ConfigurationRevision[]> {
-  const rows = await handle.select().from(schema.project.configurationRevisions).where(and(
-    eq(schema.project.configurationRevisions.projectId, params.projectId),
-    eq(schema.project.configurationRevisions.configKind, params.configKind),
-    eq(schema.project.configurationRevisions.configTargetKey, configurationTargetKey(params.configTarget)),
-  /* FNXC:ConfigVersioning 2026-07-18-14:00: createdAt has only millisecond precision; sequence preserves newest-first order for serialized same-millisecond mutations. */
-  )).orderBy(desc(schema.project.configurationRevisions.createdAt), desc(schema.project.configurationRevisions.sequence)).limit(params.limit ?? 100);
-  return rows.map((row) => ({ ...row, configTarget: row.configTarget as ConfigurationTarget, before: row.before, after: row.after, diffs: row.diffs as RevisionFieldDiff[], changedBy: row.changedBy as ConfigChangedBy, ownerScope: row.ownerScope as ConfigurationOwnerScope, configKind: row.configKind as ConfigKind, source: row.source as "mutation" | "rollback", rollbackToRevisionId: row.rollbackToRevisionId ?? undefined }));
+  return (await listConfigurationRevisionsPage(handle, params)).revisions;
 }
 
 export async function getConfigurationRevision(handle: QueryHandle, projectId: string, id: string): Promise<ConfigurationRevision | null> {

@@ -3646,6 +3646,7 @@
     "assertionUpdateFailed": "어설션 업데이트에 실패했습니다",
     "attemptRetries_one": "",
     "attemptRetries_other": "",
+    "autoMergeOverrideDescription": "상속은 프로젝트 설정을 따릅니다. 자동 병합은 각 기능이 통과할 때 병합합니다. 단일 풀 리퀘스트는 공동 검토와 병합을 위해 모든 기능을 하나의 공유 브랜치에 유지합니다.",
     "autopilotActivatingSlice": "슬라이스 활성화 중",
     "autopilotCompleting": "완료 중",
     "autopilotDescription": "켜져 있으면 Fusion이 작업이 완료될 때 자동으로 다음 슬라이스를 활성화하고 기능을 계획합니다.",
@@ -5929,7 +5930,6 @@
       "updating": "",
       "upperBoundOnMessagesFetchedFromTheRoom": "",
       "upToDate": "최신 버전입니다 ✓",
-      "useEphemeralTaskWorkerAgents": "",
       "warnOnTheBoardWhenTodoWorkExceeds": "",
       "whenEnabledDefaultFusionSpawnsShortLived": "",
       "whenEnabledFusionChecksOpenAndClosedIssues": "",
@@ -6001,7 +6001,6 @@
       "taskCreateWorkflowHelp": "",
       "refinementTaskWorkflow": "",
       "refinementTaskWorkflowHelp": "",
-      "ephemeralAgentsCompatibilityHint": "",
       "maxRecommendationsPerTask": "",
       "maxRecommendationsPerTaskHelp": ""
     },
@@ -8129,6 +8128,7 @@
     },
     "recommendations": {
       "title": "",
+      "empty": "이 작업에 대해 생성된 추천이 없습니다.",
       "created": "",
       "creating": "",
       "retry": "",

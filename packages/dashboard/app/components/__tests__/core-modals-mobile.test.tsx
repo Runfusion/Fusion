@@ -47,6 +47,20 @@ function getFloatingWindowMobileBlock(css: string): string {
   return block;
 }
 
+/*
+FNXC:GitManager 2026-08-09-07:48:
+FN-8702 moved the Git Manager phone sheet to the documented <768px boundary so a 768px tablet keeps
+its geometry. Asserting those rules against the 768px aggregate can only fail; keep that helper for
+the shared .gm-modal sizing rule that remains in styles.css, and require stable Git Manager selectors
+here so a renamed or removed phone query fails loudly instead of producing an empty aggregate.
+*/
+function getGitManagerMobileBlock(css: string): string {
+  const block = getMediaBlocks(css, /@media[^{]*\(max-width:\s*767\.98px\)[^{]*\{/g);
+  expect(block).toContain(".gm-layout {");
+  expect(block).toContain(".gm-panel {");
+  return block;
+}
+
 function getEmbeddedGitManagerBlock(css: string): string {
   const block = getMediaBlocks(css, /@container\s+gm-embedded\s+\(max-width:\s*560px\)\s*\{/g);
   expect(block).toContain(".gm-modal--embedded .gm-sidebar");
@@ -268,9 +282,9 @@ describe("core modals mobile css coverage", () => {
     expect(actionsRule![0]).toContain("margin-left: auto;");
   });
 
-  it("GitManagerModal: 768px mobile block includes stacked layout rules", () => {
+  it("GitManagerModal: <768px phone block includes stacked layout rules", () => {
     const css = loadAllAppCss();
-    const mobileBlock = getMainMobileBlock(css);
+    const mobileBlock = getGitManagerMobileBlock(css);
 
     expect(mobileBlock).toContain(".gm-layout {");
     expect(mobileBlock).toContain("flex-direction: column;");
@@ -280,7 +294,7 @@ describe("core modals mobile css coverage", () => {
 
   it("GitManagerModal: mobile section toolbar opts back into horizontal touch scrolling", () => {
     const css = loadAllAppCss();
-    const mobileBlock = getMainMobileBlock(css);
+    const mobileBlock = getGitManagerMobileBlock(css);
 
     const sidebarRules = getRuleBlocks(mobileBlock, ".gm-sidebar");
     expect(sidebarRules.length).toBeGreaterThan(0);
@@ -336,7 +350,7 @@ describe("core modals mobile css coverage", () => {
 
   it("GitManagerModal: workspace repo selector does not consume the mobile tab strip", () => {
     const css = loadAllAppCss();
-    const mobileBlock = getMainMobileBlock(css);
+    const mobileBlock = getGitManagerMobileBlock(css);
     const embeddedBlock = getEmbeddedGitManagerBlock(css);
 
     const standaloneWrapRules = getRuleBlocks(mobileBlock, ".gm-repo-selector-wrap");
@@ -361,7 +375,7 @@ describe("core modals mobile css coverage", () => {
 
   it("GitManagerModal: nav items keep a token-sized touch target on mobile", () => {
     const css = loadAllAppCss();
-    const mobileBlock = getMainMobileBlock(css);
+    const mobileBlock = getGitManagerMobileBlock(css);
 
     expect(mobileBlock).toContain(".gm-nav-item {");
     expect(mobileBlock).toContain("min-height: calc(var(--space-xl) + var(--space-sm));");
@@ -369,7 +383,7 @@ describe("core modals mobile css coverage", () => {
 
   it("GitManagerModal: panel allows content scrolling on mobile", () => {
     const css = loadAllAppCss();
-    const mobileBlock = getMainMobileBlock(css);
+    const mobileBlock = getGitManagerMobileBlock(css);
 
     expect(mobileBlock).toContain(".gm-panel {");
     expect(mobileBlock).toContain("overflow-y: auto;");
@@ -377,7 +391,7 @@ describe("core modals mobile css coverage", () => {
 
   it("GitManagerModal: mobile fullscreen block includes explicit overlay class and keyboard viewport rule", () => {
     const css = loadAllAppCss();
-    const mobileBlock = getMainMobileBlock(css);
+    const mobileBlock = getGitManagerMobileBlock(css);
 
     expect(mobileBlock).toContain(".modal-overlay.git-manager-modal-overlay,");
     // FNXC:GitManager 2026-06-22-09:30: The mobile viewport-takeover (and its keyboard rule)
@@ -395,7 +409,7 @@ describe("core modals mobile css coverage", () => {
 
   it("GitManagerModal: changes rows/actions wrap without widening viewport on mobile", () => {
     const css = loadAllAppCss();
-    const mobileBlock = getMainMobileBlock(css);
+    const mobileBlock = getGitManagerMobileBlock(css);
 
     const actionsRule = mobileBlock.match(/\.gm-file-section-actions\s*\{[^}]+\}/s);
     expect(actionsRule).not.toBeNull();

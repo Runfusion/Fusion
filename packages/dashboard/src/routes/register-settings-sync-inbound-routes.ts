@@ -1,14 +1,21 @@
-import { isMovedSettingsKey } from "@fusion/core";
+import { isMovedSettingsKey, CONFIG_CHANGED_BY_API_VERIFIED_NODE_KEY } from "@fusion/core";
 import { createFusionAuthStorage } from "@fusion/engine";
 import { ApiError, badRequest } from "../api-error.js";
 import { invalidateAllGlobalSettingsCaches } from "../project-store-resolver.js";
 import { readStoredAuthProvidersFromDisk, toProviderAuthEntries } from "./register-settings-sync-helpers.js";
+import type { ConfigChangedBy } from "@fusion/core";
 import type { ApiRouteRegistrar } from "./types.js";
 
+/*
+FNXC:ConfigVersioning 2026-08-09-04:06:
+Settings sync preserves the actor derived before each write so retrying rejected
+keys cannot create mixed provenance. Inbound node-key validation supplies its
+verified actor only after its existing server-side comparison succeeds.
+*/
 type WorkflowSettingsSyncSection = Record<string, Record<string, unknown>>;
 type WorkflowSettingsSyncStore = {
   getWorkflowSettingsProjectId(): string;
-  updateWorkflowSettingValues(workflowId: string, projectId: string, patch: Record<string, unknown>): Promise<Record<string, unknown>>;
+  updateWorkflowSettingValues(workflowId: string, projectId: string, patch: Record<string, unknown>, changedBy?: ConfigChangedBy): Promise<Record<string, unknown>>;
 };
 
 function extractRejectedSettingIds(err: unknown): string[] {
@@ -27,6 +34,7 @@ function extractRejectedSettingIds(err: unknown): string[] {
 async function applyWorkflowSettingsSection(
   store: WorkflowSettingsSyncStore,
   section: WorkflowSettingsSyncSection,
+  changedBy: ConfigChangedBy,
 ): Promise<{ count: number; keys: string[] }> {
   const projectId = store.getWorkflowSettingsProjectId();
   let count = 0;
@@ -38,7 +46,7 @@ async function applyWorkflowSettingsSection(
 
     while (Object.keys(patch).length > 0) {
       try {
-        await store.updateWorkflowSettingValues(workflowId, projectId, patch);
+        await store.updateWorkflowSettingValues(workflowId, projectId, patch, changedBy);
         const appliedKeys = Object.entries(patch)
           .filter(([, value]) => value !== null)
           .map(([key]) => key);
@@ -144,7 +152,7 @@ export const registerSettingsSyncInboundRoutes: ApiRouteRegistrar = (ctx) => {
             .filter(([key, value]) => value !== undefined && localGlobal[key] === undefined && !isMovedSettingsKey(key)),
         );
         if (Object.keys(globalPatch).length > 0) {
-          await store.updateGlobalSettings(globalPatch);
+          await store.updateGlobalSettings(globalPatch, CONFIG_CHANGED_BY_API_VERIFIED_NODE_KEY);
           invalidateAllGlobalSettingsCaches();
         }
       }
@@ -152,7 +160,7 @@ export const registerSettingsSyncInboundRoutes: ApiRouteRegistrar = (ctx) => {
       let workflowSettingsCount = 0;
       let appliedWorkflowSettingKeys: string[] = [];
       if (result.success && payload.workflowSettings && typeof payload.workflowSettings === "object" && !Array.isArray(payload.workflowSettings)) {
-        const workflowApplyResult = await applyWorkflowSettingsSection(store, payload.workflowSettings as WorkflowSettingsSyncSection);
+        const workflowApplyResult = await applyWorkflowSettingsSection(store, payload.workflowSettings as WorkflowSettingsSyncSection, CONFIG_CHANGED_BY_API_VERIFIED_NODE_KEY);
         workflowSettingsCount = workflowApplyResult.count;
         appliedWorkflowSettingKeys = workflowApplyResult.keys;
       }
