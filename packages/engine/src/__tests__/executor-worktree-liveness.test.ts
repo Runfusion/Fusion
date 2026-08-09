@@ -166,7 +166,9 @@ describe("FN-4114 worktree liveness assertion", () => {
     const { executor } = createRoutingExecutor(store as any);
     await executor.execute(task({ worktree: "/repo", sessionFile: null }) as any);
 
-    expect(implementationSessionCalls(mockedCreateFnAgent.mock.calls)).not.toHaveLength(0);
+    expect(implementationSessionCalls(
+      mockedCreateFnAgent.mock.calls.map(([options]) => options as { customTools?: Array<{ name?: string }> }),
+    )).not.toHaveLength(0);
     expect(store.moveTask).not.toHaveBeenCalledWith("FN-4114", "todo", { preserveProgress: true });
     expect(store.recordRunAuditEvent).not.toHaveBeenCalledWith(expect.objectContaining({
       mutationType: "worktree:incomplete-detected",
@@ -225,7 +227,9 @@ describe("FN-4114 worktree liveness assertion", () => {
     const { executor: acceptExecutor } = createRoutingExecutor(acceptStore as any);
     await acceptExecutor.execute(task({ worktree: allowedWorktree }) as any);
 
-    expect(implementationSessionCalls(mockedCreateFnAgent.mock.calls)).not.toHaveLength(0);
+    expect(implementationSessionCalls(
+      mockedCreateFnAgent.mock.calls.map(([options]) => options as { customTools?: Array<{ name?: string }> }),
+    )).not.toHaveLength(0);
     expect(acceptStore.moveTask).not.toHaveBeenCalledWith("FN-4114", "todo", { preserveProgress: true });
   });
 
@@ -296,7 +300,9 @@ describe("FN-4114 worktree liveness assertion", () => {
 
     await executor.execute(task({ sessionFile: null }) as any);
 
-    expect(selectImplementationSessionCall(mockedCreateFnAgent.mock.calls)).toBeDefined();
+    expect(selectImplementationSessionCall(
+      mockedCreateFnAgent.mock.calls.map(([options]) => options as { customTools?: Array<{ name?: string }> }),
+    )).toBeDefined();
     expect(routing.agentStore.listAgents).toHaveBeenCalledWith({ includeEphemeral: true });
     expect(store.moveTask).toHaveBeenCalledWith(
       "FN-4114",

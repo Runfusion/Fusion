@@ -337,7 +337,9 @@ describe("workflow routing fixture", () => {
     } as any);
 
     expect(routing.agentStore.listAgents).toHaveBeenCalledWith({ includeEphemeral: true });
-    expect(selectImplementationSessionCall(mockedCreateFnAgent.mock.calls)).toBeDefined();
+    expect(selectImplementationSessionCall(
+      mockedCreateFnAgent.mock.calls.map(([options]) => options as { customTools?: Array<{ name?: string }> }),
+    )).toBeDefined();
     expect(store.moveTask).toHaveBeenCalledWith(
       "FN-routing",
       "in-review",
