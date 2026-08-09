@@ -365,11 +365,17 @@ describe("routes /api/tasks near duplicate", () => {
     );
 
     expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(inspection).toHaveBeenCalledWith("/tmp/external-runtime", {
+      requireClean: true,
+    });
     expect((res.body as Task).sourceMetadata).toMatchObject({
       externalExecutionCheckout: "/tmp/external-runtime",
       externalExecutionBranch: "local/runtime-fixes",
       externalReviewCheckout: "/tmp/external-runtime",
     });
+    expect((res.body as Task).sourceMetadata?.externalExecutionCheckout).toBe("/tmp/external-runtime");
+    expect((res.body as Task).sourceMetadata?.externalExecutionBranch).toBe("local/runtime-fixes");
+    expect((res.body as Task).sourceMetadata?.externalReviewCheckout).toBe("/tmp/external-runtime");
     expect(tasks[0]?.sourceMetadata).toMatchObject((res.body as Task).sourceMetadata ?? {});
 
     inspection.mockResolvedValueOnce({ valid: false, reason: "checkoutPath must be clean before routing" });

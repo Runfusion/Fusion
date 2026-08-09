@@ -13,7 +13,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { Task, TaskDetail, WorkflowIr } from "@fusion/core";
 import "./executor-test-helpers.js";
 import { TaskExecutor } from "../executor.js";
-import { createMockStore, resetExecutorMocks } from "./executor-test-helpers.js";
+import { createMockStore, mockedExec, resetExecutorMocks } from "./executor-test-helpers.js";
 import { UsageLimitPauser } from "../errors/usage-limit-detector.js";
 
 const WF = "custom:planning-only";
@@ -39,7 +39,7 @@ describe("dependency-abort cleanup requeues to a DECLARED column", () => {
     resetExecutorMocks();
     const store = createMockStore();
     const selection = { workflowId: WF, stepIds: [] };
-    store.getTask.mockResolvedValue({ id: "FN-DEP", column: "in-progress", branch: null } as TaskDetail);
+    store.getTask.mockResolvedValue({ id: "FN-DEP", column: "in-progress", branch: null } as unknown as TaskDetail);
     store.getTaskWorkflowSelection = vi.fn(() => selection);
     store.getTaskWorkflowSelectionAsync = vi.fn(async () => selection);
     store.getWorkflowDefinition = vi.fn(async () => ({ id: WF, ir: planningOnlyIr() }));
@@ -53,6 +53,30 @@ describe("dependency-abort cleanup requeues to a DECLARED column", () => {
     */
     expect(store.moveTask).toHaveBeenCalledWith("FN-DEP", "todo");
     expect(store.moveTask).not.toHaveBeenCalledWith("FN-DEP", "triage");
+  });
+
+  it("does not remove or delete an operator-owned external execution checkout", async () => {
+    resetExecutorMocks();
+    const store = createMockStore();
+    store.getTask.mockResolvedValue({
+      id: "FN-EXT",
+      column: "in-progress",
+      branch: "fusion/fn-ext",
+      sourceMetadata: {
+        externalExecutionCheckout: "/tmp/operator-owned-checkout",
+        externalExecutionBranch: "operator/runtime-fixes",
+      },
+    } as unknown as TaskDetail);
+    const executor = new TaskExecutor(store, "/tmp/test");
+    const removeManagedWorktree = vi.spyOn(executor as any, "removeOwnWorktreeWithReconcile");
+
+    await (executor as any).handleDepAbortCleanup("FN-EXT", "/tmp/operator-owned-checkout");
+
+    expect(removeManagedWorktree).not.toHaveBeenCalled();
+    expect(mockedExec).not.toHaveBeenCalledWith(
+      expect.stringContaining("git branch -D"),
+      expect.anything(),
+    );
   });
 });
 

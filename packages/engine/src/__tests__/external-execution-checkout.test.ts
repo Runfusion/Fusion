@@ -1,8 +1,7 @@
 /*
- * Persisted external checkout routing is an explicit operator contract. Execution
- * must use the same validated checkout as review, and stale path/branch metadata
- * must fail closed instead of silently falling back to the project task worktree.
- */
+FNXC:ExternalExecutionCheckout 2026-08-09-23:53:
+Persisted external checkout routing is an explicit operator contract. Execution must use the same validated checkout as review, and stale path or branch metadata must fail closed instead of silently falling back to the project task worktree.
+*/
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";

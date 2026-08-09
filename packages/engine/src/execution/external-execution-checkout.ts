@@ -83,6 +83,10 @@ export async function inspectExternalGitCheckout(
   }
 }
 
+/**
+ * FNXC:ExternalTaskCheckoutRouting 2026-08-09-22:43:
+ * Resolve only a persisted, absolute Git top-level whose checked-out branch still matches the branch captured when the operator configured the route. A missing or null route preserves normal Fusion-managed worktree behavior; malformed or drifted persisted routes fail closed.
+ */
 export async function resolveExternalExecutionCheckoutRoute(task: unknown): Promise<ExternalExecutionCheckoutResolution> {
   const sourceMetadata = readSourceMetadata(task);
   if (!sourceMetadata || !Object.prototype.hasOwnProperty.call(sourceMetadata, "externalExecutionCheckout")) {

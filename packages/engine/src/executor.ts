@@ -36,7 +36,10 @@ import { WorkflowAgentCapacity } from "./agents/workflow-agent-capacity.js";
 import { createExecutorColumnBoundaryHooks } from "./workflow-column-boundary-hooks.js";
 import { ensureWorkflowCompletionSummary } from "./workflows/workflow-completion-summary.js";
 import { createCodeNodeRunner } from "./execution/code-node-runner.js";
-import { resolveExternalExecutionCheckoutRoute } from "./execution/external-execution-checkout.js";
+import {
+  resolveExternalExecutionCheckoutRoute,
+  type ExternalExecutionCheckoutResolution,
+} from "./execution/external-execution-checkout.js";
 import { getTaskReviewCheckoutPath, resolveReviewCheckoutCwd } from "./execution/review-checkout.js";
 import { getActiveNotificationService } from "./util/notifier.js";
 import type { ParseStepsHandlerDeps, CodeNodeRunner } from "./workflows/workflow-node-handlers.js";
@@ -3841,6 +3844,8 @@ export class TaskExecutor {
     });
     /* FNXC:WorkflowLifecycle 2026-07-16-10:00: Executor replaces the baseline only for its own TaskStore, so archive awaits abort/sweep/removal before branch deletion without cross-store coupling. */
     this.unregisterArchiveWorktreeDisposer = registerArchiveWorktreeDisposer(store, async (task) => {
+      const externalExecutionRoute = await resolveExternalExecutionCheckoutRoute(task);
+      if (externalExecutionRoute.configured) return;
       if (!task.worktree || await canonicalizeWorktreePath(task.worktree) === await canonicalizeWorktreePath(this.rootDir)) return;
       await this.awaitAbortInFlightTaskWork(task.id, "task archived");
       for (const path of activeSessionRegistry.pathsForTask(task.id)) activeSessionRegistry.unregisterPath(path);
@@ -4842,6 +4847,7 @@ export class TaskExecutor {
     taskId: string,
     worktreePath: string,
     preserveResumeState: boolean = true,
+    persistWorktreePath: boolean = true,
   ): Promise<"bounced" | "skipped-pending" | "deferred-paused"> {
     const pauseLabel = await this.getExecutionPauseLabel();
     if (pauseLabel) {
@@ -4915,7 +4921,7 @@ export class TaskExecutor {
         // preserveResumeState is false. Keep the writes so callers and
         // tests can observe the restoration deterministically.
         await this.store.updateTask(taskId, {
-          worktree: worktreePath,
+          ...(persistWorktreePath ? { worktree: worktreePath } : {}),
           executionStartedAt: originalExecutionStartedAt ?? null,
         });
         const pauseLabelAfterTodo = await this.getExecutionPauseLabel();
@@ -4931,7 +4937,7 @@ export class TaskExecutor {
       }
 
       if (latestTask.column === await resolveReboundColumnFor(this.store, taskId)) {
-        await this.store.updateTask(taskId, { worktree: worktreePath });
+        if (persistWorktreePath) await this.store.updateTask(taskId, { worktree: worktreePath });
         const pauseLabelBeforeResume = await this.getExecutionPauseLabel();
         if (pauseLabelBeforeResume) {
           executorLog.log(`${taskId}: workflow rerun parked in todo — ${pauseLabelBeforeResume} became active before resume`);
@@ -4955,12 +4961,18 @@ export class TaskExecutor {
     worktreePath: string,
     successMessage: string,
     preserveResumeState: boolean = true,
+    persistWorktreePath: boolean = true,
   ): void {
     this.clearWorkflowRerunWatchdog(taskId);
 
     setTimeout(async () => {
       try {
-        const outcome = await this.performWorkflowRerunBounce(taskId, worktreePath, preserveResumeState);
+        const outcome = await this.performWorkflowRerunBounce(
+          taskId,
+          worktreePath,
+          preserveResumeState,
+          persistWorktreePath,
+        );
         if (outcome === "bounced") {
           executorLog.log(successMessage);
         } else if (outcome === "skipped-pending") {
@@ -5012,7 +5024,12 @@ export class TaskExecutor {
       ).catch(() => undefined);
 
       try {
-        const outcome = await this.performWorkflowRerunBounce(taskId, worktreePath, preserveResumeState);
+        const outcome = await this.performWorkflowRerunBounce(
+          taskId,
+          worktreePath,
+          preserveResumeState,
+          persistWorktreePath,
+        );
         if (outcome === "bounced") {
           executorLog.warn(`${taskId}: workflow rerun watchdog retry succeeded`);
         } else if (outcome === "skipped-pending") {
@@ -5574,9 +5591,19 @@ export class TaskExecutor {
         return false;
       }
 
-      // Capture modified files if the worktree still exists
-      if (task.worktree && existsSync(task.worktree)) {
-        const modifiedFiles = await this.captureModifiedFiles(task.worktree, task.baseCommitSha, task.id, undefined, "recovery");
+      const { task: authoritativeRecoveryTask, route: externalExecutionRoute } =
+        await this.resolveAuthoritativeExternalExecutionRoute(task);
+      if (externalExecutionRoute.configured && !externalExecutionRoute.valid) {
+        executorLog.warn(`${task.id}: completed-task recovery refused invalid external execution checkout: ${externalExecutionRoute.reason ?? "unknown error"}`);
+        return false;
+      }
+      const recoveryWorktreePath = externalExecutionRoute.configured
+        ? externalExecutionRoute.checkoutPath
+        : authoritativeRecoveryTask.worktree;
+
+      // Capture modified files if the authoritative execution checkout still exists.
+      if (recoveryWorktreePath && existsSync(recoveryWorktreePath)) {
+        const modifiedFiles = await this.captureModifiedFiles(recoveryWorktreePath, authoritativeRecoveryTask.baseCommitSha, task.id, undefined, "recovery");
         if (modifiedFiles.length > 0) {
           await this.store.updateTask(task.id, { modifiedFiles });
           executorLog.log(`${task.id}: recovered ${modifiedFiles.length} modified files`);
@@ -10542,6 +10569,8 @@ export class TaskExecutor {
     try {
       const live = await this.store.getTask(taskId);
       if (!live?.worktree) return false;
+      const externalExecutionRoute = await resolveExternalExecutionCheckoutRoute(live);
+      if (externalExecutionRoute.configured) return false;
       if (live.firstExecutionAt || live.executionStartedAt) return false;
       if (activeSessionRegistry.isPathActive(live.worktree) || activeSessionRegistry.isPathActive(resolvePath(live.worktree))) return false;
       if (this.hasLiveTaskSessionSurface(taskId) || executingTaskLock.has(taskId)) return false;
@@ -14134,11 +14163,19 @@ export class TaskExecutor {
     // reviewHandoffPolicy, …) pick up workflow values with zero read-site changes.
     // Behavior-inert when nothing is customized (declaration defaults === legacy
     // defaults; absent-default lanes never override).
-    const settings = await mergeEffectiveSettings(this.store, task, await this.store.getSettings());
-    const externalExecutionRoute = await resolveExternalExecutionCheckoutRoute(task);
+    /*
+    FNXC:ExternalExecutionCheckout 2026-08-09-23:53:
+    Execution must re-read persisted routing state and fail closed before worktree acquisition when an operator-owned checkout has drifted or become invalid.
+    */
+    const { task: authoritativeExecutionTask, route: externalExecutionRoute } =
+      await this.resolveAuthoritativeExternalExecutionRoute(task);
+    const settings = await mergeEffectiveSettings(this.store, authoritativeExecutionTask, await this.store.getSettings());
     if (externalExecutionRoute.configured && !externalExecutionRoute.valid) {
       const message = `Persisted external execution checkout is invalid: ${externalExecutionRoute.reason ?? "unknown error"}`;
       await this.store.logEntry(task.id, message, undefined, this.getRunContextFor(task.id));
+      this.executing.delete(task.id);
+      executingTaskLock.release(task.id);
+      if (dropPreHeldExecutorSlot(task.id)) this.options.semaphore?.release();
       throw new Error(message);
     }
 
@@ -15252,7 +15289,7 @@ export class TaskExecutor {
                 executorLog.warn(`⚡ ${task.id} transient error — retry ${attempt}/${MAX_RECOVERY_RETRIES} in ${delay}: ${errorMessage}`);
                 await this.store.logEntry(task.id, `Transient error (retry ${attempt}/${MAX_RECOVERY_RETRIES} in ${delay}): ${errorMessage}`, undefined, this.getRunContextFor(task.id));
               }
-              if (worktreePath && existsSync(worktreePath)) {
+              if (!externalExecutionRoute.configured && worktreePath && existsSync(worktreePath)) {
                 try {
                   const settings = await this.store.getSettings();
                   await removeWorktree({
@@ -15352,9 +15389,11 @@ export class TaskExecutor {
                 FNXC:StuckRequeue 2026-06-27-23:15:
                 Stuck requeue may destroy a checkout that contains only uncommitted step output. Always reconcile lost-work step state before worktree removal, even when preserve-progress is enabled, so a retry cannot skip code that no longer exists.
                 */
-                await this.resetStepsIfWorkLost(latestTask);
+                if (!externalExecutionRoute.configured) {
+                  await this.resetStepsIfWorkLost(latestTask);
+                }
 
-                if (worktreePath && existsSync(worktreePath)) {
+                if (!externalExecutionRoute.configured && worktreePath && existsSync(worktreePath)) {
                   try {
                     await removeWorktree({
                       worktreePath,
@@ -16788,7 +16827,7 @@ export class TaskExecutor {
           return;
         } else {
           executorLog.log(`${task.id} paused — moving to todo`);
-          if (worktreePath && existsSync(worktreePath)) {
+          if (!externalExecutionRoute.configured && worktreePath && existsSync(worktreePath)) {
             try {
               const settings = await this.store.getSettings();
               await removeWorktree({
@@ -17311,8 +17350,8 @@ export class TaskExecutor {
               executorLog.warn(`⚡ ${task.id} transient error — retry ${attempt}/${MAX_RECOVERY_RETRIES} in ${delay}: ${errorMessage}`);
               await this.store.logEntry(task.id, `Transient error (retry ${attempt}/${MAX_RECOVERY_RETRIES} in ${delay}): ${errorMessage}`, undefined, this.getRunContextFor(task.id));
             }
-            // Clean up the old worktree so the retry gets a fresh one
-            if (worktreePath && existsSync(worktreePath)) {
+            // Clean up only Fusion-managed worktrees so retries never remove an operator-owned external checkout.
+            if (!externalExecutionRoute.configured && worktreePath && existsSync(worktreePath)) {
               try {
                 const settings = await this.store.getSettings();
                 await removeWorktree({
@@ -17504,10 +17543,12 @@ export class TaskExecutor {
             FNXC:StuckRequeue 2026-06-27-23:15:
             Preserve-progress stuck requeues still remove the old checkout. Reconcile steps first so uncommitted-only output is reset to pending while committed progress can remain complete.
             */
-            await this.resetStepsIfWorkLost(latestTask);
+            if (!externalExecutionRoute.configured) {
+              await this.resetStepsIfWorkLost(latestTask);
+            }
 
-            // Clean up the old worktree so the retry gets a fresh one
-            if (worktreePath && existsSync(worktreePath)) {
+            // Clean up only Fusion-managed worktrees so retries never remove an operator-owned external checkout.
+            if (!externalExecutionRoute.configured && worktreePath && existsSync(worktreePath)) {
               try {
                 await removeWorktree({
                   worktreePath,
@@ -18224,7 +18265,12 @@ export class TaskExecutor {
       }
       return { ok: true };
     }
-    const externalExecutionRoute = await resolveExternalExecutionCheckoutRoute(task);
+    /*
+    FNXC:ExternalExecutionCheckout 2026-08-09-23:53:
+    Completion verification must use the live external route and reject invalid persisted metadata rather than falling back to a stale Fusion-managed worktree snapshot.
+    */
+    const { task: authoritativeVerificationTask, route: externalExecutionRoute } =
+      await this.resolveAuthoritativeExternalExecutionRoute(task);
     if (externalExecutionRoute.configured && !externalExecutionRoute.valid) {
       return {
         ok: false,
@@ -18235,13 +18281,14 @@ export class TaskExecutor {
     }
     const branchName = externalExecutionRoute.configured
       ? externalExecutionRoute.branch ?? ""
-      : resolveTaskWorkingBranch(task);
+      : resolveTaskWorkingBranch(authoritativeVerificationTask);
     // Non-workspace tasks hold a one-element set; fall back to its sole member to preserve the original singular resolution.
-    const worktreePath = worktreePathOverride
-      ?? (externalExecutionRoute.configured ? externalExecutionRoute.checkoutPath : undefined)
-      ?? task.worktree
-      ?? this.getActiveWorktreePaths(task.id)[0]
-      ?? null;
+    const worktreePath = externalExecutionRoute.configured
+      ? externalExecutionRoute.checkoutPath ?? null
+      : worktreePathOverride
+        ?? authoritativeVerificationTask.worktree
+        ?? this.getActiveWorktreePaths(task.id)[0]
+        ?? null;
 
     if (!worktreePath) {
       return {
@@ -18289,6 +18336,10 @@ export class TaskExecutor {
       if (observedTopLevelRaw) {
         const observedTopLevel = canonicalizePath(observedTopLevelRaw);
 
+        /*
+        FNXC:ExternalExecutionCheckout 2026-08-09-23:53:
+        An operator-routed checkout must match its validated Git top-level exactly. Nested-worktree re-anchoring is reserved for Fusion-managed worktrees and must not widen this ownership boundary.
+        */
         const violatesCheckoutBoundary = externalExecutionRoute.configured
           ? observedTopLevel !== expectedWorktreeRealpath
           : observedTopLevel === expectedRoot
@@ -19151,30 +19202,39 @@ export class TaskExecutor {
   private async handleDepAbortCleanup(taskId: string, worktreePath: string): Promise<void> {
     executorLog.log(`${taskId} dependency added — work discarded, moved to triage for re-planning`);
 
-    // Remove worktree
-    try {
-      const settings = await this.store.getSettings();
-      await this.removeOwnWorktreeWithReconcile({
-        worktreePath,
-        settings,
-        taskId,
-        reason: RemovalReason.ExecutorDispose,
-      });
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      executorLog.warn(`${taskId}: failed to remove worktree during dep-abort cleanup (${worktreePath}): ${msg}`);
+    const task = await this.store.getTask(taskId);
+    const externalExecutionRoute = await resolveExternalExecutionCheckoutRoute(task);
+
+    /*
+    FNXC:ExternalExecutionCheckout 2026-08-09-22:43:
+    Persisted external execution routes are operator-owned checkouts. Executor cleanup may clear Fusion's managed task pointers, but it must never remove the routed directory or delete its branch during dependency abort, retry, pause, stuck-kill, or remediation recovery.
+    */
+    if (!externalExecutionRoute.configured) {
+      try {
+        const settings = await this.store.getSettings();
+        await this.removeOwnWorktreeWithReconcile({
+          worktreePath,
+          settings,
+          taskId,
+          reason: RemovalReason.ExecutorDispose,
+        });
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        executorLog.warn(`${taskId}: failed to remove worktree during dep-abort cleanup (${worktreePath}): ${msg}`);
+      }
     }
 
-    // Delete the branch — use stored branch name if available, fall back to convention
-    const task = await this.store.getTask(taskId);
+    // Delete only a Fusion-managed branch. External routes remain operator-owned.
     const branch = resolveTaskWorkingBranch(task);
     let branchDeleted = false;
-    try {
-      await execAsync(`git branch -D "${branch}"`, { cwd: this.rootDir });
-      branchDeleted = true;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      executorLog.warn(`${taskId}: failed to delete branch during dep-abort cleanup (${branch}): ${msg}`);
+    if (!externalExecutionRoute.configured) {
+      try {
+        await execAsync(`git branch -D "${branch}"`, { cwd: this.rootDir });
+        branchDeleted = true;
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        executorLog.warn(`${taskId}: failed to delete branch during dep-abort cleanup (${branch}): ${msg}`);
+      }
     }
     if (branchDeleted) {
       // FN-2165 regression guard: null baseBranch on any task that stored this branch
@@ -19552,6 +19612,14 @@ ${failureContext.output.slice(0, VERIFICATION_LOG_MAX_CHARS)}
   ): Promise<void> {
     const taskId = task.id;
     this.clearCompletedTaskWatchdog(taskId);
+    const { task: authoritativeRemediationTask, route: externalExecutionRoute } =
+      await this.resolveAuthoritativeExternalExecutionRoute(task);
+    if (externalExecutionRoute.configured && !externalExecutionRoute.valid) {
+      throw new Error(`Persisted external execution checkout is invalid: ${externalExecutionRoute.reason ?? "unknown error"}`);
+    }
+    const remediationWorktreePath = externalExecutionRoute.configured
+      ? externalExecutionRoute.checkoutPath ?? ""
+      : worktreePath;
 
     // 1. Add a task comment explaining the failure
     await this.store.addTaskComment(
@@ -19577,7 +19645,7 @@ ${failureContext.output.slice(0, VERIFICATION_LOG_MAX_CHARS)}
      * this display, remains the safety boundary for unchanged remediation loops.
      */
     await this.injectWorkflowStepFailureInstructions(
-      task,
+      authoritativeRemediationTask,
       failureFeedback,
       stepName,
       retryPresentation ?? { attempt: MAX_WORKFLOW_STEP_RETRIES, max: MAX_WORKFLOW_STEP_RETRIES },
@@ -19606,9 +19674,10 @@ ${failureContext.output.slice(0, VERIFICATION_LOG_MAX_CHARS)}
     // 6. Schedule the move after the guard unwinds (per guard-unwind requirement)
     this.scheduleWorkflowRerun(
       taskId,
-      worktreePath,
+      remediationWorktreePath,
       `${taskId}: sent back to in-progress for remediation`,
       preserveResumeState,
+      !externalExecutionRoute.configured,
     );
   }
 
@@ -23267,7 +23336,10 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
           const settings = await this.store.getSettings();
           const preserveProgress = settings.preserveProgressOnStuckRequeue !== false;
           const latestTask = await this.store.getTask(taskId);
-          const worktreePath = this.getWorktreePath(taskId) ?? latestTask.worktree;
+          const externalExecutionRoute = await resolveExternalExecutionCheckoutRoute(latestTask);
+          const worktreePath = externalExecutionRoute.configured
+            ? undefined
+            : this.getWorktreePath(taskId) ?? latestTask.worktree;
           /*
           FNXC:Workspace 2026-06-21-22:30:
           F8 — observability for the workspace case. A workspace task has no singular
@@ -23304,7 +23376,9 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
           FNXC:StuckRequeue 2026-06-27-23:15:
           The force path mirrors normal stuck-requeue cleanup: before reaping a hung executor's worktree, reconcile step progress against committed branch state so preserved progress never points at deleted uncommitted work.
           */
-          await this.resetStepsIfWorkLost(latestTask);
+          if (!externalExecutionRoute.configured) {
+            await this.resetStepsIfWorkLost(latestTask);
+          }
 
           let cleanupFailed = false;
           if (worktreePath && existsSync(worktreePath)) {
@@ -23466,6 +23540,21 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
     }
 
     return true;
+  }
+
+  /**
+   * FNXC:ExternalExecutionCheckout 2026-08-09-22:43:
+   * External checkout routing is durable task state. Long-lived executor callbacks must re-read the matching task row before choosing a checkout so a stale graph snapshot cannot route execution, verification, remediation, or cleanup back to a Fusion-managed worktree.
+   */
+  private async resolveAuthoritativeExternalExecutionRoute(
+    task: Task,
+  ): Promise<{ task: Task; route: ExternalExecutionCheckoutResolution }> {
+    const live = await this.store.getTask(task.id).catch(() => null);
+    const authoritativeTask = live?.id === task.id ? live : task;
+    return {
+      task: authoritativeTask,
+      route: await resolveExternalExecutionCheckoutRoute(authoritativeTask),
+    };
   }
 
   /**

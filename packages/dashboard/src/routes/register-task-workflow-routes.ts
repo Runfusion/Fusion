@@ -6412,9 +6412,10 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
     }
   });
 
-  // Persist one operator-validated external checkout for both implementation
-  // and enforced review. Keep filesystem routing out of the user-defined
-  // workflow custom-field schema.
+  /**
+   * FNXC:ExternalTaskCheckoutRouting 2026-08-09-22:43:
+   * Persist one operator-validated external checkout for both implementation and enforced review. The execution/review route belongs in task source metadata, not the user-defined workflow custom-field schema, and clearing the route must null every persisted routing key.
+   */
   router.patch("/tasks/:id/external-checkout", async (req, res) => {
     try {
       const { store: scopedStore } = await getProjectContext(req);
