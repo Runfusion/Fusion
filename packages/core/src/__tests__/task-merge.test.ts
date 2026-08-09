@@ -103,37 +103,31 @@ describe("hasSharedBranchMemberAutoMergeHold", () => {
 describe("hasPreMergeRemediationAutoMergeHold", () => {
   const taskValues = [undefined, true, false] as const;
   const provenances = [undefined, "user", "mission", "legacy-stamp"] as const;
+  const branchContexts = [
+    undefined,
+    { assignmentMode: "shared" as const, groupId: "BG-1" },
+    { assignmentMode: "shared" as const, groupId: "" },
+    { assignmentMode: "shared" as const, groupId: "   " },
+    { assignmentMode: "per-task-derived" as const },
+  ];
 
-  it.each([false, true] as const)("uses the user hold for standalone tasks when project autoMerge is %s", (projectAutoMerge) => {
+  it.each([false, true] as const)("uses only the user task hold across branch contexts when project autoMerge is %s", (projectAutoMerge) => {
     for (const autoMerge of taskValues) {
       for (const autoMergeProvenance of provenances) {
-        expect(hasPreMergeRemediationAutoMergeHold(
-          { autoMerge, autoMergeProvenance },
-          { autoMerge: projectAutoMerge },
-        )).toBe(autoMerge === false && autoMergeProvenance === "user");
+        for (const branchContext of branchContexts) {
+          expect(hasPreMergeRemediationAutoMergeHold(
+            { autoMerge, autoMergeProvenance, branchContext },
+            { autoMerge: projectAutoMerge },
+          )).toBe(autoMerge === false && autoMergeProvenance === "user");
+        }
       }
     }
   });
 
-  it.each([false, true] as const)("matches the shared-member hold when project autoMerge is %s", (projectAutoMerge) => {
-    for (const autoMerge of taskValues) {
-      for (const autoMergeProvenance of provenances) {
-        const task = {
-          autoMerge,
-          autoMergeProvenance,
-          branchContext: { assignmentMode: "shared" as const, groupId: "BG-1" },
-        };
-        expect(hasPreMergeRemediationAutoMergeHold(task, { autoMerge: projectAutoMerge }))
-          .toBe(hasSharedBranchMemberAutoMergeHold(task, { autoMerge: projectAutoMerge }));
-      }
-    }
-  });
-
-  it.each(["", "   "])("treats a blank shared group id as standalone (%j)", (groupId) => {
-    expect(hasPreMergeRemediationAutoMergeHold({
-      autoMerge: undefined,
-      branchContext: { assignmentMode: "shared", groupId },
-    }, { autoMerge: false })).toBe(false);
+  it("diverges from merge admission for a project-Off shared member", () => {
+    const task = { autoMerge: undefined, branchContext: { assignmentMode: "shared" as const, groupId: "BG-1" } };
+    expect(hasPreMergeRemediationAutoMergeHold(task, { autoMerge: false })).toBe(false);
+    expect(hasSharedBranchMemberAutoMergeHold(task, { autoMerge: false })).toBe(true);
   });
 });
 

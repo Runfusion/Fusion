@@ -1,4 +1,4 @@
-import { createLogger } from "@fusion/core";
+import { createLogger, recordGitHubCheckStateAsync } from "@fusion/core";
 
 const severityAuditLog = createLogger("dashboard-register-signal-routes");
 import type { Request, Response } from "express";
@@ -224,6 +224,10 @@ export async function ingestSignal(deps: SignalIngestDeps): Promise<SignalIngest
     try {
       const at = signalTimestampToIso(signal.timestamp) ?? new Date().toISOString();
       const layer = requireAsyncLayer(store, "Signal incident storage");
+      if (signal.ciCheck && layer.projectId?.trim()) {
+        /* FNXC:PrMergeEventDrivenChecks 2026-08-09-14:35: webhook writes are best-effort; scheduled self-healing, not delivery traffic, owns expiry. */
+        await recordGitHubCheckStateAsync(layer, { ...signal.ciCheck, reportedAt: signal.ciCheck.reportedAt ?? at, detailsUrl: signal.ciCheck.detailsUrl ?? signal.link, externalId: signal.externalId }, layer.projectId);
+      }
       const resolved = await resolveIncident(layer, signal.groupingKey, at);
       return { status: 200, recoveryResolved: resolved !== null };
     } catch (err) {
@@ -267,6 +271,10 @@ export async function ingestSignal(deps: SignalIngestDeps): Promise<SignalIngest
     });
     if (signal.resolution === "resolved") {
       await resolveIncident(layer, signal.groupingKey, at);
+    }
+    if (signal.ciCheck && layer.projectId?.trim()) {
+      /* FNXC:PrMergeEventDrivenChecks 2026-08-09-14:35: retain via engine maintenance so quiet repositories expire too; never prune on ingestion. */
+      await recordGitHubCheckStateAsync(layer, { ...signal.ciCheck, reportedAt: signal.ciCheck.reportedAt ?? at, detailsUrl: signal.ciCheck.detailsUrl ?? signal.link, externalId: signal.externalId }, layer.projectId);
     }
   } catch (err) {
     severityAuditLog.error("[signal-incident-bridge] Failed to record connector signal", err);

@@ -11,6 +11,7 @@ const execFileCalls = vi.hoisted(
   () => [] as Array<{ file: string; args: string[]; cwd: string | undefined }>,
 );
 const refreshFixture = vi.hoisted(() => ({ next: 0, branch: "fusion/fn-9601" }));
+const createIngestedCheckResolverMock = vi.hoisted(() => vi.fn());
 vi.mock("node:fs/promises", async () => {
   const actual = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
   return {
@@ -72,10 +73,11 @@ vi.mock("@fusion/core", async () => {
       release: vi.fn(async () => undefined),
       quarantine: vi.fn(async () => undefined),
     })),
+    createIngestedCheckResolver: createIngestedCheckResolverMock,
   };
 });
 
-import { acquireWorktreePathReservation, getCurrentRepo, getPushRepo } from "@fusion/core";
+import { acquireWorktreePathReservation, createIngestedCheckResolver, getCurrentRepo, getPushRepo } from "@fusion/core";
 import { activeSessionRegistry } from "@fusion/engine";
 import {
   cleanupMergedTaskArtifacts,
@@ -198,6 +200,7 @@ describe("processPullRequestMergeTask", () => {
     vi.mocked(getCurrentRepo).mockReturnValue({ owner: "owner", repo: "repo" });
     // Same-repo default: push owner matches fetch owner so heads stay unqualified.
     vi.mocked(getPushRepo).mockReturnValue({ owner: "owner", repo: "repo" });
+    vi.mocked(createIngestedCheckResolver).mockReset().mockReturnValue(undefined);
   });
 
   describe("central-install repo threading (gh-4)", () => {
@@ -1687,6 +1690,51 @@ describe("processPullRequestMergeTask", () => {
       expect(result).toBe("merged");
       expect(github.mergePr).toHaveBeenCalled();
     });
+  it("uses a scoped ingested resolver so green proceeds and failure remains awaiting checks", async () => {
+    const task: MockTask = {
+      id: "FN-9103-event", title: "event checks", description: "desc", column: "in-review",
+      prInfo: { number: 101, url: "https://github.com/owner/repo/pull/101", status: "open", headBranch: "fusion/fn-9103-event", baseBranch: "main" },
+    };
+    const store = makeStore(task, { requiredChecks: ["build"] });
+    const layer = { projectId: "project-a" };
+    (store as Record<string, unknown>).getAsyncLayer = vi.fn(() => layer);
+    const ingestedResolver = vi.fn().mockResolvedValue([
+      { repo: "owner/repo", headSha: "abc123", checkName: "build", state: "success", reportedAt: "2026-08-09T00:00:00.000Z" },
+    ]);
+    vi.mocked(createIngestedCheckResolver).mockReturnValue(ingestedResolver);
+    const github = {
+      findPrForBranch: vi.fn(), createPr: vi.fn(),
+      getPrMergeStatus: vi.fn(async (_owner, _repo, _number, options) => {
+        const checks = await options.resolveIngestedChecks({ owner: "owner", repo: "repo", headSha: "abc123" });
+        return {
+          prInfo: { ...task.prInfo!, mergeable: "clean" as const }, reviewDecision: null, checks: [],
+          mergeReady: checks[0]?.state === "success", blockingReasons: checks[0]?.state === "success" ? [] : ["required checks not successful: build (failure)"],
+        };
+      }),
+      mergePr: vi.fn(async () => ({ ...task.prInfo!, status: "merged" as const })),
+    };
+
+    expect(await processPullRequestMergeTask(store as never, "/repo", task.id, github as never, () => undefined)).toBe("merged");
+    expect(createIngestedCheckResolver).toHaveBeenCalledWith(layer);
+    expect(github.mergePr).toHaveBeenCalled();
+
+    ingestedResolver.mockResolvedValueOnce([{ repo: "owner/repo", headSha: "abc123", checkName: "build", state: "failure", reportedAt: "2026-08-09T00:00:00.000Z" }]);
+    const failedStore = makeStore(task, { requiredChecks: ["build"] });
+    (failedStore as Record<string, unknown>).getAsyncLayer = vi.fn(() => layer);
+    expect(await processPullRequestMergeTask(failedStore as never, "/repo", task.id, github as never, () => undefined)).toBe("waiting");
+    expect((failedStore as { _updates: Array<{ patch: Record<string, unknown> }> })._updates.at(-1)?.patch).toEqual({ status: "awaiting-pr-checks" });
+  });
+
+  it("omits the resolver for a layerless or unscoped store", async () => {
+    const task: MockTask = { id: "FN-9103-no-layer", title: "checks", description: "desc", column: "in-review", prInfo: { number: 102, url: "https://github.com/owner/repo/pull/102", status: "open" } };
+    const store = makeStore(task, { requiredChecks: ["build"] });
+    (store as Record<string, unknown>).getAsyncLayer = vi.fn(() => undefined);
+    const github = { findPrForBranch: vi.fn(), createPr: vi.fn(), getPrMergeStatus: vi.fn(async () => ({ prInfo: { ...task.prInfo!, mergeable: "clean" as const }, reviewDecision: null, checks: [], mergeReady: false, blockingReasons: ["required check not reported: build"] })), mergePr: vi.fn() };
+
+    await processPullRequestMergeTask(store as never, "/repo", task.id, github as never, () => undefined);
+    expect(github.getPrMergeStatus).toHaveBeenCalledWith("owner", "repo", 102, { requiredCheckNames: ["build"] });
+  });
+
   it("waits for a configured Fusion check, forwards normalized names, and does not merge", async () => {
     const task: MockTask = {
       id: "FN-9103", title: "test", description: "desc", column: "in-review",

@@ -6,6 +6,7 @@ export * from "./configuration-revision-store.js";
 export * from "./effective-settings-overlay.js";
 export * from "./experimental-features.js";
 export * from "./global-settings.js";
+export * from "./ingested-checks.js";
 export * from "./mcp-config.js";
 export * from "./mcp-discovery.js";
 export * from "./moved-settings.js";

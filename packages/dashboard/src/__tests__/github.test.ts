@@ -1903,7 +1903,7 @@ describe("GitHubClient", () => {
     const ghPr = {
       number: 42, url: "https://github.com/owner/repo/pull/42", title: "Ready PR", state: "OPEN",
       reviewDecision: null, mergeable: "MERGEABLE", mergeStateStatus: "CLEAN",
-      baseRefName: "main", headRefName: "fusion/fn-8855",
+      baseRefName: "main", headRefName: "fusion/fn-8855", headRefOid: "abc123",
     };
     const apiPayload = (nodes: unknown[], hasNextPage = false) => ({
       data: { repository: { pullRequest: {
@@ -1963,6 +1963,61 @@ describe("GitHubClient", () => {
       expect(fetchMock).toHaveBeenCalledTimes(2);
     });
 
+    it("uses a scoped ingested green check when gh polling omits a configured check", async () => {
+      const resolver = vi.fn().mockResolvedValue([{ repo: "owner/repo", headSha: "abc123", checkName: "build", state: "success", reportedAt: "2026-08-09T00:00:00.000Z" }]);
+      mockRunGhJsonAsync
+        .mockResolvedValueOnce(ghPr)
+        .mockResolvedValueOnce({ headRefOid: "abc123" })
+        .mockResolvedValueOnce([]);
+      const result = await new GitHubClient({ forceMode: "gh-cli" }).getPrMergeStatus("owner", "repo", 42, {
+        requiredCheckNames: ["build"], resolveIngestedChecks: resolver,
+      });
+
+      expect(result.mergeReady).toBe(true);
+      expect(result.blockingReasons).not.toContain("required check not reported: build");
+      expect(resolver).toHaveBeenCalledWith({ owner: "owner", repo: "repo", headSha: "abc123" });
+    });
+
+    it("fails closed when ingested state disagrees with a successful polled check", async () => {
+      const resolver = vi.fn().mockResolvedValue([{ repo: "owner/repo", headSha: "abc123", checkName: "build", state: "failure", reportedAt: "2026-08-09T00:00:00.000Z" }]);
+      mockRunGhJsonAsync
+        .mockResolvedValueOnce(ghPr)
+        .mockResolvedValueOnce({ headRefOid: "abc123" })
+        .mockResolvedValueOnce([{ name: "build", state: "SUCCESS", bucket: "pass" }]);
+      const result = await new GitHubClient({ forceMode: "gh-cli" }).getPrMergeStatus("owner", "repo", 42, {
+        requiredCheckNames: ["build"], resolveIngestedChecks: resolver,
+      });
+
+      expect(result.mergeReady).toBe(false);
+      expect(result.blockingReasons).toEqual(["required checks not successful: build (failure)"]);
+    });
+
+    it("does not invoke the resolver without a PR head OID", async () => {
+      const resolver = vi.fn();
+      mockRunGhJsonAsync
+        .mockResolvedValueOnce({ ...ghPr, headRefOid: undefined })
+        .mockResolvedValueOnce({ headRefOid: undefined })
+        .mockResolvedValueOnce([]);
+      const result = await new GitHubClient({ forceMode: "gh-cli" }).getPrMergeStatus("owner", "repo", 42, {
+        requiredCheckNames: ["build"], resolveIngestedChecks: resolver,
+      });
+
+      expect(resolver).not.toHaveBeenCalled();
+      expect(result.blockingReasons).toContain("required check not reported: build");
+    });
+
+    it("uses the same event-driven state through the GraphQL transport", async () => {
+      const resolver = vi.fn().mockResolvedValue([{ repo: "owner/repo", headSha: "abc123", checkName: "build", state: "success", reportedAt: "2026-08-09T00:00:00.000Z" }]);
+      vi.spyOn(global, "fetch" as any).mockResolvedValueOnce({ ok: true, json: async () => apiPayload([]) } as any);
+      const result = await new GitHubClient({ token: "ghp_token", forceMode: "token" }).getPrMergeStatus("owner", "repo", 42, {
+        requiredCheckNames: ["build"], resolveIngestedChecks: resolver,
+      });
+
+      expect(result.mergeReady).toBe(true);
+      expect(resolver).toHaveBeenCalledWith({ owner: "owner", repo: "repo", headSha: "abc123" });
+      vi.restoreAllMocks();
+    });
+
     it("fails closed for a truncated token check list and preserves names through gh fallback", async () => {
       const fetchMock = vi.spyOn(global, "fetch" as any).mockResolvedValue({
         ok: true,
@@ -1989,7 +2044,7 @@ describe("GitHubClient", () => {
 
   describe("getAllPrChecks", () => {
     it("returns required and non-required checks in gh mode and computes rollup from required checks", async () => {
-      mockRunGhJsonAsync.mockResolvedValueOnce([
+      mockRunGhJsonAsync.mockResolvedValueOnce({ headRefOid: "abc123" }).mockResolvedValueOnce([
         { name: "required-ci", state: "SUCCESS", link: "https://example.com/ci", bucket: "pass" },
         { name: "optional-preview", state: "FAILURE", link: "https://example.com/preview", bucket: "none" },
       ]);
@@ -2001,6 +2056,65 @@ describe("GitHubClient", () => {
         { name: "required-ci", required: true, state: "success", detailsUrl: "https://example.com/ci", startedAt: undefined, completedAt: undefined },
         { name: "optional-preview", required: false, state: "failure", detailsUrl: "https://example.com/preview", startedAt: undefined, completedAt: undefined },
       ]);
+    });
+
+    it("merges an ingested required green into the gh checks view", async () => {
+      const resolver = vi.fn().mockResolvedValue([
+        { repo: "owner/repo", headSha: "abc123", checkName: "build", state: "success", reportedAt: "2026-08-09T00:00:00.000Z" },
+      ]);
+      mockRunGhJsonAsync.mockResolvedValueOnce({ headRefOid: "abc123" }).mockResolvedValueOnce([]);
+
+      const result = await client.getAllPrChecks("owner", "repo", 42, {
+        requiredCheckNames: ["build"], resolveIngestedChecks: resolver,
+      });
+
+      expect(resolver).toHaveBeenCalledWith({ owner: "owner", repo: "repo", headSha: "abc123" });
+      expect(result.checks).toEqual([expect.objectContaining({ name: "build", required: true, state: "success" })]);
+      expect(result.rollupRequired).toBe("success");
+    });
+
+    it("uses the GraphQL head OID for event-driven failure and rejects an absent OID", async () => {
+      const resolver = vi.fn().mockResolvedValue([
+        { repo: "owner/repo", headSha: "abc123", checkName: "build", state: "failure", reportedAt: "2026-08-09T00:00:00.000Z" },
+      ]);
+      const clientWithToken = new GitHubClient({ token: "ghp_token", forceMode: "token" });
+      mockRunGhJsonAsync.mockRejectedValue(new Error("gh unavailable"));
+      const payloadForHead = (headRefOid: string | null) => ({
+        data: {
+          repository: {
+            pullRequest: {
+              headRefOid,
+              commits: {
+                nodes: [{
+                  commit: { statusCheckRollup: { contexts: { nodes: [] } } },
+                }],
+              },
+            },
+          },
+        },
+      });
+      const mockFetch = vi.fn().mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve(payloadForHead("abc123")),
+      }).mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve(payloadForHead(null)),
+      });
+      global.fetch = mockFetch as any;
+
+      const failed = await clientWithToken.getAllPrChecks("owner", "repo", 42, {
+        requiredCheckNames: ["build"], resolveIngestedChecks: resolver,
+      });
+      expect(failed.checks).toEqual([expect.objectContaining({ name: "build", required: true, state: "failure" })]);
+      expect(failed.rollupRequired).toBe("failure");
+      expect(resolver).toHaveBeenCalledTimes(1);
+
+      const missingHead = await clientWithToken.getAllPrChecks("owner", "repo", 42, {
+        requiredCheckNames: ["build"], resolveIngestedChecks: resolver,
+      });
+      expect(missingHead.checks).toEqual([]);
+      expect(resolver).toHaveBeenCalledTimes(1);
+      vi.restoreAllMocks();
     });
 
     it("returns all checks in API mode and ignores non-required failures for rollup", async () => {
@@ -2055,6 +2169,9 @@ describe("GitHubClient", () => {
         { name: "required-ci", required: true, state: "success", detailsUrl: "https://example.com/required", startedAt: undefined, completedAt: undefined },
         { name: "optional-legacy", required: false, state: "failure", detailsUrl: "https://example.com/optional" },
       ]);
+      const request = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(request.query).toContain("headRefOid");
+      expect(request.query).not.toContain("/*");
       vi.restoreAllMocks();
     });
   });

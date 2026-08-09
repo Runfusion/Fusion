@@ -27,7 +27,7 @@ import {buildBootstrapPrompt} from "../mesh/mesh-task-replication.js";
 import {resolveWorkflowIrById, resolveWorkflowIrForTask} from "../workflows/workflow-ir-resolver.js";
 import {resolveTaskLifecycleColumns, toTaskMoveLanes} from "../workflows/workflow-lifecycle-traits.js";
 import type {WorkflowIr} from "../workflows/workflow-ir-types.js";
-import {DEFAULT_WORKFLOW_ID} from "../workflows/builtin-workflows.js";
+import {DEFAULT_WORKFLOW_ID, getBuiltinWorkflow, isBuiltinWorkflowId} from "../workflows/builtin-workflows.js";
 import {columnsWithFlag} from "../workflows/workflow-lifecycle-traits.js";
 import {validateFileScopeInPromptContent} from "../task-store/file-scope.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
@@ -35,9 +35,15 @@ import {withTaskBranchContextInSourceMetadata} from "../task-store/branch-contex
 import {resolveCreateDeclaredSymbols} from "../tasks/task-symbol-resolution.js";
 import {softDeleteTaskRow as softDeleteTaskRowAsync, insertTaskRowInTransaction, isTaskIdConflictError} from "../task-store/async/async-persistence.js";
 import {recordRunAuditEvent as recordRunAuditEventAsync} from "../task-store/async/async-audit.js";
+import {recordRunAuditEventWithinTransaction} from "../postgres/data-layer.js";
 import type {DbTransaction} from "../postgres/data-layer.js";
 import { resolveTaskPrefix } from "./task-prefix.js";
 import {assertValidProviderInstanceId} from "../provider-instance.js";
+import {
+  getInternalIntakeOwnershipExemptionReason,
+  resolveTaskIntakeOwner,
+  type IntakeOwnershipExemption,
+} from "../tasks/task-intake-owner-resolver.js";
 
 type CreateTaskWithAfterInsert = TaskCreateInput & {
   /** Internal transaction hook; never persisted in task source metadata. */
@@ -48,24 +54,6 @@ type CreateTaskWithAfterInsert = TaskCreateInput & {
    */
   skipSameAgentDuplicateIntake?: boolean;
 };
-
-function ensureSqliteProposalClaimUniqueness(store: TaskStore): void {
-  /*
-  FNXC:EphemeralAgentTaskCreation 2026-07-30-19:10:
-  The legacy SQLite store remains a supported MessageStore/task-materialization
-  backend. Its durable partial unique index is the same at-most-once anchor as
-  PostgreSQL: release/reclaim reuses one stable key, so concurrent creators can
-  only insert one task and the loser returns that persisted task.
-  */
-  const columns = store.db.prepare("PRAGMA table_info(tasks)").all() as Array<{ name: string }>;
-  if (!columns.some((column) => column.name === "proposalClaimId")) {
-    store.db.exec("ALTER TABLE tasks ADD COLUMN proposalClaimId TEXT");
-  }
-  store.db.exec(
-    "CREATE UNIQUE INDEX IF NOT EXISTS uq_tasks_proposal_claim_id ON tasks(proposalClaimId) WHERE proposalClaimId IS NOT NULL",
-  );
-}
-
 
 /*
 FNXC:MergedPlanningColumn 2026-07-28-12:55 (U11 precondition):
@@ -150,7 +138,7 @@ async function resolveDefaultWorkflowIntakeColumn(store: TaskStore): Promise<str
 }
 
 export async function createTaskBackendImpl(store: TaskStore, input: TaskCreateInput, options?: {
- onSummarize?: (description: string) => Promise<string | null>; settings?: { autoSummarizeTitles?: boolean }; invokeTaskCreatedHook?: boolean; onProposalClaimConflict?: (task: Task) => void; },): Promise<Task> {
+ onSummarize?: (description: string) => Promise<string | null>; settings?: { autoSummarizeTitles?: boolean }; invokeTaskCreatedHook?: boolean; onProposalClaimConflict?: (task: Task) => void; ownershipExemption?: IntakeOwnershipExemption; },): Promise<Task> {
   /* FNXC:CredentialInstanceSelection 2026-08-01-05:43: validate task authoring input before persistence; ids are stored but runtime credential resolution remains unchanged. */
   for (const key of ["credentialInstanceId", "validatorCredentialInstanceId", "planningCredentialInstanceId", "mergerCredentialInstanceId"] as const) {
     const value = (input as unknown as Record<string, unknown>)[key];
@@ -161,6 +149,21 @@ export async function createTaskBackendImpl(store: TaskStore, input: TaskCreateI
     input = applyReviewLevelPreset(input);
     if (!input.description?.trim()) {
       throw new Error("Description is required and cannot be empty");
+    }
+
+    /*
+    FNXC:IntakeOwnership 2026-08-09-18:57:
+    A proposal-claim replay is an idempotent read of its canonical row, not a
+    new intake. Return before workflow or owner resolution so a later invalid
+    assignee, unavailable agent backend, or changed executor pool cannot turn a
+    successful prior proposal into a failed retry or emit a second owner signal.
+    */
+    if (input.proposalClaimId) {
+      const existing = (await store.listTasks()).find((task) => task.proposalClaimId === input.proposalClaimId);
+      if (existing) {
+        options?.onProposalClaimConflict?.(existing);
+        return existing;
+      }
     }
 
     const selfDefeatingDep = detectSelfDefeatingDependency(input.title, input.dependencies ?? []);
@@ -245,18 +248,25 @@ export async function createTaskBackendImpl(store: TaskStore, input: TaskCreateI
         // Explicit "No workflow": skip default materialization entirely.
         resolvedWorkflowSteps = undefined;
       } else {
-        // Compile + materialize up front so unknown/fragment ids throw BEFORE
-        // the task row is created (no orphaned steps, no half-created task).
-        const selected = await store.materializeExplicitWorkflowSteps(explicitWorkflowId);
-        const explicitStepIds = input.enabledWorkflowSteps !== undefined
-          ? (resolvedWorkflowSteps ?? [])
-          : undefined;
-        resolvedWorkflowSteps = explicitStepIds ?? selected.stepIds;
-        resolvedEntryColumn = selected.entryColumnId;
-        pendingWorkflowSelection = {
-          workflowId: selected.workflowId,
-          stepIds: explicitStepIds ?? selected.stepIds,
-        };
+        try {
+          const selected = await store.materializeExplicitWorkflowSteps(explicitWorkflowId);
+          const explicitStepIds = input.enabledWorkflowSteps !== undefined
+            ? (resolvedWorkflowSteps ?? [])
+            : undefined;
+          resolvedWorkflowSteps = explicitStepIds ?? selected.stepIds;
+          resolvedEntryColumn = selected.entryColumnId;
+          pendingWorkflowSelection = {
+            workflowId: selected.workflowId,
+            stepIds: explicitStepIds ?? selected.stepIds,
+          };
+        } catch {
+          /*
+          FNXC:IntakeOwnership 2026-08-09-19:51:
+          Explicit workflow materialization is an optimization, not a second ownership authority.
+          Let the one shared pre-insert boundary compile this id and return its typed
+          `workflow-unresolvable` rejection, preserving a zero-row create failure for both gateways.
+          */
+        }
       }
     } else if (input.enabledWorkflowSteps === undefined) {
       try {
@@ -334,8 +344,26 @@ export async function createTaskBackendImpl(store: TaskStore, input: TaskCreateI
           onProposalClaimConflict: options?.onProposalClaimConflict,
           onTaskInserted: () => { insertedTask = true; },
           resolvedEntryColumn,
+          resolvedWorkflowIdForOwnership: pendingWorkflowSelection?.workflowId,
+          ownershipExemption: options?.ownershipExemption,
         },
       );
+      if (!insertedTask) {
+        /*
+        FNXC:IntakeOwnership 2026-08-09-20:04:
+        A concurrent proposal-claim winner returns its canonical task through the
+        shared boundary. Abort this attempt's unused distributed ID and discard
+        its unreferenced materialized steps; only the winning insertion may
+        commit an ID, persist a workflow selection, or publish task:created.
+        */
+        await allocator.abortDistributedTaskIdReservation({
+          reservationId: reservation.reservationId,
+          nodeId,
+          reason: "failed-create",
+        });
+        await store.cleanupOrphanedMaterializedSteps(pendingWorkflowSelection?.stepIds);
+        return task;
+      }
       await allocator.commitDistributedTaskIdReservation({
         reservationId: reservation.reservationId,
         nodeId,
@@ -346,6 +374,11 @@ export async function createTaskBackendImpl(store: TaskStore, input: TaskCreateI
         nodeId,
         reason: "failed-create",
       }).catch(() => undefined);
+      // FNXC:IntakeOwnership 2026-08-09-17:10: Owner resolution can reject after
+      // workflow materialization but before insertion. Remove those unreferenced
+      // step rows just as the reserved-ID gateway does, so rejected creates leave
+      // neither a task nor orphaned workflow state.
+      await store.cleanupOrphanedMaterializedSteps(pendingWorkflowSelection?.stepIds);
       throw err;
     }
 
@@ -438,9 +471,89 @@ export async function createTaskBackendImpl(store: TaskStore, input: TaskCreateI
     return task;
   }
 
-export async function _createTaskInternalBackendImpl(store: TaskStore, input: TaskCreateInput, title: string | undefined, resolvedWorkflowSteps: string[] | undefined, id: string, options?: { createdAt?: string; updatedAt?: string; promptOverride?: string; invokeTaskCreatedHook?: boolean; resolvedEntryColumn?: string; onProposalClaimConflict?: (task: Task) => void; deferTaskCreatedEvent?: boolean; onTaskInserted?: (task: Task) => void; },): Promise<Task> {
+export class TaskIntakeOwnerResolutionError extends Error {
+  readonly code = "task-intake-owner-resolution" as const;
+  constructor(readonly reason: "explicit-assignee-ineligible" | "named-execute-binding-unavailable" | "workflow-unresolvable" | "agent-backend-unavailable") {
+    super(`Task intake owner resolution failed: ${reason}`);
+    this.name = "TaskIntakeOwnerResolutionError";
+  }
+}
+
+export async function _createTaskInternalBackendImpl(store: TaskStore, input: TaskCreateInput, title: string | undefined, resolvedWorkflowSteps: string[] | undefined, id: string, options?: { createdAt?: string; updatedAt?: string; promptOverride?: string; invokeTaskCreatedHook?: boolean; resolvedEntryColumn?: string; resolvedWorkflowIdForOwnership?: string; onProposalClaimConflict?: (task: Task) => void; deferTaskCreatedEvent?: boolean; onTaskInserted?: (task: Task) => void; ownershipExemption?: IntakeOwnershipExemption; },): Promise<Task> {
     const layer = store.asyncLayer!;
     const now = options?.createdAt ?? new Date().toISOString();
+    /*
+    FNXC:IntakeOwnership 2026-08-09-08:49:
+    This is the sole shared pre-insert boundary for ordinary and reserved-ID creates. `workflowId: null`
+    suppresses workflow routing only; it still selects an executor from the pool. Exemption is options-only.
+
+    FNXC:IntakeOwnership 2026-08-09-18:45:
+    Options may carry only an opaque in-process exemption capability, never a public string or body field.
+    The runtime symbol check below ignores forged payload-shaped values so normal creators cannot silently
+    bypass durable executor selection.
+    */
+    let workflow: WorkflowIr | "no-workflow-context" | "unresolvable";
+    /*
+    FNXC:IntakeOwnership 2026-08-09-16:28:
+    Materialization can canonicalize the selected workflow before the row exists.
+    Forward that exact selection so ownership binding and the later selection row
+    cannot diverge; public `workflowId: null` remains the pool-only path.
+    */
+    let effectiveWorkflowIdForOwnership: string | undefined;
+    if (input.workflowId === null) {
+      workflow = "no-workflow-context";
+    } else {
+      try {
+        const workflowId = options?.resolvedWorkflowIdForOwnership
+          ?? input.workflowId
+          ?? (await store.getDefaultWorkflowId())
+          ?? DEFAULT_WORKFLOW_ID;
+        effectiveWorkflowIdForOwnership = workflowId;
+        /*
+        FNXC:IntakeOwnership 2026-08-09-19:51:
+        General workflow readers intentionally fall back to builtin:coding for a missing definition.
+        Intake may not turn a client-named missing workflow into an owned default-workflow task, so
+        prove the requested definition exists before compiling it at this universal insert boundary.
+        */
+        const exists = isBuiltinWorkflowId(workflowId)
+          ? getBuiltinWorkflow(workflowId) !== undefined
+          : (await store.getWorkflowDefinition(workflowId)) !== undefined;
+        workflow = exists ? await resolveWorkflowIrById(store, workflowId) : "unresolvable";
+      } catch {
+        workflow = "unresolvable";
+      }
+    }
+    let agents;
+    try {
+      /*
+      FNXC:IntakeOwnership 2026-08-09-18:04:
+      The TaskStore owns this project-scoped reader. Reusing it prevents each intake row
+      from opening a fresh durable-agent backend while preserving a visible rejected
+      outcome if that backend cannot be constructed or read.
+      */
+      agents = await store.getIntakeOwnerAgentStore().listAgents();
+    } catch {
+      agents = undefined;
+    }
+    // `taskId` is the durable active-session link. It orders equally eligible pool
+    // agents without treating a temporary session load as an eligibility failure.
+    const activeSessions = new Map(
+      (agents ?? []).flatMap((agent) => agent.taskId ? [[agent.id, 1] as const] : []),
+    );
+    const ownership = resolveTaskIntakeOwner({
+      workflow,
+      // Runtime callers predating the public type may pass null to mean "no
+      // explicit owner". Normalize it to omission so it follows pool/binding
+      // resolution rather than becoming an ineligible named assignee.
+      explicitAssigneeId: input.assignedAgentId ?? undefined,
+      agents,
+      enabledWorkflowSteps: resolvedWorkflowSteps,
+      activeSessions,
+      ownershipExemptionReason: getInternalIntakeOwnershipExemptionReason(options?.ownershipExemption),
+      ownModelProvider: input.modelProvider,
+      ownModelId: input.modelId,
+    });
+    if (ownership.status === "rejected") throw new TaskIntakeOwnerResolutionError(ownership.reason);
     const normalizedTitle = normalizeTitleForTaskId(title, id);
     /*
     FNXC:MergedPlanningColumn 2026-07-29-14:30 (U11 post-merge audit):
@@ -502,7 +615,7 @@ export async function _createTaskInternalBackendImpl(store: TaskStore, input: Ta
       noCommitsExpected: input.noCommitsExpected === true ? true : undefined,
       enabledWorkflowSteps: resolvedWorkflowSteps,
       modelPresetId: input.modelPresetId,
-      assignedAgentId: input.assignedAgentId,
+      assignedAgentId: ownership.status === "selected" ? ownership.agentId : undefined,
       assigneeUserId: input.assigneeUserId,
       scopeOverride: input.scopeOverride === true ? true : undefined,
       scopeOverrideReason: input.scopeOverrideReason,
@@ -699,6 +812,19 @@ export async function _createTaskInternalBackendImpl(store: TaskStore, input: Ta
         ownsStagingDirectory = false;
         ownsPromotedTaskDirectory = true;
         await (input as CreateTaskWithAfterInsert).afterTaskInsert?.(tx, task);
+        if (ownership.status === "unowned") {
+          /*
+          FNXC:IntakeOwnership 2026-08-09-09:30:
+          The successful no-executor outcome is observable evidence, not a best-effort
+          post-insert side effect. Write its audit row in this transaction so an audit
+          failure rolls back the null-owner task and its staged artifacts together.
+          */
+          await recordRunAuditEventWithinTransaction(tx, {
+            taskId: task.id, agentId: "system", runId: `store:intake-owner:${task.id}`,
+            domain: "database", mutationType: "task:intake-owner-unresolved", target: task.id,
+            metadata: { reason: ownership.reason, workflowId: effectiveWorkflowIdForOwnership, source: "intake" },
+          });
+        }
       });
     } catch (error) {
       await cleanupPreparedTaskFiles();
@@ -746,7 +872,7 @@ export async function _createTaskInternalBackendImpl(store: TaskStore, input: Ta
     return task;
   }
 
-export async function createTaskImpl(store: TaskStore, input: TaskCreateInput, options?: { onSummarize?: (description: string) => Promise<string | null>; settings?: { autoSummarizeTitles?: boolean }; invokeTaskCreatedHook?: boolean; onProposalClaimConflict?: (task: Task) => void; }): Promise<Task> {
+export async function createTaskImpl(store: TaskStore, input: TaskCreateInput, options?: { onSummarize?: (description: string) => Promise<string | null>; settings?: { autoSummarizeTitles?: boolean }; invokeTaskCreatedHook?: boolean; onProposalClaimConflict?: (task: Task) => void; ownershipExemption?: IntakeOwnershipExemption; }): Promise<Task> {
     // U8/R6: apply the reviewLevel creation-time preset (maps level -> enabledWorkflowSteps; explicit wins).
     input = applyReviewLevelPreset(input);
     // FNXC:RuntimeTaskOrchestrationAsync 2026-06-24-13:10:
@@ -760,7 +886,7 @@ export async function createTaskImpl(store: TaskStore, input: TaskCreateInput, o
     return store.createTaskBackend(input, options);
 }
 
-export async function createTaskWithReservedIdImpl(store: TaskStore, input: TaskCreateInput, options: { taskId: string; createdAt?: string; updatedAt?: string; prompt?: string; applyDefaultWorkflowSteps?: boolean; invokeTaskCreatedHook?: boolean; },): Promise<Task> {
+export async function createTaskWithReservedIdImpl(store: TaskStore, input: TaskCreateInput, options: { taskId: string; createdAt?: string; updatedAt?: string; prompt?: string; applyDefaultWorkflowSteps?: boolean; invokeTaskCreatedHook?: boolean; ownershipExemption?: IntakeOwnershipExemption; },): Promise<Task> {
     // U8/R6: apply the reviewLevel creation-time preset (maps level -> enabledWorkflowSteps; explicit wins).
     input = applyReviewLevelPreset(input);
     if (!input.description?.trim()) {
@@ -777,7 +903,12 @@ export async function createTaskWithReservedIdImpl(store: TaskStore, input: Task
     }
 
     if (input.proposalClaimId) {
-      ensureSqliteProposalClaimUniqueness(store);
+      /*
+      FNXC:IntakeOwnership 2026-08-09-20:18:
+      Reserved-ID creation is PostgreSQL-only. Proposal-claim uniqueness belongs
+      to its project-scoped partial index, so this replay read must not touch the
+      removed SQLite backend before the shared insert boundary handles a race.
+      */
       const existing = (await store.listTasks()).find((task) => task.proposalClaimId === input.proposalClaimId);
       if (existing) return existing;
     }
@@ -822,18 +953,24 @@ export async function createTaskWithReservedIdImpl(store: TaskStore, input: Task
         // Explicit "No workflow": skip default materialization entirely.
         resolvedWorkflowSteps = undefined;
       } else {
-        // Compile + materialize up front so unknown/fragment ids throw BEFORE
-        // the task row is created (no orphaned steps, no half-created task).
-        const selected = await store.materializeExplicitWorkflowSteps(explicitWorkflowId);
-        const explicitStepIds = input.enabledWorkflowSteps !== undefined
-          ? (resolvedWorkflowSteps ?? [])
-          : undefined;
-        resolvedWorkflowSteps = explicitStepIds ?? selected.stepIds;
-        resolvedEntryColumn = selected.entryColumnId;
-        pendingWorkflowSelection = {
-          workflowId: selected.workflowId,
-          stepIds: explicitStepIds ?? selected.stepIds,
-        };
+        try {
+          const selected = await store.materializeExplicitWorkflowSteps(explicitWorkflowId);
+          const explicitStepIds = input.enabledWorkflowSteps !== undefined
+            ? (resolvedWorkflowSteps ?? [])
+            : undefined;
+          resolvedWorkflowSteps = explicitStepIds ?? selected.stepIds;
+          resolvedEntryColumn = selected.entryColumnId;
+          pendingWorkflowSelection = {
+            workflowId: selected.workflowId,
+            stepIds: explicitStepIds ?? selected.stepIds,
+          };
+        } catch {
+          /*
+          FNXC:IntakeOwnership 2026-08-09-19:51:
+          Reserved-ID creation must reach the same typed owner-resolution rejection as ordinary
+          creation when an explicit workflow cannot compile; materialization may not bypass it.
+          */
+        }
       }
     } else if (input.enabledWorkflowSteps === undefined && options.applyDefaultWorkflowSteps !== false) {
       // Mirror createTask: a configured project default workflow takes
@@ -883,6 +1020,7 @@ export async function createTaskWithReservedIdImpl(store: TaskStore, input: Task
     }
 
     let createdTask: Task;
+    let proposalReplay = false;
     try {
       createdTask = await store._createTaskInternal(input, title, resolvedWorkflowSteps, id, {
         createdAt: options.createdAt,
@@ -890,6 +1028,9 @@ export async function createTaskWithReservedIdImpl(store: TaskStore, input: Task
         promptOverride: options.prompt,
         invokeTaskCreatedHook: options.invokeTaskCreatedHook,
         resolvedEntryColumn,
+        resolvedWorkflowIdForOwnership: pendingWorkflowSelection?.workflowId,
+        ownershipExemption: options.ownershipExemption,
+        onProposalClaimConflict: () => { proposalReplay = true; },
       });
     } catch (err) {
       // The task row was never created, so any default-workflow steps we
@@ -900,6 +1041,18 @@ export async function createTaskWithReservedIdImpl(store: TaskStore, input: Task
         if (existing) return existing;
       }
       throw err;
+    }
+
+    if (proposalReplay) {
+      /*
+      FNXC:IntakeOwnership 2026-08-09-20:04:
+      The reserved-ID gateway can race after its preflight replay lookup. The
+      shared boundary reports the winner through this callback, so never attach
+      this loser's materialized selection to the canonical task or leave its
+      generated step rows behind.
+      */
+      await store.cleanupOrphanedMaterializedSteps(pendingWorkflowSelection?.stepIds);
+      return createdTask;
     }
 
     // Record the inherited workflow selection now that the task row exists.

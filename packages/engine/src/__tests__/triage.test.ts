@@ -1080,6 +1080,35 @@ describe("fast-mode triage", () => {
     expect(capturedSystemPrompt).not.toContain("## Review Level");
   });
 
+  /*
+  FNXC:CommandCenterActivity 2026-08-09-15:35:
+  Triage must emit its session boundary only after the live planning runtime is constructed, so a
+  failed construction cannot inflate Activity while every successful durable planning session is counted.
+  */
+  it("emits triage session telemetry through the production planning session", async () => {
+    const task = createTriageTask({
+      id: "FN-8868-TRIAGE", assignedAgentId: "durable-triage", effectiveNodeId: "mesh-node-1",
+    });
+    const emitUsageEvent = vi.fn().mockResolvedValue(undefined);
+    const store = createMockStore({
+      getTask: vi.fn().mockResolvedValue({ ...mockTaskDetail, ...task, attachments: [], comments: [] }),
+      emitUsageEvent,
+    });
+    mockCreateFnAgent.mockImplementationOnce(async () => ({
+      session: {
+        state: {}, sessionManager: { getLeafId: vi.fn().mockReturnValue(null) }, dispose: vi.fn(), navigateTree: vi.fn(),
+        prompt: vi.fn().mockResolvedValue(undefined),
+      },
+    }));
+
+    await new TriageProcessor(store, "/tmp/root").specifyTask(task);
+
+    expect(emitUsageEvent).toHaveBeenCalledWith(expect.objectContaining({
+      kind: "session_start", category: "agent-session", agentId: "durable-triage", taskId: task.id,
+      nodeId: "mesh-node-1", meta: expect.objectContaining({ lane: "triage" }),
+    }));
+  });
+
   it("keeps standard prompt for standard tasks", async () => {
     const task = createTriageTask({ id: "FN-FAST-002", executionMode: "standard" });
     const store = createMockStore({
@@ -6908,6 +6937,8 @@ describe("specifyTask — status restore failure diagnostics", () => {
       });
 
       const specifyPromise = processor.specifyTask(task);
+      // FNXC:TriagePlanningRetry 2026-08-09-15:55: Runtime setup is async; schedule its retry sleep before advancing fake time.
+      await vi.advanceTimersByTimeAsync(0);
       await vi.advanceTimersByTimeAsync(60_000);
       await expect(specifyPromise).resolves.toBeUndefined();
       expect(warnSpy).toHaveBeenCalledWith(

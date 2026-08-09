@@ -9,6 +9,7 @@ import {
   DATABASE_URL_ENV,
   DATABASE_MIGRATION_URL_ENV,
 } from "../../postgres/backend-resolver.js";
+import { PlanningLifecycleLockTransportError } from "../../index.js";
 
 describe("backend-resolver: resolveBackend (env-based)", () => {
   it("resolves to embedded mode when DATABASE_URL is unset", () => {
@@ -56,7 +57,7 @@ describe("backend-resolver: resolveBackendWithOptions", () => {
   });
 
   it("DATABASE_MIGRATION_URL routes schema work to it while runtime uses DATABASE_URL (VAL-CONN-003)", () => {
-    const runtimeUrl = "postgresql://user:pass@pooler.supabase.com:6543/fusion";
+    const runtimeUrl = "postgresql://user:pass@xyz.pooler.supabase.com:6543/fusion";
     const migrationUrl = "postgresql://user:pass@db.supabase.co:5432/fusion";
     const backend = resolveBackendWithOptions({
       databaseUrl: runtimeUrl,
@@ -78,7 +79,38 @@ describe("backend-resolver: resolveBackendWithOptions", () => {
     });
     expect(backend.migrationUrl).toBe(url);
     expect(backend.migrationUrlOverridden).toBe(false);
+    expect(backend.directSessionUrl).toBe(url);
+    expect(backend.directSessionProvenance).toBe("runtime-direct");
+  });
+
+  it.each([
+    ["direct runtime with identical direct migration", "postgresql://u:p@localhost:5432/fusion", "postgresql://u:p@localhost:5432/fusion", "migration-override"],
+    ["direct runtime with distinct direct migration", "postgresql://u:p@localhost:5432/fusion", "postgresql://u:p@db.example.com:5432/fusion", "migration-override"],
+    ["pooled runtime with direct migration", "postgresql://u:p@xyz.pooler.supabase.com:6543/fusion", "postgresql://u:p@localhost:5432/fusion", "migration-override"],
+    ["direct runtime with pooled migration", "postgresql://u:p@localhost:5432/fusion", "postgresql://u:p@xyz.pooler.supabase.com:6543/fusion", "runtime-direct"],
+  ])("selects the correct endpoint for %s", (_name, databaseUrl, databaseMigrationUrl, provenance) => {
+    const backend = resolveBackendWithOptions({ databaseUrl, databaseMigrationUrl });
+    expect(backend.directSessionProvenance).toBe(provenance);
+    expect(backend.directSessionUrl).toBe(provenance === "migration-override" ? databaseMigrationUrl : databaseUrl);
+  });
+
+  it.each([
+    "postgresql://u:p@xyz.pooler.supabase.com:6543/fusion",
+    "postgresql://u:p@localhost:5432/fusion?pgbouncer=true",
+    "postgresql://u:p@localhost:5432/fusion?pool_mode=transaction",
+  ])("fails closed without a direct endpoint for pooled runtime URL %s", (databaseUrl) => {
+    const backend = resolveBackendWithOptions({ databaseUrl });
     expect(backend.directSessionUrl).toBeNull();
+    expect(backend.directSessionProvenance).toBeNull();
+  });
+
+  it("fails closed when both runtime and migration URLs are pooled", () => {
+    const backend = resolveBackendWithOptions({
+      databaseUrl: "postgresql://u:p@xyz.pooler.supabase.com:6543/fusion",
+      databaseMigrationUrl: "postgresql://u:p@localhost:5432/fusion?pgbouncer=true",
+    });
+    expect(backend.directSessionUrl).toBeNull();
+    expect(backend.directSessionProvenance).toBeNull();
   });
 
   it("DATABASE_MIGRATION_URL without DATABASE_URL still resolves to embedded mode", () => {
@@ -175,6 +207,7 @@ describe("backend-resolver: describeBackendForLog (VAL-CONN-005)", () => {
     expect(desc).toContain("localhost:5432");
     expect(desc).not.toContain("hunter2");
     expect(desc).toContain("********");
+    expect(desc).toContain("planning lifecycle direct session: runtime URL");
   });
 
   it("migration URL override is logged with redacted URL", () => {
@@ -188,5 +221,13 @@ describe("backend-resolver: describeBackendForLog (VAL-CONN-005)", () => {
     expect(desc).not.toContain("pw2");
     expect(desc).toContain("host1");
     expect(desc).toContain("host2");
+  });
+});
+
+
+describe("backend-resolver: package barrel", () => {
+  it("exports a instanceof-classifiable planning lifecycle transport error", () => {
+    const error = new PlanningLifecycleLockTransportError("direct endpoint unavailable");
+    expect(error).toBeInstanceOf(PlanningLifecycleLockTransportError);
   });
 });

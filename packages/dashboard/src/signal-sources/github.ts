@@ -128,6 +128,8 @@ export const githubSource: SignalSource = {
       resolution: mapped.resolution,
       ...("recoveryOnly" in mapped && mapped.recoveryOnly ? { recoveryOnly: true } : {}),
       link, timestamp: at,
+      /* FNXC:PrMergeEventDrivenChecks 2026-08-09-14:35: terminal payload identity, never ambient repository config, is the only admissible event-driven check source. */
+      ciCheck: { repo: repositoryName, headSha: sha, checkName, state: outcome, eventKind: kind, reportedAt: at ? new Date(at).toISOString() : undefined, detailsUrl: link },
       meta: { kind, repository: repositoryName, branch, sha, checkName, status, conclusion, runAttempt: asNumber(event.run_attempt), pullRequests: pullNumbers(event.pull_requests) },
     };
     return applySignalCaps(signal);

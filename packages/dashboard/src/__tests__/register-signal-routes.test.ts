@@ -2,7 +2,19 @@
 
 import { createHmac } from "node:crypto";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { aggregateSignalsAnalytics, drizzleSql as sql, type AsyncDataLayer, type Task, type TaskStore } from "@fusion/core";
+
+const { mockIsGhAuthenticated, mockRunGhJsonAsync } = vi.hoisted(() => ({
+  mockIsGhAuthenticated: vi.fn(() => true),
+  mockRunGhJsonAsync: vi.fn(),
+}));
+
+vi.mock("@fusion/core", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@fusion/core")>()),
+  isGhAuthenticated: mockIsGhAuthenticated,
+  runGhJsonAsync: mockRunGhJsonAsync,
+}));
+
+import { aggregateSignalsAnalytics, createIngestedCheckResolver, drizzleSql as sql, type AsyncDataLayer, type Task, type TaskStore } from "@fusion/core";
 import { createTaskStoreForTest, pgDescribe, type PgTestHarness } from "../../../core/src/__test-utils__/pg-test-harness.js";
 import { DeliveryNonceCache, type SignalSource } from "../signal-source.js";
 import {
@@ -18,6 +30,7 @@ import { datadogSource } from "../signal-sources/datadog.js";
 import { pagerdutySource } from "../signal-sources/pagerduty.js";
 import { gitlabSource } from "../signal-sources/gitlab.js";
 import { GITHUB_OUTCOME_MAP, githubSource } from "../signal-sources/github.js";
+import { GitHubClient } from "../github.js";
 
 function sign(body: string, secret: string): string {
   return createHmac("sha256", secret).update(Buffer.from(body)).digest("hex");
@@ -75,6 +88,16 @@ async function incidents(layer: AsyncDataLayer) {
   }>;
 }
 
+async function githubCheckStates(layer: AsyncDataLayer) {
+  return await layer.db.execute(sql`SELECT project_id AS "projectId", repo, head_sha AS "headSha", check_name AS "checkName", state FROM project.github_check_states WHERE project_id = ${layer.projectId} ORDER BY id ASC`) as Array<{
+    projectId: string;
+    repo: string;
+    headSha: string;
+    checkName: string;
+    state: string;
+  }>;
+}
+
 const SECRETS: Record<string, string> = {
   FUSION_SIGNAL_WEBHOOK_SECRET: "wh-secret",
   FUSION_SIGNAL_SENTRY_SECRET: "sentry-secret",
@@ -88,6 +111,7 @@ const savedEnv: Record<string, string | undefined> = {};
 const harnesses: PgTestHarness[] = [];
 
 beforeEach(() => {
+  mockRunGhJsonAsync.mockReset();
   for (const [k, v] of Object.entries(SECRETS)) {
     savedEnv[k] = process.env[k];
     process.env[k] = v;
@@ -112,9 +136,9 @@ function ctxFor(source: SignalSource, payload: object, headers: Record<string, s
 function githubPayload(kind: "check_suite" | "workflow_run" | "status", outcome: string) {
   const repository = { full_name: "org/repo", html_url: "https://github.com/org/repo" };
   if (kind === "status") {
-    return { repository, state: outcome, context: "build", sha: "abc123", target_url: "https://github.com/org/repo/actions/1", created_at: "2026-08-09T12:00:00.000Z" };
+    return { repository, state: outcome, context: "build", sha: "abc1234", target_url: "https://github.com/org/repo/actions/1", created_at: "2026-08-09T12:00:00.000Z" };
   }
-  const run = { status: "completed", conclusion: outcome, head_sha: "abc123", head_branch: "main", updated_at: "2026-08-09T12:00:00.000Z", app: { slug: "checks" } };
+  const run = { status: "completed", conclusion: outcome, head_sha: "abc1234", head_branch: "main", updated_at: "2026-08-09T12:00:00.000Z", app: { slug: "checks" } };
   return kind === "check_suite" ? { repository, check_suite: run } : { repository, workflow: { name: "build" }, workflow_run: run };
 }
 
@@ -616,10 +640,13 @@ pgDescribe("ingestSignal — GitHub CI recovery", () => {
     expect(open.status).toBe(201);
     expect(store._tasks).toHaveLength(1);
     expect(await incidents(layer)).toMatchObject([{
-      groupingKey: "github:org/repo:check_suite:checks:abc123",
+      groupingKey: "github:org/repo:check_suite:checks:abc1234",
       source: "github",
       severity: "error",
       status: "open",
+    }]);
+    expect(await githubCheckStates(layer)).toEqual([{
+      projectId: "signal-routes-project", repo: "org/repo", headSha: "abc1234", checkName: "checks", state: "failure",
     }]);
 
     const success = githubPayload("check_suite", "success");
@@ -635,6 +662,9 @@ pgDescribe("ingestSignal — GitHub CI recovery", () => {
     const afterResolution = await incidents(layer);
     expect(afterResolution).toHaveLength(1);
     expect(afterResolution[0]).toMatchObject({ status: "resolved" });
+    expect(await githubCheckStates(layer)).toEqual([{
+      projectId: "signal-routes-project", repo: "org/repo", headSha: "abc1234", checkName: "checks", state: "success",
+    }]);
     const resolvedAt = afterResolution[0].resolvedAt;
 
     const redelivery = await ingestSignal({
@@ -667,6 +697,49 @@ pgDescribe("ingestSignal — GitHub CI recovery", () => {
     expect(reopened.status).toBe(201);
     expect(store._tasks).toHaveLength(2);
     expect(await incidents(layer)).toHaveLength(2);
+  });
+
+  it("feeds a signed GitHub green delivery through the scoped resolver into the merge gate", async () => {
+    const { layer, store } = await makeDbStore();
+    const payload = githubPayload("check_suite", "success");
+    expect((await ingestSignal({
+      source: githubSource,
+      store,
+      ...githubContext(payload, "check_suite", "github-gate-green"),
+      nonceCache: new DeliveryNonceCache(),
+    })).status).toBe(200);
+
+    mockRunGhJsonAsync
+      .mockResolvedValueOnce({
+        number: 42, url: "https://github.com/org/repo/pull/42", title: "Green PR", state: "OPEN",
+        isDraft: false, baseRefName: "main", headRefName: "feature", headRefOid: "abc1234",
+        reviewDecision: null, mergeable: "MERGEABLE", mergeStateStatus: "CLEAN",
+      })
+      .mockResolvedValueOnce({ headRefOid: "abc1234" })
+      .mockResolvedValueOnce([]);
+
+    const result = await new GitHubClient({ forceMode: "gh-cli" }).getPrMergeStatus("org", "repo", 42, {
+      requiredCheckNames: ["checks"],
+      resolveIngestedChecks: createIngestedCheckResolver(layer),
+    });
+
+    expect(result.mergeReady).toBe(true);
+    expect(result.blockingReasons).not.toContain("required check not reported: checks");
+  });
+
+  it("drops malformed GitHub repository descriptors so they cannot persist check state", async () => {
+    const { layer, store } = await makeDbStore();
+    const payload = githubPayload("check_suite", "failure");
+    (payload.repository as { full_name: string }).full_name = "org/repo/foreign";
+    const result = await ingestSignal({
+      source: githubSource,
+      store,
+      ...githubContext(payload, "check_suite", "github-invalid-repo"),
+      nonceCache: new DeliveryNonceCache(),
+    });
+
+    expect(result.status).toBe(201);
+    expect(await githubCheckStates(layer)).toEqual([]);
   });
 
   it("routes all supported GitHub event kinds through the production ingestion seam", async () => {

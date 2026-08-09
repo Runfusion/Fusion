@@ -504,28 +504,42 @@ describe("GitHubImportModal", () => {
     }));
   });
 
-  it("captures every loaded image-bearing comment in direct-import order without a client image budget", async () => {
-    const issue = { number: 48, title: "Comment screenshots", body: "![body](https://github.com/user-attachments/assets/body)", html_url: "https://github.com/dustinbyrne/kb/issues/48", labels: [], state: "open" };
-    const unresolved = Array.from({ length: 12 }, (_, index) => `![bad-${index}](https://example.com/${index}.png)`).join("\n");
-    const later = "![later](https://github.com/user-attachments/assets/later)";
-    const onPlanningMode = vi.fn();
-    vi.mocked(fetchGitRemotes).mockResolvedValueOnce(singleRemote);
-    vi.mocked(apiFetchGitHubIssues).mockResolvedValueOnce([issue]);
-    vi.mocked(apiFetchGitHubIssueDetail).mockResolvedValueOnce({ comments: [
-      { author: "one", body: "plain prose only", createdAt: "2026-08-09T00:00:00Z", authorIsBot: false },
-      { author: "two", body: unresolved, createdAt: "2026-08-09T00:01:00Z", authorIsBot: false },
-      { author: "three", body: later, createdAt: "2026-08-09T00:02:00Z", authorIsBot: false },
-    ] });
+  /*
+  FNXC:GitHubPlanningSourceIssue 2026-08-09-16:05:
+  Planning's desktop and mobile action rows must transport identical body-plus-comment image context.
+  The client deliberately sends all image-bearing bodies; the server alone applies the policy-resolved image cap.
+  */
+  it.each([["desktop", 1200], ["mobile", 480]] as const)("captures every loaded image-bearing comment at the %s breakpoint without a client image budget", async (_breakpoint, width) => {
+    const originalInnerWidth = window.innerWidth;
+    Object.defineProperty(window, "innerWidth", { writable: true, configurable: true, value: width });
+    window.dispatchEvent(new Event("resize"));
+    try {
+      const issue = { number: 48, title: "Comment screenshots", body: "![body](https://github.com/user-attachments/assets/body)", html_url: "https://github.com/dustinbyrne/kb/issues/48", labels: [], state: "open" };
+      const unresolved = Array.from({ length: 12 }, (_, index) => `![bad-${index}](https://example.com/${index}.png)`).join("\n");
+      const later = "![later](https://github.com/user-attachments/assets/later)";
+      const onPlanningMode = vi.fn();
+      vi.mocked(fetchGitRemotes).mockResolvedValueOnce(singleRemote);
+      vi.mocked(apiFetchGitHubIssues).mockResolvedValueOnce([issue]);
+      vi.mocked(apiFetchGitHubIssueDetail).mockResolvedValueOnce({ comments: [
+        { author: "one", body: "plain prose only", createdAt: "2026-08-09T00:00:00Z", authorIsBot: false },
+        { author: "two", body: unresolved, createdAt: "2026-08-09T00:01:00Z", authorIsBot: false },
+        { author: "three", body: later, createdAt: "2026-08-09T00:02:00Z", authorIsBot: false },
+      ] });
 
-    render(<GitHubImportModal isOpen onClose={onClose} onImport={onImport} onPlanningMode={onPlanningMode} tasks={[]} />);
-    fireEvent.click(await screen.findByRole("button", { name: /Select issue #48/i }));
-    await waitFor(() => expect(apiFetchGitHubIssueDetail).toHaveBeenCalledWith("dustinbyrne/kb", 48));
-    await act(async () => { await Promise.resolve(); });
-    fireEvent.click(screen.getByTestId("github-import-action-plan"));
+      render(<GitHubImportModal isOpen onClose={onClose} onImport={onImport} onPlanningMode={onPlanningMode} tasks={[]} />);
+      fireEvent.click(await screen.findByRole("button", { name: /Select issue #48/i }));
+      await waitFor(() => expect(apiFetchGitHubIssueDetail).toHaveBeenCalledWith("dustinbyrne/kb", 48));
+      await act(async () => { await Promise.resolve(); });
+      fireEvent.click(screen.getByTestId("github-import-action-plan"));
 
-    expect(onPlanningMode.mock.calls[0]?.[2]).toEqual(expect.objectContaining({
-      imageBodies: [issue.body, unresolved, later],
-    }));
+      expect(onPlanningMode.mock.calls[0]?.[2]).toEqual(expect.objectContaining({
+        provider: "github",
+        imageBodies: [issue.body, unresolved, later],
+      }));
+    } finally {
+      Object.defineProperty(window, "innerWidth", { writable: true, configurable: true, value: originalInnerWidth });
+      window.dispatchEvent(new Event("resize"));
+    }
   });
 
   /*

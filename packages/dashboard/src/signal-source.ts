@@ -88,6 +88,12 @@ export interface Signal {
    * behavior for every existing adapter.
    */
   recoveryOnly?: boolean;
+  /*
+  FNXC:PrMergeEventDrivenChecks 2026-08-09-14:35:
+  Only the GitHub adapter supplies terminal CI data; absence on all other sources keeps their
+  incident behavior unchanged. Invalid repo/SHA drops the entire descriptor rather than guessing.
+  */
+  ciCheck?: { repo: string; headSha: string; checkName: string; state: string; eventKind: "check_suite" | "workflow_run" | "status"; reportedAt?: string; detailsUrl?: string };
   /**
    * Optional canonical URL back to the source. Treated as SSRF-untrusted: it is
    * stored as data and only rendered as an external link, never fetched server
@@ -331,6 +337,22 @@ export function applySignalCaps(signal: Signal): Signal {
     signal.link && isSafeExternalUrl(signal.link)
       ? capString(signal.link, SIGNAL_FIELD_CAPS.link)
       : undefined;
+  const ciCheck = signal.ciCheck;
+  /*
+  FNXC:PrMergeEventDrivenChecks 2026-08-09-15:42:
+  A check-state repository must be the webhook's exact owner/repository slug. Reject malformed
+  slugs with the descriptor so an external payload cannot create a state the merge gate might
+  later compare against an unrelated repository.
+  */
+  const repo = ciCheck?.repo.trim();
+  const headSha = ciCheck?.headSha.trim();
+  const validCiCheck = ciCheck && repo && headSha
+    && repo.length <= SIGNAL_FIELD_CAPS.groupingKey
+    && /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)
+    && /^[0-9a-f]{7,64}$/i.test(headSha)
+    && ciCheck.checkName.trim()
+    ? { ...ciCheck, repo, headSha, checkName: capString(ciCheck.checkName, SIGNAL_FIELD_CAPS.groupingKey), detailsUrl: ciCheck.detailsUrl ? capString(ciCheck.detailsUrl, SIGNAL_FIELD_CAPS.link) : undefined }
+    : undefined;
   return {
     ...signal,
     title: capString(signal.title, SIGNAL_FIELD_CAPS.title) || "(untitled signal)",
@@ -338,5 +360,6 @@ export function applySignalCaps(signal: Signal): Signal {
     groupingKey: capString(signal.groupingKey, SIGNAL_FIELD_CAPS.groupingKey),
     link,
     meta,
+    ciCheck: validCiCheck,
   };
 }

@@ -128,7 +128,7 @@ Normalization:
 
 ## GitHub
 
-Set `FUSION_SIGNAL_GITHUB_SECRET` and configure `https://<your-fusion-host>/api/signals/github` for GitHub `check_suite`, `workflow_run`, and `status` deliveries. Fusion verifies the raw body using `X-Hub-Signature-256`.
+Set `FUSION_SIGNAL_GITHUB_SECRET` and configure `https://<your-fusion-host>/api/signals/github` for GitHub `check_suite`, `workflow_run`, and `status` deliveries. Fusion verifies the raw body using `X-Hub-Signature-256`. Terminal outcomes are also stored in `github_check_states` by `(project, repo, head SHA, check name)`. When `requiredChecks` is configured, exact-head rows may fill a missing polled check or block a disagreement; missing heads, cross-project rows, and stale commits never substitute. Newer delivery timestamps win retries, and engine batch-1 `prune-github-check-states` removes rows after 14 days even when deliveries stop.
 
 Normalization uses:
 

@@ -40,6 +40,8 @@ import {
   acquireWorktreePathReservation,
   type WorktreePathReservation,
   resolveRequiredCheckNames,
+  createIngestedCheckResolver,
+  type IngestedCheckState,
 } from "@fusion/core";
 import type { Settings, TaskDetail, PrInfo, MergeResult, BranchGroup, BranchGroupPrState, Task } from "@fusion/core";
 import { resolveWorkflowIrForTask, resolveCompleteColumn, resolveMergeOrchestrationColumn } from "@fusion/core";
@@ -88,7 +90,7 @@ import type {
 interface GitHubOperations {
   findPrForBranch(params: { owner?: string; repo?: string; head: string; state?: "open" | "closed" | "all" }): Promise<PrInfo | null>;
   createPr(params: { owner?: string; repo?: string; title: string; body: string; head: string; base?: string }): Promise<PrInfo>;
-  getPrMergeStatus(owner?: string, repo?: string, number?: number, options?: { requiredCheckNames?: string[] }): Promise<{
+  getPrMergeStatus(owner?: string, repo?: string, number?: number, options?: { requiredCheckNames?: string[]; resolveIngestedChecks?: (input: { owner: string; repo: string; headSha: string }) => Promise<IngestedCheckState[]> }): Promise<{
     prInfo: PrInfo;
     reviewDecision: string | null;
     checks: Array<{ name: string; required: boolean; state: string }>;
@@ -1313,8 +1315,9 @@ export async function processPullRequestMergeTask(
     // Defensive: keep the base settings if effective resolution fails entirely.
   }
   const requiredCheckNames = resolveRequiredCheckNames(settings);
+  const ingestedCheckResolver = createIngestedCheckResolver(store.getAsyncLayer?.());
   const getPrMergeStatus = (number: number) => requiredCheckNames.length > 0
-    ? github.getPrMergeStatus(prRepo.owner, prRepo.repo, number, { requiredCheckNames })
+    ? github.getPrMergeStatus(prRepo.owner, prRepo.repo, number, { requiredCheckNames, ...(ingestedCheckResolver ? { resolveIngestedChecks: ingestedCheckResolver } : {}) })
     : github.getPrMergeStatus(prRepo.owner, prRepo.repo, number);
   const resolvedIntegrationBranch = await resolveIntegrationBranch(cwd, settings);
   const projectDefaultBranch = resolvedIntegrationBranch;

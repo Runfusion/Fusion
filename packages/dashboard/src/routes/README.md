@@ -44,7 +44,7 @@ The following is the complete top-level registrar map currently imported by `rou
 - `registerDiagnosticsRoutes` — domain registrar mounted by `createApiRoutes`.
 - `registerCliAgentHooksRoute` — domain registrar mounted by `createApiRoutes`.
 - `registerCliAgentSettingsRoutes` — domain registrar mounted by `createApiRoutes`.
-- `registerActivityLogRoutes` — the early activity-log GET/DELETE split export from `register-setup-activity-routes.ts`.
+- `registerActivityLogRoutes` — the early activity-log GET/DELETE split export plus `GET /api/agent-activity` seq-cursor history from `register-setup-activity-routes.ts`.
 - `registerAgentCoreListCreateRoutes` — domain registrar mounted by `createApiRoutes`.
 - `registerAgentImportExportRoutes` — domain registrar mounted by `createApiRoutes`.
 - `registerOrgPortabilityRoutes` — domain registrar mounted by `createApiRoutes`.

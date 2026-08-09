@@ -13,6 +13,8 @@ import {
   getCurrentRepo,
   runGh,
   resolveRequiredCheckNames,
+  mergeIngestedCheckStates,
+  type IngestedCheckState,
 } from "@fusion/core";
 import { ALLOWED_IMAGE_MIMES, MAX_IMAGE_BYTES } from "./issue-image-attachments.js";
 
@@ -841,8 +843,9 @@ export function isPrMergeReady(input: {
     }
     const unsatisfied = matches.find((check) => !satisfies(check.state));
     if (unsatisfied) {
-      const githubReason = `required checks not successful: ${name} (${unsatisfied.state})`;
-      if (!blockingReasons.includes(githubReason)) {
+      // A synthesized ingested check is required, so the legacy filter already owns its
+      // failure reason. Non-required poll results still need the named-policy reason.
+      if (!blockingChecks.some((check) => check.name === name && check.state === unsatisfied.state)) {
         blockingReasons.push(`required check not successful: ${name} (${unsatisfied.state})`);
       }
     }
@@ -850,7 +853,8 @@ export function isPrMergeReady(input: {
   return { ready: blockingReasons.length === 0, blockingReasons: [...new Set(blockingReasons)] };
 }
 
-export interface PrCheckGateOptions { requiredCheckNames?: string[]; }
+/* FNXC:PrMergeEventDrivenChecks 2026-08-09-14:35: callers provide scoped data only; isPrMergeReady remains the sole readiness verdict and never invokes a resolver without a head SHA. */
+export interface PrCheckGateOptions { requiredCheckNames?: string[]; resolveIngestedChecks?: (input: { owner: string; repo: string; headSha: string }) => Promise<IngestedCheckState[]>; }
 
 export interface GitHubClientOptions {
   token?: string;
@@ -1849,22 +1853,22 @@ export class GitHubClient {
     const requiredCheckNames = resolveRequiredCheckNames({ requiredChecks: options?.requiredCheckNames });
     if (this.hasGhAuth()) {
       try {
-        return await this.getPrMergeStatusWithGh(owner, repo, number, requiredCheckNames);
+        return await this.getPrMergeStatusWithGh(owner, repo, number, requiredCheckNames, options?.resolveIngestedChecks);
       } catch (err) {
         if (this.token) {
-          return this.getPrMergeStatusWithApi(owner, repo, number, requiredCheckNames);
+          return this.getPrMergeStatusWithApi(owner, repo, number, requiredCheckNames, options?.resolveIngestedChecks);
         }
         throw new Error(getGhErrorMessage(err));
       }
     }
 
     if (this.token) {
-      return this.getPrMergeStatusWithApi(owner, repo, number, requiredCheckNames);
+      return this.getPrMergeStatusWithApi(owner, repo, number, requiredCheckNames, options?.resolveIngestedChecks);
     }
     throw new Error("GitHub CLI (gh) is not available or not authenticated, and no GITHUB_TOKEN provided.");
   }
 
-  private async getPrMergeStatusWithGh(owner: string | undefined, repo: string | undefined, number: number, requiredCheckNames: string[]): Promise<PrMergeStatus> {
+  private async getPrMergeStatusWithGh(owner: string | undefined, repo: string | undefined, number: number, requiredCheckNames: string[], resolveIngestedChecks?: PrCheckGateOptions["resolveIngestedChecks"]): Promise<PrMergeStatus> {
     const resolved = this.resolveRepo(owner, repo);
     const pr = await runGhJsonAsync<GhPrViewJson>([
       "pr", "view", String(number),
@@ -1901,10 +1905,14 @@ export class GitHubClient {
       startedAt: (check as GhPrCheckJson).startedAt,
       completedAt: (check as GhPrCheckJson).completedAt,
     } satisfies PrCheckStatus));
+    const ingested = requiredCheckNames.length > 0 && pr.headRefOid?.trim() && resolveIngestedChecks
+      ? await resolveIngestedChecks({ owner: resolved.owner, repo: resolved.repo, headSha: pr.headRefOid }).catch(() => [])
+      : [];
+    const effectiveChecks = mergeIngestedCheckStates({ polled: normalizedChecks, ingested, requiredCheckNames, repo: `${resolved.owner}/${resolved.repo}`, headSha: pr.headRefOid }).checks as PrCheckStatus[];
     const readiness = isPrMergeReady({
       status: prInfo.status,
       reviewDecision: pr.reviewDecision ?? null,
-      checks: normalizedChecks,
+      checks: effectiveChecks,
       mergeable,
       requiredCheckNames,
     });
@@ -1912,14 +1920,14 @@ export class GitHubClient {
     return {
       prInfo,
       reviewDecision: pr.reviewDecision ?? null,
-      checks: normalizedChecks,
+      checks: effectiveChecks,
       mergeable,
       mergeReady: readiness.ready,
       blockingReasons: readiness.blockingReasons,
     };
   }
 
-  private async getPrMergeStatusWithApi(owner: string | undefined, repo: string | undefined, number: number, requiredCheckNames: string[]): Promise<PrMergeStatus> {
+  private async getPrMergeStatusWithApi(owner: string | undefined, repo: string | undefined, number: number, requiredCheckNames: string[], resolveIngestedChecks?: PrCheckGateOptions["resolveIngestedChecks"]): Promise<PrMergeStatus> {
     const resolved = this.resolveRepo(owner, repo);
     const response = await fetch(`${this.baseUrl}/graphql`, {
       method: "POST",
@@ -2071,19 +2079,23 @@ export class GitHubClient {
       commentCount: pr.comments.totalCount,
       mergeable,
     });
+    const ingested = requiredCheckNames.length > 0 && pr.headRefOid?.trim() && resolveIngestedChecks
+      ? await resolveIngestedChecks({ owner: resolved.owner, repo: resolved.repo, headSha: pr.headRefOid }).catch(() => [])
+      : [];
+    const effectiveChecks = mergeIngestedCheckStates({ polled: gateChecks, ingested, requiredCheckNames, repo: `${resolved.owner}/${resolved.repo}`, headSha: pr.headRefOid ?? undefined }).checks as PrCheckStatus[];
     const readiness = isPrMergeReady({
       status: prInfo.status,
       reviewDecision: pr.reviewDecision,
-      checks: gateChecks,
+      checks: effectiveChecks,
       mergeable,
       requiredCheckNames,
-      checkListTruncated: Boolean(contexts?.pageInfo?.hasNextPage) && requiredCheckNames.some((name) => !gateChecks.some((check) => check.name === name)),
+      checkListTruncated: Boolean(contexts?.pageInfo?.hasNextPage) && requiredCheckNames.some((name) => !effectiveChecks.some((check) => check.name === name)),
     });
 
     return {
       prInfo,
       reviewDecision: pr.reviewDecision,
-      checks: gateChecks,
+      checks: effectiveChecks,
       mergeable,
       mergeReady: readiness.ready,
       blockingReasons: readiness.blockingReasons,
@@ -2099,17 +2111,17 @@ export class GitHubClient {
     const requiredCheckNames = resolveRequiredCheckNames({ requiredChecks: options?.requiredCheckNames });
     if (this.hasGhAuth()) {
       try {
-        return await this.getAllPrChecksWithGh(owner, repo, number, requiredCheckNames);
+        return await this.getAllPrChecksWithGh(owner, repo, number, requiredCheckNames, options?.resolveIngestedChecks);
       } catch (err) {
         if (this.token) {
-          return this.getAllPrChecksWithApi(owner, repo, number, requiredCheckNames);
+          return this.getAllPrChecksWithApi(owner, repo, number, requiredCheckNames, options?.resolveIngestedChecks);
         }
         throw new Error(getGhErrorMessage(err));
       }
     }
 
     if (this.token) {
-      return this.getAllPrChecksWithApi(owner, repo, number, requiredCheckNames);
+      return this.getAllPrChecksWithApi(owner, repo, number, requiredCheckNames, options?.resolveIngestedChecks);
     }
     throw new Error("GitHub CLI (gh) is not available or not authenticated, and no GITHUB_TOKEN provided.");
   }
@@ -2133,25 +2145,28 @@ export class GitHubClient {
     repo: string | undefined,
     number: number,
     requiredCheckNames: string[] = [],
+    resolveIngestedChecks?: PrCheckGateOptions["resolveIngestedChecks"],
   ): Promise<{ checks: PrCheckStatus[]; rollupRequired: PrCheckState | "unknown" }> {
     const resolved = this.resolveRepo(owner, repo);
+    /* FNXC:PrMergeEventDrivenChecks 2026-08-09-14:35: retrieve the PR head with this transport; missing OID deliberately admits no event state. */
+    const headOid = await Promise.resolve(runGhJsonAsync<{ headRefOid?: string }>(["pr", "view", String(number), "--repo", `${resolved.owner}/${resolved.repo}`, "--json", "headRefOid"])).then((pr) => pr?.headRefOid).catch(() => undefined);
 
-    let checks = await runGhJsonAsync<GhPrCheckJson[]>([
+    let checks = await Promise.resolve(runGhJsonAsync<GhPrCheckJson[]>([
       "pr", "checks", String(number),
       "--repo", `${resolved.owner}/${resolved.repo}`,
       "--json", "name,state,link,startedAt,completedAt,bucket",
-    ]).catch(async () => {
+    ])).catch(async () => {
       const allChecks = await runGhJsonAsync<GhPrCheckJson[]>([
         "pr", "checks", String(number),
         "--repo", `${resolved.owner}/${resolved.repo}`,
         "--json", "name,state,link,startedAt,completedAt",
       ]);
-      const requiredChecks = await runGhJsonAsync<GhPrCheckJson[]>([
+      const requiredChecks = await Promise.resolve(runGhJsonAsync<GhPrCheckJson[]>([
         "pr", "checks", String(number),
         "--repo", `${resolved.owner}/${resolved.repo}`,
         "--required",
         "--json", "name,state",
-      ]).catch(() => []);
+      ])).catch(() => []);
       const requiredNames = new Set(requiredChecks.map((check) => check.name));
       return allChecks.map((check) => ({ ...check, bucket: requiredNames.has(check.name) ? "pass" : "none" }));
     });
@@ -2168,9 +2183,12 @@ export class GitHubClient {
       completedAt: check.completedAt,
     } satisfies PrCheckStatus));
 
+    const ingested = requiredCheckNames.length > 0 && headOid?.trim() && resolveIngestedChecks
+      ? await resolveIngestedChecks({ owner: resolved.owner, repo: resolved.repo, headSha: headOid }).catch(() => []) : [];
+    const effectiveChecks = mergeIngestedCheckStates({ polled: normalized, ingested, requiredCheckNames, repo: `${resolved.owner}/${resolved.repo}`, headSha: headOid }).checks as PrCheckStatus[];
     return {
-      checks: normalized,
-      rollupRequired: this.computeRequiredChecksRollup(normalized),
+      checks: effectiveChecks,
+      rollupRequired: this.computeRequiredChecksRollup(effectiveChecks),
     };
   }
 
@@ -2179,8 +2197,10 @@ export class GitHubClient {
     repo: string | undefined,
     number: number,
     requiredCheckNames: string[] = [],
+    resolveIngestedChecks?: PrCheckGateOptions["resolveIngestedChecks"],
   ): Promise<{ checks: PrCheckStatus[]; rollupRequired: PrCheckState | "unknown" }> {
     const resolved = this.resolveRepo(owner, repo);
+    /* FNXC:PrMergeEventDrivenChecks 2026-08-09-14:35: exact PR head is mandatory before event state can affect the human checks view. */
     const response = await fetch(`${this.baseUrl}/graphql`, {
       method: "POST",
       headers: this.buildHeaders(),
@@ -2188,6 +2208,7 @@ export class GitHubClient {
         query: `query PullRequestAllChecks($owner: String!, $repo: String!, $number: Int!) {
           repository(owner: $owner, name: $repo) {
             pullRequest(number: $number) {
+              headRefOid
               commits(last: 1) {
                 nodes {
                   commit {
@@ -2227,6 +2248,7 @@ export class GitHubClient {
       data?: {
         repository?: {
           pullRequest?: {
+            headRefOid?: string | null;
             commits: {
               nodes: Array<{
                 commit: {
@@ -2285,9 +2307,13 @@ export class GitHubClient {
       } satisfies PrCheckStatus];
     });
 
+    const headOid = payload.data?.repository?.pullRequest?.headRefOid ?? undefined;
+    const ingested = requiredCheckNames.length > 0 && headOid?.trim() && resolveIngestedChecks
+      ? await resolveIngestedChecks({ owner: resolved.owner, repo: resolved.repo, headSha: headOid }).catch(() => []) : [];
+    const effectiveChecks = mergeIngestedCheckStates({ polled: checks, ingested, requiredCheckNames, repo: `${resolved.owner}/${resolved.repo}`, headSha: headOid }).checks as PrCheckStatus[];
     return {
-      checks,
-      rollupRequired: this.computeRequiredChecksRollup(checks),
+      checks: effectiveChecks,
+      rollupRequired: this.computeRequiredChecksRollup(effectiveChecks),
     };
   }
 

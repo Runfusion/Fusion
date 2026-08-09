@@ -62,6 +62,8 @@ import { normalizeAgentPermissionPolicy } from "./agent-permission-policy.js";
 import { normalizeAgentRoles } from "../types/agents/agents.js";
 import { Database } from "../db/db.js";
 import type { AsyncDataLayer } from "../postgres/data-layer.js";
+import { appendAgentActivityEvent } from "../task-store/async/async-agent-activity.js";
+import { resolveAgentActivityAttribution } from "../task-store/agent-activity-outbox.js";
 import * as postgresSchema from "../postgres/schema/index.js";
 import { and, eq, gt, lte, sql } from "drizzle-orm";
 /*
@@ -1473,6 +1475,8 @@ export class AgentStore extends EventEmitter {
 
       await this.writeAgent(updated);
       this.emit("agent:stateChanged", agentId, currentState, newState);
+      /* FNXC:AgentActivityStream 2026-08-09-09:09: monitoring is fail-soft and still probes this in-memory agent against the live roster. */
+      if (this.asyncLayer) try { await appendAgentActivityEvent(this.asyncLayer, { type: "agent:state-changed", attributionClaim: resolveAgentActivityAttribution([{ id: agentId, provenance: "roster" }], "executor"), taskId: updated.taskId, occurredAt: updated.updatedAt, discriminator: updated.updatedAt, metadata: { fromState: currentState, toState: newState, source: "update" } }); } catch { /* monitoring must not block a state transition */ }
       this.emit("agent:updated", updated, currentState);
 
       return updated;
@@ -1519,6 +1523,8 @@ export class AgentStore extends EventEmitter {
     // Emit agent:assigned only when assigning a task (not when clearing)
     if (taskId !== undefined) {
       this.emit("agent:assigned", updated, taskId);
+      // FNXC:AgentActivityStream 2026-08-09-09:09: assignment does not observe an acting manager, so no fromAgentId is inferred.
+      if (this.asyncLayer) try { await appendAgentActivityEvent(this.asyncLayer, { type: "task:handed-off", attributionClaim: resolveAgentActivityAttribution([{ id: agentId, provenance: "roster" }], "executor"), toAgentIdClaim: resolveAgentActivityAttribution([{ id: agentId, provenance: "roster" }], "executor"), taskId, occurredAt: updated.updatedAt, discriminator: `${taskId}:${updated.updatedAt}`, metadata: { reason: "unlisted", source: "executor", delegationDirection: "unknown" } }); } catch { /* monitoring must not block assignment */ }
     }
 
     // Log the assignment to the task when a non-empty taskId is provided
@@ -3292,6 +3298,24 @@ export class AgentStore extends EventEmitter {
 
         if (stateChanged) {
           this.emit("agent:stateChanged", agent.id, previousState, agent.state);
+          /*
+          FNXC:AgentActivityStream 2026-08-09-09:38:
+          A separate-process state transition may only become visible through this reconciliation observer. Reuse its durable updatedAt identity so an originating writer dedupes, while an older writer still gains one outbox row. Monitoring remains fail-soft.
+          */
+          if (this.asyncLayer) {
+            try {
+              await appendAgentActivityEvent(this.asyncLayer, {
+                type: "agent:state-changed",
+                attributionClaim: resolveAgentActivityAttribution([{ id: agent.id, provenance: "roster" }], "executor"),
+                taskId: agent.taskId,
+                occurredAt: agent.updatedAt,
+                discriminator: agent.updatedAt,
+                metadata: { fromState: previousState, toState: agent.state, source: "reconciliation" },
+              });
+            } catch {
+              // Monitoring must not interrupt roster reconciliation.
+            }
+          }
           this.emit("agent:updated", agent, previousState);
         } else {
           this.emit("agent:updated", agent);

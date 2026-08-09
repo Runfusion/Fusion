@@ -1774,6 +1774,8 @@ describe("swallowed async store failure observability", () => {
   it("logs warning when sessionFile update fails during retry", async () => {
     const warnSpy = vi.spyOn(executorLog, "warn");
     const store = createMockStore();
+    const emitUsageEvent = vi.fn().mockResolvedValue(undefined);
+    (store as any).emitUsageEvent = emitUsageEvent;
     const retrySessionFilePath = "/tmp/sessions/retry-failed.jsonl";
 
     /*
@@ -1815,6 +1817,12 @@ describe("swallowed async store failure observability", () => {
     })).resolves.toBeUndefined();
 
     expect(mockedCreateFnAgent.mock.calls.length).toBeGreaterThanOrEqual(2);
+    /*
+    FNXC:CommandCenterActivity 2026-08-09-15:18:
+    A task-done-less executor retry creates a replacement runtime session. The production retry
+    path must publish a second boundary, rather than silently undercounting durable agent work.
+    */
+    expect(emitUsageEvent.mock.calls.filter(([event]) => event.kind === "session_start")).toHaveLength(mockedCreateFnAgent.mock.calls.length);
     expect(warnSpy).toHaveBeenCalledWith(
       expect.stringContaining("FN-001 failed to persist retry sessionFile: retry sessionFile write failed"),
     );
