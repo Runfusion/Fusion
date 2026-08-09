@@ -9,23 +9,21 @@ import {
 } from "../acp-settings.js";
 
 describe("acp-settings", () => {
-  it("builds grok agent stdio args without -m when model is absent", () => {
-    // Official docs: --no-auto-update for automated ACP/headless clients.
-    expect(buildGrokAcpArgs()).toEqual(["--no-auto-update", "agent", "stdio"]);
-    expect(buildGrokAcpArgs({})).toEqual(["--no-auto-update", "agent", "stdio"]);
-    expect(buildGrokAcpArgs({ noAutoUpdate: false })).toEqual(["agent", "stdio"]);
+  it("builds grok agent stdio args without --no-auto-update by default (Grok CLI v1.0.0 rejects the flag)", () => {
+    // --no-auto-update is opt-in only; the released Grok CLI does not support it.
+    expect(buildGrokAcpArgs()).toEqual(["agent", "stdio"]);
+    expect(buildGrokAcpArgs({})).toEqual(["agent", "stdio"]);
+    expect(buildGrokAcpArgs({ noAutoUpdate: true })).toEqual(["--no-auto-update", "agent", "stdio"]);
   });
 
   it("places plugin-dir and -m before the stdio subcommand", () => {
     expect(buildGrokAcpArgs({ model: "grok-4.5" })).toEqual([
-      "--no-auto-update",
       "agent",
       "-m",
       "grok-4.5",
       "stdio",
     ]);
     expect(buildGrokAcpArgs({ model: "grok-4.5", pluginDirs: ["/tmp/skills-plugin"] })).toEqual([
-      "--no-auto-update",
       "agent",
       "--plugin-dir",
       "/tmp/skills-plugin",
@@ -59,7 +57,7 @@ describe("acp-settings", () => {
   it("builds AcpRuntimeAdapter settings for Grok ACP", () => {
     const settings = buildGrokAcpRuntimeSettings({ binary: "/usr/local/bin/grok", model: "grok-cli/grok-4.5" });
     expect(settings.acpBinaryPath).toBe("/usr/local/bin/grok");
-    expect(settings.acpArgs).toEqual(["--no-auto-update", "agent", "-m", "grok-4.5", "stdio"]);
+    expect(settings.acpArgs).toEqual(["agent", "-m", "grok-4.5", "stdio"]);
     expect(settings.acpEnvAllowList).toEqual([...GROK_ACP_ENV_ALLOWLIST]);
     expect(settings.acpFsRead).toBe(false);
     expect(settings.acpFsWrite).toBe(false);
