@@ -903,6 +903,17 @@ export {
   // boundaries can return 404 instead of 500 for an unknown task id.
   TaskNotFoundError,
   isTaskNotFoundError,
+  /*
+  FNXC:Authorization 2026-08-09-03:04:
+  The typed permission denial has to be reachable from the ROOT barrel, not just `store.ts`:
+  @fusion/engine and @fusion/dashboard import from `@fusion/core`, and a symbol re-exported
+  only through `store.ts` is invisible to them (this is why `TaskSelfDeleteError` is still
+  unreachable outside core). Without this line the engine has no way to discriminate a denial
+  except by matching its prose, which is exactly the failure mode the typed error removes.
+  */
+  PermissionDeniedError,
+  isPermissionDeniedError,
+  PERMISSION_DENIED_ERROR_CODE,
   TombstonedTaskResurrectionError,
   MergeQueueTaskNotFoundError,
   MergeQueueInvalidColumnError,

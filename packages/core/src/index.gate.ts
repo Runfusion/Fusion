@@ -764,6 +764,15 @@ export {
   SelfDefeatingDependencyError,
   DependencyCycleError,
   TaskDeletedError,
+  /*
+  FNXC:Authorization 2026-08-09-03:04:
+  Mirrored from index.ts. The `engine-core` gate project aliases @fusion/core to THIS file, so a
+  symbol present only in the full barrel resolves to `undefined` under the merge gate — the exact
+  stale-gate-barrel failure mode this file's header warns about.
+  */
+  PermissionDeniedError,
+  isPermissionDeniedError,
+  PERMISSION_DENIED_ERROR_CODE,
   TombstonedTaskResurrectionError,
   MergeQueueTaskNotFoundError,
   MergeQueueInvalidColumnError,

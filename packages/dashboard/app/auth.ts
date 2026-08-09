@@ -209,13 +209,33 @@ export function withTokenHeader(init?: HeadersInit): HeadersInit | undefined {
   return headers;
 }
 
+/*
+FNXC:Authorization 2026-08-09-03:04:
+Recovery used to be keyed on an EXACT MATCH of two prose strings — `error === "Unauthorized" && message === "Valid bearer token required"`. Any 401 whose wording differed silently failed to trigger recovery, so the user sat on a dead session with no prompt. Rewording a server message was enough to break it.
+Key on a structured `details.reason` discriminant instead, so rewording the server's prose can never silently disable recovery.
+NOT every 401 is recoverable, so this does NOT blanket-accept `error === "Unauthorized"`. The daemon also returns 401 for PROJECT auth (`{error:"Unauthorized", message:"Project auth required"}`), a different credential that the daemon-token recovery flow cannot fix; treating a bare 401 as recoverable fires the wrong prompt for it. That distinction is regression-locked by "fires recovery only for the exact daemon-auth 401 shape" in app/__tests__/auth.test.ts.
+Prose matching survives ONLY as a compatibility fallback for a daemon older than the structured shape; it is no longer the primary path.
+A 403 must never reach here — it means the session is valid and the actor lacks the permission, and firing recovery would tell the user to re-authenticate for something re-authenticating cannot fix. `detectDaemonAuthFailure` gates on `status !== 401` above, so 403 is excluded by construction.
+*/
+const LEGACY_UNAUTHORIZED_MESSAGE = "Valid bearer token required";
+
+/** Machine-readable discriminant for "your daemon session is missing or invalid". */
+export const SESSION_INVALID_REASON = "session-invalid" as const;
+
 function isDaemonAuthUnauthorizedPayload(payload: unknown): boolean {
   if (!payload || typeof payload !== "object") {
     return false;
   }
 
-  const candidate = payload as DaemonUnauthorizedPayload;
-  return candidate.error === "Unauthorized" && candidate.message === "Valid bearer token required";
+  const candidate = payload as DaemonUnauthorizedPayload & { details?: { reason?: unknown } };
+
+  // Structured discriminant (preferred) — independent of any message wording.
+  if (candidate.details?.reason === SESSION_INVALID_REASON) {
+    return true;
+  }
+
+  // Compatibility with a daemon predating the structured shape.
+  return candidate.error === "Unauthorized" && candidate.message === LEGACY_UNAUTHORIZED_MESSAGE;
 }
 
 function emitDaemonAuthRecoverySignal(): void {

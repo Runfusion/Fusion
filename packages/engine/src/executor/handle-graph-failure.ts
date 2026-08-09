@@ -11,6 +11,7 @@ import { readFile } from "node:fs/promises";
 import type { Task, TaskStore, WorkflowIr } from "@fusion/core";
 import {
   nonExecutableDuplicateRedirectReason,
+  PERMISSION_DENIED_ERROR_CODE,
   resolveExplicitDuplicateMarker,
   resolveConsecutiveToolFailureRetryBackoffMs,
   resolveConsecutiveToolFailureThreshold,
@@ -60,6 +61,69 @@ import type { PausedAbortProvenance } from "./paused-abort-provenance.js";
 
 const MAX_TRANSIENT_GRAPH_RESUME_RETRIES = 2;
 const TRANSIENT_GRAPH_RESUME_RETRY_BACKOFF_MS = process.env.VITEST || process.env.NODE_ENV === "test" ? 0 : 1_000;
+
+/*
+FNXC:Authorization 2026-08-15-22:52:
+`handleGraphFailure` replaces a terminal node failure with a generic
+"Workflow graph terminated with failure at node '<n>'" string, which ERASES the reason the node
+actually failed. For most failures that is acceptable — the node's own diagnostics are logged
+separately and the generic text names the node an operator should inspect. For a permission
+denial it is not: the whole point of the denial is the sentence "actor X is not permitted to Y",
+and an operator staring at "terminated with failure at node 'execute'" has no way to learn that
+the run failed because of authorization rather than a broken worktree, a model error, or a bug.
+
+Recover it from the graph context rather than from the thrown error, because there is no thrown
+error left by the time we get here: `executeNodeWithRetries` flattens every node exception to
+`error.message` under `node:<id>:error` and, since 2026-08-09, carries the typed `code` under
+`node:<id>:errorCode`. The code is what we key on — never the message text.
+
+Deliberately narrow. Any failure WITHOUT the permission-denied code keeps the existing generic
+message byte-for-byte, so this is a carve-out for one typed error and not a change to how graph
+failures are reported in general.
+
+FNXC:Identity 2026-08-15-22:52:
+Ported here from the pre-split TaskExecutor monolith during the PR #3428 rebase onto main.
+The identity branch added this helper on executor.ts; U4 peeled handleGraphFailure into this
+module, so the carve-out has to live next to the generic terminal-park message it replaces.
+*/
+const PERMISSION_DENIED_NODE_ERROR_CODE_SUFFIX = ":errorCode";
+
+function resolveGraphPermissionDenialMessage(
+  context: Record<string, unknown> | undefined,
+  failedNode: string | undefined,
+): string | undefined {
+  if (!context) return undefined;
+
+  const readDenial = (nodeId: string): string | undefined => {
+    if (context[`node:${nodeId}${PERMISSION_DENIED_NODE_ERROR_CODE_SUFFIX}`] !== PERMISSION_DENIED_ERROR_CODE) {
+      return undefined;
+    }
+    const message = context[`node:${nodeId}:error`];
+    return typeof message === "string" && message.trim() ? message : undefined;
+  };
+
+  // Prefer the node the graph actually terminated on.
+  if (failedNode) {
+    const exact = readDenial(failedNode);
+    if (exact) return exact;
+  }
+
+  /*
+  FNXC:Authorization 2026-08-15-22:52:
+  `visitedNodeIds` records the graph node id while a materialized template/foreach instance
+  patches context under its own instance id, so the exact key can legitimately miss. Fall back to
+  any denial-coded key rather than dropping the message — the same exact-then-scan shape the
+  node diagnostic resolver already uses for `:error`.
+  */
+  for (const [key, value] of Object.entries(context)) {
+    if (!key.endsWith(PERMISSION_DENIED_NODE_ERROR_CODE_SUFFIX)) continue;
+    if (value !== PERMISSION_DENIED_ERROR_CODE) continue;
+    const message = context[`${key.slice(0, -PERMISSION_DENIED_NODE_ERROR_CODE_SUFFIX.length)}:error`];
+    if (typeof message === "string" && message.trim()) return message;
+  }
+
+  return undefined;
+}
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- mirror TaskExecutor method/map surface
 type AnyFn = (...args: any[]) => any;
@@ -1057,7 +1121,10 @@ export async function handleGraphFailure(
           return;
         }
       }
-      const message = `Workflow graph terminated with failure at node '${failedNode ?? "unknown"}'`;
+      // FNXC:Authorization 2026-08-15-22:52: a typed permission denial keeps its own sentence;
+      // every other failure keeps the generic node-named message unchanged.
+      const message = resolveGraphPermissionDenialMessage(result.context, failedNode)
+        ?? `Workflow graph terminated with failure at node '${failedNode ?? "unknown"}'`;
       const settings = await deps.store.getSettings();
       const maxToolFailureRetries = resolveMaxConsecutiveToolFailureRetries(settings);
       if (maxToolFailureRetries > 0 && isExecuteFamilyNode && !live.paused && !live.userPaused && !live.deletedAt && live.column === wipColumn) {
