@@ -45,6 +45,16 @@ describe("GET /api/agent-activity", () => {
     expect(queryAgentActivityEvents.mock.calls[1]?.[1]).toMatchObject({ limit: 100 });
   });
 
+  it("accepts and forwards a zero limit", async () => {
+    // docs/agent-activity-contract.md#filters-and-limits
+    const response = await request(app(), "GET", "/api/agent-activity?limit=0");
+    expect(response.status).toBe(200);
+    expect(queryAgentActivityEvents).toHaveBeenCalledWith(
+      { projectId: "project-a" },
+      expect.objectContaining({ limit: 0 }),
+    );
+  });
+
   it("rejects invalid limits, cursors, and event types", async () => {
     const server = app();
     for (const query of ["limit=-1", "limit=1.5", "limit=nope", "before=one", "since=1.5", "type=nope"]) {

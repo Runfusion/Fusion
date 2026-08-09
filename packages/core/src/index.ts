@@ -2563,6 +2563,8 @@ export {
   TEST_MODE_ENV,
   TEST_DATABASE_URL_ENV,
   TEST_DATABASE_MIGRATION_URL_ENV,
+  PlanningLifecycleLockTransportError,
+  withPlanningLifecycleAdvisoryLock,
 } from "./postgres/index.js";
 export type {
   BackendMode,

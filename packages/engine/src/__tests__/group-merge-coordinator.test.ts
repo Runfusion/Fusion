@@ -1318,8 +1318,14 @@ function createPostReviewStore(task: Record<string, any>, branchGroup: Record<st
     The production drain calls these methods for token-budget enforcement and branch-group promotion
     evaluation inside catch-and-warn wrappers. Supply the real, budget-free seams so a missing method
     cannot silently remove coverage while leaving this prototype fixture green.
+
+    FNXC:BranchGroupAutoMergeGate 2026-08-09-22:51:
+    The production merger drain emits session-start telemetry in both its review and merge passes.
+    Telemetry failures are swallowed by design, so this fake must implement emitUsageEvent or a missing
+    seam degrades coverage into warnings that the user-hold regression guard catches.
     */
     getSettingsByScope: vi.fn(async () => ({ global: {}, project: settings })),
+    emitUsageEvent: vi.fn(async () => true),
     listTasksByBranchGroup: vi.fn(async () => (branchGroup ? [task] : [])),
     getBranchGroup: vi.fn(() => branchGroup),
     updateTask: vi.fn(async (_id: string, patch: Record<string, unknown>) => Object.assign(task, patch)),
@@ -1477,6 +1483,11 @@ describe("resolveBranchGroupMergeRouting", () => {
     expect(held).toMatchObject({ merged: false, noOp: true });
     expect(blockedMerge).not.toHaveBeenCalled();
     expect(git(repo, "git rev-parse main")).toBe(mainBefore);
+    /*
+    FNXC:BranchGroupAutoMergeGate 2026-08-09-22:51:
+    The expected fatal-path stderr is the proof that the automatic hold did not land this member;
+    it is not a missing fixture path.
+    */
     expect(() => git(repo, "git show mission/M-8811:user-hold-feature.txt")).toThrow();
 
     let mergeAttempts = 0;
@@ -1539,6 +1550,16 @@ describe("resolveBranchGroupMergeRouting", () => {
     }
 
     expect(offendingWarnings, "merge drain emitted missing-store-seam warnings").toEqual([]);
+    /*
+    FNXC:BranchGroupAutoMergeGate 2026-08-09-22:51:
+    An empty warning list is insufficient when a future path skips telemetry entirely. Assert the
+    production merger lane exercised the fake-store seam during the explicit release.
+    */
+    expect(store.emitUsageEvent).toHaveBeenCalledWith(expect.objectContaining({
+      kind: "session_start",
+      category: "agent-session",
+      meta: expect.objectContaining({ lane: "merger" }),
+    }));
     expect(released.merged).toBe(true);
     expect(store.listTasksByBranchGroup).toHaveBeenCalledWith("BG-user-hold");
     expect(mergeAttempts).toBe(1);

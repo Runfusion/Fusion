@@ -757,6 +757,8 @@ Authoritative cutover now depends on existing/current parity summary evidence, n
 
 If a task is found in `in-review` with failed pre-merge workflow results and no active executor, self-healing can auto-revive it by replaying the same remediation send-back flow. Generic optional gates use the resolved workflow/project budget; built-in Plan Review and most Code Review groups are unbounded unless workflow settings or node config set a numeric cap. Compound Engineering's Code Review node supplies a two-pass cap.
 
+Project-level `autoMerge: false` gates **merge admission**, not pre-merge remediation: Plan Review replans, Code Review/optional-gate fixes, required-artifact recovery, and failed-step revival remain available for shared-branch members and standalone tasks. Only an operator-authored task-level auto-merge Off fences those remediation seams. Every such hold or revision-budget refusal is recorded on the task; when a fire-and-forget remediation node cannot schedule after implementation is complete, the card stays visibly parked in its resolved review lane with its merge blocker rather than bouncing back to planning.
+
 <!--
 FNXC:WorkflowOptionalStepFix 2026-06-26-17:05:
 Enabled PRE-merge optional-group REVISE findings should be acted on before review/merge when the executor is still in the graph run. The inline path consumes the same `postReviewFixCount` / `maxPostReviewFixes` budget before scheduling `sendTaskBackForFix`; exhausted budgets preserve the older advisory/gate behavior so optional advisory gates remain ultimately non-blocking.

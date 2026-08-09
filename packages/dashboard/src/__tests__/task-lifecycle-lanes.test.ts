@@ -50,10 +50,10 @@ const V1_UPGRADED_IR = {
 };
 
 describe("landedColumnsForTask", () => {
-  it("returns the renamed complete AND archived lanes, and not the legacy ids", async () => {
+  it("returns the renamed complete and archived lanes plus the undeclared legacy archive tombstone", async () => {
     const landed = await landedColumnsForTask(storeWith(RENAMED_IR), "FN-1");
 
-    expect([...landed].sort()).toEqual(["attic", "shipped"]);
+    expect([...landed].sort()).toEqual(["archived", "attic", "shipped"]);
     /*
     The archived half is asserted explicitly: the two roles resolve independently and have failed
     independently before, so a fixture that only proved `complete` would miss half the guard.
@@ -167,6 +167,13 @@ describe("the lane resolvers themselves, not just their callers", () => {
     ["wipColumnsForTask", wipColumnsForTask, "building", "in-progress"],
     ["preWipColumnsForTask", preWipColumnsForTask, "backlog", "todo"],
   ];
+
+  it("archivedColumnsForTask keeps an undeclared legacy archive tombstone beside traited lanes", async () => {
+    expect([...(await archivedColumnsForTask(storeFor(RENAMED_IR), "FN-1"))].sort()).toEqual([
+      "archived",
+      "attic",
+    ]);
+  });
 
   for (const [name, resolve, renamed, legacy] of cases) {
     it(`${name} returns the traited lane and EXCLUDES the untraited legacy name`, async () => {

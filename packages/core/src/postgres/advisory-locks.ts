@@ -89,7 +89,7 @@ export async function withPlanningLifecycleAdvisoryLock<T>(
     projectId: string;
     taskId: string;
     directSessionUrl: string | null;
-    provenance: "embedded-lifecycle" | "migration-override" | null;
+    provenance: "embedded-lifecycle" | "migration-override" | "runtime-direct" | null;
     runtimeUrl?: string | null;
     migrationUrl?: string | null;
     /** Bounds dedicated-session setup and lock acquisition, not callback work. */
@@ -102,7 +102,7 @@ export async function withPlanningLifecycleAdvisoryLock<T>(
   const directUrl = input.directSessionUrl;
   const timeoutMs = Math.max(1, input.timeoutMs ?? DEFAULT_PLANNING_LIFECYCLE_LOCK_TIMEOUT_MS);
   if (!directUrl || !input.provenance || looksLikePoolerUrl(directUrl)) {
-    throw new PlanningLifecycleLockTransportError("Planning lifecycle lock requires a direct PostgreSQL session endpoint");
+    throw new PlanningLifecycleLockTransportError("Planning lifecycle lock requires a direct PostgreSQL session endpoint; set DATABASE_MIGRATION_URL to a direct, non-pooled connection");
   }
 
   let directDatabase: string;
@@ -114,7 +114,7 @@ export async function withPlanningLifecycleAdvisoryLock<T>(
   if (!directDatabase) {
     throw new PlanningLifecycleLockTransportError("Planning lifecycle lock direct endpoint must select a database");
   }
-  const descriptorEndpoint = input.provenance === "embedded-lifecycle"
+  const descriptorEndpoint = input.provenance === "embedded-lifecycle" || input.provenance === "runtime-direct"
     ? input.runtimeUrl
     : input.migrationUrl;
   if (!descriptorEndpoint || descriptorEndpoint !== directUrl) {

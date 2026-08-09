@@ -20,7 +20,7 @@ Fusion provides two complementary audit surfaces: append-only configuration revi
 
 ### Agent activity stream
 
-`GET /api/agent-activity` is a separate project-scoped history for agent-attributed task, gate, approval, and state transitions; it does not expand the Activity Log type contract. It uses a bigint `seq` cursor represented as a decimal string (`before`/`since`), supports `agentId`, `taskId`, and event-type filters, and returns newest-first rows. Live dashboards receive durable `agent:activity` SSE frames; reconnecting consumers can close any bounded-tail truncation gap through this route. Payload metadata is IDs/counts/outcomes-only, and only roster-proven `agent` attribution represents an org-map node.
+`GET /api/agent-activity` is a separate project-scoped history for agent-attributed task, gate, approval, and state transitions; it does not expand the Activity Log type contract. Its inspectable wire, cursor, continuation, and retention contract is [Agent activity API contract](agent-activity-contract.md). Live dashboards receive durable `agent:activity` SSE frames; reconnecting consumers can close any bounded-tail truncation gap through this route. Payload metadata is IDs/counts/outcomes-only, and only roster-proven `agent` attribution represents an org-map node.
 
 ### Current behavior and limitations
 

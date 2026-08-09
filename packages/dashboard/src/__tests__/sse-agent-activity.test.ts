@@ -5,6 +5,12 @@ import { appendAgentActivityEvent as appendDurableAgentActivity } from "../../..
 import { resolveAgentActivityAttribution } from "../../../core/src/task-store/agent-activity-outbox.js";
 import { createSharedPgTaskStoreTestHarness, pgDescribe, type SharedPgTaskStoreHarness } from "../../../core/src/__test-utils__/pg-test-harness.js";
 
+/*
+FNXC:AgentActivityStream 2026-08-09-22:35:
+FN-8915 pins the documented truncation repair endpoints so clients can reconstruct the omitted
+half-open range without depending on the SSE implementation's private tuning constants.
+*/
+
 const { queryAgentActivityEvents, getMaxAgentActivitySeq } = vi.hoisted(() => ({
   queryAgentActivityEvents: vi.fn(),
   getMaxAgentActivitySeq: vi.fn(),
@@ -254,9 +260,13 @@ describe("agent activity SSE tail", () => {
     store.emit("agent:activity", event("5001"));
     await settle();
 
+    // docs/agent-activity-contract.md#sse-truncation-repair
+    const marker = { truncated: true, fromSeq: "0", toSeq: "5001" };
     expect(response.write).toHaveBeenCalledWith(
-      `event: agent:activity\ndata: ${JSON.stringify({ truncated: true, fromSeq: "0", toSeq: "5001" })}\n\n`,
+      `event: agent:activity\ndata: ${JSON.stringify(marker)}\n\n`,
     );
+    expect(marker.fromSeq).toBe("0");
+    expect(marker.toSeq).toBe("5001");
     expect(queryAgentActivityEvents).not.toHaveBeenCalled();
     response.emit("close");
   });
