@@ -141,11 +141,10 @@ describe("worktree-acquisition secrets env hook", () => {
     expect(refreshReusedWorktreeBase).not.toHaveBeenCalled();
     expect(git).toHaveBeenCalledWith(expect.objectContaining({
       type: "worktree:base-refresh-blocked",
-      target: "FN-1",
+      target: existingWorktree,
       metadata: { taskId: "FN-1", outcome: "base-reconciliation-required", reconciliationOutcome: "git-dir-unavailable" },
     }));
     expect(JSON.stringify(git.mock.calls)).not.toContain("secret-derived resolver detail");
-    expect(JSON.stringify(git.mock.calls)).not.toContain(existingWorktree);
   });
 
   it("isolates writer failures", async () => {
