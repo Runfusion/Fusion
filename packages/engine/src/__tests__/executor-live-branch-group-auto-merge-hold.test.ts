@@ -135,7 +135,7 @@ describe("executor shared-branch autoMerge:false liveness gates", () => {
     )).resolves.toBe(true);
   });
 
-  it("holds an unset shared member at both pre-merge remediation seams when project auto-merge is Off", async () => {
+  it("FN-8910 reopens an unset project-Off shared member at live and failed-step remediation seams", async () => {
     const { executor, store } = makeExecutor({ status: "open", branchName: "mission/M-1980" });
     const task = makeInReviewTask({
       workflowStepResults: [{
@@ -156,10 +156,51 @@ describe("executor shared-branch autoMerge:false liveness gates", () => {
       status: "failed",
       verdict: "REVISE",
       nodeId: "code-review",
-    })).resolves.toBe(false);
-    await expect(executor.recoverFailedPreMergeWorkflowStep(task)).resolves.toBe(false);
+    })).resolves.toBe(true);
+    await expect(executor.recoverFailedPreMergeWorkflowStep(task)).resolves.toBe(true);
 
-    expect(sendBack).not.toHaveBeenCalled();
+    expect(sendBack).toHaveBeenCalledTimes(2);
+  });
+
+  it("FN-8910 replans Plan Review for an unset project-Off shared member", async () => {
+    const { executor, store } = makeExecutor({ status: "open", branchName: "mission/M-1980" });
+    const task = makeInReviewTask({ column: "in-progress", status: null });
+    store.getTask.mockResolvedValue(task);
+
+    await expect((executor as any).requestPreMergeOptionalStepFix(task.id, task, {
+      stepName: "Plan Review",
+      feedback: "Revise the task specification.",
+      phase: "pre-merge",
+      status: "failed",
+      verdict: "REVISE",
+      nodeId: "plan-review",
+    })).resolves.toBe(true);
+
+    expect(store.moveTask).toHaveBeenCalledWith(task.id, "todo", { preserveWorktree: true });
+    expect(store.updateTask).toHaveBeenCalledWith(task.id, expect.objectContaining({ status: "needs-replan" }), undefined);
+  });
+
+  it("FN-8910 routes retryable remediation failure through the reopened shared-member seam", async () => {
+    const { executor, store } = makeExecutor({ status: "open", branchName: "mission/M-1980" });
+    const task = makeInReviewTask({
+      workflowStepResults: [{
+        workflowStepId: "code-review",
+        workflowStepName: "Code Review",
+        phase: "pre-merge",
+        status: "failed",
+        output: "Please revise",
+      }],
+    });
+    store.getTask.mockResolvedValue(task);
+    const sendBack = vi.spyOn(executor as any, "sendTaskBackForFix").mockResolvedValue(undefined);
+
+    await expect((executor as any).routeRetryableRemediationGraphFailureToPreMergeFix(
+      task,
+      "code-review-remediation",
+      "remediation-not-scheduled",
+    )).resolves.toBe(true);
+
+    expect(sendBack).toHaveBeenCalledOnce();
   });
 
   it("does not let live pre-merge remediation reopen an operator-held member", async () => {
@@ -178,10 +219,16 @@ describe("executor shared-branch autoMerge:false liveness gates", () => {
     })).resolves.toBe(false);
 
     expect(sendBack).not.toHaveBeenCalled();
+    expect(store.logEntry).toHaveBeenCalledWith(
+      task.id,
+      expect.stringContaining("operator task hold"),
+      expect.stringContaining("operator-authored task-level auto-merge Off"),
+      undefined,
+    );
   });
 
   it("does not let failed-step recovery reopen an operator-held member", async () => {
-    const { executor } = makeExecutor({ status: "open", branchName: "mission/M-1980" });
+    const { executor, store } = makeExecutor({ status: "open", branchName: "mission/M-1980" });
     const task = makeInReviewTask({
       autoMerge: false,
       autoMergeProvenance: "user",
@@ -198,6 +245,12 @@ describe("executor shared-branch autoMerge:false liveness gates", () => {
     await expect(executor.recoverFailedPreMergeWorkflowStep(task)).resolves.toBe(false);
 
     expect(sendBack).not.toHaveBeenCalled();
+    expect(store.logEntry).toHaveBeenCalledWith(
+      task.id,
+      expect.stringContaining("operator task hold"),
+      expect.stringContaining("operator-authored task-level auto-merge Off"),
+      undefined,
+    );
   });
 
   it("holds an open shared group that would integrate directly into main", async () => {

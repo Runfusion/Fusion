@@ -2563,6 +2563,8 @@ export {
   TEST_MODE_ENV,
   TEST_DATABASE_URL_ENV,
   TEST_DATABASE_MIGRATION_URL_ENV,
+  PlanningLifecycleLockTransportError,
+  withPlanningLifecycleAdvisoryLock,
 } from "./postgres/index.js";
 export type {
   BackendMode,
@@ -2759,3 +2761,7 @@ export {
 export { pruneTaskLifecycleEvents } from "./task-store/task-lifecycle-event-retention.js";
 
 export { buildConsumerId } from "./task-store/task-lifecycle-consumer-identity.js";
+export type { AgentActivityEventType, AgentActivityAttribution, AgentActivityIdProvenance, AgentActivityIdCandidate, AgentActivityAttributionClaim, AgentActivityMetadataValueSpec, AgentActivityEvent, AgentActivityEventInput, AgentActivityQuery } from "./types/agents/agents.js";
+export { AGENT_ACTIVITY_EVENT_TYPES, AGENT_ACTIVITY_ATTRIBUTIONS, AGENT_ACTIVITY_LANE_SENTINELS, AGENT_ACTIVITY_GENERATED_ID_PATTERNS, AGENT_ACTIVITY_HANDOFF_REASONS, AGENT_ACTIVITY_TOOL_NAMES, AGENT_ACTIVITY_WORKFLOW_STEP_IDS, AGENT_ACTIVITY_METADATA_SCHEMA, AGENT_ACTIVITY_METADATA_KEYS, isAgentActivityEventType } from "./types/agents/agents.js";
+export { appendAgentActivityEvent, queryAgentActivityEvents, getMaxAgentActivitySeq, pruneAgentActivityEvents } from "./task-store/async/async-agent-activity.js";
+export { makeAgentActivityEventId, resolveAgentActivityAttribution, agentIdExistsInRoster, formatAgentActivitySummary, sanitizeAgentActivityMetadata } from "./task-store/agent-activity-outbox.js";

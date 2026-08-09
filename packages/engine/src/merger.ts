@@ -276,6 +276,7 @@ import { resolveAgentInstructions, buildSystemPromptWithInstructions } from "./a
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { createRunAuditor, generateSyntheticRunId, type EngineRunContext, type RunAuditor } from "./util/run-audit.js";
+import { resolveAgentActivityAttribution } from "@fusion/core";
 import { createWebFetchTool } from "./agent-tools.js";
 import {
   auditSquashMerge,
@@ -11443,7 +11444,12 @@ async function runConfiguredMergeWorktreeCommand(
   };
 }
 
-async function completeTask(
+/*
+FNXC:AgentActivityStream 2026-08-09-21:19:
+Completion is the single merger finalization seam shared by successful merge paths. It is exported
+so its durable agent-activity outbox write can be tested without a synthetic git or AI session.
+*/
+export async function completeTask(
   store: TaskStore,
   taskId: string,
   result: MergeResult,
@@ -11462,5 +11468,12 @@ async function completeTask(
     }
   }
   result.task = task;
+  try {
+    /*
+    FNXC:AgentActivityStream 2026-08-09-11:50:
+    A landed SHA is the completion's natural idempotency discriminator; completed retries without one converge on the fixed done token. The configured merge route is a closed metadata enum, so monitoring retains the actual route without accepting arbitrary strategy prose.
+    */
+    await store.recordAgentActivity({ type: "task:completed", attributionClaim: resolveAgentActivityAttribution([{ id: preMoveTask?.assignedAgentId ?? "merger", provenance: preMoveTask?.assignedAgentId ? "roster" : "lane" }], "merger"), taskId, occurredAt: new Date().toISOString(), discriminator: result.commitSha ?? "done", metadata: { sha: result.commitSha, strategy: settings.mergeStrategy } });
+  } catch { /* FNXC:AgentActivityStream 2026-08-09-09:09: monitoring never blocks completion. */ }
   store.emit("task:merged", result);
 }

@@ -85,6 +85,24 @@ workflows; metadata is the only authoritative renamed-lane answer in this event 
 const LEGACY_PLANNER_WAKE_COLUMNS = new Set(["todo", "triage"]);
 const LEGACY_PLANNER_COLUMNS = new Set([...LEGACY_PLANNER_WAKE_COLUMNS, "in-progress"]);
 
+const PLANNING_LIFECYCLE_LOCK_TRANSPORT_FAILURE_KEY = "planning.lifecycleLockTransportFailure";
+
+type PlanningLifecycleLockTransportFailure = { message: string; at: string; attempt: number | null };
+
+function getPlanningLifecycleLockTransportFailure(task: Task): PlanningLifecycleLockTransportFailure | null {
+  const candidate = task.customFields?.[PLANNING_LIFECYCLE_LOCK_TRANSPORT_FAILURE_KEY];
+  if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return null;
+  const marker = candidate as Partial<PlanningLifecycleLockTransportFailure>;
+  return typeof marker.message === "string" && typeof marker.at === "string"
+    ? { message: marker.message, at: marker.at, attempt: typeof marker.attempt === "number" ? marker.attempt : null }
+    : null;
+}
+
+function isPlanningLifecycleLockTransportError(error: unknown): error is Error {
+  return error instanceof fusionCore.PlanningLifecycleLockTransportError
+    || (error instanceof Error && error.name === "PlanningLifecycleLockTransportError");
+}
+
 /*
 FNXC:PlanReviewReplan 2026-07-13-00:00:
 The triage pre-execution Plan Review gate (runPlanReviewBeforeExecution) routes a REVISE
@@ -3493,11 +3511,15 @@ export class TriageProcessor {
           }
           const artifactChangedByAttempt = planningAttempt.baseline !== written;
           if (fallbackDispatchBoundaryMissing || planningAttempt.fallbackEngaged || !artifactChangedByAttempt) {
-            const failure = fallbackDispatchBoundaryMissing
-              ? `Planner runtime ${runtimeId} did not provide a fallback-dispatch settlement boundary for attempt ${planningAttempt.id}`
-              : planningAttempt.fallbackEngaged
-                ? `Planner fallback engaged during attempt ${planningAttempt.id}`
-                : `Planner did not update the authoritative PROMPT.md during attempt ${planningAttempt.id}`;
+            const liveTask = await Promise.resolve(this.store.getTask(task.id)).catch(() => task) ?? task;
+            const transportFailure = getPlanningLifecycleLockTransportFailure(liveTask);
+            const failure = transportFailure
+              ? `Planning lifecycle lock transport failure recorded at ${transportFailure.at}: ${transportFailure.message}`
+              : fallbackDispatchBoundaryMissing
+                ? `Planner runtime ${runtimeId} did not provide a fallback-dispatch settlement boundary for attempt ${planningAttempt.id}`
+                : planningAttempt.fallbackEngaged
+                  ? `Planner fallback engaged during attempt ${planningAttempt.id}`
+                  : `Planner did not update the authoritative PROMPT.md during attempt ${planningAttempt.id}`;
             const decision = computeRecoveryDecision({
               recoveryRetryCount: task.recoveryRetryCount,
               nextRecoveryAt: task.nextRecoveryAt,
@@ -3519,11 +3541,16 @@ export class TriageProcessor {
             const failureMessage = `${failure} after ${MAX_RECOVERY_RETRIES} retries. Retry after adjusting the task prompt or model.`;
             planLog.error(`${task.id} clean planning attempt retry budget exhausted`);
             await this.store.logEntry(task.id, failureMessage);
-            if (await this.updatePlanningStateIfStillCurrent(task, {
-              status: "failed",
-              error: failureMessage,
-              recoveryRetryCount: null,
-              nextRecoveryAt: null,
+            if (await this.updatePlanningStateIfStillCurrent(task, (live) => {
+              const customFields = { ...(live.customFields ?? {}) };
+              delete customFields[PLANNING_LIFECYCLE_LOCK_TRANSPORT_FAILURE_KEY];
+              return {
+                status: "failed",
+                error: failureMessage,
+                recoveryRetryCount: null,
+                nextRecoveryAt: null,
+                customFields,
+              };
             })) {
               await this.backfillBlankTitleAfterTerminalTriageFailure(task);
             }
@@ -3731,6 +3758,49 @@ export class TriageProcessor {
           if (!persisted) return;
           await this.backfillBlankTitleAfterTerminalTriageFailure(task);
           this.options.onSpecifyError?.(task, err instanceof Error ? err : new Error(errorMessage));
+          return;
+        } else if (isPlanningLifecycleLockTransportError(err)) {
+          /*
+          FNXC:PlanningDependencyReseed 2026-08-09-21:53:
+          A fail-closed lifecycle-lock transport rejection is infrastructure, not planner authoring.
+          Issue #3394 showed retries could turn a complete spec into a false unchanged-PROMPT verdict;
+          persist its marker because retry ownership can move across processes and restarts.
+          */
+          const failureMessage = `Planning lifecycle lock transport failure: ${errorMessage}`;
+          const decision = computeRecoveryDecision({
+            recoveryRetryCount: task.recoveryRetryCount,
+            nextRecoveryAt: task.nextRecoveryAt,
+          });
+          const persistMarker = (live: Task) => ({
+            customFields: {
+              ...(live.customFields ?? {}),
+              [PLANNING_LIFECYCLE_LOCK_TRANSPORT_FAILURE_KEY]: {
+                message: errorMessage,
+                at: new Date().toISOString(),
+                attempt: decision.nextState.recoveryRetryCount,
+              },
+            },
+          });
+          if (decision.shouldRetry) {
+            const retryMessage = `${failureMessage} — retry ${decision.nextState.recoveryRetryCount}/${MAX_RECOVERY_RETRIES} in ${formatDelay(decision.delayMs)}.`;
+            planLog.warn(`${task.id} ${retryMessage}`);
+            await this.store.logEntry(task.id, retryMessage).catch(() => undefined);
+            await this.updatePlanningStateIfStillCurrent(task, (live) => ({
+              ...persistMarker(live),
+              status: this.restoreStatusAfterInterruptedTriageWork(task),
+              error: null,
+              recoveryRetryCount: decision.nextState.recoveryRetryCount,
+              nextRecoveryAt: decision.nextState.nextRecoveryAt,
+            }));
+            return;
+          }
+          await this.store.logEntry(task.id, failureMessage).catch(() => undefined);
+          await this.updatePlanningStateIfStillCurrent(task, (live) => {
+            const customFields = { ...(live.customFields ?? {}) };
+            delete customFields[PLANNING_LIFECYCLE_LOCK_TRANSPORT_FAILURE_KEY];
+            return { status: "failed", error: failureMessage, recoveryRetryCount: null, nextRecoveryAt: null, customFields };
+          });
+          await this.backfillBlankTitleAfterTerminalTriageFailure(task);
           return;
         } else if (isTransientError(errorMessage)) {
           // Transient network/infrastructure error — use bounded recovery policy
@@ -4593,6 +4663,11 @@ export class TriageProcessor {
      * near-duplicate decision; keep removes the marker before the next real plan.
      */
     if (explicitDuplicateMarker) {
+      await this.updatePlanningStateIfStillCurrent(task, (live) => {
+        const customFields = { ...(live.customFields ?? {}) };
+        delete customFields[PLANNING_LIFECYCLE_LOCK_TRANSPORT_FAILURE_KEY];
+        return { customFields };
+      });
       const canonicalId = explicitDuplicateMarker.canonicalId;
       const duplicateSource = duplicateResolution.source ?? "prompt";
       const canonicalTask = await this.store.getTask(canonicalId).catch(() => null);
@@ -5192,6 +5267,11 @@ export class TriageProcessor {
     in the bookkeeping that follows does not un-hand-off a card that has already moved.
     */
     report.outcome = "released";
+    await this.updatePlanningStateIfStillCurrent(task, (live) => {
+      const customFields = { ...(live.customFields ?? {}) };
+      delete customFields[PLANNING_LIFECYCLE_LOCK_TRANSPORT_FAILURE_KEY];
+      return { customFields };
+    });
 
     /*
     FNXC:TriageStuckKill 2026-07-18-21:05:

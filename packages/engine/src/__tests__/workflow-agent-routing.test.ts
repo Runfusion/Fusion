@@ -7,11 +7,24 @@ const agent = (id: string, roles: string[], createdAt = "2026-01-01T00:00:00.000
 const ir: any = { version: "v2", name: "test", columns: [{ id: "todo", name: "Todo", traits: [] }], nodes: [] };
 
 describe("routeWorkflowPrincipal", () => {
-  it("uses exact review override and returns to task owner for execution", () => {
-    const owner = agent("owner", ["custom"]);
-    const reviewer = agent("reviewer", ["custom"]);
+  it("uses exact review override and returns to an executor owner for execution", () => {
+    const owner = agent("owner", ["executor"]);
+    const reviewer = agent("reviewer", ["reviewer"]);
     expect(routeWorkflowPrincipal({ task: { assignedAgentId: "owner" }, ir, node: { id: "r", kind: "prompt", reviewerAgentId: "reviewer", config: { workflowRole: "reviewer" } }, agents: [owner, reviewer] })).toMatchObject({ status: "routed", route: { agent: reviewer, authority: "review-node-override" } });
     expect(routeWorkflowPrincipal({ task: { assignedAgentId: "owner" }, ir, node: { id: "e", kind: "prompt", config: { seam: "execute" } }, agents: [owner, reviewer] })).toMatchObject({ status: "routed", route: { agent: owner, authority: "task-assignee" } });
+  });
+
+  it("holds rather than falling back when a named owner is not eligible to execute", () => {
+    const pool = agent("pool", ["executor"]);
+    const node = { id: "e", kind: "prompt", config: { seam: "execute" } };
+    for (const owner of [
+      agent("triage-owner", ["triage"]),
+      { ...agent("disabled-owner", ["executor"]), runtimeConfig: { enabled: false } },
+      { ...agent("policy-denied-owner", ["executor"]), runtimeConfig: { assignmentPolicy: "none" } },
+    ]) {
+      expect(routeWorkflowPrincipal({ task: { assignedAgentId: owner.id }, ir, node, agents: [owner, pool] }))
+        .toEqual({ status: "held", role: "executor", reason: "named-principal-unavailable" });
+    }
   });
 
   it("holds rather than falling back when a named principal is unavailable", () => {

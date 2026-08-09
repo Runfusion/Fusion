@@ -1292,3 +1292,82 @@ export interface AgentPerformanceSummary {
   computedAt: string;
 }
 
+
+/*
+FNXC:AgentActivityStream 2026-08-09-09:09:
+FN-8864 persists a cross-process monitoring outbox with ids/counts/outcomes-only metadata.
+Summaries are generated at the append boundary, and caller inputs carry only an opaque attribution
+claim: a live roster probe is the sole producer of persisted `agent` attribution. There is no
+freeform metadata kind; human-authorable values use closed enums with safe fallback tokens. `seq`
+remains a decimal string because PostgreSQL bigint exceeds JavaScript's exact Number range.
+*/
+export const AGENT_ACTIVITY_EVENT_TYPES = [
+  "task:started", "task:handed-off", "task:completed", "agent:state-changed",
+  "workflow:gate-passed", "workflow:gate-failed", "approval:requested",
+] as const;
+export type AgentActivityEventType = (typeof AGENT_ACTIVITY_EVENT_TYPES)[number];
+export function isAgentActivityEventType(value: string): value is AgentActivityEventType {
+  return (AGENT_ACTIVITY_EVENT_TYPES as readonly string[]).includes(value);
+}
+
+/** `agent` is roster-proven; `lane` and `actor` must never be rendered as org-map nodes. */
+export const AGENT_ACTIVITY_ATTRIBUTIONS = ["agent", "lane", "actor"] as const;
+export type AgentActivityAttribution = (typeof AGENT_ACTIVITY_ATTRIBUTIONS)[number];
+export const AGENT_ACTIVITY_LANE_SENTINELS = ["executor", "merger"] as const;
+export type AgentActivityIdProvenance = "roster" | "lane" | "actor";
+export interface AgentActivityIdCandidate { id: string; provenance: AgentActivityIdProvenance; }
+const agentActivityAttributionClaimBrand: unique symbol = Symbol("agentActivityAttributionClaim");
+/** A claim is intentionally not a persisted attribution; only the outbox boundary can verify it. */
+export type AgentActivityAttributionClaim = {
+  readonly agentId: string;
+  readonly claimedAttribution: AgentActivityAttribution;
+  readonly [agentActivityAttributionClaimBrand]: true;
+};
+
+export type AgentActivityMetadataValueSpec =
+  | { kind: "enum"; values: readonly string[]; fallback: string }
+  | { kind: "generatedId" }
+  | { kind: "count" }
+  | { kind: "boolean" }
+  | { kind: "sha" };
+
+/** If a value can be typed by a human it must be an enum, never a generatedId. */
+export const AGENT_ACTIVITY_GENERATED_ID_PATTERNS = Object.freeze([
+  /^agent-[0-9a-f]{6,32}$/i, /^apr-[0-9a-f]{6,32}$/i, /^(?:FN|KB)-\d{1,6}$/i,
+  /^evt_[0-9a-f]{16,64}$/, /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+  /^(?:exec|merge|self-heal-handoff)-(?:FN|KB)-\d{1,6}-\d{10,13}-[a-z0-9]{4}$/,
+]);
+// FNXC:AgentActivityStream 2026-08-09-12:59: These are observed production handoff reasons and registered tool names; unknown operator/plugin values still collapse to `unlisted` rather than becoming persisted prose.
+export const AGENT_ACTIVITY_HANDOFF_REASONS = ["post-done-noncontinuable", "review-handoff-requested", "completed-task-recovered", "workflow-graph-review", "workflow-graph-review-handoff", "executor-exit-while-review-pending", "paused-after-completion", "stuck-no-progress-churn", "stuck-loop-exhausted", "branch-conflict-unrecoverable-repromote", "unlisted"] as const;
+export const AGENT_ACTIVITY_TOOL_NAMES = ["bash", "edit", "read", "write", "git_push", "fn_agent_create", "fn_agent_delete", "fn_ask_question", "fn_bash", "fn_delegate_task", "fn_goal_list", "fn_goal_show", "fn_heartbeat_done", "fn_mission_create", "fn_research_run", "fn_spawn_agent", "fn_task_add_dep", "fn_task_assign", "fn_task_bypass_review", "fn_task_create", "fn_task_delete", "fn_task_done", "fn_task_file_scope_add", "fn_task_import_github", "fn_task_import_github_issue", "fn_task_import_gitlab_project_issues", "fn_task_merge", "fn_task_prompt_write", "fn_task_refine", "fn_task_update", "fn_update_agent_config", "fn_update_identity", "fn_web_fetch", "fn_workflow_delete", "mcp__postiz__integrationlist", "unlisted"] as const;
+export const AGENT_ACTIVITY_WORKFLOW_STEP_IDS = ["plan-review", "code-review", "browser-review", "custom"] as const;
+const activityEnum = <T extends readonly string[]>(values: T, fallback: T[number]): AgentActivityMetadataValueSpec => ({ kind: "enum", values, fallback });
+const states = ["idle", "active", "running", "paused", "error", "unlisted"] as const;
+const directions = ["down", "up", "unknown"] as const;
+// FNXC:AgentActivityStream 2026-08-09-11:50: Completion records the configured merge route; unsupported historical routes safely collapse to `unlisted` rather than persisting prose.
+const strategies = ["direct", "pull-request", "merge", "squash", "rebase", "unlisted"] as const;
+const categories = ["git_write", "file_write_delete", "command_execution", "network_api", "task_agent_mutation", "review_gate_bypass", "file_scope", "none", "agent_provisioning", "sandbox_provisioning", "secrets_access", "unlisted"] as const;
+export const AGENT_ACTIVITY_METADATA_SCHEMA: Record<AgentActivityEventType, Readonly<Record<string, AgentActivityMetadataValueSpec>>> = {
+  "task:started": { runId: { kind: "generatedId" } },
+  "task:handed-off": { runId: { kind: "generatedId" }, reason: activityEnum(AGENT_ACTIVITY_HANDOFF_REASONS, "unlisted"), source: activityEnum(["executor", "self-healing"] as const, "executor"), delegationDirection: activityEnum(directions, "unknown") },
+  "task:completed": { sha: { kind: "sha" }, strategy: activityEnum(strategies, "unlisted") },
+  "agent:state-changed": { fromState: activityEnum(states, "unlisted"), toState: activityEnum(states, "unlisted"), source: activityEnum(["update", "reconciliation"] as const, "update") },
+  // FNXC:AgentActivityStream 2026-08-09-13:18: An advisory failure may carry an approving verdict and is therefore emitted as a passed gate; retain its closed terminal status instead of sanitizing away the observed outcome.
+  "workflow:gate-passed": { stepId: activityEnum(AGENT_ACTIVITY_WORKFLOW_STEP_IDS, "custom"), status: activityEnum(["passed", "skipped", "advisory_failure", "unlisted"] as const, "unlisted"), attempt: { kind: "count" } },
+  "workflow:gate-failed": { stepId: activityEnum(AGENT_ACTIVITY_WORKFLOW_STEP_IDS, "custom"), status: activityEnum(["failed", "advisory_failure", "unlisted"] as const, "unlisted"), attempt: { kind: "count" } },
+  "approval:requested": { requestId: { kind: "generatedId" }, category: activityEnum(categories, "unlisted"), toolName: activityEnum(AGENT_ACTIVITY_TOOL_NAMES, "unlisted") },
+};
+export const AGENT_ACTIVITY_METADATA_KEYS: Record<AgentActivityEventType, readonly string[]> = Object.fromEntries(
+  AGENT_ACTIVITY_EVENT_TYPES.map((type) => [type, Object.keys(AGENT_ACTIVITY_METADATA_SCHEMA[type])]),
+) as unknown as Record<AgentActivityEventType, readonly string[]>;
+export interface AgentActivityEvent {
+  seq: string; eventId: string; projectId: string; agentId: string; agentAttribution: AgentActivityAttribution;
+  taskId: string | null; type: AgentActivityEventType; fromAgentId: string | null; toAgentId: string | null;
+  summary: string; occurredAt: string; metadata: Record<string, unknown> | null;
+}
+export interface AgentActivityEventInput {
+  attributionClaim: AgentActivityAttributionClaim; fromAgentIdClaim?: AgentActivityAttributionClaim;
+  toAgentIdClaim?: AgentActivityAttributionClaim; taskId?: string; type: AgentActivityEventType;
+  occurredAt: string; metadata?: Record<string, unknown>; discriminator: string;
+}
+export interface AgentActivityQuery { limit?: number; before?: string; since?: string; agentId?: string; taskId?: string; type?: AgentActivityEventType; }

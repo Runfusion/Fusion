@@ -44,6 +44,7 @@ import {
   PLAN_REVIEW_GROUP_ID,
   ACTIVE_WORKFLOW_WORK_ITEM_STATES,
   resolveCapacityPoolId,
+  sortTasksByPriorityThenAgeAndId,
   TransitionRejectionError,
   resolveWorkflowIrForTask,
   isUnplannedSeedPrompt,
@@ -692,11 +693,21 @@ export async function runHoldReleaseSweep(
     prefetchMs = deps.now() - prefetchStartedMs;
     if (expired()) return logPreambleTruncation(allTasks.length);
 
+    /*
+    FNXC:TaskDispatch 2026-08-09-21:04:
+    Capacity and file-scope reservations are assigned in sweep evaluation order.
+    After hard eligibility gates reject paused, dependency-blocked, or overlapping
+    work, operators require priority first and older work before newer work within
+    a priority tier. Reuse core's priority → createdAt → id comparator so this
+    dispatcher and board ordering cannot drift; retain allTasks as the occupancy
+    and dependency snapshot rather than changing the global listTasks order.
+    */
+    const tasksForReleaseEvaluation = sortTasksByPriorityThenAgeAndId(allTasks);
 
     let breakIndex: number | undefined;
-    for (let index = 0; index < allTasks.length; index += 1) {
+    for (let index = 0; index < tasksForReleaseEvaluation.length; index += 1) {
       if (expired()) { breakIndex = index; break; }
-      const task = allTasks[index]!;
+      const task = tasksForReleaseEvaluation[index]!;
       if (task.paused || task.userPaused || (task.nextRecoveryAt && Date.parse(task.nextRecoveryAt) > deps.now())) continue;
       if (expired()) { breakIndex = index; break; }
       const irStartedMs = deps.now();
@@ -742,7 +753,7 @@ export async function runHoldReleaseSweep(
       else { trackHeld(task.id, "move-rejected-or-no-slot", deps.now()); result.held.push({ taskId: task.id, reason: "move-rejected-or-no-slot" }); }
       evaluatedTaskIds.add(task.id);
     }
-    if (breakIndex !== undefined) { result.budgetTruncated = true; result.unevaluatedCount = allTasks.length - breakIndex; }
+    if (breakIndex !== undefined) { result.budgetTruncated = true; result.unevaluatedCount = tasksForReleaseEvaluation.length - breakIndex; }
     const sweepMs = deps.now() - sweepStartedMs;
     const longestHeldMs = result.held.reduce((max, held) => Math.max(max, deps.now() - (heldSince.get(held.taskId)?.sinceMs ?? deps.now())), 0);
     const summary = `Hold-release sweep: ${sweepMs}ms (prefetch ${prefetchMs}ms, ir-resolve ${irResolveMs}ms, evaluate ${Math.max(0, sweepMs - prefetchMs - irResolveMs)}ms over ${allTasks.length} tasks), released=${result.released.length}, held=${result.held.length}`

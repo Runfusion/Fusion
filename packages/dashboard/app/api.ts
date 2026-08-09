@@ -10,3 +10,57 @@ export * from "./api/planning/models-usage";
 export * from "./api/chat";
 export * from "./api-node";
 export * from "./api/system/report";
+
+/*
+FNXC:AgentActivityStream 2026-08-09-09:38:
+The monitoring clients receive durable event frames and an explicit truncation marker on the same SSE event name. A marker is not an activity row; consumers fetch the omitted range through the typed history route.
+*/
+export type AgentActivityEventType =
+  | "task:started"
+  | "task:handed-off"
+  | "task:completed"
+  | "agent:state-changed"
+  | "workflow:gate-passed"
+  | "workflow:gate-failed"
+  | "approval:requested";
+
+export interface AgentActivityEvent {
+  seq: string;
+  eventId: string;
+  projectId: string;
+  agentId: string;
+  agentAttribution: "agent" | "lane" | "actor";
+  taskId: string | null;
+  type: AgentActivityEventType;
+  fromAgentId: string | null;
+  toAgentId: string | null;
+  summary: string;
+  occurredAt: string;
+  metadata: Record<string, unknown> | null;
+}
+
+export interface AgentActivityTruncatedFrame {
+  truncated: true;
+  fromSeq: string;
+  toSeq: string;
+}
+
+export type AgentActivitySseFrame = AgentActivityEvent | AgentActivityTruncatedFrame;
+
+export interface AgentActivityPage {
+  events: AgentActivityEvent[];
+  nextCursor: string | null;
+}
+
+export async function getAgentActivity(
+  params: Record<string, string | number | undefined> = {},
+): Promise<AgentActivityPage> {
+  const query = new URLSearchParams(
+    Object.entries(params)
+      .filter((entry): entry is [string, string | number] => entry[1] !== undefined)
+      .map(([key, value]) => [key, String(value)]),
+  );
+  const response = await fetch(`/api/agent-activity${query.size ? `?${query}` : ""}`);
+  if (!response.ok) throw new Error(`Agent activity request failed: ${response.status}`);
+  return response.json() as Promise<AgentActivityPage>;
+}
