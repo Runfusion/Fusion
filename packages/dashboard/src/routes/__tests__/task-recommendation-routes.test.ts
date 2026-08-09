@@ -141,6 +141,10 @@ function installCustomRecommendationWorkflow(
   options: {
     declareLegacyArchivedAsLive?: boolean;
     traitlessLegacyColumns?: boolean;
+    /*
+    FNXC:TaskRecommendations 2026-08-09-08:18:
+    Workflow-definition resolution failures must preserve the legacy `archived` fallback behavior.
+    */
     unresolvableSelection?: boolean;
   } = {},
 ): void {
