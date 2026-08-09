@@ -745,10 +745,10 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 final-schema parity (table counts)", 
     const bySchema = Object.fromEntries(rows.map((r) => [r.table_schema, r.n]));
     /*
     FNXC:PgSchemaApplier 2026-08-03-02:16:
-    Project table count = historical core baseline plus later migrations. 0040 adds 2 lifecycle
-    outbox tables; 0041 adds 4 lifecycle consumer tables; 0043 adds the durable unplanned-dispatch
-    refusal marker, and 0046 adds workflow_agent_capacity_leases (100 → 106). Plugin tables are
-    added separately by the schema-init hook and are excluded here.
+    Project table count starts from the 98-table historical core baseline. Migration 0040 adds 2
+    lifecycle outbox tables, 0041 adds 4 lifecycle consumer tables, 0043 adds the durable
+    unplanned-dispatch refusal marker, and 0046 adds workflow_agent_capacity_leases: 98 + 2 + 4 + 1
+    + 1 = 106. Plugin tables are added separately by the schema-init hook and are excluded here.
     */
     expect(bySchema.project).toBe(106);
     /*
