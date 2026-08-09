@@ -1,4 +1,5 @@
 import type { WorkflowDefinition, WorkflowDefinitionKind, WorkflowIr, WorkflowIrNode, WorkflowSettingDefinition, TaskStore } from "@fusion/core";
+import { resolveRequestActor } from "../request-actor.js";
 import { ColumnTraitValidationError, OccupiedColumnsError, InvalidRehomeTargetError, WorkflowIrError, ColumnAgentBindingError, WorkflowSettingRejectionError, SCHEMA_VERSION, assertColumnTraitsValid, layoutForIr, listTraits, listStepParsers, parseWorkflowIr, resolvePlanningSettingsModel, stripApprovalBypassFlags, resolveWorkflowIrById, resolveEffectiveSettingValues, findOrphanedSettingValues, isBuiltinWorkflowId, getBuiltinWorkflow, BUILTIN_WORKFLOW_SETTINGS, AgentStore, validateColumnAgentBindings, resolveWorkflowOptionalSteps, enumeratePromptBearingWorkflowNodes, normalizeWorkflowIcon, WorkflowSwitchRehomeFailedError } from "@fusion/core";
 import { buildSessionSkillContextSync, createFnAgent as engineCreateFnAgent, validateCodeNodeSources, validateWorkflowIrDryRun } from "@fusion/engine";
 import { ApiError, badRequest, conflict, notFound, rateLimited } from "../api-error.js";
@@ -520,6 +521,7 @@ export function registerWorkflowRoutes(ctx: ApiRoutesContext): void {
           workflowId,
           projectId,
           values as Record<string, unknown>,
+          resolveRequestActor(req),
         );
         const declarations = await resolveSettingDeclarations(store, workflowId);
         res.json({
@@ -989,6 +991,7 @@ export function registerWorkflowRoutes(ctx: ApiRoutesContext): void {
             workflow.id,
             workflowProjectId,
             importedSettingValues,
+            resolveRequestActor(req),
           );
         }
         if (Object.keys(importedPromptOverrides).length > 0) {

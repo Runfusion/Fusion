@@ -2,7 +2,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { Request, Response, NextFunction } from "express";
-import { createAuthMiddleware, isDaemonAuthActive } from "../auth-middleware.js";
+import { createAuthMiddleware, hasVerifiedDaemonRequest, isDaemonAuthActive } from "../auth-middleware.js";
 
 describe("createAuthMiddleware", () => {
   let mockReq: Partial<Request>;
@@ -72,6 +72,33 @@ describe("createAuthMiddleware", () => {
 
     expect(nextFn).toHaveBeenCalled();
     expect(mockRes.status).not.toHaveBeenCalled();
+    expect(hasVerifiedDaemonRequest(mockReq as Request)).toBe(true);
+  });
+
+  it("marks a valid fn_token query request as verified", () => {
+    mockReq.url = "/api/tasks?fn_token=fn_abc123def456789";
+    const middleware = createAuthMiddleware("fn_abc123def456789");
+    middleware(mockReq as Request, mockRes as Response, nextFn);
+
+    expect(nextFn).toHaveBeenCalled();
+    expect(hasVerifiedDaemonRequest(mockReq as Request)).toBe(true);
+  });
+
+  it("does not mark exempt, SPA, or rejected requests as verified", () => {
+    const middleware = createAuthMiddleware("fn_abc123def456789");
+    mockReq.path = "/api/health";
+    middleware(mockReq as Request, mockRes as Response, nextFn);
+    expect(hasVerifiedDaemonRequest(mockReq as Request)).toBe(false);
+
+    mockReq.path = "/";
+    mockReq.headers = { authorization: "Bearer fn_abc123def456789" };
+    middleware(mockReq as Request, mockRes as Response, nextFn);
+    expect(hasVerifiedDaemonRequest(mockReq as Request)).toBe(false);
+
+    mockReq.path = "/api/tasks";
+    mockReq.headers = { authorization: "Bearer wrong" };
+    middleware(mockReq as Request, mockRes as Response, nextFn);
+    expect(hasVerifiedDaemonRequest(mockReq as Request)).toBe(false);
   });
 
   it("exempts /api/health path without token", () => {

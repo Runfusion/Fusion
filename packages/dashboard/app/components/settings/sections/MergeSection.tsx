@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import type { Settings } from "@fusion/core";
+import { resolveRequiredCheckNames, type Settings } from "@fusion/core";
 import { fetchGitRemoteBranches } from "../../../api";
 import { MovedSettingsStub } from "./MovedSettingsStub";
 import { SettingsSelectRow } from "../SettingsSelectRow";
@@ -85,6 +85,19 @@ export interface MergeSectionProps extends SectionBaseProps {
 }
 export function MergeSection({ form, setForm, integrationBranchOptions, integrationBranchCustomMode, setIntegrationBranchCustomMode, onOpenWorkflowSettings, gitRemoteOptions = [], projectId, }: MergeSectionProps) {
     const { t } = useTranslation("app");
+    const [requiredChecksInput, setRequiredChecksInput] = useState(() => (form.requiredChecks ?? []).join(", "));
+    const emittedRequiredCheckNames = useRef(resolveRequiredCheckNames(form));
+    useEffect(() => {
+        const formNames = resolveRequiredCheckNames(form);
+        if (formNames.join("\u0000") !== emittedRequiredCheckNames.current.join("\u0000")) {
+            setRequiredChecksInput(formNames.join(", "));
+        }
+        emittedRequiredCheckNames.current = formNames;
+    }, [form.requiredChecks]);
+    /*
+    FNXC:PrMergeRequiredChecks 2026-08-09-07:46:
+    Keep the raw comma-delimited value while editing. Rebuilding the controlled input from normalized names on every keypress erases a trailing comma, making a second check impossible to type; synchronize only external form changes.
+    */
     const pushTarget = parsePushRemoteSetting(form.pushRemote);
     const [pushBranchOptions, setPushBranchOptions] = useState<string[]>([]);
     const [pushBranchCustomMode, setPushBranchCustomMode] = useState(false);
@@ -265,6 +278,29 @@ export function MergeSection({ form, setForm, integrationBranchOptions, integrat
           <option value="pull-request">{t("settings.merge.createMonitorAndMergeAGitHubPullRequest", "Create, monitor, and merge a GitHub pull request")}</option>
         </select>
       </div>
+      {form.mergeStrategy === "pull-request" && <>
+      <div className="form-group">
+        <div className="settings-field-label-row">
+          <label htmlFor="requiredChecks">{t("settings.merge.requiredChecks", "Required pull-request checks")}</label>
+          <SettingsHelpTip settingKey="requiredChecks">{t("settings.merge.requiredChecksHelp", "No default — unset. Comma-separated check names match GitHub exactly (case-sensitive). Leaving this empty uses GitHub required-status checks only; a named check that never reports blocks the merge.")}</SettingsHelpTip>
+        </div>
+        <input id="requiredChecks" className="input" value={requiredChecksInput} onChange={(event) => {
+          const rawValue = event.target.value;
+          setRequiredChecksInput(rawValue);
+          const requiredChecks = resolveRequiredCheckNames({ requiredChecks: rawValue.split(",") });
+          emittedRequiredCheckNames.current = requiredChecks;
+          setForm((current) => ({ ...current, requiredChecks: requiredChecks.length > 0 ? requiredChecks : undefined }));
+        }}/>
+      </div>
+      <div className="form-group">
+        <div className="settings-field-label-row">
+          <label htmlFor="githubNativeAutoMerge" className="checkbox-label">
+            <input id="githubNativeAutoMerge" type="checkbox" checked={form.githubNativeAutoMerge === true} onChange={(e) => setForm((f) => ({ ...f, githubNativeAutoMerge: e.target.checked }))}/>{t("settings.merge.githubNativeAutoMerge", "Use GitHub native auto-merge")}
+          </label>
+          <SettingsHelpTip settingKey="githubNativeAutoMerge">{t("settings.merge.githubNativeAutoMergeHelp", "GitHub waits for its full ruleset before merging. The repository must allow auto-merge; Fusion fails closed if it is unavailable. Default: disabled.")}</SettingsHelpTip>
+        </div>
+      </div>
+      </>}
       <div className="form-group">
         <div className="settings-field-label-row">
           <label htmlFor="integrationBranch">{t("settings.merge.integrationBranch", "Integration branch")}</label>

@@ -29,6 +29,7 @@ import { assertProjectRootDir } from "../central/project-root-guard.js";
 import type { AsyncDataLayer } from "../postgres/data-layer.js";
 import { appendConfigurationRevision, createConfigurationRevision, getConfigurationRevision, rollbackConfiguration } from "../async-stores/async-configuration-revision-store.js";
 import type { ConfigChangedBy, ConfigurationRevision } from "../types.js";
+import { CONFIG_CHANGED_BY_SYSTEM } from "../types.js";
 /*
  * FNXC:SqliteFinalRemoval 2026-06-26-10:30:
  * Async Drizzle helpers for backend-mode (PostgreSQL) RoutineStore operations.
@@ -276,7 +277,7 @@ export class RoutineStore extends EventEmitter<RoutineStoreEvents> {
   /**
    * Create a new routine.
    */
-  async createRoutine(input: RoutineCreateInput, changedBy: ConfigChangedBy = { kind: "human", id: "local-user" }): Promise<Routine> {
+  async createRoutine(input: RoutineCreateInput, changedBy: ConfigChangedBy = CONFIG_CHANGED_BY_SYSTEM): Promise<Routine> {
     this.requireVersionedConfigurationBackend();
     if (!input.name?.trim()) {
       throw new Error("Name is required and cannot be empty");
@@ -366,7 +367,7 @@ export class RoutineStore extends EventEmitter<RoutineStoreEvents> {
   /**
    * Update an existing routine.
    */
-  async updateRoutine(id: string, updates: RoutineUpdateInput, changedBy: ConfigChangedBy = { kind: "human", id: "local-user" }): Promise<Routine> {
+  async updateRoutine(id: string, updates: RoutineUpdateInput, changedBy: ConfigChangedBy = CONFIG_CHANGED_BY_SYSTEM): Promise<Routine> {
     this.requireVersionedConfigurationBackend();
     return this.withRoutineLock(id, async () => {
       const routine = await this.getRoutine(id);
@@ -439,7 +440,7 @@ export class RoutineStore extends EventEmitter<RoutineStoreEvents> {
    * selected revision predates creation. The replacement and forward revision
    * share one backend transaction.
    */
-  async rollbackConfiguration(revisionId: string, changedBy: ConfigChangedBy = { kind: "human", id: "local-user" }): Promise<ConfigurationRevision> {
+  async rollbackConfiguration(revisionId: string, changedBy: ConfigChangedBy = CONFIG_CHANGED_BY_SYSTEM): Promise<ConfigurationRevision> {
     if (!this.backendMode) throw new Error("Configuration rollback requires the PostgreSQL revision store");
     const layer = this.asyncLayer!;
     return layer.transactionImmediate((tx) => rollbackConfiguration(tx, layer.projectId ?? "", revisionId, changedBy, {
@@ -460,7 +461,7 @@ export class RoutineStore extends EventEmitter<RoutineStoreEvents> {
   /**
    * Delete a routine.
    */
-  async deleteRoutine(id: string, changedBy: ConfigChangedBy = { kind: "human", id: "local-user" }): Promise<Routine> {
+  async deleteRoutine(id: string, changedBy: ConfigChangedBy = CONFIG_CHANGED_BY_SYSTEM): Promise<Routine> {
     this.requireVersionedConfigurationBackend();
     return this.withRoutineLock(id, async () => {
       const routine = await this.getRoutine(id);

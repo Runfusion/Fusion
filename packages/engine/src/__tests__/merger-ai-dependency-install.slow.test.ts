@@ -54,6 +54,7 @@ function makeStore(settingsOverrides: Record<string, unknown> = {}) {
     emit: vi.fn(),
     logEntry: vi.fn(async () => undefined),
     appendAgentLog: vi.fn(async () => undefined),
+    emitUsageEvent: vi.fn(async () => true),
   };
   return store;
 }

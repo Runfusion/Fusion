@@ -136,6 +136,7 @@ const LOCALE_LABELS: Record<Locale, string> = {
   fr: "French (Français)",
   es: "Spanish (Español)",
   ko: "Korean (한국어)",
+  "pt-BR": "Brazilian Portuguese (Português do Brasil)",
 };
 
 /**

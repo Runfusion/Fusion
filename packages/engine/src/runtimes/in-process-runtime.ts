@@ -1349,7 +1349,14 @@ export class InProcessRuntime
         }
       }
 
-      const prNodeGithubOps = this.config.prNodeGithubOps;
+      /*
+      FNXC:PrMergeAutoMerge 2026-08-09-10:59:
+      Native auto-merge is project policy, so construct its CLI callbacks only
+      after this runtime owns the TaskStore. A process-wide callback cannot
+      safely infer which concurrently running project's setting applies.
+      */
+      const prNodeGithubOps = this.config.createPrNodeGithubOps?.(this.taskStore)
+        ?? this.config.prNodeGithubOps;
       /*
       FNXC:SecretsEnvRuntimeWiring 2026-08-05-21:30:
       `secretsEnv` materializes only through fresh executor and heartbeat worktree acquisitions.
@@ -1629,6 +1636,7 @@ export class InProcessRuntime
           stuckTaskDetector: this.stuckTaskDetector,
           usageLimitPauser: this.usageLimitPauser,
           agentStore: this.agentStore,
+          messageStore: this.messageStore,
           pluginRunner: this.pluginRunner,
           // FNXC:NodeWorktreeIsolation 2026-07-25-22:10: planning acquires (or reuses) the task's own
           // worktree through the executor's acquisition path, so no lane runs in the shared checkout.

@@ -25,20 +25,24 @@ const RENAMED_IR = {
 function fixture(workflowIr?: unknown) {
   const listeners = new Set<Listener>();
   let wedge: Task["wedgeNotification"];
+  let liveTask: Task | undefined;
+  const claimTaskWedgeNotificationEpisode = vi.fn(async (taskId: string, reasonKey: string | null) => {
+    if (reasonKey === null) {
+      if (wedge?.status === "active") wedge = { ...wedge, status: "resolved" };
+      return { claimed: false };
+    }
+    if (wedge?.status === "active" && wedge.reasonKey === reasonKey) return { claimed: false };
+    wedge = { reasonKey, episodeId: `${taskId}-${reasonKey}-${Date.now()}`, status: "active", transitionedAt: new Date().toISOString() };
+    return { claimed: true, episodeId: wedge.episodeId };
+  });
   const store = {
     getSettings: async () => ({ ntfyEnabled: true, ntfyTopic: "test" }) as Settings,
+    getTask: async () => liveTask,
     on: (event: string, listener: Listener) => { if (event === "task:updated") listeners.add(listener); },
     off: () => undefined,
     emit: (task: Task) => listeners.forEach((listener) => listener(task)),
-    claimTaskWedgeNotificationEpisode: async (taskId: string, reasonKey: string | null) => {
-      if (reasonKey === null) {
-        if (wedge?.status === "active") wedge = { ...wedge, status: "resolved" };
-        return { claimed: false };
-      }
-      if (wedge?.status === "active" && wedge.reasonKey === reasonKey) return { claimed: false };
-      wedge = { reasonKey, episodeId: `${taskId}-${reasonKey}-${Date.now()}`, status: "active", transitionedAt: new Date().toISOString() };
-      return { claimed: true, episodeId: wedge.episodeId };
-    },
+    setLiveTask: (next: Task | undefined) => { liveTask = next; },
+    claimTaskWedgeNotificationEpisode,
     /* Absent → the helper keeps the legacy ids, which is every pre-existing case in this file. */
     ...(workflowIr ? { listWorkflowDefinitions: async () => [{ ir: workflowIr }] } : {}),
   };
@@ -48,7 +52,7 @@ function fixture(workflowIr?: unknown) {
   const provider: NotificationProvider = { getProviderId: () => "test", isEventSupported: () => true, sendNotification };
   service.registerProvider(provider);
   const task = (overrides: Partial<Task> = {}): Task => ({ id: "FN-8501", title: "Fix changeset", description: "", column: "in-review", status: "failed", error: "merge verification failed: check:changeset-format", dependencies: [], steps: [], currentStep: 0, log: [], createdAt: "2026-07-22T12:00:00.000Z", updatedAt: "2026-07-22T12:00:00.000Z", ...overrides } as Task);
-  return { store, service, sendMessageOnce, sendNotification, task, getWedge: () => wedge };
+  return { store, service, sendMessageOnce, sendNotification, task, getWedge: () => wedge, setWedge: (next: Task["wedgeNotification"]) => { wedge = next; }, claimTaskWedgeNotificationEpisode };
 }
 
 /* Creates a restart-safe claim fake so NotificationService tests exercise delivery policy, not storage implementation. */
@@ -184,6 +188,56 @@ describe("task wedge notifications", () => {
   });
 
   /*
+  FNXC:TaskWedgeNotifications 2026-08-09-06:30:
+  The event can race a completed resume. Delivery must ignore its stale failed
+  descriptor, re-read the executing row, and resolve the previously active episode.
+  */
+  it("does not alert from a failed snapshot after the live task resumes", async () => {
+    const { store, service, sendMessageOnce, sendNotification, task, setWedge, claimTaskWedgeNotificationEpisode } = fixture();
+    const active = { reasonKey: "merge-blocked:changeset-format", episodeId: "active-episode", status: "active" as const, transitionedAt: "2026-07-22T12:00:00.000Z" };
+    setWedge(active);
+    store.setLiveTask(task({ status: "in-progress", column: "in-progress", error: undefined, wedgeNotification: active }));
+    await service.start();
+
+    store.emit(task({ status: "failed", wedgeNotification: active }));
+    await flushWedgeHandling();
+
+    expect(sendMessageOnce).not.toHaveBeenCalled();
+    expect(sendNotification).not.toHaveBeenCalled();
+    expect(claimTaskWedgeNotificationEpisode).toHaveBeenCalledWith("FN-8501", null);
+    await service.stop();
+  });
+
+  it("does not alert repeatedly for a live executing task with a stale pause reason", async () => {
+    const { store, service, sendMessageOnce, sendNotification, task } = fixture();
+    const resumed = task({ status: "in-progress", column: "in-progress", paused: false, pausedReason: "completed-blocked", error: undefined });
+    store.setLiveTask(resumed);
+    await service.start();
+
+    store.emit(task({ paused: true, pausedReason: "completed-blocked", status: "queued" }));
+    store.emit(task({ paused: true, pausedReason: "completed-blocked", status: "queued", updatedAt: "2026-07-22T12:01:00.000Z" }));
+    await flushWedgeHandling();
+
+    expect(sendMessageOnce).not.toHaveBeenCalled();
+    expect(sendNotification).not.toHaveBeenCalled();
+    await service.stop();
+  });
+
+  it("does not deliver a self-healing descriptor after the live task progresses", async () => {
+    const { store, service, sendMessageOnce, sendNotification, task } = fixture();
+    const stalled = task({ status: "in-review", error: undefined, paused: false, userPaused: false });
+    const descriptor = describeSelfHealingNoActionWedge(stalled, "reconcile-in-review-unmet-dependencies", { taskActive: false })!;
+    store.setLiveTask(task({ status: "in-progress", column: "in-progress", error: undefined }));
+    await service.start();
+
+    await service.notifyTaskWedge(stalled, descriptor);
+
+    expect(sendMessageOnce).not.toHaveBeenCalled();
+    expect(sendNotification).not.toHaveBeenCalled();
+    await service.stop();
+  });
+
+  /*
   FNXC:TaskWedgeNotifications 2026-08-01-07:44:
   A recovery and re-wedge can be emitted back-to-back by synchronous task lifecycle writers. The
   per-task chain must run the recovery's resolve before the second wedge's claim; otherwise the old
@@ -303,6 +357,34 @@ describe("task wedge notifications", () => {
     await service.notifyTaskWedge(ownerless, descriptor!);
     expect(sendMessageOnce).toHaveBeenCalledTimes(1);
     await service.stop();
+  });
+
+  it.each(["queued", "planning", "in-progress", "merging", "merging-pr", "merging-fix", "merged", "done"])("does not classify a stale pause reason while %s is progressing", (status) => {
+    const { task } = fixture();
+    expect(describeTaskWedge(task({ status: status as Task["status"], paused: false, pausedReason: "completed-blocked", error: undefined }))).toBeNull();
+  });
+
+  it.each([
+    ["completed-blocked", "completion-blocked"],
+    ["error-retry-exhausted", "heartbeat-retry-exhausted"],
+    ["error-unrecoverable", "heartbeat-error-unrecoverable"],
+    ["branch-cross-contamination", "branch-cross-contamination"],
+    ["branch-conflict-tripwire", "branch-conflict-tripwire"],
+    ["branch-conflict-recovery-exhausted", "branch-conflict-recovery-exhausted"],
+    ["branch-conflict-unrecoverable", "branch-conflict-unrecoverable"],
+    ["stuck-loop-exhausted-manual-intervention-required", "stuck-loop-exhausted"],
+    ["non-retryable-provider-error", "non-retryable-provider-error"],
+    ["in-review-stall-deadlock", "in-review-stall-deadlock"],
+  ])("requires pause proof but preserves terminal pause reason %s as %s", (pausedReason, reasonKey) => {
+    const { task } = fixture();
+    expect(describeTaskWedge(task({ status: "failed", paused: false, pausedReason }))).not.toMatchObject({ reasonKey });
+    expect(describeTaskWedge(task({ status: "paused", paused: false, pausedReason }))).toMatchObject({ reasonKey });
+    expect(describeTaskWedge(task({ status: "queued", paused: true, pausedReason }))).toMatchObject({ reasonKey });
+  });
+
+  it("keeps the FN-7926 completed-blocked park shape actionable", () => {
+    const { task } = fixture();
+    expect(describeTaskWedge(task({ status: "queued", paused: true, pausedReason: "completed-blocked", error: undefined }))).toMatchObject({ reasonKey: "completion-blocked" });
   });
 
   it.each([

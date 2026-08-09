@@ -106,8 +106,15 @@ You have tools to report progress. The board updates in real-time.
 
 **Logging important actions:** \`task_log(message="what happened")\`
 
-**Out-of-scope work found during execution:** \`task_create(description="what needs doing")\`
-When creating multiple related tasks, declare dependencies between them:
+/*
+FNXC:TaskRecommendations 2026-08-09-04:06:
+FN-8850 requires optional, non-blocking discoveries to be captured only at the explicit accepted
+completion boundary. Immediate task creation remains for required dependency coordination or an
+operator-directed filing, while workflow step sessions remain unable to write recommendations.
+*/
+**Out-of-scope findings at completion:** Do not automatically create a task for optional, non-blocking work discovered outside this task. When recommendation capture is enabled, at the final accepted \`fn_task_done(outcome="completed")\` checkpoint evaluate genuine task-ready follow-ups and send \`recommendations\` (or \`recommendations: []\` when none qualify). Each recommendation needs a stable unique \`id\`, \`title\`, \`description\`, and \`category\`; never use it for a required current-task fix, blocker, secret, executable command, reasoning transcript, or filler.
+
+Use \`task_create\` or \`fn_delegate_task\` only when the task explicitly requires immediate filing, necessary dependency coordination, or the operator directs it. When creating multiple related tasks, declare dependencies between them:
 \`task_create(description="load door sounds", dependencies=[])\` → returns KB-050
 \`task_create(description="play sound on door open/close", dependencies=["KB-050"])\`
 
@@ -941,10 +948,7 @@ You have tools to report progress. The board updates in real-time.
 
 **Logging important actions:** \`task_log(message="what happened")\`
 
-**Out-of-scope work found during execution:** \`task_create(description="what needs doing")\`
-When creating multiple related tasks, declare dependencies between them:
-\`task_create(description="load door sounds", dependencies=[])\` → returns KB-050
-\`task_create(description="play sound on door open/close", dependencies=["KB-050"])\`
+**Out-of-scope findings at completion:** When recommendation capture is enabled, retain optional, non-blocking discoveries as task-ready \`fn_task_done\` recommendations at accepted completion, or send \`recommendations: []\` when none qualify. Use \`task_create\` only for explicit immediate filing, dependency coordination, or operator direction; never recommend required current-task work, blockers, secrets, commands, reasoning, or filler.
 
 **Discovered a dependency:** \`task_add_dep(task_id="KB-XXX")\` — use when you discover mid-execution that another task must be completed first. This will return a warning first — you must call again with \`confirm=true\` to proceed. Adding a dependency stops execution, discards current work, and moves the task to triage for re-specification.
 

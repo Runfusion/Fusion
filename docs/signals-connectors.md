@@ -1,12 +1,12 @@
 # Signals Connectors
 
-Fusion can receive signed external signals from GitLab, Sentry, Datadog, PagerDuty, or a generic webhook at:
+Fusion can receive signed external signals from GitHub, GitLab, Sentry, Datadog, PagerDuty, or a generic webhook at:
 
 ```text
 POST /api/signals/:provider
 ```
 
-Supported providers are `webhook`, `gitlab`, `sentry`, `datadog`, and `pagerduty`. Every connector requires a verification secret configured in the Fusion dashboard process environment. Generic webhook, Sentry, Datadog, and PagerDuty use HMAC signatures; GitLab uses GitLab's `X-Gitlab-Token` secret-token header. Verified signals still create triage tasks, and they also write to the project-scoped `incidents` table so Command Center → Signals can show source, severity, and open/resolved status breakdowns.
+Supported providers are `webhook`, `github`, `gitlab`, `sentry`, `datadog`, and `pagerduty`. Every connector requires a verification secret configured in the Fusion dashboard process environment. Generic webhook, GitHub, Sentry, Datadog, and PagerDuty use HMAC signatures; GitLab uses GitLab's `X-Gitlab-Token` secret-token header. Actionable open signals create triage tasks and write to the project-scoped `incidents` table so Command Center → Signals can show source, severity, and open/resolved status breakdowns. GitHub recovery-only green CI signals are the exception: they create neither a task nor a new incident.
 
 ## Runtime behavior
 
@@ -19,7 +19,7 @@ Supported providers are `webhook`, `gitlab`, `sentry`, `datadog`, and `pagerduty
 ## Security model
 
 - Secrets are environment variables; do not commit them to source control.
-- HMAC verification uses the raw request body and constant-time comparison where the provider supplies an HMAC signature. GitLab secret-token verification compares `X-Gitlab-Token` to `FUSION_SIGNAL_GITLAB_SECRET` with constant-time comparison.
+- HMAC verification uses the raw request body and constant-time comparison where the provider supplies an HMAC signature. GitHub uses `X-Hub-Signature-256`; GitLab secret-token verification compares `X-Gitlab-Token` to `FUSION_SIGNAL_GITLAB_SECRET` with constant-time comparison.
 - Requests are capped at about 1 MB.
 - Replay protection rejects stale timestamps where the provider supplies one and rejects repeated delivery ids within the replay window.
 - Normalized `title`, `body`, `groupingKey`, `link`, and `meta` fields are capped by `signal-source.ts` before storage.
@@ -125,6 +125,31 @@ Normalization:
 - `source`: `pagerduty`.
 - `severity`: explicit `data.severity` when it is one of Fusion's normalized severities; otherwise high urgency maps to `critical` and other events map to `warning`.
 - Resolution: `event.event_type === "incident.resolved"` or `data.status === "resolved"` resolves the grouped incident; other incident events open/absorb it.
+
+## GitHub
+
+Set `FUSION_SIGNAL_GITHUB_SECRET` and configure `https://<your-fusion-host>/api/signals/github` for GitHub `check_suite`, `workflow_run`, and `status` deliveries. Fusion verifies the raw body using `X-Hub-Signature-256`. Terminal outcomes are also stored in `github_check_states` by `(project, repo, head SHA, check name)`. When `requiredChecks` is configured, exact-head rows may fill a missing polled check or block a disagreement; missing heads, cross-project rows, and stale commits never substitute. Newer delivery timestamps win retries, and engine batch-1 `prune-github-check-states` removes rows after 14 days even when deliveries stop.
+
+Normalization uses:
+
+- `source`: `github`.
+- `groupingKey`: `github:<repo>:<kind>:<check-name>:<head-sha>`.
+- `externalId`: `delivery:<X-GitHub-Delivery>` when available; otherwise a grouping-key/outcome/timestamp fallback so a failure and recovery are distinct.
+- `title`: repository, check name, and outcome; `link`: the safe GitHub run/target URL or repository commit URL fallback.
+- `severity` and `resolution`: the terminal-outcome mapping below.
+
+Terminal outcomes map as follows:
+
+| Outcome | Severity | Resolution |
+| --- | --- | --- |
+| `failure`, `timed_out`, `startup_failure`, `stale`, `error` | error | open |
+| `action_required`, `cancelled` | warning | open |
+| `success`, `neutral`, `skipped` | info | resolved, recovery-only |
+| unknown future outcome | warning | open (fail-visible) |
+
+Pending, queued, in-progress, and ping deliveries are accepted without tasks or incidents. Recovery-only green outcomes create no triage task or incident: they atomically resolve only the newest already-open incident with a status-gated conditional update. Cold, redelivered, and concurrent greens write nothing; only one concurrent caller can resolve an open row, and no delivery can rewrite `resolvedAt` after that.
+
+Upstream evidence: [GitHub webhook events](https://docs.github.com/en/webhooks/webhook-events-and-payloads) and [signature validation](https://docs.github.com/en/webhooks/using-webhooks/validating-webhook-deliveries).
 
 ## GitLab
 

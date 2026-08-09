@@ -22,6 +22,7 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import type { PlannerOverseerRuntimeSnapshot } from "@fusion/core";
 import {
   makeTask,
+  makeUpdatedTask,
   noop,
   noopDelete,
   noopMerge,
@@ -138,7 +139,7 @@ describe("TaskDetailModal oversight controls — mobile overflow menu", () => {
       defaults: {},
     });
     vi.mocked(api.updateTask).mockImplementation(async (_id, patch) => {
-      currentTask = makeTask({ ...currentTask, ...patch });
+      currentTask = makeUpdatedTask(currentTask, patch);
       return currentTask as any;
     });
 

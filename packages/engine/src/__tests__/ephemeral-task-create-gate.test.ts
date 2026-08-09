@@ -1,7 +1,13 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import type { TaskStore } from "@fusion/core";
 import "./executor-test-helpers.js";
-import { createMockStore, mockedCreateFnAgent, resetExecutorMocks } from "./executor-test-helpers.js";
+import {
+  createMockStore,
+  createWorkflowRoutingAgentStore,
+  mockedCreateFnAgent,
+  resetExecutorMocks,
+  selectImplementationSessionCall,
+} from "./executor-test-helpers.js";
 import { TaskExecutor } from "../executor.js";
 import {
   createTaskCreateTool,
@@ -49,15 +55,12 @@ async function captureExecutorSession(
     ...(policy ? { ephemeralAgentTaskCreationPolicy: policy } : {}),
   });
 
-  let toolNames: string[] = [];
-  let systemPrompt = "";
-  mockedCreateFnAgent.mockImplementation((async (opts: { customTools?: Array<{ name: string }>; systemPrompt?: string }) => {
-    toolNames = (opts.customTools ?? []).map((tool) => tool.name);
-    systemPrompt = opts.systemPrompt ?? "";
-    return { session: { prompt: vi.fn().mockResolvedValue(undefined), dispose: vi.fn() } };
-  }) as never);
+  mockedCreateFnAgent.mockImplementation((async () =>
+    ({ session: { prompt: vi.fn().mockResolvedValue(undefined), dispose: vi.fn() } })) as never);
 
-  const executor = new TaskExecutor(store, "/tmp/test");
+  const executor = new TaskExecutor(store, "/tmp/test", {
+    agentStore: createWorkflowRoutingAgentStore(store, { ephemeral: true }).agentStore,
+  });
   await executor.execute({
     id: "FN-001",
     title: "Test",
@@ -70,7 +73,13 @@ async function captureExecutorSession(
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   });
-  return { toolNames, systemPrompt };
+  const implementation = selectImplementationSessionCall(
+    mockedCreateFnAgent.mock.calls.map(([options]) => options as { customTools?: Array<{ name: string }>; systemPrompt?: string }),
+  );
+  return {
+    toolNames: (implementation.customTools ?? []).map((tool) => tool.name),
+    systemPrompt: implementation.systemPrompt ?? "",
+  };
 }
 
 describe("isAgentTaskCreateToolAvailable", () => {
@@ -205,7 +214,8 @@ describe("executor session tool list (behavioral)", () => {
   it("tells the agent the tool is withheld by policy and what to do instead", async () => {
     const { systemPrompt } = await captureExecutorSession("deny");
     expect(systemPrompt).toContain("Follow-up task creation is disabled for this session");
-    expect(systemPrompt).toContain("fn_task_log");
+    expect(systemPrompt).toContain("completion recommendation route");
+    expect(systemPrompt).toContain("recommendations: []");
   });
 
   it("adds no withheld-tool guidance when creation is allowed", async () => {

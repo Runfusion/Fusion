@@ -21,6 +21,7 @@ import { withRateLimitRetry } from "../errors/rate-limit-retry.js";
 import { runVerificationCommand as mockedRunVerificationCommand } from "../execution/verification-utils.js";
 import {
   createMockStore,
+  createWorkflowRoutingAgentStore,
   mockedCreateFnAgent,
   mockedSessionManager,
   mockedGenerateWorktreeName,
@@ -33,9 +34,19 @@ import {
   mockTerminateAllSessions,
   mockCleanup,
   resetExecutorMocks,
+  captureNamedTool,
+  selectImplementationSessionCall,
 } from "./executor-test-helpers.js";
 
 const mockedReviewStep = vi.mocked(mockedReviewStepFn);
+
+/* FNXC:EngineTests 2026-08-09-05:51: Graph-owned execution fails closed before session creation when a test omits agentStore, so every executor harness must route through the durable fixture unless a test explicitly overrides it. */
+function createRoutingExecutor(store: any, rootDir: string, options: any = {}) {
+  return new TaskExecutor(store, rootDir, {
+    agentStore: createWorkflowRoutingAgentStore(store).agentStore,
+    ...options,
+  });
+}
 
 function createMockTaskDetail(overrides: Partial<TaskDetail> = {}): TaskDetail {
   return {
@@ -499,7 +510,7 @@ describe("buildExecutionPrompt", () => {
       },
     } as any);
 
-    const executor = new TaskExecutor(store, "/tmp/test");
+    const executor = createRoutingExecutor(store, "/tmp/test");
     await executor.execute({
       id: "FN-001",
       title: "Test",
@@ -793,7 +804,7 @@ describe("TaskExecutor pause behavior", () => {
       } as any;
     });
 
-    const executor = new TaskExecutor(store, "/tmp/test");
+    const executor = createRoutingExecutor(store, "/tmp/test");
     await executor.execute({
       id: "FN-001",
       title: "Test",
@@ -839,7 +850,7 @@ describe("TaskExecutor pause behavior", () => {
       } as any;
     });
 
-    const executor = new TaskExecutor(store, "/tmp/test");
+    const executor = createRoutingExecutor(store, "/tmp/test");
     await executor.execute({
       id: "FN-001",
       title: "Test",
@@ -881,7 +892,7 @@ describe("TaskExecutor pause behavior", () => {
 
     const stuckTaskDetector = { trackTask: vi.fn(), untrackTask: vi.fn(), recordActivity: vi.fn() } as any;
 
-    const executor = new TaskExecutor(store, "/tmp/test", { stuckTaskDetector });
+    const executor = createRoutingExecutor(store, "/tmp/test", { stuckTaskDetector });
     await executor.execute({
       id: "FN-805",
       title: "Stranded task",
@@ -930,7 +941,7 @@ describe("TaskExecutor pause behavior", () => {
       } as any;
     });
 
-    const executor = new TaskExecutor(store, "/tmp/test");
+    const executor = createRoutingExecutor(store, "/tmp/test");
     await executor.execute({
       id: "FN-001",
       title: "Rapid pause/unpause",
@@ -973,7 +984,7 @@ describe("TaskExecutor pause behavior", () => {
       },
     } as any);
 
-    const executor = new TaskExecutor(store, "/tmp/test");
+    const executor = createRoutingExecutor(store, "/tmp/test");
     await executor.resumeOrphaned();
 
     // Only KB-002 should be resumed (KB-001 is paused)
@@ -992,7 +1003,7 @@ describe("TaskExecutor pause behavior", () => {
       globalPause: false,
     });
 
-    const executor = new TaskExecutor(store, "/tmp/test");
+    const executor = createRoutingExecutor(store, "/tmp/test");
     await executor.resumeOrphaned();
 
     expect(store.listTasks).not.toHaveBeenCalled();
@@ -1010,7 +1021,7 @@ describe("TaskExecutor pause behavior", () => {
       },
     }) as any);
 
-    const _executor = new TaskExecutor(store, "/tmp/test");
+    const _executor = createRoutingExecutor(store, "/tmp/test");
 
     // Simulate unpause of an in-progress task that has no active session
     // (e.g., engine restarted while task was paused in-progress)
@@ -1055,7 +1066,7 @@ describe("TaskExecutor pause behavior", () => {
       },
     }) as any);
 
-    const executor = new TaskExecutor(store, "/tmp/test");
+    const executor = createRoutingExecutor(store, "/tmp/test");
 
     store._trigger("task:updated", {
       id: "FN-001",
@@ -1109,7 +1120,7 @@ describe("TaskExecutor pause behavior", () => {
       }
     });
 
-    new TaskExecutor(store, "/tmp/test");
+    createRoutingExecutor(store, "/tmp/test");
     store._trigger("task:updated", task);
 
     await new Promise((r) => setTimeout(r, 50));
@@ -1130,7 +1141,7 @@ describe("TaskExecutor pause behavior", () => {
       },
     }) as any);
 
-    const _executor = new TaskExecutor(store, "/tmp/test");
+    const _executor = createRoutingExecutor(store, "/tmp/test");
 
     store._trigger("task:updated", {
       id: "FN-001",
@@ -1179,7 +1190,7 @@ describe("TaskExecutor pause behavior", () => {
       },
     } as any);
 
-    const executor = new TaskExecutor(store, "/tmp/test");
+    const executor = createRoutingExecutor(store, "/tmp/test");
     await executor.resumeOrphaned();
 
     expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: null, error: null });
@@ -1206,7 +1217,7 @@ describe("TaskExecutor pause behavior", () => {
       },
     }) as any);
 
-    const executor = new TaskExecutor(store, "/tmp/test");
+    const executor = createRoutingExecutor(store, "/tmp/test");
     await executor.execute({
       id: "FN-001",
       title: "Already executing",
@@ -1235,7 +1246,7 @@ describe("TaskExecutor pause behavior", () => {
       },
     }) as any);
 
-    const _executor = new TaskExecutor(store, "/tmp/test");
+    const _executor = createRoutingExecutor(store, "/tmp/test");
 
     // Unpause a todo task — executor should NOT try to execute it
     store._trigger("task:updated", {
@@ -1272,7 +1283,7 @@ describe("TaskExecutor pause behavior", () => {
       },
     }) as any);
 
-    const executor = new TaskExecutor(store, "/tmp/test");
+    const executor = createRoutingExecutor(store, "/tmp/test");
 
     // Start execution — session will be active
     const executePromise = executor.execute({
@@ -1306,7 +1317,7 @@ describe("TaskExecutor pause behavior", () => {
       sessionFile: sessionFilePath,
     } as any);
 
-    const executor = new TaskExecutor(store, "/tmp/test");
+    const executor = createRoutingExecutor(store, "/tmp/test");
     await executor.execute({
       id: "FN-001",
       title: "Fresh task",
@@ -1338,13 +1349,19 @@ describe("TaskExecutor pause behavior", () => {
     // existsSync must return true for the session file
     mockedExistsSync.mockReturnValue(true);
 
-    mockedCreateFnAgent.mockResolvedValue({
-      session: {
-        prompt: resumePromptFn,
-        dispose: vi.fn(),
-      },
-      sessionFile: sessionFilePath,
-    } as any);
+    /*
+    FNXC:EngineTests 2026-08-09-12:02:
+    A coding graph opens review and implementation sessions, so a uniform session stub can hand
+    resume assertions a review-node session. Branch on fn_task_done so only the implementation
+    session owns the resumed prompt and lifecycle state under test.
+    */
+    mockedCreateFnAgent.mockImplementation((async (opts: any) => {
+      const isImplementation = (opts.customTools ?? []).some((tool: any) => tool.name === "fn_task_done");
+      return {
+        session: isImplementation ? { prompt: resumePromptFn, dispose: vi.fn() } : { dispose: vi.fn() },
+        sessionFile: sessionFilePath,
+      } as any;
+    }) as any);
 
     /*
     FNXC:EngineTests 2026-07-19-04:05 (U10b):
@@ -1355,9 +1372,10 @@ describe("TaskExecutor pause behavior", () => {
       sessionFile: sessionFilePath,
       worktree: "/tmp/test/.worktrees/fn-001",
       branch: "fusion/fn-001",
+      baseCommitSha: "abc123",
     });
 
-    const executor = new TaskExecutor(store, "/tmp/test");
+    const executor = createRoutingExecutor(store, "/tmp/test");
     await executor.execute({
       id: "FN-001",
       title: "Resumed task",
@@ -1375,9 +1393,11 @@ describe("TaskExecutor pause behavior", () => {
     // Should use SessionManager.open for the initial resumed execution
     expect(mockedSessionManager.open).toHaveBeenCalledWith(sessionFilePath);
 
-    // The first createFnAgent call should use the opened session manager
-    const firstCall = mockedCreateFnAgent.mock.calls[0][0] as any;
-    expect(firstCall.sessionManager).toBeDefined();
+    // The implementation call, not graph traversal order, owns the resumed session manager.
+    const implementationCall = selectImplementationSessionCall(
+      mockedCreateFnAgent.mock.calls.map(([options]) => options as any),
+    );
+    expect(implementationCall.sessionManager).toBeDefined();
 
     // The log should indicate resume
     expect(store.logEntry).toHaveBeenCalledWith(
@@ -1403,7 +1423,7 @@ describe("TaskExecutor pause behavior", () => {
       sessionFile: sessionFilePath,
     }) as any);
 
-    const executor = new TaskExecutor(store, "/tmp/test");
+    const executor = createRoutingExecutor(store, "/tmp/test");
     await executor.execute({
       id: "FN-001",
       title: "Pauseable task",
@@ -1445,7 +1465,7 @@ describe("TaskExecutor pause behavior", () => {
       sessionFile: "/tmp/sessions/new_session.jsonl",
     } as any);
 
-    const executor = new TaskExecutor(store, "/tmp/test");
+    const executor = createRoutingExecutor(store, "/tmp/test");
     await executor.execute({
       id: "FN-001",
       title: "Stale session",
@@ -1472,13 +1492,18 @@ describe("TaskExecutor pause behavior", () => {
 
     mockedExistsSync.mockReturnValue(true);
 
-    mockedCreateFnAgent.mockResolvedValue({
-      session: {
-        prompt: vi.fn().mockResolvedValue(undefined),
-        dispose: vi.fn(),
-      },
-      sessionFile: "/tmp/sessions/new_session.jsonl",
-    } as any);
+    /*
+    FNXC:EngineTests 2026-08-09-12:02:
+    Graph-owned execution traverses review nodes before implementation. Keep their default verdict
+    streams independent so this stale-worktree assertion observes the implementation session only.
+    */
+    mockedCreateFnAgent.mockImplementation((async (opts: any) => {
+      const isImplementation = (opts.customTools ?? []).some((tool: any) => tool.name === "fn_task_done");
+      return {
+        session: isImplementation ? { prompt: vi.fn().mockResolvedValue(undefined), dispose: vi.fn() } : { dispose: vi.fn() },
+        sessionFile: "/tmp/sessions/new_session.jsonl",
+      } as any;
+    }) as any);
 
     /*
     FNXC:EngineTests 2026-07-19-04:12 (U10b):
@@ -1489,9 +1514,10 @@ describe("TaskExecutor pause behavior", () => {
       sessionFile: sessionFilePath,
       worktree: "/tmp/test/.worktrees/fn-001",
       branch: "fusion/fn-001",
+      baseCommitSha: "abc123",
     });
 
-    const executor = new TaskExecutor(store, "/tmp/test");
+    const executor = createRoutingExecutor(store, "/tmp/test");
     await executor.execute({
       id: "FN-001",
       title: "Stale resumed session",
@@ -1503,6 +1529,7 @@ describe("TaskExecutor pause behavior", () => {
       log: [],
       worktree: "/tmp/test/.worktrees/fn-001",
       sessionFile: sessionFilePath,
+      baseCommitSha: "abc123",
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     });
@@ -1581,10 +1608,14 @@ describe("swallowed async store failure observability", () => {
     });
 
     const onError = vi.fn();
-    const executor = new TaskExecutor(store, "/tmp/test", { onError });
+    const executor = createRoutingExecutor(store, "/tmp/test", { onError });
     await executor.execute(task);
 
-    expect(store.startStep).toHaveBeenLastCalledWith("FN-8490", 1, undefined);
+    expect(
+      store.startStep.mock.calls.some(
+        ([taskId, stepIndex, runContext]) => taskId === "FN-8490" && stepIndex === 1 && runContext === undefined,
+      ),
+    ).toBe(true);
     expect(
       store.updateStep.mock.calls.some(
         ([taskId, stepIndex, status]) => taskId === "FN-8490" && stepIndex === 0 && status === "done",
@@ -1655,7 +1686,7 @@ describe("swallowed async store failure observability", () => {
       return fn();
     }) as typeof withRateLimitRetry);
 
-    const executor = new TaskExecutor(store, "/tmp/test");
+    const executor = createRoutingExecutor(store, "/tmp/test");
     await expect(executor.execute({
       id: "FN-001",
       title: "Rate-limit step-session task",
@@ -1721,7 +1752,7 @@ describe("swallowed async store failure observability", () => {
       return fn();
     }) as typeof withRateLimitRetry);
 
-    const executor = new TaskExecutor(store, "/tmp/test");
+    const executor = createRoutingExecutor(store, "/tmp/test");
     await expect(executor.execute({
       id: "FN-001",
       title: "Rate-limit main-agent task",
@@ -1755,6 +1786,8 @@ describe("swallowed async store failure observability", () => {
   it("logs warning when sessionFile update fails during retry", async () => {
     const warnSpy = vi.spyOn(executorLog, "warn");
     const store = createMockStore();
+    const emitUsageEvent = vi.fn().mockResolvedValue(undefined);
+    (store as any).emitUsageEvent = emitUsageEvent;
     const retrySessionFilePath = "/tmp/sessions/retry-failed.jsonl";
 
     /*
@@ -1781,7 +1814,7 @@ describe("swallowed async store failure observability", () => {
       sessionFile: agentCall++ === 0 ? "/tmp/sessions/initial.jsonl" : retrySessionFilePath,
     })) as any);
 
-    const executor = new TaskExecutor(store, "/tmp/test");
+    const executor = createRoutingExecutor(store, "/tmp/test");
     await expect(executor.execute({
       id: "FN-001",
       title: "Retry session task",
@@ -1796,6 +1829,12 @@ describe("swallowed async store failure observability", () => {
     })).resolves.toBeUndefined();
 
     expect(mockedCreateFnAgent.mock.calls.length).toBeGreaterThanOrEqual(2);
+    /*
+    FNXC:CommandCenterActivity 2026-08-09-15:18:
+    A task-done-less executor retry creates a replacement runtime session. The production retry
+    path must publish a second boundary, rather than silently undercounting durable agent work.
+    */
+    expect(emitUsageEvent.mock.calls.filter(([event]) => event.kind === "session_start")).toHaveLength(mockedCreateFnAgent.mock.calls.length);
     expect(warnSpy).toHaveBeenCalledWith(
       expect.stringContaining("FN-001 failed to persist retry sessionFile: retry sessionFile write failed"),
     );
@@ -1836,7 +1875,7 @@ describe("swallowed async store failure observability", () => {
       };
     }) as any);
 
-    const executor = new TaskExecutor(store, "/tmp/test");
+    const executor = createRoutingExecutor(store, "/tmp/test");
     await expect(executor.execute({
       id: "FN-001",
       title: "Session clear task",
@@ -1877,7 +1916,7 @@ describe("swallowed async store failure observability", () => {
         deleteAgent: vi.fn().mockRejectedValue(new Error("delete failed")),
       };
 
-      const executor = new TaskExecutor(store, "/tmp/test", {
+      const executor = createRoutingExecutor(store, "/tmp/test", {
         agentStore: agentStore as any,
       });
 
@@ -1931,7 +1970,7 @@ describe("TaskExecutor executor model hot-swap", () => {
       name: "GPT-4o",
     });
 
-    const executor = new TaskExecutor(store, "/tmp/test");
+    const executor = createRoutingExecutor(store, "/tmp/test");
     (executor as any)._modelRegistry = { find: findModel };
     (executor as any).activeSessions.set("FN-001", {
       session: { setModel, dispose: vi.fn() },
@@ -1962,7 +2001,7 @@ describe("TaskExecutor executor model hot-swap", () => {
     const store = createMockStore();
     const setModel = vi.fn().mockResolvedValue(undefined);
 
-    new TaskExecutor(store, "/tmp/test");
+    createRoutingExecutor(store, "/tmp/test");
 
     store._trigger("task:updated", buildUpdatedTask({
       modelProvider: "openai",
@@ -1979,7 +2018,7 @@ describe("TaskExecutor executor model hot-swap", () => {
     const setModel = vi.fn().mockResolvedValue(undefined);
     const findModel = vi.fn();
 
-    const executor = new TaskExecutor(store, "/tmp/test");
+    const executor = createRoutingExecutor(store, "/tmp/test");
     (executor as any)._modelRegistry = { find: findModel };
     (executor as any).activeSessions.set("FN-001", {
       session: { setModel, dispose: vi.fn() },
@@ -2022,7 +2061,7 @@ describe("TaskExecutor executor model hot-swap", () => {
       defaultModelId: "claude-sonnet-4-5",
     });
 
-    const executor = new TaskExecutor(store, "/tmp/test");
+    const executor = createRoutingExecutor(store, "/tmp/test");
     (executor as any)._modelRegistry = { find: findModel };
     (executor as any).activeSessions.set("FN-001", {
       session: { setModel, dispose: vi.fn() },
@@ -2065,7 +2104,7 @@ describe("TaskExecutor executor model hot-swap", () => {
       defaultModelId: "claude-sonnet-4-5",
     });
 
-    const executor = new TaskExecutor(store, "/tmp/test");
+    const executor = createRoutingExecutor(store, "/tmp/test");
     (executor as any)._modelRegistry = { find: findModel };
     (executor as any).activeSessions.set("FN-001", {
       session: { setModel, dispose: vi.fn() },
@@ -2097,7 +2136,7 @@ describe("TaskExecutor executor model hot-swap", () => {
       name: "GPT-4o",
     });
 
-    const executor = new TaskExecutor(store, "/tmp/test");
+    const executor = createRoutingExecutor(store, "/tmp/test");
     (executor as any)._modelRegistry = { find: findModel };
     (executor as any).activeSessions.set("FN-001", {
       session: { setModel, dispose: vi.fn() },
@@ -2126,7 +2165,7 @@ describe("TaskExecutor executor model hot-swap", () => {
     const dispose = vi.fn();
     const findModel = vi.fn();
 
-    const executor = new TaskExecutor(store, "/tmp/test");
+    const executor = createRoutingExecutor(store, "/tmp/test");
     (executor as any)._modelRegistry = { find: findModel };
     (executor as any).activeSessions.set("FN-001", {
       session: { setModel, dispose },
@@ -2158,7 +2197,7 @@ describe("TaskExecutor task:updated listener guards", () => {
     const terminateError = new Error("terminate failed");
     const terminateAllSessions = vi.fn().mockRejectedValue(terminateError);
 
-    const executor = new TaskExecutor(store, "/tmp/test");
+    const executor = createRoutingExecutor(store, "/tmp/test");
     (executor as any).activeStepExecutors.set("FN-001", {
       terminateAllSessions,
     });
@@ -2205,7 +2244,7 @@ describe("TaskExecutor global pause behavior", () => {
     const store = createMockStore();
     const disposeFn1 = vi.fn();
     const disposeFn2 = vi.fn();
-    let callCount = 0;
+    let implementationCallCount = 0;
 
     /*
     FNXC:WorkflowLifecycle 2026-07-01-20:35:
@@ -2226,9 +2265,16 @@ describe("TaskExecutor global pause behavior", () => {
     let releaseBarrier: () => void = () => {};
     const barrier = new Promise<void>((resolve) => { releaseBarrier = resolve; });
 
-    mockedCreateFnAgent.mockImplementation(async () => {
-      callCount++;
-      const dispose = callCount === 1 ? disposeFn1 : disposeFn2;
+    /*
+    FNXC:EngineTests 2026-08-09-12:02:
+    Several graph agent nodes are opened per coding task. Count and block implementation sessions
+    by their fn_task_done tool so review-node sessions cannot consume disposeFn1/2 or the barrier.
+    */
+    mockedCreateFnAgent.mockImplementation(async (opts: any) => {
+      const isImplementation = (opts.customTools ?? []).some((tool: any) => tool.name === "fn_task_done");
+      if (!isImplementation) return { session: { dispose: vi.fn() } } as any;
+      implementationCallCount++;
+      const dispose = implementationCallCount === 1 ? disposeFn1 : disposeFn2;
       return {
         session: {
           prompt: vi.fn().mockImplementation(async () => {
@@ -2240,7 +2286,7 @@ describe("TaskExecutor global pause behavior", () => {
       } as any;
     });
 
-    const executor = new TaskExecutor(store, "/tmp/test");
+    const executor = createRoutingExecutor(store, "/tmp/test");
 
     // Execute two tasks concurrently (do NOT await yet — the prompts block on the barrier).
     // Distinct worktrees per task: the active-session registry now rejects two tasks claiming the same
@@ -2251,19 +2297,19 @@ describe("TaskExecutor global pause behavior", () => {
     FNXC:EngineTests 2026-07-19-04:58 (U10b):
     The per-task worktree must live on the STORE ROW, not only on the literal handed to execute(): the graph re-reads the card, and a row with no worktree looks like drift, so both tasks regenerate the SAME deterministic worktree name and the second one dies on the foreign-path guard instead of exercising pause disposal.
     */
-    store._setRow("FN-001", { worktree: "/tmp/test/.worktrees/wt-001", branch: "fusion/fn-001" });
-    store._setRow("FN-002", { worktree: "/tmp/test/.worktrees/wt-002", branch: "fusion/fn-002" });
+    store._setRow("FN-001", { worktree: "/tmp/test/.worktrees/wt-001", branch: "fusion/fn-001", baseCommitSha: "abc123" });
+    store._setRow("FN-002", { worktree: "/tmp/test/.worktrees/wt-002", branch: "fusion/fn-002", baseCommitSha: "abc123" });
 
     const run = Promise.all([
       executor.execute({
         id: "FN-001", title: "T1", description: "T", column: "in-progress",
-        worktree: "/tmp/test/.worktrees/wt-001", branch: "fusion/fn-001",
+        worktree: "/tmp/test/.worktrees/wt-001", branch: "fusion/fn-001", baseCommitSha: "abc123",
         dependencies: [], steps: [], currentStep: 0, log: [],
         createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
       }),
       executor.execute({
         id: "FN-002", title: "T2", description: "T", column: "in-progress",
-        worktree: "/tmp/test/.worktrees/wt-002", branch: "fusion/fn-002",
+        worktree: "/tmp/test/.worktrees/wt-002", branch: "fusion/fn-002", baseCommitSha: "abc123",
         dependencies: [], steps: [], currentStep: 0, log: [],
         createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
       }),
@@ -2272,7 +2318,7 @@ describe("TaskExecutor global pause behavior", () => {
     // Wait until BOTH tasks have an active in-flight session (registered by execute()), then fire the
     // single global pause and release the sessions so their terminations classify as pause aborts.
     await vi.waitFor(() => {
-      if (callCount < 2) throw new Error("waiting for both sessions in-flight");
+      if (implementationCallCount < 2) throw new Error("waiting for both implementation sessions in-flight");
     }, { timeout: 5000 });
     store._trigger("settings:updated", {
       settings: { globalPause: true },
@@ -2305,7 +2351,7 @@ describe("TaskExecutor global pause behavior", () => {
       },
     } as any));
 
-    const executor = new TaskExecutor(store, "/tmp/test");
+    const executor = createRoutingExecutor(store, "/tmp/test");
     await executor.execute({
       id: "FN-001", title: "Test", description: "T", column: "in-progress",
       dependencies: [], steps: [], currentStep: 0, log: [],
@@ -2362,7 +2408,7 @@ describe("TaskExecutor global pause behavior", () => {
       } as any;
     });
 
-    const executor = new TaskExecutor(store, "/tmp/test");
+    const executor = createRoutingExecutor(store, "/tmp/test");
     await executor.execute({
       id: "FN-001", title: "Test", description: "T", column: "in-progress",
       dependencies: [], steps: [{ name: "Step 1", status: "pending" }], currentStep: 0, log: [],
@@ -2425,7 +2471,7 @@ describe("TaskExecutor global pause behavior", () => {
       };
     }) as any);
 
-    const executor = new TaskExecutor(store, "/tmp/test");
+    const executor = createRoutingExecutor(store, "/tmp/test");
     const watchdogSpy = vi.spyOn(executor as any, "scheduleCompletedTaskWatchdog");
     await executor.execute(todoTask as any);
 
@@ -2509,11 +2555,11 @@ describe("TaskExecutor global pause behavior", () => {
       store.moveTask.mockImplementation(async (_id: string, to: string) => ({ ...todoTask, column: to, paused: false }));
 
       mockedCreateFnAgent.mockImplementation((async (opts: any) => {
-        capturedCustomTools = opts.customTools || [];
+        const taskDoneTool = captureNamedTool(opts.customTools, "fn_task_done", undefined);
         return {
           session: {
             prompt: vi.fn().mockImplementation(async () => {
-              const taskDoneTool = capturedCustomTools.find((tool: any) => tool.name === "fn_task_done");
+              // Only the implementation session owns fn_task_done under graph traversal.
               if (taskDoneTool) {
                 taskDoneResult = await taskDoneTool.execute("call-1", { summary: "done" });
               }
@@ -2523,7 +2569,7 @@ describe("TaskExecutor global pause behavior", () => {
         };
       }) as any);
 
-      const executor = new TaskExecutor(store, "/tmp/test");
+      const executor = createRoutingExecutor(store, "/tmp/test");
       const watchdogSpy = vi.spyOn(executor as any, "scheduleCompletedTaskWatchdog");
 
       await executor.execute(todoTask as any);
@@ -2621,7 +2667,7 @@ describe("TaskExecutor global pause behavior", () => {
         };
       }) as any);
 
-      const executor = new TaskExecutor(store, "/tmp/test");
+      const executor = createRoutingExecutor(store, "/tmp/test");
       const watchdogSpy = vi.spyOn(executor as any, "scheduleCompletedTaskWatchdog");
 
       await executor.execute(inProgressTask as any);
@@ -2687,11 +2733,11 @@ describe("TaskExecutor global pause behavior", () => {
       store.moveTask.mockImplementation(async (_id: string, to: string) => ({ ...todoTask, column: to, paused: false }));
 
       mockedCreateFnAgent.mockImplementation((async (opts: any) => {
-        capturedCustomTools = opts.customTools || [];
+        const taskDoneTool = captureNamedTool(opts.customTools, "fn_task_done", undefined);
         return {
           session: {
             prompt: vi.fn().mockImplementation(async () => {
-              const taskDoneTool = capturedCustomTools.find((tool: any) => tool.name === "fn_task_done");
+              // Only the implementation session owns fn_task_done under graph traversal.
               if (taskDoneTool) {
                 await taskDoneTool.execute("call-1", { summary: "done" });
               }
@@ -2701,7 +2747,7 @@ describe("TaskExecutor global pause behavior", () => {
         };
       }) as any);
 
-      const executor = new TaskExecutor(store, "/tmp/test");
+      const executor = createRoutingExecutor(store, "/tmp/test");
       const watchdogSpy = vi.spyOn(executor as any, "scheduleCompletedTaskWatchdog");
 
       await executor.execute(todoTask as any);
@@ -2793,7 +2839,7 @@ describe("TaskExecutor global pause behavior", () => {
         };
       }) as any);
 
-      const executor = new TaskExecutor(store, "/tmp/test");
+      const executor = createRoutingExecutor(store, "/tmp/test");
       const watchdogSpy = vi.spyOn(executor as any, "scheduleCompletedTaskWatchdog");
 
       await executor.execute(inProgressTask as any);
@@ -2848,7 +2894,7 @@ describe("TaskExecutor global pause behavior", () => {
       };
     }) as any);
 
-    const executor = new TaskExecutor(store, "/tmp/test");
+    const executor = createRoutingExecutor(store, "/tmp/test");
     await executor.execute({
       id: "FN-001", title: "Test", description: "T", column: "in-progress",
       dependencies: [], steps: [], currentStep: 0, log: [],
@@ -2887,7 +2933,7 @@ describe("TaskExecutor global pause behavior", () => {
       };
     }) as any);
 
-    const executor = new TaskExecutor(store, "/tmp/test");
+    const executor = createRoutingExecutor(store, "/tmp/test");
     await executor.execute({
       id: "FN-001", title: "Test", description: "T", column: "in-progress",
       dependencies: [], steps: [], currentStep: 0, log: [],
@@ -2909,7 +2955,7 @@ describe("fn_task_update bare-call guard (P1 api-contract)", () => {
   // before any store access, so we reach it via the lowest-cost seam: construct
   // a TaskExecutor over a mock store and invoke the private method with `as any`.
   function makeTool(store = createMockStore()) {
-    const executor = new TaskExecutor(store, "/tmp/test");
+    const executor = createRoutingExecutor(store, "/tmp/test");
     return { store, tool: (executor as any).createTaskUpdateTool("FN-001", new Map(), { current: null }) };
   }
 
@@ -3025,5 +3071,72 @@ describe("executor base prompt runtime self-awareness", () => {
     expect(layers.stable).toBe(basePrompt);
     expect(layers.stable.startsWith(FUSION_RUNTIME_SELF_AWARENESS)).toBe(true);
     expect(layers.dynamic).not.toContain(FUSION_RUNTIME_SELF_AWARENESS);
+  });
+});
+
+describe("completion recommendation prompt contract", () => {
+  it.each([
+    ["built-in default", { agentPrompts: undefined }],
+    ["custom executor prompt", {
+      agentPrompts: {
+        templates: [{ id: "custom-executor", name: "Custom", role: "executor", prompt: "Operator custom executor prompt.", builtIn: false }],
+        roleAssignments: { executor: "custom-executor" },
+      },
+    }],
+  ])("appends populated and empty completion guidance for %s", async (_label, settings) => {
+    const { getExecutorSystemPrompt } = await import("../executor.js");
+    const prompt = getExecutorSystemPrompt({ ...settings, maxRecommendationsPerTask: 2 } as any);
+
+    expect(prompt).toContain("at most 2 task-ready recommendations");
+    expect(prompt).toContain("recommendations: []");
+    expect(prompt).toContain('id: "follow-up-export"');
+    expect(prompt).toContain('outcome="blocked"');
+    expect(prompt).not.toContain("Out-of-scope work found during execution");
+  });
+
+  it("uses the default cap when unset and disables every recommendation request at cap zero", async () => {
+    const { getExecutorSystemPrompt } = await import("../executor.js");
+    const defaultPrompt = getExecutorSystemPrompt({ agentPrompts: undefined } as any);
+    expect(defaultPrompt).toContain("at most 3 task-ready recommendations");
+
+    const disabledPrompt = getExecutorSystemPrompt({ agentPrompts: undefined, maxRecommendationsPerTask: 0 } as any);
+    expect(disabledPrompt).toContain("Recommendation capture is disabled");
+    expect(disabledPrompt).toContain("Ignore any earlier generic recommendation guidance");
+    expect(disabledPrompt).not.toContain("at most 0 task-ready recommendations");
+    expect(disabledPrompt).toContain("When recommendation capture is enabled, at the final accepted");
+
+    const customDisabledPrompt = getExecutorSystemPrompt({
+      maxRecommendationsPerTask: 0,
+      agentPrompts: {
+        templates: [{ id: "stale-custom-executor", name: "Custom", role: "executor", prompt: "Always send recommendations.", builtIn: false }],
+        roleAssignments: { executor: "stale-custom-executor" },
+      },
+    } as any);
+    expect(customDisabledPrompt).toContain("Always send recommendations.");
+    expect(customDisabledPrompt).toMatch(/Always send recommendations\.[\s\S]*Ignore any earlier generic recommendation guidance/);
+  });
+
+  it.each([
+    ["only task creation is withheld", { taskCreateWithheld: true }],
+    ["only delegation is withheld", { delegateWithheld: true }],
+    ["task creation and delegation are withheld", { taskCreateWithheld: true, delegateWithheld: true }],
+  ])("keeps enabled recommendation guidance available when %s", async (_label, availability) => {
+    const { getExecutorSystemPrompt } = await import("../executor.js");
+    const prompt = getExecutorSystemPrompt({ agentPrompts: undefined, maxRecommendationsPerTask: 3 } as any, availability);
+
+    expect(prompt).toContain("Follow-up task creation is disabled for this session");
+    expect(prompt).toContain("completion recommendation route");
+    expect(prompt).toContain("at most 3 task-ready recommendations");
+  });
+
+  it("does not present recommendations as an available fallback when capture is disabled and creation is withheld", async () => {
+    const { getExecutorSystemPrompt } = await import("../executor.js");
+    const prompt = getExecutorSystemPrompt(
+      { agentPrompts: undefined, maxRecommendationsPerTask: 0 } as any,
+      { taskCreateWithheld: true, delegateWithheld: true },
+    );
+
+    expect(prompt).toContain("Recommendation capture is disabled, so retain non-blocking context");
+    expect(prompt).not.toContain("use the available completion recommendation route");
   });
 });

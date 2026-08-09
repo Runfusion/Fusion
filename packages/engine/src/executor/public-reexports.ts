@@ -176,7 +176,13 @@ export {
 export type {
   WorkflowStepOutcome,
   WorkflowStepResult,
+  WorkflowStepVerdict,
 } from "./workflow-step-verdict.js";
+/*
+FNXC:TaskRecommendations 2026-08-09-22:10:
+Free validateCompletionRecommendations export (FN-8850) — tests import from executor.js.
+*/
+export { validateCompletionRecommendations } from "./validate-completion-recommendations.js";
 export { getExecutorSystemPrompt } from "./system-prompt.js";
 export {
   LEGACY_TERMINAL_COLUMNS,

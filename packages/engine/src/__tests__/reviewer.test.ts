@@ -39,7 +39,7 @@ vi.mock("../pi.js", () => ({
   wrapToolsWithActionGate: vi.fn((tools) => tools),
 }));
 
-import { resolveAgentPrompt } from "@fusion/core";
+import { resolveAgentPrompt, type TaskStore } from "@fusion/core";
 import { reviewStep, ReviewerProviderError } from "../execution/reviewer.js";
 import { createFnAgent, promptWithFallback } from "../pi.js";
 
@@ -103,6 +103,62 @@ describe("reviewStep — model settings threading", () => {
     const opts = mockedCreateFnAgent.mock.calls[0][0];
     expect(opts.defaultProvider).toBe("anthropic");
     expect(opts.defaultModelId).toBe("claude-sonnet-4-5");
+  });
+
+  it("emits resolved durable reviewer session and tool telemetry through the live lane callbacks", async () => {
+    mockedCreateFnAgent.mockImplementation(async (options) => {
+      options.onToolStart?.("Read", { path: "private-review-input" });
+      options.onToolEnd?.("Read", false, "private-review-output");
+      return createMockSession("### Verdict: APPROVE\n### Summary\nLooks good.");
+    });
+    const store = {
+      emitUsageEvent: vi.fn().mockResolvedValue(undefined),
+      appendAgentLog: vi.fn().mockResolvedValue(undefined),
+      logEntry: vi.fn().mockResolvedValue(undefined),
+    } as unknown as TaskStore & { emitUsageEvent: ReturnType<typeof vi.fn> };
+
+    await reviewStep("/tmp/worktree", "FN-100", 1, "Test Step", "plan", "# prompt", undefined, {
+      store,
+      taskId: "FN-100",
+      agentId: "durable-reviewer",
+      task: { assignedAgentId: "fallback-agent", effectiveNodeId: "mesh-node", nodeId: "legacy-node" },
+      taskValidatorProvider: "validator-provider",
+      taskValidatorModelId: "validator-model",
+    });
+
+    expect(store.emitUsageEvent).toHaveBeenCalledTimes(3);
+    const events = store.emitUsageEvent.mock.calls.map(([event]) => event);
+    const sessionStart = events.find((event) => event.kind === "session_start");
+    const toolCall = events.find((event) => event.kind === "tool_call");
+    const toolResult = events.find((event) => event.kind === "tool_result");
+    expect(sessionStart).toMatchObject({
+      kind: "session_start", category: "agent-session", taskId: "FN-100", agentId: "durable-reviewer",
+      nodeId: "mesh-node", model: "validator-model", provider: "validator-provider", meta: { lane: "reviewer" },
+    });
+    expect(toolCall).toMatchObject({
+      kind: "tool_call", taskId: "FN-100", agentId: "durable-reviewer", nodeId: "mesh-node",
+      model: "validator-model", provider: "validator-provider", toolName: "Read",
+    });
+    expect(toolResult).toMatchObject({
+      kind: "tool_result", taskId: "FN-100", agentId: "durable-reviewer", nodeId: "mesh-node",
+      model: "validator-model", provider: "validator-provider", toolName: "Read",
+    });
+  });
+
+  it("does not count a reviewer session when runtime construction fails", async () => {
+    mockedCreateFnAgent.mockRejectedValue(new Error("provider unavailable"));
+    const store = {
+      emitUsageEvent: vi.fn().mockResolvedValue(undefined),
+      appendAgentLog: vi.fn().mockResolvedValue(undefined),
+      logEntry: vi.fn().mockResolvedValue(undefined),
+    } as unknown as TaskStore & { emitUsageEvent: ReturnType<typeof vi.fn> };
+
+    await expect(reviewStep("/tmp/worktree", "FN-100", 1, "Test Step", "plan", "# prompt", undefined, {
+      store, taskId: "FN-100", agentId: "durable-reviewer",
+      taskValidatorProvider: "validator-provider", taskValidatorModelId: "validator-model",
+    })).rejects.toThrow("provider unavailable");
+
+    expect(store.emitUsageEvent).not.toHaveBeenCalledWith(expect.objectContaining({ kind: "session_start" }));
   });
 
   it("does not set model fields when ReviewOptions omits them", async () => {

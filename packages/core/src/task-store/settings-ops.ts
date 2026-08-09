@@ -8,6 +8,7 @@
  */
 import {TaskStore, storeLog} from "../store.js";
 import type {BoardConfig, Settings, GlobalSettings, ConfigChangedBy} from "../types.js";
+import { CONFIG_CHANGED_BY_SYSTEM } from "../types.js";
 import {DEFAULT_SETTINGS, isGlobalOnlySettingsKey} from "../types.js";
 import {MOVED_SETTINGS_KEYS, stripMovedSettingsKeys, patchContainsMovedKey} from "../config/moved-settings.js";
 import "../builtin-traits.js";
@@ -71,7 +72,7 @@ export async function publishSettingsUpdated(store: TaskStore, previous: Setting
   }
 }
 
-export async function updateSettingsImpl(store: TaskStore, patch: Partial<Settings>, changedBy: ConfigChangedBy = { kind: "human", id: "local-user" }): Promise<Settings> {
+export async function updateSettingsImpl(store: TaskStore, patch: Partial<Settings>, changedBy: ConfigChangedBy = CONFIG_CHANGED_BY_SYSTEM): Promise<Settings> {
     assertValidRecommendationSettingsPatch(patch as Record<string, unknown>);
     assertValidCredentialInstanceSettingsPatch(patch as Record<string, unknown>);
     /*
@@ -213,7 +214,7 @@ export async function updateSettingsImpl(store: TaskStore, patch: Partial<Settin
     });
   }
 
-export async function updateGlobalSettingsImpl(store: TaskStore, patch: Partial<GlobalSettings>, changedBy: ConfigChangedBy = { kind: "human", id: "local-user" }): Promise<Settings> {
+export async function updateGlobalSettingsImpl(store: TaskStore, patch: Partial<GlobalSettings>, changedBy: ConfigChangedBy = CONFIG_CHANGED_BY_SYSTEM): Promise<Settings> {
     assertValidCredentialInstanceSettingsPatch(patch as Record<string, unknown>);
     // Read previous state BEFORE writing so the diff is correct
     const previousGlobal = await store.globalSettingsStore.getSettings();

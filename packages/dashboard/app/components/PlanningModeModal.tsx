@@ -156,6 +156,7 @@ interface PlanningModeModalProps {
   onViewTask?: (task: Task) => void;
   tasks: Task[];
   initialPlan?: string;
+  sourceIssue?: { provider: "github"; repository: string; issueNumber: number; url: string; title?: string };
   /**
   FNXC:PlanningMode 2026-07-23-00:00:
   Called exactly once when the auto-start effect actually consumes `initialPlan`, so the owner
@@ -483,7 +484,7 @@ function parseModelSelection(value: string): { provider?: string; modelId?: stri
   };
 }
 
-export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreated, onViewTask, tasks, initialPlan: initialPlanProp, onInitialPlanConsumed, projectId, workflowId, resumeSessionId, initialSessions, presentation = "modal", active = true }: PlanningModeModalProps) {
+export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreated, onViewTask, tasks, initialPlan: initialPlanProp, sourceIssue, onInitialPlanConsumed, projectId, workflowId, resumeSessionId, initialSessions, presentation = "modal", active = true }: PlanningModeModalProps) {
   const { t } = useTranslation("app");
   // FNXC:EmbeddedPresentation 2026-06-22-12:00: shared hook supplies isEmbedded (DOM branching) plus the modal-only gates.
   // Note: the Escape handler intentionally does NOT gate on embedded here — embedded planning preserves its historical
@@ -1900,7 +1901,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
         startedPlan,
         projectId,
         modelOverride,
-        { clarificationEnabled: true, ...(workflowId ? { workflowId } : {}) },
+        { clarificationEnabled: true, ...(workflowId ? { workflowId } : {}), ...(sourceIssue ? { sourceIssue } : {}) },
         draftSessionId,
       );
       draftSessionIdRef.current = null;

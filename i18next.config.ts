@@ -29,7 +29,7 @@ const DEFERRED_I18N_LINT_FILES = [
  * source, not by file path. `common` is the default namespace.
  */
 export default defineConfig({
-  locales: ["en", "zh-CN", "zh-TW", "fr", "es", "ko"],
+  locales: ["en", "zh-CN", "zh-TW", "fr", "es", "ko", "pt-BR"],
   extract: {
     input: [
       "packages/dashboard/app/**/*.{ts,tsx}",

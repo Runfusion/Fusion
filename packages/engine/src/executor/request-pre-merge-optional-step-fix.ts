@@ -28,7 +28,8 @@
 import type { Task, TaskStore, WorkflowStepResult as CoreWorkflowStepResult } from "@fusion/core";
 import {
   DEFAULT_MAX_POST_REVIEW_FIXES,
-  hasSharedBranchMemberAutoMergeHold,
+  hasPreMergeRemediationAutoMergeHold,
+  PLAN_REVIEW_GROUP_ID,
   resolveOptionalReviewRevisionBudget,
   resolveOptionalStepRevisionBudget,
 } from "@fusion/core";
@@ -41,6 +42,11 @@ import {
   optionalStepRevisionKey,
   optionalStepRevisionLogOutcome,
 } from "./optional-step-revision.js";
+import {
+  countPlanReviewRevisionAttempts,
+  formatPlanReviewRevisionFeedback,
+  PLAN_REVIEW_FEEDBACK_HISTORY_LIMIT,
+} from "../plan-review-feedback-history.js";
 import { executorLog } from "../logger.js";
 import type { EngineRunContext } from "../util/run-audit.js";
 
@@ -95,11 +101,28 @@ export async function requestPreMergeOptionalStepFix(
 
   const liveTask = await deps.store.getTask(taskId).catch(() => fallbackTask);
   /*
-   * FNXC:SharedBranchMemberHold 2026-08-08-01:58:
-   * Project Off holds non-opted-in members as a durable checkpoint. Pre-merge
-   * remediation must not reopen implementation past that hold.
+   * FNXC:SharedBranchMemberHold 2026-08-06-00:12:
+   * An operator-authored task Off is a durable manual checkpoint, not merely
+   * an auto-merge admission preference. Pre-merge remediation must not reopen
+   * implementation and thereby bypass that checkpoint before the operator
+   * releases or revises the held member.
+   *
+   * FNXC:SharedBranchMemberHold 2026-08-09-21:41:
+   * FN-8910: remediation reopens implementation rather than merging. The
+   * merge boundary independently enforces project Off, so this seam fences
+   * only an operator-authored task-level Off and records every refusal.
    */
-  if (hasSharedBranchMemberAutoMergeHold(liveTask, await deps.store.getSettings())) return false;
+  if (hasPreMergeRemediationAutoMergeHold(liveTask, await deps.store.getSettings())) {
+    const reason = "operator-authored task-level auto-merge Off holds pre-merge remediation";
+    executorLog.warn(`${taskId}: pre-merge remediation NOT scheduled for step "${info.stepName}" — ${reason}. Card left parked.`);
+    await deps.store.logEntry(
+      taskId,
+      "Pre-merge remediation not scheduled — operator task hold",
+      `Step/node: ${info.nodeId ?? info.stepName}\nReason: ${reason}`,
+      deps.getRunContextFor(taskId),
+    );
+    return false;
+  }
   const missingArtifactKeys = parseRequiredArtifactMissingValue(info.failureValue);
   if (missingArtifactKeys) {
     await deps.recoverMissingRequiredArtifacts(liveTask, missingArtifactKeys, {
@@ -163,7 +186,25 @@ export async function requestPreMergeOptionalStepFix(
       return false;
     }
     const revisionKey = optionalStepRevisionKey(info.nodeId ?? "plan-review", info.stepName);
-    const currentCount = countOptionalStepRevisionAttempts(liveTask, revisionKey, info.stepName);
+    // FNXC:PlanReviewConvergence 2026-08-04-06:35 (FN-8768): The terminal
+    // result is persisted before remediation. Budget from the durable raw
+    // same-episode count, not the capped prompt history or cross-episode log.
+    const currentEpisodeAttemptCount = countPlanReviewRevisionAttempts(
+      liveTask.workflowStepResults,
+      { revisionKey },
+    );
+    const matchingProjection = liveTask.workflowStepResults?.find((result) =>
+      result.workflowStepId === revisionKey
+      || (revisionKey === PLAN_REVIEW_GROUP_ID && result.workflowStepName === "Plan Review"),
+    );
+    const hasEpisodeBoundary = matchingProjection?.supersededAt != null
+      || matchingProjection?.priorAttempts?.some((attempt) => attempt.supersededAt != null) === true;
+    const nextCount = currentEpisodeAttemptCount > 0
+      ? currentEpisodeAttemptCount
+      : hasEpisodeBoundary
+        ? 1
+        : countOptionalStepRevisionAttempts(liveTask, revisionKey, info.stepName) + 1;
+    const currentCount = nextCount - 1;
     if (!budget.unbounded && currentCount >= budget.max) {
       // U3: finite replan budget exhausted → park awaiting-approval (cap park
       // re-owned from the deleted triage gate), not a silent leave-in-place.
@@ -174,22 +215,21 @@ export async function requestPreMergeOptionalStepFix(
     }
     /*
      * FNXC:PlanReviewReplanCap 2026-07-05-17:28:
-     * FN-7561: an unset Plan Review revision budget resolves to "unbounded" (see FNXC:WorkflowRevisionBudget above), which by design skips the ceiling check — so a task whose planner and reviewer persistently disagree, or whose reviewer keeps hard-failing, replans triage↔plan-review forever, silently burning a triage + review LLM call every cycle (FN-7525 ran 13+ attempts overnight with zero operator visibility). Enforce a finite safety ceiling even when unbounded: once hit, emit a loud halting log entry and STOP replanning (return false) so the gate falls through to a visible failed/parked state a human can act on, instead of looping indefinitely. Explicit numeric operator budgets are still honored as-is above; this only backstops the unbounded DEFAULT.
+     * FN-7561: an unset Plan Review revision budget resolves to "unbounded" (see FNXC:WorkflowRevisionBudget above), which by design skips the ceiling check — so a task whose planner and reviewer persistently disagree, or whose reviewer keeps hard-failing, replans triage↔plan-review forever, silently burning a triage + review LLM call every cycle (FN-7525 ran 13+ attempts overnight with zero operator visibility). Enforce a finite safety ceiling even when unbounded: once hit, emit a loud
+     * halting log entry and STOP replanning so the gate falls through to a visible failed/parked state a human can act on. Explicit numeric operator budgets are still honored as-is above; this only backstops the unbounded DEFAULT.
      */
-    const PLAN_REVIEW_REPLAN_HARD_CAP = 15;
-    if (budget.unbounded && currentCount >= PLAN_REVIEW_REPLAN_HARD_CAP) {
+    if (budget.unbounded && currentCount >= PLAN_REVIEW_FEEDBACK_HISTORY_LIMIT) {
       // U3: the unbounded-default safety ceiling now parks awaiting-approval with
       // the replan-cap reason (re-owned from the deleted triage gate) so the
       // non-convergence surfaces to a human instead of silently sitting in place.
       await deps.parkPlanReviewReplanCapExhausted(
         taskId,
-        String(PLAN_REVIEW_REPLAN_HARD_CAP),
+        String(PLAN_REVIEW_FEEDBACK_HISTORY_LIMIT),
         currentCount,
         feedback,
       );
       return true;
     }
-    const nextCount = currentCount + 1;
     const totalFixCount = (liveTask.postReviewFixCount ?? 0) + 1;
     const budgetLabel = budget.unbounded ? "unbounded" : String(budget.max);
     await deps.store.updateTask(taskId, { postReviewFixCount: totalFixCount }, deps.getRunContextFor(taskId));
@@ -197,7 +237,7 @@ export async function requestPreMergeOptionalStepFix(
     await deps.store.logEntry(
       taskId,
       "AI spec revision requested",
-      `Plan Review requested a planning revision before execution.\n\nStatus: ${info.status}\nFeedback:\n${feedback}`,
+      formatPlanReviewRevisionFeedback(revisionKey, info.status, feedback),
       deps.getRunContextFor(taskId),
     );
     /*

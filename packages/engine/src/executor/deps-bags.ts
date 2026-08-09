@@ -148,6 +148,8 @@ export function buildExecuteWorkflowGraphDeps(host: any): any {
       "createAuthoritativeWorkflowSeams", "finalizeMergeConfirmedWorkflowGraphTask", "handleGraphFailure",
       "isLiveSharedBranchGroupMember", "prepareGraphNodeExecution", "readTaskArtifact", "recoverMissingRequiredArtifacts",
       "requestPreMergeOptionalStepFix", "runGraphCustomNode", "terminateAllChildren",
+      // FNXC:PlanReviewNoOp 2026-08-09-22:10: CLOSE_NO_OP terminal route + hold (FN-8841).
+      "completePlanReviewNoOp", "holdPlanReviewNoOpContinuation",
     ]),
   };
 }
@@ -301,7 +303,19 @@ export function buildCreateTaskDoneToolDeps(host: any): any {
     ...facadeMethods(host, [
       "getRunContextFor", "persistTokenUsage", "getTaskCompletionBlocker", "evaluateTaskVerdictProviders",
       "verifyWorktreeInvariants", "evaluateTaskDoneScopeLeak", "scheduleCompletedTaskWatchdog",
+      "finalizeAcceptedNoOpCompletion",
     ]),
+  };
+}
+
+/*
+FNXC:CodeOrganization 2026-08-09-22:10:
+Plan Review CLOSE_NO_OP terminalization deps (FN-8841) — shared by complete/hold facades and fn_task_done.
+*/
+export function buildFinalizeAcceptedNoOpCompletionDeps(host: any): any {
+  return {
+    ...facadeFields(host, ["store"]),
+    ...facadeMethods(host, ["getRunContextFor", "scheduleCompletedTaskWatchdog"]),
   };
 }
 
@@ -1343,7 +1357,7 @@ export function buildStaleLockRecoveryDeps(host: any): any {
 export function buildRecoverFailedPreMergeWorkflowStepDeps(host: any): any {
   return {
     store: host.store,
-    ...facadeMethods(host, ["resolveFailedPreMergeWorkflowStepBudget", "sendTaskBackForFix"]),
+    ...facadeMethods(host, ["getRunContextFor", "resolveFailedPreMergeWorkflowStepBudget", "sendTaskBackForFix"]),
   };
 }
 

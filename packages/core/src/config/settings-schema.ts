@@ -485,6 +485,7 @@ export const DEFAULT_PROJECT_SETTINGS = {
   voiceInput: undefined,
   mergeRequestContractShadowEnabled: false,
   mergeStrategy: "direct",
+  githubNativeAutoMerge: false,
   directMergeCommitStrategy: "always-squash",
   mergeIntegrationWorktree: "reuse-task-worktree",
   mergeAdvanceAutoSync: "stash-and-ff",
@@ -608,6 +609,7 @@ export const DEFAULT_PROJECT_SETTINGS = {
   mergeDiffVolumeMinLines: undefined,
   mergeDiffVolumeThreshold: undefined,
   mergeDiffVolumeAllowlist: undefined,
+  requiredChecks: undefined,
   mergeStrategyOverlapBehavior: "flip-to-prefer-branch",
   postMergeAuditMode: "warn",
   mergeAuditAutoRecovery: "ai-assisted",
@@ -920,6 +922,26 @@ export function isGlobalSettingsKey(key: string): key is keyof GlobalSettings {
 
 export function isProjectSettingsKey(key: string): key is keyof ProjectSettings {
   return (PROJECT_SETTINGS_KEYS as readonly string[]).includes(key);
+}
+
+/*
+FNXC:ConfigVersioning 2026-08-09-04:09:
+`engineLastActiveAt` is liveness bookkeeping written every pollIntervalMs tick. Versioning it evicted real settings changes from the audit window within about 25 minutes, so project revision payloads omit these keys and restores overlay their live values.
+*/
+export const NON_VERSIONED_SETTINGS_KEYS = Object.freeze(["engineLastActiveAt"] as const);
+
+export function isNonVersionedSettingsKey(key: string): key is (typeof NON_VERSIONED_SETTINGS_KEYS)[number] {
+  return (NON_VERSIONED_SETTINGS_KEYS as readonly string[]).includes(key);
+}
+
+/** Preserve live liveness fields when an exact historic project snapshot is restored. */
+export function mergeRestoredProjectSettings(snapshot: Record<string, unknown>, live: Record<string, unknown>): Record<string, unknown> {
+  const merged = { ...snapshot };
+  for (const key of NON_VERSIONED_SETTINGS_KEYS) {
+    delete merged[key];
+    if (Object.hasOwn(live, key)) merged[key] = live[key];
+  }
+  return merged;
 }
 
 export function isGlobalOnlySettingsKey(key: string): key is keyof GlobalSettings {

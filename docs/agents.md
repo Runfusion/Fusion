@@ -266,7 +266,7 @@ Separation of concerns:
 
 ### Task wedge operator notifications
 
-When a task is terminally blocked (for example, by a merge gate, exhausted execution retries, or a completion blocker), Fusion posts a system message to the dashboard mailbox and sends a `task-wedged` notification through configured providers. The message identifies the task, bounded reason/gate when known, and a recovery action. The active/resolved episode is persisted with the task, so it is sent once per active reason across service restarts; retrying or otherwise restoring progress clears the episode, so a later recurrence is visible again.
+When a task is terminally blocked (for example, by a merge gate, exhausted execution retries, or a completion blocker), Fusion posts a system message to the dashboard mailbox and sends a `task-wedged` notification through configured providers. Pause-derived alerts require actual pause state, and an actively progressing task never alerts even if a resume path retained a pause marker. The message identifies the task, bounded reason/gate when known, and a recovery action. The active/resolved episode is persisted with the task, so it is sent once per active reason across service restarts; retrying or otherwise restoring progress clears the episode, so a later recurrence is visible again.
 
 ### CLI agent permission prompts and notifications
 
@@ -945,6 +945,8 @@ To clear a specific override, click the **Reset** button in the UI. This sends `
 Messaging is available in dashboard mailbox UI and CLI. In dashboard Mailbox → Agents, operators can choose **All agents** to browse a single combined agent-to-agent stream, or choose a specific agent to keep using per-agent inbox/outbox views.
 
 Agent-backed dashboard chat sessions (including plugin-runtime agents such as Hermes/OpenClaw/Paperclip) also expose mailbox tools (`fn_send_message`, `fn_read_messages`) when a `MessageStore` is wired for that project. Model-only chats without an attached agent do not expose these tools.
+
+Mail has an optional structural metadata contract: `mailKind` distinguishes ordinary messages, reports, and approvals; reports carry a small serializable title/section writeup, while `approvalRequestId` is a reference to live approval state rather than a copied snapshot. `fn_send_message` can send reports with `mail_kind: "report"` and `report`; use Chat for quick back-and-forth. Approval items are engine-emitted only.
 
 ### Dashboard Chat workspace tools
 

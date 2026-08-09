@@ -222,6 +222,20 @@ If the Plan Review reviewer is unavailable before producing a verdict, the task 
 
 Workflow Plan Review is separate from manual plan approval. Project `planApprovalMode: "auto-approve-all"` bypasses only the final manual `awaiting-approval` plan gate after the plan is specified and any enabled Plan Review passes; it does not disable Plan Review or other explicit safety gates.
 
+### Closing stale or duplicate work from Plan Review
+
+The built-in **Plan Review** optional group alone accepts a fourth structured verdict:
+
+```json
+{"verdict":"CLOSE_NO_OP","notes":"DUPLICATE: FN-1234 already covered"}
+```
+
+Use it only when implementation should not begin because the premise is stale, the work is already satisfied or redundant, or another task already covers it. `notes` must begin with one of the existing no-op sentinels: `PREMISE STALE:`, `NO-OP:`, `NOOP:`, `REDUNDANT:`, or `DUPLICATE:`. For known duplicates, write `DUPLICATE: FN-NNNN ...`; Fusion preserves that canonical task ID in the Plan Review result.
+
+A valid close follows the graph's explicit terminal no-op route before parsing or implementation: it records a passed `CLOSE_NO_OP` Plan Review result, marks the task as no-commits-expected, records the reason, and completes it without replan or an implementation agent session. This is distinct from `REVISE`, which requests a corrected plan and follows the bounded replan route.
+
+`CLOSE_NO_OP` is not a generic review verdict. Code Review, Browser Verification, post-merge review, and custom non-Plan groups treat it as malformed/unknown output under their existing gate or advisory policy. A Plan Review close with empty/non-sentinel notes, or a custom workflow that has no explicit `outcome:close-no-op` terminal route, stays held at Plan Review with failed close evidence; it does not execute, replan, or fabricate a task error.
+
 **FN-7559 (superseded by FN-7732) — telling the holds apart:** Plan Review parks a task with its own distinct statuses (`needs-replan` for a revision verdict, `plan-review-unavailable` for a reviewer-outage retry), so it never renders identically to a plan-approval hold. A separate triage release-authorization gate used to also use `status: "awaiting-approval"` with a distinct `awaitingApprovalReason: "release-authorization"` discriminator and its own dashboard label; that gate was removed (it over-fired on AI-authored specs that merely mentioned release tooling — see `b5b0458`, FN-7732). Releases are kept out of Fusion by agent instruction instead (AGENTS.md → "Releasing"), not by an engine/UI gate. The `Task.awaitingApprovalReason` field and its `"release-authorization"` value are kept only so legacy rows deserialize; any task that still carries the legacy value now renders as an ordinary manual plan-approval hold.
 
 **FN-7569 / FN-8008 — manual plan approval is idempotent against unchanged plans:** approving a plan under the manual gate records a fingerprint of the approved `PROMPT.md`, normalized to ignore deterministic `## Original Description` and Frontend UX hygiene sections. If the same task is later re-specified — a `needs-replan` replan, a Plan Review reviewer-outage retry, or a self-healing rebound back to `triage` — the manual gate detects the unchanged operator-authored plan and proceeds straight to `todo` instead of re-parking at `status: "awaiting-approval"`, regardless of whether those generated sections were injected before either fingerprint was calculated. A genuinely revised Mission, Steps, or File Scope still produces a different fingerprint and re-asks as before, and using Reject Plan clears the fingerprint so the regenerated plan is always treated as new. This idempotency check runs only inside the manual gate, strictly after Plan Review has already made its independent decision, and never applies under `planApprovalMode: "auto-approve-all"` (which bypasses the manual gate entirely).
@@ -291,6 +305,10 @@ A v2 column can optionally name a **permanent agent** from the agent registry, s
 **Principal semantics.** The effective column agent becomes the **principal**, not merely a model source. Action gating is computed for the agent actually running (a security boundary — never `task.assignedAgentId` when an override governs). Heartbeat serialization follows it in both directions: a column agent with `allowParallelExecution=false` is serialized like an assigned agent, the engine re-dispatches tasks whose *effective* column agent matches (not only `assignedAgentId` matches), and the heartbeat scheduler never lets a column agent heartbeat concurrently with its own override session. A workflow-definition edit or agent `runtimeConfig` change that re-keys the effective agent/model hot-swaps a running session, the same way a `task.modelProvider` change does today.
 
 **Missing-agent fallback.** A missing or deleted agent at resolution time logs and falls back to normal resolution — a live session is never aborted because its column agent was deleted mid-flight.
+
+### Durable intake executor owner
+
+New tasks receive a stable `assignedAgentId` before insertion. Creation resolves an explicit eligible executor first, then the first reachable execute-node column binding, then the eligible durable executor pool ordered by active session, creation time, and ID. Planning and review principals remain separately fenced by workflow work items; a planner or reviewer binding never becomes the durable implementation owner. `workflowId: null` disables graph steps but still resolves an owner from the executor pool. The only successful null-owner case is a project with no eligible durable executor, which emits `task:intake-owner-unresolved`; public request and tool payloads cannot opt out of ownership resolution.
 
 **Flag requirements.** Column agents act only when **both** `experimentalFeatures.workflowColumns` and `experimentalFeatures.workflowGraphExecutor` are on; with either off the binding is inert (config is still stored and round-trips — only execution is gated), and the editor surfaces that the picker is disabled with a tooltip naming both flags.
 
@@ -739,6 +757,8 @@ Authoritative cutover now depends on existing/current parity summary evidence, n
 
 If a task is found in `in-review` with failed pre-merge workflow results and no active executor, self-healing can auto-revive it by replaying the same remediation send-back flow. Generic optional gates use the resolved workflow/project budget; built-in Plan Review and most Code Review groups are unbounded unless workflow settings or node config set a numeric cap. Compound Engineering's Code Review node supplies a two-pass cap.
 
+Project-level `autoMerge: false` gates **merge admission**, not pre-merge remediation: Plan Review replans, Code Review/optional-gate fixes, required-artifact recovery, and failed-step revival remain available for shared-branch members and standalone tasks. Only an operator-authored task-level auto-merge Off fences those remediation seams. Every such hold or revision-budget refusal is recorded on the task; when a fire-and-forget remediation node cannot schedule after implementation is complete, the card stays visibly parked in its resolved review lane with its merge blocker rather than bouncing back to planning.
+
 <!--
 FNXC:WorkflowOptionalStepFix 2026-06-26-17:05:
 Enabled PRE-merge optional-group REVISE findings should be acted on before review/merge when the executor is still in the graph run. The inline path consumes the same `postReviewFixCount` / `maxPostReviewFixes` budget before scheduling `sendTaskBackForFix`; exhausted budgets preserve the older advisory/gate behavior so optional advisory gates remain ultimately non-blocking.
@@ -965,4 +985,10 @@ Findings persist through both ordinary-node and optional-group result writers in
 
 Only session-launching nodes acquire a workflow principal: planning prompts use `triage`; implementation, remediation, script/CLI-agent and completion prompts use `executor`; `step-review` and review prompts use `reviewer`; merge prompts use `merger`. Control and lifecycle nodes, including start/end, hold, split/join, containers, parse-steps, notifications, asks, gates, and `review-handoff`, have no principal.
 
-A review node may persist `reviewerAgentId` in its IR. It is exact-node scoped and may name any permanent agent. Resolution is reviewer override (review only), task owner, column binding, then a matching role pool. Claimed `workflow_work_items` persist principal, role, authority kind, and node-instance fence. Named unavailable principals hold closed; pool exhaustion is reported separately.
+A review node may persist `reviewerAgentId` in its IR. It is exact-node scoped and may name any permanent agent. Resolution is reviewer override (review only), column binding, then a matching role pool. Execute nodes additionally prefer the durable task owner when it remains an eligible executor. Claimed `workflow_work_items` persist principal, role, authority kind, and node-instance fence. Named unavailable principals hold closed; pool exhaustion is reported separately.
+
+## Intake executor ownership
+
+Task creation resolves ownership once at the shared pre-insert boundary used by ordinary and reserved-ID creates. A durable owner must be a non-ephemeral, runtime-enabled executor not paused or errored and permitted by implementation assignment policy. A valid explicit owner wins; otherwise the first reachable execute-node column binding is used, then the deterministic executor pool. Planning and review principals remain work-item-scoped and never rewrite this owner.
+
+`workflowId: null` disables workflow-step materialization only: it still resolves from the executor pool. The only internal exemption is an options-bag reason for terminal, historical, or fixture creation; no HTTP/tool/CLI payload can set it. Resolution outcomes are distinct: `selected` persists an owner; internal `exempt` deliberately persists null; `rejected` fails before insertion; and `unowned` succeeds only when no eligible executor exists, emitting `task:intake-owner-unresolved` for ordinary later assignment.

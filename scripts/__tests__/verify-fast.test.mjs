@@ -53,6 +53,7 @@ const PRETEST_CHECKS = [
     "4040.mjs",
   ].join(""),
   "scripts/check-no-getdatabase.mjs",
+  "scripts/check-prerebase-inert.mjs",
   /* FNXC:TestInfrastructure 2026-07-31-19:15: added when the assertion below went red on `main`.
      Both validators are real scripts, both run in `package.json`'s pretest chain, and
      `PRETEST_STATIC_CHECK_SCRIPTS` already picked them up — verify:fast was RIGHT and this mirror was

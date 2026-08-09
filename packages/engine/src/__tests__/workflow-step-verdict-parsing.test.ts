@@ -19,6 +19,24 @@ describe("parseWorkflowStepVerdict", () => {
     expect(parseWorkflowStepVerdict('{"verdict":"PASS"}')).toBeNull();
   });
 
+  it("recognizes CLOSE_NO_OP only for the Plan Review optional group", () => {
+    const response = '{"verdict":"CLOSE_NO_OP","notes":"DUPLICATE: FN-1234 already covered"}';
+    expect(parseWorkflowStepVerdict(response, { optionalGroupId: "plan-review" })).toMatchObject({
+      verdict: "CLOSE_NO_OP",
+      notes: "DUPLICATE: FN-1234 already covered",
+    });
+    expect(parseWorkflowStepVerdict(response, { optionalGroupId: "code-review" })).toBeNull();
+    expect(parseWorkflowStepVerdict(response)).toBeNull();
+  });
+
+  it("prefers a trailing Plan Review close JSON payload", () => {
+    const response = 'Example: {"verdict":"REVISE"}\n{"verdict":"CLOSE_NO_OP","notes":"PREMISE STALE: already shipped"}';
+    expect(parseWorkflowStepVerdict(response, { optionalGroupId: "plan-review" })).toEqual({
+      verdict: "CLOSE_NO_OP",
+      notes: "PREMISE STALE: already shipped",
+    });
+  });
+
   /*
   FNXC:ReviewLeniency 2026-07-01-23:30:
   Models often emit reasoning PROSE (sometimes containing braces) then a trailing

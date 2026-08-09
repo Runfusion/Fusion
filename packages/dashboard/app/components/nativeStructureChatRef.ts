@@ -52,7 +52,7 @@ export function parseNativeStructureChatRef(hrefOrToken: string): NativeStructur
   }
   if (!decodedId.trim() || decodedId !== id || /[\\/]/.test(decodedId)) return null;
 
-  // FNXC:NativeStructureEmbed 2026-07-19-20:10: `roadmap-item` intentionally reaches the shared
-  // unavailable renderer until its adapter lands; retain the core ref contract rather than fork it here.
+  // FNXC:NativeStructureEmbed 2026-08-09-05:13: FN-8859 keeps roadmap-item on the shared contract;
+  // its roadmap adapter now resolves previews and mail can attach the same first-class reference.
   return { kind: kind as NativeStructureChatKind, id } as NativeStructureRef;
 }

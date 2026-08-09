@@ -1068,9 +1068,14 @@ export interface Task {
    * `plan-review-replan-cap` when automatic REVISE replans hit PLAN_REVIEW_GATE_REPLAN_CAP.
    * Dashboard badge/detail banner/notifications must surface that reason so operators know
    * approval is required because Plan Review did not converge — not a generic require-all gate.
+   *
+   * FNXC:PullRequestMerge 2026-08-09-05:07:
+   * The PR merge queue stamps `merge-blocked-by-policy` for branch-protection holds.
+   * Its notification must ask for policy remediation and a manual merge retry, never
+   * mislabel a completed implementation as a plan awaiting approval.
    * Undefined means either no hold or a routine manual plan-approval hold.
    */
-  awaitingApprovalReason?: "release-authorization" | "plan-review-replan-cap";
+  awaitingApprovalReason?: "release-authorization" | "plan-review-replan-cap" | "merge-blocked-by-policy";
   /*
    * FNXC:PlanApproval 2026-07-04-22:41:
    * FN-7569 — records the computePlanApprovalFingerprint (packages/core/src/plan-approval.ts)

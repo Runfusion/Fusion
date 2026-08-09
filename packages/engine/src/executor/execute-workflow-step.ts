@@ -736,7 +736,13 @@ export async function executeWorkflowStep(
         session.dispose();
         await agentLogger.flush();
 
-        const parsed = requireVerdict ? parseWorkflowStepOutput(output) : parseWorkflowStepOutput(output, { requireVerdict: false });
+        /*
+        FNXC:PlanReviewNoOp 2026-08-09-22:10:
+        Thread optionalGroupId so Plan Review CLOSE_NO_OP is accepted only for that group.
+        */
+        const parsed = requireVerdict
+          ? parseWorkflowStepOutput(output, { optionalGroupId })
+          : parseWorkflowStepOutput(output, { requireVerdict: false, optionalGroupId });
         if (parsed.verdict) {
           const revisionRequested = parsed.verdict === "REVISE";
           if (workflowStep.requiresBrowser === true) {

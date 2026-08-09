@@ -1,9 +1,16 @@
 /**
  * FNXC:CodeOrganization 2026-08-03-07:20:
  * Workflow-step conventions + verdict parsers peeled from executor.ts (wave18 / U4 Slice A).
+ *
+ * FNXC:PlanReviewNoOp 2026-08-09-22:10:
+ * CLOSE_NO_OP is Plan Review only (FN-8841). Exact match + optionalGroupId gate so unrelated
+ * review groups and prose cannot open a terminal lifecycle path.
  */
 import { proseSignalsClearApproval, extractJsonObjectCandidates } from "../execution/reviewer.js";
-import { normalizeWorkflowReviewFindings, type WorkflowReviewFinding } from "@fusion/core";
+import { normalizeWorkflowReviewFindings, PLAN_REVIEW_GROUP_ID, type WorkflowReviewFinding } from "@fusion/core";
+
+/** Machine-readable workflow-step verdicts, including Plan Review CLOSE_NO_OP. */
+export type WorkflowStepVerdict = "APPROVE" | "APPROVE_WITH_NOTES" | "REVISE" | "CLOSE_NO_OP";
 
 /**
  * (U2 / KTD-2) Fusion workflow-step conventions preamble, prepended to a skill
@@ -46,7 +53,7 @@ export interface WorkflowStepOutcome {
   output?: string;
   error?: string;
   /** Machine-readable verdict extracted from structured JSON output. */
-  verdict?: "APPROVE" | "APPROVE_WITH_NOTES" | "REVISE";
+  verdict?: WorkflowStepVerdict;
   /** Notes extracted from structured JSON output (distinct from raw output). */
   notes?: string;
   /** Normalized independently actionable feedback from a review-kind node. */
@@ -71,7 +78,10 @@ export type WorkflowStepResult =
   | { allPassed: false; revisionRequested: false; feedback: string; stepName: string }
   | { allPassed: false; revisionRequested: true; feedback: string; stepName: string };
 
-export function parseWorkflowStepVerdict(rawOutput: string): { verdict: "APPROVE" | "APPROVE_WITH_NOTES" | "REVISE"; notes: string; findings?: WorkflowReviewFinding[] } | null {
+export function parseWorkflowStepVerdict(
+  rawOutput: string,
+  options: { optionalGroupId?: string } = {},
+): { verdict: WorkflowStepVerdict; notes: string; findings?: WorkflowReviewFinding[] } | null {
   const trimmed = rawOutput.trim();
   const candidates: string[] = [];
   const fencedMatches = [...trimmed.matchAll(/```(?:json)?\s*([\s\S]*?)```/g)];
@@ -93,9 +103,16 @@ export function parseWorkflowStepVerdict(rawOutput: string): { verdict: "APPROVE
       "Any approved" — accept approval-family verdict variants (APPROVE, APPROVED, APPROVE_WITH_NOTES, approve_with_verdict, …), not just the exact WORKFLOW_STEP_VERDICTS strings. A token starting with APPROVE maps to APPROVE_WITH_NOTES when it mentions notes, else APPROVE; REVISE-family → REVISE; anything else (e.g. "PASS") is not a verdict and the candidate is skipped.
       */
       const token = parsed.verdict.trim().toUpperCase();
-      let verdict: "APPROVE" | "APPROVE_WITH_NOTES" | "REVISE" | null = null;
+      let verdict: WorkflowStepVerdict | null = null;
       if (token.startsWith("APPROVE") || token.startsWith("APPROVAL")) {
         verdict = token.includes("NOTE") ? "APPROVE_WITH_NOTES" : "APPROVE";
+      } else if (token === "CLOSE_NO_OP" && options.optionalGroupId === PLAN_REVIEW_GROUP_ID) {
+        /*
+         * FNXC:PlanReviewNoOp 2026-08-09-01:17:
+         * Only the built-in Plan Review protocol may request a no-op close. Exact matching
+         * prevents prose or unrelated review groups from acquiring a terminal lifecycle path.
+         */
+        verdict = "CLOSE_NO_OP";
       } else if (token.startsWith("REVISE") || token.startsWith("REQUEST_REVISION") || token.startsWith("REJECT")) {
         verdict = "REVISE";
       }
@@ -159,15 +176,15 @@ PR #3317 nit: drop the incomplete overload set. The prior pair covered no-option
 { requireVerdict: false } only, so { requireVerdict: true } failed to typecheck despite
 being supported by the implementation. One optional-options signature is enough.
 */
-export function parseWorkflowStepOutput(rawOutput: string, options: { requireVerdict?: boolean } = {}): {
+export function parseWorkflowStepOutput(rawOutput: string, options: { requireVerdict?: boolean; optionalGroupId?: string } = {}): {
   output: string;
-  verdict?: "APPROVE" | "APPROVE_WITH_NOTES" | "REVISE";
+  verdict?: WorkflowStepVerdict;
   notes?: string;
   findings?: WorkflowReviewFinding[];
   malformed?: boolean;
 } {
   const trimmed = rawOutput.trim();
-  const parsed = parseWorkflowStepVerdict(trimmed);
+  const parsed = parseWorkflowStepVerdict(trimmed, options);
   if (parsed) {
     return {
       output: parsed.notes || "",

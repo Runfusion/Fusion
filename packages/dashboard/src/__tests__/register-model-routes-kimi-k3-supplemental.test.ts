@@ -1,44 +1,17 @@
 import type { Router } from "express";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agent";
+import { describe, expect, it, vi } from "vitest";
+import { createKimiModelCatalogRegistry } from "./_kimi-model-catalog-fixture.js";
 import { registerModelRoutes } from "../routes/register-model-routes.js";
 
 /*
-FNXC:ModelCatalog 2026-07-24-12:00:
-FN-8564 requires Kimi K3 to reach both model-catalog consumers. This route-level
-coverage uses Pi 0.82.0's actual built-in ModelRuntime catalog after refresh, so an
-SDK catalog regression cannot leave the Dashboard dropdown missing K3 while the engine
-registry test remains green.
-
-FNXC:ModelCatalog 2026-08-01-05:17:
-FN-8647 preserves the real SDK catalog while hoisting its construction to one reusable
-per-file beforeAll seam, keeping future cases O(1) constructions per file. With one
-case today this does not change wall-clock time or remove the >15s risk: beforeAll
-inherits the same 15s hook budget. The test is quarantined while an owner decides that
-budget; no timeout was widened.
+FNXC:ModelCatalog 2026-08-09-10:27:
+FN-8900 keeps dashboard-level K3 coverage on pi-ai's real bundled catalog instead of the live
+ModelRegistry.refresh() path, which reproduced a roughly 300-second stall. The route still runs its
+supplemental merge and provider/id dedupe branches through registerProvider, so K3 catalog regressions
+remain visible without changing timeout budgets or adding retries.
 */
 
-let nativeKimiRegistry: ModelRegistry;
-let nativeKimiRegistryConstructionCount = 0;
-
-async function createNativeKimiRegistry(): Promise<ModelRegistry> {
-  nativeKimiRegistryConstructionCount += 1;
-  const runtime = await ModelRuntime.create({
-    credentials: {
-      read: async (providerId) => providerId === "kimi-coding"
-        ? { type: "api_key", key: "test-kimi-key" }
-        : undefined,
-      list: async () => [{ providerId: "kimi-coding", type: "api_key" }],
-      modify: async (_providerId, fn) => fn(undefined),
-      delete: async () => undefined,
-    },
-    modelsPath: null,
-    allowModelNetwork: false,
-  });
-  return new ModelRegistry(runtime);
-}
-
-function createModelsHandler(modelRegistry: ModelRegistry) {
+function createModelsHandler(modelRegistry: ReturnType<typeof createKimiModelCatalogRegistry>) {
   const handlers = new Map<string, (req: unknown, res: { json: (body: unknown) => void }) => Promise<void>>();
   const router = {
     get: vi.fn((path: string, handler: (req: unknown, res: { json: (body: unknown) => void }) => Promise<void>) => {
@@ -67,23 +40,29 @@ function createModelsHandler(modelRegistry: ModelRegistry) {
   return handlers.get("/models")!;
 }
 
+async function getK3Rows(modelRegistry: ReturnType<typeof createKimiModelCatalogRegistry>) {
+  const handler = createModelsHandler(modelRegistry);
+  const json = vi.fn();
+
+  await handler({}, { json });
+
+  const response = json.mock.calls[0][0] as { models: Array<{ provider: string; id: string; name: string; reasoning: boolean; contextWindow: number }> };
+  return response.models.filter((model) => model.provider === "kimi-coding" && model.id === "k3");
+}
+
 describe("FN-8180: Kimi K3 /api/models catalog", () => {
-  beforeAll(async () => {
-    nativeKimiRegistry = await createNativeKimiRegistry();
-  });
-
-  afterAll(() => {
-    expect(nativeKimiRegistryConstructionCount).toBe(1);
-  });
-
   it("surfaces the native K3 model once for a configured Kimi provider", async () => {
-    const handler = createModelsHandler(nativeKimiRegistry);
-    const json = vi.fn();
-
-    await handler({}, { json });
-
-    const response = json.mock.calls[0][0] as { models: Array<{ provider: string; id: string; name: string; reasoning: boolean; contextWindow: number }> };
-    const k3Rows = response.models.filter((model) => model.provider === "kimi-coding" && model.id === "k3");
+    const k3Rows = await getK3Rows(createKimiModelCatalogRegistry());
     expect(k3Rows).toEqual([{ provider: "kimi-coding", id: "k3", name: "Kimi K3", reasoning: true, contextWindow: 1_048_576 }]);
+  });
+
+  it("dedupes a colliding native K3 row after the route's supplemental merges", async () => {
+    const k3Rows = await getK3Rows(createKimiModelCatalogRegistry({ duplicateK3: true }));
+    expect(k3Rows).toEqual([{ provider: "kimi-coding", id: "k3", name: "Kimi K3", reasoning: true, contextWindow: 1_048_576 }]);
+  });
+
+  it("makes a missing native K3 catalog row explicit instead of passing vacuously", async () => {
+    const k3Rows = await getK3Rows(createKimiModelCatalogRegistry({ omitK3: true }));
+    expect(k3Rows).toEqual([]);
   });
 });

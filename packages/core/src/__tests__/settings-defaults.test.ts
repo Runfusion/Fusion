@@ -166,6 +166,10 @@ describe("settings defaults invariants", () => {
     expect(DEFAULT_PROJECT_SETTINGS.useAiMergeCommitSummary).toBe(true);
   });
 
+  it("keeps GitHub native PR auto-merge opt-in", () => {
+    expect(DEFAULT_PROJECT_SETTINGS.githubNativeAutoMerge).toBe(false);
+  });
+
   describe("recycleWorktrees default", () => {
     it("keeps recycleWorktrees explicitly false in project defaults", () => {
       expect(DEFAULT_PROJECT_SETTINGS.recycleWorktrees).toBe(false);

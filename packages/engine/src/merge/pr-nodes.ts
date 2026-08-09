@@ -42,6 +42,8 @@ import { makePrResponseAgentRunner, makePrResponseGitOps } from "./pr-response-r
  * store and the handlers stay trivially fakeable in tests.
  */
 export interface PrNodeStore extends PrResponseRunStore {
+  /** The engine supplies project policy without coupling the CLI callback to TaskStore. */
+  getSettings?: () => Promise<{ worktreeRebaseRemote?: string }>;
   /** Create-or-reuse the single non-terminal entity for a source (AE6 idempotency). */
   ensurePrEntityForSource(input: PrEntityCreateInput): Promise<PrEntity>;
   getPrEntity(id: string): Promise<PrEntity | null>;
@@ -74,6 +76,10 @@ export interface PrCreateCallInput {
   task: TaskDetail;
   node: WorkflowIrNode;
   entity: PrEntity;
+  /** Project-configured integration remote resolved by the engine-owned store. */
+  integrationRemote?: string;
+  /** Graph cancellation must prevent a PR mutation after a refresh completes. */
+  signal?: AbortSignal;
 }
 
 /** Result of a successful PR creation — the GitHub-mirror fields the node persists. */
@@ -91,6 +97,12 @@ export interface PrMergeCallInput {
   entity: PrEntity;
   /** The head OID the merge is gated on (defeats the push/merge race, U2/U6). */
   expectedHeadOid?: string;
+  /** Project-configured integration remote resolved by the engine-owned store. */
+  integrationRemote?: string;
+  /** Persist a refreshed head before the injected callback performs GitHub merge. */
+  persistRefreshedHead?: (headOid: string) => Promise<void>;
+  /** Graph cancellation must prevent a PR mutation after a refresh completes. */
+  signal?: AbortSignal;
 }
 
 /**
@@ -101,7 +113,7 @@ export interface PrMergeCallInput {
  * handler classifies it as a benign retryable outcome.
  */
 export type PrMergeCallResult =
-  | { status: "merged-requested" }
+  | { status: "merged-requested"; headOid?: string }
   | { status: "stale-head" };
 
 /** Input for the injected `respond` callback (U5 implements the real body). */
@@ -386,7 +398,8 @@ export function createPrNodeHandlers(deps: PrNodeDeps): Record<
 
     let created: PrCreateCallResult;
     try {
-      created = await deps.createPr({ task: ctx.task, node, entity: creating });
+      const integrationRemote = (await store.getSettings?.())?.worktreeRebaseRemote;
+      created = await deps.createPr({ task: ctx.task, node, entity: creating, integrationRemote, signal: ctx.signal });
     } catch (err) {
       const reason = classifyError(err);
       audit("pr-create-failed", `pr-create node '${node.id}' creation failed: ${reason}`);
@@ -446,11 +459,23 @@ export function createPrNodeHandlers(deps: PrNodeDeps): Record<
 
     let result: PrMergeCallResult;
     try {
+      const integrationRemote = (await store.getSettings?.())?.worktreeRebaseRemote;
       result = await deps.mergePr({
         task: ctx.task,
         node,
         entity,
         expectedHeadOid: entity.headOid,
+        integrationRemote,
+        /*
+        FNXC:PullRequestFreshness 2026-08-09-02:14:
+        A refreshed head identity is durable state before GitHub receives a merge
+        request. This keeps workflow fencing and the published branch aligned if
+        the process dies after refresh but before the provider call returns.
+        */
+        persistRefreshedHead: async (headOid) => {
+          if (headOid !== entity.headOid) await store.updatePrEntity(entity.id, { headOid });
+        },
+        signal: ctx.signal,
       });
     } catch (err) {
       // A non-stale merge error is benign/retryable — never throw out of the
@@ -466,6 +491,12 @@ export function createPrNodeHandlers(deps: PrNodeDeps): Record<
       return { outcome: "success", value: "stale-head" };
     }
 
+    // FNXC:PullRequestFreshness 2026-08-09-01:17:
+    // Persist the refreshed GitHub merge fence before reconciliation observes the
+    // request, so a rewrite cannot leave the entity claiming its stale head.
+    if (result.headOid && result.headOid !== entity.headOid) {
+      await store.updatePrEntity(entity.id, { headOid: result.headOid });
+    }
     // Merge requested cleanly. Do NOT write `merged` here — reconcile corroborates.
     return { outcome: "success", value: "merged-requested" };
   };

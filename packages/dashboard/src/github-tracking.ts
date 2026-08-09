@@ -10,7 +10,7 @@ import {
   type TaskStore,
 } from "@fusion/core";
 import type { CreatedIssue } from "./github.js";
-import { GitHubClient } from "./github.js";
+import { GitHubClient, isGitHubIssueAlreadyImported } from "./github.js";
 import { resolveGithubTrackingAuth } from "./github-auth.js";
 import {
   buildIssueSearchQueries,
@@ -147,6 +147,102 @@ export interface MaybeCreateTrackingIssueDeps {
   logger?: Pick<Console, "warn" | "info">;
 }
 
+export async function resolveImportedIssueGithubTracking(
+  store: TaskStore,
+  projectSettings: ProjectSettings,
+): Promise<{ enabled: true } | undefined> {
+  if (projectSettings.githubLinkImportedIssuesToTracking === true) return { enabled: true };
+  const globalSettings = await store.getGlobalSettingsStore().getSettings();
+  return resolveTaskGithubTracking({ githubTracking: undefined }, projectSettings, globalSettings).enabled ? { enabled: true } : undefined;
+}
+
+/*
+FNXC:GitHubPlanningSourceIssue 2026-08-09-05:36:
+Create-time serialization narrows same-process races, but shared database nodes can still race.
+Source adoption rechecks after linking and deterministically suppresses the loser so one issue has one tracker.
+*/
+const planningSourceIssueLocks = new Map<string, Promise<unknown>>();
+function sourceIssueKey(store: TaskStore, issue: { owner: string; repo: string; number: number }): string {
+  return `github-source-tracking:${(store as unknown as { projectId?: string }).projectId ?? "__legacy_unscoped__"}:${issue.owner.toLowerCase()}/${issue.repo.toLowerCase()}#${issue.number}`;
+}
+async function withSourceIssueLock<T>(store: TaskStore, issue: { owner: string; repo: string; number: number }, action: () => Promise<T>): Promise<T> {
+  const key = sourceIssueKey(store, issue);
+  const previous = planningSourceIssueLocks.get(key) ?? Promise.resolve();
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const queued = previous.then(() => gate);
+  planningSourceIssueLocks.set(key, queued);
+  await previous;
+  try {
+    return await action();
+  } finally {
+    release();
+    if (planningSourceIssueLocks.get(key) === queued) planningSourceIssueLocks.delete(key);
+  }
+}
+function liveIssueHolders(tasks: Task[], taskId: string, issue: { owner: string; repo: string; number: number; url: string }): Task[] {
+  return tasks.filter((candidate) => candidate.id !== taskId && isGitHubIssueAlreadyImported(candidate, { owner: issue.owner, repo: issue.repo, issueNumber: issue.number, sourceUrl: issue.url }));
+}
+export async function resolvePlanningGithubTrackingDecision(store: TaskStore, projectSettings: ProjectSettings, sourceIssueInput: { owner: string; repo: string; issueNumber: number; url: string }): Promise<{ githubTracking?: { enabled: true }; suppressedByTaskId?: string }> {
+  const issue = { owner: sourceIssueInput.owner, repo: sourceIssueInput.repo, number: sourceIssueInput.issueNumber };
+  return withSourceIssueLock(store, issue, async () => {
+    const tasks = await store.listTasks({ slim: false, includeArchived: false });
+    const holder = liveIssueHolders(tasks, "", { ...issue, url: sourceIssueInput.url })[0];
+    if (holder) return { suppressedByTaskId: holder.id };
+    return (await resolveImportedIssueGithubTracking(store, projectSettings)) ? { githubTracking: { enabled: true } } : {};
+  });
+}
+
+export async function adoptGithubSourceIssueExclusively(store: TaskStore, taskId: string, issue: { owner: string; repo: string; number: number; url: string }): Promise<{ adopted: boolean; holderTaskId?: string }> {
+  // Legacy unit adapters predate listTasks; retain their established single-task adoption behavior.
+  if (typeof store.listTasks !== "function") {
+    await store.linkGithubIssue(taskId, { owner: issue.owner, repo: issue.repo, number: issue.number, url: issue.url, createdAt: new Date().toISOString() });
+    return { adopted: true };
+  }
+  return withSourceIssueLock(store, issue, async () => {
+    const all = await store.listTasks({ slim: false, includeArchived: false });
+    const linked = all.filter((task) => task.id !== taskId && task.githubTracking?.issue
+      && task.githubTracking.issue.owner.toLowerCase() === issue.owner.toLowerCase()
+      && task.githubTracking.issue.repo.toLowerCase() === issue.repo.toLowerCase()
+      && task.githubTracking.issue.number === issue.number);
+    // A pre-existing link is authoritative even when this task is older: never steal a live stream.
+    if (linked.length > 0) {
+      const holder = linked.sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id))[0]!;
+      if (all.find((task) => task.id === taskId)?.githubTracking?.issue) {
+        await store.unlinkGithubIssue(taskId);
+      }
+      await store.updateGithubTracking(taskId, { enabled: false });
+      return { adopted: false, holderTaskId: holder.id };
+    }
+    /*
+    FNXC:GitHubPlanningSourceIssue 2026-08-09-08:09:
+    Layer 1 suppresses any existing provenance holder, not only an already-enabled tracker.
+    Keep that rule in Layer 2 too: the post-create hook can otherwise re-enable a
+    Layer-1-suppressed task through project defaults before exclusive adoption runs.
+    */
+    const candidates = liveIssueHolders(all, taskId, issue);
+    const winner = [all.find((task) => task.id === taskId), ...candidates]
+      .filter((task): task is Task => Boolean(task))
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id))[0];
+    if (winner?.id !== taskId) {
+      if (all.find((task) => task.id === taskId)?.githubTracking?.issue) {
+        await store.unlinkGithubIssue(taskId);
+      }
+      await store.updateGithubTracking(taskId, { enabled: false });
+      return { adopted: false, holderTaskId: winner.id };
+    }
+    await store.linkGithubIssue(taskId, { owner: issue.owner, repo: issue.repo, number: issue.number, url: issue.url, createdAt: new Date().toISOString() });
+    const after = await store.listTasks({ slim: false, includeArchived: false });
+    const linkedAfter = after.filter((task) => task.githubTracking?.issue && task.githubTracking.issue.owner.toLowerCase() === issue.owner.toLowerCase() && task.githubTracking.issue.repo.toLowerCase() === issue.repo.toLowerCase() && task.githubTracking.issue.number === issue.number).sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
+    if (linkedAfter[0]?.id !== taskId) {
+      await store.unlinkGithubIssue(taskId);
+      await store.updateGithubTracking(taskId, { enabled: false });
+      return { adopted: false, holderTaskId: linkedAfter[0]?.id };
+    }
+    return { adopted: true };
+  });
+}
+
 export type MaybeCreateTrackingIssueReason =
   | "tracking_disabled"
   | "issue_already_linked"
@@ -154,6 +250,7 @@ export type MaybeCreateTrackingIssueReason =
   | "no_title_available"
   | "existing_issue_found"
   | "source_issue_linked"
+  | "source_issue_already_tracked_elsewhere"
   | "github_error"
   | "auth_token_missing"
   | "auth_gh_not_installed"
@@ -235,14 +332,13 @@ export async function maybeCreateTrackingIssue(
     if (sourceRepo && Number.isFinite(sourceIssue.issueNumber)) {
       const url = sourceIssue.url
         ?? `https://github.com/${sourceRepo.owner}/${sourceRepo.repo}/issues/${sourceIssue.issueNumber}`;
-      const createdAt = new Date().toISOString();
-      await deps.taskStore.linkGithubIssue(task.id, {
-        owner: sourceRepo.owner,
-        repo: sourceRepo.repo,
-        number: sourceIssue.issueNumber,
-        url,
-        createdAt,
+      const adoption = await adoptGithubSourceIssueExclusively(deps.taskStore, task.id, {
+        owner: sourceRepo.owner, repo: sourceRepo.repo, number: sourceIssue.issueNumber, url,
       });
+      if (!adoption.adopted) {
+        await deps.taskStore.logEntry(task.id, `Source issue already tracked by ${adoption.holderTaskId ?? "another task"}`);
+        return { created: false, reason: "source_issue_already_tracked_elsewhere" };
+      }
       await deps.taskStore.recordActivity({
         type: "task:updated",
         taskId: task.id,

@@ -335,20 +335,9 @@ export default defineConfig({
             // / `test:all` invoked from the root `test:full` script.
             "src/**/*.slow.test.ts",
             /*
-            FNXC:FullSuiteBookkeeping 2026-08-05-00:40:
-            Main full-suite run https://github.com/Runfusion/Fusion/actions/runs/30982276306 failed these engine-default suites after mock-hoist errors, fake-store drift, and census drift. Path/import ENOENTs were fixed; remaining behavioral reds are quarantined on sight (paired with scripts/lib/test-quarantine.json) — no timeout/assertion appeasement.
+            FNXC:FullSuiteBookkeeping 2026-08-09-03:49:
+            All 11 engine-default entries from the 2026-08-05 full-suite quarantine wave (run 30982276306) were deleted under the deletion ratchet after operator directive. These tested pre-refactor APIs (getBuiltinWorkflow removed post-U10b), stale mock shapes, census/allowlist drift, and mock-hoist errors that no longer have a production path to exercise.
             */
-            "src/__tests__/executor-task-done-invariant.test.ts",
-            "src/__tests__/in-review-merge-stall-deadlock-recovery.test.ts",
-            "src/__tests__/merger-ai-push-divergence-conflict.test.ts",
-            "src/__tests__/notification-service.test.ts",
-            "src/__tests__/restart.integration.test.ts",
-            "src/__tests__/scheduler-renamed-wip-file-scope-lease.test.ts",
-            "src/__tests__/self-healing-fake-overlap-seam.test.ts",
-            "src/__tests__/triage-stuck-requeue-preserve-draft.test.ts",
-            "src/__tests__/unwired-lane-parameter-guard.test.ts",
-            "src/__tests__/worktree-acquisition-backend.test.ts",
-            "src/__tests__/worktree-acquisition-worktrunk.test.ts",
             /*
             FNXC:EngineTests 2026-06-26-13:15:
             FN-7068 rescued the 2026-06-25 self-healing quarantine batch by completing the local TaskStore fakes for the FN-5488 overlap path. Keep both files active in engine-default so fake drift around clearStaleBlockedBy() is caught before the deletion ratchet expires.
@@ -427,11 +416,9 @@ export default defineConfig({
           exclude: [
             "src/**/*.slow.test.ts",
             /*
-            FNXC:FullSuiteBookkeeping 2026-08-05-00:40:
-            dependency-cycle-reconcile and worktrunk-failure red on main full-suite https://github.com/Runfusion/Fusion/actions/runs/30982276306 (PG lifecycle-lock / mock-hoist). Quarantined on sight with scripts/lib/test-quarantine.json.
+            FNXC:FullSuiteBookkeeping 2026-08-09-03:49:
+            dependency-cycle-reconcile and worktrunk-failure from the 2026-08-05 full-suite quarantine wave (run 30982276306) deleted under the deletion ratchet after operator directive. Both tested pre-refactor PG lifecycle-lock and mock-hoist behavior that no longer exists.
             */
-            "src/__tests__/reliability-interactions/dependency-cycle-reconcile.test.ts",
-            "src/__tests__/reliability-interactions/worktrunk-failure.test.ts",
             /*
             FNXC:EngineTests 2026-06-26-09:30:
             Quarantined 3 reliability-interactions files failing in CI full-suite run 28259456548 under the deletion ratchet.

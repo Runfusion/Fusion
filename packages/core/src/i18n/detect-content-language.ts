@@ -28,7 +28,7 @@ export type DetectedContentLanguage = {
   confidence: "high" | "medium" | "low";
 };
 
-const LATIN_STOPWORDS: Record<"en" | "fr" | "es" | "cs", readonly string[]> = {
+const LATIN_STOPWORDS: Record<"en" | "fr" | "es" | "cs" | "pt-BR", readonly string[]> = {
   en: [
     "the", "and", "for", "that", "with", "this", "from", "have", "will", "are",
     "not", "but", "you", "all", "can", "has", "was", "were", "been", "their",
@@ -54,6 +54,23 @@ const LATIN_STOPWORDS: Record<"en" | "fr" | "es" | "cs", readonly string[]> = {
     "aby", "ale", "bez", "byla", "byl", "by", "co", "do", "jak", "jako", "je", "jsou",
     "kdy", "ktere", "ktery", "na", "nebo", "nema", "neni", "po", "pro", "pri", "se", "si",
     "tak", "to", "uz", "ve", "vse", "z", "ze",
+  ],
+  /*
+  FNXC:GitHubImportTranslate 2026-08-07-22:55:
+  pt-BR stopwords are written accent-stripped because scoreLatinLocale strips diacritics
+  before matching ("não"→"nao"); accented entries would never match. "mais" is deliberately
+  omitted (collides with the French "mais" list entry).
+
+  FNXC:GitHubImportTranslate 2026-08-07-23:07:
+  "com" is deliberately omitted too (review finding, Task 3): the tokenizer only strips
+  protocol-prefixed URLs, so bare domains like "github.com, gitlab.com, npmjs.com" tokenize
+  to repeated "com" tokens, pushing ordinary English issue bodies over the high-confidence
+  pt-BR threshold and triggering false translate offers / wasted auto-translate model calls.
+  */
+  "pt-BR": [
+    "nao", "uma", "para", "dos", "das", "pelo", "pela", "sao", "esta",
+    "tambem", "quando", "voce", "isso", "essa", "esse", "seu", "sua", "ate",
+    "apos", "ja", "fazer", "pode", "deve", "usar", "entao", "muito", "tem", "foi", "ser",
   ],
 };
 
@@ -88,16 +105,16 @@ function scoreLatinLocale(text: string): { locale: Locale | "unknown"; confidenc
     return { locale: "en", confidence: "low" };
   }
 
-  const scores: Record<"en" | "fr" | "es" | "cs", number> = { en: 0, fr: 0, es: 0, cs: 0 };
+  const scores: Record<"en" | "fr" | "es" | "cs" | "pt-BR", number> = { en: 0, fr: 0, es: 0, cs: 0, "pt-BR": 0 };
   for (const token of tokens) {
-    for (const locale of ["en", "fr", "es", "cs"] as const) {
+    for (const locale of ["en", "fr", "es", "cs", "pt-BR"] as const) {
       if (LATIN_STOPWORDS[locale].includes(token)) {
         scores[locale] += 1;
       }
     }
   }
 
-  const ranked = (Object.entries(scores) as Array<["en" | "fr" | "es" | "cs", number]>).sort(
+  const ranked = (Object.entries(scores) as Array<["en" | "fr" | "es" | "cs" | "pt-BR", number]>).sort(
     (a, b) => b[1] - a[1],
   );
   const [best, second] = ranked;
@@ -280,6 +297,8 @@ export function localeDisplayName(locale: Locale | "unknown"): string {
       return "Español";
     case "ko":
       return "한국어";
+    case "pt-BR":
+      return "Português (Brasil)";
     default:
       return locale;
   }

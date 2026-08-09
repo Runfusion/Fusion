@@ -140,6 +140,11 @@ export { createSpawnAgentTool as createSpawnAgentToolImpl } from "./create-spawn
 export { createTaskUpdateTool as createTaskUpdateToolImpl } from "./create-task-update-tool.js";
 export { attemptExecutorVerificationFix as attemptExecutorVerificationFixImpl } from "./attempt-executor-verification-fix.js";
 export { createTaskDoneTool as createTaskDoneToolImpl } from "./create-task-done-tool.js";
+export {
+  finalizeAcceptedNoOpCompletion as finalizeAcceptedNoOpCompletionImpl,
+  completePlanReviewNoOp as completePlanReviewNoOpImpl,
+  holdPlanReviewNoOpContinuation as holdPlanReviewNoOpContinuationImpl,
+} from "./plan-review-no-op.js";
 export { resetLostWorkStepProgress as resetLostWorkStepProgressImpl } from "./reset-lost-work-step-progress.js";
 export { resolveResumeLanes as resolveResumeLanesImpl } from "./resolve-resume-lanes.js";
 export { isReentrantPausedAbortedInFlightNode as isReentrantPausedAbortedInFlightNodeImpl } from "./is-reentrant-paused-aborted-in-flight-node.js";

@@ -144,12 +144,18 @@ export function createSmokeHtml() {
   The fixture must include all five production icon controls before Save, including the session
   advisor toggle. Omitting it understates the primary group's minimum width and could conceal a
   300px overflow or wrap regression on either Board or List.
+
+  FNXC:QuickAddActionRow 2026-08-07-23:56:
+  pt-BR joined the supported translations (the scaffold was previously empty and now carries
+  machine-drafted translations) — add it here so the smoke keeps measuring the widest
+  emitted-font label across every shipped locale.
   */
   const localizedSaveLabels = [
     ["en", "Save"],
     ["es", "Guardar"],
     ["fr", "Enregistrer"],
     ["ko", "저장"],
+    ["pt-BR", "Salvar"],
     ["zh-CN", "保存"],
     ["zh-TW", "儲存"],
   ];

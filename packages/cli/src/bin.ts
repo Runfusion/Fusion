@@ -502,7 +502,7 @@ Options:
   --no-engine                Start dashboard only (no AI engine)
   --supervise                (default) Run with auto-restart on crash and System-panel restart support
   --no-supervise             Run the dashboard without the supervising parent process
-  --lang <locale>            Terminal-UI locale for this run (en, zh-CN, zh-TW, fr, es, ko); the browser dashboard resolves its own language
+  --lang <locale>            Terminal-UI locale for this run (en, zh-CN, zh-TW, fr, es, ko, pt-BR); the browser dashboard resolves its own language
   --attach <file>            Attach file(s) on task create (repeatable)
   --depends <id>             Declare dependency on task create (repeatable)
   --no-dedup                 Bypass deterministic duplicate guard on task create

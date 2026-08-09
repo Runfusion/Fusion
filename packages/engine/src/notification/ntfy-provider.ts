@@ -228,15 +228,20 @@ export class NtfyNotificationProvider implements NotificationProvider {
       "awaiting-approval": {
         title: payload.metadata?.awaitingApprovalReason === "plan-review-replan-cap"
           ? `Plan Review cap reached for ${taskId}`
-          : `Plan needs approval for ${taskId}`,
+          : payload.metadata?.awaitingApprovalReason === "merge-blocked-by-policy"
+            ? `Pull-request policy block for ${taskId}`
+            : `Plan needs approval for ${taskId}`,
         /*
-        FNXC:PlanReviewReplan 2026-07-15-11:09:
-        Replan-cap escalations must say Plan Review failed to converge so the push is
-        actionable, not a generic "needs approval" ping.
+        FNXC:PullRequestMerge 2026-08-09-05:07:
+        Policy holds reuse awaiting-approval's delivery channel but require a
+        merge-specific instruction; calling them plan approvals sends operators
+        to the wrong remediation surface.
         */
         message: payload.metadata?.awaitingApprovalReason === "plan-review-replan-cap"
           ? `Task "${identifier}" needs approval because Plan Review requested revisions repeatedly without converging. Approve the current plan or reject to regenerate.`
-          : `Task "${identifier}" needs your approval before implementation can start`,
+          : payload.metadata?.awaitingApprovalReason === "merge-blocked-by-policy"
+            ? `Task "${identifier}" has a pull request blocked by repository policy. Resolve the policy requirement, then retry the merge.`
+            : `Task "${identifier}" needs your approval before implementation can start`,
         priority: "high",
       },
       "awaiting-user-review": {

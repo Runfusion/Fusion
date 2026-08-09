@@ -12,7 +12,7 @@
  * Completed-task watchdog arms on resolved WIP column, not literal in-progress.
  */
 import { Type } from "@earendil-works/pi-ai";
-import type { Settings, Task, TaskDetail, TaskStore } from "@fusion/core";
+import type { Settings, Task, TaskDetail, TaskRecommendation, TaskStore } from "@fusion/core";
 import {
   parseNoOpCompletionMarker,
   resolveWipTargetForTask,
@@ -34,6 +34,8 @@ import { resolveReboundColumnFor } from "./lifecycle-columns.js";
 import { evaluateTaskDoneRefusal } from "./task-done-refusal.js";
 import { skipBypassTaintUpdateForRefusal } from "./completion-predicates.js";
 import { MAX_TASK_DONE_REQUEUE_RETRIES } from "./task-done-refusal-handler.js";
+import { validateCompletionRecommendations } from "./validate-completion-recommendations.js";
+import type { FinalizeAcceptedNoOpCompletionParams } from "./plan-review-no-op.js";
 
 export type CreateTaskDoneToolDeps = {
   store: TaskStore;
@@ -62,6 +64,13 @@ export type CreateTaskDoneToolDeps = {
     audit?: RunAuditor,
   ) => Promise<{ blocked: false } | { blocked: true; message: string }>;
   scheduleCompletedTaskWatchdog: (taskId: string, source: string) => void;
+  /**
+   * FNXC:PlanReviewNoOp 2026-08-09-22:10:
+   * Shared terminalization for PREMISE STALE / DUPLICATE no-op completion (FN-8841).
+   */
+  finalizeAcceptedNoOpCompletion: (
+    params: FinalizeAcceptedNoOpCompletionParams,
+  ) => Promise<{ completed: boolean; hardPauseActive: boolean }>;
 };
 
 /**
@@ -84,7 +93,10 @@ export function createTaskDoneTool(
       description:
         "End the task. With outcome=\"completed\" (default): signal that all steps are complete, tests pass, and " +
         "documentation is updated — call as the final action after finishing all work; automatically marks all " +
-        "remaining steps as done; optionally provide a summary of what was changed/fixed. " +
+        "remaining steps as done. At this accepted final checkpoint, when recommendation capture is enabled, submit up to " +
+        "the project cap of genuine, task-ready out-of-scope recommendations with stable unique ids, or explicitly send " +
+        "recommendations: [] when none qualify; at cap 0, omit recommendations (an empty list is accepted for compatibility). " +
+        "Do not use recommendations for required fixes, blockers, secrets, commands, or reasoning. " +
         "With outcome=\"blocked\": honestly park the task when the work genuinely cannot proceed (upstream API break, " +
         "missing dependency task, unresolvable external blocker). Blocked is NOT a completion claim — it does not " +
         "trip the review/completion gates, does not auto-complete or auto-skip steps, and preserves your worktree/" +
@@ -94,6 +106,16 @@ export function createTaskDoneTool(
         summary: Type.Optional(Type.String({
           description: "Optional summary of what was changed/fixed and what was verified (2-4 sentences). Used when outcome=\"completed\".",
         })),
+        /*
+        FNXC:TaskRecommendations 2026-08-08-05:02:
+        Capture optional out-of-scope follow-ups only after every completion gate accepts.
+        */
+        recommendations: Type.Optional(Type.Array(Type.Object({
+          id: Type.String(),
+          title: Type.String(),
+          description: Type.String(),
+          category: Type.Union([Type.Literal("improvement"), Type.Literal("feature"), Type.Literal("bug"), Type.Literal("other")]),
+        }), { description: "For accepted completed outcomes when capture is enabled: submit at most the project cap of task-ready out-of-scope suggestions with unique stable ids, or [] when none qualify. At cap 0, omit this field; an empty list is accepted for compatibility but populated input is rejected. Never send for blocked/refused outcomes or include mandatory fixes, secrets, executable commands, or reasoning." })),
         /*
         FNXC:Lifecycle 2026-07-16-10:20:
         FN-8141 laundered a genuinely-impossible task into `done`: fn_task_done only expressed success, the bulk-completion
@@ -113,7 +135,7 @@ export function createTaskDoneTool(
           description: "Required when outcome=\"blocked\": concrete explanation of what is blocking the work and what is needed to unblock it.",
         })),
       }),
-      execute: async (_id: string, params: { summary?: string; outcome?: "completed" | "blocked"; blockedBy?: string[]; reason?: string }) => {
+      execute: async (_id: string, params: { summary?: string; recommendations?: TaskRecommendation[]; outcome?: "completed" | "blocked"; blockedBy?: string[]; reason?: string }) => {
         /*
         FNXC:Lifecycle 2026-07-16-10:20:
         FN-8141 — the blocked exit runs BEFORE every completion gate (completion blocker, verdict providers, worktree
@@ -405,50 +427,36 @@ export function createTaskDoneTool(
           };
         }
 
+        const completionRecommendations = params.recommendations === undefined
+          ? undefined
+          : validateCompletionRecommendations(params.recommendations, settings.maxRecommendationsPerTask ?? 3);
+        if (typeof completionRecommendations === "string") {
+          return {
+            content: [{ type: "text" as const, text: `Cannot mark task done yet — ${completionRecommendations}.` }],
+            details: { error: completionRecommendations },
+          };
+        }
+
         if (noOpMarker) {
-          const runContext = deps.getRunContextFor(taskId);
-          await store.updateTask(taskId, { noCommitsExpected: true });
-          await store.logEntry(
-            taskId,
-            `Verified ${noOpMarker.kind} completion sentinel accepted; no commits expected for terminal handoff`,
-            JSON.stringify({
-              kind: noOpMarker.kind,
-              reason: noOpMarker.reason,
-              canonicalId: noOpMarker.canonicalId,
-              summary: params.summary,
-              runId: runContext?.runId,
-              agentId: runContext?.agentId,
-            }),
-            runContext,
-          );
-          const recordActivity = (store as typeof store & {
-            recordActivity?: (entry: {
-              type: "task:updated";
-              taskId: string;
-              taskTitle?: string;
-              details: string;
-              metadata?: Record<string, unknown>;
-            }) => Promise<unknown>;
-          }).recordActivity;
-          if (recordActivity) {
-            await recordActivity.call(store, {
-              type: "task:updated",
-              taskId,
-              taskTitle: task.title,
-              details: `Task marked as verified ${noOpMarker.kind}; no commits expected`,
-              metadata: {
-                taskId,
-                kind: noOpMarker.kind,
-                reason: noOpMarker.reason,
-                canonicalId: noOpMarker.canonicalId,
-                summary: params.summary,
-                runId: runContext?.runId,
-                agentId: runContext?.agentId,
-              },
-            }).catch((error: unknown) => {
-              executorLog.warn(`${taskId}: failed to record no-op completion activity: ${error instanceof Error ? error.message : String(error)}`);
-            });
+          const completion = await deps.finalizeAcceptedNoOpCompletion({
+            task,
+            marker: noOpMarker,
+            summary: params.summary?.trim() || `${noOpMarker.kind.toUpperCase()}: ${noOpMarker.reason}`,
+            recommendations: completionRecommendations,
+            onDone,
+          });
+          if (!completion.completed) {
+            return {
+              content: [{ type: "text" as const, text: "Cannot mark task done because completion handoff was interrupted." }],
+              details: { error: "no-op-completion-interrupted" },
+            };
           }
+          const successMessage = completion.hardPauseActive
+            ? "Task marked complete. Completion handoff deferred until pause is cleared."
+            : params.summary
+              ? "Task marked complete with summary. All steps done. Moving to in-review."
+              : "Task marked complete. All steps done. Moving to in-review.";
+          return { content: [{ type: "text" as const, text: successMessage }], details: {} };
         }
 
         onDone();
@@ -475,6 +483,10 @@ export function createTaskDoneTool(
           } else if (!existingSummary || !hasRunWorkflowSteps) {
             await store.updateTask(taskId, { summary: params.summary });
           }
+        }
+        // FNXC:TaskRecommendations 2026-08-08-05:02: write only after every completion gate accepts; retries replace the list deterministically.
+        if (completionRecommendations !== undefined) {
+          await store.updateTask(taskId, { recommendations: completionRecommendations });
         }
         const hardPauseActive = Boolean(settings.globalPause);
         // Task-level pause prevents new work from starting, not completion of

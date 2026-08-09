@@ -2452,6 +2452,23 @@ export class ChatManager {
           attachments,
         });
         persistedUserMessageId = persistedUserMessage.id;
+        /*
+        FNXC:CommandCenterActivity 2026-08-09-10:46:
+        A persisted human chat turn contributes one content-free usage event. Analytics must never enter
+        the message-save error path because the chat record is the user-facing source of truth.
+        */
+        try {
+          // FNXC:CommandCenterActivity 2026-08-09-11:47: Task-detail planner chat
+          // encodes its known task identity in its synthetic agent id; retain that association
+          // in the content-free event rather than silently reporting it as an unscoped chat turn.
+          const taskId = typeof session.agentId === "string" && session.agentId.startsWith(TASK_PLANNER_CHAT_AGENT_ID_PREFIX)
+            ? session.agentId.slice(TASK_PLANNER_CHAT_AGENT_ID_PREFIX.length).trim() || null
+            : null;
+          // FNXC:CommandCenterActivity 2026-08-09-15:18: Task-planner session ids encode a task, not a durable agent principal; never count that synthetic id as an active agent.
+          const agentId = taskId ? null : session.agentId ?? null;
+          const emitted = this.taskStore?.emitUsageEvent({ kind: "user_message", agentId, taskId, category: "chat" });
+          void Promise.resolve(emitted).catch(() => undefined);
+        } catch { /* telemetry must not enter the message-save failure path */ }
       } catch (err) {
         this.flushInFlightGenerationPersist(sessionId, null);
         chatStreamManager.broadcast(sessionId, {

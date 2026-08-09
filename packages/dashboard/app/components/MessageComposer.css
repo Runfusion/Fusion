@@ -37,3 +37,21 @@ Long native-structure kind and label values must not give the shared Messages pi
     align-items: stretch;
   }
 }
+
+.message-composer-mode,
+.message-composer-report {
+  display: grid;
+  gap: var(--space-sm);
+}
+
+.message-composer-mode {
+  display: flex;
+  flex-wrap: wrap;
+}
+
+.message-composer-report-section {
+  border-block-start: var(--border) solid var(--border-subtle);
+  display: grid;
+  gap: var(--space-sm);
+  padding-block-start: var(--space-sm);
+}

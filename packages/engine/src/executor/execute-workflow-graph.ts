@@ -95,6 +95,10 @@ export type ExecuteWorkflowGraphDeps = {
   readTaskArtifact: AnyFn;
   recoverMissingRequiredArtifacts: AnyFn;
   requestPreMergeOptionalStepFix: AnyFn;
+  /** FNXC:PlanReviewNoOp 2026-08-09-22:10: CLOSE_NO_OP accepted terminalization (FN-8841). */
+  completePlanReviewNoOp: AnyFn;
+  /** FNXC:PlanReviewNoOp 2026-08-09-22:10: hold failed/invalid close evidence on the continuation. */
+  holdPlanReviewNoOpContinuation: AnyFn;
   runGraphCustomNode: AnyFn;
   terminateAllChildren: AnyFn;
 };
@@ -300,6 +304,12 @@ export async function executeWorkflowGraph(
           deps.runGraphCustomNode(node, nodeTask, nodeSettings, columnBinding, context),
         resolveColumnBinding: resolveBindingForNode,
       });
+      /*
+      FNXC:PlanReviewNoOp 2026-08-09-22:10:
+      Continuation is declared before the runner so holdPlanReviewNoOp can replace it
+      during CLOSE_NO_OP terminalization failure without a TDZ (FN-8841).
+      */
+      let continuation: WorkflowWorkItem | undefined;
       const runner = new WorkflowGraphTaskRunner({
         localNodeId: deps.options.getLocalNodeId?.(),
         store: {
@@ -408,6 +418,16 @@ export async function executeWorkflowGraph(
         no-op when the store lacks updateTask, and swallow read/write errors (the
         executor wrapper also swallows) so result recording never affects the run.
         */
+        /*
+        FNXC:PlanReviewNoOp 2026-08-09-01:55:
+        Invalid, unroutable, or failed Plan Review closes are explicit waits, not graph failures.
+        Keep one held continuation at plan-review so scheduler resume preserves the audited close
+        evidence without changing the task's column or manufacturing a task error.
+        */
+        completePlanReviewNoOp: (nodeTask, marker) => deps.completePlanReviewNoOp(nodeTask, marker),
+        holdPlanReviewNoOp: async (nodeTask, suspension) => {
+          continuation = await deps.holdPlanReviewNoOpContinuation(nodeTask, suspension, continuation, resolvedRunId);
+        },
         recordWorkflowStepResult: async (taskId: string, result: CoreWorkflowStepResult) => {
           if (typeof deps.store.updateTask !== "function") return;
           try {
@@ -435,7 +455,6 @@ export async function executeWorkflowGraph(
         columnBoundaryHooks: deps.buildColumnBoundaryHooks(task, resolvedRunId),
       });
       let result: WorkflowGraphTaskRunResult;
-      let continuation: WorkflowWorkItem | undefined;
       try {
         const loadedDetail = await deps.store.getTask(task.id);
         /*

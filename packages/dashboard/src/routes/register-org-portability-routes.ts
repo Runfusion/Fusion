@@ -1,4 +1,5 @@
 import { ApiError, badRequest } from "../api-error.js";
+import { resolveRequestActor } from "../request-actor.js";
 import type { ApiRoutesContext } from "./types.js";
 
 /**
@@ -98,16 +99,28 @@ export function registerOrgPortabilityRoutes(ctx: ApiRoutesContext): void {
       if (configKind !== undefined && configKind !== "project-settings") {
         throw badRequest("configKind must be project-settings");
       }
+      const parsePaging = (value: unknown, name: "limit" | "offset") => {
+        if (value === undefined) return undefined;
+        if (typeof value !== "string" || !/^\d+$/.test(value)) throw badRequest(`${name} must be a non-negative integer`);
+        const parsed = Number(value);
+        if (!Number.isSafeInteger(parsed) || (name === "limit" && (parsed < 1 || parsed > 500)) || (name === "offset" && parsed < 0)) throw badRequest(`${name} is out of range`);
+        return parsed;
+      };
+      const limit = parsePaging(req.query.limit, "limit");
+      const offset = parsePaging(req.query.offset, "offset");
       const { store: scopedStore, projectId } = await getProjectContext(req);
       const layer = scopedStore.getAsyncLayer();
       if (!layer) throw badRequest("Configuration history requires the PostgreSQL revision store");
       // FNXC:CommandCenterConfig 2026-07-18-12:00: FN-8282's revision facade is consumed through this narrow compatibility type until the dependency export is merged into this branch.
       const { ConfigurationRevisionStore } = await import("@fusion/core") as unknown as {
-        ConfigurationRevisionStore: new (layer: unknown, projectId?: string) => { list(kind: "project-settings", target: Record<string, string>): Promise<unknown[]> };
+        ConfigurationRevisionStore: new (layer: unknown, projectId?: string) => {
+          list(kind: "project-settings", target: Record<string, string>, paging?: number | { limit?: number; offset?: number }): Promise<unknown[]>;
+          listPage(kind: "project-settings", target: Record<string, string>, paging?: number | { limit?: number; offset?: number }): Promise<{ revisions: unknown[]; hasMore: boolean }>;
+        };
       };
       // FNXC:CommandCenterConfig 2026-07-18-12:00: Dashboard history starts with the project settings target because that is the configuration surface rendered beside these controls; rollback remains the core's exact, forward-recorded operation.
-      const revisions = await new ConfigurationRevisionStore(layer, projectId).list("project-settings", { projectId: projectId ?? "" });
-      res.json({ revisions });
+      const page = await new ConfigurationRevisionStore(layer, projectId).listPage("project-settings", { projectId: projectId ?? "" }, { limit, offset });
+      res.json({ revisions: page.revisions, limit: limit ?? 100, offset: offset ?? 0, hasMore: page.hasMore });
     } catch (error: unknown) {
       if (error instanceof ApiError) throw error;
       rethrowAsApiError(error);
@@ -119,7 +132,7 @@ export function registerOrgPortabilityRoutes(ctx: ApiRoutesContext): void {
       const revisionId = req.params.revisionId?.trim();
       if (!revisionId) throw badRequest("revisionId is required");
       const { store: scopedStore } = await getProjectContext(req);
-      const revision = await (scopedStore as unknown as { rollbackConfiguration(id: string, changedBy: { kind: "human"; id: string }): Promise<unknown> }).rollbackConfiguration(revisionId, { kind: "human", id: "dashboard-operator" });
+      const revision = await scopedStore.rollbackConfiguration(revisionId, resolveRequestActor(req));
       res.json({ revision });
     } catch (error: unknown) {
       if (error instanceof ApiError) throw error;

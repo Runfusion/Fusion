@@ -9,6 +9,7 @@ import * as constants from "./executor-constants.js";
 import { facadeFields, facadeMethods, type FacadeRestArgs } from "./facade-methods.js";
 import { activeSessionRegistry } from "../agents/active-session-registry.js";
 import { getTaskCompletionBlockerForStore } from "../execution/task-completion.js";
+import { buildWorkflowFailureScopeGuard } from "./workflow-failure-scope-guard.js";
 import { TaskExecutorWorktreePureFacades } from "./task-executor-worktree-pure-facades.js";
 
 export abstract class TaskExecutorSessionFacades extends TaskExecutorWorktreePureFacades {
@@ -112,6 +113,26 @@ export abstract class TaskExecutorSessionFacades extends TaskExecutorWorktreePur
   protected async evaluateTaskDoneScopeLeak(...args: FacadeRestArgs<typeof impl.evaluateTaskDoneScopeLeakImpl>): ReturnType<typeof impl.evaluateTaskDoneScopeLeakImpl> { return impl.evaluateTaskDoneScopeLeakImpl(bags.buildEvaluateTaskDoneScopeLeakDeps(this), ...args); }
   protected async handleImplicitTaskDoneRefusal(...args: FacadeRestArgs<typeof impl.handleImplicitTaskDoneRefusalImpl>): ReturnType<typeof impl.handleImplicitTaskDoneRefusalImpl> { return impl.handleImplicitTaskDoneRefusalImpl(bags.buildHandleImplicitTaskDoneRefusalDeps(this), ...args); }
   protected createTaskDoneTool(...args: FacadeRestArgs<typeof impl.createTaskDoneToolImpl>): ReturnType<typeof impl.createTaskDoneToolImpl> { return impl.createTaskDoneToolImpl(bags.buildCreateTaskDoneToolDeps(this), ...args); }
+  /*
+  FNXC:CodeOrganization 2026-08-09-22:15:
+  Instance method mirrors main's private helper so tests/callers that touch the executor instance keep working.
+  */
+  protected buildWorkflowFailureScopeGuard(task: import("@fusion/core").Task, promptContent: string): string {
+    return buildWorkflowFailureScopeGuard(task, promptContent);
+  }
+  /*
+  FNXC:PlanReviewNoOp 2026-08-09-22:10:
+  CLOSE_NO_OP terminalization (FN-8841) — protected so graph runner + tests can exercise the race fence.
+  */
+  protected async finalizeAcceptedNoOpCompletion(...args: FacadeRestArgs<typeof impl.finalizeAcceptedNoOpCompletionImpl>): ReturnType<typeof impl.finalizeAcceptedNoOpCompletionImpl> {
+    return impl.finalizeAcceptedNoOpCompletionImpl(bags.buildFinalizeAcceptedNoOpCompletionDeps(this), ...args);
+  }
+  protected async completePlanReviewNoOp(...args: FacadeRestArgs<typeof impl.completePlanReviewNoOpImpl>): ReturnType<typeof impl.completePlanReviewNoOpImpl> {
+    return impl.completePlanReviewNoOpImpl(bags.buildFinalizeAcceptedNoOpCompletionDeps(this), ...args);
+  }
+  protected async holdPlanReviewNoOpContinuation(...args: FacadeRestArgs<typeof impl.holdPlanReviewNoOpContinuationImpl>): ReturnType<typeof impl.holdPlanReviewNoOpContinuationImpl> {
+    return impl.holdPlanReviewNoOpContinuationImpl({ store: this.store }, ...args);
+  }
   protected async handleDepAbortCleanup(taskId: string, worktreePath: string): ReturnType<typeof impl.handleDepAbortCleanupImpl> { return impl.handleDepAbortCleanupImpl(bags.buildHandleDepAbortCleanupDeps(this), taskId, worktreePath); }
   protected async reopenLastStepForRevision(...args: import("./facade-methods.js").FacadeAfterFirst<typeof impl.reopenLastStepForRevisionImpl>): Promise<{ index: number; name: string; indexes: number[] } | null> { return impl.reopenLastStepForRevisionImpl(this.store, ...args); }
   protected async runExecutorDeterministicVerification(...args: FacadeRestArgs<typeof impl.runExecutorDeterministicVerificationImpl>): ReturnType<typeof impl.runExecutorDeterministicVerificationImpl> { return impl.runExecutorDeterministicVerificationImpl(bags.buildStoreRunContextDeps(this), ...args); }

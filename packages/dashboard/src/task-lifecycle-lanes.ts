@@ -1,4 +1,4 @@
-import { columnsWithFlag, declaresAnyLifecycleTrait, resolveWorkflowIrForTask, type WorkflowIr } from "@fusion/core";
+import { columnsWithFlag, declaresAnyLifecycleTrait, resolveWorkflowIrForTask, workflowHasColumn, type WorkflowIr } from "@fusion/core";
 
 /*
 FNXC:WorkflowResolvedColumns 2026-07-30-08:45 (#2783 review — coderabbit):
@@ -46,6 +46,14 @@ legacy fallback as a workflow that cannot be read at all.
 */
 const LEGACY_LANDED_COLUMNS: readonly string[] = ["done", "archived"];
 
+function archivedColumnsForIr(ir: WorkflowIr): Set<string> {
+  if (!declaresAnyLifecycleTrait(ir)) return new Set(["archived"]);
+  const archived = columnsWithFlag(ir, "archived");
+  return workflowHasColumn(ir, "archived")
+    ? new Set(archived)
+    : new Set([...archived, "archived"]);
+}
+
 export async function landedColumnsForTask(
   store: LaneResolverStore,
   taskId: string,
@@ -53,8 +61,8 @@ export async function landedColumnsForTask(
 ): Promise<Set<string>> {
   try {
     const ir = await resolveWorkflowIrForTask(store, taskId, irCache);
-    const landed = [...columnsWithFlag(ir, "complete"), ...columnsWithFlag(ir, "archived")];
-    return new Set(landed.length > 0 ? landed : LEGACY_LANDED_COLUMNS);
+    if (!declaresAnyLifecycleTrait(ir)) return new Set(LEGACY_LANDED_COLUMNS);
+    return new Set([...columnsWithFlag(ir, "complete"), ...archivedColumnsForIr(ir)]);
   } catch {
     return new Set(LEGACY_LANDED_COLUMNS);
   }
@@ -108,6 +116,11 @@ Falling back onto it widens the guard onto a role the board explicitly did not a
 `declaresAnyLifecycleTrait` separates the two, matching the shape #2821's review established for
 `resolveNodeOverrideLanes`. A board that traits nothing keeps the legacy id; a board that traits
 something is taken at its word, including when the answer is "no such lane".
+
+FNXC:TaskRecommendations 2026-08-09-06:06:
+An undeclared legacy `archived` id remains a compatibility tombstone even after a workflow adopts
+lifecycle traits. Only an explicitly declared untraited `archived` column proves that id is live;
+archived-trait lanes remain additive because persisted pre-migration tasks can still use the old id.
 */
 export async function archivedColumnsForTask(
   store: LaneResolverStore,
@@ -116,8 +129,7 @@ export async function archivedColumnsForTask(
 ): Promise<Set<string>> {
   try {
     const ir = await resolveWorkflowIrForTask(store, taskId, irCache);
-    if (!declaresAnyLifecycleTrait(ir)) return new Set(["archived"]);
-    return new Set(columnsWithFlag(ir, "archived"));
+    return archivedColumnsForIr(ir);
   } catch {
     return new Set(["archived"]);
   }

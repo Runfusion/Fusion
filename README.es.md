@@ -10,7 +10,7 @@ Describe lo que quieres — un equipo de agentes de IA lo **planifica, construye
 
 [**runfusion.ai →**](https://runfusion.ai) · [Docs](./docs/README.md) · [GitHub](https://github.com/Runfusion/Fusion) · [npm](https://www.npmjs.com/package/@runfusion/fusion) · [Discord](https://discord.gg/ksrfuy7WYR)
 
-[English](./README.md) · [简体中文](./README.zh-CN.md) · [繁體中文](./README.zh-TW.md) · [Français](./README.fr.md) · **Español** · [한국어](./README.ko.md)
+[English](./README.md) · [简体中文](./README.zh-CN.md) · [繁體中文](./README.zh-TW.md) · [Français](./README.fr.md) · **Español** · [한국어](./README.ko.md) · [Português (Brasil)](./README.pt-BR.md)
 
 *Esta es una traducción automática; el README en inglés es el documento canónico.*
 

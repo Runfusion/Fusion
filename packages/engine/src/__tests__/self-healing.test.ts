@@ -5113,12 +5113,12 @@ describe("SelfHealingManager", () => {
     });
 
     /*
-    FNXC:SharedBranchMemberHold 2026-08-05-23:14:
-    A self-healing sweep is a production merge requester. It must preserve the
-    intentional mission member fast path under global Off, but never bypass an
-    operator-authored task Off hold while doing recovery admission.
+    FNXC:SharedBranchMemberHold 2026-08-09-09:09:
+    FN-8823 supersedes the mission-policy fast path under project Off. A
+    self-healing merge requester must treat project Off as withheld consent for
+    every non-opted-in shared member, preserving the FN-8811 user hold as a subset.
     */
-    it("re-enqueues a mission-policy shared member under global auto-merge off but preserves a user hold", async () => {
+    it("holds every non-opted-in shared member under global auto-merge off, including mission policy", async () => {
       const enqueueMerge = vi.fn().mockReturnValue(true);
       const managerWithRecovery = new SelfHealingManager(store, {
         rootDir: "/tmp/test-project",
@@ -5165,10 +5165,47 @@ describe("SelfHealingManager", () => {
         },
       ]);
 
+      expect(await managerWithRecovery.recoverMergeableReviewTasks()).toBe(0);
+      expect(enqueueMerge).not.toHaveBeenCalledWith("FN-8811-MISSION");
+      expect(enqueueMerge).not.toHaveBeenCalledWith("FN-8811-USER");
+      expect(store.mergeTask).not.toHaveBeenCalled();
+
+      managerWithRecovery.stop();
+    });
+
+    it("recovers an explicitly opted-in shared member under global auto-merge off", async () => {
+      const enqueueMerge = vi.fn().mockReturnValue(true);
+      const managerWithRecovery = new SelfHealingManager(store, {
+        rootDir: "/tmp/test-project",
+        enqueueMerge,
+      });
+      (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+        autoMerge: false,
+        integrationBranch: "main",
+        globalPause: false,
+        enginePaused: false,
+      });
+      (store.getBranchGroup as ReturnType<typeof vi.fn>).mockResolvedValue({
+        status: "open",
+        branchName: "mission/M-8811",
+      });
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([{
+        id: "FN-8811-OPTED-IN",
+        column: "in-review",
+        paused: false,
+        status: null,
+        error: null,
+        worktree: "/tmp/test-project/.worktrees/fn-8811-opted-in",
+        steps: [{ name: "Ship it", status: "done" }],
+        workflowStepResults: [{ id: "ws-opted-in", status: "passed", phase: "pre-merge" }],
+        autoMerge: true,
+        branchContext: { assignmentMode: "shared", groupId: "BG-8811", source: "mission" },
+        log: [],
+      }]);
+
       expect(await managerWithRecovery.recoverMergeableReviewTasks()).toBe(1);
       expect(enqueueMerge).toHaveBeenCalledTimes(1);
-      expect(enqueueMerge).toHaveBeenCalledWith("FN-8811-MISSION");
-      expect(enqueueMerge).not.toHaveBeenCalledWith("FN-8811-USER");
+      expect(enqueueMerge).toHaveBeenCalledWith("FN-8811-OPTED-IN");
 
       managerWithRecovery.stop();
     });
@@ -8799,6 +8836,8 @@ describe("SelfHealingManager", () => {
       vi.setSystemTime(new Date("2026-01-01T00:00:01.000Z"));
 
       expect(await recovery.finalizeOrphanedPlanningSegments()).toBe(1);
+      // Call shape only: the PostgreSQL regression test proves this excludes archive snapshots.
+      expect(recoveryStore.listTasks).toHaveBeenCalledWith(expect.objectContaining({ slim: true, includeArchived: false }));
       expect(updateTaskAtomic).toHaveBeenCalledOnce();
       expect(task).toMatchObject({ cumulativePlanningMs: 1050, planningStartedAt: null });
       expect(recoveryStore.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
@@ -8831,6 +8870,79 @@ describe("SelfHealingManager", () => {
         mutationType: "task:reconcile-orphaned-planning-segment-no-action",
         metadata: { finalizedCount: 0, reason: "no-eligible-orphan" },
       }));
+
+      recovery.stop();
+    });
+
+    it.each([
+      ["before", ["FN-POISON", "FN-HEALTHY"]],
+      ["after", ["FN-HEALTHY", "FN-POISON"]],
+    ])("skips a deleted candidate listed %s a healthy orphan", async (_position, ids) => {
+      const poisoned = { id: "FN-POISON", deletedAt: "2026-08-08T16:42:53.336Z", planningStartedAt: "2026-01-01T00:00:00.000Z" } as Task;
+      const healthy = { id: "FN-HEALTHY", planningStartedAt: "2026-01-01T00:00:00.000Z", cumulativePlanningMs: 50 } as Task;
+      const tasks = ids.map((id) => id === poisoned.id ? poisoned : healthy);
+      const updateTaskAtomic = vi.fn(async (id: string, updater: (live: Task) => Partial<Task> | null) => {
+        const task = id === healthy.id ? healthy : poisoned;
+        const patch = updater(task);
+        if (patch) Object.assign(task, patch);
+        return patch;
+      });
+      const recoveryStore = createMockStore({ listTasks: vi.fn().mockResolvedValue(tasks), updateTaskAtomic });
+      const recovery = new SelfHealingManager(recoveryStore, { rootDir: "/tmp/test-project", getPlanningTaskIds: () => new Set<string>() });
+      vi.setSystemTime(new Date("2026-01-01T00:00:01.000Z"));
+
+      await expect(recovery.finalizeOrphanedPlanningSegments()).resolves.toBe(1);
+      expect(updateTaskAtomic).toHaveBeenCalledTimes(1);
+      expect(updateTaskAtomic).toHaveBeenCalledWith(healthy.id, expect.any(Function));
+      expect(healthy).toMatchObject({ planningStartedAt: null, cumulativePlanningMs: 1050 });
+
+      recovery.stop();
+    });
+
+    it("contains a TOCTOU soft-delete failure and continues with other candidates", async () => {
+      const racing = { id: "FN-RACING", planningStartedAt: "2026-01-01T00:00:00.000Z", cumulativePlanningMs: 50 } as Task;
+      const healthy = { id: "FN-HEALTHY", planningStartedAt: "2026-01-01T00:00:00.000Z", cumulativePlanningMs: 50 } as Task;
+      const updateTaskAtomic = vi.fn(async (id: string, updater: (live: Task) => Partial<Task> | null) => {
+        if (id === racing.id) throw new Error("Task FN-RACING is soft-deleted (deletedAt=2026-08-08T16:42:53.336Z) and cannot be read or mutated");
+        const patch = updater(healthy);
+        if (patch) Object.assign(healthy, patch);
+        return patch;
+      });
+      const recoveryStore = createMockStore({ listTasks: vi.fn().mockResolvedValue([racing, healthy]), updateTaskAtomic });
+      const recovery = new SelfHealingManager(recoveryStore, { rootDir: "/tmp/test-project", getPlanningTaskIds: () => new Set<string>() });
+      getSelfHealingLogger().warn.mockClear();
+      vi.setSystemTime(new Date("2026-01-01T00:00:01.000Z"));
+
+      await expect(recovery.finalizeOrphanedPlanningSegments()).resolves.toBe(1);
+      expect(healthy).toMatchObject({ planningStartedAt: null, cumulativePlanningMs: 1050 });
+      expect(getSelfHealingLogger().warn).toHaveBeenCalledWith(expect.stringContaining("Failed to finalize orphaned planning segment for FN-RACING"));
+
+      recovery.stop();
+    });
+
+    it("contains fallback getTask failures and still finalizes healthy candidates around deleted rows", async () => {
+      const firstPoison = { id: "FN-POISON-1", deletedAt: "2026-08-08T16:42:53.336Z", planningStartedAt: "2026-01-01T00:00:00.000Z" } as Task;
+      const healthy = { id: "FN-HEALTHY", planningStartedAt: "2026-01-01T00:00:00.000Z", cumulativePlanningMs: 50 } as Task;
+      const secondPoison = { id: "FN-POISON-2", planningStartedAt: "2026-01-01T00:00:00.000Z" } as Task;
+      const getTask = vi.fn(async (id: string) => {
+        if (id === secondPoison.id) throw new Error("Task FN-POISON-2 is soft-deleted (deletedAt=2026-08-08T16:42:53.336Z) and cannot be read or mutated");
+        return healthy;
+      });
+      const updateTask = vi.fn(async (_id: string, patch: Partial<Task>) => Object.assign(healthy, patch));
+      const recoveryStore = createMockStore({
+        listTasks: vi.fn().mockResolvedValue([firstPoison, healthy, secondPoison]),
+        updateTaskAtomic: undefined,
+        getTask,
+        updateTask,
+      });
+      const recovery = new SelfHealingManager(recoveryStore, { rootDir: "/tmp/test-project", getPlanningTaskIds: () => new Set<string>() });
+      getSelfHealingLogger().warn.mockClear();
+      vi.setSystemTime(new Date("2026-01-01T00:00:01.000Z"));
+
+      await expect(recovery.finalizeOrphanedPlanningSegments()).resolves.toBe(1);
+      expect(updateTask).toHaveBeenCalledWith(healthy.id, expect.objectContaining({ planningStartedAt: null, cumulativePlanningMs: 1050 }));
+      expect(getTask).not.toHaveBeenCalledWith(firstPoison.id);
+      expect(getSelfHealingLogger().warn).toHaveBeenCalledWith(expect.stringContaining("Failed to finalize orphaned planning segment for FN-POISON-2"));
 
       recovery.stop();
     });

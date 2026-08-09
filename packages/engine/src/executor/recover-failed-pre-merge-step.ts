@@ -29,11 +29,13 @@
  * graph executor's signature guard rather than this budget check.
  */
 import type { Task, TaskStore, WorkflowStepResult as CoreWorkflowStepResult } from "@fusion/core";
-import { hasSharedBranchMemberAutoMergeHold } from "@fusion/core";
+import { hasPreMergeRemediationAutoMergeHold } from "@fusion/core";
 import { executorLog } from "../logger.js";
+import type { EngineRunContext } from "../util/run-audit.js";
 
 export type RecoverFailedPreMergeStepDeps = {
   store: TaskStore;
+  getRunContextFor?: (taskId: string) => EngineRunContext | undefined;
   resolveFailedPreMergeWorkflowStepBudget: (
     task: Task,
     target: CoreWorkflowStepResult,
@@ -56,11 +58,27 @@ export async function recoverFailedPreMergeWorkflowStep(
 ): Promise<boolean> {
   try {
     /*
-     * FNXC:SharedBranchMemberHold 2026-08-08-01:58:
+     * FNXC:SharedBranchMemberHold 2026-08-06-00:12:
      * Startup/self-healing recovery is another pre-merge remediation requester.
-     * Project Off holds non-opted-in members; only an operator release may advance.
+     * Do not let it send a user-held member back to execution: only an explicit
+     * operator release or revision may advance that manual checkpoint.
+     *
+     * FNXC:SharedBranchMemberHold 2026-08-09-21:41:
+     * FN-8910: recovery reopens implementation rather than merging. Project
+     * Off remains enforced at merge admission; only an operator task Off
+     * fences this seam, and a refusal must be visible to the operator.
      */
-    if (hasSharedBranchMemberAutoMergeHold(task, await deps.store.getSettings())) return false;
+    if (hasPreMergeRemediationAutoMergeHold(task, await deps.store.getSettings())) {
+      const reason = "operator-authored task-level auto-merge Off holds failed-step recovery";
+      executorLog.warn(`${task.id}: failed pre-merge step recovery NOT scheduled — ${reason}. Card left parked.`);
+      await deps.store.logEntry(
+        task.id,
+        "Failed pre-merge step recovery not scheduled — operator task hold",
+        `Reason: ${reason}`,
+        deps.getRunContextFor?.(task.id),
+      );
+      return false;
+    }
     const failed = (task.workflowStepResults ?? [])
       .filter((r) => (r.phase || "pre-merge") === "pre-merge" && r.status === "failed")
       .sort((a, b) => {
@@ -78,8 +96,31 @@ export async function recoverFailedPreMergeWorkflowStep(
     const feedback = target.output?.trim() || "(no feedback captured)";
     const stepName = target.workflowStepName || target.workflowStepId || "Unknown";
     const budget = await deps.resolveFailedPreMergeWorkflowStepBudget(task, target);
-    if (!budget.unbounded && (!Number.isFinite(budget.max) || budget.max <= 0)) return false;
-    if (!budget.unbounded && budget.attempts >= budget.max) return false;
+    /*
+     * FNXC:WorkflowRevisionBudget 2026-08-09-21:41:
+     * FN-8910: recovery-budget refusals park a card with no new session, so
+     * they must log their concrete attempt/max values before returning false.
+     */
+    if (!budget.unbounded && (!Number.isFinite(budget.max) || budget.max <= 0)) {
+      executorLog.warn(`${task.id}: failed pre-merge step recovery NOT scheduled for "${stepName}" — revision budget is zero/invalid (attempts=${budget.attempts}, max=${String(budget.max)}). Card left parked.`);
+      await deps.store.logEntry(
+        task.id,
+        "Failed pre-merge step recovery not scheduled — revision budget zero/invalid",
+        `Step: ${stepName}\nAttempts: ${budget.attempts}\nMax: ${String(budget.max)}`,
+        deps.getRunContextFor?.(task.id),
+      );
+      return false;
+    }
+    if (!budget.unbounded && budget.attempts >= budget.max) {
+      executorLog.warn(`${task.id}: failed pre-merge step recovery NOT scheduled for "${stepName}" — revision budget exhausted (attempts=${budget.attempts}, max=${String(budget.max)}). Card left parked.`);
+      await deps.store.logEntry(
+        task.id,
+        "Failed pre-merge step recovery not scheduled — revision budget exhausted",
+        `Step: ${stepName}\nAttempts: ${budget.attempts}\nMax: ${String(budget.max)}`,
+        deps.getRunContextFor?.(task.id),
+      );
+      return false;
+    }
 
     await deps.sendTaskBackForFix(
       task,

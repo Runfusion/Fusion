@@ -181,6 +181,8 @@ export type GitMutationType =
   | "merge:resolve"
   | "merge:file-scope-violation"
   | "merge:file-scope-enforcement-disabled"
+  // FNXC:MergerUnification 2026-08-09-12:04: Legacy-only audit events emitted
+  // exclusively by soft-deprecated aiMergeTask, never by production runAiMerge.
   | "merge:auto-prerebase:applied"
   | "merge:auto-prerebase:skipped"
   | "merge:auto-prerebase:failed"

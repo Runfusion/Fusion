@@ -156,6 +156,21 @@ describe("WebhookNotificationProvider", () => {
     ).resolves.toEqual({ success: false, providerId: "webhook", error: "Not initialized" });
   });
 
+  it("describes a pull-request policy hold without calling it plan approval", async () => {
+    fetchMock.mockResolvedValue({ ok: true, status: 200, statusText: "OK" });
+    await provider.initialize({ webhookUrl: "https://example.com/hook", webhookFormat: "slack" });
+
+    await provider.sendNotification("awaiting-approval", {
+      taskId: "FN-1",
+      taskTitle: "My Task",
+      event: "awaiting-approval",
+      metadata: { awaitingApprovalReason: "merge-blocked-by-policy" },
+    });
+
+    const [, requestInit] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(String(requestInit.body)).text).toContain("Resolve the policy requirement, then retry the merge.");
+  });
+
   it.each([
     ["in-review", "ready for review"],
     ["merged", "has been merged to main"],

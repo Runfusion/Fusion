@@ -6723,6 +6723,8 @@ describe("TaskCard", () => {
     const pricedTask = makeTask({
       id: "FN-8324",
       column: "todo",
+      awaitingPlanning: false,
+      steps: [{ name: "Implement", status: "pending" }] as any,
       tokenUsage: {
         inputTokens: 1_000_000,
         outputTokens: 0,
@@ -7879,7 +7881,7 @@ describe("TaskCard mission badge", () => {
     try {
       render(
         <TaskCard
-          task={makeTask({ id: "FN-777", column: "todo" })}
+          task={makeTask({ id: "FN-777", column: "todo", awaitingPlanning: false, steps: [{ name: "Implement", status: "pending" }] as any })}
           onOpenDetail={noop}
           addToast={noop}
           onPromote={onPromote}
@@ -7910,7 +7912,7 @@ describe("TaskCard mission badge", () => {
 
     render(
       <TaskCard
-        task={makeTask({ id: "FN-781", column: "todo" })}
+        task={makeTask({ id: "FN-781", column: "todo", awaitingPlanning: false, steps: [{ name: "Implement", status: "pending" }] as any })}
         onOpenDetail={noop}
         addToast={noop}
         onPromote={onPromote}
@@ -7932,7 +7934,7 @@ describe("TaskCard mission badge", () => {
 
     const soloRender = render(
       <TaskCard
-        task={makeTask({ id: "FN-782", column: "todo" })}
+        task={makeTask({ id: "FN-782", column: "todo", awaitingPlanning: false, steps: [{ name: "Implement", status: "pending" }] as any })}
         onOpenDetail={noop}
         addToast={noop}
         onPromote={onPromote}
@@ -7946,7 +7948,7 @@ describe("TaskCard mission badge", () => {
 
     render(
       <TaskCard
-        task={makeTask({ id: "FN-783", column: "in-review", paused: false, userPaused: false, prInfo: undefined as any })}
+        task={makeTask({ id: "FN-783", column: "in-review", paused: false, userPaused: false, prInfo: undefined as any, awaitingPlanning: false, steps: [{ name: "Implement", status: "pending" }] as any })}
         onOpenDetail={noop}
         addToast={noop}
         onPromote={onPromote}
@@ -7971,7 +7973,7 @@ describe("TaskCard mission badge", () => {
 
     render(
       <TaskCard
-        task={makeTask({ id: "FN-778", column: "todo" })}
+        task={makeTask({ id: "FN-778", column: "todo", awaitingPlanning: false, steps: [{ name: "Implement", status: "pending" }] as any })}
         onOpenDetail={onOpenDetail}
         addToast={noop}
         onPromote={onPromote}
@@ -7989,7 +7991,7 @@ describe("TaskCard mission badge", () => {
 
     render(
       <TaskCard
-        task={makeTask({ id: "FN-779", column: "todo" })}
+        task={makeTask({ id: "FN-779", column: "todo", awaitingPlanning: false, steps: [{ name: "Implement", status: "pending" }] as any })}
         onOpenDetail={noop}
         addToast={noop}
         onPromote={onPromote}
@@ -8003,6 +8005,87 @@ describe("TaskCard mission badge", () => {
 
     fireEvent.click(promoteButton);
     expect(onPromote).not.toHaveBeenCalled();
+  });
+
+  it("suppresses Promote for every planning state while retaining the planned capacity-hold action", () => {
+    let sequence = 0;
+    const makePromoteFixture = (overrides: Partial<Task> = {}) => makeTask({
+      id: `FN-8907-${sequence++}`,
+      title: `Promote fixture ${sequence}`,
+      column: "todo",
+      awaitingPlanning: false,
+      status: null as any,
+      steps: [{ name: "Implement", status: "pending" }] as any,
+      ...overrides,
+    });
+    const renderPromoteFixture = (task: Task, taskColumnFlags: any, cost = false) => render(
+      <CostBadgeProvider value={{ enabled: cost }}>
+        <TaskCard task={task} taskColumnFlags={taskColumnFlags} onOpenDetail={noop} addToast={noop} onPromote={vi.fn().mockResolvedValue(undefined)} />
+      </CostBadgeProvider>,
+    );
+    const expectSuppressedWithControl = (planning: Partial<Task>, control: Partial<Task>, flags: any) => {
+      const planningTask = makePromoteFixture(planning);
+      const suppressed = renderPromoteFixture(planningTask, flags);
+      expect(screen.getByText(planningTask.title)).toBeInTheDocument();
+      expect(screen.queryByTestId(`card-promote-${planningTask.id}`)).toBeNull();
+      suppressed.unmount();
+
+      const controlTask = makePromoteFixture(control);
+      const positive = renderPromoteFixture(controlTask, flags);
+      expect(screen.getByText(controlTask.title)).toBeInTheDocument();
+      expect(screen.getByTestId(`card-promote-${controlTask.id}`)).toBeInTheDocument();
+      positive.unmount();
+    };
+
+    // Harness self-check: planned capacity-held cards must reach the rendered Promote branch.
+    const readyTask = makePromoteFixture();
+    const ready = renderPromoteFixture(readyTask, { hold: true });
+    const readyPromote = screen.getByTestId(`card-promote-${readyTask.id}`);
+    expect(readyPromote).toHaveClass("card-promote-action");
+    expect(readyPromote).toHaveTextContent("Promote");
+    ready.unmount();
+
+    expectSuppressedWithControl({ awaitingPlanning: true }, { awaitingPlanning: false }, { hold: true });
+    expectSuppressedWithControl({ awaitingPlanning: undefined, steps: [] }, { awaitingPlanning: undefined, steps: [{ name: "Implement", status: "pending" }] as any }, { hold: true });
+    expectSuppressedWithControl({ status: "planning" as any }, { status: null as any }, { hold: true });
+    expectSuppressedWithControl({ status: "needs-replan" as any }, { status: null as any }, { hold: true });
+    expectSuppressedWithControl({
+      enabledWorkflowSteps: ["plan-review"],
+      workflowStepResults: [{ workflowStepId: "plan-review", workflowStepName: "Plan Review", status: "pending", startedAt: "2026-08-09T00:00:00Z" }],
+    }, {
+      enabledWorkflowSteps: ["plan-review"],
+      workflowStepResults: [{ workflowStepId: "plan-review", workflowStepName: "Plan Review", status: "pending" }],
+    }, { hold: true });
+    expectSuppressedWithControl({ awaitingPlanning: true }, { awaitingPlanning: false }, undefined);
+
+    /* isTaskAwaitingPlanApproval requires intake unless the replan-cap reason is set. */
+    expectSuppressedWithControl({ status: "awaiting-approval" as any }, { status: null as any }, { hold: true, intake: true });
+    expectSuppressedWithControl(
+      { status: "awaiting-approval" as any, awaitingApprovalReason: "plan-review-replan-cap" as any },
+      { status: "awaiting-approval" as any, awaitingApprovalReason: undefined },
+      { hold: true },
+    );
+
+    // Promote/cost-row CSS is media-query-only, so DOM absence covers desktop and mobile alike.
+    const pricedPlanning = makePromoteFixture({ awaitingPlanning: true, tokenUsage: {
+      inputTokens: 1_000_000, outputTokens: 0, cachedTokens: 0, cacheWriteTokens: 0, totalTokens: 1_000_000,
+      firstUsedAt: "2026-08-09T00:00:00Z", lastUsedAt: "2026-08-09T00:00:00Z", modelProvider: "openai", modelId: "gpt-5-mini",
+    } });
+    const pricedSuppressed = renderPromoteFixture(pricedPlanning, { hold: true }, true);
+    expect(screen.getByText(pricedPlanning.title)).toBeInTheDocument();
+    expect(pricedSuppressed.container.querySelector(".card-action-row")).toBeNull();
+    expect(pricedSuppressed.container.querySelector(".card-promote-action")).toBeNull();
+    expect(pricedSuppressed.container.querySelector(".card-send-back-btn")).toBeNull();
+    expect(pricedSuppressed.container.querySelector(".card-promote-cost-row")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Promote task" })).toBeNull();
+    expect(pricedSuppressed.container.querySelectorAll(".card-cost-indicator")).toHaveLength(1);
+    expect(pricedSuppressed.container.querySelector(".card-cost-indicator")?.closest(".card-footer-row")).not.toBeNull();
+    pricedSuppressed.unmount();
+
+    const pricedControl = makePromoteFixture({ tokenUsage: pricedPlanning.tokenUsage });
+    const pricedPromotable = renderPromoteFixture(pricedControl, { hold: true }, true);
+    expect(screen.getByTestId(`card-promote-${pricedControl.id}`)).toBeInTheDocument();
+    expect(pricedPromotable.container.querySelector(".card-promote-cost-row .card-cost-indicator")).not.toBeNull();
   });
 
   it("does not render a promote action when onPromote is omitted", () => {
@@ -8639,6 +8722,8 @@ describe("TaskCard trailing-row layout (FN-8631)", () => {
                 task={makeTask({
                   id: `FN-cost-${width}`,
                   column: "todo",
+                  awaitingPlanning: false,
+                  steps: [{ name: "Implement", status: "pending" }] as any,
                   tokenUsage: { inputTokens: 1_000_000, outputTokens: 0, cachedTokens: 0, cacheWriteTokens: 0, totalTokens: 1_000_000, firstUsedAt: "2026-01-01T00:00:00Z", lastUsedAt: "2026-01-01T00:00:00Z", modelProvider: "openai", modelId: "gpt-5-mini" },
                 } as Partial<Task>)}
                 onOpenDetail={noop}

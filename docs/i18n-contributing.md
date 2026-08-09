@@ -86,7 +86,12 @@ No feature code changes are required: the dashboard discovers the locale through
 the generated `app/locales/` tree, and the CLI through the regenerated import
 map. Add the language's endonym to `ENDONYMS` in
 `packages/dashboard/app/components/LanguageSelector.tsx` so it appears in the
-Settings switcher.
+Settings switcher, add a prompt label to `LOCALE_LABELS` in
+`packages/dashboard/src/ai-translate.ts` (compile-enforced), and add a display
+name to `localeDisplayName` in
+`packages/core/src/i18n/detect-content-language.ts`. For Latin-script languages,
+also consider a stopword list in `LATIN_STOPWORDS` there so content-language
+detection can recognize the language (entries must be accent-stripped).
 
 ## Using a non-English locale
 

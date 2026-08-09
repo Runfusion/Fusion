@@ -35,6 +35,7 @@ import {ACTIVE_TASK_FILTER, insertTaskRowInTransaction, isTaskIdConflictError as
 import {resolveWorkflowIrForTask} from "../workflows/workflow-ir-resolver.js";
 import {recordRunAuditEventWithinTransaction} from "../postgres/data-layer.js";
 import * as schema from "../postgres/schema/index.js";
+import {diffSettingsForActivity, formatSettingsActivity} from "./settings-activity.js";
 
 export async function initImpl(store: TaskStore): Promise<void> {
     store.closing = false;
@@ -333,31 +334,22 @@ export function setupActivityLogListenersImpl(store: TaskStore): void {
       }
     });
 
-    // Settings updated (log important changes)
+    /*
+    FNXC:SettingsAuditTrail 2026-08-09-02:05:
+    Keep settings activity policy in settings-activity.ts so every settings:updated emitter
+    gets one safe, generic diff without reintroducing a partial listener allowlist.
+    */
     store.on("settings:updated", (data) => {
-      const importantChanges: string[] = [];
-      if (data.settings.ntfyEnabled !== data.previous.ntfyEnabled) {
-        importantChanges.push(`ntfy ${data.settings.ntfyEnabled ? "enabled" : "disabled"}`);
-      }
-      if (data.settings.ntfyTopic !== data.previous.ntfyTopic) {
-        importantChanges.push(`ntfy topic changed to ${data.settings.ntfyTopic}`);
-      }
-      if (data.settings.globalPause !== data.previous.globalPause) {
-        importantChanges.push(`global pause ${data.settings.globalPause ? "enabled" : "disabled"}`);
-      }
-      if (data.settings.enginePaused !== data.previous.enginePaused) {
-        importantChanges.push(`engine pause ${data.settings.enginePaused ? "enabled" : "disabled"}`);
-      }
-
-      if (importantChanges.length > 0) {
-        store.recordActivityFromListener(
-          {
-            type: "settings:updated",
-            details: `Settings updated: ${importantChanges.join(", ")}`,
-            metadata: { changes: importantChanges },
-          },
-          "settings:updated",
-        );
+      try {
+        const activity = formatSettingsActivity(diffSettingsForActivity(data.previous, data.settings));
+        if (activity) {
+          store.recordActivityFromListener(
+            { type: "settings:updated", details: activity.details, metadata: activity.metadata },
+            "settings:updated",
+          );
+        }
+      } catch (error) {
+        storeLog.warn("Failed to format settings activity", { error: getErrorMessage(error) });
       }
     });
 

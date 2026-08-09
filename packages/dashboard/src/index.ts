@@ -17,7 +17,7 @@ export {
   type RuntimeLogSink,
 } from "./runtime-logger.js";
 export { createSkillsAdapter, getProjectSettingsPath, type SkillsAdapter, type DiscoveredSkill, type CatalogEntry, type CatalogFetchResult, type ToggleSkillResult, type UpstreamError, type UpstreamErrorCode, type SkillContent, type SkillFileEntry, type SkillFileContent } from "./skills-adapter.js";
-export { GitHubClient, isPrMergeReady, closeGroupPullRequest, reconcileGroupPullRequest, buildGitHubIssueSource, isGitHubIssueAlreadyImported, type GitHubClientOptions, type PrMergeStatus, type PrCheckStatus, type ReviewDecision, type MergePrParams, type UpdatePrParams, type ClosePrParams, type FindPrParams, type CreateIssueParams, type CreatedIssue, type DiscussionCategory, type DiscussionCandidate, type CreatedDiscussion, type CreateGroupPrResult } from "./github.js";
+export { GitHubClient, isPrMergeReady, closeGroupPullRequest, reconcileGroupPullRequest, buildGitHubIssueSource, isGitHubIssueAlreadyImported, type GitHubClientOptions, type PrMergeStatus, type PrCheckStatus, type ReviewDecision, type MergePrParams, PrAutoMergeUnavailableError, type UpdatePrParams, type ClosePrParams, type FindPrParams, type CreateIssueParams, type CreatedIssue, type DiscussionCategory, type DiscussionCandidate, type CreatedDiscussion, type CreateGroupPrResult } from "./github.js";
 export { generatePrMetadata, type GeneratedPrMetadata } from "./pr-metadata-generator.js";
 export {
   resolvePrConflicts,

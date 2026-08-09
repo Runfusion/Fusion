@@ -258,6 +258,11 @@ newer than the row and resolves an equal legacy move clock; sparse SSE patches n
 This helper intentionally merges only defined sparse fields and retains a fetched detail's prompt/log
 when a slim board row arrives. Every open-detail host and useTasks ingestion uses this one boundary so
 one provider cannot regress a modal, main panel, split detail, dock, or popup independently.
+
+FNXC:TaskDetailStateStability 2026-08-09-07:13:
+`mergeTaskSnapshot` arbitrates server snapshots only. Locally-authored detail patches must use
+`applyLocalTaskPatch`: FN-5148 requires mismatched ids to be ignored while accepting an absent id, and
+FN-8796 showed that an absent or equal local clock is not evidence of staleness.
 */
 export interface TaskSnapshotMergeOptions {
   /** A complete board/detail fetch can resolve an otherwise ambiguous legacy column clock. */
@@ -371,6 +376,46 @@ export function mergeTaskSnapshot<T extends Task>(
     merged.log = current.log;
   }
 
+  return merged as T;
+}
+
+/*
+FNXC:TaskDetailStateStability 2026-08-09-07:13:
+Open detail views author sparse patches after a PATCH response or derived PR/review refresh. Unlike
+server snapshots, these patches are applied by intent: FN-5148 ignores an explicit foreign id but
+accepts an absent id. FN-8796's stale lifecycle protection remains only when both sides provide a
+clock and the local patch is strictly older; absent and equal clocks are not stale evidence.
+*/
+export function applyLocalTaskPatch<T extends Task>(current: T, patch: Partial<Task>): T {
+  if (patch.id !== undefined && patch.id !== current.id) return current;
+
+  const merged = { ...current } as Record<string, unknown>;
+  for (const [key, value] of Object.entries(patch)) {
+    if (value !== undefined) merged[key] = value;
+  }
+
+  const hasClock = (value: unknown): value is string => typeof value === "string" && value.length > 0;
+  if (
+    hasClock(patch.columnMovedAt)
+    && hasClock(current.columnMovedAt)
+    && compareTimestamps(patch.columnMovedAt, current.columnMovedAt) < 0
+  ) {
+    merged.column = current.column;
+    merged.columnMovedAt = current.columnMovedAt;
+  }
+  if (
+    hasClock(patch.updatedAt)
+    && hasClock(current.updatedAt)
+    && compareTimestamps(patch.updatedAt, current.updatedAt) < 0
+  ) {
+    merged.status = current.status;
+    merged.updatedAt = current.updatedAt;
+  }
+
+  const mergedKeys = Object.keys(merged);
+  if (mergedKeys.length === Object.keys(current).length && mergedKeys.every((key) => merged[key] === (current as Record<string, unknown>)[key])) {
+    return current;
+  }
   return merged as T;
 }
 

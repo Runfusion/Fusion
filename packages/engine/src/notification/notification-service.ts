@@ -16,7 +16,7 @@ import { DEFAULT_NTFY_EVENTS, buildNtfyClickUrl, formatTaskIdentifier } from "..
 import { schedulerLog } from "../logger.js";
 import { NtfyNotificationProvider } from "./ntfy-provider.js";
 import { WebhookNotificationProvider } from "./webhook-provider.js";
-import { describeTaskRecoveryOwner, describeTaskWedge, type TaskWedgeDescriptor } from "./task-wedge-notification.js";
+import { describeTaskRecoveryOwner, describeTaskWedge, isTaskProgressing, type TaskWedgeDescriptor } from "./task-wedge-notification.js";
 
 export interface NotificationServiceOptions {
   /** Project identifier for notification deep links */
@@ -371,10 +371,10 @@ export class NotificationService {
 
   private handleTaskUpdated = (task: Task, meta?: { lanes?: TaskMoveLanes }): void => {
     /*
-    FNXC:TaskWedgeNotifications 2026-08-05-04:53:
-    A task update is a point-in-time snapshot. The pure classifier recognizes
-    only persisted recovery ownership, while `maybeNotifyTaskWedge` re-reads
-    live state before a durable claim so recovery cannot produce a false alert.
+    FNXC:TaskWedgeNotifications 2026-08-09-06:30:
+    An update is a snapshot and resume paths can leave a pause marker behind.
+    Use snapshot classification only for generic-failure scheduling; wedge delivery
+    reclassifies the live row immediately before its episode claim.
     */
     const recoveryOwner = task.status === "failed" ? describeTaskRecoveryOwner(task) : null;
     const wedge = describeTaskWedge(task);
@@ -385,7 +385,7 @@ export class NotificationService {
     only operator notification; dispatch-time suppression below covers races.
     */
     if (wedge) this.cancelPendingFailureNotification(task.id, "classified-terminal-wedge");
-    void this.enqueueWedgeHandling(task.id, () => this.maybeNotifyTaskWedge(task, wedge));
+    void this.enqueueWedgeHandling(task.id, () => this.maybeNotifyTaskWedge(task));
     void this.maybeSuppressTransientFailedNotification(task, `status=${task.status ?? "undefined"}`);
 
     /*
@@ -482,17 +482,26 @@ export class NotificationService {
       }
       const identifier = formatTaskIdentifier(task);
       const reason = task.awaitingApprovalReason ?? "manual";
+      /*
+      FNXC:PullRequestMerge 2026-08-09-05:07:
+      A policy-blocked PR uses the durable awaiting-approval mailbox transport,
+      but it is not a plan gate. Keep its operator instruction explicit and use a
+      distinct once-key so an earlier plan-approval notice cannot hide the block.
+      */
+      const isMergePolicyBlock = reason === "merge-blocked-by-policy";
       const reasonLine =
         reason === "plan-review-replan-cap"
           ? "Plan Review exhausted its automatic revision attempts and escalated this plan for a human decision."
-          : "The generated plan is ready and needs your approval before execution begins.";
+          : isMergePolicyBlock
+            ? "The pull request is blocked by repository policy. Resolve the policy requirement, then retry the merge."
+            : "The generated plan is ready and needs your approval before execution begins.";
       const link = buildNtfyClickUrl({
         dashboardHost: this.dashboardHost,
         projectId: this.options.projectId,
         taskId: task.id,
       });
       const content = [
-        `**${identifier} needs plan approval**`,
+        isMergePolicyBlock ? `**${identifier} pull-request merge is blocked**` : `**${identifier} needs plan approval**`,
         "",
         reasonLine,
         ...(link ? ["", `[Open ${task.id}](${link})`] : []),
@@ -506,7 +515,7 @@ export class NotificationService {
         content,
         metadata: { taskId: task.id, awaitingApprovalReason: reason },
       };
-      await messageStore.sendMessageOnce(input, `plan-approval:${task.id}`);
+      await messageStore.sendMessageOnce(input, `${isMergePolicyBlock ? "merge-policy-block" : "plan-approval"}:${task.id}`);
     } catch (error) {
       schedulerLog.log(
         `[notify] ${task.id} awaiting-approval mailbox message failed: ${error instanceof Error ? error.message : String(error)}`,
@@ -539,7 +548,15 @@ export class NotificationService {
       }
       return;
     }
-    const descriptor = suppliedDescriptor ?? describeTaskWedge(liveTask);
+    /*
+    FNXC:TaskWedgeNotifications 2026-08-09-06:30:
+    Self-healing descriptors encode a no-action proof that the generic classifier
+    cannot recompute. They still cannot claim after the live task resumes, so let
+    the existing no-descriptor resolution path close any active stale episode.
+    */
+    const descriptor = suppliedDescriptor && isTaskProgressing(liveTask)
+      ? null
+      : suppliedDescriptor ?? describeTaskWedge(liveTask);
     task = liveTask;
     let episode: string | undefined;
     if (!descriptor) {
