@@ -64,6 +64,7 @@ import {
   resolveWorkflowIrForTask,
   resolveWorkflowIrForTaskWithProvenance,
   resolveReviewColumns,
+  declaresAnyLifecycleTrait,
   workflowHasColumn,
   workflowPlansInColumn,
   workflowDeclaresColumnModel,
@@ -354,6 +355,24 @@ async function resolveTerminalColumnsForTask(store: TaskStore, taskId: string): 
     return all.length > 0 ? new Set(all) : new Set(["done", "archived"]);
   } catch {
     return new Set(["done", "archived"]);
+  }
+}
+
+/*
+FNXC:TaskRecommendations 2026-08-09-05:22:
+Workflow traits identify current archived lanes. An undeclared legacy `archived` id remains a
+compatibility tombstone for persisted pre-migration tasks, while an explicitly declared untraited
+`archived` column stays live on a trait-aware board. Traitless v1-upgraded workflows and resolution
+failures retain the legacy terminal id.
+*/
+async function resolveArchivedColumnsForTask(store: TaskStore, taskId: string): Promise<Set<string>> {
+  try {
+    const ir = await resolveWorkflowIrForTask(store, taskId);
+    const archived = columnsWithFlag(ir, "archived");
+    if (!declaresAnyLifecycleTrait(ir)) return new Set([...archived, "archived"]);
+    return new Set(workflowHasColumn(ir, "archived") ? archived : [...archived, "archived"]);
+  } catch {
+    return new Set(["archived"]);
   }
 }
 
@@ -2349,13 +2368,16 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
           throw conflict("Recommendation link is malformed");
         }
         const linked = await scopedStore.getTask(recommendation.createdTaskId).catch(() => null);
+        const linkedArchiveColumns = linked
+          ? await resolveArchivedColumnsForTask(scopedStore, linked.id)
+          : new Set<string>();
         /*
         FNXC:TaskRecommendations 2026-08-08-06:34:
         A prior link is reusable only while its child remains in a live task lane. Archived and
         soft-deleted children are historical records, not an actionable Created result; conflict
         rather than silently resurrecting or linking a second child.
         */
-        if (!linked || linked.deletedAt || linked.column === "archived") {
+        if (!linked || linked.deletedAt || linkedArchiveColumns.has(linked.column)) {
           throw conflict("Recommendation link points to an unavailable task");
         }
         return res.status(200).json({ task: linked, parent });
@@ -2370,16 +2392,9 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       */
       const existing = (await scopedStore.listTasks({ slim: false, includeArchived: true, includeDeleted: true }))
         .find((task) => task.proposalClaimId === proposalClaimId);
-      const existingArchiveColumns = await (async () => {
-        if (!existing) return new Set<string>();
-        try {
-          const ir = await resolveWorkflowIrForTask(scopedStore, existing.id);
-          const columns = columnsWithFlag(ir, "archived");
-          return new Set(columns.length > 0 ? columns : ["archived"]);
-        } catch {
-          return new Set(["archived"]);
-        }
-      })();
+      const existingArchiveColumns = existing
+        ? await resolveArchivedColumnsForTask(scopedStore, existing.id)
+        : new Set<string>();
       /*
       FNXC:TaskRecommendations 2026-08-08-08:44:
       Deterministic reconciliation moves a child to its workflow's archived trait, which may be
