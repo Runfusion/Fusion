@@ -42,6 +42,7 @@ function store(
     getTaskWorkflowSelection: vi.fn(() => undefined),
     getTaskWorkflowSelectionAsync: vi.fn(async () => undefined),
     getWorkflowDefinition: vi.fn(async () => undefined),
+    logEntry: vi.fn(async () => undefined),
   } as unknown as TaskStore;
 }
 
@@ -78,9 +79,10 @@ describe("workflow continuation active-slot admission", () => {
       }],
     }));
     const dispatch = vi.fn(async () => {});
+    const taskStore = store([...active, task(CONTINUATION_ID)]);
 
     const admitted = await admitPlanningContinuation({
-      store: store([...active, task(CONTINUATION_ID)]),
+      store: taskStore,
       projectId: PROJECT_ID,
       task: task(CONTINUATION_ID),
       item,
@@ -89,6 +91,10 @@ describe("workflow continuation active-slot admission", () => {
 
     expect(admitted).toBe(false);
     expect(dispatch).not.toHaveBeenCalled();
+    expect(taskStore.logEntry).toHaveBeenCalledWith(
+      CONTINUATION_ID,
+      expect.stringContaining("maxWorktrees capacity exhausted: used=9/9"),
+    );
   });
 
   it("starts the ninth task when only eight active tasks hold slots", async () => {

@@ -1,5 +1,91 @@
 # @runfusion/fusion
 
+## 0.76.0-beta.0
+
+### Minor Changes
+
+- eaadd15: summary: Route workflow stages through durable multi-role agents instead of ephemeral workers.
+  category: feature
+  dev: Removes ephemeral workflow-worker lifecycle dispatch; existing singular role input remains migration-compatible.
+- d450dbe: summary: Add completed-task recommendations with guarded one-click task creation.
+  category: feature
+  dev: Project setting `maxRecommendationsPerTask` controls the accepted completion cap.
+- f7ca14b: summary: Add fn_workflow_step_resume operator tool to unstick permanently-pending merge review steps.
+  category: feature
+  dev: New CLI/pi-extension operator-only tool `fn_workflow_step_resume` (with `TaskStore.resumeWorkflowStep` + `findPendingPreMergeStep` helper) transitions a stuck `pending` pre-merge workflow step to `failed` with resume audit metadata so the existing `fn_task_bypass_review` escape hatch can clear the merge blocker. Audit-logged via the new `task:resume-step` run-audit event. Not exposed to executor/reviewer/triage agent surfaces.
+
+### Patch Changes
+
+- 6bacfd7: summary: Stop verified no-op tasks from repeatedly bouncing between lifecycle states.
+  category: fix
+  dev: Trust verified intentional skips and preserve durable merger blockers during graph unwind.
+- 8eb050e: summary: Clear stale Planning badges when refreshed task state shows execution has advanced.
+  category: fix
+  dev: Equal-clock complete snapshots clear stale lifecycle status without erasing newer planner activity.
+- 4739f8a: summary: Warm extension-host task stores up front so fn*task*\* tools never hit a lazy second-pool boot.
+  category: fix
+  dev: Populates setHostTaskStore for every registered project from the already-running ProjectEngine TaskStores at dashboard startup, so extension API tools (fn_task_update, fn_task_archive, fn_agent_show) find a cached store and never fall through to createTaskStoreForBackend, which could time out creating a second connection pool. cwd is skipped because its store is already injected. Non-fatal warnings on any per-project failure.
+- 1f9b0e6: summary: Fix a startup deadlock that made the dashboard stop responding to all requests.
+  category: fix
+  dev: `provisionBuiltinWorkflowRoleAgents` (FN-8764) held a `pg_advisory_xact_lock` transaction while running its reads/writes on the pool, requiring a second connection. With concurrent callers blocking on the same lock and `DEFAULT_POOL_MAX=3`, the pool self-deadlocked and every DB-backed API route queued forever. `listAgents`/`findAgentByName`/`createAgent`/`writeAgent` now accept an optional `QueryHandle` so the provisioning work runs on the locking transaction.
+- 8c76416: summary: Keep every open dashboard synchronized when a task is paused or unpaused.
+  category: fix
+  dev: Treat omitted fields in newer task snapshots as cleared pause lifecycle state.
+- 3ed31e9: summary: Retry execution after the first terminal tool-call failure by default.
+  category: fix
+  dev: The project threshold remains configurable and existing explicit overrides are preserved.
+- 5532019: summary: Keep Planning Mode running when browser storage is unavailable.
+  category: fix
+  dev: Planning draft and active-session persistence now evicts only its scoped key and retries once.
+- c3f4af6: summary: Show four distinct Planning Mode responses plus one write-your-own choice.
+  category: fix
+  dev: Planning question normalization reserves localized fallback alternatives for malformed or restored responses.
+- 297ec17: summary: Let Planning Mode show a useful, context-appropriate set of choices.
+  category: fix
+  dev: Planning prompts now guide 3–5 alternatives without truncating larger valid option sets.
+- 6fd49f7: summary: Keep Messages structure selection within narrow mobile composers.
+  category: fix
+  dev: Shared MessageComposer sizing now contains long structure labels in full-page and modal Messages.
+- fc2040c: summary: Keep legacy agent setting input from changing mission or workflow routing.
+  category: fix
+  dev: Retires residual scheduler, executor, and mission-start compatibility routing authority.
+- 36f20f8: summary: Prevent inactive retained worktrees from exhausting live task capacity.
+  category: fix
+  dev: Shares worktree-capacity admission across execution, planning, merge, and workflow continuation lanes.
+- 3dd824d: summary: Honor project auto-merge consent for shared members and show review advisories before promotion.
+  category: fix
+  dev: Shared member integration now uses canonical task-plus-project consent precedence.
+- 7b010ec: summary: Keep mission autopilot slice progression serial and milestone ordered.
+  category: fix
+  dev: Duplicate completion and recovery signals now stop at the shared serial admission rule.
+- e78c09c: summary: Keep secrets environment fingerprint records out of task worktrees.
+  category: fix
+  dev: Reconciles legacy root records before strict worktree refresh and preserves ambiguous metadata.
+- 1f5c44a: summary: Restore the In progress badge for active dashboard tasks with no transient status.
+  category: fix
+  dev: Uses resolved workflow WIP traits and lifecycle labels across board and list views.
+- cdf81a2: summary: Resume partially completed tasks after restart without reporting a false failure.
+  category: fix
+  dev: Extends bounded unknown-node recovery to resumable partial steps and ignores recovered tool errors in failure attribution.
+- 70a830d: summary: Backfill detailed identities for built-in workflow agents.
+  category: fix
+  dev: Seeds non-destructive instructions, souls, and managed Markdown files while reconciling duplicate built-in provenance.
+- 15418d2: summary: State the enabled default for the ephemeral-agent compatibility setting.
+  category: fix
+  dev: Maps the surfaced Settings help to its canonical project default.
+- 168f7fb: summary: Clarify mission merge behavior and show read-only shared branch status.
+  category: fix
+  dev: Mission detail validates BranchGroup ownership before displaying branch, member, and PR data.
+- ef8828f: summary: Fix tasks stalling forever in progress with no session after the workflow role-agent rollout.
+  category: fix
+  dev: Two deadlocks in FN-8764's role routing, both silent. (1) The in-process runtime never passed its AgentStore into `TaskExecutorOptions`, so routing failed closed at every role-classified node. (2) Durable continuation writes used a bare `upsertWorkflowWorkItem`, whose ON CONFLICT target is not `idx_workflow_work_items_one_active_task_continuation`, so a predecessor the run had already left (the resumed continuation, or a sibling foreach instance sharing the template nodeId) made the write RAISE; the run then re-suspended every dispatch until an operator bounced the card. Every `kind:"task"` continuation write in the executor and triage now goes through the atomic `replaceActiveTaskWorkflowContinuation`. Adds the `task:workflow-run-suspended` run-audit event, logs principal holds and fence-write errors instead of swallowing them, pins the invariant against a real Postgres index, and ratchets the hand-rolled handover as a tombstone.
+- 55e8484: summary: Refresh an empty task Activity Feed when operators open it after execution has started.
+  category: fix
+  dev: Shared task-detail hosts refetch complete task logs when an empty Feed is selected.
+- 039db99: summary: The Todo Lists and Roadmaps plugins now appear in dashboard navigation after being enabled.
+  category: fix
+  dev: Both plugin `manifest.json` files were missing the `dashboardViews` block that `PluginLoader.getPluginDashboardViews` treats as authoritative, so the module-level `dashboardViews` in each `src/index.ts` was discarded and the views were absent from every nav surface.
+
 ## 0.75.1
 
 ### Patch Changes

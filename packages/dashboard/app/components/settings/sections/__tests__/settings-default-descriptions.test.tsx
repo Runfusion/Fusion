@@ -20,7 +20,7 @@ import realEnApp from "../../../../../../i18n/locales/en/app.json";
  *    reason each, so a genuinely new setting cannot silently skip documentation.
  *
  * Source of truth for canonical default values: `DEFAULT_GLOBAL_SETTINGS` /
- * `DEFAULT_PROJECT_SETTINGS` / `DEFAULT_SETTINGS` in `packages/core/src/settings-schema.ts`.
+ * `DEFAULT_PROJECT_SETTINGS` / `DEFAULT_SETTINGS` in `packages/core/src/config/settings-schema.ts`.
  * See task document "plan" on FN-7505 for the full field \u2192 default \u2192 i18n-key table.
  */
 
@@ -44,7 +44,7 @@ const DEFAULT_INDICATOR_RE = /default|inherits|unset/i;
  * FN-7505 code review caught GlobalGeneralSection/GeneralSection/MergeSection stating
  * `gitlabEnabled` defaults to "enabled" and GlobalModelsSection stating
  * `openrouterAppAttribution` defaults to a literal URL/title, when both are actually
- * `undefined` in DEFAULT_GLOBAL_SETTINGS/DEFAULT_PROJECT_SETTINGS (settings-schema.ts).
+ * `undefined` in DEFAULT_GLOBAL_SETTINGS/DEFAULT_PROJECT_SETTINGS (`packages/core/src/config/settings-schema.ts`).
  * A generic "mentions the word default" check cannot catch a WRONG default value, only
  * a missing one. `resolveCanonicalDefault` + the checks in the third `it()` below assert
  * the description's stated default agrees with the actual schema default for every mapped
@@ -290,6 +290,7 @@ const SETTING_DESCRIPTION_KEYS: Record<string, string> = {
   quickChatCloseOnOutsideClick: "general.quickChatCloseOnOutsideClickHint",
   showTaskChatsInCommonFeed: "general.showTaskChatsInCommonFeedHint",
   taskPrefix: "general.prefixForNewTaskIDsEGKB",
+  maxRecommendationsPerTask: "general.maxRecommendationsPerTaskHelp",
   workspaceMode: "general.workspaceModeHint",
   defaultWorkflowId: "general.newTasksInheritThisCustomWorkflowsStepsOverridable",
   enabledBuiltinWorkflowIds: "general.disabledFusionWorkflowsAreHiddenFromWorkflow",
@@ -336,7 +337,7 @@ const NOT_SURFACED_ALLOWLIST: Record<string, string> = {
   nested enabled flag rather than a top-level plain description field.
   */
   voiceInput: "nested Voice Input section object; enable toggle owns Default: off for voiceInput.enabled",
-  // Moved to workflow settings (U4) — see MOVED_SETTINGS_KEYS in settings-schema.ts.
+  // Moved to workflow settings (U4) — see MOVED_SETTINGS_KEYS in `packages/core/src/config/settings-schema.ts`.
   workflowStepTimeoutMs: "moved to workflow settings (U4)",
   workflowStepScopeEnforcement: "moved to workflow settings (U4)",
   planOnlyScopeLeakEnforcement: "moved to workflow settings (U4)",

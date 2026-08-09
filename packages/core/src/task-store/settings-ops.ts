@@ -25,6 +25,20 @@ import {isValidProviderInstanceId} from "../provider-instance.js";
  * Settings authoring validates persisted-but-inert credential instance ids before either project
  * or global persistence. Nested presets are atomic: one malformed element rejects the whole write.
  */
+/**
+ * FNXC:TaskRecommendations 2026-08-08-05:02:
+ * Reject an invalid project cap atomically rather than coercing an executor's
+ * completion policy. Zero deliberately disables recommendations; 1..20 bounds
+ * retained operator-visible suggestions.
+ */
+function assertValidRecommendationSettingsPatch(patch: Record<string, unknown>): void {
+  const value = patch.maxRecommendationsPerTask;
+  if (value === undefined || value === null) return;
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0 || value > 20) {
+    throw new Error("maxRecommendationsPerTask must be an integer between 0 and 20");
+  }
+}
+
 function assertValidCredentialInstanceSettingsPatch(patch: Record<string, unknown>): void {
   for (const [key, value] of Object.entries(patch)) {
     if (key.endsWith("CredentialInstanceId") || key === "defaultCredentialInstanceIdOverride") {
@@ -58,6 +72,7 @@ export async function publishSettingsUpdated(store: TaskStore, previous: Setting
 }
 
 export async function updateSettingsImpl(store: TaskStore, patch: Partial<Settings>, changedBy: ConfigChangedBy = { kind: "human", id: "local-user" }): Promise<Settings> {
+    assertValidRecommendationSettingsPatch(patch as Record<string, unknown>);
     assertValidCredentialInstanceSettingsPatch(patch as Record<string, unknown>);
     /*
     FNXC:ConfigVersioning 2026-07-18-12:15:
@@ -89,14 +104,15 @@ export async function updateSettingsImpl(store: TaskStore, patch: Partial<Settin
           })()
         : patch;
     /*
-    FNXC:WorkflowAgentRouting 2026-08-07-08:45:
-    Preserve ephemeralAgentsEnabled in project updates for configuration compatibility. Its
-    routing-inert behavior is enforced exclusively by scheduler, executor, and mission consumers.
+    FNXC:WorkflowAgentRouting 2026-08-09-01:04:
+    FN-8847 rejects the retired ephemeralAgentsEnabled client patch before the configuration
+    revision transaction. Canonicalization also removes stale stored copies, while active
+    ephemeral task-creation policy fields keep their normal project-setting behavior.
     */
-    // Filter out global-only fields — they should go through updateGlobalSettings().
+    // Filter out global-only and retired project fields before writing a configuration revision.
     const projectPatch: Partial<Settings> = {};
     for (const [key, value] of Object.entries(guardedPatch)) {
-      if (!isGlobalOnlySettingsKey(key)) {
+      if (!isGlobalOnlySettingsKey(key) && key !== "ephemeralAgentsEnabled") {
         (projectPatch as Record<string, unknown>)[key] = value;
       }
     }
@@ -221,6 +237,13 @@ export async function updateGlobalSettingsImpl(store: TaskStore, patch: Partial<
       ? (stripMovedSettingsKeys(patch as Record<string, unknown>) as Partial<GlobalSettings>)
       : { ...patch };
     delete globalPatch.secretsSyncPassphraseConfigured;
+    /*
+    FNXC:TaskRecommendations 2026-08-08-06:11:
+    Recommendation volume is a project policy, never a user-global preference. Runtime callers can
+    bypass TypeScript with a JSON patch, so reject this project-only key at the global persistence
+    boundary instead of allowing one project's completion cap to leak into every project.
+    */
+    delete (globalPatch as Record<string, unknown>).maxRecommendationsPerTask;
 
     // Handle deep merge + targeted null clear semantics for remoteAccess
     const incomingRemoteAccess = (globalPatch as Record<string, unknown>)["remoteAccess"];

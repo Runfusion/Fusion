@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import "../executor-test-helpers.js";
 import { TaskExecutor } from "../../executor.js";
+import * as worktreeAcquisition from "../../worktree/worktree-acquisition.js";
 import { mockedCreateFnAgent, createMockStore, resetExecutorMocks } from "../executor-test-helpers.js";
 
 /*
@@ -45,9 +46,51 @@ function makeSession() {
   };
 }
 
+function makeExecutor(store: ReturnType<typeof createMockStore>): TaskExecutor {
+  store.getRootDir = vi.fn().mockReturnValue("/tmp/test");
+  return new TaskExecutor(store as any, "/tmp/test", {
+    agentStore: {
+      listAgents: vi.fn().mockResolvedValue([{
+        id: "agent-executor",
+        name: "Executor",
+        role: "executor",
+        roles: ["executor"],
+        state: "active",
+        runtimeConfig: {},
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      }]),
+      getAgent: vi.fn().mockResolvedValue({
+        id: "agent-executor",
+        name: "Executor",
+        role: "executor",
+        roles: ["executor"],
+        state: "active",
+        runtimeConfig: {},
+      }),
+      checkoutTask: vi.fn().mockResolvedValue(undefined),
+      acquireWorkflowSessionCapacity: vi.fn().mockResolvedValue("acquired"),
+      releaseWorkflowSessionCapacity: vi.fn().mockResolvedValue(undefined),
+    },
+  } as any);
+}
+
 describe("reliability interactions: executor no-fn_task_done vs worktree reclaim", () => {
   beforeEach(() => {
     resetExecutorMocks();
+    /*
+    FNXC:WorktreeBaseRefresh 2026-08-08-03:59:
+    This retry/liveness suite owns the post-session lifecycle boundary, not Git reconciliation.
+    Keep its synthetic /tmp checkout acquisition successful so refresh-enabled executor dispatch
+    reaches the retry logic; dedicated temporary-Git tests prove the stale-base contract.
+    */
+    vi.spyOn(worktreeAcquisition, "acquireTaskWorktree").mockResolvedValue({
+      worktreePath: "/tmp/test/.worktrees/fn-4601",
+      branch: "fusion/fn-4601",
+      source: "existing",
+      hydrated: false,
+      isResume: true,
+    });
   });
 
   it("pre-retry liveness recheck aborts retry and silently requeues (FN-4806)", async () => {
@@ -75,7 +118,7 @@ describe("reliability interactions: executor no-fn_task_done vs worktree reclaim
 
     mockedCreateFnAgent.mockResolvedValue({ session: makeSession() } as any);
 
-    const executor = new TaskExecutor(store as any, "/tmp/test");
+    const executor = makeExecutor(store);
     await executor.execute(state);
 
     expect(mockedCreateFnAgent).toHaveBeenCalledTimes(1);
@@ -113,7 +156,7 @@ describe("reliability interactions: executor no-fn_task_done vs worktree reclaim
       .mockResolvedValueOnce({ session: makeSession() } as any)
       .mockRejectedValueOnce(new Error("Refusing to start coding agent in missing worktree: /tmp/test/.worktrees/fn-4601"));
 
-    const executor = new TaskExecutor(store as any, "/tmp/test");
+    const executor = makeExecutor(store);
     await executor.execute(state);
 
     expect(store.updateTask).toHaveBeenCalledWith("FN-4601", expect.objectContaining({
@@ -145,7 +188,7 @@ describe("reliability interactions: executor no-fn_task_done vs worktree reclaim
       .mockResolvedValueOnce({ session: makeSession() } as any)
       .mockRejectedValueOnce(new Error("boom"));
 
-    const executor = new TaskExecutor(store as any, "/tmp/test");
+    const executor = makeExecutor(store);
     await executor.execute(state);
 
     // FNXC:WorkflowLifecycle 2026-07-01-21:05: A non-recoverable execute error follows the terminal
@@ -185,7 +228,7 @@ describe("reliability interactions: executor no-fn_task_done vs worktree reclaim
 
     mockedCreateFnAgent.mockResolvedValue({ session: makeSession() } as any);
 
-    const executor = new TaskExecutor(store as any, "/tmp/test");
+    const executor = makeExecutor(store);
     await executor.execute(state);
 
     expect(store.moveTask).toHaveBeenCalledWith("FN-4601", "todo", { preserveProgress: true });
@@ -226,7 +269,7 @@ describe("reliability interactions: executor no-fn_task_done vs worktree reclaim
 
     mockedCreateFnAgent.mockResolvedValue({ session: makeSession() } as any);
 
-    const executor = new TaskExecutor(store as any, "/tmp/test");
+    const executor = makeExecutor(store);
     await executor.execute(makeTask({ taskDoneRetryCount: 3 }));
 
     // No resurrection: the park must abort before a second session spawns.
@@ -252,7 +295,7 @@ describe("reliability interactions: executor no-fn_task_done vs worktree reclaim
 
     mockedCreateFnAgent.mockResolvedValue({ session: makeSession() } as any);
 
-    const executor = new TaskExecutor(store as any, "/tmp/test");
+    const executor = makeExecutor(store);
     await executor.execute(state);
 
     expect(mockedCreateFnAgent.mock.calls.length).toBeGreaterThan(1);

@@ -19,7 +19,7 @@ import {randomUUID} from "node:crypto";
 import {mkdir, readFile, writeFile, rename, unlink} from "node:fs/promises";
 import {join} from "node:path";
 import {existsSync} from "node:fs";
-import type {Task, TaskCreateInput, TaskAttachment, BoardConfig, ActivityLogEntry, ActivityEventType, Artifact, ArtifactCreateInput, RunMutationContext, MergeQueueEntry, BranchGroup, BranchGroupUpdate, CompletionHandoffMarker, WorkflowWorkItem, WorkflowWorkItemKind, PrEntity, PrEntityUpdate} from "../types.js";
+import type {Task, TaskCreateInput, TaskAttachment, BoardConfig, ActivityLogEntry, ActivityEventType, Artifact, ArtifactCreateInput, RunMutationContext, MergeQueueEntry, BranchGroup, BranchGroupUpdate, CompletionHandoffMarker, WorkflowWorkItem, WorkflowWorkItemKind, PrEntity, PrEntityUpdate, TaskRecommendation} from "../types.js";
 import {validateSettingValuePatch, WorkflowSettingRejectionError} from "../workflows/workflow-settings.js";
 import "../builtin-traits.js";
 import {toJson} from "../db/db.js";
@@ -31,7 +31,7 @@ import {readTaskRow as readTaskRowAsync, readTaskRowInTransaction, resolveActive
 import {upsertArchivedTaskEntry} from "./async/async-archive-lineage.js";
 import {purgeTaskWorkflowSelectionRowsAsyncImpl} from "./workflow-definitions.js";
 import * as schema from "../postgres/schema/index.js";
-import {and, asc, eq, isNotNull, isNull, sql} from "drizzle-orm";
+import {and, asc, eq, inArray, isNotNull, isNull, sql} from "drizzle-orm";
 import {recoverExpiredMergeQueueLeases as recoverExpiredMergeQueueLeasesAsync} from "../task-store/async/async-merge-coordination.js";
 import {updateBranchGroup as updateBranchGroupAsync, updatePrEntity as updatePrEntityAsync} from "../task-store/async/async-branch-groups.js";
 import {recordCompletionHandoff as recordCompletionHandoffAsync, getCompletionHandoffMarker as getCompletionHandoffMarkerAsync} from "../task-store/async/async-workflow-workitems.js";
@@ -43,6 +43,7 @@ import {readProjectConfig, writeProjectConfig} from "./async/async-settings.js";
 import {publishSettingsUpdated} from "./settings-ops.js";
 import type {ConfigChangedBy, ConfigurationRevision} from "../types.js";
 import { resolveArchivedLanes } from "../project-lane-vocabulary.js";
+import { acquireTaskAdvisoryXactLock } from "./task-advisory-lock.js";
 
 export function getTaskSelectClauseWithActivityLogLimitImpl(store: TaskStore, limit: number): string {
     const columns = [
@@ -373,6 +374,79 @@ export async function updateTaskAtomicImpl(store: TaskStore, id: string, updater
       return store.updateTaskUnlocked(id, updates, runContext);
     });
   }
+
+/**
+ * FNXC:TaskRecommendations 2026-08-08-06:52:
+ * A recommendation link is a read-modify-write of one JSONB parent field. Dashboard processes
+ * share PostgreSQL, not an in-memory route mutex, so acquire the task advisory transaction lock
+ * before re-reading and changing the row. This makes distinct recommendation links converge
+ * without losing a sibling link, while the proposal claim unique index remains the child
+ * creation at-most-once authority.
+ *
+ * FNXC:TaskRecommendations 2026-08-08-07:06:
+ * A parent can reopen after route intake creates its child. Recheck the route-resolved complete
+ * columns under this same advisory lock before writing the link, so an obsolete completion cannot
+ * make an active parent display a Created recommendation.
+ */
+export async function linkTaskRecommendationImpl(
+  store: TaskStore,
+  id: string,
+  recommendationId: string,
+  createdTaskId: string,
+  completeColumns?: ReadonlySet<string>,
+): Promise<Task> {
+  return store.withTaskLock(id, async () => {
+    const layer = store.asyncLayer!;
+    const updated = await layer.transactionImmediate(async (tx) => {
+      await acquireTaskAdvisoryXactLock(tx, layer.projectId, id);
+      const row = await readTaskRowInTransaction(tx, id, { includeDeleted: true }, layer.projectId);
+      if (!row) throw new TaskNotFoundError(id);
+      if (row.deletedAt) throw new TaskDeletedError(id, row.deletedAt as string);
+
+      const current = store.rowToTask(store.pgRowToTaskRow(row));
+      if (completeColumns && !completeColumns.has(current.column)) {
+        throw new Error("Recommendations are available only on completed tasks");
+      }
+      const index = current.recommendations?.findIndex((item) => item.id === recommendationId) ?? -1;
+      if (index < 0) throw new Error("Recommendation no longer exists");
+      const recommendation = current.recommendations![index]!;
+      if (recommendation.createdTaskId && recommendation.createdTaskId !== createdTaskId) {
+        throw new Error("Recommendation is already linked to another task");
+      }
+      if (recommendation.createdTaskId === createdTaskId) return current;
+
+      const recommendations: TaskRecommendation[] = current.recommendations!.map((item) =>
+        item.id === recommendationId ? { ...item, createdTaskId } : item,
+      );
+      const updatedAt = new Date().toISOString();
+      /*
+      FNXC:TaskRecommendations 2026-08-08-07:15:
+      Lifecycle moves do not share this recommendation advisory lock. Keep the completed-lane
+      predicate in the UPDATE itself so PostgreSQL's row-level CAS rejects a parent reopened after
+      our read but before this JSONB link write.
+      */
+      const [updatedRow] = await tx
+        .update(schema.project.tasks)
+        .set({ recommendations, updatedAt })
+        .where(and(
+          eq(schema.project.tasks.id, id),
+          taskProjectScope(layer),
+          ...(completeColumns ? [inArray(schema.project.tasks.column, [...completeColumns])] : []),
+        ))
+        .returning();
+      if (!updatedRow) {
+        if (completeColumns) throw new Error("Recommendations are available only on completed tasks");
+        throw new TaskNotFoundError(id);
+      }
+      return store.rowToTask(store.pgRowToTaskRow(updatedRow));
+    });
+
+    await store.writeTaskJsonFile(store.taskDir(id), updated);
+    if (store.isWatching) store.taskCache.set(id, { ...updated });
+    store.emitTaskLifecycleEventSafely("task:updated", [updated]);
+    return updated;
+  });
+}
 
 /*
 FNXC:TaskWedgeNotifications 2026-08-01-15:35:

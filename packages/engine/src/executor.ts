@@ -12,11 +12,11 @@ const WORKFLOW_THINKING_LEVEL_SET: ReadonlySet<string> = new Set(THINKING_LEVELS
 import { basename, delimiter, isAbsolute, join, relative, resolve as resolvePath } from "node:path";
 import { existsSync, lstatSync, realpathSync } from "node:fs";
 import { readFile, rm, writeFile } from "node:fs/promises";
-import { DEFAULT_PROVIDER_INSTANCE_ID, type ProviderInstanceRef, type TaskStore, type Task, type TaskDetail, type TaskTokenUsage, type StepStatus, type Settings, type WorkflowStep, type MissionStore, type AsyncMissionStore, type Slice, type AgentState, type AgentCapability, type RunMutationContext, type AgentHeartbeatConfig, type Agent, type AgentMemoryInclusionMode, type ProjectSettings, type MergeResult, type WorkflowIrNode, type WorkflowIrNodeKind, type WorkflowStepResult as CoreWorkflowStepResult, type WorkflowReviewFinding, type ThinkingLevel } from "@fusion/core";
+import { DEFAULT_PROVIDER_INSTANCE_ID, type ProviderInstanceRef, type TaskStore, type Task, type TaskDetail, type TaskRecommendation, type TaskTokenUsage, type StepStatus, type Settings, type WorkflowStep, type MissionStore, type AsyncMissionStore, type Slice, type AgentState, type AgentCapability, type RunMutationContext, type AgentHeartbeatConfig, type Agent, type AgentMemoryInclusionMode, type ProjectSettings, type MergeResult, type WorkflowIrNode, type WorkflowIrNodeKind, type WorkflowStepResult as CoreWorkflowStepResult, type WorkflowReviewFinding, type ThinkingLevel } from "@fusion/core";
 import { getUnmetSchedulingDependencies } from "./scheduler.js";
 import type { ImplementationExit, ImplementationExitReporter } from "./executor/implementation-exit.js";
 import { emitWorkflowLifecycleEvent } from "@fusion/core";
-import { resolveTaskLifecycleColumns, resolveProjectColumnsForRoles, resolveWipTargetForTask, resolveTerminalColumns, RetryStormError, serializeRetryStormError, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, resolveWorkflowIrForTask, columnsWithFlag, evaluateForeachMergeProof, resolveCompleteColumn, resolveMergeOrchestrationColumn, resolveReboundTarget, resolveLifecycleColumns, resolveColumnAgentBinding, resolveEffectiveAgent, instanceNodeId, getWorkflowExtensionRegistry, getBuiltinWorkflow, parseNoOpCompletionMarker, allowsAutoMergeProcessing, hasSharedBranchMemberAutoMergeHold, resolveEffectiveAutoMerge, isLiveSharedBranchGroupMemberIntegration, resolveMaxAutoMergeRetries, resolveMaxConsecutiveToolFailureRetries, resolveConsecutiveToolFailureRetryBackoffMs, resolveConsecutiveToolFailureThreshold, resolveExecutorEscalationTarget, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, DEFAULT_MAX_POST_REVIEW_FIXES, COMPLETION_SUMMARY_NODE_ID, PLAN_REVIEW_GROUP_ID, upsertWorkflowStepResult, normalizeWorkflowReviewFindings, AWAITING_APPROVAL_PAUSE_REASON, THINKING_LEVELS, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AgentStore, classifyWorkflowAgentNode, isWorkflowAgentRole, resolveExecutorFallbackModel, resolveValidatorFallbackModel, parseExplicitDuplicateMarker, nonExecutableDuplicateRedirectReason } from "@fusion/core";
+import { resolveTaskLifecycleColumns, resolveProjectColumnsForRoles, resolveWipTargetForTask, resolveTerminalColumns, RetryStormError, serializeRetryStormError, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, resolveWorkflowIrForTask, columnsWithFlag, evaluateForeachMergeProof, resolveCompleteColumn, resolveMergeOrchestrationColumn, resolveReboundTarget, resolveLifecycleColumns, resolveColumnAgentBinding, resolveEffectiveAgent, instanceNodeId, getWorkflowExtensionRegistry, getBuiltinWorkflow, parseNoOpCompletionMarker, allowsAutoMergeProcessing, hasSharedBranchMemberAutoMergeHold, resolveEffectiveAutoMerge, isLiveSharedBranchGroupMemberIntegration, resolveMaxAutoMergeRetries, resolveMaxConsecutiveToolFailureRetries, resolveConsecutiveToolFailureRetryBackoffMs, resolveConsecutiveToolFailureThreshold, resolveExecutorEscalationTarget, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, DEFAULT_MAX_POST_REVIEW_FIXES, COMPLETION_SUMMARY_NODE_ID, PLAN_REVIEW_GROUP_ID, upsertWorkflowStepResult, normalizeWorkflowReviewFindings, AWAITING_APPROVAL_PAUSE_REASON, THINKING_LEVELS, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AgentStore, classifyWorkflowAgentNode, isWorkflowAgentRole, resolveExecutorFallbackModel, resolveValidatorFallbackModel, resolveExplicitDuplicateMarker, nonExecutableDuplicateRedirectReason } from "@fusion/core";
 import {
   BLOCKED_THRASH_LIMIT,
   buildExternalBlockMetadataPatch,
@@ -614,6 +614,48 @@ const WORKFLOW_RERUN_WATCHDOG_MS = 15_000;
 const LOOP_COMPACTION_TIMEOUT_MS = 60_000;
 
 const TASK_DONE_REFUSAL_SUFFIX = "Either finish the work and resubmit, or do not call fn_task_done — exit the session and the engine will requeue.";
+
+/*
+FNXC:TaskRecommendations 2026-08-08-07:06:
+Keep completion validation aligned with TaskStore's authoritative no-command boundary. This early
+refusal gives executors an actionable tool response, while the store remains the final safeguard.
+*/
+/*
+FNXC:TaskRecommendations 2026-08-08-07:15:
+Keep the production tool's refusal aligned with the authoritative store policy: imperative shell
+forms with flags, paths, or script extensions are executable instructions, not task-ready prose.
+*/
+/* FNXC:TaskRecommendations 2026-08-08-07:26: Treat credential-like values, not ordinary security work such as a password-reset feature, as secrets. */
+const UNSAFE_RECOMMENDATION_CONTENT = /(?:```|\b(?:api[_-]?key|password|secret|token)\b\s*(?:=|:)\s*\S+|(?:^|\n)\s*(?:[$#]\s*)?(?:npm|pnpm|yarn|bun|npx|node|deno|python(?:3)?|bash|sh|zsh|fish|cmd(?:\.exe)?|powershell|curl|wget|git|docker|kubectl|make|just|rm|cp|mv|chmod|sudo)\b|(?:^|\n)\s*(?:run|execute)\s+(?:(?:npm|pnpm|yarn|bun|npx|node|deno|python(?:3)?|bash|sh|zsh|fish|cmd(?:\.exe)?|powershell|curl|wget|git|docker|kubectl|make|just|rm|cp|mv|chmod|sudo)\b|(?:\.?\.?[\\/]|~[\\/])\S*|\S+\s+(?:-{1,2}\S*|\S*[\\/]\S*|\S+\.(?:sh|py|js|ts|mjs|cjs|exe|bat|cmd)\b))|`(?:npm|pnpm|yarn|bun|npx|node|deno|python(?:3)?|bash|sh|zsh|fish|cmd|powershell|curl|wget|git|docker|kubectl|make|just|rm|cp|mv|chmod|sudo)\b)/im;
+
+/**
+ * FNXC:TaskRecommendations 2026-08-08-05:02:
+ * `fn_task_done` accepts only task-ready, out-of-scope suggestions. Refuse
+ * executable or credential-like material so the durable operator surface cannot
+ * become a second channel for agent reasoning, commands, or secrets.
+ */
+export function validateCompletionRecommendations(value: unknown, maximum: number): TaskRecommendation[] | string {
+  if (!Array.isArray(value)) return "recommendations must be an array";
+  if (value.length > maximum) return `recommendations exceed the project maximum of ${maximum}`;
+  const ids = new Set<string>();
+  for (const item of value) {
+    if (!item || typeof item !== "object") return "each recommendation must be an object";
+    const recommendation = item as TaskRecommendation;
+    /*
+    FNXC:TaskRecommendations 2026-08-08-05:56:
+    Completion recommendations are a compact, task-ready handoff rather than an executor transcript.
+    Keep the accepted shape closed so agents cannot persist reasoning, tool output, or a pre-linked
+    child id alongside an otherwise valid suggestion.
+    */
+    if (Object.keys(recommendation).some((key) => !["id", "title", "description", "category"].includes(key))) return "each recommendation may contain only id, title, description, and category";
+    if (typeof recommendation.id !== "string" || typeof recommendation.title !== "string" || typeof recommendation.description !== "string" || !recommendation.id.trim() || !recommendation.title.trim() || !recommendation.description.trim()) return "each recommendation requires id, title, and description";
+    if (!["improvement", "feature", "bug", "other"].includes(recommendation.category)) return "each recommendation category must be improvement, feature, bug, or other";
+    if (ids.has(recommendation.id)) return "recommendation ids must be unique";
+    if (UNSAFE_RECOMMENDATION_CONTENT.test(`${recommendation.title}\n${recommendation.description}`)) return "recommendations must not contain secrets or executable commands";
+    ids.add(recommendation.id);
+  }
+  return value as TaskRecommendation[];
+}
 
 type TaskDoneRefusalClass =
   | "bulk-step-completion-without-review"
@@ -1277,7 +1319,7 @@ export interface WorkflowStepOutcome {
   output?: string;
   error?: string;
   /** Machine-readable verdict extracted from structured JSON output. */
-  verdict?: "APPROVE" | "APPROVE_WITH_NOTES" | "REVISE";
+  verdict?: "APPROVE" | "APPROVE_WITH_NOTES" | "REVISE" | "CLOSE_NO_OP";
   /** Notes extracted from structured JSON output (distinct from raw output). */
   notes?: string;
   /** Normalized independently actionable feedback from a review-kind node. */
@@ -1302,7 +1344,10 @@ export type WorkflowStepResult =
   | { allPassed: false; revisionRequested: false; feedback: string; stepName: string }
   | { allPassed: false; revisionRequested: true; feedback: string; stepName: string };
 
-export function parseWorkflowStepVerdict(rawOutput: string): { verdict: "APPROVE" | "APPROVE_WITH_NOTES" | "REVISE"; notes: string; findings?: WorkflowReviewFinding[] } | null {
+export function parseWorkflowStepVerdict(
+  rawOutput: string,
+  options: { optionalGroupId?: string } = {},
+): { verdict: "APPROVE" | "APPROVE_WITH_NOTES" | "REVISE" | "CLOSE_NO_OP"; notes: string; findings?: WorkflowReviewFinding[] } | null {
   const trimmed = rawOutput.trim();
   const candidates: string[] = [];
   const fencedMatches = [...trimmed.matchAll(/```(?:json)?\s*([\s\S]*?)```/g)];
@@ -1324,9 +1369,16 @@ export function parseWorkflowStepVerdict(rawOutput: string): { verdict: "APPROVE
       "Any approved" — accept approval-family verdict variants (APPROVE, APPROVED, APPROVE_WITH_NOTES, approve_with_verdict, …), not just the exact WORKFLOW_STEP_VERDICTS strings. A token starting with APPROVE maps to APPROVE_WITH_NOTES when it mentions notes, else APPROVE; REVISE-family → REVISE; anything else (e.g. "PASS") is not a verdict and the candidate is skipped.
       */
       const token = parsed.verdict.trim().toUpperCase();
-      let verdict: "APPROVE" | "APPROVE_WITH_NOTES" | "REVISE" | null = null;
+      let verdict: "APPROVE" | "APPROVE_WITH_NOTES" | "REVISE" | "CLOSE_NO_OP" | null = null;
       if (token.startsWith("APPROVE") || token.startsWith("APPROVAL")) {
         verdict = token.includes("NOTE") ? "APPROVE_WITH_NOTES" : "APPROVE";
+      } else if (token === "CLOSE_NO_OP" && options.optionalGroupId === PLAN_REVIEW_GROUP_ID) {
+        /*
+         * FNXC:PlanReviewNoOp 2026-08-09-01:17:
+         * Only the built-in Plan Review protocol may request a no-op close. Exact matching
+         * prevents prose or unrelated review groups from acquiring a terminal lifecycle path.
+         */
+        verdict = "CLOSE_NO_OP";
       } else if (token.startsWith("REVISE") || token.startsWith("REQUEST_REVISION") || token.startsWith("REJECT")) {
         verdict = "REVISE";
       }
@@ -1381,27 +1433,34 @@ export function inferWorkflowStepVerdictFromProse(rawOutput: string): { verdict:
  */
 export function parseWorkflowStepOutput(rawOutput: string): {
   output: string;
-  verdict?: "APPROVE" | "APPROVE_WITH_NOTES" | "REVISE";
+  verdict?: "APPROVE" | "APPROVE_WITH_NOTES" | "REVISE" | "CLOSE_NO_OP";
   notes?: string;
   findings?: WorkflowReviewFinding[];
   malformed?: boolean;
 };
-export function parseWorkflowStepOutput(rawOutput: string, options: { requireVerdict: false }): {
+export function parseWorkflowStepOutput(rawOutput: string, options: { optionalGroupId?: string }): {
   output: string;
-  verdict?: "APPROVE" | "APPROVE_WITH_NOTES" | "REVISE";
+  verdict?: "APPROVE" | "APPROVE_WITH_NOTES" | "REVISE" | "CLOSE_NO_OP";
   notes?: string;
   findings?: WorkflowReviewFinding[];
   malformed?: boolean;
 };
-export function parseWorkflowStepOutput(rawOutput: string, options: { requireVerdict?: boolean } = {}): {
+export function parseWorkflowStepOutput(rawOutput: string, options: { requireVerdict: false; optionalGroupId?: string }): {
   output: string;
-  verdict?: "APPROVE" | "APPROVE_WITH_NOTES" | "REVISE";
+  verdict?: "APPROVE" | "APPROVE_WITH_NOTES" | "REVISE" | "CLOSE_NO_OP";
+  notes?: string;
+  findings?: WorkflowReviewFinding[];
+  malformed?: boolean;
+};
+export function parseWorkflowStepOutput(rawOutput: string, options: { requireVerdict?: boolean; optionalGroupId?: string } = {}): {
+  output: string;
+  verdict?: "APPROVE" | "APPROVE_WITH_NOTES" | "REVISE" | "CLOSE_NO_OP";
   notes?: string;
   findings?: WorkflowReviewFinding[];
   malformed?: boolean;
 } {
   const trimmed = rawOutput.trim();
-  const parsed = parseWorkflowStepVerdict(trimmed);
+  const parsed = parseWorkflowStepVerdict(trimmed, options);
   if (parsed) {
     return {
       output: parsed.notes || "",
@@ -5681,6 +5740,205 @@ export class TaskExecutor {
     );
   }
 
+  /*
+   * FNXC:PlanReviewNoOp 2026-08-09-02:08:
+   * Accepted no-op completion has one lifecycle handoff for both fn_task_done and Plan Review.
+   * The close path must not emulate completion with a column patch: this primitive records the
+   * canonical marker, completes steps, and uses the same watchdog-owned handoff as an executor.
+   */
+  private async finalizeAcceptedNoOpCompletion(params: {
+    task: TaskDetail;
+    marker: { kind: string; reason: string; canonicalId?: string };
+    summary: string;
+    recommendations?: TaskRecommendation[];
+    onDone?: () => void;
+    rejectIfPaused?: boolean;
+  }): Promise<{ completed: boolean; hardPauseActive: boolean }> {
+    const { task, marker, summary, recommendations, onDone, rejectIfPaused = false } = params;
+    const isRejectedCloseState = async (): Promise<boolean> => {
+      const current = await this.store.getTask(task.id);
+      return !current
+        || Boolean(current.deletedAt)
+        || (await resolveTerminalColumnsFor(this.store, task.id)).includes(current.column)
+        || (rejectIfPaused && (current.paused === true || current.userPaused === true));
+    };
+    const live = await this.store.getTask(task.id);
+    if (!live || live.deletedAt || (await resolveTerminalColumnsFor(this.store, task.id)).includes(live.column)) {
+      return { completed: false, hardPauseActive: false };
+    }
+    if (rejectIfPaused && (live.paused || live.userPaused)) return { completed: false, hardPauseActive: false };
+
+    const runContext = this.getRunContextFor(task.id);
+    const restoreNoCommitsExpected = async (): Promise<void> => {
+      if (live.noCommitsExpected !== true) {
+        await this.store.updateTask(task.id, { noCommitsExpected: false }).catch(() => undefined);
+      }
+    };
+    try {
+      /*
+       * FNXC:PlanReviewNoOp 2026-08-09-02:28:
+       * A reviewer close must lose to a concurrent user pause, deletion, or terminal handoff.
+       * Re-read immediately before each lifecycle boundary and never clear pause fields on this
+       * path, so accepting a close cannot resurrect or complete operator-withdrawn work.
+       */
+      if (await isRejectedCloseState()) return { completed: false, hardPauseActive: false };
+      await this.store.updateTask(task.id, { noCommitsExpected: true });
+      await this.store.logEntry(
+        task.id,
+        `Verified ${marker.kind} completion sentinel accepted; no commits expected for terminal handoff`,
+        JSON.stringify({ kind: marker.kind, reason: marker.reason, canonicalId: marker.canonicalId, summary, runId: runContext?.runId, agentId: runContext?.agentId }),
+        runContext,
+      );
+      const recordActivity = (this.store as typeof this.store & {
+        recordActivity?: (entry: { type: "task:updated"; taskId: string; taskTitle?: string; details: string; metadata?: Record<string, unknown> }) => Promise<unknown>;
+      }).recordActivity;
+      if (recordActivity) {
+        await recordActivity.call(this.store, {
+          type: "task:updated",
+          taskId: task.id,
+          taskTitle: live.title,
+          details: `Task marked as verified ${marker.kind}; no commits expected`,
+          metadata: { taskId: task.id, kind: marker.kind, reason: marker.reason, canonicalId: marker.canonicalId, summary, runId: runContext?.runId, agentId: runContext?.agentId },
+        }).catch((error: unknown) => {
+          executorLog.warn(`${task.id}: failed to record no-op completion activity: ${error instanceof Error ? error.message : String(error)}`);
+        });
+      }
+      onDone?.();
+      for (let index = 0; index < live.steps.length; index += 1) {
+        if (live.steps[index]?.status !== "done" && live.steps[index]?.status !== "skipped") {
+          if (await isRejectedCloseState()) {
+            await restoreNoCommitsExpected();
+            return { completed: false, hardPauseActive: false };
+          }
+          await this.store.updateStep(task.id, index, "done");
+        }
+      }
+      if (await isRejectedCloseState()) {
+        await restoreNoCommitsExpected();
+        return { completed: false, hardPauseActive: false };
+      }
+      const currentTask = await this.store.getTask(task.id);
+      const existingSummary = currentTask.summary?.trim();
+      const hasRunWorkflowSteps = (currentTask.workflowStepResults?.length ?? 0) > 0;
+      const rerunSuffix = `---\nRerun after workflow step revision:\n${summary}`;
+      if (existingSummary && hasRunWorkflowSteps && !existingSummary.endsWith(rerunSuffix)) {
+        await this.store.updateTask(task.id, { summary: `${currentTask.summary}\n\n${rerunSuffix}` });
+        await this.store.logEntry(task.id, "fn_task_done summary appended to existing summary (workflow-step rerun)", undefined, runContext);
+      } else if (!existingSummary || !hasRunWorkflowSteps) {
+        await this.store.updateTask(task.id, { summary });
+      }
+      if (recommendations !== undefined) {
+        await this.store.updateTask(task.id, { recommendations });
+      }
+      const settings = await this.store.getSettings();
+      const hardPauseActive = Boolean(settings.globalPause);
+      if (await isRejectedCloseState()) {
+        await restoreNoCommitsExpected();
+        return { completed: false, hardPauseActive: false };
+      }
+      await this.store.updateTask(task.id, {
+        ...(rejectIfPaused ? {} : { paused: false, pausedByAgentId: null }),
+        status: null,
+        bulkCompletionRefusalAt: null,
+      }, runContext);
+      await this.store.logEntry(task.id, "Task marked done by agent", undefined, runContext);
+      const refreshed = await this.store.getTask(task.id);
+      if (!refreshed || refreshed.deletedAt || (await resolveTerminalColumnsFor(this.store, task.id)).includes(refreshed.column)
+        || (rejectIfPaused && (refreshed.paused || refreshed.userPaused))) {
+        await restoreNoCommitsExpected();
+        return { completed: false, hardPauseActive: false };
+      }
+      let latestColumn = refreshed.column;
+      if (latestColumn === await resolveReboundColumnFor(this.store, task.id)) {
+        const wipTarget = await resolveWipTargetForTask(this.store, task.id);
+        await this.store.moveTask(task.id, wipTarget);
+        latestColumn = wipTarget;
+      }
+      const beforeWatchdog = await this.store.getTask(task.id);
+      if (latestColumn === await resolveWipTargetForTask(this.store, task.id)
+        && !hardPauseActive
+        && beforeWatchdog
+        && !beforeWatchdog.deletedAt
+        && !(rejectIfPaused && (beforeWatchdog.paused || beforeWatchdog.userPaused))) {
+        this.scheduleCompletedTaskWatchdog(task.id, "fn_task_done");
+      }
+      return { completed: true, hardPauseActive };
+    } catch (error) {
+      /*
+       * FNXC:PlanReviewNoOp 2026-08-09-02:24:
+       * `noCommitsExpected` is a completion-only exemption. A failed handoff returns to
+       * Plan Review, so restore its prior value rather than allowing a later approval to
+       * execute implementation without the normal no-commit invariant.
+       */
+      await restoreNoCommitsExpected();
+      await this.store.logEntry(task.id, `Plan Review CLOSE_NO_OP terminalization failed: ${error instanceof Error ? error.message : String(error)}`);
+      return { completed: false, hardPauseActive: false };
+    }
+  }
+
+  private async completePlanReviewNoOp(
+    task: TaskDetail,
+    marker: { kind: string; reason: string; canonicalId?: string },
+  ): Promise<boolean> {
+    const summaryPrefix = marker.kind === "premise-stale" ? "PREMISE STALE" : marker.kind.toUpperCase();
+    const completion = await this.finalizeAcceptedNoOpCompletion({
+      task,
+      marker,
+      summary: `${summaryPrefix}: ${marker.reason}`,
+      rejectIfPaused: true,
+    });
+    return completion.completed;
+  }
+
+  private async holdPlanReviewNoOpContinuation(
+    task: Task,
+    suspension: {
+      reason: "invalid" | "terminal-route-unavailable" | "terminalization-failed";
+      nodeId: string;
+      fromColumn: string;
+      toColumn: string;
+      irHash: string;
+    },
+    continuation: WorkflowWorkItem | undefined,
+    resolvedRunId: string | undefined,
+  ): Promise<WorkflowWorkItem | undefined> {
+    const live = await this.store.getTask(task.id).catch(() => undefined);
+    if (!live || live.deletedAt || (await resolveTerminalColumnsFor(this.store, task.id)).includes(live.column)) return continuation;
+    const blockedReason = `plan-review-close-${suspension.reason}`;
+    if (typeof this.store.replaceActiveTaskWorkflowContinuation === "function") {
+      /*
+       * FNXC:PlanReviewNoOp 2026-08-09-02:37:
+       * A user pause wins terminal completion, but it must not discard the reviewer-close
+       * continuation that makes the paused card resumable. Replace the active continuation
+       * atomically even after observing a pause; holding it never clears pause fields or
+       * schedules execution, while omitting it strands durable failed close evidence.
+       */
+      return await this.store.replaceActiveTaskWorkflowContinuation({
+        runId: continuation?.runId ?? `${resolvedRunId ?? `${task.id}:workflow`}:plan-review-close:${suspension.reason}`,
+        taskId: task.id,
+        nodeId: suspension.nodeId,
+        kind: "task",
+        state: "held",
+        stableWorkflowRunId: continuation?.stableWorkflowRunId ?? resolvedRunId ?? `${task.id}:workflow`,
+        waitReason: "planning",
+        blockedReason,
+        lastError: blockedReason,
+        sourceColumn: suspension.fromColumn,
+        targetColumn: suspension.toColumn,
+        irHash: suspension.irHash,
+      });
+    }
+    if (continuation && typeof this.store.transitionWorkflowWorkItem === "function") {
+      return await this.store.transitionWorkflowWorkItem(continuation.id, "held", {
+        leaseOwner: null,
+        leaseExpiresAt: null,
+        lastError: blockedReason,
+        blockedReason,
+      }).catch(() => continuation);
+    }
+    return continuation;
+  }
+
   private async requestPreMergeOptionalStepFix(
     taskId: string,
     fallbackTask: Task,
@@ -6780,6 +7038,9 @@ export class TaskExecutor {
           this.runGraphCustomNode(node, nodeTask, nodeSettings, columnBinding, context),
         resolveColumnBinding: resolveBindingForNode,
       });
+      // Assigned from the active work item before runner.run(). The close-hold callback
+      // closes over this binding so it can retain the exact resumable continuation.
+      let continuation: WorkflowWorkItem | undefined;
       const runner = new WorkflowGraphTaskRunner({
         localNodeId: this.options.getLocalNodeId?.(),
         store: {
@@ -7218,6 +7479,16 @@ export class TaskExecutor {
         no-op when the store lacks updateTask, and swallow read/write errors (the
         executor wrapper also swallows) so result recording never affects the run.
         */
+        completePlanReviewNoOp: (nodeTask, marker) => this.completePlanReviewNoOp(nodeTask, marker),
+        /*
+        FNXC:PlanReviewNoOp 2026-08-09-01:55:
+        Invalid, unroutable, or failed Plan Review closes are explicit waits, not graph failures.
+        Keep one held continuation at plan-review so scheduler resume preserves the audited close
+        evidence without changing the task's column or manufacturing a task error.
+        */
+        holdPlanReviewNoOp: async (nodeTask, suspension) => {
+          continuation = await this.holdPlanReviewNoOpContinuation(nodeTask, suspension, continuation, resolvedRunId);
+        },
         recordWorkflowStepResult: async (taskId: string, result: CoreWorkflowStepResult) => {
           if (typeof this.store.updateTask !== "function") return;
           try {
@@ -7260,7 +7531,6 @@ export class TaskExecutor {
         columnBoundaryHooks: this.buildColumnBoundaryHooks(task, resolvedRunId),
       });
       let result: WorkflowGraphTaskRunResult;
-      let continuation: WorkflowWorkItem | undefined;
       try {
         const loadedDetail = await this.store.getTask(task.id);
         /*
@@ -12646,9 +12916,10 @@ export class TaskExecutor {
             ? this.store.getTasksDir()
             : join(this.rootDir, ".fusion", "tasks");
           const promptContent = await readFile(getPromptPath(tasksDir, live.id), "utf-8").catch(() => "");
-          const redirectReason = nonExecutableDuplicateRedirectReason(promptContent);
+          const redirectReason = nonExecutableDuplicateRedirectReason(promptContent, live.title);
           if (redirectReason) {
-            const marker = parseExplicitDuplicateMarker(promptContent);
+            const duplicateResolution = resolveExplicitDuplicateMarker(promptContent, live.title);
+            const marker = duplicateResolution.marker;
             const replanColumn = await resolveReplanTargetColumn(this.store, live.id);
             await moveTaskToReplanColumn(this.store, { id: live.id, column: live.column }, replanColumn);
             await this.store.updateTask(live.id, {
@@ -12656,8 +12927,8 @@ export class TaskExecutor {
               error: null,
             }, this.getRunContextFor(live.id));
             const feedback = marker
-              ? `Execution parse rejected non-executable PROMPT.md (DUPLICATE: ${marker.canonicalId}). Write a full plan body; do not re-emit only DUPLICATE: ${marker.canonicalId}.`
-              : `Execution parse rejected non-executable PROMPT.md (${redirectReason}). Write a full plan body.`;
+              ? `Execution parse rejected non-executable duplicate redirect (DUPLICATE: ${marker.canonicalId}). Write a full plan body; do not re-emit only DUPLICATE: ${marker.canonicalId}.`
+              : `Execution parse rejected conflicting duplicate redirects (${redirectReason}). Correct the title or PROMPT.md before writing a full plan body.`;
             await this.store.logEntry(
               live.id,
               "AI spec revision requested",
@@ -18136,6 +18407,12 @@ export class TaskExecutor {
         summary: Type.Optional(Type.String({
           description: "Optional summary of what was changed/fixed and what was verified (2-4 sentences). Used when outcome=\"completed\".",
         })),
+        recommendations: Type.Optional(Type.Array(Type.Object({
+          id: Type.String(),
+          title: Type.String(),
+          description: Type.String(),
+          category: Type.Union([Type.Literal("improvement"), Type.Literal("feature"), Type.Literal("bug"), Type.Literal("other")]),
+        }), { description: "Optional bounded out-of-scope, task-ready follow-up suggestions. Do not include mandatory fixes, secrets, commands, or execution reasoning." })),
         /*
         FNXC:Lifecycle 2026-07-16-10:20:
         FN-8141 laundered a genuinely-impossible task into `done`: fn_task_done only expressed success, the bulk-completion
@@ -18155,7 +18432,7 @@ export class TaskExecutor {
           description: "Required when outcome=\"blocked\": concrete explanation of what is blocking the work and what is needed to unblock it.",
         })),
       }),
-      execute: async (_id: string, params: { summary?: string; outcome?: "completed" | "blocked"; blockedBy?: string[]; reason?: string }) => {
+      execute: async (_id: string, params: { summary?: string; recommendations?: TaskRecommendation[]; outcome?: "completed" | "blocked"; blockedBy?: string[]; reason?: string }) => {
         /*
         FNXC:Lifecycle 2026-07-16-10:20:
         FN-8141 — the blocked exit runs BEFORE every completion gate (completion blocker, verdict providers, worktree
@@ -18447,50 +18724,36 @@ export class TaskExecutor {
           };
         }
 
+        const completionRecommendations = params.recommendations === undefined
+          ? undefined
+          : validateCompletionRecommendations(params.recommendations, settings.maxRecommendationsPerTask ?? 3);
+        if (typeof completionRecommendations === "string") {
+          return {
+            content: [{ type: "text" as const, text: `Cannot mark task done yet — ${completionRecommendations}.` }],
+            details: { error: completionRecommendations },
+          };
+        }
+
         if (noOpMarker) {
-          const runContext = this.getRunContextFor(taskId);
-          await store.updateTask(taskId, { noCommitsExpected: true });
-          await store.logEntry(
-            taskId,
-            `Verified ${noOpMarker.kind} completion sentinel accepted; no commits expected for terminal handoff`,
-            JSON.stringify({
-              kind: noOpMarker.kind,
-              reason: noOpMarker.reason,
-              canonicalId: noOpMarker.canonicalId,
-              summary: params.summary,
-              runId: runContext?.runId,
-              agentId: runContext?.agentId,
-            }),
-            runContext,
-          );
-          const recordActivity = (store as typeof store & {
-            recordActivity?: (entry: {
-              type: "task:updated";
-              taskId: string;
-              taskTitle?: string;
-              details: string;
-              metadata?: Record<string, unknown>;
-            }) => Promise<unknown>;
-          }).recordActivity;
-          if (recordActivity) {
-            await recordActivity.call(store, {
-              type: "task:updated",
-              taskId,
-              taskTitle: task.title,
-              details: `Task marked as verified ${noOpMarker.kind}; no commits expected`,
-              metadata: {
-                taskId,
-                kind: noOpMarker.kind,
-                reason: noOpMarker.reason,
-                canonicalId: noOpMarker.canonicalId,
-                summary: params.summary,
-                runId: runContext?.runId,
-                agentId: runContext?.agentId,
-              },
-            }).catch((error: unknown) => {
-              executorLog.warn(`${taskId}: failed to record no-op completion activity: ${error instanceof Error ? error.message : String(error)}`);
-            });
+          const completion = await this.finalizeAcceptedNoOpCompletion({
+            task,
+            marker: noOpMarker,
+            summary: params.summary?.trim() || `${noOpMarker.kind.toUpperCase()}: ${noOpMarker.reason}`,
+            recommendations: completionRecommendations,
+            onDone,
+          });
+          if (!completion.completed) {
+            return {
+              content: [{ type: "text" as const, text: "Cannot mark task done because completion handoff was interrupted." }],
+              details: { error: "no-op-completion-interrupted" },
+            };
           }
+          const successMessage = completion.hardPauseActive
+            ? "Task marked complete. Completion handoff deferred until pause is cleared."
+            : params.summary
+            ? "Task marked complete with summary. All steps done. Moving to in-review."
+            : "Task marked complete. All steps done. Moving to in-review.";
+          return { content: [{ type: "text" as const, text: successMessage }], details: {} };
         }
 
         onDone();
@@ -18517,6 +18780,10 @@ export class TaskExecutor {
           } else if (!existingSummary || !hasRunWorkflowSteps) {
             await store.updateTask(taskId, { summary: params.summary });
           }
+        }
+        // FNXC:TaskRecommendations 2026-08-08-05:02: write only after every completion gate accepts; retries replace the list deterministically.
+        if (completionRecommendations !== undefined) {
+          await store.updateTask(taskId, { recommendations: completionRecommendations });
         }
         const hardPauseActive = Boolean(settings.globalPause);
         // Task-level pause prevents new work from starting, not completion of
@@ -19520,13 +19787,13 @@ ${scopeGuard}
   }
 
   /** Parse structured JSON verdict from workflow step output. */
-  private parseWorkflowStepOutput(rawOutput: string): {
+  private parseWorkflowStepOutput(rawOutput: string, optionalGroupId?: string): {
     output: string;
-    verdict?: "APPROVE" | "APPROVE_WITH_NOTES" | "REVISE";
+    verdict?: "APPROVE" | "APPROVE_WITH_NOTES" | "REVISE" | "CLOSE_NO_OP";
     notes?: string;
     malformed?: boolean;
   } {
-    return parseWorkflowStepOutput(rawOutput);
+    return parseWorkflowStepOutput(rawOutput, { optionalGroupId });
   }
 
   private workflowInputRepliesAfterWatermark(task: TaskDetail, marker: string): Array<{ createdAt?: string }> {
@@ -20224,7 +20491,9 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
         session.dispose();
         await agentLogger.flush();
 
-        const parsed = requireVerdict ? parseWorkflowStepOutput(output) : parseWorkflowStepOutput(output, { requireVerdict: false });
+        const parsed = requireVerdict
+          ? parseWorkflowStepOutput(output, { optionalGroupId })
+          : parseWorkflowStepOutput(output, { requireVerdict: false, optionalGroupId });
         if (parsed.verdict) {
           const revisionRequested = parsed.verdict === "REVISE";
           if (workflowStep.requiresBrowser === true) {
@@ -20692,13 +20961,17 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
             );
           });
         }
-        // Mirror the merge-time rebase behavior: when worktreeRebaseBeforeMerge
-        // is enabled, fetch the remote and rebase the just-created task branch
-        // onto the latest <remote>/<defaultBranch>. This makes the worktree
-        // start from origin/main + local main both, so divergence only matters
-        // if the user actively skips this setting. Best-effort: failures here
-        // don't abort task setup.
-        await this.rebaseNewWorktreeOntoRemote(result.path, result.branch, taskId).catch((err: unknown) => {
+        /*
+         * FNXC:WorktreeRebase 2026-08-09-00:48:
+         * A fresh worktree must refresh against the same integration-branch-first
+         * contract that selected its start point. The root checkout may be on a
+         * sibling task branch, so it must never select this rebase target.
+         * Refresh remains best-effort, but enabled skips and failures are logged
+         * durably for operators rather than looking like the setting was disabled.
+         */
+        // Fetch and rebase the just-created task branch only when the setting
+        // is enabled. Failures here never abort task setup.
+        await this.rebaseNewWorktreeOntoRemote(result.path, result.branch, taskId, settings).catch((err: unknown) => {
           executorLog.warn(
             `Post-create worktree rebase failed for ${taskId} (continuing): ${err instanceof Error ? err.message : String(err)}`,
           );
@@ -20925,25 +21198,28 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
 
   /**
    * After creating a fresh task worktree, fetch the configured remote and
-   * rebase the task branch onto `<remote>/<defaultBranch>`. The result is a
-   * branch that contains origin's tip plus any local main commits, so the
-   * eventual merge has fewer surprises and the executor sees the freshest
-   * code its peers/CI may have published.
+   * rebase the task branch onto that remote's resolved integration branch.
+   * The branch resolver is shared with fresh-worktree acquisition, so an
+   * explicit `integrationBranch` wins over a remote default and root HEAD is
+   * never consulted.
    *
-   * No-op when `worktreeRebaseBeforeMerge` is disabled, no remote is
-   * configured/resolvable, or the rebase produces conflicts (we abort and
-   * leave the worktree as-is so the executor can still run).
+   * No-op when `worktreeRebaseBeforeMerge` is disabled. Enabled skips,
+   * fetch failures, and conflicts are visible in the task log; setup remains
+   * best-effort and a conflict leaves the local base usable after abort.
    */
   private async rebaseNewWorktreeOntoRemote(
     worktreePath: string,
     branch: string,
     taskId: string,
+    settingsOverride?: Settings,
   ): Promise<void> {
-    let settings;
-    try {
-      settings = await this.store.getSettings();
-    } catch {
-      return;
+    let settings = settingsOverride;
+    if (!settings) {
+      try {
+        settings = await this.store.getSettings();
+      } catch {
+        return;
+      }
     }
     if (settings.worktreeRebaseBeforeMerge === false) return;
 
@@ -20958,39 +21234,45 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
         // No remote resolvable — nothing to rebase against.
       }
     }
-    if (!remote) return;
-
-    let defaultBranch = "";
-    try {
-      const { stdout } = await execAsync(`git rev-parse --abbrev-ref ${remote}/HEAD`, { cwd: this.rootDir });
-      defaultBranch = stdout.trim().replace(new RegExp(`^${remote}/`), "");
-    } catch {
-      // origin/HEAD not set — fall back to current branch in rootDir.
+    if (!remote) {
+      this.safeLogEntry(
+        taskId,
+        "Skipped new worktree rebase refresh — no remote was resolvable",
+      );
+      return;
     }
-    if (!defaultBranch) {
-      try {
-        const { stdout } = await execAsync("git rev-parse --abbrev-ref HEAD", { cwd: this.rootDir });
-        defaultBranch = stdout.trim();
-      } catch {
-        return;
-      }
-    }
-    if (!defaultBranch || defaultBranch === "HEAD") return;
 
-    const remoteRef = `${remote}/${defaultBranch}`;
+    let integrationBranch: string;
+    try {
+      integrationBranch = await resolveIntegrationBranch(this.rootDir, settings, { logger: executorLog });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      executorLog.warn(`Worktree rebase: could not resolve integration branch for ${taskId}: ${message}`);
+      this.safeLogEntry(
+        taskId,
+        `Skipped new worktree rebase refresh — integration branch could not be resolved for ${remote}`,
+      );
+      return;
+    }
+
+    const remoteRef = `${remote}/${integrationBranch}`;
 
     try {
-      await execAsync(`git fetch ${this.quoteShellArg(remote)} ${this.quoteShellArg(defaultBranch)}`, { cwd: this.rootDir });
+      await execAsync(`git fetch ${this.quoteShellArg(remote)} ${this.quoteShellArg(integrationBranch)}`, { cwd: this.rootDir });
     } catch (err) {
       executorLog.warn(
-        `Worktree rebase: fetch ${remote} ${defaultBranch} failed for ${taskId}: ${err instanceof Error ? err.message : String(err)}`,
+        `Worktree rebase: fetch ${remote} ${integrationBranch} failed for ${taskId}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      this.safeLogEntry(
+        taskId,
+        `Could not refresh new worktree rebase target ${remoteRef} — fetch failed; kept local base.`,
       );
       return;
     }
 
     try {
       await execAsync(`git rebase ${this.quoteShellArg(remoteRef)}`, { cwd: worktreePath });
-      await this.store.logEntry(
+      this.safeLogEntry(
         taskId,
         `Rebased new worktree branch ${branch} onto ${remoteRef}`,
       );
@@ -21004,7 +21286,7 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
       } catch {
         // best-effort
       }
-      await this.store.logEntry(
+      this.safeLogEntry(
         taskId,
         `Could not rebase new worktree onto ${remoteRef} — kept local base. The merge-time rebase will retry with conflict resolution.`,
       );

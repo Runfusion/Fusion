@@ -18,7 +18,7 @@ import {InvalidFileScopeError} from "./errors.js";
 import {mkdir, readFile, writeFile} from "node:fs/promises";
 import {join} from "node:path";
 import {existsSync} from "node:fs";
-import type {Task, Column, TaskLogEntry, RunMutationContext} from "../types.js";
+import type {Task, Column, TaskLogEntry, RunMutationContext, TaskRecommendation} from "../types.js";
 import {validateCustomFieldPatch, CustomFieldRejectionError} from "../tasks/task-fields.js";
 import "../builtin-traits.js";
 import {normalizeTaskPriority} from "../tasks/task-priority.js";
@@ -35,7 +35,53 @@ import {assertValidProviderInstanceId} from "../provider-instance.js";
 import {supersedePlanReviewResults} from "../planner/plan-approval.js";
 import {PLAN_REVIEW_GROUP_ID} from "../workflows/builtin-plan-review-group.js";
 
+/*
+FNXC:TaskRecommendations 2026-08-08-07:06:
+Recommendations are durable operator-visible task proposals, never an execution channel. Enforce the
+no-secret/no-command contract at the authoritative mutation boundary as well as fn_task_done, so
+routes, migrations, and future writers cannot persist shell instructions by bypassing the executor.
+*/
+/*
+FNXC:TaskRecommendations 2026-08-08-07:15:
+Recommendations are task-ready prose, not a shell execution channel. Reject direct shell/interpreter
+syntax and imperative command forms with flags, paths, or script extensions at persistence, where
+future writers cannot evade the executor's user-facing validation.
+*/
+/* FNXC:TaskRecommendations 2026-08-08-07:26: Treat credential-like values, not ordinary security work such as a password-reset feature, as secrets. */
+const UNSAFE_RECOMMENDATION_CONTENT = /(?:```|\b(?:api[_-]?key|password|secret|token)\b\s*(?:=|:)\s*\S+|(?:^|\n)\s*(?:[$#]\s*)?(?:npm|pnpm|yarn|bun|npx|node|deno|python(?:3)?|bash|sh|zsh|fish|cmd(?:\.exe)?|powershell|curl|wget|git|docker|kubectl|make|just|rm|cp|mv|chmod|sudo)\b|(?:^|\n)\s*(?:run|execute)\s+(?:(?:npm|pnpm|yarn|bun|npx|node|deno|python(?:3)?|bash|sh|zsh|fish|cmd(?:\.exe)?|powershell|curl|wget|git|docker|kubectl|make|just|rm|cp|mv|chmod|sudo)\b|(?:\.?\.?[\\/]|~[\\/])\S*|\S+\s+(?:-{1,2}\S*|\S*[\\/]\S*|\S+\.(?:sh|py|js|ts|mjs|cjs|exe|bat|cmd)\b))|`(?:npm|pnpm|yarn|bun|npx|node|deno|python(?:3)?|bash|sh|zsh|fish|cmd|powershell|curl|wget|git|docker|kubectl|make|just|rm|cp|mv|chmod|sudo)\b)/im;
+const RECOMMENDATION_KEYS = new Set(["id", "title", "description", "category", "createdTaskId"]);
+
+function assertValidRecommendations(value: unknown): asserts value is TaskRecommendation[] {
+  if (!Array.isArray(value)) throw new Error("recommendations must be an array");
+  const ids = new Set<string>();
+  for (const recommendation of value) {
+    if (!recommendation || typeof recommendation !== "object") throw new Error("recommendations must contain objects");
+    const candidate = recommendation as TaskRecommendation;
+    if (Object.keys(candidate).some((key) => !RECOMMENDATION_KEYS.has(key))) {
+      throw new Error("recommendations may contain only id, title, description, category, and createdTaskId");
+    }
+    if (
+      typeof candidate.id !== "string" || !candidate.id.trim()
+      || typeof candidate.title !== "string" || !candidate.title.trim()
+      || typeof candidate.description !== "string" || !candidate.description.trim()
+    ) {
+      throw new Error("recommendations require string id, title, and description");
+    }
+    if (!['improvement', 'feature', 'bug', 'other'].includes(candidate.category)) throw new Error("recommendations contain an invalid category");
+    if (UNSAFE_RECOMMENDATION_CONTENT.test(`${candidate.title}\n${candidate.description}`)) {
+      throw new Error("recommendations must not contain secrets or executable commands");
+    }
+    if (candidate.createdTaskId !== undefined && (typeof candidate.createdTaskId !== "string" || !/^[A-Z]+-\d+$/.test(candidate.createdTaskId))) {
+      throw new Error("recommendations contain an invalid created task link");
+    }
+    if (ids.has(candidate.id)) throw new Error("recommendations must have unique ids");
+    ids.add(candidate.id);
+  }
+}
+
 export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updates: Parameters<TaskStore["updateTask"]>[1], runContext?: RunMutationContext,): Promise<Task> {
+  /* FNXC:TaskRecommendations 2026-08-08-05:02: every writer, including the recommendation route, shares this authoritative malformed/duplicate-id rejection boundary. */
+  if (updates.recommendations !== undefined) assertValidRecommendations(updates.recommendations);
   /* FNXC:CredentialInstanceSelection 2026-08-01-05:43: validate task authoring input before persistence; ids are stored but runtime credential resolution remains unchanged. */
   for (const key of ["credentialInstanceId", "validatorCredentialInstanceId", "planningCredentialInstanceId", "mergerCredentialInstanceId"] as const) {
     const value = (updates as Record<string, unknown>)[key];
@@ -786,6 +832,9 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
         task.summary = undefined;
       } else if (updates.summary !== undefined) {
         task.summary = updates.summary;
+      }
+      if (updates.recommendations !== undefined) {
+        task.recommendations = updates.recommendations;
       }
       if (updates.sessionFile === null) {
         task.sessionFile = undefined;

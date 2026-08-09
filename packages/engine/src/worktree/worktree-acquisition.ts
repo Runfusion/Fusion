@@ -36,7 +36,7 @@ import {
   type WorktrunkOpName,
 } from "./worktrunk-failure-handler.js";
 import type { RunAuditor } from "../util/run-audit.js";
-import { writeSecretsEnvFile } from "./secrets-env-writer.js";
+import { reconcileSecretsEnvFingerprint, writeSecretsEnvFile } from "./secrets-env-writer.js";
 import { removeDesktopBuildArtifacts } from "./worktree-desktop-artifacts.js";
 import { installTaskWorktreeIdentityGuard } from "./worktree-hooks.js";
 import { copyConfiguredWorktreeFiles, type WorktreeCopyFileResult } from "./worktree-copy-files.js";
@@ -215,6 +215,26 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
   const { task, rootDir, store, settings, pool, logger, audit, runContext, createWorktree, runConfiguredCommand, runInitCommand, taskEnv, secretsStore } = opts;
   const refreshExistingWorktree = async (path: string): Promise<WorktreeBaseRefreshResult | undefined> => {
     if (!opts.refreshStaleBase) return undefined;
+    /*
+     * FNXC:SecretsEnvMaterialization 2026-08-07-23:13:
+     * Reconcile the v0.75.1 root record before strict porcelain checking. A malformed, conflicting, or
+     * unresolvable record fails closed rather than hiding project dirt or authorizing unsafe secret cleanup.
+     */
+    let reconciliation: Awaited<ReturnType<typeof reconcileSecretsEnvFingerprint>>;
+    try {
+      reconciliation = await reconcileSecretsEnvFingerprint(path);
+    } catch {
+      // FNXC:SecretsEnvMaterialization 2026-08-08-02:00: A resolver I/O failure is an opaque but fixed
+      // reconciliation outcome. Convert it to the same pre-refresh fail-closed path without recording OS
+      // error text, paths, or any secret-derived value in the durable audit trail.
+      reconciliation = { executionSafe: false, outcome: "git-dir-unavailable" };
+    }
+    if (!reconciliation.executionSafe) {
+      const refresh: WorktreeBaseRefreshResult = { kind: "base-reconciliation-required", executionSafe: false, detail: reconciliation.outcome };
+      await audit?.git?.({ type: "worktree:base-refresh-blocked", target: task.id, metadata: { taskId: task.id, outcome: refresh.kind, reconciliationOutcome: reconciliation.outcome } });
+      await store.logEntry(task.id, `Worktree secrets record reconciliation blocked execution (${reconciliation.outcome})`, undefined, runContext);
+      throw new WorktreeBaseRefreshError(refresh);
+    }
     const refresh = await refreshReusedWorktreeBase({ task, rootDir, worktreePath: path, store, settings, audit, logger });
     if (!refresh.executionSafe) {
       await audit?.git({ type: refresh.kind === "stale-base-conflict" ? "worktree:base-refresh-conflict" : "worktree:base-refresh-blocked", target: path, metadata: { taskId: task.id, outcome: refresh.kind } });

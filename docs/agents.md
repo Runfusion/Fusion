@@ -969,6 +969,16 @@ fn agent mailbox AGENT-001
 
 Worked manager/IC/message/blocked/no-task scenarios live in [Permanent Agent Heartbeat Playbooks](./agents-playbooks.md). Prefer those examples over re-deriving tick behavior from engine source.
 
+## Built-in workflow owner identities
+
+At startup, Fusion provisions one provenance-marked durable owner for each built-in workflow role: **Workflow Planner** (`triage`), **Workflow Executor**, **Workflow Reviewer**, and **Workflow Merger**. Each receives role-specific inline `instructionsText` and `soul` values. Those persisted fields are the runtime authority used when the engine builds an agent prompt.
+
+Fusion also creates a managed setup mirror under each owner’s agent directory: `AGENTS.md` mirrors the default instruction text and `soul.md` mirrors the default soul. The files are intentionally not assigned to `instructionsPath`, so the same default identity is not composed twice at runtime. They are safe operator editing starting points, not an additional runtime source.
+
+Provisioning is idempotent and non-destructive. A trimmed non-empty inline instruction, `instructionsPath`, external bundle, non-canonical managed bundle, non-empty soul, or non-empty managed mirror is operator-owned and is preserved. Sparse canonical owners receive only missing default fields/files; an incomplete default bundle is repaired without overwriting non-empty files. Files are materialized after the database transaction commits, so a filesystem failure is retryable on the next startup without duplicating owners.
+
+If legacy data contains several provenance-marked owners for a supported role, Fusion retains the earliest valid `createdAt` row (then lexicographically smallest ID as a tie-breaker). It removes only the built-in provenance keys from the other rows, preserving them as ordinary durable agents with their names, roles, identity, policies, settings, metadata, and files intact. Agents with missing or unsupported provenance roles, and same-role agents without built-in provenance, are never adopted or changed by this repair.
+
 ## Heartbeat Prompt Composition and Autonomous Run Behavior
 
 Heartbeat runs are composed from multiple prompt layers so each wake has full identity and operating context:

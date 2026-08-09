@@ -4023,6 +4023,137 @@ describe("PR conflict refresh + reclaim routes", () => {
     expect(res.body.mergeReady).toBe(res.body.primary.mergeReady);
   });
 
+  it("returns a refreshed branch-protection diagnosis for an ambiguous merge failure", async () => {
+    const prInfo = { url: "https://github.com/owner/repo/pull/940", number: 940, status: "open" as const, title: "PR940", headBranch: "fusion/fn-940", baseBranch: "main", commentCount: 0 };
+    const task = { ...FAKE_TASK_DETAIL, id: "FN-940", prInfo, prInfos: [prInfo] };
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(task);
+    vi.spyOn(GitHubClient.prototype, "mergePr").mockRejectedValue(new Error("Pull request is not mergeable"));
+    vi.spyOn(GitHubClient.prototype, "getPrMergeStatus").mockResolvedValue({
+      prInfo: { ...prInfo, mergeable: "blocked" },
+      mergeable: "blocked",
+      reviewDecision: "REVIEW_REQUIRED",
+      checks: [],
+      mergeReady: false,
+      blockingReasons: [],
+    });
+
+    const res = await REQUEST(buildApp(), "POST", `/api/tasks/${task.id}/pr/merge`, JSON.stringify({}), { "content-type": "application/json" });
+
+    expect(res.status).toBe(422);
+    expect(res.body.details.githubError.code).toBe("merge-blocked-by-policy");
+    expect(res.body.error).toContain("review approval is required");
+    expect(res.body.error).not.toMatch(/conflict/i);
+    expect(store.updatePrInfo).toHaveBeenCalledWith(task.id, expect.objectContaining({
+      mergeable: "blocked",
+      lastMergeError: expect.stringContaining("review approval is required"),
+    }));
+    expect(store.applyPrMergedTransition).not.toHaveBeenCalled();
+  });
+
+  it("returns required-check blockers from the refreshed merge status", async () => {
+    const prInfo = { url: "https://github.com/owner/repo/pull/941", number: 941, status: "open" as const, title: "PR941", headBranch: "fusion/fn-941", baseBranch: "main", commentCount: 0 };
+    const task = { ...FAKE_TASK_DETAIL, id: "FN-941", prInfo, prInfos: [prInfo] };
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(task);
+    vi.spyOn(GitHubClient.prototype, "mergePr").mockRejectedValue(new Error("Pull request is not mergeable"));
+    vi.spyOn(GitHubClient.prototype, "getPrMergeStatus").mockResolvedValue({
+      prInfo: { ...prInfo, mergeable: "blocked" },
+      mergeable: "blocked",
+      reviewDecision: null,
+      checks: [],
+      mergeReady: false,
+      blockingReasons: ["required checks not successful: ci (pending)"],
+    });
+
+    const res = await REQUEST(buildApp(), "POST", `/api/tasks/${task.id}/pr/merge`, JSON.stringify({}), { "content-type": "application/json" });
+
+    expect(res.status).toBe(422);
+    expect(res.body.details.githubError).toMatchObject({ code: "merge-blocked-by-policy" });
+    expect(res.body.error).toContain("required checks not successful: ci (pending)");
+    expect(res.body.error).not.toMatch(/conflict/i);
+  });
+
+  it("retains the conflict diagnosis for a refreshed conflicting PR", async () => {
+    const prInfo = { url: "https://github.com/owner/repo/pull/942", number: 942, status: "open" as const, title: "PR942", headBranch: "fusion/fn-942", baseBranch: "main", commentCount: 0 };
+    const task = { ...FAKE_TASK_DETAIL, id: "FN-942", prInfo, prInfos: [prInfo] };
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(task);
+    vi.spyOn(GitHubClient.prototype, "mergePr").mockRejectedValue(new Error("Pull request is not mergeable"));
+    vi.spyOn(GitHubClient.prototype, "getPrMergeStatus").mockResolvedValue({
+      prInfo: { ...prInfo, mergeable: "conflicting" },
+      mergeable: "conflicting",
+      reviewDecision: null,
+      checks: [],
+      mergeReady: false,
+      blockingReasons: ["PR mergeability is conflicting"],
+    });
+
+    const res = await REQUEST(buildApp(), "POST", `/api/tasks/${task.id}/pr/merge`, JSON.stringify({}), { "content-type": "application/json" });
+
+    expect(res.status).toBe(422);
+    expect(res.body.details.githubError.code).toBe("merge-conflict");
+    expect(res.body.error).toMatch(/conflicts/i);
+  });
+
+  it("keeps an ambiguous merge failure generic when its refresh has no merge state", async () => {
+    const prInfo = { url: "https://github.com/owner/repo/pull/942", number: 942, status: "open" as const, title: "PR942", headBranch: "fusion/fn-942", baseBranch: "main", commentCount: 0 };
+    const task = { ...FAKE_TASK_DETAIL, id: "FN-942", prInfo, prInfos: [prInfo] };
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(task);
+    vi.spyOn(GitHubClient.prototype, "mergePr").mockRejectedValue(new Error("Pull request is not mergeable"));
+    vi.spyOn(GitHubClient.prototype, "getPrMergeStatus").mockResolvedValue({
+      prInfo,
+      mergeable: undefined,
+      reviewDecision: null,
+      checks: [],
+      mergeReady: false,
+      blockingReasons: [],
+    } as any);
+
+    const res = await REQUEST(buildApp(), "POST", `/api/tasks/${task.id}/pr/merge`, JSON.stringify({}), { "content-type": "application/json" });
+
+    expect(res.status).toBe(502);
+    expect(res.body.details.githubError.code).toBe("unknown");
+    expect(res.body.error).toBe("Pull request is not mergeable");
+    expect(res.body.error).not.toMatch(/conflict/i);
+  });
+
+  it("reconciles a PR merged after the merge command failure exactly once", async () => {
+    const prInfo = { url: "https://github.com/owner/repo/pull/943", number: 943, status: "open" as const, title: "PR943", headBranch: "fusion/fn-943", baseBranch: "main", commentCount: 0 };
+    const task = { ...FAKE_TASK_DETAIL, id: "FN-943", prInfo, prInfos: [prInfo] };
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(task);
+    vi.spyOn(GitHubClient.prototype, "mergePr").mockRejectedValue(new Error("merge command timed out"));
+    vi.spyOn(GitHubClient.prototype, "getPrMergeStatus").mockResolvedValue({
+      prInfo: { ...prInfo, status: "merged" },
+      mergeable: "clean",
+      reviewDecision: "APPROVED",
+      checks: [],
+      mergeReady: true,
+      blockingReasons: [],
+    } as any);
+
+    const res = await REQUEST(buildApp(), "POST", `/api/tasks/${task.id}/pr/merge`, JSON.stringify({}), { "content-type": "application/json" });
+
+    expect(res.status).toBe(200);
+    expect(res.body.prInfo.status).toBe("merged");
+    expect(store.applyPrMergedTransition).toHaveBeenCalledTimes(1);
+    expect(store.updatePrInfo).toHaveBeenCalledWith(task.id, expect.objectContaining({ status: "merged", lastMergeError: undefined }));
+  });
+
+  it("preserves the original merge failure when status refresh fails", async () => {
+    const prInfo = { url: "https://github.com/owner/repo/pull/944", number: 944, status: "open" as const, title: "PR944", headBranch: "fusion/fn-944", baseBranch: "main", commentCount: 0 };
+    const task = { ...FAKE_TASK_DETAIL, id: "FN-944", prInfo, prInfos: [prInfo] };
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(task);
+    vi.spyOn(GitHubClient.prototype, "mergePr").mockRejectedValue(new Error("merge command failed"));
+    vi.spyOn(GitHubClient.prototype, "getPrMergeStatus").mockRejectedValue(new Error("GitHub unavailable"));
+
+    const res = await REQUEST(buildApp(), "POST", `/api/tasks/${task.id}/pr/merge`, JSON.stringify({}), { "content-type": "application/json" });
+
+    expect(res.status).toBe(502);
+    expect(res.body.error).toBe("merge command failed");
+    expect(store.updatePrInfo).toHaveBeenCalledWith(task.id, expect.objectContaining({
+      lastMergeError: "merge command failed",
+    }));
+    expect(store.applyPrMergedTransition).not.toHaveBeenCalled();
+  });
+
   it("unlink removes targeted PR without closing github PR", async () => {
     const task = {
       ...FAKE_TASK_DETAIL,

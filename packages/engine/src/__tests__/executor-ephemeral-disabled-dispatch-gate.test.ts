@@ -33,22 +33,20 @@ function task(overrides: Partial<TaskDetail> = {}): TaskDetail {
   } as TaskDetail;
 }
 
-function settings(ephemeralAgentsEnabled: boolean | undefined) {
+function settings() {
   return {
     autoMerge: true,
     maxAutoMergeRetries: 3,
     maxConcurrent: 2,
     maxWorktrees: 4,
     pollIntervalMs: 15_000,
-    ephemeralAgentsEnabled,
   };
 }
 
 /*
-FNXC:WorkflowAgentRouting 2026-08-07-09:11:
-A non-scheduler TaskExecutor.execute() entry must run the real graph admission hook regardless
-of the persisted compatibility value. The graph owns durable principal acquisition, unavailable
-principal holds, and capacity fencing; outer dispatch must not rebound or queue work under this setting.
+FNXC:WorkflowAgentRouting 2026-08-09-01:04:
+FN-8847 removes the retired compatibility input. Every TaskExecutor.execute() entry must use graph
+admission for durable principal acquisition, unavailable-principal holds, and capacity fencing.
 */
 const graphDefinition = {
   id: "WF-fn-8821-principal",
@@ -78,7 +76,6 @@ function durableExecutorAgent(overrides: Record<string, unknown> = {}) {
 }
 
 function createProductionGraphHarness(
-  ephemeralAgentsEnabled: boolean | undefined,
   agents: unknown[] = [durableExecutorAgent()],
   taskOverrides: Partial<TaskDetail> = {},
   semaphore?: AgentSemaphore,
@@ -87,7 +84,7 @@ function createProductionGraphHarness(
   const live = task(taskOverrides);
   store.getTask.mockResolvedValue(live);
   store.getRootDir = vi.fn(() => "/tmp/fn-8821-project");
-  store.getSettings.mockResolvedValue(settings(ephemeralAgentsEnabled));
+  store.getSettings.mockResolvedValue(settings());
   store.getTaskWorkflowSelectionAsync.mockResolvedValue({ workflowId: graphDefinition.id, stepIds: [] });
   store.getTaskWorkflowSelection.mockReturnValue({ workflowId: graphDefinition.id, stepIds: [] });
   store.getWorkflowDefinition = vi.fn(async () => graphDefinition);
@@ -102,17 +99,15 @@ function createProductionGraphHarness(
   return { store, live, executor, agentStore, acquire, release };
 }
 
-describe("executor compatibility setting is routing-inert", () => {
+describe("executor routes workflow stages through durable principals", () => {
   afterEach(() => {
     clearPreHeldExecutorSlotsForTests();
     (TaskExecutor as unknown as { processWideGraphRouting: Set<string> }).processWideGraphRouting.clear();
   });
 
-  it.each([undefined, true, false])(
-    "runs real graph principal admission for unassigned direct re-entry with compatibility input %s",
-    async (ephemeralAgentsEnabled) => {
+  it("runs real graph principal admission for unassigned direct re-entry", async () => {
       resetExecutorMocks();
-      const { store, live, executor, agentStore, acquire, release } = createProductionGraphHarness(ephemeralAgentsEnabled);
+      const { store, live, executor, agentStore, acquire, release } = createProductionGraphHarness();
 
       await executor.execute(live);
 
@@ -140,17 +135,13 @@ describe("executor compatibility setting is routing-inert", () => {
         expect.anything(),
         expect.anything(),
       );
-    },
-  );
+  });
 
-  it.each([undefined, true, false])(
-    "preserves assigned workflow principals through scheduler-held graph dispatch for compatibility input %s",
-    async (ephemeralAgentsEnabled) => {
+  it("preserves assigned workflow principals through scheduler-held graph dispatch", async () => {
       resetExecutorMocks();
       const semaphore = new AgentSemaphore(1);
       expect(semaphore.tryAcquire()).toBe(true);
       const { store, live, executor, acquire, release } = createProductionGraphHarness(
-        ephemeralAgentsEnabled,
         [durableExecutorAgent()],
         { assignedAgentId: "workflow-executor" },
         semaphore,
@@ -171,13 +162,11 @@ describe("executor compatibility setting is routing-inert", () => {
       expect(semaphore.activeCount).toBe(0);
       expect(store.moveTask).not.toHaveBeenCalled();
       expect(store.transitionQueuedEpisode).not.toHaveBeenCalled();
-    },
-  );
+  });
 
-  it("keeps an explicit-false direct re-entry behind the real unmet-dependency gate", async () => {
+  it("keeps direct re-entry behind the real unmet-dependency gate", async () => {
     resetExecutorMocks();
     const { store, live, executor, agentStore, acquire } = createProductionGraphHarness(
-      false,
       [durableExecutorAgent()],
       { dependencies: ["FN-8821-PARENT"] },
     );
@@ -199,11 +188,9 @@ describe("executor compatibility setting is routing-inert", () => {
     expect(store.upsertWorkflowWorkItem).not.toHaveBeenCalled();
   });
 
-  it.each([undefined, true, false])(
-    "holds unavailable workflow principals through their graph owner for compatibility input %s",
-    async (ephemeralAgentsEnabled) => {
+  it("holds unavailable workflow principals through their graph owner", async () => {
       resetExecutorMocks();
-      const { store, live, executor, agentStore, acquire } = createProductionGraphHarness(ephemeralAgentsEnabled, []);
+      const { store, live, executor, agentStore, acquire } = createProductionGraphHarness([]);
 
       await executor.execute(live);
 
@@ -217,14 +204,11 @@ describe("executor compatibility setting is routing-inert", () => {
       }));
       expect(store.moveTask).not.toHaveBeenCalled();
       expect(store.transitionQueuedEpisode).not.toHaveBeenCalled();
-    },
-  );
+  });
 
-  it.each([undefined, true, false])(
-    "holds saturated workflow principals through graph capacity for compatibility input %s",
-    async (ephemeralAgentsEnabled) => {
+  it("holds saturated workflow principals through graph capacity", async () => {
       resetExecutorMocks();
-      const { store, live, executor, acquire } = createProductionGraphHarness(ephemeralAgentsEnabled);
+      const { store, live, executor, acquire } = createProductionGraphHarness();
       acquire.mockResolvedValue({ status: "held", reason: "project-capacity" });
 
       await executor.execute(live);
@@ -238,6 +222,5 @@ describe("executor compatibility setting is routing-inert", () => {
       }));
       expect(store.moveTask).not.toHaveBeenCalled();
       expect(store.transitionQueuedEpisode).not.toHaveBeenCalled();
-    },
-  );
+  });
 });

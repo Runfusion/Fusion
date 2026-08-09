@@ -1665,6 +1665,8 @@ describe("GitHubClient", () => {
       const result = await client.getPrMergeStatus("owner", "repo", 42);
       expect(result.mergeable).toBe("conflicting");
       expect(result.prInfo.mergeable).toBe("conflicting");
+      expect(result.mergeReady).toBe(false);
+      expect(result.blockingReasons).toEqual(["PR mergeability is conflicting"]);
     });
 
     it("maps BEHIND merge-state to behind", async () => {
@@ -1684,6 +1686,8 @@ describe("GitHubClient", () => {
       const result = await client.getPrMergeStatus("owner", "repo", 42);
       expect(result.mergeable).toBe("behind");
       expect(result.prInfo.mergeable).toBe("behind");
+      expect(result.mergeReady).toBe(false);
+      expect(result.blockingReasons).toEqual(["PR mergeability is behind"]);
     });
 
     it("maps BLOCKED merge-state to blocked", async () => {
@@ -1693,7 +1697,8 @@ describe("GitHubClient", () => {
           url: "https://github.com/owner/repo/pull/42",
           title: "Blocked PR",
           state: "OPEN",
-          reviewDecision: "APPROVED",
+          reviewDecision: "REVIEW_REQUIRED",
+          mergeable: "MERGEABLE",
           mergeStateStatus: "BLOCKED",
           baseRefName: "main",
           headRefName: "fusion/fn-093",
@@ -1703,6 +1708,8 @@ describe("GitHubClient", () => {
       const result = await client.getPrMergeStatus("owner", "repo", 42);
       expect(result.mergeable).toBe("blocked");
       expect(result.prInfo.mergeable).toBe("blocked");
+      expect(result.mergeReady).toBe(false);
+      expect(result.blockingReasons).toEqual(["PR mergeability is blocked"]);
     });
 
     it("maps missing mergeability fields to unknown", async () => {
@@ -1721,9 +1728,11 @@ describe("GitHubClient", () => {
       const result = await client.getPrMergeStatus("owner", "repo", 42);
       expect(result.mergeable).toBe("unknown");
       expect(result.prInfo.mergeable).toBe("unknown");
+      expect(result.mergeReady).toBe(false);
+      expect(result.blockingReasons).toEqual(["PR mergeability is unknown"]);
     });
 
-    it("falls back to GraphQL API when gh CLI merge-status lookup fails and token is available", async () => {
+    it("fails closed through the GraphQL API when branch protection blocks a review-required PR", async () => {
       mockRunGhJsonAsync.mockRejectedValue(new Error("gh failed"));
       const clientWithToken = new GitHubClient("ghp_token");
       const mockFetch = vi.fn().mockResolvedValue({
@@ -1734,11 +1743,11 @@ describe("GitHubClient", () => {
               pullRequest: {
                 number: 42,
                 url: "https://github.com/owner/repo/pull/42",
-                title: "Fallback PR",
+                title: "Branch-protected PR",
                 state: "OPEN",
-                reviewDecision: null,
-                mergeable: "CONFLICTING",
-                mergeStateStatus: "DIRTY",
+                reviewDecision: "REVIEW_REQUIRED",
+                mergeable: "MERGEABLE",
+                mergeStateStatus: "BLOCKED",
                 baseRefName: "main",
                 headRefName: "fusion/fn-093",
                 comments: { totalCount: 0 },
@@ -1790,9 +1799,10 @@ describe("GitHubClient", () => {
 
       const result = await clientWithToken.getPrMergeStatus("owner", "repo", 42);
 
-      expect(result.mergeReady).toBe(true);
-      expect(result.mergeable).toBe("conflicting");
-      expect(result.prInfo.mergeable).toBe("conflicting");
+      expect(result.mergeReady).toBe(false);
+      expect(result.mergeable).toBe("blocked");
+      expect(result.prInfo.mergeable).toBe("blocked");
+      expect(result.blockingReasons).toEqual(["PR mergeability is blocked"]);
       expect(result.checks).toEqual([
         {
           name: "ci",
@@ -2140,7 +2150,7 @@ describe("GitHubClient", () => {
 
   describe("isPrMergeReady", () => {
     it("blocks closed PRs", () => {
-      expect(isPrMergeReady({ status: "closed", reviewDecision: null, checks: [] })).toEqual({
+      expect(isPrMergeReady({ status: "closed", reviewDecision: null, checks: [], mergeable: "clean" })).toEqual({
         ready: false,
         blockingReasons: ["PR is closed"],
       });
@@ -2151,6 +2161,7 @@ describe("GitHubClient", () => {
         status: "open",
         reviewDecision: "CHANGES_REQUESTED",
         checks: [{ name: "ci", required: true, state: "success" }],
+        mergeable: "clean",
       })).toEqual({
         ready: false,
         blockingReasons: ["changes requested review is active"],
@@ -2162,6 +2173,7 @@ describe("GitHubClient", () => {
         status: "open",
         reviewDecision: null,
         checks: [{ name: "ci", required: true, state: "pending" }],
+        mergeable: "clean",
       })).toEqual({
         ready: false,
         blockingReasons: ["required checks not successful: ci (pending)"],
@@ -2176,7 +2188,39 @@ describe("GitHubClient", () => {
           { name: "required-ci", required: true, state: "success" },
           { name: "optional-preview", required: false, state: "failure" },
         ],
+        mergeable: "clean",
       })).toEqual({ ready: true, blockingReasons: [] });
+    });
+
+    it.each(["blocked", "behind", "conflicting", "unknown"] as const)(
+      "fails closed when mergeability is %s",
+      (mergeable) => {
+        expect(isPrMergeReady({
+          status: "open",
+          reviewDecision: "APPROVED",
+          checks: [{ name: "ci", required: true, state: "success" }],
+          mergeable,
+        })).toEqual({
+          ready: false,
+          blockingReasons: [`PR mergeability is ${mergeable}`],
+        });
+      },
+    );
+
+    it("aggregates branch protection with existing review and required-check blockers", () => {
+      expect(isPrMergeReady({
+        status: "open",
+        reviewDecision: "CHANGES_REQUESTED",
+        checks: [{ name: "ci", required: true, state: "failure" }],
+        mergeable: "blocked",
+      })).toEqual({
+        ready: false,
+        blockingReasons: [
+          "changes requested review is active",
+          "PR mergeability is blocked",
+          "required checks not successful: ci (failure)",
+        ],
+      });
     });
   });
 

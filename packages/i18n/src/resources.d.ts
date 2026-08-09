@@ -3658,6 +3658,7 @@ export default interface Resources {
       "assertionUpdated": "Assertion updated",
       "attemptRetries_one": "Attempt {{attempt}} · {{count}} {{label}} left",
       "attemptRetries_other": "Attempt {{attempt}} · {{count}} {{label}} left",
+      "autoMergeOverrideDescription": "Inherited follows the project setting. Auto-merge lands each feature as it passes. Single pull request keeps every feature on one shared branch for joint review and merge.",
       "autopilotActivatingSlice": "Activating slice",
       "autopilotCompleting": "Completing",
       "autopilotDescription": "When on, Fusion automatically activates the next slice and plans its features as work completes.",
@@ -5961,6 +5962,8 @@ export default interface Resources {
         "hardCapOnTheSynthesizedEarlierRoomContext": "Hard cap on the synthesized \"Earlier room context\" summary block. Default: 3000.",
         "learnMore": "Learn more",
         "loweringThisWindowMeansReliabilityMetricsChartsAnd": " Lowering this window means Reliability metrics/charts and the Activity feed will not show history older than the selected range. Per-task task detail history is unaffected. Default: 30 days. ",
+        "maxRecommendationsPerTask": "Maximum recommendations per task",
+        "maxRecommendationsPerTaskHelp": "Default: 3. Set 0 to disable recommendations; choose a whole number from 1 to 20 to cap each completed task.",
         "mobileNavPrimaryItems": "Mobile footer quick actions",
         "mobileNavPrimaryItemsHint": "Default: Dashboard, Tasks, Agents, Missions, Chat, Mailbox. Add eligible destinations; unselected destinations remain in More.",
         "moveNavItemEarlier": "Move {{item}} earlier",
@@ -6043,7 +6046,6 @@ export default interface Resources {
         "updateSuccessToast": "Update installed. Restart Fusion to apply it.",
         "updating": "Updating…",
         "upperBoundOnMessagesFetchedFromTheRoom": "Upper bound on messages fetched from the room store for compaction consideration. Default: 200.",
-        "useEphemeralTaskWorkerAgents": " Use ephemeral task-worker agents ",
         "warnOnTheBoardWhenTodoWorkExceeds": "Warn on the board when todo work exceeds the threshold and no idle agents are available. Default: disabled.",
         "whenEnabledDefaultFusionSpawnsShortLived": " When enabled (default), Fusion spawns short-lived ",
         "whenEnabledFusionChecksOpenAndClosedIssues": " When enabled, Fusion checks open and closed issues in the target repo for likely duplicates (using File Scope paths and key symptoms) before creating a new tracking issue. Uncheck to always create a new issue. Default: enabled. ",
@@ -8018,6 +8020,15 @@ export default interface Resources {
         "title": "Provenance",
         "undoTask": "Undo task"
       },
+      "recommendations": {
+        "create": "Create task",
+        "created": "Created {{taskId}}",
+        "empty": "No recommendations were produced for this task.",
+        "creating": "Creating…",
+        "error": "Could not create task. Try again.",
+        "retry": "Retry creating task",
+        "title": "Recommendations"
+      },
       "recoveryState": "Recovery state",
       "refine": {
         "btn": "Refine",
@@ -8153,6 +8164,7 @@ export default interface Resources {
         "logs": "Logs",
         "model": "Model",
         "pullRequest": "Pull Request",
+        "recommendations": "Recommendations",
         "review": "Review",
         "routing": "Routing",
         "stats": "Stats",

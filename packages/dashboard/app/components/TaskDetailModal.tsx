@@ -56,6 +56,7 @@ import { TaskPlannerChatTab } from "./TaskPlannerChatTab";
 import { TaskReviewTab } from "./TaskReviewTab";
 import { TaskChangesTab } from "./TaskChangesTab";
 import { TaskSummaryTab } from "./TaskSummaryTab";
+import { TaskRecommendationsTab } from "./TaskRecommendationsTab";
 import { TaskCostTab } from "./TaskCostTab";
 import { WorkspaceWorktreesSummary, isWorkspaceTask } from "./WorkspaceWorktreesSummary";
 import { TaskForm, type PendingImage } from "./TaskForm";
@@ -255,7 +256,7 @@ function formatDurationCompact(ageMs: number): string {
   return `${minutes}m`;
 }
 
-type TabId = "summary" | "cost" | "definition" | "chat" | "planner-chat" | "logs" | "changes" | "review" | "pr" | "comments" | "model" | "workflow" | "documents" | "stats" | "routing" | "retries" | "terminal" | "worktree-terminal" | `plugin-${string}`;
+type TabId = "summary" | "recommendations" | "cost" | "definition" | "chat" | "planner-chat" | "logs" | "changes" | "review" | "pr" | "comments" | "model" | "workflow" | "documents" | "stats" | "routing" | "retries" | "terminal" | "worktree-terminal" | `plugin-${string}`;
 type ActivitySegment = "current" | "feed" | "raw-logs" | "interventions";
 
 /*
@@ -1199,6 +1200,20 @@ export function TaskDetailContent({
       setActiveTab("definition");
     }
   }, [activeTab, task.column, isDoneColumn, detailFlagsAreForThisTask]);
+
+  /*
+  FNXC:TaskRecommendations 2026-08-09-01:21:
+  Completed tasks always expose Recommendations, even when the executor produced no records, so
+  operators can distinguish an empty result from unavailable functionality. Reconcile away only
+  after this task's resolved complete-role result says the card left completion; waiting preserves
+  a deliberate tab selection while workflow metadata is still unresolved.
+  */
+  const hasRecommendations = isDoneColumn;
+  useEffect(() => {
+    if (detailFlagsAreForThisTask && activeTab === "recommendations" && !hasRecommendations) {
+      setActiveTab("definition");
+    }
+  }, [activeTab, detailFlagsAreForThisTask, hasRecommendations]);
 
   // Reset planner-chat focus when the operator opens a different task.
   useEffect(() => {
@@ -5628,6 +5643,14 @@ export function TaskDetailContent({
                 {t("taskDetail.tabs.summary", "Summary")}
               </button>
             )}
+            {hasRecommendations && (
+              <button
+                className={`detail-tab${activeTab === "recommendations" ? " detail-tab-active" : ""}`}
+                onClick={() => setActiveTab("recommendations")}
+              >
+                {t("taskDetail.tabs.recommendations", "Recommendations")}
+              </button>
+            )}
             <button
               className={`detail-tab${activeTab === "definition" ? " detail-tab-active" : ""}`}
               onClick={() => setActiveTab("definition")}
@@ -5771,6 +5794,25 @@ export function TaskDetailContent({
           ) : activeTab === "summary" && isDoneColumn ? (
             <div className="detail-section detail-section--summary">
               <TaskSummaryTab task={workingTask} columnFlags={detailColumnFlags} pricingOverrides={globalSettings?.modelPricingOverrides} />
+            </div>
+          ) : activeTab === "recommendations" && hasRecommendations ? (
+            <div className="detail-section">
+              <TaskRecommendationsTab
+                task={workingTask}
+                projectId={projectId}
+                onTaskReconciled={(updatedTask) => {
+                  /*
+                  FNXC:TaskRecommendations 2026-08-08-05:27:
+                  The create route returns the durable parent link update. Publish that exact snapshot
+                  to the board owner and retained detail snapshot so modal, main-panel, list, and
+                  floating hosts cannot retain a stale Create affordance while SSE catches up.
+                  */
+                  setFullDetail((previous) => previous?.id === updatedTask.id
+                    ? mergeTaskSnapshot(previous, updatedTask, { fullSnapshot: true })
+                    : previous);
+                  onTaskUpdated?.(updatedTask);
+                }}
+              />
             </div>
           ) : activeTab === "cost" ? (
             <div className="detail-section detail-section--cost">

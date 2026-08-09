@@ -36,6 +36,28 @@ export function resolveActiveTaskCapacityLimit(params: {
     : Math.min(params.maxConcurrent, maxWorktrees);
 }
 
+/**
+ * FNXC:WorktreeCapacity 2026-08-08-04:27:
+ * Every production admission owner must persist the same operator-visible explanation when the
+ * shared live-task ceiling is full. Retained directories are not holders: report only canonical
+ * live task IDs, and name `maxWorktrees` only when it is the binding configured ceiling.
+ */
+export function formatAdmissionCapacityQueuedReason(params: {
+  maxConcurrent: number;
+  maxWorktrees: number;
+  worktreeLimitEnabled?: boolean;
+  claimed: number;
+  holderTaskIds: Iterable<string>;
+}): string {
+  const limit = resolveActiveTaskCapacityLimit(params);
+  const worktreeLimit = resolveWorktreeCapacityLimit(params);
+  const gate = worktreeLimit !== null && worktreeLimit <= params.maxConcurrent
+    ? "maxWorktrees"
+    : "maxConcurrent";
+  const holders = [...new Set(params.holderTaskIds)].sort();
+  return `queued — ${gate} capacity exhausted: used=${params.claimed}/${limit}; holders=${holders.join(",") || "none"}`;
+}
+
 /** Lifecycle lanes ordered by the project admission coordinator. */
 export type AdmissionLane = "review" | "execute" | "planning";
 

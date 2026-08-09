@@ -1,5 +1,12 @@
 import { afterEach, beforeEach, expect, it } from "vitest";
+import { mkdir, rm } from "node:fs/promises";
+import { join } from "node:path";
 import { AgentStore } from "../agents/agent-store.js";
+import { getCanonicalAgentInstructionsBundleDirName } from "../types.js";
+import {
+  BUILTIN_WORKFLOW_AGENT_BUNDLE_CONFIG,
+  BUILTIN_WORKFLOW_ROLE_AGENT_DEFAULT_LIST,
+} from "../agents/workflow-role-agent-defaults.js";
 import { createTaskStoreForTest, pgDescribe, type PgTestHarness } from "../__test-utils__/pg-test-harness.js";
 
 /*
@@ -50,7 +57,14 @@ pgDescribe("AgentStore built-in workflow role provisioning under a saturated poo
       "triage",
     ]);
     for (const agent of agents) {
+      const definition = BUILTIN_WORKFLOW_ROLE_AGENT_DEFAULT_LIST.find((item) => item.role === agent.metadata?.workflowRole);
       expect(agent.metadata?.builtInWorkflowRole).toBe(true);
+      expect(definition).toBeDefined();
+      expect(agent.instructionsText).toBe(definition!.instructionsText);
+      expect(agent.soul).toBe(definition!.soul);
+      expect(agent.instructionsPath).toBeUndefined();
+      expect(agent.bundleConfig).toEqual(BUILTIN_WORKFLOW_AGENT_BUNDLE_CONFIG);
+      expect(await agentStore.listBundleFiles(agent.id)).toEqual(["AGENTS.md", "soul.md"]);
     }
   }, 20_000);
 
@@ -66,6 +80,33 @@ pgDescribe("AgentStore built-in workflow role provisioning under a saturated poo
       (a) => a.metadata?.builtInWorkflowRole === true,
     );
     expect(durable).toHaveLength(4);
+  }, 20_000);
+
+  it("retries managed mirror materialization after a post-transaction filesystem failure", async () => {
+    const first = await agentStore.provisionBuiltinWorkflowRoleAgents();
+    const planner = first.find((agent) => agent.metadata?.workflowRole === "triage")!;
+    const bundleDir = join(
+      harness.rootDir,
+      "agents",
+      getCanonicalAgentInstructionsBundleDirName(planner.name, planner.id),
+    );
+    const entryPath = join(bundleDir, "AGENTS.md");
+
+    // FNXC:WorkflowAgentIdentities 2026-08-08-06:27: A directory at the entry-file path
+    // deterministically fails the post-commit write without adding sleeps or mock-only behavior.
+    await rm(entryPath, { force: true });
+    await mkdir(entryPath);
+    await expect(agentStore.provisionBuiltinWorkflowRoleAgents()).rejects.toThrow();
+
+    const durableAfterFailure = (await agentStore.listAgents({ includeEphemeral: true })).filter(
+      (agent) => agent.metadata?.builtInWorkflowRole === true,
+    );
+    expect(durableAfterFailure).toHaveLength(4);
+
+    await rm(entryPath, { recursive: true, force: true });
+    const retried = await agentStore.provisionBuiltinWorkflowRoleAgents();
+    expect(retried.map((agent) => agent.id).sort()).toEqual(first.map((agent) => agent.id).sort());
+    expect(await agentStore.listBundleFiles(planner.id)).toEqual(["AGENTS.md", "soul.md"]);
   }, 20_000);
 
   it("serializes concurrent callers without deadlocking or duplicating owners", async () => {

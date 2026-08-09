@@ -68,6 +68,7 @@ import { createRunAuditor, generateSyntheticRunId } from "../util/run-audit.js";
 import { setImmediate as setImmediateCb } from "node:timers";
 import { seedPreReleasePlanReviewContinuation } from "../plan-review-continuation.js";
 import {
+  formatAdmissionCapacityQueuedReason,
   persistedTopLevelAgentTaskIdsFromStore,
   projectAdmissionCoordinator,
   resolveActiveTaskCapacityLimit,
@@ -470,6 +471,7 @@ export async function drainDuePlanningContinuations(
 }
 
 const planningContinuationRuns = new Set<string>();
+const planningContinuationCapacityReasons = new Map<string, string>();
 
 export async function admitPlanningContinuation(input: {
   store: TaskStore;
@@ -559,7 +561,36 @@ export async function admitPlanningContinuation(input: {
       },
     }],
   });
-  return selected || duplicateHandled;
+  if (selected || duplicateHandled) {
+    planningContinuationCapacityReasons.delete(runKey);
+    return true;
+  }
+  const snapshot = await getAdmissionSnapshot();
+  const limit = resolveActiveTaskCapacityLimit({
+    maxConcurrent: settings.maxConcurrent ?? 2,
+    maxWorktrees: settings.maxWorktrees ?? 4,
+    worktreeLimitEnabled: settings.worktreeLimitEnabled,
+  });
+  if (snapshot.count >= limit) {
+    /*
+    FNXC:ConcurrencyAdmission 2026-08-08-04:27:
+    Direct workflow continuations bypass scheduler task-status handling. A full live-task cap must
+    still be visible through the shared task log, using the same canonical-holder diagnostic as
+    execute, triage, and merge admission; unchanged retries remain deduplicated.
+    */
+    const reason = formatAdmissionCapacityQueuedReason({
+      maxConcurrent: settings.maxConcurrent ?? 2,
+      maxWorktrees: settings.maxWorktrees ?? 4,
+      worktreeLimitEnabled: settings.worktreeLimitEnabled,
+      claimed: snapshot.count,
+      holderTaskIds: snapshot.ids,
+    });
+    if (planningContinuationCapacityReasons.get(runKey) !== reason) {
+      planningContinuationCapacityReasons.set(runKey, reason);
+      await input.store.logEntry(input.task.id, reason);
+    }
+  }
+  return false;
 }
 
 export function createPlanningContinuationDispatcher(input: {

@@ -151,6 +151,8 @@ export const tasks = projectSchema.table("tasks", {
   nextRecoveryAt: text("next_recovery_at"),
   error: text("error"),
   summary: text("summary"),
+  // FNXC:TaskRecommendations 2026-08-08-05:02: structured completion suggestions remain project-scoped JSONB beside the source task.
+  recommendations: jsonb("recommendations"),
   thinkingLevel: text("thinking_level"),
   // FNXC:Settings-ThinkingLevel 2026-07-13 (merge port): validator/planning reasoning-effort overrides.
   validatorThinkingLevel: text("validator_thinking_level"),

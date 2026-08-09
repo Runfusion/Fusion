@@ -144,6 +144,7 @@ export function rowToTask(row: TaskRow): Task {
     nextRecoveryAt: row.nextRecoveryAt || undefined,
     error: row.error || undefined,
     summary: row.summary || undefined,
+    recommendations: fromJson<Task["recommendations"]>(row.recommendations) ?? undefined,
     thinkingLevel: (row.thinkingLevel || undefined) as Task["thinkingLevel"],
     validatorThinkingLevel: (row.validatorThinkingLevel || undefined) as Task["validatorThinkingLevel"],
     planningThinkingLevel: (row.planningThinkingLevel || undefined) as Task["planningThinkingLevel"],

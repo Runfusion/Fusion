@@ -216,6 +216,10 @@ describe("planning admission's worktree ledger on a renamed board", () => {
     const throttle = recorded.filter((event) => event.type === "task:plan-admission-throttled");
     expect(throttle.length, "a live task must still consume its worktree-capacity slot").toBeGreaterThan(0);
     expect(specifyTask).not.toHaveBeenCalled();
+    expect(store.logEntry).toHaveBeenCalledWith(
+      "FN-WAITING",
+      expect.stringContaining("maxWorktrees capacity exhausted: used=1/1"),
+    );
   });
 
   it("counts a pending optional workflow-step lease in final planning admission", async () => {

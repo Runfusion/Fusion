@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import type { Agent, AgentRating, AgentRatingSummary, AgentStore } from "@fusion/core";
+import { BUILTIN_WORKFLOW_ROLE_AGENT_DEFAULT_LIST, type Agent, type AgentRating, type AgentRatingSummary, type AgentStore } from "@fusion/core";
 import {
   resolveAgentInstructions,
   resolveAgentInstructionsWithRatings,
@@ -88,6 +88,22 @@ describe("resolveAgentInstructions", () => {
     expect(result).toBe("## Soul\n\nBe thorough and analytical.");
   });
 
+  it("composes every exported workflow-owner identity exactly once", async () => {
+    for (const definition of BUILTIN_WORKFLOW_ROLE_AGENT_DEFAULT_LIST) {
+      const result = await resolveAgentInstructions(makeAgent({
+        id: `agent-${definition.role}`,
+        name: definition.name,
+        role: definition.role,
+        roles: [definition.role],
+        instructionsText: definition.instructionsText,
+        soul: definition.soul,
+      }), testDir);
+      expect(result.split(definition.instructionsText)).toHaveLength(2);
+      expect(result.split("## Soul")).toHaveLength(2);
+      expect(result.split(definition.soul)).toHaveLength(2);
+    }
+  });
+
   it("returns memory section when memory is set", async () => {
     const agent = makeAgent({ memory: "Remember to keep CI green." });
     const result = await resolveAgentInstructions(agent, testDir);
@@ -161,6 +177,20 @@ describe("resolveAgentInstructions", () => {
     const agent = makeAgent({ instructionsText: "Always write tests." });
     const result = await resolveAgentInstructions(agent, testDir);
     expect(result).toBe("Always write tests.");
+  });
+
+  it("does not add a default inline identity beside a preserved custom path", async () => {
+    const definition = BUILTIN_WORKFLOW_ROLE_AGENT_DEFAULT_LIST.find((item) => item.role === "executor")!;
+    await writeFile(join(testDir, "operator-executor.md"), "operator-owned executor instructions");
+
+    const result = await resolveAgentInstructions(makeAgent({
+      instructionsPath: "operator-executor.md",
+      instructionsText: "",
+      soul: definition.soul,
+    }), testDir);
+
+    expect(result).toContain("operator-owned executor instructions");
+    expect(result).not.toContain(definition.instructionsText);
   });
 
   it("returns file contents when instructionsPath is set", async () => {

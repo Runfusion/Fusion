@@ -41,6 +41,12 @@ export type {
 export { AGENT_VALID_TRANSITIONS, DUPLICATE_OF_METADATA_KEY, REPORT_ATTACHMENT_SOURCE, assertNotWorkspaceTaskMerge, isWorkspaceTask, WorkspaceTaskMergeError, PLANNER_AGENT_ROLE} from "./types.js";
 export { WEDGE_RENOTIFY_COOLDOWN_MS, normalizeAgentRoles } from "./types.js";
 export {
+  BUILTIN_WORKFLOW_AGENT_BUNDLE_CONFIG,
+  BUILTIN_WORKFLOW_ROLE_AGENT_DEFAULTS,
+  BUILTIN_WORKFLOW_ROLE_AGENT_DEFAULT_LIST,
+} from "./agents/workflow-role-agent-defaults.js";
+export type { BuiltinWorkflowRole, WorkflowRoleAgentDefault } from "./agents/workflow-role-agent-defaults.js";
+export {
   resolveEntryPointBranchAssignment,
   sanitizeBranchSegment,
   derivePerTaskBranchName,
@@ -200,7 +206,7 @@ export {
 } from "./agents/agent-memory-mode.js";
 export type { TaskReviewData, TaskReviewSummary, TaskReviewItem, TaskReviewVerdict, TaskReviewerType } from "./types.js";
 /* FNXC:TaskVerificationRequest 2026-07-30-00:00: FN-8296 makes the persisted verification read model available to dashboard task and Command Center surfaces without exporting a subprocess runner. */
-export type { TaskVerificationRequest, TaskVerificationResultSummary, TaskVerificationStatus, TaskVerificationProfile } from "./types.js";
+export type { TaskVerificationRequest, TaskVerificationResultSummary, TaskVerificationStatus, TaskVerificationProfile, TaskRecommendation, TaskRecommendationCategory } from "./types.js";
 export type {
   TaskCommitAssociation,
   TaskCommitAssociationConfidence,
@@ -865,7 +871,10 @@ export { getTaskDuplicateLineage } from "./duplicates/duplicate-lineage.js";
 export {
   parseDuplicateMarkerFromSessionText,
   parseExplicitDuplicateMarker,
+  resolveExplicitDuplicateMarker,
   type ExplicitDuplicateMarker,
+  type ExplicitDuplicateMarkerResolution,
+  type ExplicitDuplicateMarkerSource,
   isDuplicateRedirectOnlyPrompt,
   nonExecutableDuplicateRedirectReason,
 } from "./duplicates/explicit-duplicate-marker.js";
@@ -1251,6 +1260,7 @@ export {
   getCurrentRepo,
   getPushRepo,
   type GhError,
+  type GhErrorClassificationContext,
   type GhErrorCode,
   type StructuredGhError,
 } from "./cli/gh-cli.js";

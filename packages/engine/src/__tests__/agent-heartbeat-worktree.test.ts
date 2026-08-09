@@ -49,11 +49,18 @@ describe("heartbeat worktree cwd", () => {
     vi.restoreAllMocks();
   });
 
-  it("uses acquired worktree cwd for task-scoped runs", async () => {
+  it("refreshes acquired worktree before creating task-scoped session", async () => {
     const monitor = new HeartbeatMonitor({ store, taskStore, rootDir: "/repo" });
     await monitor.executeHeartbeat({ agentId: "a1", source: "on_demand" });
-    expect(worktreeAcquisition.acquireTaskWorktree).toHaveBeenCalled();
+
+    expect(worktreeAcquisition.acquireTaskWorktree).toHaveBeenCalledWith(expect.objectContaining({
+      task: expect.objectContaining({ id: "FN-1" }),
+      refreshStaleBase: true,
+    }));
     expect(piModule.createFnAgent).toHaveBeenCalledWith(expect.objectContaining({ cwd: "/tmp/wt" }));
+    expect(worktreeAcquisition.acquireTaskWorktree.mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(piModule.createFnAgent).mock.invocationCallOrder[0],
+    );
   });
 
   it("uses rootDir for no-task runs", async () => {

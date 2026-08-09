@@ -3646,6 +3646,7 @@
     "assertionUpdateFailed": "更新断言失败",
     "attemptRetries_one": "",
     "attemptRetries_other": "",
+    "autoMergeOverrideDescription": "继承遵循项目设置。自动合并会在每个功能通过时合并。单个拉取请求会将所有功能保留在一个共享分支上，以便联合审查和合并。",
     "autopilotActivatingSlice": "正在激活切片",
     "autopilotCompleting": "完成中",
     "autopilotDescription": "开启后，Fusion 会在工作完成时自动激活下一个切片并规划其功能。",
@@ -5929,7 +5930,6 @@
       "updating": "",
       "upperBoundOnMessagesFetchedFromTheRoom": "",
       "upToDate": "您已是最新版本 ✓",
-      "useEphemeralTaskWorkerAgents": "",
       "warnOnTheBoardWhenTodoWorkExceeds": "",
       "whenEnabledDefaultFusionSpawnsShortLived": "",
       "whenEnabledFusionChecksOpenAndClosedIssues": "",
@@ -6000,7 +6000,9 @@
       "taskCreateWorkflow": "",
       "taskCreateWorkflowHelp": "",
       "refinementTaskWorkflow": "",
-      "refinementTaskWorkflowHelp": ""
+      "refinementTaskWorkflowHelp": "",
+      "maxRecommendationsPerTask": "",
+      "maxRecommendationsPerTaskHelp": ""
     },
     "globalGeneral": {
       "andShowsUpdateNoticesInTheCLIAnd": "",
@@ -8020,7 +8022,8 @@
       "worktreeTerminal": "终端",
       "workflow": "工作流",
       "summary": "Summary",
-      "cost": ""
+      "cost": "",
+      "recommendations": ""
     },
     "terminal": {
       "loading": ""
@@ -8122,6 +8125,15 @@
       "totalCostLabel": "",
       "totalTokens": "",
       "unknownModel": ""
+    },
+    "recommendations": {
+      "title": "",
+      "empty": "此任务未生成建议。",
+      "created": "",
+      "creating": "",
+      "retry": "",
+      "create": "",
+      "error": ""
     }
   },
   "taskDocuments": {

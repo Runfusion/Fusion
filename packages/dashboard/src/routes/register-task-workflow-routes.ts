@@ -1,4 +1,5 @@
 import { createLogger } from "@fusion/core";
+import type { Request, Response } from "express";
 
 const severityAuditLog = createLogger("dashboard-register-task-workflow-routes");
 
@@ -59,6 +60,7 @@ import {
   resolveNearDuplicateCanonicalFlags,
   isEphemeralAgent,
   parseExplicitDuplicateMarker,
+  resolveExplicitDuplicateMarker,
   resolveWorkflowIrForTask,
   resolveWorkflowIrForTaskWithProvenance,
   resolveReviewColumns,
@@ -1601,8 +1603,23 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
     }
   });
 
-  // Create task
-  router.post("/tasks", async (req, res) => {
+  /*
+  FNXC:TaskRecommendations 2026-08-08-05:10:
+  Recommendation children use this exact production intake pipeline, not a direct store write.
+  Keeping normalization, duplicate guards, lock cleanup, source metadata, and workflow routing here
+  prevents a convenience action from becoming a policy bypass.
+  */
+  const createTaskThroughGuardedIntake = async (
+    req: Request,
+    res: Response,
+    trusted?: {
+      proposalClaimId?: string;
+      /** A recommendation child auto-archived by a late deterministic conflict. */
+      recoverArchivedProposalTask?: Task;
+      onCreated?: (task: Task) => Promise<unknown>;
+      responseForCreated?: (task: Task, result: unknown) => unknown;
+    },
+  ): Promise<void> => {
     try {
       const { store: scopedStore, projectId } = await getProjectContext(req);
       const {
@@ -1868,6 +1885,22 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         if (
           deterministicGuard.action === "duplicate"
           && deterministicGuard.existing
+          && deterministicGuard.existing.proposalClaimId === trusted?.proposalClaimId
+        ) {
+          /*
+          FNXC:TaskRecommendations 2026-08-08-05:27:
+          The database proposal claim is project-scoped, cross-process at-most-once authority.
+          A second process can observe its newly-created child while checking the normal content
+          guard; reuse that immutable same-recommendation winner and repair the parent link rather
+          than surfacing the ordinary duplicate conflict reserved for distinct recommendations.
+          */
+          const trustedCreateResult = await trusted?.onCreated?.(deterministicGuard.existing);
+          res.status(200).json(trusted?.responseForCreated?.(deterministicGuard.existing, trustedCreateResult) ?? deterministicGuard.existing);
+          return;
+        }
+        if (
+          deterministicGuard.action === "duplicate"
+          && deterministicGuard.existing
           && await classifyDuplicateBlocker(deterministicGuard.existing)
         ) {
           throw conflict("duplicate_candidates", {
@@ -1973,7 +2006,15 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       // FN-5220: layered intake ordering remains deterministic -> similarity -> near-duplicate intent -> explicit-marker.
       try {
         const combinedText = `${normalizedTitle ?? ""}\n${normalizedDescription}`;
-        const explicitDuplicateMarker = parseExplicitDuplicateMarker(combinedText);
+        /*
+        FNXC:TaskRecommendations 2026-08-08-07:57:
+        Recommendation titles and descriptions are both required, so parsing only their combined
+        text makes a description-only `DUPLICATE: FN-####` marker unreachable from the server-owned
+        recommendation payload. Check the canonical description shape first while retaining the
+        ordinary combined-input check, so both intake paths enforce the explicit-marker guard.
+        */
+        const explicitDuplicateMarker = parseExplicitDuplicateMarker(normalizedDescription)
+          ?? parseExplicitDuplicateMarker(combinedText);
         const explicitMarkerBypassed =
           bypassDuplicateCheck === true ||
           (explicitDuplicateMarker ? acknowledgedDuplicateIds.includes(explicitDuplicateMarker.canonicalId) : false);
@@ -2075,7 +2116,33 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         ...(validatedGithubTracking ? { githubTracking: validatedGithubTracking } : {}),
         // FNXC:PlannerOversight 2026-07-14-18:11: only persist when client sent an explicit boolean override.
         ...(typeof sessionAdvisorEnabled === "boolean" ? { sessionAdvisorEnabled } : {}),
+        ...(trusted?.proposalClaimId ? { proposalClaimId: trusted.proposalClaimId } : {}),
       };
+
+      /*
+      FNXC:TaskRecommendations 2026-08-08-08:34:
+      A late deterministic conflict archives the just-created recommendation child but retains its
+      immutable proposal claim. Re-run every normal intake guard before restoring that child: an
+      unchanged canonical still produces the standard duplicate conflict, while an inactive
+      canonical lets the original claimed child return to its workflow-resolved intake lane.
+      */
+      if (trusted?.recoverArchivedProposalTask) {
+        const restoredTask = await scopedStore.unarchiveTask(trusted.recoverArchivedProposalTask.id);
+        /*
+        FNXC:TaskRecommendations 2026-08-08-08:44:
+        A deterministic-duplicate archive is a lane move, not an operator archive, so it has no
+        pre-archive history for generic restore to replay. Re-home its recovered child to that
+        child's workflow intake explicitly; otherwise custom workflows can restore it to a legacy
+        fallback or complete lane instead of the normal guarded-intake destination.
+        */
+        const intakeColumn = await resolveIntakeColumnForTask(scopedStore, restoredTask.id);
+        const recoveredTask = restoredTask.column === intakeColumn
+          ? restoredTask
+          : await scopedStore.moveTask(restoredTask.id, intakeColumn);
+        const trustedCreateResult = await trusted.onCreated?.(recoveredTask);
+        res.status(200).json(trusted.responseForCreated?.(recoveredTask, trustedCreateResult) ?? recoveredTask);
+        return;
+      }
 
       const task = await scopedStore.createTask(
         createInput,
@@ -2115,6 +2182,24 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
             : "keep-created",
       });
         if (deterministicReconcile.outcome === "archived") {
+          /*
+          FNXC:TaskRecommendations 2026-08-08-08:26:
+          A recommendation child that loses the post-create deterministic race cannot be presented
+          as a successful Created action. Its parent remains unlinked, so return the same
+          duplicate_candidates conflict shape as the pre-create guard rather than an unwrapped task.
+          */
+          if (trusted?.proposalClaimId) {
+            throw conflict("duplicate_candidates", {
+              matches: [{
+                id: deterministicReconcile.canonical.id,
+                title: deterministicReconcile.canonical.title ?? "",
+                description: deterministicReconcile.canonical.description ?? "",
+                column: deterministicReconcile.canonical.column,
+                score: 1,
+                deterministic: true,
+              }],
+            });
+          }
           res.status(200).json(deterministicReconcile.canonical);
           return;
         }
@@ -2139,7 +2224,8 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
           }
         }
 
-        res.status(201).json(taskWithBranchContext);
+        const trustedCreateResult = await trusted?.onCreated?.(taskWithBranchContext);
+        res.status(201).json(trusted?.responseForCreated?.(taskWithBranchContext, trustedCreateResult) ?? taskWithBranchContext);
         return;
       } finally {
         deterministicGuard.releaseLock();
@@ -2158,6 +2244,176 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         || /is a fragment and cannot be selected/.test(message);
       const status = isClientError ? 400 : 500;
       throw new ApiError(status, message);
+    }
+  };
+
+  // Ordinary dashboard creation deliberately shares the guarded production intake above.
+  router.post("/tasks", async (req, res) => {
+    await createTaskThroughGuardedIntake(req, res);
+  });
+
+  /*
+  FNXC:TaskRecommendations 2026-08-08-05:27:
+  A recommendation key must serialize BEFORE the guarded intake takes its content-fingerprint lock.
+  Otherwise two clicks can both pass pre-create duplicate checks and the loser observes a duplicate
+  conflict instead of the one child it is required to reuse. The key includes project identity,
+  because task ids are composite project-scoped identities.
+  */
+  const acquireRecommendationIdempotencyLock = async (projectId: string, taskId: string, recommendationId: string): Promise<() => void> => {
+    const key = `recommendation-idempotency:${projectId}:${taskId}:${recommendationId}`;
+    const predecessor = deterministicGuardLocks.get(key);
+    let releaseGate: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => { releaseGate = resolve; });
+    deterministicGuardLocks.set(key, gate);
+    if (predecessor) await predecessor;
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      releaseGate?.();
+      if (deterministicGuardLocks.get(key) === gate) deterministicGuardLocks.delete(key);
+    };
+  };
+
+  router.post("/tasks/:id/recommendations/:recommendationId/create", async (req, res) => {
+    let releaseParentRecommendationLock: (() => void) | undefined;
+    let releaseRecommendationLock: (() => void) | undefined;
+    try {
+      if (req.body && Object.keys(req.body).length > 0) {
+        throw badRequest("recommendation creation does not accept client-controlled task options");
+      }
+      const { store: scopedStore, projectId } = await getProjectContext(req);
+      const lockProjectId = projectId ?? "default";
+      /*
+      FNXC:TaskRecommendations 2026-08-08-06:42:
+      Recommendation links share one JSONB parent field. Serialize all recommendation mutations
+      for that parent before taking an individual recommendation key so simultaneous actions for
+      different rows cannot overwrite each other's createdTaskId during read-modify-write repair.
+      The individual key still precedes the guarded intake fingerprint lock as required.
+      */
+      releaseParentRecommendationLock = await acquireRecommendationIdempotencyLock(lockProjectId, req.params.id, "parent-mutation");
+      releaseRecommendationLock = await acquireRecommendationIdempotencyLock(lockProjectId, req.params.id, req.params.recommendationId);
+      // Re-read only after acquiring the recommendation identity lock; this is the queue winner's authority.
+      const parent = await scopedStore.getTask(req.params.id).catch(() => null);
+      if (!parent || parent.deletedAt) throw notFound("Task not found");
+      const completeColumns = await (async () => {
+        try {
+          const ir = await resolveWorkflowIrForTask(scopedStore, parent.id);
+          const columns = columnsWithFlag(ir, "complete");
+          return new Set(columns.length > 0 ? columns : ["done"]);
+        } catch {
+          return new Set(["done"]);
+        }
+      })();
+      if (!completeColumns.has(parent.column)) {
+        throw conflict("recommendations are available only on completed tasks");
+      }
+      const recommendation = parent.recommendations?.find((item) => item.id === req.params.recommendationId);
+      if (!recommendation) throw notFound("Recommendation not found");
+
+      const repairLink = async (child: Task): Promise<Task> => {
+        try {
+          /*
+          FNXC:TaskRecommendations 2026-08-08-06:52:
+          Route-local promise locks only coordinate one dashboard process. The TaskStore mutation
+          takes the project-scoped PostgreSQL advisory lock and re-reads the parent in that same
+          transaction, so concurrent dashboard instances cannot overwrite another recommendation
+          link after the durable child claim has been created.
+          */
+          return await scopedStore.linkTaskRecommendation(parent.id, recommendation.id, child.id, completeColumns);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          if (
+            message === "Recommendation no longer exists"
+            || message === "Recommendation is already linked to another task"
+            || message === "Recommendations are available only on completed tasks"
+          ) {
+            throw conflict(message);
+          }
+          throw error;
+        }
+      };
+
+      if (recommendation.createdTaskId) {
+        if (!/^[A-Z]+-\d+$/.test(recommendation.createdTaskId)) {
+          throw conflict("Recommendation link is malformed");
+        }
+        const linked = await scopedStore.getTask(recommendation.createdTaskId).catch(() => null);
+        /*
+        FNXC:TaskRecommendations 2026-08-08-06:34:
+        A prior link is reusable only while its child remains in a live task lane. Archived and
+        soft-deleted children are historical records, not an actionable Created result; conflict
+        rather than silently resurrecting or linking a second child.
+        */
+        if (!linked || linked.deletedAt || linked.column === "archived") {
+          throw conflict("Recommendation link points to an unavailable task");
+        }
+        return res.status(200).json({ task: linked, parent });
+      }
+
+      const proposalClaimId = `recommendation:${parent.lineageId ?? parent.id}:${recommendation.id}`;
+      /*
+      FNXC:TaskRecommendations 2026-08-08-05:41:
+      Proposal claims deliberately survive soft deletion to prevent a stale recommendation retry
+      from colliding with the unique claim and manufacturing a second child. Read tombstones here
+      only to return a conflict; they are never relinked or exposed as live recommendation tasks.
+      */
+      const existing = (await scopedStore.listTasks({ slim: false, includeArchived: true, includeDeleted: true }))
+        .find((task) => task.proposalClaimId === proposalClaimId);
+      const existingArchiveColumns = await (async () => {
+        if (!existing) return new Set<string>();
+        try {
+          const ir = await resolveWorkflowIrForTask(scopedStore, existing.id);
+          const columns = columnsWithFlag(ir, "archived");
+          return new Set(columns.length > 0 ? columns : ["archived"]);
+        } catch {
+          return new Set(["archived"]);
+        }
+      })();
+      /*
+      FNXC:TaskRecommendations 2026-08-08-08:44:
+      Deterministic reconciliation moves a child to its workflow's archived trait, which may be
+      named anything but `archived`. Detect that trait before retry recovery so a custom-workflow
+      child reaches the explicit intake re-home rather than being stranded as an unavailable claim.
+      */
+      const recoverArchivedProposalTask = existing
+        && !existing.deletedAt
+        && existingArchiveColumns.has(existing.column)
+        && typeof existing.sourceMetadata?.deterministicDuplicateOf === "string"
+        ? existing
+        : undefined;
+      if (existing && !recoverArchivedProposalTask) {
+        if (existing.deletedAt || existingArchiveColumns.has(existing.column)) throw conflict("Recommendation task is unavailable");
+        const repairedParent = await repairLink(existing);
+        return res.status(200).json({ task: existing, parent: repairedParent });
+      }
+
+      const originalBody = req.body;
+      req.body = {
+        title: recommendation.title,
+        description: recommendation.description,
+        source: {
+          sourceType: "api",
+          sourceParentTaskId: parent.id,
+          sourceMetadata: { recommendationId: recommendation.id, recommendationCategory: recommendation.category },
+        },
+      };
+      try {
+        await createTaskThroughGuardedIntake(req, res, {
+          proposalClaimId,
+          recoverArchivedProposalTask,
+          onCreated: repairLink,
+          responseForCreated: (child, linkedParent) => ({ task: child, parent: linkedParent as Task }),
+        });
+      } finally {
+        req.body = originalBody;
+      }
+    } catch (err: unknown) {
+      if (err instanceof ApiError) throw err;
+      rethrowAsApiError(err);
+    } finally {
+      releaseRecommendationLock?.();
+      releaseParentRecommendationLock?.();
     }
   });
 
@@ -5938,9 +6194,28 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       const existingTaskForDuplicateDismissal = dismissNearDuplicate === true
         ? await scopedStore.getTask(req.params.id)
         : null;
+      let duplicateDismissalResolution: ReturnType<typeof resolveExplicitDuplicateMarker> | null = null;
       if (dismissNearDuplicate === true) {
         const isTriageMarkerDecision = existingTaskForDuplicateDismissal?.sourceMetadata?.duplicateSource === "triage-marker"
           && existingTaskForDuplicateDismissal.pausedReason === "duplicate-decision-required";
+        const existingPrompt = existingTaskForDuplicateDismissal
+          ? await readFile(join(scopedStore.getRootDir(), ".fusion", "tasks", existingTaskForDuplicateDismissal.id, "PROMPT.md"), "utf-8").catch(() => null)
+          : null;
+        duplicateDismissalResolution = resolveExplicitDuplicateMarker(existingPrompt, existingTaskForDuplicateDismissal?.title);
+        /*
+         * FNXC:DuplicateIntake 2026-08-09-02:29:
+         * FN-8840 extends an explicit redirect to task titles. Keep must retire the source that
+         * created the duplicate-decision hold before releasing it: otherwise a title marker is
+         * immediately re-ingested, while deleting PROMPT.md for a title-only redirect loses an
+         * operator-authored plan. Same-ID prompt/title markers remain one cleanup operation;
+         * conflicts deliberately retain both sources for explicit operator correction.
+         */
+        if (!duplicateDismissalResolution.conflict && duplicateDismissalResolution.marker) {
+          const titleMarker = parseExplicitDuplicateMarker(existingTaskForDuplicateDismissal?.title ?? "");
+          if (title === undefined && titleMarker?.canonicalId === duplicateDismissalResolution.marker.canonicalId) {
+            updates.title = `Duplicate redirect cleared: ${titleMarker.canonicalId}`;
+          }
+        }
         /*
          * FNXC:DuplicateIntake 2026-07-16-13:00:
          * Keep resolves Issue #2225's default triage-marker hold by acknowledging the link,
@@ -5976,7 +6251,11 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       }
 
       const task = await scopedStore.updateTask(req.params.id, updates);
-      if (dismissNearDuplicate === true && task.sourceMetadata?.duplicateSource === "triage-marker") {
+      if (
+        dismissNearDuplicate === true
+        && task.sourceMetadata?.duplicateSource === "triage-marker"
+        && duplicateDismissalResolution?.source === "prompt"
+      ) {
         const { rm } = await import("node:fs/promises");
         await rm(join(scopedStore.getRootDir(), ".fusion", "tasks", task.id, "PROMPT.md"), { force: true });
       }

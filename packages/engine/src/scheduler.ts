@@ -1511,7 +1511,16 @@ export class Scheduler {
    * @param id - The task ID to validate
    * @returns Object with `valid: true` if checks pass, or `valid: false` with a `reason` string if they fail
    */
-  private async validateTaskFilesystem(id: string): Promise<{ valid: boolean; reason?: string }> {
+  private async validateTaskFilesystem(task: Pick<Task, "id" | "title">): Promise<{ valid: boolean; reason?: string }> {
+    const id = task.id;
+    /*
+    FNXC:DuplicateIntake 2026-08-09-01:02:
+    A title redirect is available without filesystem capability or PROMPT.md I/O. Refuse it first
+    so minimal stores and missing artifacts cannot dispatch a task the operator explicitly marked
+    DUPLICATE.
+    */
+    const titleRedirect = nonExecutableDuplicateRedirectReason(null, task.title);
+    if (titleRedirect) return { valid: false, reason: titleRedirect };
     if (typeof this.store.getTasksDir !== "function") {
       /*
       FNXC:WorkflowScheduling 2026-06-23-11:38:
@@ -1542,7 +1551,7 @@ export class Scheduler {
       Non-empty is not enough: a sole `DUPLICATE: FN-####` line is a triage redirect, not a
       plan. Admitting it (FN-8704) fails the graph at `parse` and parks failed WIP in a loop.
       */
-      const duplicateOnly = nonExecutableDuplicateRedirectReason(content);
+      const duplicateOnly = nonExecutableDuplicateRedirectReason(content, task.title);
       if (duplicateOnly) {
         return { valid: false, reason: duplicateOnly };
       }
@@ -2259,9 +2268,8 @@ export class Scheduler {
         isReviewColumnRole(columnFlagsForTask(task), task.column);
       /*
       FNXC:ConcurrencyIndicators 2026-08-01-19:22:
-      Failed WIP is not a live holder (isRunningAgentTask). Keep the WIP id list aligned so
-      diagnostic maxConcurrent holders and any WIP-only arithmetic do not re-count stranded failed
-      parks that the worktree ledger already excludes.
+      Failed WIP is not a live holder (isRunningAgentTask). Keep the WIP list aligned so
+      same-sweep executor reservation arithmetic does not re-count stranded failed parks.
       */
       const wipTaskIds = tasks
         .filter((task) => isWipColumnTask(task) && task.status !== "failed")
@@ -2278,7 +2286,6 @@ export class Scheduler {
       const activeWorktreeTaskIds = await persistedTopLevelAgentTaskIdsFromStore(this.store, tasks);
       let reservedWorktreeSlots = activeWorktreeTaskIds.length;
       let reservedConcurrentSlots = wipTaskIds.length;
-      const inProgressTaskIds = wipTaskIds;
       const dispatchPrepByTaskId = new Map<string, {
         baseBranch: string | null;
         dispatchStormCount: number;
@@ -2454,7 +2461,7 @@ export class Scheduler {
           FNXC:WorkflowScheduling 2026-06-23-11:12:
           The workflow sweep is the only dispatcher, so the scheduler-only pre-dispatch gates must run before a capacity hold moves to an execution column. Keep dependency, filesystem, node-routing, permanent-agent, and oscillation checks on this path instead of relying on the retired todo loop.
           */
-          const validation = await this.validateTaskFilesystem(task.id);
+          const validation = await this.validateTaskFilesystem(task);
           if (!validation.valid) {
             schedulerLog.warn(`Task ${task.id} filesystem validation failed: ${validation.reason}`);
             /*
@@ -2818,23 +2825,6 @@ export class Scheduler {
             }
           }
 
-          const concurrencyDiagnostic = computeConcurrencyGateDiagnostic({
-            agentSlots: reservedConcurrentSlots,
-            maxConcurrent,
-            activeWorktrees: reservedWorktreeSlots,
-            maxWorktrees,
-            worktreeHolderTaskIds: [...activeWorktreeTaskIds, ...dispatchPrepByTaskId.keys()],
-            semaphore: this.options.semaphore,
-            inProgressTaskIds,
-            topLevelClaimedSlots: reservedWorktreeSlots,
-          });
-          /*
-          The sweep diagnostic is intentionally descriptive only. Worktree preparation can outlive
-          a holder, so using this older snapshot as an admission gate strands queued cards even after
-          capacity frees. The serialized fresh reservation below is the sole capacity authority; the
-          diagnostic remains available to explain a rejection from that authoritative check.
-          */
-
           /*
           FNXC:WorktreeCapacity 2026-08-01-04:38:
           Serialize the workflow scheduler's direct hold release with planning and merge admission.
@@ -2859,7 +2849,7 @@ export class Scheduler {
             return { count: ids.length, ids };
           })();
           let projectSlotReserved = false;
-          await projectAdmissionCoordinator.admitNext({
+          const admittedTaskId = await projectAdmissionCoordinator.admitNext({
             projectId: this.store.getRootDir(),
             maxConcurrent: activeTaskLimit,
             claimed: async () => (await getFinalClaimSnapshot()).count,
@@ -2882,14 +2872,28 @@ export class Scheduler {
               activeScopes.delete(task.id);
               activeScopeColumns.delete(task.id);
             }
-            const bindingGate: ConcurrencyGateName = maxWorktrees !== null && maxWorktrees <= maxConcurrent
-              ? "maxWorktrees"
-              : "maxConcurrent";
-            const reason = formatConcurrencyLimitReason({
-              ...concurrencyDiagnostic,
-              available: 0,
-              bindingGates: [...new Set([...concurrencyDiagnostic.bindingGates, bindingGate])],
+            /*
+            FNXC:WorktreeCapacity 2026-08-08-04:17:
+            A scheduler candidate can lose one serialized admission pass because a higher-priority
+            merge/planning provider was selected, even with a free slot. Only call it exhaustion
+            after the coordinator admitted nobody and report the fresh canonical holder snapshot
+            that made that decision; the pre-sweep snapshot is diagnostic-only and can be stale.
+            */
+            const freshClaims = await getFinalClaimSnapshot();
+            const exhausted = admittedTaskId === undefined;
+            const freshDiagnostic = computeConcurrencyGateDiagnostic({
+              agentSlots: freshClaims.count,
+              maxConcurrent,
+              activeWorktrees: freshClaims.count,
+              maxWorktrees,
+              worktreeHolderTaskIds: freshClaims.ids,
+              semaphore: this.options.semaphore,
+              inProgressTaskIds: freshClaims.ids,
+              topLevelClaimedSlots: freshClaims.count,
             });
+            const reason = exhausted
+              ? formatConcurrencyLimitReason(freshDiagnostic)
+              : `queued — higher-priority lifecycle admission started: task=${admittedTaskId}`;
             await this.store.updateTask(task.id, { status: "queued" });
             await this.logDispatchQueuedReason(task.id, reason);
             return null;

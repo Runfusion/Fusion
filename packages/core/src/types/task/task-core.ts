@@ -588,6 +588,22 @@ export interface TaskWedgeNotificationState {
   lastNotifiedAtByReason?: Record<string, string>;
 }
 
+export type TaskRecommendationCategory = "improvement" | "feature" | "bug" | "other";
+
+/**
+ * FNXC:TaskRecommendations 2026-08-08-05:02:
+ * Completion suggestions are deliberately short, task-ready records rather than
+ * execution reasoning. Their stable id is also the idempotency identity used when
+ * an operator turns a recommendation into a normal guarded-intake task.
+ */
+export interface TaskRecommendation {
+  id: string;
+  title: string;
+  description: string;
+  category: TaskRecommendationCategory;
+  createdTaskId?: string;
+}
+
 export interface Task {
   id: string;
   /** Immutable lineage identity used for durable commit/task attribution. */
@@ -1160,6 +1176,8 @@ export interface Task {
   error?: string;
   /** Optional summary of what was changed/fixed when task is completed */
   summary?: string;
+  /** Bounded out-of-scope suggestions accepted with successful completion only. */
+  recommendations?: TaskRecommendation[];
   /** ISO-8601 timestamp of when the task last entered its current column.
    *  Used to sort cards within a column so that recently-moved cards appear at the top. */
   columnMovedAt?: string;

@@ -2,10 +2,19 @@ import { dirname } from "node:path";
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { writeSecretsEnvFile } = vi.hoisted(() => ({ writeSecretsEnvFile: vi.fn() }));
+const { writeSecretsEnvFile, reconcileSecretsEnvFingerprint, refreshReusedWorktreeBase } = vi.hoisted(() => ({
+  writeSecretsEnvFile: vi.fn(),
+  reconcileSecretsEnvFingerprint: vi.fn(),
+  refreshReusedWorktreeBase: vi.fn(),
+}));
 
 vi.mock("../worktree/secrets-env-writer.js", () => ({
   writeSecretsEnvFile,
+  reconcileSecretsEnvFingerprint,
+}));
+
+vi.mock("../worktree-base-refresh.js", () => ({
+  refreshReusedWorktreeBase,
 }));
 
 vi.mock("../worktree/worktree-pool.js", async () => {
@@ -42,6 +51,8 @@ describe("worktree-acquisition secrets env hook", () => {
 
   beforeEach(() => {
     writeSecretsEnvFile.mockReset().mockResolvedValue({ outcome: "skipped", filename: ".env", reason: "disabled" });
+    reconcileSecretsEnvFingerprint.mockReset().mockResolvedValue({ executionSafe: true, outcome: "clean" });
+    refreshReusedWorktreeBase.mockReset().mockResolvedValue({ kind: "up-to-date", executionSafe: true });
     vi.mocked(classifyTaskWorktree).mockResolvedValue({ ok: true } as any);
     store = { updateTask: vi.fn().mockResolvedValue(undefined), logEntry: vi.fn().mockResolvedValue(undefined) };
   });
@@ -87,6 +98,54 @@ describe("worktree-acquisition secrets env hook", () => {
       createWorktree: vi.fn(),
     });
     expect(writeSecretsEnvFile).not.toHaveBeenCalled();
+  });
+
+  it("reconciles a pinned planning sidecar before its refresh-enabled execution handoff", async () => {
+    const existingWorktree = process.cwd();
+    const projectRoot = dirname(existingWorktree);
+    reconcileSecretsEnvFingerprint.mockResolvedValueOnce({ executionSafe: true, outcome: "adopted-legacy" });
+
+    await expect(acquireTaskWorktree({
+      task: { ...task, branch: "fusion/fn-1", worktree: existingWorktree },
+      rootDir: projectRoot,
+      store,
+      settings: { secretsEnv: { enabled: true } } as any,
+      refreshStaleBase: true,
+      createWorktree: vi.fn(),
+    })).resolves.toMatchObject({ source: "existing", isResume: true });
+
+    // FNXC:SecretsEnvMaterialization 2026-08-08-03:30: Execution handoff must reconcile the planning-era root record before strict refresh sees porcelain.
+    expect(reconcileSecretsEnvFingerprint).toHaveBeenCalledWith(existingWorktree);
+    expect(refreshReusedWorktreeBase).toHaveBeenCalledWith(expect.objectContaining({ worktreePath: existingWorktree }));
+    expect(reconcileSecretsEnvFingerprint.mock.invocationCallOrder[0]).toBeLessThan(refreshReusedWorktreeBase.mock.invocationCallOrder[0]);
+  });
+
+  it("fails closed with a redacted fixed audit outcome when reconciliation rejects", async () => {
+    const existingWorktree = process.cwd();
+    const projectRoot = dirname(existingWorktree);
+    const git = vi.fn();
+    reconcileSecretsEnvFingerprint.mockRejectedValueOnce(new Error("secret-derived resolver detail"));
+
+    await expect(acquireTaskWorktree({
+      task: { ...task, branch: "fusion/fn-1", worktree: existingWorktree },
+      rootDir: projectRoot,
+      store,
+      settings: { secretsEnv: { enabled: true } } as any,
+      refreshStaleBase: true,
+      audit: { git },
+      createWorktree: vi.fn(),
+    })).rejects.toMatchObject({
+      name: "WorktreeBaseRefreshError",
+      refresh: { kind: "base-reconciliation-required", detail: "git-dir-unavailable" },
+    });
+    expect(refreshReusedWorktreeBase).not.toHaveBeenCalled();
+    expect(git).toHaveBeenCalledWith(expect.objectContaining({
+      type: "worktree:base-refresh-blocked",
+      target: "FN-1",
+      metadata: { taskId: "FN-1", outcome: "base-reconciliation-required", reconciliationOutcome: "git-dir-unavailable" },
+    }));
+    expect(JSON.stringify(git.mock.calls)).not.toContain("secret-derived resolver detail");
+    expect(JSON.stringify(git.mock.calls)).not.toContain(existingWorktree);
   });
 
   it("isolates writer failures", async () => {

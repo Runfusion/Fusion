@@ -1,6 +1,6 @@
 {
   "name": "@fusion-plugin-examples/roadmap",
-  "version": "0.1.53",
+  "version": "0.1.54-beta.0",
   "type": "module",
   "description": "Roadmap plugin package for Fusion",
   "private": true,

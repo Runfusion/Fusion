@@ -1030,7 +1030,7 @@ describe("createDelegateTaskTool", () => {
     }, undefined as any, undefined as any, undefined as any);
 
     const text = (result.content[0] as { text: string }).text;
-    expect(text).toContain("ERROR: Agent agent-002 has role \"reviewer\"");
+    expect(text).toContain("ERROR: Agent agent-002 has roles \"reviewer\"");
     expect(text).toContain("Pass override=true to bypass");
     expect(taskStore.createTask).not.toHaveBeenCalled();
   });

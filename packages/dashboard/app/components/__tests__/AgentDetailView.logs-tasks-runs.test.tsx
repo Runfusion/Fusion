@@ -198,41 +198,73 @@ describe("Logs tab", () => {
 });
 
 describe("Tasks tab", () => {
-  it("renders tasks returned by fetchAgentTasks", async () => {
+  it("renders workflow-linked task rows without the empty state at desktop and mobile widths", async () => {
+    const workflowTask = {
+      id: "FN-WORKFLOW",
+      title: "Execute workflow task",
+      description: "",
+      column: "in-progress",
+      status: "executing",
+      steps: [],
+      dependencies: [],
+      log: [],
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-02T00:00:00.000Z",
+    };
+
+    const initialWidth = window.innerWidth;
+    try {
+      for (const width of [1280, 375]) {
+        Object.defineProperty(window, "innerWidth", { configurable: true, value: width });
+        mockFetchAgentTasks.mockResolvedValue([workflowTask] as any);
+        const user = userEvent.setup();
+        render(<AgentDetailView agentId="agent-001" onClose={vi.fn()} addToast={vi.fn()} />);
+
+        await user.click(await screen.findByText("Tasks"));
+
+        await waitFor(() => {
+          expect(mockFetchAgentTasks).toHaveBeenCalledWith("agent-001", undefined);
+          expect(screen.getByText("FN-WORKFLOW")).toBeInTheDocument();
+          expect(screen.getByText("Execute workflow task")).toBeInTheDocument();
+          expect(screen.getByText(/executing · Updated/)).toBeInTheDocument();
+          expect(screen.getByText("In Progress")).toBeInTheDocument();
+        });
+        expect(screen.getByRole("link", { name: /FN-WORKFLOW/ })).toHaveAttribute("href", "/tasks/FN-WORKFLOW");
+        expect(screen.queryByText("No assigned or active workflow tasks for this agent")).not.toBeInTheDocument();
+        cleanup();
+      }
+    } finally {
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: initialWidth });
+    }
+  });
+
+  it("shows the agent-task loading state while the request is pending", async () => {
+    let resolveTasks: (tasks: any[]) => void;
+    mockFetchAgentTasks.mockReturnValue(new Promise((resolve) => { resolveTasks = resolve; }));
     const user = userEvent.setup();
-    mockFetchAgentTasks.mockResolvedValue([
-      {
-        id: "FN-201",
-        title: "Implement assignment API",
-        description: "",
-        column: "in-progress",
-        status: "executing",
-        steps: [],
-        dependencies: [],
-        log: [],
-        createdAt: "2026-01-01T00:00:00.000Z",
-        updatedAt: "2026-01-02T00:00:00.000Z",
-      },
-    ] as any);
 
-    render(
-      <AgentDetailView
-        agentId="agent-001"
-        onClose={vi.fn()}
-        addToast={vi.fn()}
-      />
-    );
+    render(<AgentDetailView agentId="agent-001" onClose={vi.fn()} addToast={vi.fn()} />);
+    await user.click(await screen.findByText("Tasks"));
 
+    expect(screen.getByText("Loading agent tasks...")).toBeInTheDocument();
+    resolveTasks!([]);
+  });
+
+  it("reports a task-list failure and then renders the empty state", async () => {
+    const addToast = vi.fn();
+    mockFetchAgentTasks.mockRejectedValue(new Error("request failed"));
+    const user = userEvent.setup();
+
+    render(<AgentDetailView agentId="agent-001" onClose={vi.fn()} addToast={addToast} />);
     await user.click(await screen.findByText("Tasks"));
 
     await waitFor(() => {
-      expect(mockFetchAgentTasks).toHaveBeenCalledWith("agent-001", undefined);
-      expect(screen.getByText("FN-201")).toBeInTheDocument();
-      expect(screen.getByText("Implement assignment API")).toBeInTheDocument();
+      expect(addToast).toHaveBeenCalledWith("Failed to load agent tasks: request failed", "error");
+      expect(screen.getByText("No assigned or active workflow tasks for this agent")).toBeInTheDocument();
     });
   });
 
-  it("shows empty state when no tasks are assigned", async () => {
+  it("shows empty state when no assigned or workflow tasks are returned", async () => {
     const user = userEvent.setup();
     mockFetchAgentTasks.mockResolvedValue([]);
 
@@ -247,7 +279,7 @@ describe("Tasks tab", () => {
     await user.click(await screen.findByText("Tasks"));
 
     await waitFor(() => {
-      expect(screen.getByText("No tasks assigned to this agent")).toBeInTheDocument();
+      expect(screen.getByText("No assigned or active workflow tasks for this agent")).toBeInTheDocument();
     });
   });
 });

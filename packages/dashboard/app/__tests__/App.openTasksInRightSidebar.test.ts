@@ -10,6 +10,7 @@ describe("board task detail routing", () => {
 
   it("keeps deep-tab opens on the existing main-panel path", () => {
     expect(shouldOpenBoardTaskInDock(true, true, "changes")).toBe(false);
+    expect(shouldOpenBoardTaskInDock(true, true, "recommendations")).toBe(false);
     expect(shouldOpenBoardTaskInDock(true, true, "retries")).toBe(false);
     expect(shouldOpenBoardTaskInDock(true, true, "workflow")).toBe(false);
   });
@@ -65,7 +66,7 @@ describe("board task detail routing", () => {
   });
 
   it("routes every board-card deep tab to the popup when enabled", () => {
-    for (const initialTab of ["changes", "retries", "workflow"] as const) {
+    for (const initialTab of ["changes", "recommendations", "retries", "workflow"] as const) {
       for (const isMobile of [true, false]) {
         expect(getBoardTaskOpenRoute({
           isMobile,

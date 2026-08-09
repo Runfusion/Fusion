@@ -12,6 +12,7 @@ import { findWorktreeUser, aiMergeTask } from "../merger.js";
 import { WorktreePool } from "../worktree/worktree-pool.js";
 import * as worktreePoolModule from "../worktree/worktree-pool.js";
 import { BranchConflictError } from "../execution/branch-conflicts.js";
+import { routeWorkflowPrincipal } from "../agents/workflow-agent-router.js";
 import * as branchConflictModule from "../execution/branch-conflicts.js";
 import { activeSessionRegistry } from "../agents/active-session-registry.js";
 import { ActiveSessionWorktreeRemovalError } from "../worktree/worktree-backend.js";
@@ -25,6 +26,7 @@ import { runVerificationCommand as mockedRunVerificationCommand } from "../execu
 import { __resetSandboxBackendForTests, __setSandboxBackendForTests } from "../sandbox/index.js";
 import {
   createMockStore,
+  createWorkflowRoutingAgentStore,
   mockedCreateFnAgent,
   mockedSessionManager,
   mockedGenerateWorktreeName,
@@ -49,6 +51,94 @@ import {
 
 const mockedReviewStep = vi.mocked(mockedReviewStepFn);
 
+/*
+ * FNXC:WorkflowPrincipalRouting 2026-08-08-04:27:
+ * Mandatory graph principal routing is part of every production-path executor run, including
+ * worktree tests. This factory supplies only a durable executor role, capacity leases, and
+ * refresh-safe checkout renewal; it must not bypass graph admission or worktree refresh, so
+ * each existing Git/worktree assertion continues to exercise the production acquisition path.
+ */
+function createWorktreeExecutor(store: any, rootDir: string, options: any = {}) {
+  return new TaskExecutor(store, rootDir, {
+    agentStore: createWorkflowRoutingAgentStore(store).agentStore,
+    ...options,
+  });
+}
+
+describe("worktree workflow routing fixture", () => {
+  it("selects its eligible executor from the role pool", async () => {
+    const store = createMockStore();
+    const fixture = createWorkflowRoutingAgentStore(store);
+    const agents = await fixture.agentStore.listAgents({ includeEphemeral: true });
+    const route = routeWorkflowPrincipal({
+      task: {},
+      ir: { version: "v1", name: "fixture", nodes: [], edges: [] },
+      node: { id: "execute", kind: "script", config: { seam: "execute" } },
+      agents,
+    } as any);
+
+    expect(route).toEqual(expect.objectContaining({
+      status: "routed",
+      route: expect.objectContaining({
+        agent: expect.objectContaining({ id: fixture.agent.id }),
+        role: "executor",
+        authority: "role-pool",
+      }),
+    }));
+    expect(fixture.agentStore.listAgents).toHaveBeenCalledWith({ includeEphemeral: true });
+  });
+
+  it("releases capacity after successful and failed fixture work", async () => {
+    const fixture = createWorkflowRoutingAgentStore(createMockStore());
+    const run = async (attemptId: string, fail = false) => {
+      expect(await fixture.agentStore.acquireWorkflowSessionCapacity({ agentId: fixture.agent.id, attemptId })).toBe("acquired");
+      try {
+        if (fail) throw new Error("fixture failure");
+      } finally {
+        await fixture.agentStore.releaseWorkflowSessionCapacity(attemptId);
+      }
+    };
+
+    await run("success");
+    await expect(run("failure", true)).rejects.toThrow("fixture failure");
+    expect(fixture.leases).toHaveLength(0);
+    expect(fixture.agentStore.releaseWorkflowSessionCapacity).toHaveBeenCalledTimes(2);
+  });
+
+  it("renews checkout without replacing populated worktree state", async () => {
+    const store = createMockStore();
+    store._setRow("FN-routing", {
+      worktree: "/tmp/existing-worktree",
+      branch: "fusion/FN-routing",
+      baseBranch: "main",
+      baseSha: "abc123",
+    });
+    const fixture = createWorkflowRoutingAgentStore(store);
+
+    await fixture.agentStore.checkoutTask(fixture.agent.id, "FN-routing", { nodeId: "node", runId: "run", leaseEpoch: 1, renewedAt: "2026-01-01T00:00:00.000Z" });
+    await fixture.agentStore.checkoutTask(fixture.agent.id, "FN-routing", { nodeId: "node", runId: "run", leaseEpoch: 1, renewedAt: "2026-01-01T00:01:00.000Z" });
+
+    expect(await store.getTask("FN-routing")).toEqual(expect.objectContaining({
+      worktree: "/tmp/existing-worktree",
+      branch: "fusion/FN-routing",
+      baseBranch: "main",
+      baseSha: "abc123",
+      checkedOutBy: fixture.agent.id,
+      checkoutLeaseRenewedAt: "2026-01-01T00:01:00.000Z",
+    }));
+  });
+
+  it("resets lease state without leaking into the next fixture", async () => {
+    const fixture = createWorkflowRoutingAgentStore(createMockStore());
+    await fixture.agentStore.acquireWorkflowSessionCapacity({ agentId: fixture.agent.id, attemptId: "leaked" });
+    fixture.reset();
+
+    expect(fixture.leases).toHaveLength(0);
+    expect(fixture.agentStore.acquireWorkflowSessionCapacity).not.toHaveBeenCalled();
+    expect(createWorkflowRoutingAgentStore(createMockStore()).leases).toHaveLength(0);
+  });
+});
+
 describe("TaskExecutor with semaphore", () => {
   beforeEach(() => {
     resetExecutorMocks();
@@ -67,7 +157,7 @@ describe("TaskExecutor with semaphore", () => {
       },
     } as any);
 
-    const executor = new TaskExecutor(store, "/tmp/test", { semaphore: sem });
+    const executor = createWorktreeExecutor(store, "/tmp/test", { semaphore: sem });
 
     await executor.execute({
       id: "FN-001",
@@ -94,7 +184,7 @@ describe("TaskExecutor with semaphore", () => {
     mockedCreateFnAgent.mockRejectedValue(new Error("agent failed"));
 
     const onError = vi.fn();
-    const executor = new TaskExecutor(store, "/tmp/test", {
+    const executor = createWorktreeExecutor(store, "/tmp/test", {
       semaphore: sem,
       onError,
     });
@@ -122,7 +212,7 @@ describe("TaskExecutor with semaphore", () => {
     mockedCreateFnAgent.mockRejectedValue(new Error("agent crashed"));
 
     const onError = vi.fn();
-    const executor = new TaskExecutor(store, "/tmp/test", { onError });
+    const executor = createWorktreeExecutor(store, "/tmp/test", { onError });
 
     await executor.execute({
       id: "FN-001",
@@ -170,7 +260,7 @@ describe("TaskExecutor with semaphore", () => {
       } as any;
     });
 
-    const executor = new TaskExecutor(store, "/tmp/test", { semaphore: sem });
+    const executor = createWorktreeExecutor(store, "/tmp/test", { semaphore: sem });
 
     const task = (id: string) => ({
       id,
@@ -259,7 +349,7 @@ describe("TaskExecutor worktreeInitCommand", () => {
       worktreeInitCommand: "pnpm install --frozen-lockfile",
     });
 
-    const executor = new TaskExecutor(store, "/tmp/test");
+    const executor = createWorktreeExecutor(store, "/tmp/test");
     await executor.execute(makeTask());
 
     // Should log success
@@ -275,7 +365,7 @@ describe("TaskExecutor worktreeInitCommand", () => {
     const store = createMockStore();
     // getSettings returns default (no worktreeInitCommand)
 
-    const executor = new TaskExecutor(store, "/tmp/test");
+    const executor = createWorktreeExecutor(store, "/tmp/test");
     await executor.execute(makeTask());
 
     // Only worktree creation calls to execSync, no "pnpm install --frozen-lockfile" etc.
@@ -307,7 +397,7 @@ describe("TaskExecutor worktreeInitCommand", () => {
     });
 
     const onError = vi.fn();
-    const executor = new TaskExecutor(store, "/tmp/test", { onError });
+    const executor = createWorktreeExecutor(store, "/tmp/test", { onError });
     await executor.execute(makeTask());
 
     // Should log the failure
@@ -344,7 +434,7 @@ describe("TaskExecutor worktreeInitCommand", () => {
     // Worktree already exists (resume)
     mockedExistsSync.mockReturnValue(true);
 
-    const executor = new TaskExecutor(store, "/tmp/test");
+    const executor = createWorktreeExecutor(store, "/tmp/test");
     await executor.execute(makeTask());
 
     // getSettings is called (for project commands in execution prompt) but init command should not run
@@ -381,7 +471,7 @@ describe("TaskExecutor worktree naming", () => {
 
   it("uses generateWorktreeName for fresh worktree directories", async () => {
     const store = createMockStore();
-    const executor = new TaskExecutor(store, "/tmp/test");
+    const executor = createWorktreeExecutor(store, "/tmp/test");
 
     await executor.execute(makeTask());
 
@@ -395,7 +485,7 @@ describe("TaskExecutor worktree naming", () => {
 
   it("does NOT use task ID as worktree directory name for fresh worktrees", async () => {
     const store = createMockStore();
-    const executor = new TaskExecutor(store, "/tmp/test");
+    const executor = createWorktreeExecutor(store, "/tmp/test");
 
     await executor.execute(makeTask("FN-099"));
 
@@ -438,7 +528,7 @@ describe("TaskExecutor worktree naming", () => {
     is generated for a resumed task) is unchanged.
     */
     store._setRow("FN-031", { worktree: existingPath });
-    const executor = new TaskExecutor(store, "/tmp/test");
+    const executor = createWorktreeExecutor(store, "/tmp/test");
 
     await executor.execute(makeTask("FN-031", existingPath));
 
@@ -466,7 +556,7 @@ describe("TaskExecutor worktree naming", () => {
     stored row for the clear-and-recreate branch to be reachable at all.
     */
     store._setRow("FN-032", { worktree: stalePath });
-    const executor = new TaskExecutor(store, "/tmp/test");
+    const executor = createWorktreeExecutor(store, "/tmp/test");
 
     await executor.execute(makeTask("FN-032", stalePath));
 
@@ -490,7 +580,7 @@ describe("TaskExecutor worktree naming", () => {
         worktreeNaming: "task-id",
       });
 
-      const executor = new TaskExecutor(store, "/tmp/test");
+      const executor = createWorktreeExecutor(store, "/tmp/test");
       await executor.execute(makeTask("FN-042"));
 
       // Should use task ID (lowercase) as worktree name
@@ -520,7 +610,7 @@ describe("TaskExecutor worktree naming", () => {
       passed to `execute()` is provably ignored — the requirement is about stored task data.
       */
       store._setRow("FN-043", { title: "Fix login bug with OAuth" });
-      const executor = new TaskExecutor(store, "/tmp/test");
+      const executor = createWorktreeExecutor(store, "/tmp/test");
       await executor.execute({
         ...makeTask("FN-043"),
         title: "Fix login bug with OAuth",
@@ -546,7 +636,7 @@ describe("TaskExecutor worktree naming", () => {
         worktreeNaming: "task-title",
       });
 
-      const executor = new TaskExecutor(store, "/tmp/test");
+      const executor = createWorktreeExecutor(store, "/tmp/test");
       const taskDescription = "Implement user authentication flow";
       /*
       FNXC:EngineTests 2026-07-19-16:28 (U10b):
@@ -579,7 +669,7 @@ describe("TaskExecutor worktree naming", () => {
         worktreeNaming: "random",
       });
 
-      const executor = new TaskExecutor(store, "/tmp/test");
+      const executor = createWorktreeExecutor(store, "/tmp/test");
       await executor.execute(makeTask("FN-045"));
 
       // Should use generateWorktreeName for random mode
@@ -601,7 +691,7 @@ describe("TaskExecutor worktree naming", () => {
         // worktreeNaming is not set (undefined)
       });
 
-      const executor = new TaskExecutor(store, "/tmp/test");
+      const executor = createWorktreeExecutor(store, "/tmp/test");
       await executor.execute(makeTask("FN-046"));
 
       // Should default to random naming
@@ -637,7 +727,7 @@ describe("TaskExecutor worktree naming", () => {
         reclaimed: false,
       });
 
-      const executor = new TaskExecutor(store, "/tmp/test", { pool });
+      const executor = createWorktreeExecutor(store, "/tmp/test", { pool });
       await executor.execute(makeTask("FN-047"));
 
       // Worktree naming preference should not break task startup in recycle mode.
@@ -683,7 +773,7 @@ describe("TaskExecutor worktree recovery", () => {
 
   it("creates worktree successfully on first attempt", async () => {
     const store = createMockStore();
-    const executor = new TaskExecutor(store, "/tmp/test");
+    const executor = createWorktreeExecutor(store, "/tmp/test");
 
     await executor.execute(makeTask());
 
@@ -715,7 +805,7 @@ describe("TaskExecutor worktree recovery", () => {
       return Buffer.from("");
     });
 
-    const executor = new TaskExecutor(store, "/tmp/test", { onError });
+    const executor = createWorktreeExecutor(store, "/tmp/test", { onError });
     await executor.execute(makeTask());
 
     expect(store.logEntry).toHaveBeenCalledWith(
@@ -748,7 +838,7 @@ describe("TaskExecutor worktree recovery", () => {
       return Buffer.from("");
     });
 
-    const executor = new TaskExecutor(store, "/tmp/test");
+    const executor = createWorktreeExecutor(store, "/tmp/test");
     await executor.execute(makeTask());
 
     const worktreeAddCalls = mockedExecSync.mock.calls.filter(
@@ -772,7 +862,7 @@ describe("TaskExecutor worktree recovery", () => {
       return Buffer.from("");
     });
 
-    const executor = new TaskExecutor(store, rootDir, { onError });
+    const executor = createWorktreeExecutor(store, rootDir, { onError });
     await executor.execute(makeTask());
 
     const worktreeAddCalls = mockedExecSync.mock.calls.filter(
@@ -807,7 +897,7 @@ describe("TaskExecutor worktree recovery", () => {
 
   it("extractWorktreeConflictInfo classifies not-a-git-repository errors", () => {
     const store = createMockStore();
-    const executor = new TaskExecutor(store, "/tmp/test");
+    const executor = createWorktreeExecutor(store, "/tmp/test");
 
     const error: any = new Error("fatal: not a git repository");
     error.stderr = Buffer.from("fatal: not a git repository");
@@ -819,7 +909,7 @@ describe("TaskExecutor worktree recovery", () => {
 
   it("extractWorktreeConflictInfo does not misclassify dubious ownership as not-git-repo", () => {
     const store = createMockStore();
-    const executor = new TaskExecutor(store, "/tmp/test");
+    const executor = createWorktreeExecutor(store, "/tmp/test");
     const rootDir = "C:/Users/drewd/Documents/1. App Development/1. Active/NextGenEHS";
 
     const error: any = new Error(`fatal: detected dubious ownership in repository at '${rootDir}'`);
@@ -832,7 +922,7 @@ describe("TaskExecutor worktree recovery", () => {
 
   it("treats not-a-git-repository as non-retryable in tryCreateWorktree flow", async () => {
     const store = createMockStore();
-    const executor = new TaskExecutor(store, "/tmp/test");
+    const executor = createWorktreeExecutor(store, "/tmp/test");
 
     mockedExecSync.mockImplementation((cmd: string | string[]) => {
       const command = typeof cmd === "string" ? cmd : cmd[0];
@@ -859,7 +949,7 @@ describe("TaskExecutor worktree recovery", () => {
 
   it("extractWorktreeConflictInfo classifies already checked out errors as already-used", () => {
     const store = createMockStore();
-    const executor = new TaskExecutor(store, "/tmp/test");
+    const executor = createWorktreeExecutor(store, "/tmp/test");
 
     const error: any = new Error(
       "fatal: 'fusion/fn-050' is already checked out at '/tmp/test/.worktrees/green-sage'",
@@ -893,7 +983,7 @@ describe("TaskExecutor worktree recovery", () => {
       return Buffer.from("");
     });
 
-    const executor = new TaskExecutor(store, "/tmp/test");
+    const executor = createWorktreeExecutor(store, "/tmp/test");
     await executor.execute(makeTask());
 
     expect(store.logEntry).toHaveBeenCalledWith(
@@ -909,7 +999,7 @@ describe("TaskExecutor worktree recovery", () => {
 
   it("reclaims an inactive same-task conflict when the branch preserves task commits", async () => {
     const store = createMockStore();
-    const executor = new TaskExecutor(store, "/tmp/test");
+    const executor = createWorktreeExecutor(store, "/tmp/test");
     const conflictPath = "/tmp/test/.worktrees/light-cedar";
     vi.spyOn(executor as any, "shouldGenerateNewWorktreeName").mockResolvedValue(false);
     const cleanup = vi.spyOn(executor as any, "cleanupConflictingWorktree").mockResolvedValue(true);
@@ -945,7 +1035,7 @@ describe("TaskExecutor worktree recovery", () => {
     "relocates an out-of-root %s same-task worktree before reclaiming it",
     async (kind) => {
       const store = createMockStore();
-      const executor = new TaskExecutor(store, "/tmp/test");
+      const executor = createWorktreeExecutor(store, "/tmp/test");
       const conflictPath = "/tmp/legacy-worktrees/recover-fn-8400";
       const targetPath = "/tmp/test/.worktrees/pearl-otter";
       vi.spyOn(executor as any, "shouldGenerateNewWorktreeName").mockResolvedValue(false);
@@ -984,7 +1074,7 @@ describe("TaskExecutor worktree recovery", () => {
   it("normalizes an out-of-root branch-conflict reclaim before persisting it", async () => {
     const store = createMockStore();
     store.getSettings.mockResolvedValue({ worktreesDir: ".worktrees" } as any);
-    const executor = new TaskExecutor(store, "/tmp/test");
+    const executor = createWorktreeExecutor(store, "/tmp/test");
     const conflictPath = "/tmp/legacy-worktrees/recover-fn-8400";
     const targetPath = "/tmp/test/.worktrees/recover-fn-8400";
     vi.spyOn(branchConflictModule, "inspectBranchConflict").mockResolvedValueOnce({
@@ -1016,7 +1106,7 @@ describe("TaskExecutor worktree recovery", () => {
   it("uses the task-pinned target when normalizing a branch-conflict reclaim", async () => {
     const store = createMockStore();
     store.getSettings.mockResolvedValue({ worktreesDir: ".worktrees", worktreeNaming: "task-id" } as any);
-    const executor = new TaskExecutor(store, "/tmp/test");
+    const executor = createWorktreeExecutor(store, "/tmp/test");
     const conflictPath = "/tmp/legacy-worktrees/recover-fn-8400";
     const pinnedPath = "/tmp/test/.worktrees/fn-8400";
     vi.spyOn(branchConflictModule, "inspectBranchConflict").mockResolvedValueOnce({
@@ -1054,7 +1144,7 @@ describe("TaskExecutor worktree recovery", () => {
     // the task to todo. status='failed' is no longer set; moveTask IS called.
     const store = createMockStore();
     const onError = vi.fn();
-    const executor = new TaskExecutor(store, "/tmp/test", { onError });
+    const executor = createWorktreeExecutor(store, "/tmp/test", { onError });
 
     const result = await (executor as any).handleBranchConflict(
       makeTask(),
@@ -1098,7 +1188,7 @@ describe("TaskExecutor worktree recovery", () => {
 
   it("FN-4397 reproduces repeated branch-conflict recovery-required emissions for the same task", async () => {
     const store = createMockStore();
-    const executor = new TaskExecutor(store, "/tmp/test");
+    const executor = createWorktreeExecutor(store, "/tmp/test");
     const conflictError = new BranchConflictError({
       branchName: "fusion/fn-050",
       conflictingWorktreePath: "/tmp/test/.worktrees/green-sage",
@@ -1132,7 +1222,7 @@ describe("TaskExecutor worktree recovery", () => {
 
   it("FN-4397 tripwire pauses on 6th branch conflict and suppresses additional recovery-required agent logs", async () => {
     const store = createMockStore();
-    const executor = new TaskExecutor(store, "/tmp/test");
+    const executor = createWorktreeExecutor(store, "/tmp/test");
     const conflictError = new BranchConflictError({
       branchName: "fusion/fn-050",
       conflictingWorktreePath: "/tmp/test/.worktrees/green-sage",
@@ -1184,7 +1274,7 @@ describe("TaskExecutor worktree recovery", () => {
     });
 
     const onError = vi.fn();
-    const executor = new TaskExecutor(store, "/tmp/test", { onError });
+    const executor = createWorktreeExecutor(store, "/tmp/test", { onError });
     /*
     FNXC:EngineTests 2026-07-19-16:32 (U10b):
     `executionStartBranch` is a PERSISTED field: the missing-base fallback reads it from the row
@@ -1253,7 +1343,7 @@ describe("TaskExecutor worktree recovery", () => {
     });
 
     const onError = vi.fn();
-    const executor = new TaskExecutor(store, "/tmp/test", { onError });
+    const executor = createWorktreeExecutor(store, "/tmp/test", { onError });
     /*
     FNXC:EngineTests 2026-07-19-16:35 (U10b):
     The nested-worktree refusal guards the PERSISTED worktree path. The graph re-reads the row,
@@ -1310,7 +1400,7 @@ describe("TaskExecutor worktree recovery", () => {
     });
 
     const onError = vi.fn();
-    const executor = new TaskExecutor(store, "/tmp/test", { onError });
+    const executor = createWorktreeExecutor(store, "/tmp/test", { onError });
 
     await executor.execute(makeTask());
 
@@ -1367,7 +1457,7 @@ describe("TaskExecutor worktree recovery", () => {
       return Buffer.from("");
     });
 
-    const executor = new TaskExecutor(store, "/tmp/test");
+    const executor = createWorktreeExecutor(store, "/tmp/test");
 
     // Mock the second call to tryCreateWorktree to succeed
     // by making subsequent calls succeed after cleanup
@@ -1470,7 +1560,7 @@ describe("TaskExecutor worktree recovery", () => {
       return Buffer.from("");
     });
 
-    const executor = new TaskExecutor(store, "/tmp/test");
+    const executor = createWorktreeExecutor(store, "/tmp/test");
     await executor.execute(makeTask());
 
     expect(removeSpy).toHaveBeenCalledTimes(1);
@@ -1537,7 +1627,7 @@ describe("TaskExecutor worktree recovery", () => {
       return Buffer.from("");
     });
 
-    const executor = new TaskExecutor(store, "/tmp/test");
+    const executor = createWorktreeExecutor(store, "/tmp/test");
     await executor.execute(makeTask());
 
     expect(activeSessionRegistry.lookupByPath(conflictPath)?.kind).toBe("workflow-step");
@@ -1603,7 +1693,7 @@ describe("TaskExecutor worktree recovery", () => {
     // Second generated name for the suffix-rename path.
     mockedGenerateWorktreeName.mockReturnValueOnce("jade-finch");
 
-    const executor = new TaskExecutor(store, "/tmp/test");
+    const executor = createWorktreeExecutor(store, "/tmp/test");
     /*
     FNXC:EngineTests 2026-07-19-16:38 (U10b):
     The suffix-rename retry must reuse the task's persisted start point, so `executionStartBranch`
@@ -1660,7 +1750,7 @@ describe("TaskExecutor worktree recovery", () => {
         return Buffer.from("");
       });
 
-      const executor = new TaskExecutor(store, "/tmp/test");
+      const executor = createWorktreeExecutor(store, "/tmp/test");
       await executor.execute(makeTask());
 
       expect(mockedClassifyStaleLock).toHaveBeenCalled();
@@ -1687,7 +1777,7 @@ describe("TaskExecutor worktree recovery", () => {
         return Buffer.from("");
       });
 
-      const executor = new TaskExecutor(store, "/tmp/test");
+      const executor = createWorktreeExecutor(store, "/tmp/test");
       await executor.execute(makeTask());
 
       expect(store.updateTask).toHaveBeenCalledWith(
@@ -1714,7 +1804,7 @@ describe("TaskExecutor worktree recovery", () => {
         return Buffer.from("");
       });
 
-      const executor = new TaskExecutor(store, "/tmp/test");
+      const executor = createWorktreeExecutor(store, "/tmp/test");
       await executor.execute(makeTask());
 
       expect(mockedRecoverStaleRegistration).toHaveBeenCalled();
@@ -1744,7 +1834,7 @@ describe("TaskExecutor worktree recovery", () => {
         return Buffer.from("");
       });
 
-      const executor = new TaskExecutor(store, "/tmp/test");
+      const executor = createWorktreeExecutor(store, "/tmp/test");
       (executor as any).MAX_WORKTREE_RETRIES = 1;
 
       await expect(
@@ -1771,7 +1861,7 @@ describe("TaskExecutor worktree recovery", () => {
       return Buffer.from("");
     });
 
-    const executor = new TaskExecutor(store, "/tmp/test");
+    const executor = createWorktreeExecutor(store, "/tmp/test");
     await executor.execute(makeTask());
 
     // Should have removed the stale branch
@@ -1801,7 +1891,7 @@ describe("TaskExecutor worktree recovery", () => {
       return Buffer.from("");
     });
 
-    const executor = new TaskExecutor(store, "/tmp/test");
+    const executor = createWorktreeExecutor(store, "/tmp/test");
     await executor.execute(makeTask());
 
     // Should have called git worktree prune as the first recovery step
@@ -1857,7 +1947,7 @@ describe("TaskExecutor worktree recovery", () => {
       return Buffer.from("");
     });
 
-    const executor = new TaskExecutor(store, "/tmp/test");
+    const executor = createWorktreeExecutor(store, "/tmp/test");
     await executor.execute(makeTask());
 
     // Should have tried branch -D first
@@ -1909,7 +1999,7 @@ describe("TaskExecutor worktree recovery", () => {
     });
 
     const onError = vi.fn();
-    const executor = new TaskExecutor(store, "/tmp/test", { onError });
+    const executor = createWorktreeExecutor(store, "/tmp/test", { onError });
     const executePromise = executor.execute(makeTask());
     await vi.advanceTimersByTimeAsync(5000);
     await executePromise;
@@ -1954,7 +2044,7 @@ describe("TaskExecutor worktree recovery", () => {
     });
 
     const onError = vi.fn();
-    const executor = new TaskExecutor(store, "/tmp/test", { onError });
+    const executor = createWorktreeExecutor(store, "/tmp/test", { onError });
     await executor.execute(makeTask());
 
     // Should have logged terminal failure for the stale reference
@@ -1997,7 +2087,7 @@ describe("TaskExecutor worktree recovery", () => {
       return Buffer.from("");
     });
 
-    const executor = new TaskExecutor(store, "/tmp/test");
+    const executor = createWorktreeExecutor(store, "/tmp/test");
     await executor.execute(makeTask());
 
     // Should have logged cleanup in fallback path
@@ -2028,7 +2118,7 @@ describe("TaskExecutor worktree recovery", () => {
       return Buffer.from("");
     });
 
-    const executor = new TaskExecutor(store, "/tmp/test");
+    const executor = createWorktreeExecutor(store, "/tmp/test");
     await executor.execute(makeTask());
 
     // Should have triggered cleanup (stale branch reclaim)
@@ -2058,7 +2148,7 @@ describe("TaskExecutor worktree recovery", () => {
       return Buffer.from("");
     });
 
-    const executor = new TaskExecutor(store, "/tmp/test");
+    const executor = createWorktreeExecutor(store, "/tmp/test");
     await executor.execute(makeTask());
 
     expect(store.logEntry).toHaveBeenCalledWith(
@@ -2083,7 +2173,7 @@ describe("TaskExecutor worktree recovery", () => {
       return Buffer.from("");
     });
 
-    const executor = new TaskExecutor(store, "/tmp/test");
+    const executor = createWorktreeExecutor(store, "/tmp/test");
     await executor.execute(makeTask());
 
     expect(store.logEntry).toHaveBeenCalledWith(
@@ -2115,7 +2205,7 @@ describe("TaskExecutor worktree recovery", () => {
         return Buffer.from("");
       });
 
-      const executor = new TaskExecutor(store, rootDir);
+      const executor = createWorktreeExecutor(store, rootDir);
       await executor.execute(makeTask());
 
       expect(
@@ -2152,7 +2242,7 @@ describe("TaskExecutor worktree recovery", () => {
       return Buffer.from("");
     });
 
-    const executor = new TaskExecutor(store, "/tmp/test");
+    const executor = createWorktreeExecutor(store, "/tmp/test");
     await executor.execute(makeTask());
 
     // Should attempt to unlock the worktree before removing
@@ -2193,7 +2283,7 @@ describe("TaskExecutor dependency-based worktree creation", () => {
 
   it("creates worktree from baseBranch when set on task", async () => {
     const store = createMockStore();
-    const executor = new TaskExecutor(store, "/tmp/test");
+    const executor = createWorktreeExecutor(store, "/tmp/test");
 
     /*
     FNXC:EngineTests 2026-07-19-16:41 (U10b):
@@ -2217,7 +2307,7 @@ describe("TaskExecutor dependency-based worktree creation", () => {
 
   it("creates worktree from integration branch when baseBranch is not set", async () => {
     const store = createMockStore();
-    const executor = new TaskExecutor(store, "/tmp/test");
+    const executor = createWorktreeExecutor(store, "/tmp/test");
 
     await executor.execute(makeTask({
       id: "FN-061",
@@ -2234,7 +2324,7 @@ describe("TaskExecutor dependency-based worktree creation", () => {
 
   it("logs base branch in worktree creation log entry", async () => {
     const store = createMockStore();
-    const executor = new TaskExecutor(store, "/tmp/test");
+    const executor = createWorktreeExecutor(store, "/tmp/test");
 
     /*
     FNXC:EngineTests 2026-07-19-16:42 (U10b):
@@ -2257,7 +2347,7 @@ describe("TaskExecutor dependency-based worktree creation", () => {
 
   it("logs integration branch in worktree creation log when baseBranch is not set", async () => {
     const store = createMockStore();
-    const executor = new TaskExecutor(store, "/tmp/test");
+    const executor = createWorktreeExecutor(store, "/tmp/test");
 
     await executor.execute(makeTask({
       id: "FN-063",
@@ -2272,7 +2362,7 @@ describe("TaskExecutor dependency-based worktree creation", () => {
 
   it("retries worktree creation after cleaning up conflicting worktree", async () => {
     const store = createMockStore();
-    const executor = new TaskExecutor(store, "/tmp/test");
+    const executor = createWorktreeExecutor(store, "/tmp/test");
     const conflictingPath = "/tmp/test/.worktrees/sharp-stone";
     const removeWorktreeSpy = vi.spyOn(worktreePoolModule, "removeWorktree");
 
@@ -2316,7 +2406,7 @@ describe("TaskExecutor dependency-based worktree creation", () => {
   it("throws original error if cleanup also fails", async () => {
     vi.useRealTimers();
     const store = createMockStore();
-    const executor = new TaskExecutor(store, "/tmp/test");
+    const executor = createWorktreeExecutor(store, "/tmp/test");
     const conflictingPath = "/tmp/test/.worktrees/sharp-stone";
 
     mockedExecSync.mockImplementation((cmd: any) => {
@@ -2362,7 +2452,7 @@ describe("TaskExecutor dependency-based worktree creation", () => {
       recycleWorktrees: true,
     });
 
-    const executor = new TaskExecutor(store, "/tmp/test", { pool });
+    const executor = createWorktreeExecutor(store, "/tmp/test", { pool });
 
     /*
     FNXC:EngineTests 2026-07-19-16:44 (U10b):
@@ -2402,7 +2492,7 @@ describe("TaskExecutor dependency-based worktree creation", () => {
       recycleWorktrees: true,
     });
 
-    const executor = new TaskExecutor(store, "/tmp/test", { pool });
+    const executor = createWorktreeExecutor(store, "/tmp/test", { pool });
 
     await executor.execute(makeTask({
       id: "FN-065",
@@ -2440,7 +2530,7 @@ describe("TaskExecutor dependency-based worktree creation", () => {
       recycleWorktrees: true,
     });
 
-    const executor = new TaskExecutor(store, "/tmp/test", { pool });
+    const executor = createWorktreeExecutor(store, "/tmp/test", { pool });
     await executor.execute(makeTask({ id: "FN-066" }));
 
     expect(store.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
@@ -2476,7 +2566,7 @@ describe("TaskExecutor dependency-based worktree creation", () => {
       recycleWorktrees: true,
     });
 
-    const executor = new TaskExecutor(store, "/tmp/test", { pool });
+    const executor = createWorktreeExecutor(store, "/tmp/test", { pool });
 
     await executor.execute(makeTask({
       id: "FN-066",
@@ -2534,7 +2624,7 @@ describe("TaskExecutor worktree pool integration", () => {
       recycleWorktrees: true,
     });
 
-    const executor = new TaskExecutor(store, "/tmp/test", { pool });
+    const executor = createWorktreeExecutor(store, "/tmp/test", { pool });
     await executor.execute(makeTask());
 
     // Should NOT call git worktree add (no fresh worktree)
@@ -2612,7 +2702,7 @@ describe("TaskExecutor worktree pool integration", () => {
       recycleWorktrees: true,
     });
 
-    const executor = new TaskExecutor(store, "/tmp/test", { pool });
+    const executor = createWorktreeExecutor(store, "/tmp/test", { pool });
     await executor.execute(makeTask());
 
     expect(store.updateTask).toHaveBeenCalledWith("FN-020", { baseCommitSha: "newbase123" });
@@ -2632,7 +2722,7 @@ describe("TaskExecutor worktree pool integration", () => {
       recycleWorktrees: true,
     });
 
-    const executor = new TaskExecutor(store, "/tmp/test", { pool });
+    const executor = createWorktreeExecutor(store, "/tmp/test", { pool });
     await executor.execute(makeTask());
 
     // Should call git worktree add (fresh worktree)
@@ -2672,7 +2762,7 @@ describe("TaskExecutor worktree pool integration", () => {
       worktreeInitCommand: "pnpm install --frozen-lockfile",
     });
 
-    const executor = new TaskExecutor(store, "/tmp/test", { pool });
+    const executor = createWorktreeExecutor(store, "/tmp/test", { pool });
     await executor.execute(makeTask());
 
     // "pnpm install --frozen-lockfile" should NOT have been called (pooled worktree has warm cache)
@@ -2689,7 +2779,7 @@ describe("TaskExecutor worktree pool integration", () => {
     const store = createMockStore();
     // recycleWorktrees defaults to false
 
-    const executor = new TaskExecutor(store, "/tmp/test", { pool });
+    const executor = createWorktreeExecutor(store, "/tmp/test", { pool });
     await executor.execute(makeTask());
 
     // Should create a fresh worktree, NOT acquire from pool
@@ -2723,7 +2813,7 @@ describe("TaskExecutor worktree pool integration", () => {
       recycleWorktrees: true,
     });
 
-    const executor = new TaskExecutor(store, "/tmp/test", { pool });
+    const executor = createWorktreeExecutor(store, "/tmp/test", { pool });
     await executor.execute(makeTask());
 
     expect(releaseSpy).toHaveBeenCalledWith("/tmp/test/.worktrees/bad-wt", "FN-020");
@@ -2766,7 +2856,7 @@ describe("TaskExecutor worktree pool integration", () => {
       recycleWorktrees: true,
     });
 
-    const executor = new TaskExecutor(store, "/tmp/test", { pool });
+    const executor = createWorktreeExecutor(store, "/tmp/test", { pool });
     await executor.execute(makeTask("FN-020"));
 
     const worktreeAddCalls = mockedExecSync.mock.calls.filter(
@@ -2830,6 +2920,173 @@ describe("Merger worktree pool integration", () => {
   // which tests aiMergeTask with real implementation
 });
 
+describe("fresh worktree integration rebase", () => {
+  beforeEach(() => {
+    resetExecutorMocks();
+  });
+
+  function mockGitCommands(respond: (command: string) => Error | null) {
+    mockedExec.mockImplementation(((command: string, _options: unknown, callback: (error: Error | null, stdout: string, stderr: string) => void) => {
+      callback(respond(command), "", "");
+      return {} as any;
+    }) as any);
+  }
+
+  it("rebases onto configured integrationBranch instead of remote or ambient HEAD", async () => {
+    const store = createMockStore();
+    store.getSettings.mockResolvedValue({
+      worktreeRebaseBeforeMerge: true,
+      worktreeRebaseRemote: "origin",
+      integrationBranch: "develop",
+    });
+    mockGitCommands(() => null);
+    const executor = createWorktreeExecutor(store, "/repo");
+
+    await (executor as any).rebaseNewWorktreeOntoRemote("/repo/.worktrees/fn-8839", "fusion/fn-8839", "FN-8839");
+
+    const commands = mockedExec.mock.calls.map(([command]) => String(command));
+    expect(commands).toContain("git fetch 'origin' 'develop'");
+    expect(commands).toContain("git rebase 'origin/develop'");
+    expect(commands).not.toContain(expect.stringContaining("rev-parse --abbrev-ref HEAD"));
+    expect(commands).not.toContain(expect.stringContaining("origin/HEAD"));
+    expect(store.logEntry).toHaveBeenCalledWith(
+      "FN-8839",
+      "Rebased new worktree branch fusion/fn-8839 onto origin/develop",
+      undefined,
+      undefined,
+    );
+  });
+
+  it("uses the canonical resolver's origin HEAD and fixed fallback without ambient HEAD", async () => {
+    const store = createMockStore();
+    store.getSettings.mockResolvedValue({
+      worktreeRebaseBeforeMerge: true,
+      worktreeRebaseRemote: "origin",
+    });
+    mockedExec.mockImplementation(((command: string, _options: unknown, callback: (error: Error | null, stdout: string, stderr: string) => void) => {
+      callback(null, command.includes("refs/remotes/origin/HEAD") ? "origin/release\n" : "", "");
+      return {} as any;
+    }) as any);
+    const executor = createWorktreeExecutor(store, "/repo");
+
+    await (executor as any).rebaseNewWorktreeOntoRemote("/worktree", "fusion/fn-8839", "FN-8839");
+
+    expect(mockedExec.mock.calls.map(([command]) => String(command))).toEqual(expect.arrayContaining([
+      "git symbolic-ref --short refs/remotes/origin/HEAD",
+      "git fetch 'origin' 'release'",
+      "git rebase 'origin/release'",
+    ]));
+
+    resetExecutorMocks();
+    const fallbackStore = createMockStore();
+    fallbackStore.getSettings.mockResolvedValue({
+      worktreeRebaseBeforeMerge: true,
+      worktreeRebaseRemote: "origin",
+    });
+    mockedExec.mockImplementation(((command: string, _options: unknown, callback: (error: Error | null, stdout: string, stderr: string) => void) => {
+      callback(command.includes("refs/remotes/origin/HEAD") ? new Error("origin HEAD unset") : null, "", "");
+      return {} as any;
+    }) as any);
+
+    await (createWorktreeExecutor(fallbackStore, "/repo") as any).rebaseNewWorktreeOntoRemote("/worktree", "fusion/fn-8839", "FN-8839");
+
+    const fallbackCommands = mockedExec.mock.calls.map(([command]) => String(command));
+    expect(fallbackCommands).toContain("git fetch 'origin' 'main'");
+    expect(fallbackCommands).toContain("git rebase 'origin/main'");
+    expect(fallbackCommands).not.toContain(expect.stringContaining("rev-parse --abbrev-ref HEAD"));
+  });
+
+  it("logs an enabled refresh skip when no remote is resolvable", async () => {
+    const store = createMockStore();
+    store.getSettings.mockResolvedValue({ worktreeRebaseBeforeMerge: true });
+    mockGitCommands((command) => command === "git remote" ? null : new Error(`unexpected ${command}`));
+    const executor = createWorktreeExecutor(store, "/repo");
+
+    await (executor as any).rebaseNewWorktreeOntoRemote("/worktree", "fusion/fn-8839", "FN-8839");
+
+    expect(mockedExec).toHaveBeenCalledWith("git remote", { cwd: "/repo" }, expect.any(Function));
+    expect(store.logEntry).toHaveBeenCalledWith(
+      "FN-8839",
+      "Skipped new worktree rebase refresh — no remote was resolvable",
+      undefined,
+      undefined,
+    );
+  });
+
+  it("logs fetch failures without rebasing or failing worktree setup", async () => {
+    const store = createMockStore();
+    store.getSettings.mockResolvedValue({
+      worktreeRebaseBeforeMerge: true,
+      worktreeRebaseRemote: "origin",
+      integrationBranch: "develop",
+    });
+    mockGitCommands((command) => command.includes("git fetch") ? new Error("network unavailable") : null);
+    const executor = createWorktreeExecutor(store, "/repo");
+
+    await expect((executor as any).rebaseNewWorktreeOntoRemote("/worktree", "fusion/fn-8839", "FN-8839")).resolves.toBeUndefined();
+
+    const commands = mockedExec.mock.calls.map(([command]) => String(command));
+    expect(commands).toContain("git fetch 'origin' 'develop'");
+    expect(commands).not.toContain("git rebase 'origin/develop'");
+    expect(store.logEntry).toHaveBeenCalledWith(
+      "FN-8839",
+      "Could not refresh new worktree rebase target origin/develop — fetch failed; kept local base.",
+      undefined,
+      undefined,
+    );
+  });
+
+  it("keeps a successful rebase successful when its task-log write fails", async () => {
+    const store = createMockStore();
+    store.getSettings.mockResolvedValue({
+      worktreeRebaseBeforeMerge: true,
+      worktreeRebaseRemote: "origin",
+      integrationBranch: "develop",
+    });
+    store.logEntry.mockRejectedValue(new Error("task log unavailable"));
+    mockGitCommands(() => null);
+    const executor = createWorktreeExecutor(store, "/repo");
+
+    await expect((executor as any).rebaseNewWorktreeOntoRemote("/worktree", "fusion/fn-8839", "FN-8839")).resolves.toBeUndefined();
+    await Promise.resolve();
+
+    const commands = mockedExec.mock.calls.map(([command]) => String(command));
+    expect(commands).toContain("git rebase 'origin/develop'");
+    expect(commands).not.toContain("git rebase --abort");
+  });
+
+  it("aborts a conflicting rebase, retains the local-base log, and keeps disabled mode silent", async () => {
+    const store = createMockStore();
+    store.getSettings.mockResolvedValue({
+      worktreeRebaseBeforeMerge: true,
+      worktreeRebaseRemote: "origin",
+      integrationBranch: "develop",
+    });
+    mockGitCommands((command) => command === "git rebase 'origin/develop'" || command === "git rebase --abort"
+      ? new Error("conflict")
+      : null);
+    const executor = createWorktreeExecutor(store, "/repo");
+
+    await (executor as any).rebaseNewWorktreeOntoRemote("/worktree", "fusion/fn-8839", "FN-8839");
+
+    expect(mockedExec.mock.calls.map(([command]) => String(command))).toContain("git rebase --abort");
+    expect(store.logEntry).toHaveBeenCalledWith(
+      "FN-8839",
+      "Could not rebase new worktree onto origin/develop — kept local base. The merge-time rebase will retry with conflict resolution.",
+      undefined,
+      undefined,
+    );
+
+    resetExecutorMocks();
+    const disabledStore = createMockStore();
+    disabledStore.getSettings.mockResolvedValue({ worktreeRebaseBeforeMerge: false });
+    const disabledExecutor = createWorktreeExecutor(disabledStore, "/repo");
+    await (disabledExecutor as any).rebaseNewWorktreeOntoRemote("/worktree", "fusion/fn-8839", "FN-8839");
+    expect(mockedExec).not.toHaveBeenCalled();
+    expect(disabledStore.logEntry).not.toHaveBeenCalled();
+  });
+});
+
 function createMockTaskDetail(overrides: Partial<TaskDetail> = {}): TaskDetail {
   return {
     id: "FN-001",
@@ -2880,7 +3137,7 @@ describe("worktree DB hydration", () => {
   it("runs once for fresh worktree", async () => {
     mockedExistsSync.mockReturnValue(false);
     const store = createMockStore();
-    const executor = new TaskExecutor(store, "/tmp/test");
+    const executor = createWorktreeExecutor(store, "/tmp/test");
     await executor.execute(makeTask());
     expect(mockedHydrateWorktreeDb).toHaveBeenCalledTimes(1);
   });
@@ -2894,7 +3151,7 @@ describe("worktree DB hydration", () => {
       release: vi.fn(),
     } as any;
     store.getSettings.mockResolvedValue({ ...(await store.getSettings()), recycleWorktrees: true });
-    const executor = new TaskExecutor(store, "/tmp/test", { pool });
+    const executor = createWorktreeExecutor(store, "/tmp/test", { pool });
     await executor.execute(makeTask());
     expect(mockedHydrateWorktreeDb).toHaveBeenCalledTimes(1);
   });
@@ -2904,7 +3161,7 @@ describe("worktree DB hydration", () => {
     mockedClassifyTaskWorktree.mockResolvedValueOnce({ ok: false, classification: "incomplete", reason: "missing or invalid .git metadata" } as any);
     mockedExistsSync.mockReturnValue(true);
     const store = createMockStore();
-    const executor = new TaskExecutor(store, "/tmp/test");
+    const executor = createWorktreeExecutor(store, "/tmp/test");
     await executor.execute(makeTask({ worktree: "/tmp/test" }));
     expect(mockedHydrateWorktreeDb).toHaveBeenCalledTimes(1);
   });
@@ -2919,7 +3176,7 @@ describe("worktree DB hydration", () => {
     });
     mockedExistsSync.mockReturnValue(false);
     const store = createMockStore();
-    const executor = new TaskExecutor(store, "/tmp/test");
+    const executor = createWorktreeExecutor(store, "/tmp/test");
     await executor.execute(makeTask());
 
     expect((store.logEntry as ReturnType<typeof vi.fn>).mock.calls).toEqual(
@@ -2939,7 +3196,7 @@ describe("worktree DB hydration", () => {
     mockedHydrateWorktreeDb.mockRejectedValueOnce(new Error("boom"));
     mockedExistsSync.mockReturnValue(false);
     const store = createMockStore();
-    const executor = new TaskExecutor(store, "/tmp/test");
+    const executor = createWorktreeExecutor(store, "/tmp/test");
     await executor.execute(makeTask());
     expect(mockedCreateFnAgent).toHaveBeenCalled();
   });

@@ -10,6 +10,7 @@ import {
   deleteAiSession,
   updateTask,
   createTask,
+  createTaskFromRecommendation,
   connectPlanningStream,
   connectSubtaskStream,
   connectMissionInterviewStream,
@@ -589,6 +590,36 @@ describe("updateTask", () => {
       method: "PATCH",
       body: JSON.stringify({ sourceIssue: null }),
     });
+  });
+});
+
+describe("createTaskFromRecommendation", () => {
+  const originalFetch = globalThis.fetch;
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  it("uses the server-owned recommendation endpoint with no caller-controlled options", async () => {
+    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, { id: "FN-002" }));
+
+    await createTaskFromRecommendation("FN-001", "recommendation-1", "project-a");
+
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      "/api/tasks/FN-001/recommendations/recommendation-1/create?projectId=project-a",
+      { headers: API_JSON_HEADERS, method: "POST", body: "{}" },
+    );
+  });
+
+  it("encodes opaque recommendation ids before placing them in the route", async () => {
+    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, { id: "FN-002" }));
+
+    await createTaskFromRecommendation("FN-001", "follow-up/with?reserved#characters", "project-a");
+
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      "/api/tasks/FN-001/recommendations/follow-up%2Fwith%3Freserved%23characters/create?projectId=project-a",
+      { headers: API_JSON_HEADERS, method: "POST", body: "{}" },
+    );
   });
 });
 

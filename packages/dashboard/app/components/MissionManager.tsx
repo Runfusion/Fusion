@@ -1,5 +1,5 @@
 import "./MissionManager.css";
-import { useState, useEffect, useCallback, useRef, useMemo, type ReactNode } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo, type MouseEvent, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -358,6 +358,42 @@ const EMPTY_MISSION_FORM: MissionFormData = {
   },
   taskPrefix: "",
 };
+
+interface MissionMergeBehaviorFieldProps {
+  value: MissionAutoMergeOverride;
+  onChange: (value: MissionAutoMergeOverride) => void;
+  t: (key: string, fallback: string) => string;
+}
+
+/*
+FNXC:MissionAutoMerge 2026-08-08-16:11:
+Every Mission Manager create and edit surface must explain the same three merge
+choices beside its selector: inherited project behavior, feature-by-feature
+auto-merge, and the shared-branch single-pull-request review path. A shared
+field prevents a duplicated form path from silently omitting that contract.
+*/
+export function MissionMergeBehaviorField({ value, onChange, t }: MissionMergeBehaviorFieldProps) {
+  return (
+    <label>
+      {t("missions.autoMergeOverride", "Merge behavior")}
+      <select
+        value={value}
+        onChange={(event) => onChange(event.target.value as MissionAutoMergeOverride)}
+        aria-label={t("missions.autoMergeOverrideAriaLabel", "Mission auto-merge override")}
+      >
+        <option value="inherit">{t("missions.autoMergeInherited", "Use project default")}</option>
+        <option value="on">{t("missions.autoMergeOn", "Auto-merge")}</option>
+        <option value="off">{t("missions.singlePullRequest", "Single pull request")}</option>
+      </select>
+      <small className="mission-detail__autopilot-description">
+        {t(
+          "missions.autoMergeOverrideDescription",
+          "Inherited follows the project setting. Auto-merge lands each feature as it passes. Single pull request keeps every feature on one shared branch for joint review and merge.",
+        )}
+      </small>
+    </label>
+  );
+}
 
 const EMPTY_MILESTONE_FORM: MilestoneFormData = {
   title: "",
@@ -781,7 +817,6 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
     persistSidebarWidth(nextWidth);
   }, [isMobile, persistSidebarWidth, sidebarWidth]);
 
-  // Form states
   const [isCreatingMission, setIsCreatingMission] = useState(false);
   const [editingMissionId, setEditingMissionId] = useState<string | null>(null);
   const [missionForm, setMissionForm] = useState<MissionFormData>(EMPTY_MISSION_FORM);
@@ -1005,6 +1040,23 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
   const missionsRef = useRef<MissionWithSummary[]>([]);
   const selectedMissionRef = useRef<MissionWithHierarchy | null>(null);
   const selectedMilestoneIdRef = useRef<string | null>(null);
+  /*
+  FNXC:MissionBranchGroupDetail 2026-08-08-16:58:
+  Mission selection can issue overlapping detail requests. Keep only the latest
+  response authoritative so a delayed prior mission cannot restore its hierarchy
+  or trigger a stale shared-branch scan after the operator has selected another.
+  */
+  const missionDetailRequestGenerationRef = useRef(0);
+  /*
+  FNXC:MissionBranchGroupDetail 2026-08-08-17:07:
+  Returning to the mission list, deleting the selected mission, hiding this
+  inline view, or unmounting also changes selection. Invalidate in-flight
+  detail reads at each of those boundaries so they cannot resurrect a detail
+  after the operator has left it.
+  */
+  const invalidateMissionDetailRequests = useCallback(() => {
+    missionDetailRequestGenerationRef.current += 1;
+  }, []);
   // FNXC:MilestoneValidationFreshness 2026-08-01-20:42: Rollup and telemetry responses share one per-milestone generation so an older request cannot restore a repaired failed badge, while a newer failure remains valid.
   const validationRequestGenerationRef = useRef(new MilestoneValidationFreshnessCoordinator());
   const activeTabRef = useRef<"structure" | "activity">("structure");
@@ -1147,9 +1199,11 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
   }, [addToast, projectId, t]);
 
   const loadMissionDetail = useCallback(async (missionId: string) => {
+    const requestGeneration = ++missionDetailRequestGenerationRef.current;
     try {
       setDetailLoading(true);
       const payload = await fetchMission(missionId, projectId);
+      if (requestGeneration !== missionDetailRequestGenerationRef.current) return;
       if (!payload || typeof payload !== "object") {
         throw new Error("Malformed mission detail response");
       }
@@ -1200,13 +1254,23 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
         setValidationTelemetry(null);
       }
     } catch (err) {
+      if (requestGeneration !== missionDetailRequestGenerationRef.current) return;
       console.error("[MissionManager] loadMissionDetail:", err);
       addToast(getErrorMessage(err) || t("missions.loadDetailFailed", "Failed to load mission details"), "error");
     } finally {
-      setDetailLoading(false);
+      if (requestGeneration === missionDetailRequestGenerationRef.current) {
+        setDetailLoading(false);
+      }
     }
   }, [addToast, loadAssertionsForMilestone, loadValidationRollup, projectId]);
 
+  /*
+  FNXC:MissionBranchGroupDetail 2026-08-08-16:11:
+  Mission detail may resolve multiple linked tasks asynchronously. Reset first and
+  cancel the prior scan when mission, project, or component ownership changes so
+  an unavailable candidate can be skipped but an old response never leaks its
+  branch, member count, or PR state into the current mission.
+  */
   useEffect(() => {
     let cancelled = false;
     setSelectedMissionBranchGroup(null);
@@ -1511,6 +1575,7 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
         try {
           const deletedMissionId = JSON.parse(messageEvent.data) as string;
           if (deletedMissionId && selectedMissionRef.current?.id === deletedMissionId) {
+            invalidateMissionDetailRequests();
             setSelectedMission(null);
           }
         } catch {
@@ -1744,6 +1809,7 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
   }, [
     isActive,
     isActivityScrolledNearBottom,
+    invalidateMissionDetailRequests,
     loadMissionDetail,
     loadMissionHealth,
     loadMissions,
@@ -1858,13 +1924,14 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
       await deleteMission(missionId, projectId);
       addToast(t("missions.deleted", "Mission deleted"), "success");
       if (selectedMission?.id === missionId) {
+        invalidateMissionDetailRequests();
         setSelectedMission(null);
       }
       await loadMissions();
     } catch (err) {
       addToast(getErrorMessage(err) || t("missions.deleteFailed", "Failed to delete mission"), "error");
     }
-  }, [addToast, loadMissions, selectedMission, projectId, t]);
+  }, [addToast, invalidateMissionDetailRequests, loadMissions, selectedMission, projectId, t]);
 
   const requestDeleteMission = useCallback(async (missionId: string) => {
     /*
@@ -2603,6 +2670,7 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
   }, [loadMissionDetail]);
 
   const handleBackToList = useCallback(() => {
+    invalidateMissionDetailRequests();
     setSelectedMission(null);
     setSelectedMilestoneId(null);
     setValidationTelemetry(null);
@@ -2612,7 +2680,11 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
     setEventsFilter("all");
     setExpandedEventMetadata(new Set());
     loadMissions();
-  }, [loadMissions]);
+  }, [invalidateMissionDetailRequests, loadMissions]);
+
+  useEffect(() => () => {
+    invalidateMissionDetailRequests();
+  }, [invalidateMissionDetailRequests]);
 
   const hasMoreEvents = missionEvents.length < eventsTotal;
   const autopilotState = (selectedMission?.autopilotState ?? "inactive") as AutopilotState;
@@ -3084,25 +3156,11 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
                       <option value="custom-new">{t("missions.branchStrategyCustomNew", "Create custom branch")}</option>
                     </select>
                   </label>
-                  <label>
-                    {t("missions.autoMergeOverride", "Merge behavior")}
-                    <select
-                      value={missionForm.autoMergeOverride}
-                      onChange={(e) => setMissionForm({ ...missionForm, autoMergeOverride: e.target.value as MissionAutoMergeOverride })}
-                      aria-label={t("missions.autoMergeOverrideAriaLabel", "Mission auto-merge override")}
-                    >
-                      <option value="inherit">{t("missions.autoMergeInherited", "Use project default")}</option>
-                      <option value="on">{t("missions.autoMergeOn", "Auto-merge")}</option>
-                      <option value="off">{t("missions.singlePullRequest", "Single pull request")}</option>
-                    </select>
-                    {/*
-                    FNXC:MissionAutoMerge 2026-07-19-00:00:
-                    Operators need in-context guidance for the per-mission merge choice: auto-merge lands each feature independently, while a single pull request keeps all features on one shared branch for joint review.
-                    */}
-                    <span className="mission-detail__autopilot-description">
-                      {t("missions.autoMergeOverrideDescription", "Auto-merge merges each feature as it passes. Single pull request keeps every feature on one shared branch to review and merge together.")}
-                    </span>
-                  </label>
+                  <MissionMergeBehaviorField
+                    value={missionForm.autoMergeOverride}
+                    onChange={(autoMergeOverride) => setMissionForm({ ...missionForm, autoMergeOverride })}
+                    t={t}
+                  />
                   {(missionForm.branchStrategy.mode === "existing" || missionForm.branchStrategy.mode === "custom-new") && (
                     <label>
                       {t("missions.branchName", "Branch name")}
@@ -4479,6 +4537,20 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
     );
   };
 
+  /*
+  FNXC:MissionAutoMerge 2026-08-08-17:21:
+  Keep AI planning as the primary Plan New Mission CTA, but retain a visible,
+  production manual-create path for operators who need to choose merge behavior
+  before a mission exists. This link opens the existing form without changing
+  the frozen planning button set.
+  */
+  const openDirectMissionCreate = (event: MouseEvent<HTMLAnchorElement>) => {
+    event.preventDefault();
+    setMissionForm(EMPTY_MISSION_FORM);
+    setEditingMissionId(null);
+    setIsCreatingMission(true);
+  };
+
   const openNewMissionInterview = () => {
     if (resumeSessionId) {
       dismissedResumeSessionIdRef.current = resumeSessionId;
@@ -4838,21 +4910,11 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
                       <option value="custom-new">{t("missions.branchStrategyCustomNew", "Create custom branch")}</option>
                     </select>
                   </label>
-                  <label>
-                    {t("missions.autoMergeOverride", "Merge behavior")}
-                    <select
-                      value={missionForm.autoMergeOverride}
-                      onChange={(e) => setMissionForm({ ...missionForm, autoMergeOverride: e.target.value as MissionAutoMergeOverride })}
-                      aria-label={t("missions.autoMergeOverrideAriaLabel", "Mission auto-merge override")}
-                    >
-                      <option value="inherit">{t("missions.autoMergeInherited", "Use project default")}</option>
-                      <option value="on">{t("missions.autoMergeOn", "Auto-merge")}</option>
-                      <option value="off">{t("missions.singlePullRequest", "Single pull request")}</option>
-                    </select>
-                    <span className="mission-detail__autopilot-description">
-                      {t("missions.autoMergeOverrideDescription", "Auto-merge merges each feature as it passes. Single pull request keeps every feature on one shared branch to review and merge together.")}
-                    </span>
-                  </label>
+                  <MissionMergeBehaviorField
+                    value={missionForm.autoMergeOverride}
+                    onChange={(autoMergeOverride) => setMissionForm({ ...missionForm, autoMergeOverride })}
+                    t={t}
+                  />
                   {(missionForm.branchStrategy.mode === "existing" || missionForm.branchStrategy.mode === "custom-new") && (
                     <label>
                       {t("missions.branchName", "Branch name")}
@@ -4957,21 +5019,11 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
                       <option value="custom-new">{t("missions.branchStrategyCustomNew", "Create custom branch")}</option>
                     </select>
                   </label>
-                  <label>
-                    {t("missions.autoMergeOverride", "Merge behavior")}
-                    <select
-                      value={missionForm.autoMergeOverride}
-                      onChange={(e) => setMissionForm({ ...missionForm, autoMergeOverride: e.target.value as MissionAutoMergeOverride })}
-                      aria-label={t("missions.autoMergeOverrideAriaLabel", "Mission auto-merge override")}
-                    >
-                      <option value="inherit">{t("missions.autoMergeInherited", "Use project default")}</option>
-                      <option value="on">{t("missions.autoMergeOn", "Auto-merge")}</option>
-                      <option value="off">{t("missions.singlePullRequest", "Single pull request")}</option>
-                    </select>
-                    <span className="mission-detail__autopilot-description">
-                      {t("missions.autoMergeOverrideDescription", "Auto-merge merges each feature as it passes. Single pull request keeps every feature on one shared branch to review and merge together.")}
-                    </span>
-                  </label>
+                  <MissionMergeBehaviorField
+                    value={missionForm.autoMergeOverride}
+                    onChange={(autoMergeOverride) => setMissionForm({ ...missionForm, autoMergeOverride })}
+                    t={t}
+                  />
                   {(missionForm.branchStrategy.mode === "existing" || missionForm.branchStrategy.mode === "custom-new") && (
                     <label>
                       {t("missions.branchName", "Branch name")}
@@ -5038,6 +5090,9 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
                     <Sparkles size={14} />
                     {t("missions.planNewMission", "Plan New Mission")}
                   </button>
+                  <a className="mission-list__manual-create-link" href="#mission-create" onClick={openDirectMissionCreate}>
+                    {t("missions.createButton", "Create")}
+                  </a>
                 </div>
               )}
 
@@ -5049,6 +5104,9 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
                         <Sparkles size={14} />
                         {t("missions.planNewMission", "Plan New Mission")}
                       </button>
+                      <a className="mission-list__manual-create-link" href="#mission-create" onClick={openDirectMissionCreate}>
+                        {t("missions.createButton", "Create")}
+                      </a>
                     </div>
                   )}
                 </div>
@@ -5222,6 +5280,9 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
                 <Sparkles size={14} />
                 {t("missions.planNewMission", "Plan New Mission")}
               </button>
+              <a className="mission-list__manual-create-link" href="#mission-create" onClick={openDirectMissionCreate}>
+                {t("missions.createButton", "Create")}
+              </a>
             </div>
           </aside>
 

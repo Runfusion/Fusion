@@ -10,7 +10,7 @@ import * as desktopArtifacts from "../worktree/worktree-desktop-artifacts.js";
 import * as branchConflicts from "../execution/branch-conflicts.js";
 
 vi.mock("../worktree/worktree-pool.js", async () => {
-  const actual = await vi.importActual<any>("../worktree-pool.js");
+  const actual = await vi.importActual<any>("../worktree/worktree-pool.js");
   return {
     ...actual,
     classifyTaskWorktree: vi.fn().mockResolvedValue({ ok: true }),
@@ -19,7 +19,7 @@ vi.mock("../worktree/worktree-pool.js", async () => {
 });
 
 vi.mock("../execution/branch-conflicts.js", async () => {
-  const actual = await vi.importActual<any>("../branch-conflicts.js");
+  const actual = await vi.importActual<any>("../execution/branch-conflicts.js");
   return {
     ...actual,
     classifyBootstrapMisbinding: vi.fn().mockResolvedValue({
@@ -47,7 +47,7 @@ resolves git paths and throws there, which the pool catch treats as prepare fail
 through to fresh. No-op the guard so classification + pool wiring stay under test.
 */
 vi.mock("../worktree/worktree-hooks.js", async () => {
-  const actual = await vi.importActual<any>("../worktree-hooks.js");
+  const actual = await vi.importActual<any>("../worktree/worktree-hooks.js");
   return {
     ...actual,
     installTaskWorktreeIdentityGuard: vi.fn().mockResolvedValue(undefined),

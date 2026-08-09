@@ -82,6 +82,7 @@ export const PROJECT_SECTION_KEYS: Readonly<Record<string, readonly string[]>> =
     "ephemeralAgentTaskCreationPolicy",
     "sessionAdvisorEnabledByDefault",
     "mailAutoCleanupDays",
+    "maxRecommendationsPerTask",
     "mobileNavPrimaryItems",
     "operationalLogRetentionDays",
     "quickChatButtonMode",

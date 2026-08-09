@@ -115,15 +115,16 @@ Archiving a workspace (multi-repository) task now synchronously removes every re
 Fusion also recognizes the canonical one-line redirect marker:
 
 - `DUPLICATE: FN-1234`
-- `` `DUPLICATE: FN-1234` ``
-- `**DUPLICATE: FN-1234**`
+- `DUPLICATE: KB-1234`
+- `` `DUPLICATE: KB-1234` ``
+- `**DUPLICATE: KB-1234**`
 - fenced single-line wrappers such as:
 
   ```text
   DUPLICATE: FN-1234
   ```
 
-The shared parser lives in `packages/core/src/explicit-duplicate-marker.ts` (`parseExplicitDuplicateMarker`). It is intentionally strict: after trimming outer whitespace and one optional wrapper layer, the content must reduce to exactly one substantive line matching `^DUPLICATE:\s*FN-\d+$`. Any extra prose, multiple markers, or full PROMPT bodies that merely mention duplicate text are ignored.
+The shared parser lives in `packages/core/src/duplicates/explicit-duplicate-marker.ts` (`parseExplicitDuplicateMarker`). It is intentionally strict: after trimming outer whitespace and one optional wrapper layer, the content must reduce to exactly one substantive line matching `^DUPLICATE:\s*[A-Z]+-\d+$`. Exact markers are recognized in either `PROMPT.md` or the task title; a prompt marker wins only when both sources name the same canonical ID. Conflicting exact title/prompt markers fail closed for operator or planning correction. Any extra prose, multiple markers, malformed IDs, or full PROMPT bodies that merely mention duplicate text are ignored.
 
 This guard adds three fail-open layers on top of the existing duplicate stack, in final order:
 
@@ -135,10 +136,10 @@ This guard adds three fail-open layers on top of the existing duplicate stack, i
 Layer behavior:
 
 - **Dashboard intake (`POST /api/tasks`)** — after deterministic/similarity/near-duplicate checks and before `createTask`, intake returns `409 duplicate_candidates` with `reason: "explicit-marker"` when the combined title/description is exactly a canonical redirect and the canonical target exists. `acknowledgedDuplicates` and `bypassDuplicateCheck: true` both suppress the conflict. Because this guard runs before task creation, the activity breadcrumb is attached to the canonical target.
-- **Triage planning loop** — after triage reads the generated `PROMPT.md`, an exact redirect marker short-circuits directly into `finalizeApprovedTask()`. Normal plans run deterministic spec hygiene checks in triage, then the selected workflow's optional Plan Review gate owns AI plan review before execution.
+- **Triage planning loop** — before triage starts a planner session, an exact redirect in the prompt or title short-circuits directly into `finalizeApprovedTask()`. Normal plans run deterministic spec hygiene checks in triage, then the selected workflow's optional Plan Review gate owns AI plan review before execution.
 - **Self-healing sweep** — maintenance Batch 2 runs `resolveExplicitDuplicateMarkerTasks()` across `triage`/`todo` tasks to clean up older stuck marker tasks. The sweep is best-effort, capped at 50 marker tasks per cycle, and can be disabled with the internal setting `resolveExplicitDuplicateMarkerEnabled: false` (default `true`).
 
-An operator's decision is durable for a task and its active canonical pair. **Keep** records the acknowledgement, clears the marker-only prompt and triage decision hold, and lets planning continue; triage and self-healing will not ask again if that same marker is reprocessed. A marker for a different active canonical remains a new decision. **Delete** for an explicit-marker decision soft-deletes the duplicate, while **Archive** for an ordinary near-duplicate leaves it terminal in Archived; neither outcome is reopened as a duplicate decision.
+An operator's decision is durable for a task and its active canonical pair. **Keep** records the acknowledgement, clears the exact redirect source and triage decision hold, and lets planning continue; triage and self-healing will not ask again if that same marker is reprocessed. A marker for a different active canonical remains a new decision. **Delete** for an explicit-marker decision soft-deletes the duplicate, while **Archive** for an ordinary near-duplicate leaves it terminal in Archived; neither outcome is reopened as a duplicate decision.
 
 All three layers fail open: parse errors, task lookup failures, file-read failures, activity-recording errors, or other unexpected exceptions log a warning and continue normal intake/triage/self-healing flow instead of blocking task creation or recovery.
 

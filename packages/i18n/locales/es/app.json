@@ -3646,6 +3646,7 @@
     "assertionUpdateFailed": "Error al actualizar la aserción",
     "attemptRetries_one": "",
     "attemptRetries_other": "",
+    "autoMergeOverrideDescription": "Heredado sigue la configuración del proyecto. La fusión automática integra cada funcionalidad al pasar. Una sola solicitud de extracción mantiene todas las funcionalidades en una rama compartida para revisión y fusión conjuntas.",
     "autopilotActivatingSlice": "Activando segmento",
     "autopilotCompleting": "Completando",
     "autopilotDescription": "Cuando está activado, Fusion activa automáticamente el siguiente segmento y planifica sus funcionalidades a medida que avanza el trabajo.",
@@ -5929,7 +5930,6 @@
       "updating": "",
       "upperBoundOnMessagesFetchedFromTheRoom": "",
       "upToDate": "Estás actualizado ✓",
-      "useEphemeralTaskWorkerAgents": "",
       "warnOnTheBoardWhenTodoWorkExceeds": "",
       "whenEnabledDefaultFusionSpawnsShortLived": "",
       "whenEnabledFusionChecksOpenAndClosedIssues": "",
@@ -6000,7 +6000,9 @@
       "taskCreateWorkflow": "",
       "taskCreateWorkflowHelp": "",
       "refinementTaskWorkflow": "",
-      "refinementTaskWorkflowHelp": ""
+      "refinementTaskWorkflowHelp": "",
+      "maxRecommendationsPerTask": "",
+      "maxRecommendationsPerTaskHelp": ""
     },
     "globalGeneral": {
       "andShowsUpdateNoticesInTheCLIAnd": "",
@@ -8020,7 +8022,8 @@
       "worktreeTerminal": "Terminal",
       "workflow": "Flujo de trabajo",
       "summary": "Summary",
-      "cost": ""
+      "cost": "",
+      "recommendations": ""
     },
     "terminal": {
       "loading": ""
@@ -8122,6 +8125,15 @@
       "totalCostLabel": "",
       "totalTokens": "",
       "unknownModel": ""
+    },
+    "recommendations": {
+      "title": "",
+      "empty": "No se generaron recomendaciones para esta tarea.",
+      "created": "",
+      "creating": "",
+      "retry": "",
+      "create": "",
+      "error": ""
     }
   },
   "taskDocuments": {

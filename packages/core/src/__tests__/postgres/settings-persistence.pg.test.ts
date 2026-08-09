@@ -56,6 +56,30 @@ pgTest("VAL-CROSS-004: Settings persistence (PostgreSQL)", () => {
     expect(settings.autoMerge).toBe(false);
   });
 
+  it("discards retired ephemeral compatibility patches while preserving active project settings", async () => {
+    const store = h.store();
+    await store.updateSettings({
+      ephemeralAgentsEnabled: false,
+      ephemeralAgentTaskCreationPolicy: "deny",
+      taskPrefix: "ACTIVE",
+    } as never);
+
+    const settings = await store.getSettings();
+    expect(settings).not.toHaveProperty("ephemeralAgentsEnabled");
+    expect(settings.ephemeralAgentTaskCreationPolicy).toBe("deny");
+    expect(settings.taskPrefix).toBe("ACTIVE");
+  });
+
+  it("keeps the recommendation cap project-scoped when an untyped global patch includes it", async () => {
+    const store = h.store();
+    await store.updateSettings({ maxRecommendationsPerTask: 7 });
+
+    // JSON/API callers can evade the GlobalSettings TypeScript shape; global persistence must not.
+    await store.updateGlobalSettings({ maxRecommendationsPerTask: 20 } as never);
+
+    expect((await store.getSettings()).maxRecommendationsPerTask).toBe(7);
+  });
+
   it("settings survive a re-read (persistence)", async () => {
     const store = h.store();
     await store.updateSettings({ maxConcurrentTasks: 5 });

@@ -699,6 +699,7 @@ export function createMockStore() {
       listGoals: vi.fn().mockReturnValue([]),
     }),
     getFusionDir: vi.fn().mockReturnValue("/tmp/test/.fusion"),
+    getRootDir: vi.fn().mockReturnValue("/tmp/test"),
     clearStaleExecutionStartBranchReferences: vi.fn().mockReturnValue([]),
     // FNXC:EngineTestDrift 2026-07-11-22:40:
     // FN-7750 / Runfusion#1980 made isLiveSharedBranchGroupMemberIntegration
@@ -767,6 +768,76 @@ FNXC:TaskVerificationRequest 2026-07-19-04:30 (merged with U5f 2026-07-19-06:00)
     getTaskWorkflowSelection: vi.fn().mockReturnValue({ workflowId: "builtin:coding", stepIds: [] }),
   };
   return store as any;
+}
+
+/** Minimal durable routing seam for production-path executor fixture tests. */
+export function createWorkflowRoutingAgentStore(store: Pick<any, "getTask" | "updateTask">) {
+  const leases = new Map<string, string>();
+  const agent = {
+    id: "workflow-test-executor",
+    name: "Workflow Test Executor",
+    role: "executor",
+    roles: ["executor"],
+    state: "active",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    runtimeConfig: {},
+  };
+  const countAgentLeases = (agentId: string) => [...leases.values()].filter((holder) => holder === agentId).length;
+  const agentStore = {
+    workflowProjectId: "executor-worktree-test-project",
+    listAgents: vi.fn(async () => [agent]),
+    getAgent: vi.fn(async (agentId: string) => agentId === agent.id ? agent : null),
+    acquireWorkflowSessionCapacity: vi.fn(async (input: {
+      agentId: string;
+      attemptId: string;
+      maxProjectSessions?: number;
+      maxAgentSessions?: number;
+    }) => {
+      const existing = leases.get(input.attemptId);
+      if (existing) return existing === input.agentId ? "acquired" : "agent-capacity";
+      if (input.maxProjectSessions !== undefined && leases.size >= input.maxProjectSessions) return "project-capacity";
+      if (input.maxAgentSessions !== undefined && countAgentLeases(input.agentId) >= input.maxAgentSessions) return "agent-capacity";
+      leases.set(input.attemptId, input.agentId);
+      return "acquired";
+    }),
+    renewWorkflowSessionCapacity: vi.fn(async (attemptId: string) => leases.has(attemptId)),
+    releaseWorkflowSessionCapacity: vi.fn(async (attemptId: string) => {
+      leases.delete(attemptId);
+    }),
+    checkoutTask: vi.fn(async (
+      agentId: string,
+      taskId: string,
+      leaseContext?: { nodeId?: string; runId?: string; leaseEpoch?: number; renewedAt?: string },
+    ) => {
+      const task = await store.getTask(taskId);
+      if (!task) throw new Error(`Task ${taskId} not found`);
+      const renewedAt = leaseContext?.renewedAt ?? new Date().toISOString();
+      await store.updateTask(taskId, {
+        checkedOutBy: agentId,
+        checkedOutAt: task.checkedOutBy === agentId ? task.checkedOutAt ?? renewedAt : renewedAt,
+        checkoutNodeId: leaseContext?.nodeId ?? task.checkoutNodeId ?? null,
+        checkoutRunId: leaseContext?.runId ?? task.checkoutRunId ?? null,
+        checkoutLeaseRenewedAt: renewedAt,
+        checkoutLeaseEpoch: leaseContext?.leaseEpoch ?? task.checkoutLeaseEpoch ?? 0,
+      });
+      return await store.getTask(taskId);
+    }),
+  };
+  return {
+    agent,
+    agentStore,
+    leases,
+    reset() {
+      leases.clear();
+      agentStore.listAgents.mockClear();
+      agentStore.getAgent.mockClear();
+      agentStore.acquireWorkflowSessionCapacity.mockClear();
+      agentStore.renewWorkflowSessionCapacity.mockClear();
+      agentStore.releaseWorkflowSessionCapacity.mockClear();
+      agentStore.checkoutTask.mockClear();
+    },
+  };
 }
 
 /*

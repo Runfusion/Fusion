@@ -87,6 +87,7 @@ export interface TaskRow {
   nextRecoveryAt: string | null;
   error: string | null;
   summary: string | null;
+  recommendations: string | null;
   thinkingLevel: string | null;
   validatorThinkingLevel: string | null;
   planningThinkingLevel: string | null;
@@ -213,7 +214,7 @@ export const TASK_JSONB_COLUMNS: ReadonlySet<string> = new Set([
   "comments", "review", "reviewState", "workflowStepResults", "prInfo", "prInfos",
   "issueInfo", "githubTracking", "gitlabTracking", "mergeDetails", "workspaceWorktrees", "enabledWorkflowSteps",
   "modifiedFiles", "declaredSymbols", "scopeAutoWiden", "sourceMetadata", "tokenUsagePerModel",
-  "tokenBudgetOverride", "columnDwellMs", "workflowTransitionNotification",
+  "tokenBudgetOverride", "columnDwellMs", "workflowTransitionNotification", "recommendations",
 ]);
 
 export function defineTaskColumn(
@@ -312,6 +313,7 @@ export const TASK_COLUMN_DESCRIPTORS: TaskColumnDescriptor[] = [
   defineTaskColumn("nextRecoveryAt", (task) => task.nextRecoveryAt ?? null),
   defineTaskColumn("error", (task) => task.error ?? null),
   defineTaskColumn("summary", (task) => task.summary ?? null),
+  defineTaskColumn("recommendations", (task) => toJsonNullable(task.recommendations)),
   defineTaskColumn("thinkingLevel", (task) => task.thinkingLevel ?? null),
   // FNXC:Settings-ThinkingLevel 2026-07-13 (merge port): per-task validator/planning reasoning-effort overrides.
   defineTaskColumn("validatorThinkingLevel", (task) => task.validatorThinkingLevel ?? null),

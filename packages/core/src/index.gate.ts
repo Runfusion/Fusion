@@ -749,9 +749,12 @@ export { getTaskDuplicateLineage } from "./duplicates/duplicate-lineage.js";
 export {
   parseDuplicateMarkerFromSessionText,
   parseExplicitDuplicateMarker,
+  resolveExplicitDuplicateMarker,
   isDuplicateRedirectOnlyPrompt,
   nonExecutableDuplicateRedirectReason,
   type ExplicitDuplicateMarker,
+  type ExplicitDuplicateMarkerResolution,
+  type ExplicitDuplicateMarkerSource,
 } from "./duplicates/explicit-duplicate-marker.js";
 export {
   parseNoOpCompletionMarker,
@@ -1114,6 +1117,7 @@ export {
   getCurrentRepo,
   getPushRepo,
   type GhError,
+  type GhErrorClassificationContext,
   type GhErrorCode,
   type StructuredGhError,
 } from "./cli/gh-cli.js";

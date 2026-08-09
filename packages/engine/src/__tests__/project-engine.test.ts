@@ -2538,6 +2538,10 @@ describe("ProjectEngine paused in-review auto-merge behavior", () => {
     expect(privateEngine.mergeQueue).not.toContain("FN-MERGE-WAITING");
     expect(privateEngine.capacityDeferredMergeTaskIds.has("FN-MERGE-WAITING")).toBe(true);
     expect(engine.isMergePending("FN-MERGE-WAITING")).toBe(true);
+    expect(mockStore.store.logEntry).toHaveBeenCalledWith(
+      "FN-MERGE-WAITING",
+      expect.stringContaining("maxWorktrees capacity exhausted: used=1/1"),
+    );
 
     // An unrelated queue wake must not make the deferred task runnable before its timer.
     mockStore.store.getTask.mockResolvedValue({

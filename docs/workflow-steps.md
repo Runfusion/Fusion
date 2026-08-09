@@ -222,6 +222,20 @@ If the Plan Review reviewer is unavailable before producing a verdict, the task 
 
 Workflow Plan Review is separate from manual plan approval. Project `planApprovalMode: "auto-approve-all"` bypasses only the final manual `awaiting-approval` plan gate after the plan is specified and any enabled Plan Review passes; it does not disable Plan Review or other explicit safety gates.
 
+### Closing stale or duplicate work from Plan Review
+
+The built-in **Plan Review** optional group alone accepts a fourth structured verdict:
+
+```json
+{"verdict":"CLOSE_NO_OP","notes":"DUPLICATE: FN-1234 already covered"}
+```
+
+Use it only when implementation should not begin because the premise is stale, the work is already satisfied or redundant, or another task already covers it. `notes` must begin with one of the existing no-op sentinels: `PREMISE STALE:`, `NO-OP:`, `NOOP:`, `REDUNDANT:`, or `DUPLICATE:`. For known duplicates, write `DUPLICATE: FN-NNNN ...`; Fusion preserves that canonical task ID in the Plan Review result.
+
+A valid close follows the graph's explicit terminal no-op route before parsing or implementation: it records a passed `CLOSE_NO_OP` Plan Review result, marks the task as no-commits-expected, records the reason, and completes it without replan or an implementation agent session. This is distinct from `REVISE`, which requests a corrected plan and follows the bounded replan route.
+
+`CLOSE_NO_OP` is not a generic review verdict. Code Review, Browser Verification, post-merge review, and custom non-Plan groups treat it as malformed/unknown output under their existing gate or advisory policy. A Plan Review close with empty/non-sentinel notes, or a custom workflow that has no explicit `outcome:close-no-op` terminal route, stays held at Plan Review with failed close evidence; it does not execute, replan, or fabricate a task error.
+
 **FN-7559 (superseded by FN-7732) — telling the holds apart:** Plan Review parks a task with its own distinct statuses (`needs-replan` for a revision verdict, `plan-review-unavailable` for a reviewer-outage retry), so it never renders identically to a plan-approval hold. A separate triage release-authorization gate used to also use `status: "awaiting-approval"` with a distinct `awaitingApprovalReason: "release-authorization"` discriminator and its own dashboard label; that gate was removed (it over-fired on AI-authored specs that merely mentioned release tooling — see `b5b0458`, FN-7732). Releases are kept out of Fusion by agent instruction instead (AGENTS.md → "Releasing"), not by an engine/UI gate. The `Task.awaitingApprovalReason` field and its `"release-authorization"` value are kept only so legacy rows deserialize; any task that still carries the legacy value now renders as an ordinary manual plan-approval hold.
 
 **FN-7569 / FN-8008 — manual plan approval is idempotent against unchanged plans:** approving a plan under the manual gate records a fingerprint of the approved `PROMPT.md`, normalized to ignore deterministic `## Original Description` and Frontend UX hygiene sections. If the same task is later re-specified — a `needs-replan` replan, a Plan Review reviewer-outage retry, or a self-healing rebound back to `triage` — the manual gate detects the unchanged operator-authored plan and proceeds straight to `todo` instead of re-parking at `status: "awaiting-approval"`, regardless of whether those generated sections were injected before either fingerprint was calculated. A genuinely revised Mission, Steps, or File Scope still produces a different fingerprint and re-asks as before, and using Reject Plan clears the fingerprint so the regenerated plan is always treated as new. This idempotency check runs only inside the manual gate, strictly after Plan Review has already made its independent decision, and never applies under `planApprovalMode: "auto-approve-all"` (which bypasses the manual gate entirely).

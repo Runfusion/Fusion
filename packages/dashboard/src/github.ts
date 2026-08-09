@@ -735,10 +735,15 @@ function toPrInfo(input: {
   };
 }
 
+/*
+FNXC:PrMergeReadiness 2026-08-09-00:48:
+FN-8835 requires the live pull-request merge gate to fail closed on GitHub's normalized mergeability state. Branch-protection BLOCKED, stale BEHIND, conflicts, and unknown state must wait before any merge request; legacy approval and optional-check policy remain unchanged.
+*/
 export function isPrMergeReady(input: {
   status: PrInfo["status"];
   reviewDecision: ReviewDecision;
   checks: PrCheckStatus[];
+  mergeable: PrConflictState;
 }): { ready: boolean; blockingReasons: string[] } {
   const blockingReasons: string[] = [];
 
@@ -748,6 +753,10 @@ export function isPrMergeReady(input: {
 
   if (input.reviewDecision === "CHANGES_REQUESTED") {
     blockingReasons.push("changes requested review is active");
+  }
+
+  if (input.mergeable !== "clean") {
+    blockingReasons.push(`PR mergeability is ${input.mergeable}`);
   }
 
   const blockingChecks = input.checks.filter(
@@ -1816,6 +1825,7 @@ export class GitHubClient {
       status: prInfo.status,
       reviewDecision: pr.reviewDecision ?? null,
       checks: normalizedChecks,
+      mergeable,
     });
 
     return {
@@ -1975,6 +1985,7 @@ export class GitHubClient {
       status: prInfo.status,
       reviewDecision: pr.reviewDecision,
       checks,
+      mergeable,
     });
 
     return {

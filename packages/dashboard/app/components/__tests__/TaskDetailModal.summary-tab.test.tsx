@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { Column, ModelPricingOverrides, TaskTokenUsage } from "@fusion/core";
 import {
   makeTask,
@@ -181,6 +181,59 @@ describe("TaskDetailModal Summary tab", () => {
       expectButtonActive(screen.getByRole("button", { name: "Activity" }));
       rendered.unmount();
     }
+  });
+
+  it("keeps Recommendations available for empty completed tasks and removes it after completion", async () => {
+    const view = render(
+      <TaskDetailModal
+        task={doneTask({ recommendations: undefined })}
+        initialTab="recommendations"
+        onClose={noop}
+        onMoveTask={noopMove}
+        onDeleteTask={noopDelete}
+        onMergeTask={noopMerge}
+        onOpenDetail={noopOpenDetail}
+        addToast={noop}
+      />,
+    );
+
+    const tabs = document.querySelector(".detail-tabs");
+    const recommendations = screen.getByRole("button", { name: "Recommendations" });
+    expectButtonActive(recommendations);
+    expect(tabs?.contains(recommendations)).toBe(true);
+    expect(recommendations.classList.contains("detail-tab")).toBe(true);
+    expect(screen.getByText("No recommendations were produced for this task.")).toBeInTheDocument();
+
+    view.rerender(
+      <TaskDetailModal
+        task={doneTask({ recommendations: [] })}
+        initialTab="recommendations"
+        onClose={noop}
+        onMoveTask={noopMove}
+        onDeleteTask={noopDelete}
+        onMergeTask={noopMerge}
+        onOpenDetail={noopOpenDetail}
+        addToast={noop}
+      />,
+    );
+    expectButtonActive(screen.getByRole("button", { name: "Recommendations" }));
+    expect(screen.getByText("No recommendations were produced for this task.")).toBeInTheDocument();
+
+    view.rerender(
+      <TaskDetailModal
+        task={makeTask({ column: "todo", recommendations: [] })}
+        initialTab="recommendations"
+        onClose={noop}
+        onMoveTask={noopMove}
+        onDeleteTask={noopDelete}
+        onMergeTask={noopMerge}
+        onOpenDetail={noopOpenDetail}
+        addToast={noop}
+      />,
+    );
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Recommendations" })).toBeNull());
+    await waitFor(() => expectButtonActive(screen.getByRole("button", { name: "Plan" })));
+    expect(screen.queryByText("No recommendations were produced for this task.")).toBeNull();
   });
 
   it("omits the token-cost section when token usage is absent", () => {
@@ -641,5 +694,23 @@ describe("TaskDetailModal Summary tab", () => {
     expectButtonActive(screen.getByRole("button", { name: "Summary" }));
     expect(document.querySelector(".detail-tabs")?.firstElementChild?.textContent).toBe("Activity");
     expect(screen.getByText("Completion summary")).toBeTruthy();
+  });
+
+  it("exposes empty Recommendations through the shared embedded detail entrypoint", () => {
+    render(
+      <TaskDetailContent
+        task={doneTask({ recommendations: [] })}
+        embedded
+        initialTab="recommendations"
+        onMoveTask={noopMove}
+        onDeleteTask={noopDelete}
+        onMergeTask={noopMerge}
+        onOpenDetail={noopOpenDetail}
+        addToast={noop}
+      />,
+    );
+
+    expectButtonActive(screen.getByRole("button", { name: "Recommendations" }));
+    expect(screen.getByText("No recommendations were produced for this task.")).toBeInTheDocument();
   });
 });

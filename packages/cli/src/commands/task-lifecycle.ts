@@ -32,6 +32,7 @@ import {
   resolveEffectiveSettings,
   isWorkspaceTask,
   assertNotWorkspaceTaskMerge,
+  classifyGhError,
   WorkspaceTaskMergeError,
 } from "@fusion/core";
 import type { Settings, TaskDetail, PrInfo, MergeResult, BranchGroup, BranchGroupPrState, Task } from "@fusion/core";
@@ -1146,7 +1147,18 @@ export async function processPullRequestMergeTask(
       return "merged";
     }
 
-    throw err;
+    /*
+    FNXC:GitHubPrMerge 2026-08-09-01:02:
+    Preserve merge → one refresh → persist → merged reconciliation ordering. A
+    refreshed BLOCKED state explains ambiguous gh "not mergeable" output as
+    branch policy, while DIRTY/CONFLICTING remain the only state-based conflict.
+    */
+    const diagnosis = classifyGhError(err, {
+      mergeable: refreshedStatus.prInfo.mergeable,
+      reviewDecision: refreshedStatus.reviewDecision,
+      blockingReasons: refreshedStatus.blockingReasons,
+    });
+    throw Object.assign(new Error(diagnosis.message), { code: diagnosis.code, cause: diagnosis.cause });
   }
   await store.updatePrInfo(task.id, { ...mergedPr, lastCheckedAt: new Date().toISOString() });
   await finalizePullRequestMerge(store, cwd, task, mergedPr, "Pull request merged", pool);

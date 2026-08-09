@@ -417,6 +417,8 @@ export const DEFAULT_GLOBAL_SETTINGS = {
 
 /** Default values for project-level settings. */
 export const DEFAULT_PROJECT_SETTINGS = {
+  // FNXC:TaskRecommendations 2026-08-08-05:02: completion follows-ups stay bounded by default; 0 disables writing them.
+  maxRecommendationsPerTask: 3,
   globalPause: false,
   globalPauseReason: undefined,
   defaultWorkflowId: undefined,
@@ -629,13 +631,6 @@ export const DEFAULT_PROJECT_SETTINGS = {
   // proportional to the change; the thin merge gate carries cross-cutting
   // coverage. Falls back to package/explicit command when no tests resolve.
   scopeVerificationToChangedFiles: true,
-  /*
-  FNXC:WorkflowAgentRouting 2026-08-07-08:45:
-  Keep the legacy project setting defaulted and persistable for existing clients and
-  configuration records. Workflow-stage routing must ignore its value; durable role
-  principals own scheduler, executor, and mission-stage authority.
-  */
-  ephemeralAgentsEnabled: true,
   /*
   FNXC:EphemeralAgentTaskCreation 2026-07-01-00:00:
   Default-on so ephemeral task-worker agents keep the ability to open follow-up tasks via fn_task_create. Operators who want to confine task creation to humans/permanent agents flip this off.

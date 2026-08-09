@@ -39,6 +39,7 @@ export {
   fetchTaskPrompt,
   fetchTaskRuntimeFallback,
   checkDuplicateTasks,
+  createTaskFromRecommendation,
   createTask,
   repairOverlapBlocker,
   updateTask,

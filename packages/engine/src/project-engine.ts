@@ -78,6 +78,7 @@ import { sweepStaleAutostashes, VerificationError } from "./merger.js";
 import { runAiMerge, landWorkspaceTask, WorkspacePartialLandError, WorkspaceRepoLandBusyError } from "./merge/merger-ai.js";
 import { promoteBranchGroup, type BranchGroupPromotionResult, type CreateGroupPrFn, type SyncGroupPrFn } from "./merge/group-merge-coordinator.js";
 import {
+  formatAdmissionCapacityQueuedReason,
   persistedTopLevelAgentTaskIdsFromStore,
   projectAdmissionCoordinator,
   resolveActiveTaskCapacityLimit,
@@ -461,6 +462,8 @@ export class ProjectEngine {
   private mergeActive = new Set<string>();
   /** Capacity-deferred ids stay out of the runnable queue until their retry timer fires. */
   private readonly capacityDeferredMergeTaskIds = new Set<string>();
+  /** Last persisted live-cap reason per merge; avoids rewriting the task log each poll. */
+  private readonly capacityDeferredMergeReasons = new Map<string, string>();
   private readonly capacityDeferredMerges = new Map<string, {
     timer: ReturnType<typeof setTimeout>;
     resolvers: MergeResolver[];
@@ -1356,6 +1359,7 @@ export class ProjectEngine {
     }
     this.capacityDeferredMerges.clear();
     this.capacityDeferredMergeTaskIds.clear();
+    this.capacityDeferredMergeReasons.clear();
     this.stopPlannerOverseerPoll();
 
     /*
@@ -4008,7 +4012,35 @@ export class ProjectEngine {
                 },
               }],
             });
-            if (!selected) return undefined;
+            if (!selected) {
+              const snapshot = await getMergeClaimSnapshot();
+              const limit = resolveActiveTaskCapacityLimit({
+                maxConcurrent: admissionSettings.maxConcurrent ?? 2,
+                maxWorktrees: admissionSettings.maxWorktrees ?? 4,
+                worktreeLimitEnabled: admissionSettings.worktreeLimitEnabled,
+              });
+              if (snapshot.count >= limit) {
+                /*
+                FNXC:ConcurrencyAdmission 2026-08-08-04:27:
+                A merge capacity defer used to be invisible because its queue is internal. Persist
+                the shared live-cap reason on the task itself, but only when the fresh serialized
+                snapshot proves exhaustion rather than a higher-priority candidate winning.
+                */
+                const reason = formatAdmissionCapacityQueuedReason({
+                  maxConcurrent: admissionSettings.maxConcurrent ?? 2,
+                  maxWorktrees: admissionSettings.maxWorktrees ?? 4,
+                  worktreeLimitEnabled: admissionSettings.worktreeLimitEnabled,
+                  claimed: snapshot.count,
+                  holderTaskIds: snapshot.ids,
+                });
+                if (this.capacityDeferredMergeReasons.get(taskId) !== reason) {
+                  this.capacityDeferredMergeReasons.set(taskId, reason);
+                  await store.logEntry(taskId, reason);
+                }
+              }
+              return undefined;
+            }
+            this.capacityDeferredMergeReasons.delete(taskId);
             try {
               return await start();
             } finally {

@@ -1,5 +1,9 @@
 # Diagnostics
 
+## Settings changes in the Activity Log
+
+Every changed project or global setting produces one `settings:updated` Activity Log entry. Engine-owned churn keys (`engineLastActiveAt` and `engineActiveSinceMs`) are deliberately excluded so heartbeat polling does not flood the log, and secret-bearing values are redacted. Workflow setting values, including `requirePrApproval`, are not covered because they never appear in the `settings:updated` payload; use `GET /api/config/revisions` for those changes. The broader audit-trail documentation work remains tracked by FN-8854.
+
 ## Debug-level diagnostics (`FUSION_DEBUG`)
 
 Engine and core subsystem loggers (`createLogger`) expose a `debug()` level for routine diagnostics. It is **off by default** so the TUI log pane and engine stderr show state *changes* rather than repeated resting-state chatter.

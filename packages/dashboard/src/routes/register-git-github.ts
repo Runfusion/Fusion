@@ -99,6 +99,7 @@ function mapStructuredGhErrorToStatus(code: StructuredGhError["code"]): number {
       return 404;
     case "validation":
     case "merge-conflict":
+    case "merge-blocked-by-policy":
       return 422;
     default:
       return 502;
@@ -2394,18 +2395,57 @@ async function mergeTaskPr(
     });
     return updated;
   } catch (error) {
-    const message = getCommandErrorMessage(error) || "Failed to merge pull request";
-    await scopedStore.updatePrInfo(task.id, {
+    let mergeStatus: Awaited<ReturnType<GitHubClient["getPrMergeStatus"]>> | undefined;
+    try {
+      mergeStatus = await client.getPrMergeStatus(repo.owner, repo.repo, task.prInfo.number);
+    } catch {
+      // A refresh failure cannot invent GitHub state; retain the original command diagnosis.
+    }
+
+    const refreshed = mergeStatus && {
       ...task.prInfo,
-      lastMergeError: message,
+      ...mergeStatus.prInfo,
+      autoMergeOnGreen: task.prInfo.autoMergeOnGreen,
+      autoMergeStrategy: task.prInfo.autoMergeStrategy,
+      manual: task.prInfo.manual,
+      draft: mergeStatus.prInfo.draft ?? mergeStatus.prInfo.isDraft,
+      lastCheckedAt: new Date().toISOString(),
+    } satisfies PrInfo;
+
+    if (refreshed?.status === "merged") {
+      await scopedStore.updatePrInfo(task.id, {
+        ...refreshed,
+        lastMergeError: undefined,
+        lastMergeErrorAt: undefined,
+      });
+      await scopedStore.applyPrMergedTransition(task.id, {
+        agentId: "dashboard",
+        runId: `${runIdPrefix}-${task.id}-${Date.now()}`,
+      });
+      return refreshed;
+    }
+
+    /*
+    FNXC:GitHubPrMerge 2026-08-09-01:02:
+    The direct route never reaches CLI lifecycle recovery, so it performs its
+    own single post-failure refresh before classifying ambiguous gh output.
+    Persist that state and structured policy diagnosis; only a confirmed merged
+    refresh may finalize the task, and a refresh failure retains the original error.
+    */
+    const diagnosis = classifyGhError(error, mergeStatus && {
+      mergeable: mergeStatus.mergeable,
+      reviewDecision: mergeStatus.reviewDecision,
+      blockingReasons: mergeStatus.blockingReasons,
+    });
+    const updated = {
+      ...(refreshed ?? task.prInfo),
+      lastMergeError: diagnosis.message,
       lastMergeErrorAt: new Date().toISOString(),
+    } satisfies PrInfo;
+    await scopedStore.updatePrInfo(task.id, updated);
+    throw new ApiError(mapStructuredGhErrorToStatus(diagnosis.code), diagnosis.message, {
+      githubError: diagnosis,
     });
-    const err = new ApiError(502, "Failed to merge pull request", {
-      code: "pr_merge_failed",
-      retryable: true,
-      error: message,
-    });
-    throw err;
   }
 }
 
