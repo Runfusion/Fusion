@@ -357,6 +357,16 @@ async function resolveTerminalColumnsForTask(store: TaskStore, taskId: string): 
   }
 }
 
+async function resolveArchivedColumnsForTask(store: TaskStore, taskId: string): Promise<ReadonlySet<string>> {
+  try {
+    const ir = await resolveWorkflowIrForTask(store, taskId);
+    const archived = columnsWithFlag(ir, "archived");
+    return archived.length > 0 ? new Set(archived) : LEGACY_ARCHIVE_LANES;
+  } catch {
+    return LEGACY_ARCHIVE_LANES;
+  }
+}
+
 
 function isArtifactType(value: string): value is ArtifactType {
   return ARTIFACT_TYPES.has(value as ArtifactType);
@@ -2345,7 +2355,10 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         soft-deleted children are historical records, not an actionable Created result; conflict
         rather than silently resurrecting or linking a second child.
         */
-        if (!linked || linked.deletedAt || linked.column === "archived") {
+        const linkedArchiveColumns = linked
+          ? await resolveArchivedColumnsForTask(scopedStore, linked.id)
+          : LEGACY_ARCHIVE_LANES;
+        if (!linked || linked.deletedAt || linkedArchiveColumns.has(linked.column)) {
           throw conflict("Recommendation link points to an unavailable task");
         }
         return res.status(200).json({ task: linked, parent });
@@ -2360,16 +2373,9 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       */
       const existing = (await scopedStore.listTasks({ slim: false, includeArchived: true, includeDeleted: true }))
         .find((task) => task.proposalClaimId === proposalClaimId);
-      const existingArchiveColumns = await (async () => {
-        if (!existing) return new Set<string>();
-        try {
-          const ir = await resolveWorkflowIrForTask(scopedStore, existing.id);
-          const columns = columnsWithFlag(ir, "archived");
-          return new Set(columns.length > 0 ? columns : ["archived"]);
-        } catch {
-          return new Set(["archived"]);
-        }
-      })();
+      const existingArchiveColumns = existing
+        ? await resolveArchivedColumnsForTask(scopedStore, existing.id)
+        : new Set<string>();
       /*
       FNXC:TaskRecommendations 2026-08-08-08:44:
       Deterministic reconciliation moves a child to its workflow's archived trait, which may be
