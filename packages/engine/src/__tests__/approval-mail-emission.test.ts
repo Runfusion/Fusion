@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { DASHBOARD_USER_ID } from "@fusion/core";
 import { TaskExecutor } from "../executor.js";
 import { HeartbeatMonitor } from "../agent-heartbeat.js";
+import { TriageProcessor } from "../triage.js";
 import { emitApprovalMail } from "../agents/approval-mail.js";
 
 function createMessageStore(options: { reject?: boolean } = {}) {
@@ -133,5 +134,105 @@ describe("approval-mail emission", () => {
     await expect((monitor as any).buildActionGateContext(heartbeatAgent, "FN-no-mail", "run-1").pauseForApproval({ approvalRequestId: "no-mail", decision: actionDecision })).resolves.toBeUndefined();
     expect(taskStore.pauseTask).toHaveBeenCalledOnce();
     expect(agentStore.updateAgentState).toHaveBeenCalledOnce();
+  });
+
+  /*
+  FNXC:StructuralMail 2026-08-09-09:57:
+  Triage was the one FN-8870-deferred approval-pause closure. Cover delivery, re-raise dedupe,
+  fail-soft persistence, optional wiring, and fallback actor identity so planning pauses cannot become
+  mailbox-invisible while preserving their existing task and agent pause behavior.
+  */
+  describe("triage action gate", () => {
+    function createTriageHarness(options: { messageStore?: ReturnType<typeof createMessageStore>; agent?: typeof heartbeatAgent | null } = {}) {
+      const taskStore = createExecutorStore();
+      const agentStore = {
+        updateAgentState: vi.fn().mockResolvedValue(undefined),
+        updateAgent: vi.fn().mockResolvedValue(undefined),
+      };
+      const processor = new TriageProcessor(taskStore as never, "/tmp/test", {
+        ...(options.messageStore ? { messageStore: options.messageStore as never } : {}),
+        agentStore: agentStore as never,
+      });
+      const taskId = "FN-triage";
+      const context = (processor as any).buildActionGateContext(taskId, "run-1", options.agent === undefined ? heartbeatAgent : options.agent);
+      return { taskStore, agentStore, context, taskId };
+    }
+
+    it("writes one reference-only mailbox item for the triage approval pause", async () => {
+      const messageStore = createMessageStore();
+      const { context, taskId } = createTriageHarness({ messageStore });
+
+      await context.pauseForApproval({ approvalRequestId: "triage-action", decision: actionDecision });
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(messageStore.sendMessageOnce).toHaveBeenCalledTimes(1);
+      expect(messageStore.sendMessageOnce).toHaveBeenCalledWith(
+        expect.objectContaining({
+          fromId: "system",
+          toId: DASHBOARD_USER_ID,
+          type: "system",
+          metadata: { mailKind: "approval", approvalRequestId: "triage-action", taskId },
+        }),
+        "approval-mail:triage-action",
+      );
+      const message = messageStore.persisted.get("approval-mail:triage-action") as { metadata: Record<string, unknown> };
+      expect(message.metadata).not.toHaveProperty("status");
+      expect(message.metadata).not.toHaveProperty("decision");
+    });
+
+    it("keeps a re-raised triage approval to one durable mailbox row", async () => {
+      const messageStore = createMessageStore();
+      const { context } = createTriageHarness({ messageStore });
+
+      await context.pauseForApproval({ approvalRequestId: "triage-repeat", decision: actionDecision });
+      await context.pauseForApproval({ approvalRequestId: "triage-repeat", decision: actionDecision });
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(messageStore.sendMessageOnce).toHaveBeenCalledTimes(2);
+      expect(messageStore.persisted).toHaveLength(1);
+    });
+
+    it("keeps the triage pause and agent updates intact when mailbox persistence rejects", async () => {
+      const messageStore = createMessageStore({ reject: true });
+      const { context, taskStore, agentStore } = createTriageHarness({ messageStore });
+
+      await expect(context.pauseForApproval({ approvalRequestId: "triage-reject", decision: actionDecision })).resolves.toBeUndefined();
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(taskStore.pauseTask).toHaveBeenCalledOnce();
+      expect(taskStore.logEntry).toHaveBeenCalledOnce();
+      expect(agentStore.updateAgentState).toHaveBeenCalledOnce();
+      expect(agentStore.updateAgentState).toHaveBeenCalledWith("agent-1", "paused");
+      expect(agentStore.updateAgent).toHaveBeenCalledOnce();
+      expect(agentStore.updateAgent).toHaveBeenCalledWith("agent-1", { pauseReason: "awaiting-approval" });
+      expect(messageStore.sendMessageOnce).toHaveBeenCalledOnce();
+    });
+
+    it("keeps the triage pause usable without a message store", async () => {
+      const { context, taskStore, agentStore } = createTriageHarness();
+
+      await expect(context.pauseForApproval({ approvalRequestId: "triage-no-mail", decision: actionDecision })).resolves.toBeUndefined();
+
+      expect(taskStore.pauseTask).toHaveBeenCalledOnce();
+      expect(taskStore.logEntry).toHaveBeenCalledOnce();
+      expect(agentStore.updateAgentState).toHaveBeenCalledOnce();
+      expect(agentStore.updateAgentState).toHaveBeenCalledWith("agent-1", "paused");
+      expect(agentStore.updateAgent).toHaveBeenCalledOnce();
+      expect(agentStore.updateAgent).toHaveBeenCalledWith("agent-1", { pauseReason: "awaiting-approval" });
+    });
+
+    it("emits triage approval mail with fallback identity when no agent is assigned", async () => {
+      const messageStore = createMessageStore();
+      const { context, agentStore } = createTriageHarness({ messageStore, agent: null });
+
+      await context.pauseForApproval({ approvalRequestId: "triage-null-agent", decision: actionDecision });
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(messageStore.persisted.get("approval-mail:triage-null-agent")).toEqual(expect.objectContaining({
+        content: expect.stringContaining("Triage planner FN-triage"),
+      }));
+      expect(agentStore.updateAgentState).not.toHaveBeenCalled();
+      expect(agentStore.updateAgent).not.toHaveBeenCalled();
+    });
   });
 });

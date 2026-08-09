@@ -857,6 +857,20 @@ describe("runServe", () => {
     expect(mockSyncStartupModels).toHaveBeenCalledTimes(1);
   });
 
+  it("binds native auto-merge to the executing engine's store", async () => {
+    const lifecycle = await import("../task-lifecycle.js");
+    const { ProjectEngineManager } = await import("@fusion/engine");
+    await runServe(0, {});
+
+    const factory = vi.mocked(ProjectEngineManager).mock.calls.at(-1)?.[1]?.createPrNodeGithubOps;
+    const otherProjectStore = { getSettings: vi.fn().mockResolvedValue({ githubNativeAutoMerge: true }) };
+    factory?.(otherProjectStore as never);
+    const resolver = vi.mocked(lifecycle.createPrNodeGithubOps).mock.calls.at(-1)?.[1]?.isNativeAutoMergeEnabled;
+
+    await expect(resolver?.({ id: "FN-shared" } as never)).resolves.toBe(true);
+    expect(otherProjectStore.getSettings).toHaveBeenCalledOnce();
+  });
+
   // FNXC:DaemonSignalExit 2026-07-10-16:00: `fn serve` must honor the same POSIX
   // exit-code contract as `fn daemon` — a memory-pressure SIGTERM exits non-zero
   // (143) so `Restart=on-failure` restarts it; SIGINT exits 130. Guards against

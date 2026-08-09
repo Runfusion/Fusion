@@ -11,6 +11,7 @@ const execFileCalls = vi.hoisted(
   () => [] as Array<{ file: string; args: string[]; cwd: string | undefined }>,
 );
 const refreshFixture = vi.hoisted(() => ({ next: 0, branch: "fusion/fn-9601" }));
+const createIngestedCheckResolverMock = vi.hoisted(() => vi.fn());
 vi.mock("node:fs/promises", async () => {
   const actual = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
   return {
@@ -72,10 +73,11 @@ vi.mock("@fusion/core", async () => {
       release: vi.fn(async () => undefined),
       quarantine: vi.fn(async () => undefined),
     })),
+    createIngestedCheckResolver: createIngestedCheckResolverMock,
   };
 });
 
-import { acquireWorktreePathReservation, getCurrentRepo, getPushRepo } from "@fusion/core";
+import { acquireWorktreePathReservation, createIngestedCheckResolver, getCurrentRepo, getPushRepo } from "@fusion/core";
 import { activeSessionRegistry } from "@fusion/engine";
 import {
   cleanupMergedTaskArtifacts,
@@ -198,6 +200,7 @@ describe("processPullRequestMergeTask", () => {
     vi.mocked(getCurrentRepo).mockReturnValue({ owner: "owner", repo: "repo" });
     // Same-repo default: push owner matches fetch owner so heads stay unqualified.
     vi.mocked(getPushRepo).mockReturnValue({ owner: "owner", repo: "repo" });
+    vi.mocked(createIngestedCheckResolver).mockReset().mockReturnValue(undefined);
   });
 
   describe("central-install repo threading (gh-4)", () => {
@@ -1687,6 +1690,51 @@ describe("processPullRequestMergeTask", () => {
       expect(result).toBe("merged");
       expect(github.mergePr).toHaveBeenCalled();
     });
+  it("uses a scoped ingested resolver so green proceeds and failure remains awaiting checks", async () => {
+    const task: MockTask = {
+      id: "FN-9103-event", title: "event checks", description: "desc", column: "in-review",
+      prInfo: { number: 101, url: "https://github.com/owner/repo/pull/101", status: "open", headBranch: "fusion/fn-9103-event", baseBranch: "main" },
+    };
+    const store = makeStore(task, { requiredChecks: ["build"] });
+    const layer = { projectId: "project-a" };
+    (store as Record<string, unknown>).getAsyncLayer = vi.fn(() => layer);
+    const ingestedResolver = vi.fn().mockResolvedValue([
+      { repo: "owner/repo", headSha: "abc123", checkName: "build", state: "success", reportedAt: "2026-08-09T00:00:00.000Z" },
+    ]);
+    vi.mocked(createIngestedCheckResolver).mockReturnValue(ingestedResolver);
+    const github = {
+      findPrForBranch: vi.fn(), createPr: vi.fn(),
+      getPrMergeStatus: vi.fn(async (_owner, _repo, _number, options) => {
+        const checks = await options.resolveIngestedChecks({ owner: "owner", repo: "repo", headSha: "abc123" });
+        return {
+          prInfo: { ...task.prInfo!, mergeable: "clean" as const }, reviewDecision: null, checks: [],
+          mergeReady: checks[0]?.state === "success", blockingReasons: checks[0]?.state === "success" ? [] : ["required checks not successful: build (failure)"],
+        };
+      }),
+      mergePr: vi.fn(async () => ({ ...task.prInfo!, status: "merged" as const })),
+    };
+
+    expect(await processPullRequestMergeTask(store as never, "/repo", task.id, github as never, () => undefined)).toBe("merged");
+    expect(createIngestedCheckResolver).toHaveBeenCalledWith(layer);
+    expect(github.mergePr).toHaveBeenCalled();
+
+    ingestedResolver.mockResolvedValueOnce([{ repo: "owner/repo", headSha: "abc123", checkName: "build", state: "failure", reportedAt: "2026-08-09T00:00:00.000Z" }]);
+    const failedStore = makeStore(task, { requiredChecks: ["build"] });
+    (failedStore as Record<string, unknown>).getAsyncLayer = vi.fn(() => layer);
+    expect(await processPullRequestMergeTask(failedStore as never, "/repo", task.id, github as never, () => undefined)).toBe("waiting");
+    expect((failedStore as { _updates: Array<{ patch: Record<string, unknown> }> })._updates.at(-1)?.patch).toEqual({ status: "awaiting-pr-checks" });
+  });
+
+  it("omits the resolver for a layerless or unscoped store", async () => {
+    const task: MockTask = { id: "FN-9103-no-layer", title: "checks", description: "desc", column: "in-review", prInfo: { number: 102, url: "https://github.com/owner/repo/pull/102", status: "open" } };
+    const store = makeStore(task, { requiredChecks: ["build"] });
+    (store as Record<string, unknown>).getAsyncLayer = vi.fn(() => undefined);
+    const github = { findPrForBranch: vi.fn(), createPr: vi.fn(), getPrMergeStatus: vi.fn(async () => ({ prInfo: { ...task.prInfo!, mergeable: "clean" as const }, reviewDecision: null, checks: [], mergeReady: false, blockingReasons: ["required check not reported: build"] })), mergePr: vi.fn() };
+
+    await processPullRequestMergeTask(store as never, "/repo", task.id, github as never, () => undefined);
+    expect(github.getPrMergeStatus).toHaveBeenCalledWith("owner", "repo", 102, { requiredCheckNames: ["build"] });
+  });
+
   it("waits for a configured Fusion check, forwards normalized names, and does not merge", async () => {
     const task: MockTask = {
       id: "FN-9103", title: "test", description: "desc", column: "in-review",
@@ -1712,6 +1760,132 @@ describe("processPullRequestMergeTask", () => {
       (update) => "mergeRetries" in update.patch,
     )).toBe(false);
   });
+  });
+
+  it("arms native auto-merge for a per-task PR without finalizing its open result", async () => {
+    const task: MockTask = {
+      id: "FN-native-per-task", title: "native", description: "desc", column: "in-review",
+      prInfo: { number: 801, url: "https://github.com/owner/repo/pull/801", status: "open", headBranch: "fusion/fn-native-per-task", baseBranch: "main" },
+    };
+    const store = makeStore(task, { githubNativeAutoMerge: true });
+    const github = {
+      findPrForBranch: vi.fn(), createPr: vi.fn(),
+      getPrMergeStatus: vi.fn().mockResolvedValue({ prInfo: { ...task.prInfo, mergeable: "clean" }, reviewDecision: "APPROVED", checks: [], mergeReady: false, blockingReasons: [] }),
+      mergePr: vi.fn().mockResolvedValue({ ...task.prInfo, status: "open" }),
+    };
+
+    await expect(processPullRequestMergeTask(store as never, "/repo", task.id, github as never, () => undefined)).resolves.toBe("waiting");
+    expect(github.mergePr).toHaveBeenCalledWith(expect.objectContaining({ auto: true }));
+    expect(github.mergePr).not.toHaveBeenCalledWith(expect.objectContaining({ expectedHeadOid: expect.anything() }));
+    expect(store.moveTask).not.toHaveBeenCalled();
+  });
+
+  it("finalizes a per-task PR when GitHub merges native auto-merge synchronously", async () => {
+    const task: MockTask = {
+      id: "FN-native-per-task-merged", title: "native", description: "desc", column: "in-review",
+      prInfo: { number: 803, url: "https://github.com/owner/repo/pull/803", status: "open", headBranch: "fusion/fn-native-per-task-merged", baseBranch: "main" },
+    };
+    const store = makeStore(task, { githubNativeAutoMerge: true });
+    const github = {
+      findPrForBranch: vi.fn(), createPr: vi.fn(),
+      getPrMergeStatus: vi.fn().mockResolvedValue({ prInfo: { ...task.prInfo, mergeable: "clean" }, reviewDecision: "APPROVED", checks: [], mergeReady: true, blockingReasons: [] }),
+      mergePr: vi.fn().mockResolvedValue({ ...task.prInfo, status: "merged" }),
+    };
+
+    await expect(processPullRequestMergeTask(store as never, "/repo", task.id, github as never, () => undefined)).resolves.toBe("merged");
+    expect(github.mergePr).toHaveBeenCalledWith(expect.objectContaining({ auto: true }));
+    expect(store.moveTask).toHaveBeenCalledWith(task.id, "done");
+  });
+
+  it("keeps the per-task head fence when native auto-merge is disabled", async () => {
+    const task: MockTask = {
+      id: "FN-legacy-per-task", title: "legacy", description: "desc", column: "in-review",
+      prInfo: { number: 804, url: "https://github.com/owner/repo/pull/804", status: "open", headBranch: "fusion/fn-legacy-per-task", baseBranch: "main" },
+    };
+    const store = makeStore(task);
+    const github = {
+      findPrForBranch: vi.fn(), createPr: vi.fn(),
+      getPrMergeStatus: vi.fn().mockResolvedValue({ prInfo: { ...task.prInfo, mergeable: "clean" }, reviewDecision: "APPROVED", checks: [], mergeReady: true, blockingReasons: [] }),
+      mergePr: vi.fn().mockResolvedValue({ ...task.prInfo, status: "merged" }),
+    };
+
+    await expect(processPullRequestMergeTask(store as never, "/repo", task.id, github as never, () => undefined)).resolves.toBe("merged");
+    expect(github.mergePr).toHaveBeenCalledWith(expect.objectContaining({ expectedHeadOid: "1111111111111111111111111111111111111111" }));
+    expect(github.mergePr).not.toHaveBeenCalledWith(expect.objectContaining({ auto: true }));
+  });
+
+  it("arms native auto-merge for a shared branch group without finalizing its open result", async () => {
+    const task: MockTask = {
+      id: "FN-native-group", title: "native group", description: "desc", column: "in-review",
+      branchContext: { groupId: "BG-native", source: "planning", assignmentMode: "shared" },
+    };
+    const store = makeStore(task, { githubNativeAutoMerge: true });
+    (store.getBranchGroup as ReturnType<typeof vi.fn>).mockReturnValue({
+      id: "BG-native", sourceType: "planning", sourceId: "planning:native", branchName: "fusion/groups/native", autoMerge: true,
+      prState: "open", prNumber: 802, prUrl: "https://github.com/owner/repo/pull/802", status: "open", createdAt: Date.now(), updatedAt: Date.now(),
+    });
+    (store.listTasksByBranchGroup as ReturnType<typeof vi.fn>).mockResolvedValue([task]);
+    execMock.mockImplementation((command: string) => command.includes("rev-list --count") ? "1\n" : "");
+    const groupPr = { number: 802, url: "https://github.com/owner/repo/pull/802", status: "open" as const, headBranch: "fusion/groups/native", baseBranch: "main" };
+    const github = {
+      findPrForBranch: vi.fn(), createPr: vi.fn(),
+      getPrMergeStatus: vi.fn().mockResolvedValue({ prInfo: { ...groupPr, mergeable: "clean" }, reviewDecision: "APPROVED", checks: [], mergeReady: false, blockingReasons: [] }),
+      mergePr: vi.fn().mockResolvedValue(groupPr),
+    };
+
+    await expect(processPullRequestMergeTask(store as never, "/repo", task.id, github as never, () => undefined)).resolves.toBe("waiting");
+    expect(github.mergePr).toHaveBeenCalledWith(expect.objectContaining({ auto: true }));
+    expect(store.moveTask).not.toHaveBeenCalled();
+    expect(store.updateBranchGroup).toHaveBeenCalledWith("BG-native", expect.objectContaining({ prState: "open" }));
+  });
+
+  it("finalizes shared branch members when GitHub merges native auto-merge synchronously", async () => {
+    const task: MockTask = {
+      id: "FN-native-group-merged", title: "native group", description: "desc", column: "in-review",
+      branchContext: { groupId: "BG-native-merged", source: "planning", assignmentMode: "shared" },
+    };
+    const store = makeStore(task, { githubNativeAutoMerge: true });
+    (store.getBranchGroup as ReturnType<typeof vi.fn>).mockReturnValue({
+      id: "BG-native-merged", sourceType: "planning", sourceId: "planning:native", branchName: "fusion/groups/native-merged", autoMerge: true,
+      prState: "open", prNumber: 805, prUrl: "https://github.com/owner/repo/pull/805", status: "open", createdAt: Date.now(), updatedAt: Date.now(),
+    });
+    (store.listTasksByBranchGroup as ReturnType<typeof vi.fn>).mockResolvedValue([task]);
+    execMock.mockImplementation((command: string) => command.includes("rev-list --count") ? "1\n" : "");
+    const groupPr = { number: 805, url: "https://github.com/owner/repo/pull/805", status: "open" as const, headBranch: "fusion/groups/native-merged", baseBranch: "main" };
+    const github = {
+      findPrForBranch: vi.fn(), createPr: vi.fn(),
+      getPrMergeStatus: vi.fn().mockResolvedValue({ prInfo: { ...groupPr, mergeable: "clean" }, reviewDecision: "APPROVED", checks: [], mergeReady: true, blockingReasons: [] }),
+      mergePr: vi.fn().mockResolvedValue({ ...groupPr, status: "merged" }),
+    };
+
+    await expect(processPullRequestMergeTask(store as never, "/repo", task.id, github as never, () => undefined)).resolves.toBe("merged");
+    expect(github.mergePr).toHaveBeenCalledWith(expect.objectContaining({ auto: true }));
+    expect(store.moveTask).toHaveBeenCalledWith(task.id, "done");
+    expect(store.updateBranchGroup).toHaveBeenCalledWith("BG-native-merged", expect.objectContaining({ status: "finalized", prState: "merged" }));
+  });
+
+  it("keeps the shared branch head fence when native auto-merge is disabled", async () => {
+    const task: MockTask = {
+      id: "FN-legacy-group", title: "legacy group", description: "desc", column: "in-review",
+      branchContext: { groupId: "BG-legacy", source: "planning", assignmentMode: "shared" },
+    };
+    const store = makeStore(task);
+    (store.getBranchGroup as ReturnType<typeof vi.fn>).mockReturnValue({
+      id: "BG-legacy", sourceType: "planning", sourceId: "planning:legacy", branchName: "fusion/groups/legacy", autoMerge: true,
+      prState: "open", prNumber: 806, prUrl: "https://github.com/owner/repo/pull/806", status: "open", createdAt: Date.now(), updatedAt: Date.now(),
+    });
+    (store.listTasksByBranchGroup as ReturnType<typeof vi.fn>).mockResolvedValue([task]);
+    execMock.mockImplementation((command: string) => command.includes("rev-list --count") ? "1\n" : "");
+    const groupPr = { number: 806, url: "https://github.com/owner/repo/pull/806", status: "open" as const, headBranch: "fusion/groups/legacy", baseBranch: "main" };
+    const github = {
+      findPrForBranch: vi.fn(), createPr: vi.fn(),
+      getPrMergeStatus: vi.fn().mockResolvedValue({ prInfo: { ...groupPr, mergeable: "clean" }, reviewDecision: "APPROVED", checks: [], mergeReady: true, blockingReasons: [] }),
+      mergePr: vi.fn().mockResolvedValue({ ...groupPr, status: "merged" }),
+    };
+
+    await expect(processPullRequestMergeTask(store as never, "/repo", task.id, github as never, () => undefined)).resolves.toBe("merged");
+    expect(github.mergePr).toHaveBeenCalledWith(expect.objectContaining({ expectedHeadOid: "1111111111111111111111111111111111111111" }));
+    expect(github.mergePr).not.toHaveBeenCalledWith(expect.objectContaining({ auto: true }));
   });
 });
 
@@ -2354,6 +2528,7 @@ describe("createPrNodeGithubOps repo resolution (gh-4)", () => {
     expect(github.mergePr).toHaveBeenCalledWith(
       expect.objectContaining({ owner: "central-owner", repo: "central-repo", number: 9, method: "squash", expectedHeadOid: "1111111111111111111111111111111111111111" }),
     );
+    expect(github.mergePr).not.toHaveBeenCalledWith(expect.objectContaining({ auto: true }));
   });
 
   it("fails closed when workflow PR merge is cancelled", async () => {
@@ -2366,6 +2541,37 @@ describe("createPrNodeGithubOps repo resolution (gh-4)", () => {
       signal: controller.signal,
     } as never)).rejects.toThrow("workflow merge cancelled");
     expect(github.mergePr).not.toHaveBeenCalled();
+  });
+
+  it("resolves native auto-merge against the workflow task rather than a process-global setting", async () => {
+    const github = githubStub();
+    const resolver = vi.fn(async (task: { id: string }) => task.id === "FN-native");
+    const ops = createPrNodeGithubOps(github as never, { isNativeAutoMergeEnabled: resolver });
+
+    await ops.mergePr({
+      task: { id: "FN-native" },
+      entity: { id: "e1", sourceId: "FN-native", repo: "central-owner/central-repo", prNumber: 9 },
+    } as never);
+    await ops.mergePr({
+      task: { id: "FN-legacy" },
+      entity: { id: "e2", sourceId: "FN-legacy", repo: "central-owner/central-repo", prNumber: 10 },
+    } as never);
+
+    expect(resolver).toHaveBeenNthCalledWith(1, expect.objectContaining({ id: "FN-native" }));
+    expect(resolver).toHaveBeenNthCalledWith(2, expect.objectContaining({ id: "FN-legacy" }));
+    expect(github.mergePr).toHaveBeenNthCalledWith(1, expect.objectContaining({ auto: true }));
+    expect(github.mergePr).toHaveBeenNthCalledWith(2, expect.objectContaining({ expectedHeadOid: "1111111111111111111111111111111111111111" }));
+  });
+
+  it("propagates unavailable native auto-merge failures from the workflow callback", async () => {
+    const github = githubStub();
+    github.mergePr.mockRejectedValue(Object.assign(new Error("auto merge disabled"), { code: "auto-merge-unavailable" }));
+    const ops = createPrNodeGithubOps(github as never, { isNativeAutoMergeEnabled: () => true });
+
+    await expect(ops.mergePr({
+      task: { id: "FN-native" },
+      entity: { id: "e1", sourceId: "FN-native", repo: "central-owner/central-repo", prNumber: 9 },
+    } as never)).rejects.toMatchObject({ code: "auto-merge-unavailable", message: "auto merge disabled" });
   });
 
   it("persists the refreshed workflow head before requesting GitHub merge", async () => {

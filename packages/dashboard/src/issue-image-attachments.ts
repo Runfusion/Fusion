@@ -2,6 +2,7 @@ import { createLogger } from "@fusion/core";
 
 const severityAuditLog = createLogger("dashboard-issue-image-attachments");
 import { runGhAsync, isGhAvailable, isGhAuthenticated, type TaskStore } from "@fusion/core";
+export { containsIssueImageMarkup, PER_BODY_MAX_CHARS, TRANSPORT_MAX_CHARS } from "./issue-image-markup.js";
 
 /*
 FNXC:IssueImportAttachments 2026-07-15-11:20:
@@ -25,7 +26,7 @@ export const ALLOWED_IMAGE_MIMES = new Set(["image/png", "image/jpeg", "image/gi
 export const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 
 /** Bound per-issue work: a pathological issue (or a long comment thread) must not stall the import request. */
-const MAX_IMAGES_PER_ISSUE = 10;
+export const MAX_IMAGES_PER_ISSUE = 10;
 
 const DOWNLOAD_TIMEOUT_MS = 15_000;
 const MAX_DOWNLOAD_REDIRECTS = 3;
@@ -163,6 +164,10 @@ export function gitlabImagePolicy(options: { webBaseUrl: string; webUrl: string;
  * FNXC:IssueImportAttachments 2026-07-15-11:20:
  * Bodies embed images two ways and both must be covered: markdown `![alt](url)` (the upload default) and raw `<img src="...">` (common when authors resize a screenshot).
  */
+/*
+FNXC:IssueImportAttachments 2026-08-09-14:09:
+Planning Mode captures image-bearing bodies at Plan time but downloads resolved URLs only after task creation, so extraction and download need independent entry points. This containment-only predicate runs on untrusted client data: it must not decide fetchability, and markup occurrence counts cannot prove the authoritative URL cap has been reached.
+*/
 export function extractIssueImageUrls(
   bodies: string | null | undefined | Array<string | null | undefined>,
   policy: ImageImportPolicy,
@@ -273,14 +278,19 @@ async function downloadImage(
  * FNXC:IssueImportAttachments 2026-07-15-11:20:
  * Best-effort by contract — the caller has already created the task, so a throw here would fail an import that actually succeeded. Returns counts so the caller can log what landed.
  */
-export async function importIssueImageAttachments(
+export async function importIssueImagesFromUrls(
   store: Pick<TaskStore, "addAttachment">,
   taskId: string,
-  bodies: string | null | undefined | Array<string | null | undefined>,
+  urls: string[],
   policy: ImageImportPolicy,
 ): Promise<IssueImageImportResult> {
-  const urls = extractIssueImageUrls(bodies, policy);
-  if (urls.length === 0) return { attached: 0, failed: 0 };
+  // Persisted URLs are untrusted too: resolve again before any credentialed fetch.
+  const approvedUrls = urls.slice(0, MAX_IMAGES_PER_ISSUE).flatMap((url) => {
+    const resolved = policy.resolve(url);
+    return resolved ? [resolved] : [];
+  });
+  const rejectedCount = Math.min(urls.length, MAX_IMAGES_PER_ISSUE) - approvedUrls.length;
+  if (approvedUrls.length === 0) return { attached: 0, failed: rejectedCount };
 
   const authHeaders = await policy.headers();
   let attached = 0;
@@ -306,12 +316,21 @@ export async function importIssueImageAttachments(
   // FNXC:IssueImportAttachments 2026-07-15-14:10: Bound simultaneous remote
   // work so ten slow screenshots cannot serialize an issue import for minutes.
   let nextIndex = 0;
-  await Promise.all(Array.from({ length: Math.min(IMAGE_DOWNLOAD_CONCURRENCY, urls.length) }, async () => {
-    while (nextIndex < urls.length) {
+  await Promise.all(Array.from({ length: Math.min(IMAGE_DOWNLOAD_CONCURRENCY, approvedUrls.length) }, async () => {
+    while (nextIndex < approvedUrls.length) {
       const index = nextIndex++;
-      await importOne(index, urls[index]!);
+      await importOne(index, approvedUrls[index]!);
     }
   }));
 
-  return { attached, failed };
+  return { attached, failed: failed + rejectedCount };
+}
+
+export async function importIssueImageAttachments(
+  store: Pick<TaskStore, "addAttachment">,
+  taskId: string,
+  bodies: string | null | undefined | Array<string | null | undefined>,
+  policy: ImageImportPolicy,
+): Promise<IssueImageImportResult> {
+  return importIssueImagesFromUrls(store, taskId, extractIssueImageUrls(bodies, policy), policy);
 }

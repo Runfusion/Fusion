@@ -4,7 +4,20 @@ import { TaskExecutor } from "../executor.js";
 import * as worktreePool from "../worktree/worktree-pool.js";
 import { resolveWorktreesDir } from "../worktree/worktree-paths.js";
 import * as worktreeAcquisition from "../worktree/worktree-acquisition.js";
-import { createMockStore, mockedCreateFnAgent, mockedExecSync, mockedExistsSync, resetExecutorMocks } from "./executor-test-helpers.js";
+import { createMockStore, createWorkflowRoutingAgentStore, implementationSessionCalls, mockedCreateFnAgent, mockedExecSync, mockedExistsSync, resetExecutorMocks, selectImplementationSessionCall } from "./executor-test-helpers.js";
+
+/*
+FNXC:WorkflowPrincipalRouting 2026-08-09-09:22:
+Graph ownership requires principal routing before these liveness harnesses can open an agent
+session. This local fixture supplies only the durable executor role and capacity leases without
+bypassing graph admission; it returns routing for an intra-test guard that proves lifecycle
+assertions reached the routing seam rather than failing vacuously.
+*/
+function createRoutingExecutor(store: any, options: any = {}) {
+  const routing = createWorkflowRoutingAgentStore(store);
+  const executor = new TaskExecutor(store, "/repo", { agentStore: routing.agentStore, ...options });
+  return { executor, routing };
+}
 
 function task(overrides: Record<string, unknown> = {}) {
   return {
@@ -84,7 +97,7 @@ describe("FN-4114 worktree liveness assertion", () => {
     const store = createMockStore();
     store.getTask.mockResolvedValue(task({ sessionFile: null }));
 
-    const executor = new TaskExecutor(store as any, "/repo");
+    const { executor } = createRoutingExecutor(store as any);
     await executor.execute(task({ sessionFile: null }) as any);
 
     expect(mockedCreateFnAgent).not.toHaveBeenCalled();
@@ -112,7 +125,7 @@ describe("FN-4114 worktree liveness assertion", () => {
     store.recordRunAuditEvent = vi.fn().mockResolvedValue(undefined);
     store.getTask.mockResolvedValue(task({ worktree: "/repo" }));
 
-    const executor = new TaskExecutor(store as any, "/repo");
+    const { executor } = createRoutingExecutor(store as any);
     await executor.execute(task({ worktree: "/repo" }) as any);
 
     expect(mockedCreateFnAgent).not.toHaveBeenCalled();
@@ -150,10 +163,10 @@ describe("FN-4114 worktree liveness assertion", () => {
 
     mockCompletingAgent();
 
-    const executor = new TaskExecutor(store as any, "/repo");
+    const { executor } = createRoutingExecutor(store as any);
     await executor.execute(task({ worktree: "/repo", sessionFile: null }) as any);
 
-    expect(mockedCreateFnAgent).toHaveBeenCalled();
+    expect(implementationSessionCalls(mockedCreateFnAgent.mock.calls)).not.toHaveLength(0);
     expect(store.moveTask).not.toHaveBeenCalledWith("FN-4114", "todo", { preserveProgress: true });
     expect(store.recordRunAuditEvent).not.toHaveBeenCalledWith(expect.objectContaining({
       mutationType: "worktree:incomplete-detected",
@@ -167,15 +180,26 @@ describe("FN-4114 worktree liveness assertion", () => {
     { name: "relative worktreesDir", settings: { worktreesDir: "custom-trees" }, outsidePath: "/repo/not-a-worktree" },
   ])("FN-4114 enforces configured worktreesDir ($name)", async ({ settings, outsidePath }) => {
     vi.spyOn(worktreePool, "classifyTaskWorktree").mockResolvedValue({ ok: true });
+    /*
+    FNXC:WorktreeLiveness 2026-08-09-09:22:
+    Real acquisition refreshes stale bases before returning and prevents this harness from reaching
+    its configured-directory gate. Supply only each phase's acquired path through the file's
+    established acquisition seam; the production containment gate still decides reject versus
+    accept, preserving the fresh-store two-phase invariant below.
+    */
+    const acquireWorktree = vi.spyOn(worktreeAcquisition, "acquireTaskWorktree");
     const store = createMockStore();
     const baseSettings = await store.getSettings();
     const mergedSettings = { ...baseSettings, ...settings };
     store.getSettings.mockResolvedValue(mergedSettings);
 
     const allowedWorktree = `${resolveWorktreesDir("/repo", mergedSettings as any)}/fn-4114`;
+    acquireWorktree
+      .mockResolvedValueOnce({ worktreePath: outsidePath, branch: "fusion/fn-4114", source: "pool", hydrated: true, isResume: false })
+      .mockResolvedValueOnce({ worktreePath: allowedWorktree, branch: "fusion/fn-4114", source: "pool", hydrated: true, isResume: false });
     store.getTask.mockResolvedValue(task({ worktree: outsidePath }));
 
-    const rejectExecutor = new TaskExecutor(store as any, "/repo");
+    const { executor: rejectExecutor } = createRoutingExecutor(store as any);
     await rejectExecutor.execute(task({ worktree: outsidePath }) as any);
 
     expect(mockedCreateFnAgent).not.toHaveBeenCalled();
@@ -198,15 +222,22 @@ describe("FN-4114 worktree liveness assertion", () => {
     acceptStore.getSettings.mockResolvedValue(mergedSettings);
     acceptStore.getTask.mockResolvedValue(task({ worktree: allowedWorktree }));
 
-    const acceptExecutor = new TaskExecutor(acceptStore as any, "/repo");
+    const { executor: acceptExecutor } = createRoutingExecutor(acceptStore as any);
     await acceptExecutor.execute(task({ worktree: allowedWorktree }) as any);
 
-    expect(mockedCreateFnAgent).toHaveBeenCalled();
+    expect(implementationSessionCalls(mockedCreateFnAgent.mock.calls)).not.toHaveLength(0);
     expect(acceptStore.moveTask).not.toHaveBeenCalledWith("FN-4114", "todo", { preserveProgress: true });
   });
 
   it("FN-4114 accepts usable pool-acquired worktrees", async () => {
     vi.spyOn(worktreePool, "classifyTaskWorktree").mockResolvedValue({ ok: true });
+    vi.spyOn(worktreeAcquisition, "acquireTaskWorktree").mockResolvedValue({
+      worktreePath: "/repo/.worktrees/swift-falcon",
+      branch: "fusion/fn-4114",
+      source: "pool",
+      hydrated: true,
+      isResume: false,
+    });
     const store = createMockStore();
     store.getTask.mockResolvedValue(task());
 
@@ -214,7 +245,7 @@ describe("FN-4114 worktree liveness assertion", () => {
       session: { prompt: vi.fn().mockResolvedValue(undefined), dispose: vi.fn() },
     }) as any);
 
-    const executor = new TaskExecutor(store as any, "/repo");
+    const { executor } = createRoutingExecutor(store as any);
     await executor.execute(task() as any);
 
     expect(mockedCreateFnAgent).toHaveBeenCalled();
@@ -236,11 +267,65 @@ describe("FN-4114 worktree liveness assertion", () => {
       session: { prompt: vi.fn().mockResolvedValue(undefined), dispose: vi.fn() },
     }) as any);
 
-    const executor = new TaskExecutor(store as any, "/repo");
+    const { executor } = createRoutingExecutor(store as any);
     await executor.execute(task({ worktree: "/repo/.worktrees/stale" }) as any);
 
     expect(classifySpy).not.toHaveBeenCalled();
     expect(mockedCreateFnAgent).toHaveBeenCalled();
+  });
+
+  /*
+  FNXC:WorkflowPrincipalRouting 2026-08-09-11:05:
+  FN-8883 observed 34 vacuous failures when an unrouted graph run opened zero createFnAgent
+  sessions and never exposed fn_task_done. These paired guards prove the accept path opens the
+  implementation session and the missing-agent-store path stays suspended rather than tolerated.
+  */
+  it("opens an implementation session and hands routed work to graph review", async () => {
+    vi.spyOn(worktreeAcquisition, "acquireTaskWorktree").mockResolvedValue({
+      worktreePath: "/repo/.worktrees/swift-falcon",
+      branch: "fusion/fn-4114",
+      source: "fresh",
+      hydrated: true,
+      isResume: false,
+    });
+    vi.spyOn(worktreePool, "classifyTaskWorktree").mockResolvedValue({ ok: true });
+    const store = createMockStore();
+    store.getTask.mockResolvedValue(task({ sessionFile: null }));
+    mockCompletingAgent();
+    const { executor, routing } = createRoutingExecutor(store as any);
+
+    await executor.execute(task({ sessionFile: null }) as any);
+
+    expect(selectImplementationSessionCall(mockedCreateFnAgent.mock.calls)).toBeDefined();
+    expect(routing.agentStore.listAgents).toHaveBeenCalledWith({ includeEphemeral: true });
+    expect(store.moveTask).toHaveBeenCalledWith(
+      "FN-4114",
+      "in-review",
+      expect.objectContaining({ workflowMoveSource: "workflow-graph" }),
+    );
+  });
+
+  it("suspends an unrouted graph run before opening an implementation session", async () => {
+    vi.spyOn(worktreeAcquisition, "acquireTaskWorktree").mockResolvedValue({
+      worktreePath: "/repo/.worktrees/swift-falcon",
+      branch: "fusion/fn-4114",
+      source: "fresh",
+      hydrated: true,
+      isResume: false,
+    });
+    vi.spyOn(worktreePool, "classifyTaskWorktree").mockResolvedValue({ ok: true });
+    const store = createMockStore();
+    store.getTask.mockResolvedValue(task({ sessionFile: null }));
+    const executor = new TaskExecutor(store as any, "/repo", {});
+
+    await executor.execute(task({ sessionFile: null }) as any);
+
+    expect(mockedCreateFnAgent).not.toHaveBeenCalled();
+    expect(store.moveTask).not.toHaveBeenCalledWith(
+      "FN-4114",
+      "in-review",
+      expect.objectContaining({ workflowMoveSource: "workflow-graph" }),
+    );
   });
 
   it("FN-4935 runs liveness gate for pooled/reused assigned worktree", async () => {
@@ -255,7 +340,7 @@ describe("FN-4114 worktree liveness assertion", () => {
     const store = createMockStore();
     store.getTask.mockResolvedValue(task({ worktree: "/repo/.worktrees/swift-falcon", sessionFile: null }));
 
-    const executor = new TaskExecutor(store as any, "/repo");
+    const { executor } = createRoutingExecutor(store as any);
     await executor.execute(task({ worktree: "/repo/.worktrees/swift-falcon", sessionFile: null }) as any);
 
     expect(classifySpy).toHaveBeenCalled();

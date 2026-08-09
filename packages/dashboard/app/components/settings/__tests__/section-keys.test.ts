@@ -143,6 +143,7 @@ describe("settings section-keys registry", () => {
         "mergeConflictStrategy",
         "mergeIntegrationWorktree",
         "mergeStrategy",
+        "githubNativeAutoMerge",
         "requiredChecks",
         "mergeStrategyOverlapBehavior",
         "merger",

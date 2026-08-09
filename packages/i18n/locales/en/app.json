@@ -6377,7 +6377,9 @@
       "sameAsIntegrationBranchDefault": "(same as integration branch — default)",
       "pushTargetBranchHelp": "Branch on the remote that merged results are pushed to. Leave on the default to push the integration branch to its same-named remote branch; pick a listed remote branch or choose Custom… to type one that doesn't exist on the remote yet (the push creates it).",
       "requiredChecks": "Required pull-request checks",
-      "requiredChecksHelp": "No default — unset. Comma-separated check names match GitHub exactly (case-sensitive). Leaving this empty uses GitHub required-status checks only; a named check that never reports blocks the merge."
+      "requiredChecksHelp": "No default — unset. Comma-separated check names match GitHub exactly (case-sensitive). Leaving this empty uses GitHub required-status checks only; a named check that never reports blocks the merge.",
+      "githubNativeAutoMerge": "Use GitHub native auto-merge",
+      "githubNativeAutoMergeHelp": "GitHub waits for its full ruleset before merging. The repository must allow auto-merge; Fusion fails closed if it is unavailable. Default: disabled."
     },
     "mergeManually": "Merge Manually",
     "mobileNav": {

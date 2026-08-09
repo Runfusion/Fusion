@@ -2,11 +2,6 @@
   "$comment": "Flaky-test quarantine ledger (deletion ratchet — see AGENTS.md 'Flaky tests: quarantine on sight' and docs/testing.md 'Quarantine ledger and the deletion ratchet'). A test observed failing without a corresponding real bug is quarantined ON SIGHT: add an entry here AND a matching one-line `exclude` entry in that package's vitest config, in the same commit. Every entry needs a non-empty `reason` (link the failing run) and a `quarantinedAt` date — the entry expires 14 days later, at which point the test file is DELETED unless someone rescues it with evidence it catches real regressions plus a root-cause fix (never appeasement). There is deliberately no loader module and no automation around this file: it is a dated record, the vitest config is the enforcement.",
   "entries": [
     {
-      "file": "packages/dashboard/src/__tests__/register-model-routes-kimi-k3-supplemental.test.ts",
-      "reason": "Real Pi SDK ModelRuntime catalog construction timed out at the 15s test budget in 2/6 sampled loaded CI runs; failing run https://github.com/Runfusion/Fusion/actions/runs/30664201149 and issue https://github.com/Runfusion/Fusion/issues/3245. FN-8647 landed a reusable shared-construction seam without widening timeouts. FN-8669 must obtain an owner budget decision and re-measure CI before the 14-day deletion deadline; this entry and its paired exclusion must remain through 2026-08-15.",
-      "quarantinedAt": "2026-08-01"
-    },
-    {
       "file": "packages/engine/src/__tests__/project-engine.test.ts",
       "reason": "FN-8811 observed B4/B5 workspace busy contention asserting a stale 60s cap while runtime schedules 120s, then the subprocess guard timed out on git remote; reproduced in isolation on 2026-08-06. Do not widen timing or weaken the assertion; restore only with a root-cause fix before the deletion deadline.",
       "quarantinedAt": "2026-08-06"

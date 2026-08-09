@@ -6,6 +6,7 @@ import { AppModals } from "../AppModals";
 import { TaskCard } from "../TaskCard";
 import { ListView } from "../ListView";
 import { useTasks } from "../../hooks/useTasks";
+import { clearCache, SWR_CACHE_KEYS } from "../../utils/swrCache";
 import * as taskApi from "../../api";
 import { NavigationHistoryProvider, useNavigationHistory } from "../../hooks/useNavigationHistory";
 import type { ModalManager } from "../../hooks/useModalManager";
@@ -198,6 +199,41 @@ function render(ui: ReactElement, options?: Omit<RenderOptions, "wrapper">) {
 const integrationNoop = vi.fn();
 const integrationAsyncNoop = vi.fn(async () => ({}));
 
+function ensureMatchMedia() {
+  if (!window.matchMedia) {
+    Object.defineProperty(window, "matchMedia", { writable: true, value: vi.fn() });
+  }
+}
+
+function mockMobileViewport() {
+  ensureMatchMedia();
+  Object.defineProperty(window, "innerWidth", { value: 375, configurable: true });
+  return vi.spyOn(window, "matchMedia").mockImplementation((query: string) => ({
+    matches: query === "(max-width: 768px)" || query === "(max-width: 600px)" || query === "(max-width: 768px), (max-height: 480px)",
+    media: query,
+    onchange: null,
+    addListener: vi.fn(),
+    removeListener: vi.fn(),
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    dispatchEvent: vi.fn(),
+  }));
+}
+
+function restoreDesktopViewport() {
+  Object.defineProperty(window, "innerWidth", { value: 1280, configurable: true });
+  vi.spyOn(window, "matchMedia").mockImplementation((query: string) => ({
+    matches: false,
+    media: query,
+    onchange: null,
+    addListener: vi.fn(),
+    removeListener: vi.fn(),
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    dispatchEvent: vi.fn(),
+  }));
+}
+
 /** Drives the same hook-owned board row into every production status renderer. */
 function PlanningStatusConvergenceHarness({ detailTask, modalManager, settings }: {
   detailTask: Record<string, unknown>;
@@ -331,11 +367,13 @@ describe("AppModals", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     sseSubscriptions.length = 0;
+    clearCache(`${SWR_CACHE_KEYS.TASKS_PREFIX}project-a`);
     mockTaskDetailModalProps.mockClear();
     mockScheduledTasksModalProps.mockClear();
     mockModelOnboardingModalProps.mockClear();
     mockActivityLogModalProps.mockClear();
     mockSettingsModalProps.mockClear();
+    restoreDesktopViewport();
   });
 
   it("renders without crashing", () => {
@@ -580,7 +618,9 @@ describe("AppModals", () => {
     expect(screen.getByTestId("task-detail-status-badge")).toHaveTextContent("Planning");
   });
 
-  it("drives SSE planner activity and its authoritative status update through board, list, and the real detail host", async () => {
+  it("drives SSE planner activity and its authoritative status update through board, the desktop list row, and the real detail host", async () => {
+    vi.spyOn(taskApi, "fetchTasks").mockReset();
+    vi.spyOn(taskApi, "fetchBoardWorkflows").mockReset();
     window.localStorage.setItem("kb:project-a:kb-dashboard-list-columns", JSON.stringify(["title", "status"]));
     const parkedTask = {
       id: "FN-8798",
@@ -630,7 +670,7 @@ describe("AppModals", () => {
 
     await waitFor(() => {
       expect(document.querySelector('.card[data-id="FN-8798"] .card-status-badge')).toHaveTextContent("Planning");
-      expect(document.querySelector(".list-status-badge")).toHaveTextContent("Planning");
+      expect(document.querySelector('tr[data-id="FN-8798"] td.list-cell .list-status-badge')).toHaveTextContent("Planning");
       expect(screen.getByTestId("task-detail-status-badge")).toHaveTextContent("Planning");
     });
 
@@ -651,7 +691,7 @@ describe("AppModals", () => {
 
     await waitFor(() => {
       expect(document.querySelector('.card[data-id="FN-8798"] .card-status-badge')).toHaveTextContent("Planning");
-      expect(document.querySelector(".list-status-badge")).toHaveTextContent("Planning");
+      expect(document.querySelector('tr[data-id="FN-8798"] td.list-cell .list-status-badge')).toHaveTextContent("Planning");
       expect(screen.getByTestId("task-detail-status-badge")).toHaveTextContent("Planning");
     });
 
@@ -662,14 +702,109 @@ describe("AppModals", () => {
     act(() => window.dispatchEvent(new Event("focus")));
 
     await waitFor(() => expect(taskApi.fetchTasks).toHaveBeenCalledTimes(2));
+    /*
+    FNXC:TaskStatusBadge 2026-08-09-08:24:
+    FN-8826's empty-status WIP lifecycle fallback and FN-8764/FN-8798's stale-planning
+    retirement are compatible: an authoritative status:null refresh must stop the card claiming
+    Planning, not stop it rendering its In Progress lifecycle badge. The detail header intentionally
+    has no fallback because its sibling .detail-column-badge already names the lane.
+    */
     await waitFor(() => {
       const card = document.querySelector('.card[data-id="FN-8798"]');
+      const cardBadge = card?.querySelector(".card-status-badge");
+      const desktopListBadge = document.querySelector('tr[data-id="FN-8798"] td.list-cell .list-status-badge');
       expect(card).toBeInTheDocument();
-      expect(card?.querySelector(".card-status-badge")).not.toBeInTheDocument();
-      expect(document.querySelector(".list-status-badge")).not.toHaveTextContent("Planning");
+      expect(cardBadge).toHaveTextContent(/in progress/i);
+      expect(cardBadge).not.toHaveTextContent(/planning/i);
+      expect(cardBadge?.className).not.toMatch(/queued-to-plan|planning/i);
+      expect(desktopListBadge).toHaveTextContent(/in progress/i);
+      expect(desktopListBadge).not.toHaveTextContent(/planning/i);
       expect(document.querySelector("#task-detail-modal-title")).toHaveTextContent("FN-8798");
       expect(screen.queryByTestId("task-detail-status-badge")).not.toBeInTheDocument();
     });
+  });
+
+  /*
+  FNXC:TaskStatusBadge 2026-08-09-08:24:
+  ListView has two responsive status-badge renderers: .list-card on mobile and td.list-cell on
+  desktop. Both share getTaskWipLifecycleBadgeLabel, but one jsdom render exercises only desktop,
+  so this cross-surface guard explicitly mounts and proves the mobile renderer.
+  */
+  it("drives SSE planner activity and its authoritative status update through board, the mobile list card, and the real detail host", async () => {
+    vi.spyOn(taskApi, "fetchTasks").mockReset();
+    vi.spyOn(taskApi, "fetchBoardWorkflows").mockReset();
+    const viewportSpy = mockMobileViewport();
+    try {
+      window.localStorage.setItem("kb:project-a:kb-dashboard-list-columns", JSON.stringify(["title", "status"]));
+      const parkedTask = {
+        id: "FN-8798",
+        title: "Revision task",
+        description: "",
+        column: "triage" as const,
+        status: "needs-replan",
+        dependencies: [],
+        steps: [],
+        currentStep: 0,
+        log: [],
+        prompt: "# Prompt",
+        createdAt: "2026-08-05T10:00:00.000Z",
+        updatedAt: "2026-08-05T10:00:00.000Z",
+        columnMovedAt: "2026-08-05T10:00:00.000Z",
+      };
+      const manager = { ...mockModalManager, detailTask: parkedTask };
+      vi.spyOn(taskApi, "fetchTasks").mockResolvedValueOnce([parkedTask] as any);
+      vi.spyOn(taskApi, "fetchBoardWorkflows").mockResolvedValue({
+        flagEnabled: true,
+        defaultWorkflowId: "builtin:coding",
+        workflows: [{ id: "builtin:coding", name: "Coding", columns: [{ id: "triage", name: "Planning", flags: { intake: true } }] }],
+        taskWorkflowIds: { [parkedTask.id]: "builtin:coding" },
+      });
+
+      render(<PlanningStatusConvergenceHarness detailTask={parkedTask} modalManager={manager} settings={mockSettings} />);
+      await waitFor(() => expect(sseSubscriptions.some(({ url }) => url.startsWith("/api/events"))).toBe(true));
+      await waitFor(() => {
+        expect(document.querySelector(".list-cards")).toBeInTheDocument();
+        expect(document.querySelector('tr[data-id="FN-8798"]')).not.toBeInTheDocument();
+      });
+      const boardEvents = sseSubscriptions.find(({ url }) => url.startsWith("/api/events"))?.events;
+      act(() => {
+        boardEvents?.["agent:log"]?.({ data: JSON.stringify({ taskId: parkedTask.id, timestamp: "2026-08-05T10:01:00.000Z", type: "tool", agent: "triage" }) });
+        boardEvents?.["task:updated"]?.({ data: JSON.stringify({ ...parkedTask, status: "planning", updatedAt: "2026-08-05T10:02:00.000Z" }) });
+      });
+      await waitFor(() => {
+        expect(document.querySelector('.card[data-id="FN-8798"] .card-status-badge')).toHaveTextContent("Planning");
+        expect(document.querySelector(".list-card .list-status-badge")).toHaveTextContent("Planning");
+        expect(screen.getByTestId("task-detail-status-badge")).toHaveTextContent("Planning");
+      });
+
+      const inProgressTask = { ...parkedTask, column: "in-progress" as const, status: "planning", updatedAt: "2026-08-05T10:03:00.000Z", columnMovedAt: "2026-08-05T10:03:00.000Z" };
+      act(() => boardEvents?.["task:moved"]?.({ data: JSON.stringify({ task: inProgressTask, from: "triage", to: "in-progress" }) }));
+      await waitFor(() => {
+        expect(document.querySelector('.card[data-id="FN-8798"] .card-status-badge')).toHaveTextContent("Planning");
+        expect(document.querySelector(".list-card .list-status-badge")).toHaveTextContent("Planning");
+        expect(screen.getByTestId("task-detail-status-badge")).toHaveTextContent("Planning");
+      });
+
+      vi.mocked(taskApi.fetchTasks).mockResolvedValueOnce([{ ...inProgressTask, status: null }] as any);
+      act(() => window.dispatchEvent(new Event("focus")));
+      await waitFor(() => expect(taskApi.fetchTasks).toHaveBeenCalledTimes(2));
+      await waitFor(() => {
+        const card = document.querySelector('.card[data-id="FN-8798"]');
+        const cardBadge = card?.querySelector(".card-status-badge");
+        const mobileListBadge = document.querySelector(".list-card .list-status-badge");
+        expect(card).toBeInTheDocument();
+        expect(cardBadge).toHaveTextContent(/in progress/i);
+        expect(cardBadge).not.toHaveTextContent(/planning/i);
+        expect(cardBadge?.className).not.toMatch(/queued-to-plan|planning/i);
+        expect(mobileListBadge).toHaveTextContent(/in progress/i);
+        expect(mobileListBadge).not.toHaveTextContent(/planning/i);
+        expect(document.querySelector("#task-detail-modal-title")).toHaveTextContent("FN-8798");
+        expect(screen.queryByTestId("task-detail-status-badge")).not.toBeInTheDocument();
+      });
+    } finally {
+      viewportSpy.mockRestore();
+      restoreDesktopViewport();
+    }
   });
 
   describe("ModelOnboardingModal wiring", () => {

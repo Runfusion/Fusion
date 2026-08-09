@@ -278,7 +278,8 @@ export function MergeSection({ form, setForm, integrationBranchOptions, integrat
           <option value="pull-request">{t("settings.merge.createMonitorAndMergeAGitHubPullRequest", "Create, monitor, and merge a GitHub pull request")}</option>
         </select>
       </div>
-      {form.mergeStrategy === "pull-request" && <div className="form-group">
+      {form.mergeStrategy === "pull-request" && <>
+      <div className="form-group">
         <div className="settings-field-label-row">
           <label htmlFor="requiredChecks">{t("settings.merge.requiredChecks", "Required pull-request checks")}</label>
           <SettingsHelpTip settingKey="requiredChecks">{t("settings.merge.requiredChecksHelp", "No default — unset. Comma-separated check names match GitHub exactly (case-sensitive). Leaving this empty uses GitHub required-status checks only; a named check that never reports blocks the merge.")}</SettingsHelpTip>
@@ -290,7 +291,16 @@ export function MergeSection({ form, setForm, integrationBranchOptions, integrat
           emittedRequiredCheckNames.current = requiredChecks;
           setForm((current) => ({ ...current, requiredChecks: requiredChecks.length > 0 ? requiredChecks : undefined }));
         }}/>
-      </div>}
+      </div>
+      <div className="form-group">
+        <div className="settings-field-label-row">
+          <label htmlFor="githubNativeAutoMerge" className="checkbox-label">
+            <input id="githubNativeAutoMerge" type="checkbox" checked={form.githubNativeAutoMerge === true} onChange={(e) => setForm((f) => ({ ...f, githubNativeAutoMerge: e.target.checked }))}/>{t("settings.merge.githubNativeAutoMerge", "Use GitHub native auto-merge")}
+          </label>
+          <SettingsHelpTip settingKey="githubNativeAutoMerge">{t("settings.merge.githubNativeAutoMergeHelp", "GitHub waits for its full ruleset before merging. The repository must allow auto-merge; Fusion fails closed if it is unavailable. Default: disabled.")}</SettingsHelpTip>
+        </div>
+      </div>
+      </>}
       <div className="form-group">
         <div className="settings-field-label-row">
           <label htmlFor="integrationBranch">{t("settings.merge.integrationBranch", "Integration branch")}</label>

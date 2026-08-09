@@ -333,8 +333,64 @@ describe("executor graph execute self-requeue gate", () => {
       expect.anything(),
       expect.anything(),
     );
-    expect(store.updateTask).toHaveBeenCalledWith(live.id, { status: null, error: null }, undefined);
-    expect(store.updateTask).toHaveBeenCalledWith(live.id, { workflowStepResults: [] }, undefined);
+    expect(store.updateTask).not.toHaveBeenCalledWith(live.id, { status: null, error: null }, undefined);
+    expect(store.updateTask).not.toHaveBeenCalledWith(live.id, { workflowStepResults: [] }, undefined);
+  });
+
+  it.each(["remediation-not-scheduled", "missing-remediation-context"])("FN-8910 keeps a completed review card in place when remediation reports %s", async (failureValue) => {
+    resetExecutorMocks();
+    const store = createMockStore();
+    const live = task({
+      id: `FN-8910-${failureValue}`,
+      column: "in-review",
+      steps: [{ name: "Implement", status: "done" }],
+    });
+    store.getTask.mockResolvedValue(live);
+    const executor = new TaskExecutor(store, "/tmp/test");
+
+    await expect((executor as any).routeGraphFailureToExecutionResume(
+      live,
+      "code-review-remediation",
+      failureValue,
+    )).resolves.toBe(false);
+
+    await (executor as any).handleGraphFailure(live, {
+      disposition: "failed",
+      outcome: "failure",
+      visitedNodeIds: ["code-review", "code-review-remediation"],
+      context: { "node:code-review-remediation:value": failureValue },
+    });
+
+    /*
+    FNXC:WorkflowRemediation 2026-08-09-21:53:
+    FN-8910 requires policy-refused remediation to remain visibly parked in the
+    review lane after implementation is complete, never rebound to execution.
+    */
+    expect(store.moveTask).not.toHaveBeenCalled();
+  });
+
+  it("still resumes an incomplete review card after a refused remediation", async () => {
+    resetExecutorMocks();
+    const store = createMockStore();
+    const live = task({
+      id: "FN-8910-INCOMPLETE",
+      column: "in-review",
+      steps: [{ name: "Implement", status: "pending" }],
+    });
+    store.getTask.mockResolvedValue(live);
+    const executor = new TaskExecutor(store, "/tmp/test");
+
+    await expect((executor as any).routeGraphFailureToExecutionResume(
+      live,
+      "code-review-remediation",
+      "remediation-not-scheduled",
+    )).resolves.toBe(true);
+
+    expect(store.moveTask).toHaveBeenCalledWith(
+      live.id,
+      "todo",
+      expect.objectContaining({ preserveProgress: true, recoveryRehome: true }),
+    );
   });
 
   it("still parks a remediation-node graph failure as failed when no durable failed gate result exists", async () => {

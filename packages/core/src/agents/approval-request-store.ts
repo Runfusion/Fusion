@@ -5,6 +5,8 @@ import { fromJson } from "../db/db.js";
 import type { AsyncDataLayer } from "../postgres/data-layer.js";
 import * as asyncApprovalRequestStore from "../async-stores/async-approval-request-store.js";
 import * as schema from "../postgres/schema/index.js";
+import { appendAgentActivityEvent } from "../task-store/async/async-agent-activity.js";
+import { resolveAgentActivityAttribution } from "../task-store/agent-activity-outbox.js";
 import {
   normalizeApprovalRequestActionCategory,
   type ApprovalRequest,
@@ -187,7 +189,18 @@ export class ApprovalRequestStore {
     createApprovalRequest materialize the full row.
     */
     const id = `apr-${randomUUID().slice(0, 8)}`;
-    return asyncApprovalRequestStore.createApprovalRequest(this.asyncLayer!, { ...input, id });
+    const created = await asyncApprovalRequestStore.createApprovalRequest(this.asyncLayer!, { ...input, id });
+    // FNXC:AgentActivityStream 2026-08-09-12:59: Record the observed registered tool identifier when the producer supplies one; the closed schema rewrites plugin or unknown values to `unlisted` without persisting arguments or prose.
+    if (input.requester.actorId) try {
+      const context = input.targetAction.context;
+      const toolName = typeof context?.toolName === "string"
+        ? context.toolName
+        : typeof context?.tool === "string"
+          ? context.tool
+          : input.targetAction.action;
+      await appendAgentActivityEvent(this.asyncLayer!, { type: "approval:requested", attributionClaim: resolveAgentActivityAttribution([{ id: input.requester.actorId, provenance: "roster" }], "executor"), taskId: input.taskId, occurredAt: created.requestedAt, discriminator: id, metadata: { requestId: id, category: input.targetAction.category, toolName } });
+    } catch { /* monitoring must not break approval creation */ }
+    return created;
 }
 
   async get(id: string): Promise<ApprovalRequest | null> {

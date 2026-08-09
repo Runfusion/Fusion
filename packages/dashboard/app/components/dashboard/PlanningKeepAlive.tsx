@@ -72,6 +72,7 @@ export function PlanningKeepAlive({
           tasks={tasks}
           initialSessions={bgPlanningSessions}
           initialPlan={modalManager.planningInitialPlan ?? undefined}
+          sourceIssue={modalManager.planningSourceIssue}
           onInitialPlanConsumed={modalManager.clearPlanningInitialPlan}
           projectId={projectId}
           workflowId={modalManager.planningWorkflowId ?? planningHeaderWorkflowId}

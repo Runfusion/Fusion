@@ -171,6 +171,7 @@ export const PROJECT_SECTION_KEYS: Readonly<Record<string, readonly string[]>> =
     "mergeConflictStrategy",
     "mergeIntegrationWorktree",
     "mergeStrategy",
+    "githubNativeAutoMerge",
     "requiredChecks",
     "mergeStrategyOverlapBehavior",
     "merger",

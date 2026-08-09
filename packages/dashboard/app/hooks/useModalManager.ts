@@ -62,6 +62,7 @@ export interface ModalManager {
   newTaskInitialWorkflowId: string | null | undefined;
   isPlanningOpen: boolean;
   planningInitialPlan: string | null;
+  planningSourceIssue: { provider: "github"; repository: string; issueNumber: number; url: string; title?: string } | undefined;
   planningResumeSessionId: string | undefined;
   planningWorkflowId: string | null | undefined;
   /*
@@ -112,7 +113,7 @@ export interface ModalManager {
   closeNewTask: () => void;
 
   openPlanning: () => void;
-  openPlanningWithInitialPlan: (initialPlan: string, workflowId?: string | null) => void;
+  openPlanningWithInitialPlan: (initialPlan: string, workflowId?: string | null, sourceIssue?: { provider: "github"; repository: string; issueNumber: number; url: string; title?: string }) => void;
   resumePlanning: () => void;
   openPlanningWithSession: (sessionId: string) => void;
   /**
@@ -219,6 +220,7 @@ export function useModalManager(options: UseModalManagerOptions): ModalManager {
   const [planningInitialPlan, setPlanningInitialPlan] = useState<string | null>(null);
   const [planningResumeSessionId, setPlanningResumeSessionId] = useState<string | undefined>(undefined);
   const [planningWorkflowId, setPlanningWorkflowId] = useState<string | null | undefined>(undefined);
+  const [planningSourceIssue, setPlanningSourceIssue] = useState<{ provider: "github"; repository: string; issueNumber: number; url: string; title?: string } | undefined>(undefined);
   // FNXC:PlanningKeepAlive 2026-07-22-12:20: see ModalManager.planningEntryGeneration.
   const [planningEntryGeneration, setPlanningEntryGeneration] = useState(0);
   const [isSubtaskOpen, setIsSubtaskOpen] = useState(false);
@@ -314,14 +316,16 @@ export function useModalManager(options: UseModalManagerOptions): ModalManager {
     setPlanningResumeSessionId(undefined);
     setPlanningInitialPlan(null);
     setPlanningWorkflowId(undefined);
+    setPlanningSourceIssue(undefined);
     setIsPlanningOpen(true);
   }, []);
-  const openPlanningWithInitialPlan = useCallback((initialPlan: string, workflowId?: string | null) => {
+  const openPlanningWithInitialPlan = useCallback((initialPlan: string, workflowId?: string | null, sourceIssue?: { provider: "github"; repository: string; issueNumber: number; url: string; title?: string }) => {
     // FNXC:PlanningModals 2026-06-20-20:10: clear a stale resume-session id so the
     // supplied initial plan is honored rather than being overridden by an old session.
     setPlanningResumeSessionId(undefined);
     setPlanningInitialPlan(initialPlan);
     setPlanningWorkflowId(workflowId);
+    setPlanningSourceIssue(sourceIssue);
     // FNXC:PlanningKeepAlive 2026-07-22-12:20: payload-carrying entries bump the generation so the kept-alive instance remounts with fresh-open semantics.
     setPlanningEntryGeneration((generation) => generation + 1);
     setIsPlanningOpen(true);
@@ -330,24 +334,31 @@ export function useModalManager(options: UseModalManagerOptions): ModalManager {
     const session = planningSessions[0];
     if (!session) return;
     setPlanningWorkflowId(undefined);
+    setPlanningSourceIssue(undefined);
     setPlanningResumeSessionId(session.id);
     setPlanningEntryGeneration((generation) => generation + 1);
     setIsPlanningOpen(true);
   }, [planningSessions]);
   const openPlanningWithSession = useCallback((sessionId: string) => {
     setPlanningWorkflowId(undefined);
+    setPlanningSourceIssue(undefined);
     setPlanningResumeSessionId(sessionId);
     setPlanningEntryGeneration((generation) => generation + 1);
     setIsPlanningOpen(true);
   }, []);
   const clearPlanningInitialPlan = useCallback(() => {
+    // FNXC:GitHubPlanningSourceIssue 2026-08-09-08:09: The seed and its GitHub
+    // provenance are one atomic handoff. After auto-start consumes the seed, retaining
+    // sourceIssue would incorrectly attach it to a later plan started in the same view.
     setPlanningInitialPlan(null);
+    setPlanningSourceIssue(undefined);
   }, []);
   const closePlanning = useCallback(() => {
     setIsPlanningOpen(false);
     setPlanningInitialPlan(null);
     setPlanningResumeSessionId(undefined);
     setPlanningWorkflowId(undefined);
+    setPlanningSourceIssue(undefined);
   }, []);
 
   const openSubtaskBreakdown = useCallback((description: string, workflowId?: string | null) => {
@@ -534,6 +545,7 @@ export function useModalManager(options: UseModalManagerOptions): ModalManager {
     setSubtaskWorkflowId(undefined);
     setIsPlanningOpen(false);
     setPlanningInitialPlan(null);
+    setPlanningSourceIssue(undefined);
     setPlanningResumeSessionId(undefined);
     setPlanningWorkflowId(undefined);
     setGitHubImportOpen(false);
@@ -587,6 +599,7 @@ export function useModalManager(options: UseModalManagerOptions): ModalManager {
     newTaskInitialWorkflowId,
     isPlanningOpen,
     planningInitialPlan,
+    planningSourceIssue,
     planningResumeSessionId,
     planningWorkflowId,
     planningEntryGeneration,

@@ -1214,12 +1214,15 @@ describe("StepSessionExecutor", () => {
       const prompt = makeStepPrompt("FN-001", 2);
       const task = makeTaskDetail({
         prompt,
+        assignedAgentId: "durable-step-agent",
+        effectiveNodeId: "mesh-node-1",
         steps: [
           { name: "Step 0", status: "pending" },
           { name: "Step 1", status: "pending" },
         ],
       });
       const settings = makeSettings({ maxParallelSteps: 1, runStepsInNewSessions: false });
+      const emitUsageEvent = vi.fn().mockResolvedValue(undefined);
       let statsCall = 0;
       const session = {
         ...makeMockSession(),
@@ -1236,7 +1239,11 @@ describe("StepSessionExecutor", () => {
           };
         }),
       };
-      mockedCreateFnAgent.mockResolvedValue({ session } as any);
+      mockedCreateFnAgent.mockImplementationOnce(async (options: any) => {
+        options.onToolStart("Read", { path: "private-step-input" });
+        options.onToolEnd("Read", false, "private-step-output");
+        return { session } as any;
+      });
 
       const executor = new StepSessionExecutor({
         taskDetail: task,
@@ -1244,6 +1251,7 @@ describe("StepSessionExecutor", () => {
         rootDir: "/project",
         settings,
         pluginRunner: undefined,
+        store: { emitUsageEvent, appendAgentLog: vi.fn().mockResolvedValue(undefined) },
       } as any);
 
       const result = await executor.executeAll();
@@ -1252,6 +1260,30 @@ describe("StepSessionExecutor", () => {
       expect(result).toHaveLength(2);
       expect(result.every((step) => step.success)).toBe(true);
       expect(mockedCreateFnAgent).toHaveBeenCalledTimes(1);
+      /*
+      FNXC:CommandCenterActivity 2026-08-09-15:06:
+      Reused workflow steps share one AgentSession, so their production execution path must
+      publish one session_start rather than counting each prompt as a new Activity session.
+      */
+      expect(emitUsageEvent.mock.calls.filter(([event]) => event.kind === "session_start")).toHaveLength(1);
+      /*
+      FNXC:CommandCenterActivity 2026-08-09-16:38:
+      Execute a real workflow-step construction path, including provider tool callbacks, so the
+      durable-agent telemetry regression cannot be hidden by testing the shared seam in isolation.
+      */
+      expect(emitUsageEvent).toHaveBeenCalledWith(expect.objectContaining({
+        kind: "session_start", category: "agent-session", agentId: "durable-step-agent",
+        taskId: "FN-001", nodeId: "mesh-node-1",
+        meta: expect.objectContaining({ lane: "workflow-step", ephemeral: true }),
+      }));
+      expect(emitUsageEvent).toHaveBeenCalledWith(expect.objectContaining({
+        kind: "tool_call", toolName: "Read", agentId: "durable-step-agent",
+        taskId: "FN-001", nodeId: "mesh-node-1",
+      }));
+      expect(emitUsageEvent).toHaveBeenCalledWith(expect.objectContaining({
+        kind: "tool_result", toolName: "Read", agentId: "durable-step-agent",
+        taskId: "FN-001", nodeId: "mesh-node-1",
+      }));
       expect(session.prompt).toHaveBeenCalledTimes(2);
       expect(session.dispose).toHaveBeenCalledTimes(1);
       expect(result[0]?.tokenUsage?.inputTokens).toBe(10);
@@ -1269,6 +1301,7 @@ describe("StepSessionExecutor", () => {
         ],
       });
       const settings = makeSettings({ maxParallelSteps: 1, runStepsInNewSessions: true });
+      const emitUsageEvent = vi.fn().mockResolvedValue(undefined);
       const sessions = [makeMockSession(), makeMockSession()];
       mockedCreateFnAgent
         .mockResolvedValueOnce({ session: sessions[0] } as any)
@@ -1280,6 +1313,7 @@ describe("StepSessionExecutor", () => {
         rootDir: "/project",
         settings,
         pluginRunner: undefined,
+        store: { emitUsageEvent },
       } as any);
 
       const result = await executor.executeAll();
@@ -1287,6 +1321,7 @@ describe("StepSessionExecutor", () => {
       expect(result).toHaveLength(2);
       expect(result.every((step) => step.success)).toBe(true);
       expect(mockedCreateFnAgent).toHaveBeenCalledTimes(2);
+      expect(emitUsageEvent.mock.calls.filter(([event]) => event.kind === "session_start")).toHaveLength(2);
       expect(sessions[0]?.prompt).toHaveBeenCalledTimes(1);
       expect(sessions[1]?.prompt).toHaveBeenCalledTimes(1);
       expect(sessions[0]?.dispose).toHaveBeenCalledTimes(1);

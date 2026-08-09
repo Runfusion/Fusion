@@ -349,6 +349,11 @@ export interface ProjectEngineOptions {
    */
   prNodeGithubOps?: PrNodeGithubOps;
   /**
+   * Factory evaluated by the runtime after it owns its project TaskStore.
+   * Use this for callbacks that need project-scoped settings.
+   */
+  createPrNodeGithubOps?: (store: TaskStore) => PrNodeGithubOps;
+  /**
    * Node-agnostic GitHub reconcile ops (U4): the injected ETag-probe +
    * deep-fetch callbacks backing {@link PrReconciler}. Injected from the CLI
    * layer for the same FN-3049 reason as {@link prNodeGithubOps}. When present,
@@ -653,6 +658,7 @@ export class ProjectEngine {
       ...config,
       ...(options.externalTaskStore ? { externalTaskStore: options.externalTaskStore } : {}),
       ...(options.prNodeGithubOps ? { prNodeGithubOps: options.prNodeGithubOps } : {}),
+      ...(options.createPrNodeGithubOps ? { createPrNodeGithubOps: options.createPrNodeGithubOps } : {}),
     };
     this.runtime = new InProcessRuntime(runtimeConfig, centralCore);
     // Let the runtime's SelfHealingManager re-enqueue tasks directly into our

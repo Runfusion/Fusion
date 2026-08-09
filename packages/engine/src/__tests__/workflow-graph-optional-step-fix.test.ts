@@ -388,9 +388,8 @@ describe("TaskExecutor pre-merge optional-step fix seam", () => {
     expect(store.updateTask).toHaveBeenCalledWith(liveTask.id, expect.objectContaining({ status: "needs-replan" }), undefined);
   });
 
-  it("holds shared members and user-held standalone tasks during project-Off Plan Review remediation", async () => {
+  it("holds only user-held tasks during project-Off Plan Review remediation", async () => {
     for (const overrides of [
-      { branchContext: { assignmentMode: "shared" as const, groupId: "BG-1" } },
       { autoMerge: false, autoMergeProvenance: "user" as const },
     ]) {
       const store = createMockStore();
@@ -409,6 +408,12 @@ describe("TaskExecutor pre-merge optional-step fix seam", () => {
 
       expect(store.moveTask).not.toHaveBeenCalled();
       expect(store.updateTask).not.toHaveBeenCalled();
+      expect(store.logEntry).toHaveBeenCalledWith(
+        liveTask.id,
+        expect.stringContaining("operator task hold"),
+        expect.stringContaining("operator-authored task-level auto-merge Off"),
+        undefined,
+      );
     }
   });
 
@@ -826,11 +831,16 @@ describe("TaskExecutor pre-merge optional-step fix seam", () => {
     await expect(executor.recoverFailedPreMergeWorkflowStep(liveTask)).resolves.toBe(true);
 
     expect(sendBack).toHaveBeenCalledOnce();
+    expect(store.logEntry).not.toHaveBeenCalledWith(
+      liveTask.id,
+      expect.stringContaining("recovery not scheduled — revision budget"),
+      expect.anything(),
+      undefined,
+    );
   });
 
-  it("does not recover shared members or user-held standalone tasks during project-Off failed-step recovery", async () => {
+  it("does not recover user-held tasks during project-Off failed-step recovery", async () => {
     for (const overrides of [
-      { branchContext: { assignmentMode: "shared" as const, groupId: "BG-1" } },
       { autoMerge: false, autoMergeProvenance: "user" as const },
     ]) {
       const store = createMockStore();
@@ -916,6 +926,12 @@ describe("TaskExecutor pre-merge optional-step fix seam", () => {
     await expect(executor.recoverFailedPreMergeWorkflowStep(liveTask)).resolves.toBe(false);
 
     expect(sendBack).not.toHaveBeenCalled();
+    expect(store.logEntry).toHaveBeenCalledWith(
+      liveTask.id,
+      expect.stringContaining(codeReviewMaxRevisions === 0 ? "zero/invalid" : "exhausted"),
+      expect.stringContaining(`Attempts: ${attempts}\nMax: ${codeReviewMaxRevisions}`),
+      undefined,
+    );
   });
 
   it("writes an unbounded retry label into Code Review remediation instructions", async () => {

@@ -1300,17 +1300,33 @@ function createPostReviewTask(groupId: string): Record<string, any> {
 }
 
 function createPostReviewStore(task: Record<string, any>, branchGroup: Record<string, any> | null) {
+  const settings = {
+    autoMerge: false,
+    merger: { maxReviewPasses: 0 },
+    includeTaskIdInCommit: false,
+    mergeIntegrationWorktree: "cwd-main",
+    mergeStrategy: "direct",
+    directMergeCommitStrategy: "auto",
+  };
+
   return {
     getTask: vi.fn(async () => task),
     listTasks: vi.fn(async () => [task]),
-    getSettings: vi.fn(async () => ({
-      autoMerge: false,
-      merger: { maxReviewPasses: 0 },
-      includeTaskIdInCommit: false,
-      mergeIntegrationWorktree: "cwd-main",
-      mergeStrategy: "direct",
-      directMergeCommitStrategy: "auto",
-    })),
+    getSettings: vi.fn(async () => settings),
+    /*
+    FNXC:BranchGroupAutoMergeGate 2026-08-09-08:55:
+    The production drain calls these methods for token-budget enforcement and branch-group promotion
+    evaluation inside catch-and-warn wrappers. Supply the real, budget-free seams so a missing method
+    cannot silently remove coverage while leaving this prototype fixture green.
+
+    FNXC:BranchGroupAutoMergeGate 2026-08-09-22:51:
+    The production merger drain emits session-start telemetry in both its review and merge passes.
+    Telemetry failures are swallowed by design, so this fake must implement emitUsageEvent or a missing
+    seam degrades coverage into warnings that the user-hold regression guard catches.
+    */
+    getSettingsByScope: vi.fn(async () => ({ global: {}, project: settings })),
+    emitUsageEvent: vi.fn(async () => true),
+    listTasksByBranchGroup: vi.fn(async () => (branchGroup ? [task] : [])),
     getBranchGroup: vi.fn(() => branchGroup),
     updateTask: vi.fn(async (_id: string, patch: Record<string, unknown>) => Object.assign(task, patch)),
     moveTask: vi.fn(async (_id: string, column: string) => { task.column = column; return task; }),
@@ -1467,6 +1483,11 @@ describe("resolveBranchGroupMergeRouting", () => {
     expect(held).toMatchObject({ merged: false, noOp: true });
     expect(blockedMerge).not.toHaveBeenCalled();
     expect(git(repo, "git rev-parse main")).toBe(mainBefore);
+    /*
+    FNXC:BranchGroupAutoMergeGate 2026-08-09-22:51:
+    The expected fatal-path stderr is the proof that the automatic hold did not land this member;
+    it is not a missing fixture path.
+    */
     expect(() => git(repo, "git show mission/M-8811:user-hold-feature.txt")).toThrow();
 
     let mergeAttempts = 0;
@@ -1498,10 +1519,49 @@ describe("resolveBranchGroupMergeRouting", () => {
     */
     seedMergeLaneState(engine);
 
-    const released = await ProjectEngine.prototype.onMerge.call(engine, "FN-3324");
-    createResolvedAgentSessionMock.mockReset();
+    let resolvePromotionEvaluation!: () => void;
+    const promotionEvaluationReached = new Promise<void>((resolve) => {
+      resolvePromotionEvaluation = resolve;
+    });
+    store.recordRunAuditEvent.mockImplementation(async (event: { target?: string; mutationType?: string }) => {
+      if (event.target === "BG-user-hold" && event.mutationType?.startsWith("merge:branch-group-promotion")) {
+        resolvePromotionEvaluation();
+      }
+    });
 
+    /*
+    FNXC:BranchGroupAutoMergeGate 2026-08-09-09:00:
+    The drain's catch-and-warn wrappers can turn a missing fake-store seam into silent coverage loss.
+    This fixture therefore treats an `is not a function` warning as a failure after its asynchronous
+    promotion continuation completes, rather than allowing stderr noise to hide the skipped path.
+    */
+    const warnSpy = vi.spyOn(console, "warn");
+    let released: any;
+    let offendingWarnings: string[] = [];
+    try {
+      released = await ProjectEngine.prototype.onMerge.call(engine, "FN-3324");
+      await promotionEvaluationReached;
+      offendingWarnings = warnSpy.mock.calls
+        .map((args) => args.map((arg) => String(arg)).join(" "))
+        .filter((message) => message.includes("is not a function"));
+    } finally {
+      warnSpy.mockRestore();
+      createResolvedAgentSessionMock.mockReset();
+    }
+
+    expect(offendingWarnings, "merge drain emitted missing-store-seam warnings").toEqual([]);
+    /*
+    FNXC:BranchGroupAutoMergeGate 2026-08-09-22:51:
+    An empty warning list is insufficient when a future path skips telemetry entirely. Assert the
+    production merger lane exercised the fake-store seam during the explicit release.
+    */
+    expect(store.emitUsageEvent).toHaveBeenCalledWith(expect.objectContaining({
+      kind: "session_start",
+      category: "agent-session",
+      meta: expect.objectContaining({ lane: "merger" }),
+    }));
     expect(released.merged).toBe(true);
+    expect(store.listTasksByBranchGroup).toHaveBeenCalledWith("BG-user-hold");
     expect(mergeAttempts).toBe(1);
     expect(git(repo, "git rev-parse main")).toBe(mainBefore);
     expect(git(repo, "git show mission/M-8811:user-hold-feature.txt")).toBe("release only after operator confirmation");

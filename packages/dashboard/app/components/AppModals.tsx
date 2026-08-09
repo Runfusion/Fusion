@@ -55,7 +55,7 @@ interface AppModalsProps {
   modalManager: ModalManager;
   projectActions: Pick<UseProjectActionsResult, "handleAddProject" | "handleSetupComplete" | "handleModelOnboardingComplete">;
   taskHandlers: Pick<UseTaskHandlersResult, "handleModalCreate" | "handlePlanningTaskCreated" | "handlePlanningTasksCreated" | "handleSubtaskTasksCreated" | "handleGitHubImport">;
-  onPlanningMode?: (initialPlan: string, workflowId?: string | null) => void;
+  onPlanningMode?: (initialPlan: string, workflowId?: string | null, sourceIssue?: { provider: "github"; repository: string; issueNumber: number; url: string; title?: string }) => void;
   onOpenChatWithPrefill?: (prefillText: string) => void;
   onSubtaskBreakdown?: (description: string, workflowId?: string | null) => void;
   taskOperations: {

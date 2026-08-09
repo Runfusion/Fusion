@@ -756,6 +756,53 @@ describe("POST /tasks", () => {
     );
   });
 
+  it("forwards no-workflow and explicit owner inputs but drops public exemption-shaped fields", async () => {
+    (store.createTask as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...FAKE_TASK_DETAIL,
+      assignedAgentId: "executor-1",
+    });
+
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/tasks",
+      JSON.stringify({
+        description: "No workflow still needs an executor owner",
+        workflowId: null,
+        agentId: "executor-1",
+        ownershipExemption: true,
+      }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(201);
+    const createInput = (store.createTask as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(createInput).toMatchObject({
+      description: "No workflow still needs an executor owner",
+      workflowId: null,
+      assignedAgentId: "executor-1",
+    });
+    expect(createInput).not.toHaveProperty("ownershipExemption");
+  });
+
+  it("returns a typed client failure when the universal owner resolver rejects an explicit owner", async () => {
+    (store.createTask as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new Error("Task intake owner resolution failed: explicit-assignee-ineligible"),
+    );
+
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/tasks",
+      JSON.stringify({ description: "Reject a triage-only owner", assignedAgentId: "triage-agent" }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(400);
+    expect(res.body).toMatchObject({ error: "Task intake owner resolution failed: explicit-assignee-ineligible" });
+    expect(store.createTask).toHaveBeenCalledTimes(1);
+  });
+
   it("does not synchronously create tracking issues in POST /tasks route", async () => {
     const createIssueSpy = vi.spyOn(GitHubClient.prototype, "createIssue").mockResolvedValue({
       owner: "task",

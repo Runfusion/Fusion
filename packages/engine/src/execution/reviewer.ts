@@ -34,6 +34,7 @@ import {
 } from "../agents/agent-session-helpers.js";
 import { buildSessionSkillContext } from "../cli-runtime/session-skill-context.js";
 import { AgentLogger } from "../agents/agent-logger.js";
+import { attachAgentUsageTelemetry, emitAgentSessionStart } from "../agents/agent-usage-telemetry.js";
 import { reviewerLog } from "../logger.js";
 import { checkSessionError } from "../errors/usage-limit-detector.js";
 import {
@@ -129,8 +130,8 @@ export interface ReviewOptions {
   agentId?: string;
   /** Optional task title for fallback-used notification context. */
   taskTitle?: string;
-  /** Task with optional assignedAgentId for skill selection. */
-  task?: { assignedAgentId?: string | null };
+  /** Task identity used for skill selection and usage telemetry attribution. */
+  task?: { assignedAgentId?: string | null; effectiveNodeId?: string | null; nodeId?: string | null };
   /** User comments on the task (author === "user"). For spec reviews, the reviewer explicitly checks that every comment is addressed. */
   userComments?: TaskComment[];
   /** Agent prompt configuration for resolving custom reviewer prompts. */
@@ -269,7 +270,6 @@ export async function reviewStep(
         persistAgentThinkingLog: resolvePersistAgentThinkingLog(effectiveSettings, { ephemeral: false }),
       })
     : null;
-
   /*
   FNXC:ModelResolution 2026-06-28-17:00:
   Reviewer, spec-review, and workflow review-step sessions are validator-lane sessions. Resolve their primary model through the shared session helper so task reviewer overrides, project/global validator lanes, project/global defaults, and test-mode mock forcing stay identical to core model resolution instead of drifting in a reviewer-local precedence chain.
@@ -297,6 +297,26 @@ export async function reviewStep(
   );
   const validatorProvider = reviewerModel.provider;
   const validatorModelId = reviewerModel.modelId;
+  /*
+  FNXC:CommandCenterActivity 2026-08-09-11:29:
+  A reviewer session exists only after its validator model is resolved. Publish its boundary and
+  attach tool telemetry together with the workflow principal and routing node so durable review
+  work is not counted as a model-less or anonymous session.
+  */
+  if (options.store) {
+    const reviewerAgentId = options.agentId ?? options.task?.assignedAgentId ?? "reviewer";
+    const reviewerNodeId = options.task?.effectiveNodeId ?? options.task?.nodeId ?? null;
+    const telemetryContext = {
+      store: options.store,
+      agentId: reviewerAgentId,
+      taskId: options.taskId ?? null,
+      nodeId: reviewerNodeId,
+      model: validatorModelId ?? null,
+      provider: validatorProvider ?? null,
+      lane: "reviewer" as const,
+    };
+    attachAgentUsageTelemetry(agentLogger, telemetryContext);
+  }
 
   const reviewerFallbackSettings: Partial<Settings> = {
     ...reviewerModelSettings,
@@ -542,6 +562,21 @@ export async function reviewStep(
         }
       },
     });
+
+    if (options.store) {
+      const telemetryContext = {
+        store: options.store,
+        agentId: options.agentId ?? options.task?.assignedAgentId ?? "reviewer",
+        taskId: options.taskId ?? null,
+        nodeId: options.task?.effectiveNodeId ?? options.task?.nodeId ?? null,
+        model: overrides?.forceModelId ?? validatorModelId ?? null,
+        provider: overrides?.forceProvider ?? validatorProvider ?? null,
+        lane: "reviewer" as const,
+      };
+      // FNXC:CommandCenterActivity 2026-08-09-15:18: Review boundaries are recorded only after a real reviewer runtime exists, including fallback attempts.
+      attachAgentUsageTelemetry(agentLogger, telemetryContext);
+      emitAgentSessionStart(telemetryContext);
+    }
 
     const reviewerModelDesc = describeModel(session);
     const reviewerModelDetails = formatModelMarkerDetails(reviewerModelDesc, options.defaultThinkingLevel);

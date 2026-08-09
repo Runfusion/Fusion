@@ -19,6 +19,7 @@ import { DASHBOARD_USER_ID, normalizeMessageParticipant, validateMessageMetadata
 import type { AsyncDataLayer } from "../postgres/data-layer.js";
 import * as asyncMessageStore from "../async-stores/async-message-store.js";
 import { sanitizeTextValue, sanitizeJsonbValue } from "../postgres/nul-sanitize.js";
+import { emitUsageEvent } from "../task-store/async/async-events.js";
 
 const messageStoreLog = createLogger("message-store");
 
@@ -222,6 +223,21 @@ export class MessageStore extends EventEmitter<MessageStoreEvents> {
         message.updatedAt,
       );
       this.db!.bumpLastModified();
+    }
+
+    /*
+    FNXC:CommandCenterActivity 2026-08-09-10:46:
+    Human mailbox sends count as activity only after durable delivery succeeds. Usage telemetry contains
+    routing identifiers only, never message prose, and its failure cannot delay or reverse mailbox delivery.
+    */
+    if (this.asyncLayer && message.fromType === "user") {
+      try {
+        void emitUsageEvent(this.asyncLayer.db, this.asyncLayer.projectId ?? "", {
+          kind: "user_message", agentId: message.toType === "agent" ? message.toId : null,
+          taskId: typeof message.metadata?.taskId === "string" ? message.metadata.taskId : null,
+          category: "mailbox",
+        }).catch((error) => messageStoreLog.warn(`Failed to emit mailbox usage telemetry: ${error instanceof Error ? error.message : String(error)}`));
+      } catch (error) { messageStoreLog.warn(`Failed to emit mailbox usage telemetry: ${error instanceof Error ? error.message : String(error)}`); }
     }
 
     messageStoreLog.log(`MessageStore emitting message:sent id=${message.id} type=${message.type} fromId=${message.fromId} toId=${message.toId}`);

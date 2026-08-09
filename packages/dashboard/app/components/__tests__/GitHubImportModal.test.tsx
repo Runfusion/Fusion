@@ -427,7 +427,166 @@ describe("GitHubImportModal", () => {
     expect(sequence).toEqual(["board", "planning"]);
     expect(destination).toBe("planning");
     expect(onPlanningMode).toHaveBeenCalledTimes(1);
+    expect(onPlanningMode).toHaveBeenCalledWith(
+      buildIssuePlanningSeed(issue),
+      undefined,
+      {
+        provider: "github",
+        repository: "dustinbyrne/kb",
+        issueNumber: issue.number,
+        url: issue.html_url,
+        title: issue.title,
+        commentsUnavailable: true,
+      },
+    );
     expect(apiImportGitHubIssue).not.toHaveBeenCalled();
+  });
+
+  it("passes structured GitHub source context from the modal Plan action", async () => {
+    const issue = { number: 45, title: "Modal plan", body: "Keep this issue context.", html_url: "https://github.com/dustinbyrne/kb/issues/45", labels: [], state: "open" };
+    const onPlanningMode = vi.fn();
+    vi.mocked(fetchGitRemotes).mockResolvedValueOnce(singleRemote);
+    vi.mocked(apiFetchGitHubIssues).mockResolvedValueOnce([issue]);
+
+    render(<GitHubImportModal isOpen onClose={onClose} onImport={onImport} onPlanningMode={onPlanningMode} tasks={[]} />);
+    fireEvent.click(await screen.findByRole("button", { name: /Select issue #45/i }));
+    fireEvent.click(screen.getByTestId("github-import-action-plan"));
+
+    expect(onPlanningMode).toHaveBeenCalledWith(
+      buildIssuePlanningSeed(issue),
+      undefined,
+      {
+        provider: "github",
+        repository: "dustinbyrne/kb",
+        issueNumber: issue.number,
+        url: issue.html_url,
+        title: issue.title,
+        commentsUnavailable: true,
+      },
+    );
+  });
+
+  /*
+  FNXC:GitHubPlanningSourceIssue 2026-08-09-14:31:
+  Planning must never capture a prior issue's visible detail while a newly selected issue's detail request is pending.
+  The per-issue cache is the provenance source; absent selected-issue cache records the L1 partial-capture marker.
+  */
+  it("does not capture stale selected-issue comments while the next issue detail loads", async () => {
+    const firstIssue = { number: 46, title: "First issue", body: "![first body](https://github.com/user-attachments/assets/first-body)", html_url: "https://github.com/dustinbyrne/kb/issues/46", labels: [], state: "open" };
+    const secondIssue = { number: 47, title: "Second issue", body: "![second body](https://github.com/user-attachments/assets/second-body)", html_url: "https://github.com/dustinbyrne/kb/issues/47", labels: [], state: "open" };
+    const onPlanningMode = vi.fn();
+    vi.mocked(fetchGitRemotes).mockResolvedValueOnce(singleRemote);
+    vi.mocked(apiFetchGitHubIssues).mockResolvedValueOnce([firstIssue, secondIssue]);
+    vi.mocked(apiFetchGitHubIssueDetail)
+      .mockResolvedValueOnce({ comments: [{ author: "octocat", body: "![first comment](https://github.com/user-attachments/assets/first-comment)", createdAt: "2026-08-09T00:00:00Z", authorIsBot: false }] })
+      .mockImplementationOnce(() => new Promise(() => {}));
+
+    render(<GitHubImportModal isOpen onClose={onClose} onImport={onImport} onPlanningMode={onPlanningMode} tasks={[]} />);
+    fireEvent.click(await screen.findByRole("button", { name: /Select issue #46/i }));
+    await waitFor(() => expect(apiFetchGitHubIssueDetail).toHaveBeenCalledWith("dustinbyrne/kb", 46));
+    await act(async () => { await Promise.resolve(); });
+
+    fireEvent.click(screen.getByRole("button", { name: /Select issue #47/i }));
+    fireEvent.click(screen.getByTestId("github-import-action-plan"));
+
+    expect(onPlanningMode).toHaveBeenCalledWith(
+      buildIssuePlanningSeed(secondIssue),
+      undefined,
+      expect.objectContaining({
+        provider: "github",
+        issueNumber: secondIssue.number,
+        imageBodies: [secondIssue.body],
+        commentsUnavailable: true,
+      }),
+    );
+    expect(onPlanningMode.mock.calls[0]?.[2]).not.toEqual(expect.objectContaining({
+      imageBodies: expect.arrayContaining([expect.stringContaining("first-comment")]),
+    }));
+  });
+
+  /*
+  FNXC:GitHubPlanningSourceIssue 2026-08-09-16:05:
+  Planning's desktop and mobile action rows must transport identical body-plus-comment image context.
+  The client deliberately sends all image-bearing bodies; the server alone applies the policy-resolved image cap.
+  */
+  it.each([["desktop", 1200], ["mobile", 480]] as const)("captures every loaded image-bearing comment at the %s breakpoint without a client image budget", async (_breakpoint, width) => {
+    const originalInnerWidth = window.innerWidth;
+    Object.defineProperty(window, "innerWidth", { writable: true, configurable: true, value: width });
+    window.dispatchEvent(new Event("resize"));
+    try {
+      const issue = { number: 48, title: "Comment screenshots", body: "![body](https://github.com/user-attachments/assets/body)", html_url: "https://github.com/dustinbyrne/kb/issues/48", labels: [], state: "open" };
+      const unresolved = Array.from({ length: 12 }, (_, index) => `![bad-${index}](https://example.com/${index}.png)`).join("\n");
+      const later = "![later](https://github.com/user-attachments/assets/later)";
+      const onPlanningMode = vi.fn();
+      vi.mocked(fetchGitRemotes).mockResolvedValueOnce(singleRemote);
+      vi.mocked(apiFetchGitHubIssues).mockResolvedValueOnce([issue]);
+      vi.mocked(apiFetchGitHubIssueDetail).mockResolvedValueOnce({ comments: [
+        { author: "one", body: "plain prose only", createdAt: "2026-08-09T00:00:00Z", authorIsBot: false },
+        { author: "two", body: unresolved, createdAt: "2026-08-09T00:01:00Z", authorIsBot: false },
+        { author: "three", body: later, createdAt: "2026-08-09T00:02:00Z", authorIsBot: false },
+      ] });
+
+      render(<GitHubImportModal isOpen onClose={onClose} onImport={onImport} onPlanningMode={onPlanningMode} tasks={[]} />);
+      fireEvent.click(await screen.findByRole("button", { name: /Select issue #48/i }));
+      await waitFor(() => expect(apiFetchGitHubIssueDetail).toHaveBeenCalledWith("dustinbyrne/kb", 48));
+      await act(async () => { await Promise.resolve(); });
+      fireEvent.click(screen.getByTestId("github-import-action-plan"));
+
+      expect(onPlanningMode.mock.calls[0]?.[2]).toEqual(expect.objectContaining({
+        provider: "github",
+        imageBodies: [issue.body, unresolved, later],
+      }));
+    } finally {
+      Object.defineProperty(window, "innerWidth", { writable: true, configurable: true, value: originalInnerWidth });
+      window.dispatchEvent(new Event("resize"));
+    }
+  });
+
+  /*
+  FNXC:GitHubPlanningSourceIssue 2026-08-09-14:59:
+  Issue numbers are repository-local. Switching remotes before Plan must not reuse the first
+  repository's cached comments for an identically numbered issue.
+  */
+  it("keeps captured comment bodies isolated when repositories reuse an issue number", async () => {
+    const originIssue = { number: 48, title: "Origin screenshot", body: "![origin](https://github.com/user-attachments/assets/origin-body)", html_url: "https://github.com/dustinbyrne/kb/issues/48", labels: [], state: "open" };
+    const upstreamIssue = { number: 48, title: "Upstream screenshot", body: "![upstream](https://github.com/user-attachments/assets/upstream-body)", html_url: "https://github.com/upstream/kb/issues/48", labels: [], state: "open" };
+    const onPlanningMode = vi.fn();
+    vi.mocked(fetchGitRemotes).mockResolvedValueOnce(multipleRemotes);
+    vi.mocked(apiFetchGitHubIssues).mockResolvedValueOnce([originIssue]).mockResolvedValueOnce([upstreamIssue]);
+    vi.mocked(apiFetchGitHubIssueDetail)
+      .mockResolvedValueOnce({ comments: [{ author: "origin", body: "![origin comment](https://github.com/user-attachments/assets/origin-comment)", createdAt: "2026-08-09T00:00:00Z", authorIsBot: false }] })
+      .mockResolvedValueOnce({ comments: [{ author: "upstream", body: "![upstream comment](https://github.com/user-attachments/assets/upstream-comment)", createdAt: "2026-08-09T00:01:00Z", authorIsBot: false }] });
+
+    render(<GitHubImportModal isOpen onClose={onClose} onImport={onImport} onPlanningMode={onPlanningMode} tasks={[]} />);
+    await screen.findByText("Origin screenshot");
+    fireEvent.click(screen.getByRole("button", { name: /Select issue #48/i }));
+    await waitFor(() => expect(apiFetchGitHubIssueDetail).toHaveBeenCalledWith("dustinbyrne/kb", 48));
+    fireEvent.change(screen.getByRole("combobox"), { target: { value: "upstream" } });
+    await screen.findByText("Upstream screenshot");
+    fireEvent.click(screen.getByRole("button", { name: /Select issue #48/i }));
+    await waitFor(() => expect(apiFetchGitHubIssueDetail).toHaveBeenCalledWith("upstream/kb", 48));
+    fireEvent.click(screen.getByTestId("github-import-action-plan"));
+
+    expect(onPlanningMode.mock.calls[0]?.[2]).toEqual(expect.objectContaining({
+      repository: "upstream/kb",
+      imageBodies: [upstreamIssue.body, "![upstream comment](https://github.com/user-attachments/assets/upstream-comment)"],
+    }));
+    expect(onPlanningMode.mock.calls[0]?.[2]?.imageBodies).not.toEqual(expect.arrayContaining([expect.stringContaining("origin-comment")]));
+  });
+
+  it("drops an oversized image-bearing body whole and records the partial capture", async () => {
+    const oversized = `![large](https://github.com/user-attachments/assets/large)${"x".repeat(256_000)}`;
+    const issue = { number: 49, title: "Large screenshot", body: oversized, html_url: "https://github.com/dustinbyrne/kb/issues/49", labels: [], state: "open" };
+    const onPlanningMode = vi.fn();
+    vi.mocked(fetchGitRemotes).mockResolvedValueOnce(singleRemote);
+    vi.mocked(apiFetchGitHubIssues).mockResolvedValueOnce([issue]);
+
+    render(<GitHubImportModal isOpen onClose={onClose} onImport={onImport} onPlanningMode={onPlanningMode} tasks={[]} />);
+    fireEvent.click(await screen.findByRole("button", { name: /Select issue #49/i }));
+    fireEvent.click(screen.getByTestId("github-import-action-plan"));
+
+    expect(onPlanningMode.mock.calls[0]?.[2]).toEqual(expect.objectContaining({ droppedBodyCount: 1, commentsUnavailable: true }));
+    expect(onPlanningMode.mock.calls[0]?.[2]).not.toEqual(expect.objectContaining({ imageBodies: expect.any(Array) }));
   });
 
   it("renders Plan only for selectable GitHub issues with Planning Mode", async () => {

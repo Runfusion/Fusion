@@ -165,12 +165,27 @@ describe("useModalManager", () => {
       useModalManager({ projectId, planningSessions: [{ id: "plan-1" }] }),
     );
 
+    const sourceIssue = {
+      provider: "github" as const,
+      repository: "owner/repo",
+      issueNumber: 42,
+      url: "https://github.com/owner/repo/issues/42",
+      title: "Seeded issue",
+    };
     act(() => {
-      result.current.openPlanningWithInitialPlan("Build dashboard");
+      result.current.openPlanningWithInitialPlan("Build dashboard", undefined, sourceIssue);
     });
 
     expect(result.current.isPlanningOpen).toBe(true);
     expect(result.current.planningInitialPlan).toBe("Build dashboard");
+    expect(result.current.planningSourceIssue).toEqual(sourceIssue);
+
+    act(() => {
+      result.current.clearPlanningInitialPlan();
+    });
+
+    expect(result.current.planningInitialPlan).toBeNull();
+    expect(result.current.planningSourceIssue).toBeUndefined();
 
     act(() => {
       result.current.closePlanning();
@@ -179,6 +194,7 @@ describe("useModalManager", () => {
     expect(result.current.isPlanningOpen).toBe(false);
     expect(result.current.planningInitialPlan).toBeNull();
     expect(result.current.planningResumeSessionId).toBeUndefined();
+    expect(result.current.planningSourceIssue).toBeUndefined();
     expect(localStorage.getItem(quickEntryKey)).toBe("quick draft");
     expect(localStorage.getItem(inlineCreateKey)).toBe("inline draft");
 
@@ -188,6 +204,14 @@ describe("useModalManager", () => {
 
     expect(result.current.isPlanningOpen).toBe(true);
     expect(result.current.planningResumeSessionId).toBe("plan-1");
+    expect(result.current.planningSourceIssue).toBeUndefined();
+
+    act(() => {
+      result.current.openPlanningWithInitialPlan("Seed another issue", undefined, sourceIssue);
+      result.current.openPlanning();
+    });
+
+    expect(result.current.planningSourceIssue).toBeUndefined();
   });
 
   it("clears scoped quick-add drafts after single-task planning completion", () => {

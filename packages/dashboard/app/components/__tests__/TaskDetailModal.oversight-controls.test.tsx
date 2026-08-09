@@ -19,6 +19,7 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import type { PlannerOverseerRuntimeSnapshot } from "@fusion/core";
 import {
   makeTask,
+  makeUpdatedTask,
   noop,
   noopDelete,
   noopMerge,
@@ -58,6 +59,13 @@ async function openOversightMenu() {
   return trigger;
 }
 
+/*
+FNXC:PlannerOversight 2026-08-09-08:59:
+FN-8894 repairs these mutation fixtures because frozen `makeTask` clocks made simulated `updateTask`
+responses violate TaskStore's always-advancing update clock. `mergeTaskSnapshot` correctly rejected the
+populated advisor field from that equal-clock response, leaving the Eye/EyeOff trigger stale; mutation
+mocks in this suite must advance the clock so they model a real server response.
+*/
 describe("TaskDetailModal oversight controls", () => {
   it("uses the Eye icon for the labeled oversight overflow trigger", async () => {
     render(
@@ -193,7 +201,7 @@ describe("TaskDetailModal oversight controls", () => {
     });
     vi.mocked(api.fetchWorkflowSettingValues).mockImplementationOnce(() => new Promise(() => {}));
     vi.mocked(api.updateTask).mockImplementation(async (_id, patch) => {
-      currentTask = makeTask({ ...currentTask, ...patch });
+      currentTask = makeUpdatedTask(currentTask, patch);
       return currentTask as any;
     });
 
@@ -260,7 +268,7 @@ describe("TaskDetailModal oversight controls", () => {
       defaults: {},
     });
     vi.mocked(api.updateTask).mockImplementation(async (_id, patch) => {
-      currentTask = makeTask({ ...currentTask, ...patch });
+      currentTask = makeUpdatedTask(currentTask, patch);
       return currentTask as any;
     });
 
@@ -306,7 +314,7 @@ describe("TaskDetailModal oversight controls", () => {
       sessionAdvisorEnabled: false,
     });
     mockUpdate.mockImplementation(async (_id, patch) => {
-      currentTask = makeTask({ ...currentTask, ...patch });
+      currentTask = makeUpdatedTask(currentTask, patch);
       return currentTask as any;
     });
 
@@ -354,6 +362,66 @@ describe("TaskDetailModal oversight controls", () => {
     fireEvent.click(await screen.findByTestId("detail-session-advisor-toggle"));
     await waitFor(() => {
       expect(trigger.querySelector('[data-testid="eye-off-icon"]')).toBeInTheDocument();
+    });
+  });
+
+  it("retains a populated advisor override for an equal-clock mutation, then repaints for a newer response", async () => {
+    const api = await import("../../api");
+    let currentTask = makeTask({ id: "FN-8894-equal-clock", column: "in-progress", plannerOversightLevel: "off", sessionAdvisorEnabled: false });
+    vi.mocked(api.fetchSettings).mockResolvedValueOnce({ modelPresets: [], autoSelectModelPreset: false, defaultPresetBySize: {}, sessionAdvisorEnabledByDefault: false } as any);
+    vi.mocked(api.fetchBoardWorkflows).mockResolvedValue({ flagEnabled: true, defaultWorkflowId: "WF-8894-equal-clock", workflows: [{ id: "WF-8894-equal-clock", name: "Equal-clock workflow", columns: [] } as any], taskWorkflowIds: { [currentTask.id]: "WF-8894-equal-clock" } });
+    vi.mocked(api.fetchWorkflowSettingValues).mockResolvedValue({ stored: {}, effective: { plannerOversightLevel: "off", plannerOverseerAdvisorEnabled: true }, defaults: {} });
+    let updateCount = 0;
+    vi.mocked(api.updateTask).mockImplementation(async (_id, patch) => {
+      updateCount += 1;
+      currentTask = updateCount === 1
+        ? makeTask({ ...currentTask, ...patch, updatedAt: currentTask.updatedAt })
+        : makeUpdatedTask(currentTask, patch);
+      return currentTask as any;
+    });
+
+    let rerenderModal: (nextTask: typeof currentTask) => void;
+    const renderModal = (nextTask: typeof currentTask) => <TaskDetailModal task={nextTask} onClose={noop} onMoveTask={noopMove} onDeleteTask={noopDelete} onMergeTask={noopMerge} onOpenDetail={noopOpenDetail} onTaskUpdated={(updatedTask) => rerenderModal(updatedTask as typeof currentTask)} addToast={noop} />;
+    const rendered = render(renderModal(currentTask));
+    rerenderModal = (nextTask) => rendered.rerender(renderModal(nextTask));
+
+    const trigger = await screen.findByTestId("detail-oversight-menu-trigger");
+    await openOversightMenu();
+    fireEvent.click(await screen.findByTestId("detail-session-advisor-toggle"));
+    await waitFor(() => {
+      expect(trigger.querySelector('[data-testid="eye-off-icon"]')).toBeInTheDocument();
+      expect(screen.getByTestId("detail-session-advisor-toggle")).toHaveAttribute("aria-pressed", "false");
+    });
+
+    fireEvent.click(await screen.findByTestId("detail-session-advisor-toggle"));
+    await waitFor(() => {
+      expect(trigger.querySelector('[data-testid="eye-icon"]')).toBeInTheDocument();
+      expect(screen.getByTestId("detail-session-advisor-toggle")).toHaveAttribute("aria-pressed", "true");
+    });
+  });
+
+  it("fills an absent advisor override from an equal-clock mutation response", async () => {
+    const api = await import("../../api");
+    let currentTask = makeTask({ id: "FN-8894-absent-clock", column: "in-progress", plannerOversightLevel: "off", sessionAdvisorEnabled: undefined });
+    vi.mocked(api.fetchSettings).mockResolvedValueOnce({ modelPresets: [], autoSelectModelPreset: false, defaultPresetBySize: {}, sessionAdvisorEnabledByDefault: false } as any);
+    vi.mocked(api.fetchBoardWorkflows).mockResolvedValue({ flagEnabled: true, defaultWorkflowId: "WF-8894-absent-clock", workflows: [{ id: "WF-8894-absent-clock", name: "Absent-clock workflow", columns: [] } as any], taskWorkflowIds: { [currentTask.id]: "WF-8894-absent-clock" } });
+    vi.mocked(api.fetchWorkflowSettingValues).mockResolvedValue({ stored: {}, effective: { plannerOversightLevel: "off", plannerOverseerAdvisorEnabled: true }, defaults: {} });
+    vi.mocked(api.updateTask).mockImplementation(async (_id, patch) => {
+      currentTask = makeTask({ ...currentTask, ...patch, updatedAt: currentTask.updatedAt });
+      return currentTask as any;
+    });
+
+    let rerenderModal: (nextTask: typeof currentTask) => void;
+    const renderModal = (nextTask: typeof currentTask) => <TaskDetailModal task={nextTask} onClose={noop} onMoveTask={noopMove} onDeleteTask={noopDelete} onMergeTask={noopMerge} onOpenDetail={noopOpenDetail} onTaskUpdated={(updatedTask) => rerenderModal(updatedTask as typeof currentTask)} addToast={noop} />;
+    const rendered = render(renderModal(currentTask));
+    rerenderModal = (nextTask) => rendered.rerender(renderModal(nextTask));
+
+    const trigger = await screen.findByTestId("detail-oversight-menu-trigger");
+    await openOversightMenu();
+    fireEvent.click(await screen.findByTestId("detail-session-advisor-toggle"));
+    await waitFor(() => {
+      expect(trigger.querySelector('[data-testid="eye-off-icon"]')).toBeInTheDocument();
+      expect(screen.getByTestId("detail-session-advisor-toggle")).toHaveAttribute("aria-pressed", "false");
     });
   });
 

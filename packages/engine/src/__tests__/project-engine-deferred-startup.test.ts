@@ -130,6 +130,7 @@ vi.mock("../merger.js", () => ({
 }));
 
 import { ProjectEngine } from "../project-engine.js";
+import { InProcessRuntime } from "../runtimes/in-process-runtime.js";
 
 function makeEngine(projectId: string, skipNotifier: boolean) {
   return new ProjectEngine(
@@ -149,6 +150,26 @@ describe("ProjectEngine deferred startup", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     listTasks.mockResolvedValue([]);
+  });
+
+  it("forwards the per-engine PR callback factory to the runtime", () => {
+    const factory = vi.fn();
+    new ProjectEngine(
+      {
+        projectId: "proj_pr_factory",
+        workingDirectory: "/tmp/proj_pr_factory",
+        isolationMode: "in-process",
+        maxConcurrent: 1,
+        maxWorktrees: 1,
+      },
+      { on: vi.fn(), off: vi.fn() } as any,
+      { skipNotifier: true, createPrNodeGithubOps: factory },
+    );
+
+    expect(InProcessRuntime).toHaveBeenLastCalledWith(
+      expect.objectContaining({ createPrNodeGithubOps: factory }),
+      expect.anything(),
+    );
   });
 
   it("clears stale merging statuses during start critical path", async () => {

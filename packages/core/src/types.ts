@@ -45,6 +45,8 @@ FNXC:PrMergeRequiredChecks 2026-08-09-07:48:
 The dashboard aliases @fusion/core to this browser-safe barrel. Re-export the pure shared normalizer here so Settings cannot fork name-trimming semantics from the CLI and server merge gates.
 */
 export { resolveRequiredCheckNames } from "./config/required-checks.js";
+export { mergeIngestedCheckStates } from "./config/ingested-checks.js";
+export type { IngestedCheckState, IngestedCheckStateValue, MergeablePrCheck } from "./config/ingested-checks.js";
 
 /*
  * FNXC:WorkflowDeprecation 2026-07-15-16:35:
@@ -1583,3 +1585,5 @@ export { sortTasksForDisplayColumn } from "./tasks/task-priority.js";
 export type { DoneColumnSortMode, DisplayColumnSortOptions } from "./tasks/task-priority.js";
 
 export { CONFIG_CHANGED_BY_SYSTEM, CONFIG_CHANGED_BY_API_VERIFIED_TOKEN, CONFIG_CHANGED_BY_API_UNVERIFIED, CONFIG_CHANGED_BY_API_VERIFIED_NODE_KEY } from "./types/agents/agents.js";
+export type { AgentActivityEventType, AgentActivityAttribution, AgentActivityIdProvenance, AgentActivityIdCandidate, AgentActivityAttributionClaim, AgentActivityMetadataValueSpec, AgentActivityEvent, AgentActivityEventInput, AgentActivityQuery } from "./types/agents/agents.js";
+export { AGENT_ACTIVITY_EVENT_TYPES, AGENT_ACTIVITY_ATTRIBUTIONS, AGENT_ACTIVITY_LANE_SENTINELS, AGENT_ACTIVITY_GENERATED_ID_PATTERNS, AGENT_ACTIVITY_HANDOFF_REASONS, AGENT_ACTIVITY_TOOL_NAMES, AGENT_ACTIVITY_WORKFLOW_STEP_IDS, AGENT_ACTIVITY_METADATA_SCHEMA, AGENT_ACTIVITY_METADATA_KEYS, isAgentActivityEventType } from "./types/agents/agents.js";

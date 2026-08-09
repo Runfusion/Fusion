@@ -2132,14 +2132,21 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
     ProjectEngineManager only applies this store when the project's working
     directory matches the store root (multi-project safety).
     */
-    const engineManager = new ProjectEngineManager(centralCoreForEngine, {
+    const engineManager: ProjectEngineManager = new ProjectEngineManager(centralCoreForEngine, {
       cliPackageVersion,
       getMergeStrategy,
       processPullRequestMerge: (s, wd, taskId, pool, signal) =>
         processPullRequestMergeTask(s, wd, taskId, githubClient, getTaskMergeBlocker, pool, signal),
       createGroupPr: createGroupPrCallback(githubClient),
       syncGroupPr: syncGroupPrCallback(githubClient),
-      prNodeGithubOps: createPrNodeGithubOps(githubClient),
+      /*
+      FNXC:PrMergeAutoMerge 2026-08-09-10:59:
+      Dashboard-managed engines bind this resolver to their own TaskStore; the
+      dashboard boot store is not a safe proxy for every registered project.
+      */
+      createPrNodeGithubOps: (taskStore) => createPrNodeGithubOps(githubClient, {
+        isNativeAutoMergeEnabled: async () => (await taskStore.getSettings()).githubNativeAutoMerge === true,
+      }),
       prReconcileGithubOps: createPrReconcileGithubOps(githubClient),
       getTaskMergeBlocker,
       externalTaskStore: store,

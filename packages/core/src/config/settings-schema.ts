@@ -485,6 +485,7 @@ export const DEFAULT_PROJECT_SETTINGS = {
   voiceInput: undefined,
   mergeRequestContractShadowEnabled: false,
   mergeStrategy: "direct",
+  githubNativeAutoMerge: false,
   directMergeCommitStrategy: "always-squash",
   mergeIntegrationWorktree: "reuse-task-worktree",
   mergeAdvanceAutoSync: "stash-and-ff",

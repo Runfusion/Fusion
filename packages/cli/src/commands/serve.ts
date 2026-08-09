@@ -422,14 +422,21 @@ export async function runServe(
   const resolvedCliPackageVersion = getCliPackageVersion(import.meta.url);
   const cliPackageVersion = isUnresolvedCliPackageVersion(resolvedCliPackageVersion) ? undefined : resolvedCliPackageVersion;
 
-  const engineManager = startupEngineManager = new ProjectEngineManager(sharedCentralCore, {
+  const engineManager: ProjectEngineManager = startupEngineManager = new ProjectEngineManager(sharedCentralCore, {
     cliPackageVersion,
     getMergeStrategy,
     processPullRequestMerge: (s, wd, taskId, pool, signal) =>
       processPullRequestMergeTask(s, wd, taskId, githubClient, getTaskMergeBlocker, pool, signal),
     createGroupPr: createGroupPrCallback(githubClient),
     syncGroupPr: syncGroupPrCallback(githubClient),
-    prNodeGithubOps: createPrNodeGithubOps(githubClient),
+    /*
+    FNXC:PrMergeAutoMerge 2026-08-09-10:59:
+    Serve may own several engines. Bind native auto-merge policy to the runtime
+    TaskStore instead of guessing task ownership from a project-scoped task ID.
+    */
+    createPrNodeGithubOps: (taskStore) => createPrNodeGithubOps(githubClient, {
+      isNativeAutoMergeEnabled: async () => (await taskStore.getSettings()).githubNativeAutoMerge === true,
+    }),
     prReconcileGithubOps: createPrReconcileGithubOps(githubClient),
     getTaskMergeBlocker,
     onInsightRunProcessed: (s: unknown, r: unknown) => onMemoryInsightRunProcessed(s as ScheduledTask, r as AutomationRunResult),

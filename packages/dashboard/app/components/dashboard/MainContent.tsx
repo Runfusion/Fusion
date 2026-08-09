@@ -85,6 +85,8 @@ export function MainContent({
   experimentalFeatures,
   setQuickChatOpen,
   chatComposerPrefill,
+  mailComposerPrefill,
+  onSendAsReport,
   onOpenChatWithPrefill,
   setMailboxUnreadCount,
   setMissionTargetId,
@@ -474,6 +476,7 @@ export function MainContent({
             initialComposerDraft={chatComposerPrefill?.text}
             initialComposerDraftNonce={chatComposerPrefill?.nonce}
             onPopOut={() => setQuickChatOpen(true)}
+            onSendAsReport={onSendAsReport}
           />
         </Suspense>
       </PageErrorBoundary>
@@ -509,6 +512,7 @@ export function MainContent({
           onUnreadCountChange={setMailboxUnreadCount}
           onOpenNativeStructure={onOpenNativeStructure}
           nativeStructureCandidates={nativeStructureCandidates}
+          composePrefill={mailComposerPrefill ?? undefined}
         />
       </PageErrorBoundary>
     );

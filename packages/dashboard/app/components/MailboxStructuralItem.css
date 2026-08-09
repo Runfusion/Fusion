@@ -1,0 +1,73 @@
+/* FNXC:StructuralMail 2026-08-09-09:09: Reports and approval references need a compact structural treatment without changing ordinary mail. */
+.mailbox-kind-badge {
+  border-radius: var(--radius-sm);
+  display: inline-flex;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  margin-inline-start: var(--space-xs);
+  padding: var(--space-2xs) var(--space-xs);
+}
+
+.mailbox-kind-badge--report {
+  background: color-mix(in srgb, var(--color-info) 16%, transparent);
+  color: var(--color-info);
+}
+
+.mailbox-kind-badge--approval {
+  background: color-mix(in srgb, var(--color-warning) 16%, transparent);
+  color: var(--color-warning);
+}
+
+.mailbox-structural-report,
+.mailbox-structural-approval {
+  border: var(--border) solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  margin-block-start: var(--space-md);
+  padding: var(--space-md);
+}
+
+.mailbox-structural-report h3,
+.mailbox-report-section h4 {
+  margin-block: 0 var(--space-sm);
+}
+
+.mailbox-report-section + .mailbox-report-section {
+  border-block-start: var(--border) solid var(--border-subtle);
+  margin-block-start: var(--space-md);
+  padding-block-start: var(--space-md);
+}
+
+.mailbox-inline-approval {
+  display: grid;
+  gap: var(--space-sm);
+}
+
+.mailbox-inline-approval-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+}
+
+.mailbox-inline-approval textarea {
+  min-height: var(--space-3xl);
+}
+
+.mailbox-inline-approval button:focus-visible {
+  outline: var(--focus-ring-strong);
+}
+
+.mailbox-approval-unresolvable,
+.mailbox-inline-approval-status {
+  color: var(--text-muted);
+}
+
+@media (max-width: 768px) {
+  .mailbox-structural-report,
+  .mailbox-structural-approval {
+    padding: var(--space-sm);
+  }
+
+  .mailbox-inline-approval-actions .btn {
+    min-height: var(--space-2xl);
+  }
+}

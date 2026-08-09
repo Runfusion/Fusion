@@ -67,6 +67,7 @@ function resolveCanonicalDefault(settingKey: string): unknown {
  * English description states that setting's default value.
  */
 const SETTING_DESCRIPTION_KEYS: Record<string, string> = {
+  githubNativeAutoMerge: "merge.githubNativeAutoMergeHelp",
   requiredChecks: "merge.requiredChecksHelp",
   // AuthenticationSection — Anthropic dual-credential precedence (default api-key)
   anthropicAuthPreference: "auth.anthropicPreferenceHint",

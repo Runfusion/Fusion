@@ -20,7 +20,11 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 export type SignalSeverity = "critical" | "error" | "warning" | "info";
 
 /** Supported external signal providers. */
-export type SignalProvider = "sentry" | "datadog" | "pagerduty" | "webhook" | "gitlab";
+/*
+FNXC:CommandCenterSignals 2026-08-09-13:23:
+GitHub CI needs a dedicated inbound provider so completed check outcomes can reach Signals without adding polling or outbound GitHub API calls.
+*/
+export type SignalProvider = "sentry" | "datadog" | "pagerduty" | "webhook" | "gitlab" | "github";
 
 /** Normalized lifecycle intent for an ingested signal. */
 export type SignalResolution = "open" | "resolved";
@@ -73,6 +77,23 @@ export interface Signal {
    * Connector events must distinguish fire from recovery so incident-backed Signals metrics can preserve status. Omitted means "open" for backward-compatible task creation; "resolved" routes the grouped incident to resolveIncident instead of opening another occurrence.
    */
   resolution?: SignalResolution;
+  /**
+   * FNXC:CommandCenterSignals 2026-08-09-13:23:
+   * GitHub green CI runs must not create one triage task per run. A recovery-only
+   * adapter opts into taskless recovery: it only atomically resolves the newest
+   * open incident for its grouping key and never records/opens an incident.
+   * Taskless signals have no durable delivery marker, so persisted open-gated
+   * resolution makes redelivery and concurrent delivery no-ops. This differs
+   * from `resolution: "resolved"` alone, which retains record-then-resolve
+   * behavior for every existing adapter.
+   */
+  recoveryOnly?: boolean;
+  /*
+  FNXC:PrMergeEventDrivenChecks 2026-08-09-14:35:
+  Only the GitHub adapter supplies terminal CI data; absence on all other sources keeps their
+  incident behavior unchanged. Invalid repo/SHA drops the entire descriptor rather than guessing.
+  */
+  ciCheck?: { repo: string; headSha: string; checkName: string; state: string; eventKind: "check_suite" | "workflow_run" | "status"; reportedAt?: string; detailsUrl?: string };
   /**
    * Optional canonical URL back to the source. Treated as SSRF-untrusted: it is
    * stored as data and only rendered as an external link, never fetched server
@@ -316,6 +337,22 @@ export function applySignalCaps(signal: Signal): Signal {
     signal.link && isSafeExternalUrl(signal.link)
       ? capString(signal.link, SIGNAL_FIELD_CAPS.link)
       : undefined;
+  const ciCheck = signal.ciCheck;
+  /*
+  FNXC:PrMergeEventDrivenChecks 2026-08-09-15:42:
+  A check-state repository must be the webhook's exact owner/repository slug. Reject malformed
+  slugs with the descriptor so an external payload cannot create a state the merge gate might
+  later compare against an unrelated repository.
+  */
+  const repo = ciCheck?.repo.trim();
+  const headSha = ciCheck?.headSha.trim();
+  const validCiCheck = ciCheck && repo && headSha
+    && repo.length <= SIGNAL_FIELD_CAPS.groupingKey
+    && /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)
+    && /^[0-9a-f]{7,64}$/i.test(headSha)
+    && ciCheck.checkName.trim()
+    ? { ...ciCheck, repo, headSha, checkName: capString(ciCheck.checkName, SIGNAL_FIELD_CAPS.groupingKey), detailsUrl: ciCheck.detailsUrl ? capString(ciCheck.detailsUrl, SIGNAL_FIELD_CAPS.link) : undefined }
+    : undefined;
   return {
     ...signal,
     title: capString(signal.title, SIGNAL_FIELD_CAPS.title) || "(untitled signal)",
@@ -323,5 +360,6 @@ export function applySignalCaps(signal: Signal): Signal {
     groupingKey: capString(signal.groupingKey, SIGNAL_FIELD_CAPS.groupingKey),
     link,
     meta,
+    ciCheck: validCiCheck,
   };
 }
