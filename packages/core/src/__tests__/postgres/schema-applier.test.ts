@@ -89,6 +89,7 @@ import {
   QUEUED_EPISODE_SIGNATURE_VERSION,
   MULTI_ROLE_WORKFLOW_AGENTS_VERSION,
   WORKFLOW_PRINCIPAL_FENCE_VERSION,
+  TASK_RECOMMENDATIONS_VERSION,
 } from "../../postgres/schema-applier.js";
 import { ProjectPartitionRekeyError, rekeyFallbackProjectPartition } from "../../postgres/migration-stamping.js";
 import type { PluginSchemaInitHook } from "../../postgres/plugin-schema-hook.js";
@@ -111,7 +112,8 @@ describe("schema-applier: immutable migration identities", () => {
     expect(QUEUED_EPISODE_SIGNATURE_VERSION).toBe("0044");
     expect(MULTI_ROLE_WORKFLOW_AGENTS_VERSION).toBe("0045");
     expect(WORKFLOW_PRINCIPAL_FENCE_VERSION).toBe("0046");
-    expect(SCHEMA_BASELINE_VERSION).toBe("0046");
+    expect(TASK_RECOMMENDATIONS_VERSION).toBe("0047");
+    expect(SCHEMA_BASELINE_VERSION).toBe("0047");
   });
 
   it("keeps monitor and approval isolation assigned to version 0003", () => {
@@ -726,7 +728,7 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 final-schema parity (table counts)", 
     ctx = null;
   });
 
-  it("creates all 105 project tables, 17 central tables, 1 archive table", async () => {
+  it("creates all 106 project tables, 17 central tables, 1 archive table", async () => {
     ctx = await setupFreshDb();
     // FNXC:PostgresCutover 2026-07-05-15:55: apply the BASELINE only.
     // applySchemaBaseline now runs the plugin schema-init hooks by default,
@@ -745,9 +747,10 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 final-schema parity (table counts)", 
     FNXC:PgSchemaApplier 2026-08-03-02:16:
     Project table count = historical core baseline plus later migrations. 0040 adds 2 lifecycle
     outbox tables; 0041 adds 4 lifecycle consumer tables; 0043 adds the durable unplanned-dispatch
-    refusal marker (100 → 105). Plugin tables are added separately by the schema-init hook and are excluded here.
+    refusal marker, and 0046 adds workflow_agent_capacity_leases (100 → 106). Plugin tables are
+    added separately by the schema-init hook and are excluded here.
     */
-    expect(bySchema.project).toBe(105);
+    expect(bySchema.project).toBe(106);
     /*
     FNXC:CapacityModel 2026-07-29-08:10 (drop the cross-project cap — table half):
     17, not 18: `central.global_concurrency` is dropped by migration 0037. A fresh
@@ -1770,6 +1773,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       QUEUED_EPISODE_SIGNATURE_VERSION,
       MULTI_ROLE_WORKFLOW_AGENTS_VERSION,
       WORKFLOW_PRINCIPAL_FENCE_VERSION,
+      TASK_RECOMMENDATIONS_VERSION,
     ]);
     expect((await applySchemaBaseline(ctx.db, { pluginHooks: [] })).applied).toBe(false);
   });
@@ -1842,6 +1846,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       QUEUED_EPISODE_SIGNATURE_VERSION,
       MULTI_ROLE_WORKFLOW_AGENTS_VERSION,
       WORKFLOW_PRINCIPAL_FENCE_VERSION,
+      TASK_RECOMMENDATIONS_VERSION,
     ]);
   });
 
@@ -2047,6 +2052,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       QUEUED_EPISODE_SIGNATURE_VERSION,
       MULTI_ROLE_WORKFLOW_AGENTS_VERSION,
       WORKFLOW_PRINCIPAL_FENCE_VERSION,
+      TASK_RECOMMENDATIONS_VERSION,
     ]);
   });
 
@@ -2133,6 +2139,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       QUEUED_EPISODE_SIGNATURE_VERSION,
       MULTI_ROLE_WORKFLOW_AGENTS_VERSION,
       WORKFLOW_PRINCIPAL_FENCE_VERSION,
+      TASK_RECOMMENDATIONS_VERSION,
     ]);
   });
 
@@ -2219,6 +2226,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       QUEUED_EPISODE_SIGNATURE_VERSION,
       MULTI_ROLE_WORKFLOW_AGENTS_VERSION,
       WORKFLOW_PRINCIPAL_FENCE_VERSION,
+      TASK_RECOMMENDATIONS_VERSION,
     ]);
   });
 });
