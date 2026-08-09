@@ -112,6 +112,8 @@ const engineMocks = vi.hoisted(() => {
 });
 
 vi.mock("@fusion/core", () => ({
+  /* FNXC:DesktopHostAuth 2026-08-09-03:04: api-token.ts reuses the daemon token prefix from @fusion/core; this whole-module mock must declare it or the desktop bearer token would be built from `undefined`. */
+  DAEMON_TOKEN_PREFIX: "fn_",
   CentralCore: engineMocks.CentralCore,
   PluginLoader: engineMocks.PluginLoader,
   ensureBundledPluginInstalled: engineMocks.ensureBundledPluginInstalled,

@@ -384,51 +384,29 @@ describe("node settings sync on the PostgreSQL backend", () => {
   });
 });
 
-describe("POST /api/action-gate/reload", () => {
-  function buildApp(store: TaskStore, options?: Parameters<typeof createApiRoutes>[1]) {
-    const app = express();
-    app.use(express.json());
-    app.use("/api", createApiRoutes(store, options));
-    return app;
-  }
+/*
+FNXC:AgentGating 2026-08-09-03:04:
+Tombstone for the deleted `POST /api/action-gate/reload` route. It could disable agent
+action gating for every agent in every project in one unaudited, unscoped request, because
+the action gate maps the `exempt` class straight to `allow`. These assertions exist so the
+route cannot quietly return; a reload surface may only come back permission-gated,
+project-scoped, persisted, and audited.
+*/
+describe("POST /api/action-gate/reload (deleted)", () => {
+  it("is not registered on the API router", () => {
+    const orderedKeys = collectOrderedRouteKeys(createApiRoutes(createMockStore()));
 
-  beforeEach(() => {
-    mockReloadExemptTools.mockReset();
-    mockGetExemptToolNames.mockReset();
-    mockGetExemptToolNames.mockReturnValue(["read", "find"]);
+    // Positive control: prove this assertion can actually see registered routes,
+    // so `not.toContain` below is not passing against an empty list.
+    expect(orderedKeys).toContain("GET /projects/:id");
+
+    expect(orderedKeys).not.toContain("POST /action-gate/reload");
   });
 
-  it("reloads defaults when no tools body is provided", async () => {
-    const store = createMockStore();
-    const res = await REQUEST(buildApp(store), "POST", "/api/action-gate/reload", JSON.stringify({}), {
-      "content-type": "application/json",
-    });
+  it("leaves no action-gate mutation surface on the router at all", () => {
+    const orderedKeys = collectOrderedRouteKeys(createApiRoutes(createMockStore()));
 
-    expect(res.status).toBe(200);
-    expect(mockReloadExemptTools).toHaveBeenCalledWith();
-    expect(res.body).toEqual({ ok: true, tools: ["read", "find"] });
-  });
-
-  it("reloads explicit tool list when tools are provided", async () => {
-    const store = createMockStore();
-    mockGetExemptToolNames.mockReturnValue(["custom_tool"]);
-    const res = await REQUEST(buildApp(store), "POST", "/api/action-gate/reload", JSON.stringify({ tools: ["custom_tool"] }), {
-      "content-type": "application/json",
-    });
-
-    expect(res.status).toBe(200);
-    expect(mockReloadExemptTools).toHaveBeenCalledWith(["custom_tool"]);
-    expect(res.body).toEqual({ ok: true, tools: ["custom_tool"] });
-  });
-
-  it("returns bad request when tools is not a string array", async () => {
-    const store = createMockStore();
-    const res = await REQUEST(buildApp(store), "POST", "/api/action-gate/reload", JSON.stringify({ tools: ["ok", 1] }), {
-      "content-type": "application/json",
-    });
-
-    expect(res.status).toBe(400);
-    expect(mockReloadExemptTools).not.toHaveBeenCalled();
+    expect(orderedKeys.filter((key) => key.includes("action-gate"))).toEqual([]);
   });
 });
 

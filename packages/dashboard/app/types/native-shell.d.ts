@@ -37,6 +37,15 @@ export interface ShellConnectionState {
     state: "stopped" | "starting" | "running" | "error";
     port?: number;
     baseUrl?: string;
+    /*
+    FNXC:DesktopHostAuth 2026-08-09-03:04:
+    Bearer token for the embedded desktop API. The desktop host used to serve `/api/*` — terminal
+    WebSocket included — with no token on ALL interfaces; it now binds loopback and mounts the real
+    gate, so the renderer must receive this token and replay it as `?token=` when it navigates to
+    the runtime origin (DesktopLaunchGate, and the "Switch server" -> Local redirect in
+    appLifecycle.ts). Absent for `source: "external-cli"` — that server is another process.
+    */
+    authToken?: string;
     error?: string;
     /*
     FNXC:MigrationHoldingPage 2026-07-17-13:30:

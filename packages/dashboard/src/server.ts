@@ -69,7 +69,12 @@ import { ChatManager, TASK_PLANNER_CHAT_AGENT_ID_PREFIX } from "./chat.js";
 import { CliChatSessionRunner } from "./cli-chat.js";
 import { stopAllDevServers } from "./dev-server-routes.js";
 import type { SkillsAdapter } from "./skills-adapter.js";
-import { createAuthMiddleware, authenticateUpgradeRequest, getDaemonToken } from "./auth-middleware.js";
+import {
+  createAuthMiddleware,
+  createUnconfiguredAuthRefusalMiddleware,
+  authenticateUpgradeRequest,
+  getDaemonToken,
+} from "./auth-middleware.js";
 import { setupCliSessionWebSocket } from "./cli-session-ws.js";
 import { createCliSessionsRouter } from "./routes/cli-sessions.js";
 import { getProjectIdFromRequest, resolveStoreForProjectId } from "./routes/context.js";
@@ -1031,11 +1036,25 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
   // that then captures ?token= from the URL and injects a Bearer header on every
   // /api/* call. WebSocket upgrades are gated separately in setupTerminalWebSocket /
   // setupBadgeWebSocket.
+  /*
+  FNXC:DaemonAuth 2026-08-09-03:04:
+  Three-way mount, not two. Previously a missing token silently skipped the middleware, which made "is this API protected?" a property of the launch command rather than a deliberate setting — the desktop host tripped exactly that and served the shell-capable terminal API to the LAN.
+  Now: explicit `--no-auth` serves open (and says so), a token mounts the real gate, and neither one refuses `/api/*`. Absence of a token never implies open access.
+  */
   const daemonToken = options?.noAuth
     ? undefined
     : options?.daemon?.token ?? process.env.FUSION_DAEMON_TOKEN;
-  if (daemonToken) {
+  if (options?.noAuth) {
+    console.warn(
+      "[fusion] --no-auth: serving /api/* WITHOUT authentication. Identity and transport auth are both disabled.",
+    );
+  } else if (daemonToken) {
     app.use(createAuthMiddleware(daemonToken));
+  } else {
+    console.error(
+      "[fusion] No daemon token configured and --no-auth not set: refusing to serve /api/*. Provide a token or pass --no-auth.",
+    );
+    app.use(createUnconfiguredAuthRefusalMiddleware());
   }
 
   // Initialize terminal service with project root
@@ -2425,11 +2444,13 @@ export function setupTerminalWebSocket(
       return;
     }
 
-    // When daemon auth is active, refuse WebSocket upgrades that don't
-    // carry a valid bearer token. The token can come from the Authorization
-    // header (rare for browser WebSocket clients) or the `fn_token` query
-    // param (what our own client uses).
-    if (wsDaemonToken && !options?.noAuth && !authenticateUpgradeRequest(wsDaemonToken, req)) {
+    /*
+    FNXC:DaemonAuth 2026-08-09-03:04:
+    Unless `--no-auth` is explicit, an upgrade requires BOTH a configured token and a valid credential. The former guard read `wsDaemonToken && !noAuth && !authed`, so a server with no token configured accepted every upgrade — and this is the shell-capable terminal socket, the highest-value target on the surface.
+    */
+    // The token can come from the Authorization header (rare for browser
+    // WebSocket clients) or the `fn_token` query param (what our own client uses).
+    if (!options?.noAuth && (!wsDaemonToken || !authenticateUpgradeRequest(wsDaemonToken, req))) {
       socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
       socket.destroy();
       return;
@@ -2730,7 +2751,9 @@ export function setupBadgeWebSocket(
       return;
     }
 
-    if (badgeWsDaemonToken && !options?.noAuth && !authenticateUpgradeRequest(badgeWsDaemonToken, req)) {
+    // FNXC:DaemonAuth 2026-08-09-03:04: Same inversion as the terminal socket above — a
+    // missing token must refuse the upgrade, not accept it.
+    if (!options?.noAuth && (!badgeWsDaemonToken || !authenticateUpgradeRequest(badgeWsDaemonToken, req))) {
       socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
       socket.destroy();
       return;
