@@ -60,6 +60,7 @@ import {
   resolveNearDuplicateCanonicalFlags,
   isEphemeralAgent,
   parseExplicitDuplicateMarker,
+  resolveExplicitDuplicateMarker,
   resolveWorkflowIrForTask,
   resolveWorkflowIrForTaskWithProvenance,
   resolveReviewColumns,
@@ -2343,8 +2344,24 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         A prior link is reusable only while its child remains in a live task lane. Archived and
         soft-deleted children are historical records, not an actionable Created result; conflict
         rather than silently resurrecting or linking a second child.
+
+        FNXC:TaskRecommendations 2026-08-09-03:30:
+        Resolve the child's archived trait from its workflow rather than comparing the legacy
+        `"archived"` id so custom archive-lane boards keep the same unavailability rule.
         */
-        if (!linked || linked.deletedAt || linked.column === "archived") {
+        if (!linked || linked.deletedAt) {
+          throw conflict("Recommendation link points to an unavailable task");
+        }
+        const linkedArchiveColumns = await (async () => {
+          try {
+            const ir = await resolveWorkflowIrForTask(scopedStore, linked.id);
+            const columns = columnsWithFlag(ir, "archived");
+            return new Set(columns.length > 0 ? columns : ["archived"]);
+          } catch {
+            return new Set(["archived"]);
+          }
+        })();
+        if (linkedArchiveColumns.has(linked.column)) {
           throw conflict("Recommendation link points to an unavailable task");
         }
         return res.status(200).json({ task: linked, parent });
@@ -6193,9 +6210,28 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       const existingTaskForDuplicateDismissal = dismissNearDuplicate === true
         ? await scopedStore.getTask(req.params.id)
         : null;
+      let duplicateDismissalResolution: ReturnType<typeof resolveExplicitDuplicateMarker> | null = null;
       if (dismissNearDuplicate === true) {
         const isTriageMarkerDecision = existingTaskForDuplicateDismissal?.sourceMetadata?.duplicateSource === "triage-marker"
           && existingTaskForDuplicateDismissal.pausedReason === "duplicate-decision-required";
+        const existingPrompt = existingTaskForDuplicateDismissal
+          ? await readFile(join(scopedStore.getRootDir(), ".fusion", "tasks", existingTaskForDuplicateDismissal.id, "PROMPT.md"), "utf-8").catch(() => null)
+          : null;
+        duplicateDismissalResolution = resolveExplicitDuplicateMarker(existingPrompt, existingTaskForDuplicateDismissal?.title);
+        /*
+         * FNXC:DuplicateIntake 2026-08-09-02:29:
+         * FN-8840 extends an explicit redirect to task titles. Keep must retire the source that
+         * created the duplicate-decision hold before releasing it: otherwise a title marker is
+         * immediately re-ingested, while deleting PROMPT.md for a title-only redirect loses an
+         * operator-authored plan. Same-ID prompt/title markers remain one cleanup operation;
+         * conflicts deliberately retain both sources for explicit operator correction.
+         */
+        if (!duplicateDismissalResolution.conflict && duplicateDismissalResolution.marker) {
+          const titleMarker = parseExplicitDuplicateMarker(existingTaskForDuplicateDismissal?.title ?? "");
+          if (title === undefined && titleMarker?.canonicalId === duplicateDismissalResolution.marker.canonicalId) {
+            updates.title = `Duplicate redirect cleared: ${titleMarker.canonicalId}`;
+          }
+        }
         /*
          * FNXC:DuplicateIntake 2026-07-16-13:00:
          * Keep resolves Issue #2225's default triage-marker hold by acknowledging the link,
@@ -6231,7 +6267,11 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       }
 
       const task = await scopedStore.updateTask(req.params.id, updates);
-      if (dismissNearDuplicate === true && task.sourceMetadata?.duplicateSource === "triage-marker") {
+      if (
+        dismissNearDuplicate === true
+        && task.sourceMetadata?.duplicateSource === "triage-marker"
+        && duplicateDismissalResolution?.source === "prompt"
+      ) {
         const { rm } = await import("node:fs/promises");
         await rm(join(scopedStore.getRootDir(), ".fusion", "tasks", task.id, "PROMPT.md"), { force: true });
       }
