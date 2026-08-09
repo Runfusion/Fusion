@@ -8915,7 +8915,7 @@ describe("SelfHealingManager", () => {
 
       await expect(recovery.finalizeOrphanedPlanningSegments()).resolves.toBe(1);
       expect(healthy).toMatchObject({ planningStartedAt: null, cumulativePlanningMs: 1050 });
-      expect(getSelfHealingLogger().warn).toHaveBeenCalledWith(expect.stringContaining("Failed to finalize orphaned planning segment for FN-RACING"));
+      expect(getSelfHealingLogger().warn).toHaveBeenCalledWith(expect.stringContaining("orphaned planning segment FN-RACING could not be finalized: errorType="));
 
       recovery.stop();
     });
@@ -8942,7 +8942,57 @@ describe("SelfHealingManager", () => {
       await expect(recovery.finalizeOrphanedPlanningSegments()).resolves.toBe(1);
       expect(updateTask).toHaveBeenCalledWith(healthy.id, expect.objectContaining({ planningStartedAt: null, cumulativePlanningMs: 1050 }));
       expect(getTask).not.toHaveBeenCalledWith(firstPoison.id);
-      expect(getSelfHealingLogger().warn).toHaveBeenCalledWith(expect.stringContaining("Failed to finalize orphaned planning segment for FN-POISON-2"));
+      expect(getSelfHealingLogger().warn).toHaveBeenCalledWith(expect.stringContaining("orphaned planning segment FN-POISON-2 could not be finalized: errorType="));
+
+      recovery.stop();
+    });
+
+    it("reports when every eligible orphan attempt fails", async () => {
+      const failedTasks = [
+        { id: "FN-PLAN-ERROR-1", planningStartedAt: "2026-01-01T00:00:00.000Z" },
+        { id: "FN-PLAN-ERROR-2", planningStartedAt: "2026-01-01T00:00:00.000Z" },
+      ] as Task[];
+      const updateTaskAtomic = vi.fn(async () => {
+        throw new Error("reconciliation unavailable");
+      });
+      const recoveryStore = createMockStore({
+        listTasks: vi.fn().mockResolvedValue(failedTasks),
+        updateTaskAtomic,
+      });
+      const recovery = new SelfHealingManager(recoveryStore, {
+        rootDir: "/tmp/test-project",
+        getPlanningTaskIds: () => new Set<string>(),
+        hasActivePlanningWorkflowSession: () => false,
+      });
+      vi.setSystemTime(new Date("2026-01-01T00:00:01.000Z"));
+
+      expect(await recovery.finalizeOrphanedPlanningSegments()).toBe(0);
+      expect(updateTaskAtomic).toHaveBeenCalledTimes(2);
+      expect(recoveryStore.recordRunAuditEvent).toHaveBeenLastCalledWith(expect.objectContaining({
+        mutationType: "task:reconcile-orphaned-planning-segment-no-action",
+        metadata: { finalizedCount: 0, reason: "all-attempts-failed", attemptedCount: 2 },
+      }));
+
+      recovery.stop();
+    });
+
+    it("keeps a no-action sweep successful when audit recording fails", async () => {
+      const task = { id: "FN-PLAN-AUDIT-ERROR", planningStartedAt: "2026-01-01T00:00:00.000Z" } as Task;
+      const recordRunAuditEvent = vi.fn().mockRejectedValue(new Error("audit unavailable"));
+      const recoveryStore = createMockStore({
+        listTasks: vi.fn().mockResolvedValue([task]),
+        recordRunAuditEvent,
+      });
+      const recovery = new SelfHealingManager(recoveryStore, {
+        rootDir: "/tmp/test-project",
+        getPlanningTaskIds: () => new Set([task.id]),
+        hasActivePlanningWorkflowSession: () => false,
+      });
+
+      await expect(recovery.finalizeOrphanedPlanningSegments()).resolves.toBe(0);
+      expect(recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
+        mutationType: "task:reconcile-orphaned-planning-segment-no-action",
+      }));
 
       recovery.stop();
     });
