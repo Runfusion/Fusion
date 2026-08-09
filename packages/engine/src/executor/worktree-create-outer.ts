@@ -7,7 +7,7 @@ import { exec } from "node:child_process";
 import { promisify } from "node:util";
 import { existsSync } from "node:fs";
 import { isAbsolute } from "node:path";
-import type { Settings } from "@fusion/core";
+import type { RunMutationContext, Settings } from "@fusion/core";
 import { isBranchConflictError } from "../execution/branch-conflicts.js";
 import { StaleWorktreeIndexLockError } from "../worktree/worktree-stale-lock.js";
 import { resolveIntegrationBranch } from "../merge/integration-branch.js";
@@ -20,7 +20,13 @@ const execAsync = promisify(exec);
 export type WorktreeOuterStore = {
   updateTask: (taskId: string, patch: Record<string, unknown>) => Promise<unknown>;
   getSettings: () => Promise<Settings | Partial<Settings>>;
-  logEntry: (taskId: string, action: string, outcome?: string) => Promise<unknown>;
+  /** Mirrors TaskStore.logEntry so safe breadcrumbs match main (action, outcome?, runContext?). */
+  logEntry: (
+    taskId: string,
+    action: string,
+    outcome?: string | undefined,
+    runContext?: RunMutationContext | undefined,
+  ) => Promise<unknown>;
 };
 
 export type WorktreeOuterCreateDeps = {
@@ -205,8 +211,17 @@ export async function rebaseNewWorktreeOntoRemote(
   }
   if (settings.worktreeRebaseBeforeMerge === false) return;
 
+  /*
+  FNXC:WorktreeRebase 2026-08-09-00:48:
+  Match TaskExecutor.safeLogEntry arity: (taskId, message, undefined, runContext).
+  Tests pin the four-argument breadcrumb shape for enabled skips and failures.
+  */
   const safeLog = (action: string) => {
-    void store.logEntry(taskId, action).catch(() => undefined);
+    try {
+      void Promise.resolve(store.logEntry(taskId, action, undefined, undefined)).catch(() => undefined);
+    } catch {
+      // best-effort breadcrumb
+    }
   };
 
   let remote = settings.worktreeRebaseRemote?.trim() || "";

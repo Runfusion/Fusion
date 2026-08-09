@@ -22,7 +22,6 @@ import { classifyWorkflowAgentNode, isWorkflowAgentRole } from "@fusion/core";
 import {
   routeWorkflowPrincipal,
   validateFencedWorkflowPrincipal,
-  type WorkflowPrincipalRouteResult,
 } from "../agents/workflow-agent-router.js";
 import type { WorkflowAgentCapacity } from "../agents/workflow-agent-capacity.js";
 import type { WorkflowNodeResult } from "../workflows/workflow-graph-executor.js";

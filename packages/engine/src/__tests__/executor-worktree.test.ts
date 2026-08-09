@@ -1545,7 +1545,9 @@ describe("TaskExecutor worktree recovery", () => {
 
     mockedExecSync.mockImplementation((cmd: string | string[]) => {
       const command = typeof cmd === "string" ? cmd : cmd[0];
-      if (command.includes('git worktree add -b "fusion/fn-050"')) {
+      // Exact branch only — `"fusion/fn-050"` is a prefix of `"fusion/fn-050-2"`, so a naive
+      // includes() would fail every sibling-rename attempt and recurse forever.
+      if (command.includes('git worktree add -b "fusion/fn-050"') && !command.includes('fusion/fn-050-')) {
         const error: any = new Error(
           `fatal: 'fusion/fn-050' is already used by worktree at '${conflictPath}'`,
         );
@@ -1607,7 +1609,8 @@ describe("TaskExecutor worktree recovery", () => {
 
     mockedExecSync.mockImplementation((cmd: string | string[]) => {
       const command = typeof cmd === "string" ? cmd : cmd[0];
-      if (command.includes('git worktree add -b "fusion/fn-050"')) {
+      // Exact branch only — avoid matching sibling rename branches (fusion/fn-050-2, …).
+      if (command.includes('git worktree add -b "fusion/fn-050"') && !command.includes("fusion/fn-050-")) {
         const error: any = new Error("fatal: A branch named 'fusion/fn-050' already exists.");
         error.stderr = Buffer.from(error.message);
         throw error;
