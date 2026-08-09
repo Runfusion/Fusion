@@ -290,14 +290,6 @@ export async function isUnplannedForExecution(store: TaskStore, task: Task, ir: 
   if (task.status === "needs-replan") return true;
 
   /*
-  FNXC:DuplicateIntake 2026-08-09-01:02:
-  The title is already durable task state, so its exact redirect must hold capacity before the
-  store capability check and prompt read. This keeps title-only redirects non-dispatchable even
-  for adapters without task directories or during prompt I/O failures.
-  */
-  if (isDuplicateRedirectOnlyPrompt(null, task.title)) return true;
-
-  /*
   FNXC:WorkflowScheduling 2026-07-19-02:10 (U4):
   Gate the bootstrap-stub check on the TRAIT, not the literal "todo" id. An
   unplanned card rests in a pre-wip column — an `intake` column (Ideas / the
@@ -321,7 +313,7 @@ export async function isUnplannedForExecution(store: TaskStore, task: Task, ir: 
     A DUPLICATE-only PROMPT is unplanned for execution (FN-8704). Hold capacity release
     until triage writes a real plan — filesystem validation is the twin of this check.
     */
-    if (isDuplicateRedirectOnlyPrompt(promptContent, task.title)) return true;
+    if (isDuplicateRedirectOnlyPrompt(promptContent)) return true;
     return isUnplannedSeedPrompt(promptContent, task.id, task.title, task.description);
   } catch {
     // Missing prompt is handled by filesystem validation elsewhere; do not block on it here.

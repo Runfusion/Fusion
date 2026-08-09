@@ -738,10 +738,15 @@ export function buildCliAgentAwaitingInputNotificationPayload(input: {
  * await runtime.stop();
  * ```
  */
+/*
+FNXC:CodeOrganization 2026-08-03-12:15:
+Match executor formatGitRepositoryDetectionError: never interpolate the working directory into the
+copy-paste safe.directory shell remedy (quote/metachar injection if pasted). Path stays in prose only.
+*/
 function formatRuntimeGitDetectionWarning(workingDirectory: string, detection: Extract<GitRepoDetection, { status: "error" }>): string {
   const stderr = detection.stderr.trim() || "git rev-parse --git-dir failed without stderr";
   const remedy = detection.reason === "dubious-ownership"
-    ? ` Resolve Git safe-directory ownership with: git config --global --add safe.directory "${workingDirectory}"`
+    ? " Resolve Git safe-directory ownership with: git config --global --add safe.directory <project-directory>"
     : "";
   return `Project directory "${workingDirectory}" could not be verified as a Git repository. ` +
     `Task execution will fail until the Git error is resolved. Git reported: ${stderr}.${remedy}`;

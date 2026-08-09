@@ -54,10 +54,46 @@ import { fileURLToPath } from "node:url";
 import ts from "typescript";
 
 const EXECUTOR_PATH = join(dirname(fileURLToPath(import.meta.url)), "..", "executor.ts");
+/*
+FNXC:CodeOrganization 2026-08-03-15:05 (U4 handleGraphFailure peel):
+handleGraphFailure's junction-box body lives in executor/handle-graph-failure.ts as a free
+function; the class method is a thin deps-bag facade. The U8 ownership ledger must measure the
+real disposition sites (deps.store.moveTask / deps.handoffTaskToReview / status:"failed"), not
+the facade, or every count collapses to zero while nothing about ownership changed.
+
+FNXC:CodeOrganization 2026-08-03-16:15 (U4 runImplementation peel):
+Same for runImplementation — the ~3.4k-line junction box is executor/run-implementation.ts.
+*/
+const HANDLE_GRAPH_FAILURE_PATH = join(
+  dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "executor",
+  "handle-graph-failure.ts",
+);
+const RUN_IMPLEMENTATION_PATH = join(
+  dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "executor",
+  "run-implementation.ts",
+);
 
 const SOURCE_FILE = ts.createSourceFile(
   EXECUTOR_PATH,
   readFileSync(EXECUTOR_PATH, "utf8"),
+  ts.ScriptTarget.ESNext,
+  /* setParentNodes */ true,
+);
+
+const HANDLE_GRAPH_FAILURE_SOURCE = ts.createSourceFile(
+  HANDLE_GRAPH_FAILURE_PATH,
+  readFileSync(HANDLE_GRAPH_FAILURE_PATH, "utf8"),
+  ts.ScriptTarget.ESNext,
+  /* setParentNodes */ true,
+);
+
+const RUN_IMPLEMENTATION_SOURCE = ts.createSourceFile(
+  RUN_IMPLEMENTATION_PATH,
+  readFileSync(RUN_IMPLEMENTATION_PATH, "utf8"),
   ts.ScriptTarget.ESNext,
   /* setParentNodes */ true,
 );
@@ -81,10 +117,31 @@ function methodBody(name: string): ts.Block {
 }
 
 /**
- * Count call expressions of `this.<property>.…(…)` shapes inside a method body.
- * `member` is the dotted path after `this.` — e.g. `store.moveTask` or `handoffTaskToReview`.
+ * Free-function body by name (U4 peels). Same throw-on-miss discipline as methodBody.
+ */
+function freeFunctionBody(sourceFile: ts.SourceFile, name: string): ts.Block {
+  let found: ts.Block | undefined;
+  const visit = (node: ts.Node): void => {
+    if (ts.isFunctionDeclaration(node) && node.name?.text === name && node.body) {
+      if (found) throw new Error(`ambiguous free function name: ${name}`);
+      found = node.body;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  if (!found) throw new Error(`free function not found: ${name}`);
+  return found;
+}
+
+/**
+ * Count call expressions of `this.<property>.…(…)` or `deps.<property>.…(…)` shapes inside a
+ * method/free-function body.
+ * `member` is the dotted path after the receiver — e.g. `store.moveTask` or `handoffTaskToReview`.
  * Matching on the callee EXPRESSION (not text) is what makes a call inside a string impossible
  * to miscount, and a renamed-but-equivalent call impossible to miss.
+ *
+ * FNXC:CodeOrganization 2026-08-03-15:05: U4 peels rewrite `this.X` to `deps.X`; accept either
+ * receiver so the ledger tracks dispositions after the peel without redefining ownership.
  */
 function countCalls(body: ts.Block, member: string): number {
   const path = member.split(".");
@@ -95,7 +152,8 @@ function countCalls(body: ts.Block, member: string): number {
       if (!ts.isPropertyAccessExpression(current) || current.name.text !== path[i]) return false;
       current = current.expression;
     }
-    return current.kind === ts.SyntaxKind.ThisKeyword;
+    if (current.kind === ts.SyntaxKind.ThisKeyword) return true;
+    return ts.isIdentifier(current) && current.text === "deps";
   };
   const visit = (node: ts.Node): void => {
     if (ts.isCallExpression(node) && matchesPath(node.expression)) total++;
@@ -137,8 +195,8 @@ function countTerminalParks(body: ts.Block): number {
   return total;
 }
 
-const RUN_IMPLEMENTATION = methodBody("runImplementation");
-const HANDLE_GRAPH_FAILURE = methodBody("handleGraphFailure");
+const RUN_IMPLEMENTATION = freeFunctionBody(RUN_IMPLEMENTATION_SOURCE, "runImplementation");
+const HANDLE_GRAPH_FAILURE = freeFunctionBody(HANDLE_GRAPH_FAILURE_SOURCE, "handleGraphFailure");
 
 /** The three ways the executor performs a lifecycle disposition itself. */
 const EXECUTOR_OWNED_LABELS = [
@@ -150,9 +208,9 @@ const EXECUTOR_OWNED_LABELS = [
 /** The one way the implementation phase hands the decision back to the graph. */
 const GRAPH_HANDBACK_LABEL = "graph handbacks (graphCompletion)";
 
-function bodyLineCount(body: ts.Block): number {
-  const { line: start } = SOURCE_FILE.getLineAndCharacterOfPosition(body.getStart(SOURCE_FILE));
-  const { line: end } = SOURCE_FILE.getLineAndCharacterOfPosition(body.getEnd());
+function bodyLineCount(body: ts.Block, sourceFile: ts.SourceFile = SOURCE_FILE): number {
+  const { line: start } = sourceFile.getLineAndCharacterOfPosition(body.getStart(sourceFile));
+  const { line: end } = sourceFile.getLineAndCharacterOfPosition(body.getEnd());
   return end - start + 1;
 }
 
@@ -207,10 +265,11 @@ describe("U8 execution-lifecycle ownership ledger", () => {
   something else while still reporting a comfortable pass.
   */
   it("extracts both junction-box method bodies at their real size", () => {
-    expect(bodyLineCount(RUN_IMPLEMENTATION)).toBeGreaterThan(2000);
-    expect(bodyLineCount(RUN_IMPLEMENTATION)).toBeLessThan(4500);
-    expect(bodyLineCount(HANDLE_GRAPH_FAILURE)).toBeGreaterThan(500);
-    expect(bodyLineCount(HANDLE_GRAPH_FAILURE)).toBeLessThan(1600);
+    // Free-function bodies after U4 peels — still the multi-k junction boxes, not facades.
+    expect(bodyLineCount(RUN_IMPLEMENTATION, RUN_IMPLEMENTATION_SOURCE)).toBeGreaterThan(2000);
+    expect(bodyLineCount(RUN_IMPLEMENTATION, RUN_IMPLEMENTATION_SOURCE)).toBeLessThan(4500);
+    expect(bodyLineCount(HANDLE_GRAPH_FAILURE, HANDLE_GRAPH_FAILURE_SOURCE)).toBeGreaterThan(500);
+    expect(bodyLineCount(HANDLE_GRAPH_FAILURE, HANDLE_GRAPH_FAILURE_SOURCE)).toBeLessThan(1600);
   });
 
   it("runImplementation: executor-owned dispositions match the ledger", () => {

@@ -109,6 +109,6 @@ export function isTaskAwaitingPlanning(
   A duplicate-only PROMPT is unplanned for execution — badge and triage must agree with
   scheduler filesystem validation so the card shows "Queued to plan", not Ready.
   */
-  if (isDuplicateRedirectOnlyPrompt(promptContent, task.title)) return true;
+  if (isDuplicateRedirectOnlyPrompt(promptContent)) return true;
   return isUnplannedSeedPrompt(promptContent, task.id, task.title, task.description);
 }
