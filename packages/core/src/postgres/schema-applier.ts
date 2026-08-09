@@ -56,8 +56,9 @@ capacity-model table drop that landed while this PR was open.
 */
 /* FNXC:CrossProcessDeleteObservation 2026-08-01-11:39: advance the schema ceiling so durable consumer state exists before observers begin polling FN-8684's outbox. */
 /* FNXC:MissionValidation 2026-08-01-16:21: advance the schema ceiling before validator admission reads durable content fingerprints. */
-/* FNXC:PrMergeEventDrivenChecks 2026-08-09-14:35: SCHEMA_BASELINE_VERSION advances to 0048 for project-scoped GitHub CI check state. */
-export const SCHEMA_BASELINE_VERSION = "0048";
+/* FNXC:PrMergeEventDrivenChecks 2026-08-09-14:35: 0048 registers project-scoped GitHub CI check state. */
+/** FNXC:AgentActivityStream 2026-08-09-21:32: 0049 follows the landed 0048 GitHub check-state migration so upgraded projects receive the durable activity outbox. */
+export const SCHEMA_BASELINE_VERSION = "0049";
 /** FNXC:SymbolLock 2026-07-20-10:00: upgrades need durable task declarations before admission resolves symbols. */
 export const TASK_DECLARED_SYMBOLS_VERSION = "0028";
 const INITIAL_SCHEMA_VERSION = "0000";
@@ -196,6 +197,8 @@ export const WORKFLOW_PRINCIPAL_FENCE_VERSION = "0046";
 export const TASK_RECOMMENDATIONS_VERSION = "0047";
 /** FNXC:PrMergeEventDrivenChecks 2026-08-09-14:35: explicit registration prevents event-driven merge state migration from being skipped. */
 export const GITHUB_CHECK_STATES_VERSION = "0048";
+/** FNXC:AgentActivityStream 2026-08-09-21:32: Migration 0049 avoids the already-landed 0048 bookkeeping identity. */
+export const AGENT_ACTIVITY_EVENTS_VERSION = "0049";
 
 /** SECURITY DEFINER helper that only inserts LEGACY_ADOPTION_DRAINED_MARKER. */
 export const LEGACY_ADOPTION_DRAINED_MARKER_FUNCTION = "fusion_mark_legacy_adoption_drained";
@@ -418,6 +421,7 @@ const MULTI_ROLE_WORKFLOW_AGENTS_MIGRATION_PATH = join(MIGRATIONS_DIR, "0045_fn_
 const WORKFLOW_PRINCIPAL_FENCE_MIGRATION_PATH = join(MIGRATIONS_DIR, "0046_fn_8764_workflow_principal_fence.sql");
 const TASK_RECOMMENDATIONS_MIGRATION_PATH = join(MIGRATIONS_DIR, "0047_fn_8829_task_recommendations.sql");
 const GITHUB_CHECK_STATES_MIGRATION_PATH = join(MIGRATIONS_DIR, "0048_fn_8903_github_check_states.sql");
+const AGENT_ACTIVITY_EVENTS_MIGRATION_PATH = join(MIGRATIONS_DIR, "0049_fn_8864_agent_activity_events.sql");
 
 /**
  * Ensure the migration bookkeeping table exists. Lives in the public schema so
@@ -536,6 +540,7 @@ export async function applySchemaBaseline(
     const workflowPrincipalFenceAlreadyApplied = applied.includes(WORKFLOW_PRINCIPAL_FENCE_VERSION);
     const taskRecommendationsAlreadyApplied = applied.includes(TASK_RECOMMENDATIONS_VERSION);
     const githubCheckStatesAlreadyApplied = applied.includes(GITHUB_CHECK_STATES_VERSION);
+    const agentActivityEventsAlreadyApplied = applied.includes(AGENT_ACTIVITY_EVENTS_VERSION);
     assertBinaryNotOlderThanDatabase(applied);
     let schemaChanged = false;
 
@@ -1174,6 +1179,12 @@ export async function applySchemaBaseline(
       schemaChanged = true;
     }
 
+    if (!agentActivityEventsAlreadyApplied) {
+      const migrationSql = await readFile(AGENT_ACTIVITY_EVENTS_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${AGENT_ACTIVITY_EVENTS_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
     return { applied: schemaChanged, pluginHooksRun: pluginHooks.length };
   });
 }

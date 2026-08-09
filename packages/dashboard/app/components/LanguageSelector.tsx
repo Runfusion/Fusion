@@ -11,6 +11,7 @@ const ENDONYMS: Record<Locale, string> = {
   fr: "Français",
   es: "Español",
   ko: "한국어",
+  "pt-BR": "Português (Brasil)",
 };
 
 /** Settings control for choosing the UI language. Applies in place (no reload). */

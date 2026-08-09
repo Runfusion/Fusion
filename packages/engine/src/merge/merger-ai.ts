@@ -69,6 +69,7 @@ import { advanceIntegrationBranchRef } from "./merger-ref-update-advance.js";
 import { createResolvedAgentSession, resolveMergerSessionModel, resolveMergerThinkingLevel, resolveMergerFallbackThinkingLevel, resolveValidatorThinkingLevel } from "../agents/agent-session-helpers.js";
 import { promptWithFallback } from "../pi.js";
 import { AgentLogger } from "../agents/agent-logger.js";
+import { attachAgentUsageTelemetry, emitAgentSessionStart } from "../agents/agent-usage-telemetry.js";
 import { withRateLimitRetry } from "../errors/rate-limit-retry.js";
 import { checkSessionError } from "../errors/usage-limit-detector.js";
 import { accumulateSessionTokenUsage } from "../execution/session-token-usage.js";
@@ -427,6 +428,8 @@ function makeMutatingAgent(store: TaskStore, settings: Settings, taskId: string,
         ? (_id: string, name: string) => options.onAgentTool?.(name)
         : undefined,
     });
+    { attachAgentUsageTelemetry(logger, { store, agentId: task?.assignedAgentId ?? null, taskId, nodeId: task?.effectiveNodeId ?? task?.nodeId ?? null, model: model.modelId ?? null, provider: model.provider ?? null, lane: "merger" }); }
+
     const { session } = await createResolvedAgentSession({
       sessionPurpose: "merger",
       pluginRunner: options.pluginRunner,
@@ -450,6 +453,7 @@ function makeMutatingAgent(store: TaskStore, settings: Settings, taskId: string,
       mcpServers: (await resolveMcpServersForStore(store)).servers,
       taskId,
     });
+    emitAgentSessionStart({ store, agentId: task?.assignedAgentId ?? null, taskId, nodeId: task?.effectiveNodeId ?? task?.nodeId ?? null, model: model.modelId ?? null, provider: model.provider ?? null, lane: "merger" });
     options.onSession?.(session);
     try {
       await withRateLimitRetry(async () => {
@@ -494,6 +498,8 @@ function makeReviewAgent(store: TaskStore, settings: Settings, taskId: string, o
         ? (_id: string, name: string) => options.onAgentTool?.(name)
         : undefined,
     });
+    { attachAgentUsageTelemetry(logger, { store, agentId: task?.assignedAgentId ?? null, taskId, nodeId: task?.effectiveNodeId ?? task?.nodeId ?? null, model: model.modelId ?? null, provider: model.provider ?? null, lane: "merger" }); }
+
     const { session } = await createResolvedAgentSession({
       sessionPurpose: "merger",
       pluginRunner: options.pluginRunner,
@@ -520,6 +526,7 @@ function makeReviewAgent(store: TaskStore, settings: Settings, taskId: string, o
       mcpServers: (await resolveMcpServersForStore(store)).servers,
       taskId,
     });
+    emitAgentSessionStart({ store, agentId: task?.assignedAgentId ?? null, taskId, nodeId: task?.effectiveNodeId ?? task?.nodeId ?? null, model: model.modelId ?? null, provider: model.provider ?? null, lane: "merger" });
     options.onSession?.(session);
     try {
       await withRateLimitRetry(async () => {

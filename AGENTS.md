@@ -337,6 +337,7 @@ Scoped exception (FN-5819/FN-8823): while project auto-merge is On, shared-branc
 - `./docs/workflow-steps.md` — prompt/script gates and merge-blocking behavior.
 - `./docs/secrets.md` — secrets policy and tooling behavior.
 - `./docs/diagnostics.md` — engine diagnostic logging conventions.
+- `./docs/agent-activity-contract.md` — inspectable `/api/agent-activity` wire, cursor, and retention contract.
 - `./docs/task-management.md` — archive cleanup and restore semantics.
 - `./docs/soft-delete-verification-matrix.md` — mandatory soft-delete verification matrix.
 - `./docs/cli-reference.md` — CLI and terminal UI reference.

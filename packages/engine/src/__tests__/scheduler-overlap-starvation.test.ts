@@ -608,6 +608,82 @@ describe("scheduler overlap starvation regression (FN-057)", () => {
     ]);
   });
 
+  /*
+  FNXC:TaskDispatch 2026-08-09-21:04:
+  These scheduler fixtures prove hard dependency and active-lease filters run
+  before the new priority → age release order consumes capacity. Their limits
+  deliberately match occupancy: dependency uses one empty slot; lease uses two
+  slots because the live holder consumes one; competing holds use one empty slot.
+  */
+  it("does not let an older urgent task with an unmet dependency consume the ready slot", async () => {
+    const tasks = [
+      makeTask({ id: "FN-BLOCKER", column: "triage", priority: "normal" }),
+      makeTask({
+        id: "FN-OLDER-URGENT",
+        column: "todo",
+        priority: "urgent",
+        dependencies: ["FN-BLOCKER"],
+        createdAt: "2026-01-01T00:00:00.000Z",
+      }),
+      makeTask({ id: "FN-READY-NORMAL", column: "todo", priority: "normal", createdAt: "2026-01-02T00:00:00.000Z" }),
+    ];
+    // Limit 1 and no in-progress occupant: only the dispatchable held peer may take this slot.
+    const store = createStore(tasks, {}, { maxConcurrent: 1 });
+    const scheduler = new Scheduler(store);
+    (scheduler as any).running = true;
+
+    await scheduler.schedule();
+
+    expect(store.moveTask).toHaveBeenCalledWith("FN-READY-NORMAL", "in-progress", expect.anything());
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-OLDER-URGENT", "in-progress", expect.anything());
+    expect(store.updateTask).toHaveBeenCalledWith("FN-OLDER-URGENT", { status: "queued", blockedBy: "FN-BLOCKER" });
+  });
+
+  it("does not let an older urgent task blocked by an active lease starve disjoint work", async () => {
+    const tasks = [
+      makeTask({ id: "FN-LEASE-HOLDER", column: "in-progress", priority: "normal" }),
+      makeTask({ id: "FN-OLDER-URGENT", column: "todo", priority: "urgent", createdAt: "2026-01-01T00:00:00.000Z" }),
+      makeTask({ id: "FN-READY-NORMAL", column: "todo", priority: "normal", createdAt: "2026-01-02T00:00:00.000Z" }),
+    ];
+    // Limit 2: the in-progress lease holder occupies one slot, leaving one for the disjoint candidate.
+    const store = createStore(tasks, {
+      "FN-LEASE-HOLDER": ["packages/engine/src/scheduler.ts"],
+      "FN-OLDER-URGENT": ["packages/engine/src/scheduler.ts"],
+      "FN-READY-NORMAL": ["packages/core/src/store.ts"],
+    }, { maxConcurrent: 2 });
+    const scheduler = new Scheduler(store);
+    (scheduler as any).running = true;
+
+    await scheduler.schedule();
+
+    expect(store.moveTask).toHaveBeenCalledWith("FN-READY-NORMAL", "in-progress", expect.anything());
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-OLDER-URGENT", "in-progress", expect.anything());
+    expect(store.updateTask).toHaveBeenCalledWith("FN-OLDER-URGENT", {
+      status: "queued",
+      blockedBy: null,
+      overlapBlockedBy: "FN-LEASE-HOLDER",
+    });
+  });
+
+  it("lets the older same-priority overlapping peer claim the only empty slot", async () => {
+    const tasks = [
+      makeTask({ id: "FN-NEWER", column: "todo", priority: "normal", createdAt: "2026-01-02T00:00:00.000Z" }),
+      makeTask({ id: "FN-OLDER", column: "todo", priority: "normal", createdAt: "2026-01-01T00:00:00.000Z" }),
+    ];
+    // Limit 1 with zero in-progress occupants: the two overlapping holds compete for exactly one slot.
+    const store = createStore(tasks, {
+      "FN-OLDER": ["packages/engine/src/scheduler.ts"],
+      "FN-NEWER": ["packages/engine/src/scheduler.ts"],
+    }, { maxConcurrent: 1 });
+    const scheduler = new Scheduler(store);
+    (scheduler as any).running = true;
+
+    await scheduler.schedule();
+
+    expect(store.moveTask).toHaveBeenCalledWith("FN-OLDER", "in-progress", expect.anything());
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-NEWER", "in-progress", expect.anything());
+  });
+
   it("clears an absent overlap blocker only after confirming no current overlap remains", async () => {
     const tasks = [
       makeTask({ id: "FN-901", column: "todo", status: "queued", priority: "normal", overlapBlockedBy: "FN-MISSING" }),

@@ -86,6 +86,7 @@ import {
 } from "@fusion/core";
 import { GitHubClient } from "../github.js";
 import { resolveArtifactMediaPath } from "../artifact-media.js";
+import { archivedColumnsForTask } from "../task-lifecycle-lanes.js";
 import { githubRateLimiter } from "../github-poll.js";
 import { createTrackingIssueForTask } from "../github-tracking-hook.js";
 import { parseGitHubBadgeUrl } from "./register-git-github.js";
@@ -356,7 +357,6 @@ async function resolveTerminalColumnsForTask(store: TaskStore, taskId: string): 
     return new Set(["done", "archived"]);
   }
 }
-
 
 function isArtifactType(value: string): value is ArtifactType {
   return ARTIFACT_TYPES.has(value as ArtifactType);
@@ -1630,6 +1630,8 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         breakIntoSubtasks,
         enabledWorkflowSteps,
         workflowId,
+        agentId,
+        assignedAgentId,
         modelPresetId,
         modelProvider,
         modelId,
@@ -1741,6 +1743,12 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       // the store below (mapped to 4xx in the catch handler).
       if (workflowId !== undefined && workflowId !== null && typeof workflowId !== "string") {
         throw badRequest("workflowId must be a string or null");
+      }
+
+      // The public aliases normalize once; owner eligibility is enforced by the shared store boundary.
+      const requestedOwnerId = assignedAgentId ?? agentId;
+      if (requestedOwnerId !== undefined && (typeof requestedOwnerId !== "string" || requestedOwnerId.trim() === "")) {
+        throw badRequest("agentId must be a non-empty string");
       }
 
       // Check for summarize flag in request
@@ -2076,6 +2084,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         // U6/R3: forward only when the client set it (string | null). Leaving it
         // absent preserves the project-default inheritance behavior.
         ...(workflowId !== undefined ? { workflowId: workflowId as string | null } : {}),
+        ...(typeof requestedOwnerId === "string" ? { assignedAgentId: requestedOwnerId.trim() } : {}),
         modelPresetId: validateOptionalModelField(modelPresetId, "modelPresetId"),
         modelProvider: executorModel.provider ?? undefined,
         modelId: executorModel.modelId ?? undefined,
@@ -2127,18 +2136,23 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       canonical lets the original claimed child return to its workflow-resolved intake lane.
       */
       if (trusted?.recoverArchivedProposalTask) {
-        const restoredTask = await scopedStore.unarchiveTask(trusted.recoverArchivedProposalTask.id);
         /*
         FNXC:TaskRecommendations 2026-08-08-08:44:
         A deterministic-duplicate archive is a lane move, not an operator archive, so it has no
         pre-archive history for generic restore to replay. Re-home its recovered child to that
         child's workflow intake explicitly; otherwise custom workflows can restore it to a legacy
         fallback or complete lane instead of the normal guarded-intake destination.
+
+        FNXC:TaskRecommendations 2026-08-09-06:06:
+        Never call the cold-storage unarchive path here. Deterministic reconciliation keeps the row in
+        active storage and may move it to a custom archived-trait lane; re-home that live row directly
+        through the explicit recovery bypass because archive-to-intake is intentionally non-adjacent.
         */
-        const intakeColumn = await resolveIntakeColumnForTask(scopedStore, restoredTask.id);
-        const recoveredTask = restoredTask.column === intakeColumn
-          ? restoredTask
-          : await scopedStore.moveTask(restoredTask.id, intakeColumn);
+        const archivedTask = trusted.recoverArchivedProposalTask;
+        const intakeColumn = await resolveIntakeColumnForTask(scopedStore, archivedTask.id);
+        const recoveredTask = archivedTask.column === intakeColumn
+          ? archivedTask
+          : await scopedStore.moveTask(archivedTask.id, intakeColumn, { recoveryRehome: true });
         const trustedCreateResult = await trusted.onCreated?.(recoveredTask);
         res.status(200).json(trusted.responseForCreated?.(recoveredTask, trustedCreateResult) ?? recoveredTask);
         return;
@@ -2241,7 +2255,8 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         message.includes("must be a string")
         || message.includes("must be an array of strings")
         || /^Workflow '.*' not found$/.test(message)
-        || /is a fragment and cannot be selected/.test(message);
+        || /is a fragment and cannot be selected/.test(message)
+        || message.startsWith("Task intake owner resolution failed:");
       const status = isClientError ? 400 : 500;
       throw new ApiError(status, message);
     }
@@ -2339,13 +2354,16 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
           throw conflict("Recommendation link is malformed");
         }
         const linked = await scopedStore.getTask(recommendation.createdTaskId).catch(() => null);
+        const linkedArchiveColumns = linked
+          ? await archivedColumnsForTask(scopedStore, linked.id)
+          : new Set<string>();
         /*
         FNXC:TaskRecommendations 2026-08-08-06:34:
         A prior link is reusable only while its child remains in a live task lane. Archived and
         soft-deleted children are historical records, not an actionable Created result; conflict
         rather than silently resurrecting or linking a second child.
         */
-        if (!linked || linked.deletedAt || linked.column === "archived") {
+        if (!linked || linked.deletedAt || linkedArchiveColumns.has(linked.column)) {
           throw conflict("Recommendation link points to an unavailable task");
         }
         return res.status(200).json({ task: linked, parent });
@@ -2360,16 +2378,9 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       */
       const existing = (await scopedStore.listTasks({ slim: false, includeArchived: true, includeDeleted: true }))
         .find((task) => task.proposalClaimId === proposalClaimId);
-      const existingArchiveColumns = await (async () => {
-        if (!existing) return new Set<string>();
-        try {
-          const ir = await resolveWorkflowIrForTask(scopedStore, existing.id);
-          const columns = columnsWithFlag(ir, "archived");
-          return new Set(columns.length > 0 ? columns : ["archived"]);
-        } catch {
-          return new Set(["archived"]);
-        }
-      })();
+      const existingArchiveColumns = existing
+        ? await archivedColumnsForTask(scopedStore, existing.id)
+        : new Set<string>();
       /*
       FNXC:TaskRecommendations 2026-08-08-08:44:
       Deterministic reconciliation moves a child to its workflow's archived trait, which may be

@@ -594,6 +594,23 @@ export const taskLifecycleEventSeq = projectSchema.table("task_lifecycle_event_s
   lastSeq: bigint("last_seq", { mode: "bigint" }).notNull().default(sql`0`),
 }, (t) => [primaryKey({ columns: [t.projectId] })]);
 
+
+/* FNXC:AgentActivityStream 2026-08-09-09:09: durable project-scoped agent activity uses a transactional counter so commit order is the cursor order. */
+export const agentActivityEvents = projectSchema.table("agent_activity_events", {
+  projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
+  seq: bigint("seq", { mode: "bigint" }).notNull(), eventId: text("event_id").notNull(),
+  agentId: text("agent_id").notNull(), agentAttribution: text("agent_attribution").notNull(),
+  taskId: text("task_id"), type: text("type").notNull(), fromAgentId: text("from_agent_id"), toAgentId: text("to_agent_id"),
+  summary: text("summary").notNull(), occurredAt: text("occurred_at").notNull(), createdAt: text("created_at").notNull(), metadata: jsonb("metadata"),
+}, (t) => [
+  primaryKey({ columns: [t.projectId, t.seq] }), unique("agent_activity_events_project_event_unique").on(t.projectId, t.eventId),
+  index("idxAgentActivityEventsSeq").on(t.projectId, t.seq), index("idxAgentActivityEventsAgentSeq").on(t.projectId, t.agentId, t.seq),
+  index("idxAgentActivityEventsTaskSeq").on(t.projectId, t.taskId, t.seq), index("idxAgentActivityEventsTypeSeq").on(t.projectId, t.type, t.seq),
+]);
+export const agentActivityEventSeq = projectSchema.table("agent_activity_event_seq", {
+  projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`), lastSeq: bigint("last_seq", { mode: "bigint" }).notNull().default(sql`0`),
+}, (t) => [primaryKey({ columns: [t.projectId] })]);
+
 /*
 FNXC:CrossProcessDeleteObservation 2026-08-01-11:39:
 The transactional delete outbox needs durable state per independently observing identity.
@@ -2431,6 +2448,6 @@ export const projectTableNames = [
   "mission_validator_runs", "mission_validator_failures",
   "mission_fix_feature_lineage", "verification_cache", "import_translation_cache",
   "approval_requests",
-  "approval_request_audit_events", "chat_rooms", "chat_room_members",
+  "approval_request_audit_events", "agent_activity_events", "agent_activity_event_seq", "chat_rooms", "chat_room_members",
   "chat_room_messages", "chat_token_usage",
 ] as const;

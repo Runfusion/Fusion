@@ -19,11 +19,15 @@ function savePlanningItem(baseKey: string, value: string, projectId?: string): v
   } catch {
     try {
       removeScopedItem(baseKey, projectId);
-    } catch {}
+    } catch {
+      // Best-effort eviction; ignore cleanup failures so planning continues.
+    }
 
     try {
       setScopedItem(baseKey, value, projectId);
-    } catch {}
+    } catch {
+      // Best-effort retry; ignore storage failures so planning continues.
+    }
   }
 }
 

@@ -44,6 +44,7 @@ import { Type, type Static } from "@earendil-works/pi-ai";
 import { createHash } from "node:crypto";
 import { createTaskCreateTool, createTaskLogToolWithContext, createTaskLogsReadTool, createTaskDocumentWriteTool, createTaskDocumentReadTool, createTaskReadTools, createArtifactRegisterTool, createArtifactListTool, createArtifactViewTool, createListAgentsTool, createDelegateTaskTool, createTaskAssignTool, createGetAgentConfigTool, createUpdateAgentConfigTool, createAgentCreateTool, createAgentDeleteTool, createSendMessageTool, createReadMessagesTool, createPostRoomMessageTool, createMemoryTools, createGoalRetrievalTools, createMissionTools, createIdeationTools, createReadEvaluationsTool, createUpdateIdentityTool, createReflectOnPerformanceTool, createWebFetchTool, createWorkflowListTool, createWorkflowGetTool, createWorkflowValidateTool, createWorkflowSelectTool, createTaskPromoteTool, createWorkflowCreateTool, createWorkflowUpdateTool, createWorkflowDeleteTool, createWorkflowSettingsTool, createTraitListTool, createAskQuestionTool, createResearchTools, readAgentMemoryWorkspaceLongTerm, taskCreateParams } from "./agent-tools.js";
 import { AgentLogger } from "./agents/agent-logger.js";
+import { attachAgentUsageTelemetry, emitAgentSessionStart } from "./agents/agent-usage-telemetry.js";
 import { emitApprovalMail } from "./agents/approval-mail.js";
 import {
   resolveAgentInstructionsWithRatings,
@@ -2868,6 +2869,7 @@ export class HeartbeatMonitor {
             persistAgentToolOutput: memorySettings?.persistAgentToolOutput,
             persistAgentThinkingLog: resolvePersistAgentThinkingLog(memorySettings, { ephemeral: isAgentEphemeral }),
           });
+          attachAgentUsageTelemetry(agentLogger, { store: taskStore, agentId, taskId: null, nodeId: null, lane: "heartbeat" });
         } else if (taskId) {
           agentLogger = new AgentLogger({
             store: taskStore,
@@ -2877,6 +2879,7 @@ export class HeartbeatMonitor {
             persistAgentToolOutput: memorySettings?.persistAgentToolOutput,
             persistAgentThinkingLog: resolvePersistAgentThinkingLog(memorySettings, { ephemeral: isAgentEphemeral }),
           });
+          attachAgentUsageTelemetry(agentLogger, { store: taskStore, agentId, taskId, nodeId: taskDetail?.effectiveNodeId ?? taskDetail?.nodeId ?? null, lane: "heartbeat" });
         }
 
         const isModelUnavailableError = (errorMessage: string): boolean => {
@@ -3064,6 +3067,19 @@ export class HeartbeatMonitor {
           ? await mergeEffectiveSettings(taskStore, taskDetail, heartbeatBaseSettings)
           : await mergeProjectWorkflowModelLaneBaseline(taskStore, heartbeatBaseSettings);
         const heartbeatSessionModels = resolveHeartbeatSessionModels(heartbeatModelSettings, agent.runtimeConfig);
+        // FNXC:CommandCenterActivity 2026-08-09-11:12: Heartbeat model selection happens after
+        // logger construction, so refresh telemetry before the session boundary and tool callbacks.
+        attachAgentUsageTelemetry(agentLogger, {
+          store: taskStore,
+          agentId,
+          taskId: taskId ?? null,
+          nodeId: taskDetail?.effectiveNodeId ?? taskDetail?.nodeId ?? null,
+          model: heartbeatSessionModels.defaultModelId ?? null,
+          provider: heartbeatSessionModels.defaultProvider ?? null,
+          lane: "heartbeat",
+          ephemeral: isAgentEphemeral,
+          runId: run.id,
+        });
         /*
          * FNXC:McpConfig 2026-06-26-00:00:
          * Heartbeat runs are coding-capable agent-work sessions, so configured MCP servers must be resolved with the waking agent identity and forwarded like executor/chat lanes. Log only server counts and resolution error counts; resolved env/header contents may contain materialized secrets.
@@ -3113,6 +3129,17 @@ export class HeartbeatMonitor {
           ...(skillContext.additionalSkillPaths.length > 0 ? { additionalSkillPaths: skillContext.additionalSkillPaths } : {}),
           actionGateContext: this.buildActionGateContext(agent, taskId, run.id, heartbeatModelSettings?.defaultAgentPermissionPolicy),
           permanentAgentGating: this.buildPermanentAgentGatingContext(agent, taskId, run.id, heartbeatModelSettings?.defaultAgentPermissionPolicy),
+        });
+        emitAgentSessionStart({
+          store: taskStore,
+          agentId,
+          taskId: taskId ?? null,
+          nodeId: taskDetail?.effectiveNodeId ?? taskDetail?.nodeId ?? null,
+          model: heartbeatSessionModels.defaultModelId ?? null,
+          provider: heartbeatSessionModels.defaultProvider ?? null,
+          lane: "heartbeat",
+          ephemeral: isAgentEphemeral,
+          runId: run.id,
         });
 
         /*
@@ -3643,6 +3670,22 @@ export class HeartbeatMonitor {
                   permanentAgentGating: this.buildPermanentAgentGatingContext(agent, taskId, run.id, heartbeatModelSettings?.defaultAgentPermissionPolicy),
                 });
                 session = created.session;
+                /*
+                FNXC:CommandCenterActivity 2026-08-09-15:06:
+                Credential rotation constructs a replacement AgentSession, so it owns a new
+                boundary event rather than reusing the initial session's accounting.
+                */
+                emitAgentSessionStart({
+                  store: taskStore,
+                  agentId,
+                  taskId: taskId ?? null,
+                  nodeId: taskDetail?.effectiveNodeId ?? taskDetail?.nodeId ?? null,
+                  model: heartbeatSessionModels.defaultModelId ?? null,
+                  provider: heartbeatSessionModels.defaultProvider ?? null,
+                  lane: "heartbeat",
+                  ephemeral: isAgentEphemeral,
+                  runId: run.id,
+                });
                 return next;
               },
             } : undefined,

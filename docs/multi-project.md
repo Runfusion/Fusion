@@ -33,7 +33,7 @@ Fusion stores multi-project and multi-node coordination state in **PostgreSQL**:
 
 **Default (single machine):** unset `DATABASE_URL` → embedded Postgres under `~/.fusion/embedded-postgres/`. That data directory is **local to the host**. Two laptops each running embedded Postgres do **not** share a board.
 
-**Multi-node (shared board):** every Fusion node sets the **same external** `DATABASE_URL` (and `DATABASE_MIGRATION_URL` when the runtime URL is a transaction pooler). All nodes share one database; execution (worktrees, agent processes) stays per node.
+**Multi-node (shared board):** every Fusion node sets the **same external** `DATABASE_URL`. A direct URL needs no duplicate `DATABASE_MIGRATION_URL`; set that override only when the runtime URL is a transaction pooler or schema work needs a separate direct endpoint. All nodes share one database; execution (worktrees, agent processes) stays per node.
 
 Core `central` tables (names as exposed by the data layer; SQL uses snake_case):
 
@@ -59,7 +59,7 @@ Legacy SQLite paths (`~/.fusion/fusion-central.db`, `<repo>/.fusion/fusion.db`) 
 ### Shared Postgres multi-node runbook
 
 1. Provision one Postgres (local Docker, RDS, Supabase, etc.).
-2. On **every** Fusion node: `export DATABASE_URL=...` (same URL). If you use PgBouncer/Supavisor in transaction mode, also set `DATABASE_MIGRATION_URL` to a direct (non-pooled) connection for schema work.
+2. On **every** Fusion node: `export DATABASE_URL=...` (same URL). Do not duplicate a direct URL into `DATABASE_MIGRATION_URL`; if you use PgBouncer/Supavisor in transaction mode, set that override to a direct (non-pooled) connection for schema work and planning lifecycle locks.
 3. Register projects and nodes so they appear in shared `central.projects` / `central.nodes`.
 4. For each host, set `project_node_path_mappings` so that host’s absolute checkout path is recorded for each project.
 5. Run `fn serve` / the engine on each node. Task IDs and settings are shared via Postgres; checkout exclusivity uses `task_claims`; abandoned-owner recovery uses `MeshLeaseManager`.

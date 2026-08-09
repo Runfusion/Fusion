@@ -63,6 +63,7 @@ See the [2026-07-14 PostgreSQL runtime cutover review](./postgres-migration-revi
 - Archived-task snapshot behavior (`taskToArchiveEntry` / `archiveTask`) embeds a capped agent-log snapshot sourced from JSONL.
 - Retention is independent from PostgreSQL operational-log pruning. `settings.agentLogFileRetentionDays` controls age-based pruning of JSONL entries for soft-deleted and archived tasks only. Default: `0` (disabled).
 - PostgreSQL operational-log pruning is controlled separately by `settings.operationalLogRetentionDays`. It prunes `activityLog`, `runAuditEvents`, `agentHeartbeats`, terminal `agentRuns` rows by `endedAt`, and `agentConfigRevisions` by `createdAt`.
+- `project.agent_activity_events` is a separate 30-day, 50,000-row-per-project durable monitoring outbox. Its `agent_activity_event_seq` companion allocates transactional bigint cursors; `agent_activity_events` uses deterministic `(project_id, event_id)` uniqueness for replay-safe activity delivery.
 - Safety invariants for operational pruning: in-flight `agentRuns` (`endedAt IS NULL`) are never deleted, and the most-recent `agentConfigRevisions` row per agent is always preserved even when older than the retention window.
 
 ### Archived-column pagination (FN-7659)

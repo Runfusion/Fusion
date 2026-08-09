@@ -40,7 +40,7 @@ vi.mock("@fusion/core", () => {
   return {
     GlobalSettingsStore: makeConstructibleMock(),
     DEFAULT_SETTINGS,
-    SUPPORTED_LOCALES: ["en", "zh-CN", "zh-TW", "fr", "es", "ko"],
+    SUPPORTED_LOCALES: ["en", "zh-CN", "zh-TW", "fr", "es", "ko", "pt-BR"],
     resolveWorktrunkSettings: (globalValue: any, projectValue: any) => ({
       enabled: projectValue?.enabled ?? globalValue?.enabled ?? false,
       ...(projectValue?.binaryPath ?? globalValue?.binaryPath ? { binaryPath: projectValue?.binaryPath ?? globalValue?.binaryPath } : {}),

@@ -35,6 +35,8 @@ export const FALLBACK_LNG: FallbackLngObjList = {
   "zh-Hans": ["zh-CN"],
   "zh-Hant": ["zh-TW"],
   zh: ["zh-CN"],
+  pt: ["pt-BR"],
+  "pt-PT": ["pt-BR"],
   default: [DEFAULT_LOCALE],
 };
 
@@ -57,6 +59,16 @@ export function normalizeToSupportedLocale(tag: string): Locale | undefined {
   if (isLocale(norm)) return norm;
 
   const lower = norm.toLowerCase();
+  /*
+  FNXC:I18nLocales 2026-08-07-22:55:
+  normalizeToSupportedLocale had an explicit zh branch but no pt one, so the FALLBACK_LNG
+  pt/pt-PT entries were dead on both the CLI env-detection and dashboard browser-detection
+  paths (both funnel through this function, which returned undefined for base "pt"). Any
+  Portuguese region tag (pt, pt-PT, pt_PT.UTF-8) resolves to pt-BR, the only Portuguese
+  catalog Fusion ships; exact "pt-BR" already matches via the isLocale(norm) check above.
+  */
+  const base = lower.split("-")[0];
+  if (base === "pt") return "pt-BR";
   if (lower.startsWith("zh")) {
     // An explicit Simplified script subtag wins over region: zh-Hans-HK /
     // zh-Hans-MO are valid BCP-47 for Simplified Chinese used in HK/Macau.
@@ -72,7 +84,6 @@ export function normalizeToSupportedLocale(tag: string): Locale | undefined {
     return "zh-CN";
   }
 
-  const base = lower.split("-")[0];
   return isLocale(base) ? base : undefined;
 }
 

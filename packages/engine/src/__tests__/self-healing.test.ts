@@ -8836,6 +8836,8 @@ describe("SelfHealingManager", () => {
       vi.setSystemTime(new Date("2026-01-01T00:00:01.000Z"));
 
       expect(await recovery.finalizeOrphanedPlanningSegments()).toBe(1);
+      // Call shape only: the PostgreSQL regression test proves this excludes archive snapshots.
+      expect(recoveryStore.listTasks).toHaveBeenCalledWith(expect.objectContaining({ slim: true, includeArchived: false }));
       expect(updateTaskAtomic).toHaveBeenCalledOnce();
       expect(task).toMatchObject({ cumulativePlanningMs: 1050, planningStartedAt: null });
       expect(recoveryStore.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
@@ -8868,6 +8870,79 @@ describe("SelfHealingManager", () => {
         mutationType: "task:reconcile-orphaned-planning-segment-no-action",
         metadata: { finalizedCount: 0, reason: "no-eligible-orphan" },
       }));
+
+      recovery.stop();
+    });
+
+    it.each([
+      ["before", ["FN-POISON", "FN-HEALTHY"]],
+      ["after", ["FN-HEALTHY", "FN-POISON"]],
+    ])("skips a deleted candidate listed %s a healthy orphan", async (_position, ids) => {
+      const poisoned = { id: "FN-POISON", deletedAt: "2026-08-08T16:42:53.336Z", planningStartedAt: "2026-01-01T00:00:00.000Z" } as Task;
+      const healthy = { id: "FN-HEALTHY", planningStartedAt: "2026-01-01T00:00:00.000Z", cumulativePlanningMs: 50 } as Task;
+      const tasks = ids.map((id) => id === poisoned.id ? poisoned : healthy);
+      const updateTaskAtomic = vi.fn(async (id: string, updater: (live: Task) => Partial<Task> | null) => {
+        const task = id === healthy.id ? healthy : poisoned;
+        const patch = updater(task);
+        if (patch) Object.assign(task, patch);
+        return patch;
+      });
+      const recoveryStore = createMockStore({ listTasks: vi.fn().mockResolvedValue(tasks), updateTaskAtomic });
+      const recovery = new SelfHealingManager(recoveryStore, { rootDir: "/tmp/test-project", getPlanningTaskIds: () => new Set<string>() });
+      vi.setSystemTime(new Date("2026-01-01T00:00:01.000Z"));
+
+      await expect(recovery.finalizeOrphanedPlanningSegments()).resolves.toBe(1);
+      expect(updateTaskAtomic).toHaveBeenCalledTimes(1);
+      expect(updateTaskAtomic).toHaveBeenCalledWith(healthy.id, expect.any(Function));
+      expect(healthy).toMatchObject({ planningStartedAt: null, cumulativePlanningMs: 1050 });
+
+      recovery.stop();
+    });
+
+    it("contains a TOCTOU soft-delete failure and continues with other candidates", async () => {
+      const racing = { id: "FN-RACING", planningStartedAt: "2026-01-01T00:00:00.000Z", cumulativePlanningMs: 50 } as Task;
+      const healthy = { id: "FN-HEALTHY", planningStartedAt: "2026-01-01T00:00:00.000Z", cumulativePlanningMs: 50 } as Task;
+      const updateTaskAtomic = vi.fn(async (id: string, updater: (live: Task) => Partial<Task> | null) => {
+        if (id === racing.id) throw new Error("Task FN-RACING is soft-deleted (deletedAt=2026-08-08T16:42:53.336Z) and cannot be read or mutated");
+        const patch = updater(healthy);
+        if (patch) Object.assign(healthy, patch);
+        return patch;
+      });
+      const recoveryStore = createMockStore({ listTasks: vi.fn().mockResolvedValue([racing, healthy]), updateTaskAtomic });
+      const recovery = new SelfHealingManager(recoveryStore, { rootDir: "/tmp/test-project", getPlanningTaskIds: () => new Set<string>() });
+      getSelfHealingLogger().warn.mockClear();
+      vi.setSystemTime(new Date("2026-01-01T00:00:01.000Z"));
+
+      await expect(recovery.finalizeOrphanedPlanningSegments()).resolves.toBe(1);
+      expect(healthy).toMatchObject({ planningStartedAt: null, cumulativePlanningMs: 1050 });
+      expect(getSelfHealingLogger().warn).toHaveBeenCalledWith(expect.stringContaining("Failed to finalize orphaned planning segment for FN-RACING"));
+
+      recovery.stop();
+    });
+
+    it("contains fallback getTask failures and still finalizes healthy candidates around deleted rows", async () => {
+      const firstPoison = { id: "FN-POISON-1", deletedAt: "2026-08-08T16:42:53.336Z", planningStartedAt: "2026-01-01T00:00:00.000Z" } as Task;
+      const healthy = { id: "FN-HEALTHY", planningStartedAt: "2026-01-01T00:00:00.000Z", cumulativePlanningMs: 50 } as Task;
+      const secondPoison = { id: "FN-POISON-2", planningStartedAt: "2026-01-01T00:00:00.000Z" } as Task;
+      const getTask = vi.fn(async (id: string) => {
+        if (id === secondPoison.id) throw new Error("Task FN-POISON-2 is soft-deleted (deletedAt=2026-08-08T16:42:53.336Z) and cannot be read or mutated");
+        return healthy;
+      });
+      const updateTask = vi.fn(async (_id: string, patch: Partial<Task>) => Object.assign(healthy, patch));
+      const recoveryStore = createMockStore({
+        listTasks: vi.fn().mockResolvedValue([firstPoison, healthy, secondPoison]),
+        updateTaskAtomic: undefined,
+        getTask,
+        updateTask,
+      });
+      const recovery = new SelfHealingManager(recoveryStore, { rootDir: "/tmp/test-project", getPlanningTaskIds: () => new Set<string>() });
+      getSelfHealingLogger().warn.mockClear();
+      vi.setSystemTime(new Date("2026-01-01T00:00:01.000Z"));
+
+      await expect(recovery.finalizeOrphanedPlanningSegments()).resolves.toBe(1);
+      expect(updateTask).toHaveBeenCalledWith(healthy.id, expect.objectContaining({ planningStartedAt: null, cumulativePlanningMs: 1050 }));
+      expect(getTask).not.toHaveBeenCalledWith(firstPoison.id);
+      expect(getSelfHealingLogger().warn).toHaveBeenCalledWith(expect.stringContaining("Failed to finalize orphaned planning segment for FN-POISON-2"));
 
       recovery.stop();
     });

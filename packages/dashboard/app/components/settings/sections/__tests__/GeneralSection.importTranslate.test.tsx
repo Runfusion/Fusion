@@ -147,6 +147,7 @@ describe("GeneralSection - import auto-translate controls", () => {
     expect(select.className).toContain("select");
     expect(select.value).toBe("");
     expect([...select.options].map((o) => o.textContent)).toContain("Follow dashboard language");
+    expect([...select.options].map((o) => o.textContent)).toContain("Português (Brasil)");
   });
 
   it("reflects and stores an explicit target locale", () => {

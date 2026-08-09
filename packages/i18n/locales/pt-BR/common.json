@@ -1,0 +1,244 @@
+{
+  "actions": {
+    "send": "Enviar"
+  },
+  "agents": {
+    "ratings": {
+      "trendDeclining": "↓ Em declínio",
+      "trendImproving": "↑ Melhorando",
+      "trendInsufficient": "Dados insuficientes",
+      "trendStable": "→ Estável"
+    },
+    "reflections": {
+      "triggerManual": "Manual",
+      "triggerPeriodic": "Periódico",
+      "triggerPostTask": "Pós-tarefa",
+      "triggerUserRequested": "Solicitado pelo usuário"
+    },
+    "time": {
+      "daysAgo_one": "há {{count}}d",
+      "daysAgo_other": "há {{count}}d",
+      "hoursAgo_one": "há {{count}}h",
+      "hoursAgo_other": "há {{count}}h",
+      "inAMoment": "em instantes",
+      "inDays_one": "em {{count}}d",
+      "inDays_other": "em {{count}}d",
+      "inHours_one": "em {{count}}h",
+      "inHours_other": "em {{count}}h",
+      "inMinutes_one": "em {{count}}m",
+      "inMinutes_other": "em {{count}}m",
+      "justNow": "agora mesmo",
+      "minutesAgo_one": "há {{count}}m",
+      "minutesAgo_other": "há {{count}}m"
+    }
+  },
+  "board": {
+    "rejection": {
+      "capacityExhausted": "Essa coluna está com capacidade esgotada. Tente novamente quando uma vaga se abrir.",
+      "guardRejected": "Este movimento não é permitido pelo fluxo de trabalho.",
+      "mergeBlocked": "Esta tarefa está bloqueada para conclusão até que sua etapa de merge termine.",
+      "unknownColumn": "Essa coluna não existe no fluxo de trabalho desta tarefa.",
+      "unplannedForExecution": "Esta tarefa ainda não está pronta para execução — o planejamento ou a revisão do plano ainda está pendente.",
+      "workflowMismatch": "Arrastar não pode mover um cartão entre fluxos de trabalho. Use o seletor de fluxo de trabalho."
+    }
+  },
+  "chat": {
+    "failedToGetResponse": "Falha ao obter resposta",
+    "failureReferenceId": "ID",
+    "failureReferenceKind": "Tipo",
+    "failureReferenceLabel": "Referência",
+    "failureReferenceMetaLabel": "Rótulo",
+    "openMailboxMessage": "Abrir mensagem da caixa de entrada",
+    "toolCallArgsPrefix": "args",
+    "toolCallResultPrefix": "resultado",
+    "toolCallsCount_one": "{{count}} chamada de ferramenta",
+    "toolCallsCount_other": "{{count}} chamadas de ferramenta",
+    "toolCallsHeader": "Chamadas de ferramenta",
+    "toolCallStatusCompleted": "concluído",
+    "toolCallStatusError": "erro",
+    "toolCallStatusErrors": "erros",
+    "toolCallStatusRunning": "em execução",
+    "viewFailureDetails": "Ver detalhes da falha"
+  },
+  "commandCenter": {
+    "range": {
+      "allTime": "Todo o período",
+      "last24h": "Últimas 24h",
+      "last30d": "Últimos 30 dias",
+      "last7d": "Últimos 7 dias"
+    }
+  },
+  "health": {
+    "anomaly": {
+      "duplicateActiveId": "ID de tarefa ativa duplicado",
+      "idInBothStorages": "ID de tarefa presente no armazenamento ativo e arquivado",
+      "sequenceOverlap": "A próxima sequência do alocador sobrepõe um ID de tarefa existente",
+      "unknownPrefix": "Linha de tarefa usa um prefixo fora do estado do alocador"
+    }
+  },
+  "inline": {
+    "connecting": "Conectando",
+    "error": "Erro",
+    "offline": "Offline",
+    "online": "Online"
+  },
+  "labels": {
+    "name": "Nome"
+  },
+  "merge": {
+    "unknown": "Desconhecido"
+  },
+  "missions": {
+    "autopilotStateActivating": "Ativando fatia",
+    "autopilotStateCompleting": "Concluindo",
+    "autopilotStateInactive": "Inativo",
+    "autopilotStateUnknown": "Desconhecido",
+    "autopilotStateWatching": "Observando",
+    "interviewStatusAwaitingInput": "Aguardando entrada",
+    "interviewStatusComplete": "Plano pronto",
+    "interviewStatusError": "Precisa de nova tentativa",
+    "interviewStatusGenerating": "Gerando plano",
+    "runHelperActive": "Ao parar, as tarefas vinculadas são pausadas e a missão é marcada como bloqueada.",
+    "runHelperBlocked": "Ao retomar, a missão é reativada e a execução continua.",
+    "runHelperPlanning": "Ao iniciar, a primeira fatia é ativada para que o trabalho possa começar."
+  },
+  "models": {
+    "messages": {
+      "modelSetTo": "Modelo de {{label}} definido para {{provider}}/{{modelId}}",
+      "modelSetToDefault": "Modelo de {{label}} definido para o padrão"
+    }
+  },
+  "nodes": {
+    "auth": {
+      "differ": "As credenciais de autenticação são diferentes",
+      "differProviders": "As credenciais de autenticação são diferentes: {{providers}}",
+      "match": "As credenciais de autenticação coincidem",
+      "notSynced": "Autenticação não sincronizada"
+    },
+    "status": {
+      "connecting": "Conectando",
+      "creating": "Criando",
+      "deleting": "Excluindo",
+      "error": "Erro",
+      "exited": "Encerrado",
+      "offline": "Offline",
+      "online": "Online",
+      "recreating": "Recriando",
+      "running": "Em execução",
+      "stopped": "Parado"
+    }
+  },
+  "nodeStatus": {
+    "connecting": "Conectando",
+    "error": "Erro",
+    "offline": "Offline",
+    "online": "Online",
+    "unknown": "Desconhecido"
+  },
+  "research": {
+    "providerGitHub": "GitHub",
+    "providerLlmSynthesis": "Síntese por LLM",
+    "providerLocalDocs": "Documentos locais",
+    "providerPageFetch": "Busca de página",
+    "providerWebSearch": "Pesquisa na Web"
+  },
+  "routing": {
+    "policyLabel": {
+      "block": "Bloquear execução",
+      "fallback": "Recorrer ao local",
+      "notConfigured": "Não configurado"
+    }
+  },
+  "settings": {
+    "nodeRouting": {
+      "statusConnecting": "Conectando",
+      "statusError": "Erro",
+      "statusOffline": "Offline",
+      "statusOnline": "Online"
+    }
+  },
+  "setup": {
+    "apiKeyFormatError": "As chaves da {{providerName}} devem seguir este formato: {{hint}} (ex.: {{example}})",
+    "apiKeyLabel": {
+      "fallback": "Chave de API",
+      "kimiCoding": "Chave de API do Kimi",
+      "minimax": "Chave de API do MiniMax",
+      "ollama": "Endpoint do Ollama",
+      "openai": "Chave de API da OpenAI",
+      "openrouter": "Chave de API do OpenRouter",
+      "zai": "Chave de API da Zhipu AI"
+    },
+    "apiKeyPlaceholder": {
+      "fallback": "Digite a chave de API",
+      "kimiCoding": "Digite sua chave de API do Kimi",
+      "minimax": "Digite sua chave de API do MiniMax",
+      "zai": "Digite sua chave de API da Zhipu AI"
+    },
+    "apiKeyRequired": "A chave de API é obrigatória",
+    "apiKeySetup": {
+      "fallback": "Digite sua chave de API para este provedor.",
+      "kimiCoding": "Crie sua chave de API nas configurações de conta da plataforma Moonshot.",
+      "minimax": "Gere uma chave de API no console de desenvolvedor da plataforma MiniMax.",
+      "ollama": "Digite a URL do endpoint do Ollama (por exemplo, http://localhost:11434).",
+      "openai": "Crie uma chave de API no painel da OpenAI, em API keys.",
+      "openrouter": "Crie uma chave de API na página de gerenciamento de chaves da sua conta OpenRouter.",
+      "zai": "Crie uma chave de API nas configurações de conta da plataforma aberta da Zhipu AI."
+    },
+    "apiKeyUsage": {
+      "fallback": "Usada pelo Fusion para autenticar solicitações a este provedor",
+      "kimiCoding": "Usada para modelos Kimi/Moonshot AI na execução e no planejamento de tarefas",
+      "minimax": "Usada para modelos MiniMax na execução de tarefas",
+      "ollama": "Conecta à sua instância local do Ollama",
+      "openai": "Usada para modelos GPT na execução e no planejamento de tarefas",
+      "openrouter": "Roteia para múltiplos provedores de modelos de IA através de uma única chave",
+      "zai": "Usada para modelos GLM na execução de tarefas"
+    },
+    "providerDesc": {
+      "anthropic": "Modelos Claude — fortes em raciocínio, análise e código",
+      "fallback": "Provedor de IA — conecte-se para começar a usar modelos de IA",
+      "gemini": "Modelos Gemini — multimodais com forte raciocínio",
+      "google": "Modelos Gemini — multimodais com forte raciocínio",
+      "kimi": "Kimi da Moonshot AI — capacidades de contexto longo",
+      "kimiCoding": "Kimi da Moonshot AI — capacidades de contexto longo",
+      "minimax": "Modelos MiniMax — custo-benefício para uso de alto volume",
+      "moonshot": "Kimi da Moonshot AI — capacidades de contexto longo",
+      "ollama": "Execute modelos de código aberto localmente na sua máquina",
+      "openai": "Modelos GPT — versáteis para uma ampla variedade de tarefas",
+      "openaiCodex": "Modelos Codex da OpenAI — otimizados para tarefas de programação",
+      "openrouter": "OpenRouter — roteia solicitações entre múltiplos provedores de IA",
+      "zai": "Modelos GLM da Zhipu AI — forte suporte multilíngue"
+    }
+  },
+  "taskForm": {
+    "nodeStatusConnecting": "Conectando",
+    "nodeStatusError": "Erro",
+    "nodeStatusOffline": "Offline",
+    "nodeStatusOnline": "Online"
+  },
+  "taskReview": {
+    "never": "Nunca",
+    "refreshSourceBackground": "Segundo plano",
+    "refreshSourceInitialLoad": "Carregamento inicial",
+    "refreshSourceManual": "Manual"
+  },
+  "workflowNodes": {
+    "summaryAwaitInput": "Aguarda entrada do usuário",
+    "summaryCodeDefault": "TypeScript",
+    "summaryDefaultModel": "Modelo padrão",
+    "summaryGateAdvisory": "Consultivo",
+    "summaryGateBlocks": "Gate (bloqueia)",
+    "summaryHoldRelease": "Liberação: {{release}}",
+    "summaryLoopIterations_one": "{{count}}x",
+    "summaryLoopIterations_other": "{{count}}x",
+    "summaryLoopUntilContains": "até conter \"{{value}}\"",
+    "summaryLoopUntilMatches": "até corresponder a /{{pattern}}/",
+    "summaryNotConfigured": "Não configurado",
+    "summaryReviewType": "revisão de {{type}}",
+    "summarySeamExecute": "Executar (motor)",
+    "summarySeamMerge": "Limite de merge",
+    "summarySeamPlanning": "Planejar (motor)",
+    "summarySeamReview": "Revisar (motor)",
+    "summarySeamStepExecute": "Executar etapa (motor)",
+    "summarySeamUnknown": "Seam: {{seam}}"
+  }
+}

@@ -1,6 +1,6 @@
 # Translation status
 
-`en` is the authored source-of-truth. The four non-English locales below were
+`en` is the authored source-of-truth. The non-English locales below were
 **machine-drafted and have NOT been reviewed by a human translator.** They are
 shipped so the feature is end-to-end exercisable, but each string should be
 reviewed (and corrected where needed) by a fluent speaker before being treated
@@ -13,6 +13,8 @@ as production-quality.
 | `zh-TW`| Traditional Chinese (TW) | Machine-drafted ⚠️  |
 | `fr`   | French                   | Machine-drafted ⚠️  |
 | `es`   | Spanish                  | Machine-drafted ⚠️  |
+| `ko`   | Korean                   | Machine-drafted ⚠️  |
+| `pt-BR`| Brazilian Portuguese     | Machine-drafted ⚠️  |
 
 Notes for reviewers:
 
@@ -24,3 +26,6 @@ Notes for reviewers:
   sweep the product name without touching catalogs.
 - Keybinding accelerators inside hints (e.g. `[{{key}}]`) must stay as the
   literal key — translate only the surrounding words.
+- `pt-BR` is Brazilian Portuguese specifically. European Portuguese (pt-PT)
+  differs in vocabulary, orthography, and register — do not machine-convert one
+  into the other.

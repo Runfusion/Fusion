@@ -25,7 +25,7 @@ function readCatalogs(locale: string, namespaces = listNamespaces()): NamespaceC
 
 describe("i18n key parity", () => {
   it("passes for the live catalogs across all supported locales and en namespaces", () => {
-    expect([...SUPPORTED_LOCALES]).toEqual(["en", "zh-CN", "zh-TW", "fr", "es", "ko"]);
+    expect([...SUPPORTED_LOCALES]).toEqual(["en", "zh-CN", "zh-TW", "fr", "es", "ko", "pt-BR"]);
     expect(listNamespaces()).toEqual(["app", "cli", "common", "errors"]);
 
     const enCatalogs = readCatalogs("en");
