@@ -19617,8 +19617,16 @@ ${failureContext.output.slice(0, VERIFICATION_LOG_MAX_CHARS)}
     if (externalExecutionRoute.configured && !externalExecutionRoute.valid) {
       throw new Error(`Persisted external execution checkout is invalid: ${externalExecutionRoute.reason ?? "unknown error"}`);
     }
+    /*
+    FNXC:ExternalExecutionCheckout 2026-08-10-01:06:
+    Remediation must fail closed unless a configured persisted route resolves to a concrete checkout path.
+    Never turn malformed operator-owned routing into an empty managed-worktree path.
+    */
+    if (externalExecutionRoute.configured && !externalExecutionRoute.checkoutPath) {
+      throw new Error("Persisted external execution checkout is invalid: checkoutPath is missing");
+    }
     const remediationWorktreePath = externalExecutionRoute.configured
-      ? externalExecutionRoute.checkoutPath ?? ""
+      ? externalExecutionRoute.checkoutPath!
       : worktreePath;
 
     // 1. Add a task comment explaining the failure
