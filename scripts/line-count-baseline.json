@@ -100,7 +100,7 @@
   "packages/engine/src/project-engine.ts": 5580,
   "packages/engine/src/runtimes/in-process-runtime.ts": 2160,
   "packages/engine/src/scheduler.ts": 3666,
-  "packages/engine/src/self-healing.ts": 12888,
+  "packages/engine/src/self-healing.ts": 15231,
   "packages/engine/src/triage.ts": 3645,
   "packages/pi-claude-cli/src/__tests__/provider.test.ts": 2028,
   "plugins/fusion-plugin-roadmap/src/dashboard/RoadmapsView.tsx": 2583,

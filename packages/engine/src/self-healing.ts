@@ -30,7 +30,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync,
 import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
-import { type TaskMoveLanes, resolveColumnFlags, IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX, IN_REVIEW_STALL_LOG_PREFIX, IN_REVIEW_STALL_TERMINAL_LOG_PREFIX, allowsAutoMergeProcessing, hasSharedBranchMemberAutoMergeHold, resolveEffectiveAutoMerge, countRecentIdenticalStallEntries, detectDependencyCycle, detectSelfDefeatingDependency, evaluateNoCommitsNoOpFinalize, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, getInReviewStalledSignal, getInReviewStallReason, getPrimaryPrInfo, getStalePausedReviewSignal, getStalePausedTodoSignal, getTaskHardMergeBlocker, getTaskMergeBlocker, isEphemeralAgent, isMergeRequestContractShadowEnabled, isWorkspaceTask, isSharedBranchGroupMemberIntegration, isLiveSharedBranchGroupMemberIntegration, isNearDuplicateCanonicalInactive, parseExplicitDuplicateMarker, flagTriageDuplicate, isTriageDuplicateKeepAcknowledged, resolveMaxAutoMergeRetries, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, getBuiltinWorkflow, isBuiltinWorkflowId, resolveWorkflowIrForTask, resolveWorkflowIrForTaskWithProvenance, resolveReboundTarget, resolveReboundTargetForTask, resolveArchiveTargetForTask, columnsWithFlag, resolveLifecycleColumns, resolveTaskLifecycleColumns, workflowHasColumn, planLegacyAdoption, resolveOrphanedPendingStepResults, classifyReviewLease, PLAN_REVIEW_LEASE_STALENESS_MS, DEFAULT_MAX_POST_REVIEW_FIXES, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AWAITING_APPROVAL_PAUSE_REASON, type Agent, type AgentStore, type ChatStore, type MessageStore, type TaskStore, type Settings, type Task, type MergeDetails, type TaskPriority, type MergeResult, type WorkflowStepResult, type WorkflowIr,
+import { type TaskMoveLanes, resolveColumnFlags, IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX, IN_REVIEW_STALL_LOG_PREFIX, IN_REVIEW_STALL_TERMINAL_LOG_PREFIX, allowsAutoMergeProcessing, hasSharedBranchMemberAutoMergeHold, resolveEffectiveAutoMerge, countRecentIdenticalStallEntries, detectDependencyCycle, detectSelfDefeatingDependency, evaluateNoCommitsNoOpFinalize, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, getInReviewStalledSignal, getInReviewStallReason, getPrimaryPrInfo, getStalePausedReviewSignal, getStalePausedTodoSignal, getTaskHardMergeBlocker, getTaskMergeBlocker, isEphemeralAgent, isMergeRequestContractShadowEnabled, isWorkspaceTask, isSharedBranchGroupMemberIntegration, isLiveSharedBranchGroupMemberIntegration, isNearDuplicateCanonicalInactive, parseExplicitDuplicateMarker, flagTriageDuplicate, isTriageDuplicateKeepAcknowledged, resolveMaxAutoMergeRetries, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, getBuiltinWorkflow, isBuiltinWorkflowId, resolveWorkflowIrForTask, resolveWorkflowIrForTaskWithProvenance, resolveReboundTarget, resolveReboundTargetForTask, columnsWithFlag, resolveLifecycleColumns, resolveTaskLifecycleColumns, workflowHasColumn, planLegacyAdoption, resolveOrphanedPendingStepResults, classifyReviewLease, PLAN_REVIEW_LEASE_STALENESS_MS, DEFAULT_MAX_POST_REVIEW_FIXES, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AWAITING_APPROVAL_PAUSE_REASON, type Agent, type AgentStore, type ChatStore, type MessageStore, type TaskStore, type Settings, type Task, type MergeDetails, type TaskPriority, type MergeResult, type WorkflowStepResult, type WorkflowIr,
   resolveNearDuplicateCanonicalFlags,
   LEGACY_COLUMN_IDS_BY_ROLE,
   TERMINAL_ROLES,
@@ -112,7 +112,6 @@ import {
   sendNtfyNotification,
   type NtfyNotifier,
 } from "./util/notifier.js";
-import type { GhostBugDecision } from "./triage-domain/triage-preflight.js";
 import { filterPathsByIgnoreList, getUnmetSchedulingDependencies, isCoordinationOnlyTask, pathsOverlap, shouldHoldActiveFileScopeLease, resolveDependencySatisfactionColumns} from "./scheduler.js";
 import { runSurfacingSweep, hours, type SurfacingCycle } from "./surfacing-sweeps.js";
 /* U4 substrate PR1: the git-evidence readers and their helpers now live in
@@ -241,31 +240,18 @@ type BranchGroupLandingRecorder = {
 // deadlock/stall sweeps still defensively skip soft-deleted rows in case a
 // future caller bypasses that contract (includeDeleted, fixtures, ad-hoc SQL).
 
-export async function archiveAsGhostBug(
-  store: TaskStore,
-  taskId: string,
-  taskTitle: string,
-  decision: GhostBugDecision,
-): Promise<void> {
-  await store.logEntry(
-    taskId,
-    "Auto-archived as ghost bug — cited code construct not present on main",
-    JSON.stringify({ reason: decision.reason, findings: decision.findings }, null, 2),
-  );
-  await store.recordActivity({
-    type: "task:auto-archived-ghost-bug",
-    taskId,
-    taskTitle,
-    details: "Cited construct not found on main",
-    metadata: {
-      reason: decision.reason,
-      findings: decision.findings.slice(0, 10),
-    },
-  });
-  // #1411: recovery/terminal move — recoveryRehome skips order-derived adjacency
-  // so a custom-workflow card can always reach the terminal column.
-  await store.moveTask(taskId, await resolveArchiveTargetForTask(store, taskId), { moveSource: "engine", recoveryRehome: true });
-}
+/*
+FNXC:CodeOrganization 2026-08-10-03:45:
+archiveAsGhostBug / autoRecoverWorktreeSessionStartFailure peeled to self-healing/ (U5 wave19).
+*/
+export { archiveAsGhostBug } from "./self-healing/archive-ghost-bug.js";
+export { autoRecoverWorktreeSessionStartFailure } from "./self-healing/auto-recover-worktree-session.js";
+import { autoRecoverWorktreeSessionStartFailure } from "./self-healing/auto-recover-worktree-session.js";
+import {
+  hasStepProgress,
+  isNoTaskDoneFailure,
+  isTaskWorkComplete,
+} from "./self-healing/step-progress.js";
 
 async function classifyOwnedLandedEvidenceForSelfHealing(rootDir: string, task: Task, mergeTargetBranch: string): Promise<OwnedLandedClassification> {
   const { classifyOwnedLandedEvidence } = await import("./merger.js");
@@ -587,204 +573,6 @@ function bumpTaskPriority(priority: TaskPriority | undefined): TaskPriority {
     case "urgent":
       return "urgent";
   }
-}
-
-export async function autoRecoverWorktreeSessionStartFailure(
-  store: TaskStore,
-  task: Task,
-  opts: {
-    failure: unknown;
-    source: "executor-session-start" | "in-review-sweep" | "merge-active-sweep" | "resume-guard";
-    auditor: RunAuditor | null;
-    forceClearWorktreeMetadata?: boolean;
-    resetRetryBudgetOnStaleMetadataClear?: boolean;
-    staleMetadataClearRecoveryRetryCount?: number;
-    /**
-     * FNXC:MissingWorktreeRecovery 2026-07-26-08:35:
-     * Project root. Pass it whenever the caller has one so the liveness probe can also reject a
-     * recorded worktree that IS the main checkout (FN-6861 repo-root requeue loop). Optional so
-     * narrow test callers and any future caller without a root still type-check.
-     */
-    rootDir?: string;
-  },
-): Promise<{ outcome: "requeue-todo" | "escalate-exhausted"; retries: number; classification: "missing" | "incomplete" | "unregistered" | "unknown" }> {
-  const classification = classifyMissingWorktreeSessionStartFailure(opts.failure);
-  /*
-  FNXC:MissingWorktreeRecovery 2026-07-10-18:15:
-  Upstream #1992 showed merge-active review-fix sessions can exhaust the unusable-worktree retry budget while every retry reuses the same phantom worktree metadata. When a guarded recovery clears that stale worktree/branch/session reference, the next dispatch must get a fresh session-start retry budget instead of inheriting the exhausted context that caused the strand.
-
-  FNXC:MissingWorktreeRecovery 2026-07-10-21:36:
-  The merge-active sweep still needs a bounded human-escalation circuit breaker after clearing stale metadata, so it tracks those guarded clears through recoveryRetryCount instead of repeatedly resetting worktreeSessionRetryCount to zero on every recurrence.
-  */
-  const resetRetryBudget = opts.resetRetryBudgetOnStaleMetadataClear === true;
-  const staleMetadataClearRecoveryRetryCount = opts.staleMetadataClearRecoveryRetryCount;
-  const currentStaleMetadataClearRecoveryCount = staleMetadataClearRecoveryRetryCount ?? 0;
-  const nextStaleMetadataClearRecoveryCount = staleMetadataClearRecoveryRetryCount === undefined
-    ? undefined
-    : currentStaleMetadataClearRecoveryCount + 1;
-  if (nextStaleMetadataClearRecoveryCount !== undefined && nextStaleMetadataClearRecoveryCount > MAX_WORKTREE_SESSION_RETRIES) {
-    await store.logEntry(
-      task.id,
-      `Auto-recovery exhausted (${MAX_WORKTREE_SESSION_RETRIES}/${MAX_WORKTREE_SESSION_RETRIES}) for merge-active unusable-worktree stale-metadata clears — leaving in-review for human inspection`,
-    );
-    await opts.auditor?.database({
-      type: "task:auto-recover-worktree-session-exhausted",
-      target: task.id,
-      metadata: {
-        retries: currentStaleMetadataClearRecoveryCount,
-        maxRetries: MAX_WORKTREE_SESSION_RETRIES,
-        source: opts.source,
-        counter: "recoveryRetryCount",
-      },
-    });
-    return { outcome: "escalate-exhausted", retries: currentStaleMetadataClearRecoveryCount, classification };
-  }
-  const nextCount = resetRetryBudget ? 0 : (task.worktreeSessionRetryCount ?? 0) + 1;
-  if (!resetRetryBudget && nextCount > MAX_WORKTREE_SESSION_RETRIES) {
-    await store.logEntry(
-      task.id,
-      `Auto-recovery exhausted (${MAX_WORKTREE_SESSION_RETRIES}/${MAX_WORKTREE_SESSION_RETRIES}) for unusable-worktree session-start failure — leaving in-review for human inspection`,
-    );
-    await opts.auditor?.database({
-      type: "task:auto-recover-worktree-session-exhausted",
-      target: task.id,
-      metadata: {
-        retries: task.worktreeSessionRetryCount ?? 0,
-        maxRetries: MAX_WORKTREE_SESSION_RETRIES,
-        source: opts.source,
-      },
-    });
-    return { outcome: "escalate-exhausted", retries: task.worktreeSessionRetryCount ?? 0, classification };
-  }
-
-  const staleWorktree = task.worktree;
-  const missingWorktreePath = extractMissingWorktreePathFromSessionStartFailure(opts.failure);
-  /*
-  FNXC:MissingWorktreeRecovery 2026-07-26-07:15:
-  A failing path that DIFFERS from `task.worktree` does not prove the recorded worktree is live.
-  The reported strand (in-review MG-047) had both gone: an AI-merge clean room refused as an
-  "incomplete worktree" while the recorded task worktree had already been removed. The mismatch
-  branch preserved that dead path, so every requeue re-dispatched into a directory that no longer
-  existed ("Working directory does not exist: …" / "Cannot execute bash commands") until the retry
-  budget burned out and the card parked failed in review. Preserve the recorded worktree only when
-  it is STILL a usable checkout; otherwise clear it so the next dispatch builds a fresh one from
-  the branch.
-
-  `hasUsableWorktreeShape` is the deliberately NARROW probe (see its own note in worktree-pool.ts):
-  recovery must not spawn git to decide how to recover from a git failure, so it proves only that
-  the path exists, carries `.git`, and is not the repo root. A stale-but-present `.git` pointer
-  therefore still reads as usable and is preserved here; the executor's own session-start assertion
-  is the backstop that catches that shape and routes it back through this recovery with the path now
-  named in the failure, at which point the branch below clears it.
-
-  FNXC:MissingWorktreeRecovery 2026-07-26-08:35:
-  WHAT THIS DECISION ACTUALLY CONTROLS: `branch`. The rebound below is a reopen move
-  (in-review/in-progress -> todo|triage), and a reopen CLEARS `task.worktree` unless the caller
-  passes `preserveWorktree` (packages/core/src/task-store/moves.ts + default-workflow-hooks.ts
-  applyResetOnEntryEffects) — which this recovery deliberately does not, because a fresh checkout is
-  the correct thing to hand the next dispatch. The `worktree` value written here is therefore
-  overwritten by the move on every reopen path; it is kept in the patch only so the row is coherent
-  for the non-reopen case (already sitting in the rebound column, where no reopen effects fire).
-  Do not read the preserve branch as "the worktree survives" — it does not.
-  */
-  const recordedWorktreeStillUsable = hasUsableWorktreeShape(staleWorktree, opts.rootDir);
-  const hasMismatchedLiveWorktree =
-    recordedWorktreeStillUsable
-    && typeof missingWorktreePath === "string" && missingWorktreePath.length > 0
-    && resolve(staleWorktree as string) !== resolve(missingWorktreePath);
-  const noProgress = !hasStepProgress(task);
-  const forceClearWorktreeMetadata = opts.forceClearWorktreeMetadata === true;
-  const clearWorktreeMetadata = noProgress || forceClearWorktreeMetadata || !hasMismatchedLiveWorktree;
-  /*
-  FNXC:MissingWorktreeRecovery 2026-07-26-08:35:
-  Clearing `branch` is only safe for the CANONICAL `fusion/<id>` name, which acquisition re-derives
-  from the task id (resolveTaskWorkingBranch) — dropping it costs nothing. A non-canonical branch
-  (a `-2` suffix, a legacy case-mismatched name) is NOT re-derivable, so nulling it would abandon the
-  only pointer to the card's commits. Keep such a branch even while clearing the dead worktree; the
-  worktree is rebuilt from whatever branch survives.
-  */
-  const branchIsRederivable =
-    typeof task.branch !== "string"
-    || task.branch.length === 0
-    || task.branch.toLowerCase() === `fusion/${task.id}`.toLowerCase();
-  const nextBranch = clearWorktreeMetadata && branchIsRederivable ? null : task.branch ?? null;
-
-  await store.updateTask(task.id, {
-    status: null,
-    error: null,
-    worktreeSessionRetryCount: nextCount,
-    ...(nextStaleMetadataClearRecoveryCount === undefined ? {} : { recoveryRetryCount: nextStaleMetadataClearRecoveryCount }),
-    worktree: clearWorktreeMetadata ? null : staleWorktree,
-    branch: nextBranch,
-    sessionFile: null,
-  });
-  await opts.auditor?.database({
-    type: "task:auto-recover-worktree-session-metadata",
-    target: task.id,
-    metadata: {
-      source: opts.source,
-      classification,
-      // The decision this recovery makes, as ids/outcomes-only facts an agent can read without
-      // parsing the human log prose below (agent-native parity with the dashboard activity log).
-      recordedWorktreeStillUsable,
-      clearedWorktreeMetadata: clearWorktreeMetadata,
-      clearedBranch: nextBranch === null && (task.branch ?? null) !== null,
-      retainedNonCanonicalBranch: clearWorktreeMetadata && !branchIsRederivable,
-    },
-  });
-
-  const rawFailureExcerpt = typeof task.error === "string"
-    ? task.error.slice(0, 200)
-    : opts.failure instanceof Error
-      ? opts.failure.message.slice(0, 200)
-      : String(opts.failure).slice(0, 200);
-  const failureExcerpt = isMissingWorktreeSessionStartFailure(rawFailureExcerpt)
-    ? "session-start unusable-worktree assertion"
-    : rawFailureExcerpt;
-  const attemptLabel = resetRetryBudget
-    ? `retry budget reset from ${task.worktreeSessionRetryCount ?? 0}/${MAX_WORKTREE_SESSION_RETRIES}`
-    : `attempt ${nextCount}/${MAX_WORKTREE_SESSION_RETRIES}`;
-  /*
-  FNXC:WorkflowLifecycleTraits 2026-07-19-06:30 (U6 / KTD-10):
-  Requeue the recovered card to the workflow's TRAIT-derived backlog column (hold →
-  intake → first), not the literal "todo". builtin:coding resolves to `todo` (its
-  hold column) so the log + move stay byte-identical; a custom workflow that renamed
-  or omitted `todo` lands its recovered card in a valid backlog column instead of
-  stranding it. One IR resolution per recovered task (a rare failure path, not a
-  sweep loop) so this stays within the no-per-task-resolution-in-enumeration rule.
-  */
-  let reboundColumn = "todo";
-  try {
-    reboundColumn = resolveReboundTarget(await resolveWorkflowIrForTask(store, task.id)) ?? "todo";
-  } catch {
-    // Keep the legacy literal on any IR-resolution failure.
-  }
-  await store.logEntry(
-    task.id,
-    noProgress
-      ? `Auto-recovered (no-progress): session-start refused unusable worktree${staleWorktree ? ` (${staleWorktree})` : ""} — cleared stale session metadata and requeued to ${reboundColumn} (${attemptLabel}, failure: ${failureExcerpt})`
-      : hasMismatchedLiveWorktree && !forceClearWorktreeMetadata
-        ? `Auto-recovered: stale resume referenced unusable worktree (${missingWorktreePath}) while the recorded task worktree ${staleWorktree} is still a live checkout — cleared stale session metadata and requeued to ${reboundColumn} (${attemptLabel}, failure: ${failureExcerpt})`
-        /*
-        FNXC:MissingWorktreeRecovery 2026-07-26-08:35:
-        Name WHICH path was unusable. The old single sentence credited the failure to the recorded
-        worktree even when the session had actually targeted some other path (an AI-merge clean
-        room), which is what made the MG-047 strand unreadable from the activity log: the operator
-        saw "targeted unusable worktree (<task worktree>)" while the refusal named the clean room.
-        */
-        : `Auto-recovered: session start refused unusable worktree${missingWorktreePath ? ` (${missingWorktreePath})` : ""}${
-          staleWorktree && (!missingWorktreePath || resolve(staleWorktree) !== resolve(missingWorktreePath))
-            ? `; the recorded task worktree ${staleWorktree} is ${recordedWorktreeStillUsable ? "still present" : "gone too"}`
-            : ""
-        } — cleared stale session metadata${clearWorktreeMetadata && !branchIsRederivable ? ` (kept non-canonical branch ${task.branch})` : ""} and requeued to ${reboundColumn} (${attemptLabel}, failure: ${failureExcerpt})`,
-  );
-  if (noProgress) {
-    // #1411: backward recovery move — recoveryRehome skips order-derived adjacency.
-    await store.moveTask(task.id, reboundColumn, { moveSource: "engine", recoveryRehome: true });
-  } else {
-    await store.moveTask(task.id, reboundColumn, { preserveProgress: true, moveSource: "engine", recoveryRehome: true });
-  }
-  return { outcome: "requeue-todo", retries: nextCount, classification };
 }
 
 type RebindOutcome =
@@ -15441,16 +15229,3 @@ const movedTask = await this.store.moveTask(task.id, completeLane);
   }
 }
 
-function isTaskWorkComplete(task: Task): boolean {
-  if (task.steps.length === 0) return false;
-  return task.steps.every((step) => step.status === "done" || step.status === "skipped");
-}
-
-function isNoTaskDoneFailure(task: Task): boolean {
-  const error = task.error?.toLowerCase() ?? "";
-  return error.includes("without calling fn_task_done") || error.includes("without calling task_done");
-}
-
-function hasStepProgress(task: Task): boolean {
-  return task.steps.some((step) => step.status !== "pending");
-}
