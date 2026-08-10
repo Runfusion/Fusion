@@ -69,6 +69,7 @@ Planner oversight (FN-7508 → FN-7583) is fully documented in Settings Referenc
 | [Docker](./docker.md) | Container builds, deployment, and persistence configuration |
 | [Code Signing](./CODE_SIGNING.md) | macOS and Windows code signing configuration for release binaries |
 | [Diagnostics](./diagnostics.md) | Engine diagnostic logging subsystems, structured log keys, and key diagnostic points catalog |
+| [Run-Audit Catalogue](./run-audit.md) | Durable reference catalogue of delivery-pipeline run-audit events (finalization, self-healing reconciliation, durable-agent error-state) — the S4 reliability/durability/observability observability surface |
 | [Sandbox Backends](./sandbox.md) | Pluggable sandbox backends for executor command isolation (bubblewrap, spawn-based) |
 | [Secrets](./secrets.md) | Encrypted secrets storage, per-secret access policies, scopes, and agent tool wiring |
 | [Testing](./testing.md) | Full testing lanes, worker fanout guidance, test taxonomy, and file organization |
