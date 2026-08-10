@@ -8,7 +8,7 @@ import { assertCleanBranchAtBase, inspectBranchConflict } from "../execution/bra
 import { worktreePoolLog } from "../logger.js";
 /*
 */
-import { isAiMergeContainerDir, isInsideConfiguredWorktreesDir, resolveWorktreesDir } from "./worktree-paths.js";
+import { isInsideConfiguredWorktreesDir, isWorktreeContainerDir, resolveWorktreesDir } from "./worktree-paths.js";
 import { canonicalFusionBranchName } from "./worktree-names.js";
 import {
   resolveWorktrunkBinary,
@@ -893,7 +893,7 @@ export async function scanIdleWorktrees(
   try {
     const entries = readdirSync(worktreesDir, { withFileTypes: true });
     dirs = entries
-      .filter((e) => e.isDirectory() && !isAiMergeContainerDir(e.name))
+      .filter((e) => e.isDirectory() && !isWorktreeContainerDir(e.name))
       .map((e) => join(worktreesDir, e.name));
   } catch (err: unknown) {
     const errorMessage = err instanceof Error ? err.message : String(err);
@@ -981,7 +981,7 @@ export async function cleanupOrphanedWorktrees(
   if (existsSync(worktreesDir)) {
     try {
       dirs = readdirSync(worktreesDir, { withFileTypes: true })
-        .filter((e) => e.isDirectory() && !isAiMergeContainerDir(e.name))
+        .filter((e) => e.isDirectory() && !isWorktreeContainerDir(e.name))
         .map((e) => join(worktreesDir, e.name));
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : String(err);
@@ -1106,8 +1106,8 @@ export async function reapOrphanWorktrees(
   try {
     entries = readdirSync(worktreesDir, { withFileTypes: true })
       .filter((e) => {
-        // Only real directories — never symlinks; never the dedicated AI-merge container.
-        if (!e.isDirectory() || isAiMergeContainerDir(e.name)) return false;
+        // Only real directories — never symlinks or internal worktree containers.
+        if (!e.isDirectory() || isWorktreeContainerDir(e.name)) return false;
         try {
           return lstatSync(join(worktreesDir, e.name)).isDirectory() && !lstatSync(join(worktreesDir, e.name)).isSymbolicLink();
         } catch {

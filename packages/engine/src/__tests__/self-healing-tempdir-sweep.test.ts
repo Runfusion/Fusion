@@ -159,27 +159,33 @@ function sweepAudits(audits: any[]) {
 }
 
 describe("SelfHealingManager worktrees-dir sweeps", () => {
-  it("excludes the .ai-merge container from unregistered-orphan reap while removing genuine orphans", async () => {
+  it("excludes internal containers from unregistered-orphan reap while removing genuine orphans", async () => {
     const worktreesDir = join(projectRoot, ".worktrees");
     const aiMergeContainer = join(worktreesDir, ".ai-merge");
+    const recoveryContainer = join(worktreesDir, ".fusion-recovery");
     const orphan = join(worktreesDir, "half-built");
     mkdirSync(aiMergeContainer, { recursive: true });
+    mkdirSync(recoveryContainer, { recursive: true });
     mkdirSync(orphan, { recursive: true });
     const { manager } = makeManager({ recycleWorktrees: true });
 
     await expect((manager as any).reapUnregisteredOrphans()).resolves.toBe(1);
 
     expect(existsSync(aiMergeContainer)).toBe(true);
+    expect(existsSync(recoveryContainer)).toBe(true);
     expect(existsSync(orphan)).toBe(false);
     expect(fsState.rmCalls).toContain(orphan);
     expect(fsState.rmCalls).not.toContain(aiMergeContainer);
+    expect(fsState.rmCalls).not.toContain(recoveryContainer);
   });
 
-  it("excludes the .ai-merge container from cap enforcement while removing genuine idle worktrees", async () => {
+  it("excludes internal containers from cap enforcement while removing genuine idle worktrees", async () => {
     const worktreesDir = join(projectRoot, ".worktrees");
     const aiMergeContainer = join(worktreesDir, ".ai-merge");
+    const recoveryContainer = join(worktreesDir, ".fusion-recovery");
     const idle = join(worktreesDir, "idle-wt");
     mkdirSync(aiMergeContainer, { recursive: true });
+    mkdirSync(recoveryContainer, { recursive: true });
     mkdirSync(idle, { recursive: true });
     childState.execStdout = gitWorktreeList(["idle-wt"]);
     const { manager } = makeManager({ maxWorktrees: 0 });
@@ -187,7 +193,9 @@ describe("SelfHealingManager worktrees-dir sweeps", () => {
     await expect((manager as any).enforceWorktreeCap()).resolves.toBeUndefined();
 
     expect(existsSync(aiMergeContainer)).toBe(true);
+    expect(existsSync(recoveryContainer)).toBe(true);
     expect(childState.execCalls.some((command) => command.includes(".ai-merge"))).toBe(false);
+    expect(childState.execCalls.some((command) => command.includes(".fusion-recovery"))).toBe(false);
     expect(childState.execCalls.some((command) => command.includes("idle-wt"))).toBe(true);
   });
 });

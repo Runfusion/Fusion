@@ -1,12 +1,12 @@
 import { existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, realpath, rename, stat, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { exec } from "node:child_process";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { promisify } from "node:util";
 import {acquireWorktreePathReservation, canonicalizeWorktreePath, type RunMutationContext, type Settings, type Task, type TaskStore, type SecretsStore} from "@fusion/core";
 import { generateWorktreeName, resolveTaskWorkingBranch, slugify } from "./worktree-names.js";
-import { resolveTaskWorktreePathForBackend, resolveWorktreesDir } from "./worktree-paths.js";
+import { resolveTaskWorktreePathForBackend, resolveWorktreesDir, WORKTREE_RECOVERY_DIRNAME } from "./worktree-paths.js";
 import { hydrateWorktreeDb } from "./worktree-db-hydrate.js";
 import { formatError } from "../logger.js";
 import { classifyBootstrapMisbinding, isBranchConflictError, reanchorBranchToBase } from "../execution/branch-conflicts.js";
@@ -50,6 +50,8 @@ import { refreshReusedWorktreeBase, type WorktreeBaseRefreshResult } from "../wo
 
 const execAsync = promisify(exec);
 const WORKTREE_BACKEND_MARKER = "fusion-worktree-backend-kind";
+const PRESERVED_ORPHAN_RETENTION_COUNT = 10;
+const PRESERVED_ORPHAN_NAME_PATTERN = /^[a-z0-9][a-z0-9-]*-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
 async function resolveWorktreeBackendMarkerPath(worktreePath: string): Promise<string> {
   const { stdout } = await execAsync(`git rev-parse --git-path ${JSON.stringify(WORKTREE_BACKEND_MARKER)}`, {
@@ -158,12 +160,68 @@ async function ensureContainedDirectory(parentCanonicalPath: string, name: strin
   const canonicalCandidate = await realpath(candidate);
   const candidateRelative = relative(parentCanonicalPath, canonicalCandidate);
   if (candidateRelative === "" || candidateRelative.startsWith("..") || isAbsolute(candidateRelative)) {
-    throw new Error(`Refusing to use recovery directory outside the project root: ${canonicalCandidate}`);
+    throw new Error(`Refusing to use recovery directory outside ${parentCanonicalPath}: ${canonicalCandidate}`);
   }
   if (!(await stat(canonicalCandidate)).isDirectory()) {
     throw new Error(`Refusing to use non-directory recovery path: ${canonicalCandidate}`);
   }
   return canonicalCandidate;
+}
+
+interface PreservedOrphanCandidate {
+  path: string;
+  canonicalPath: string;
+  mtimeMs: number;
+}
+
+async function inspectPreservedOrphanCandidate(
+  canonicalRecoveryRoot: string,
+  name: string,
+): Promise<PreservedOrphanCandidate | null> {
+  if (!PRESERVED_ORPHAN_NAME_PATTERN.test(name)) return null;
+  const path = join(canonicalRecoveryRoot, name);
+  try {
+    const pathStat = await lstat(path);
+    if (!pathStat.isDirectory() || pathStat.isSymbolicLink()) return null;
+    const canonicalPath = await realpath(path);
+    const candidateRelative = relative(canonicalRecoveryRoot, canonicalPath);
+    if (candidateRelative !== name || candidateRelative.includes("/") || candidateRelative.includes("\\") || isAbsolute(candidateRelative)) {
+      return null;
+    }
+    return { path, canonicalPath, mtimeMs: pathStat.mtimeMs };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * FNXC:TaskPinnedWorktrees 2026-08-10-01:12:
+ * Each actual orphan-recovery root retains its newest ten generated task-id-plus-UUID directories. Pruning is fail-soft and removes only direct canonical non-symlink directories after an immediate active-session check; unknown, unstatable, or active entries are preserved.
+ */
+async function prunePreservedOrphanDirectories(
+  canonicalRecoveryRoot: string,
+  logger?: { warn: (message: string) => void },
+): Promise<void> {
+  try {
+    const entries = await readdir(canonicalRecoveryRoot, { withFileTypes: true });
+    const candidates = (await Promise.all(entries.map((entry) =>
+      inspectPreservedOrphanCandidate(canonicalRecoveryRoot, entry.name))))
+      .filter((candidate): candidate is PreservedOrphanCandidate => candidate !== null)
+      .sort((left, right) => right.mtimeMs - left.mtimeMs || right.path.localeCompare(left.path));
+
+    for (const candidate of candidates.slice(PRESERVED_ORPHAN_RETENTION_COUNT)) {
+      try {
+        const current = await inspectPreservedOrphanCandidate(canonicalRecoveryRoot, candidate.path.slice(canonicalRecoveryRoot.length + 1));
+        if (!current || current.canonicalPath !== candidate.canonicalPath) continue;
+        if (activeSessionRegistry.isPathActive(current.path) || activeSessionRegistry.isPathActive(current.canonicalPath)) continue;
+        await rm(current.path, { recursive: true, force: true });
+      } catch (error) {
+        logger?.warn(`Failed to prune preserved orphan directory ${candidate.path}: ${formatError(error).message}`);
+      }
+    }
+  } catch (error) {
+    logger?.warn(`Failed to inspect preserved orphan retention root ${canonicalRecoveryRoot}: ${formatError(error).message}`);
+  }
 }
 
 function configuredCommandErrorMessage(result: { spawnError?: string | Error; timedOut?: boolean; exitCode?: number | null }): string {
@@ -727,6 +785,27 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
         if (activeSessionRegistry.isPathActive(pinnedPath)) return true;
         return (await classifyTaskWorktree(rootDir, pinnedPath)).ok;
       },
+      /*
+       * FNXC:TaskPinnedWorktrees 2026-08-10-01:12:
+       * Pinned acquisition owns the reservation through classification, orphan preservation, quarantine reconciliation, and recreation. Preserve an existing directory for classification; for an absent path, fail closed on containment or active in-process ownership before reusing the guarded backend removal path.
+       */
+      reconcileQuarantined: async () => {
+        if (existsSync(pinnedPath)) return;
+        if (!isInsideWorktreesDir(rootDir, pinnedPath, settings)) {
+          throw new Error(`Refusing to reconcile quarantined task-pinned worktree outside configured worktrees directory: ${pinnedPath}`);
+        }
+        if (activeSessionRegistry.isPathActive(pinnedPath)) {
+          throw new Error(`Refusing to reconcile absent task-pinned worktree owned by an active session: ${pinnedPath}`);
+        }
+        await removeWorktree({
+          worktreePath: pinnedPath,
+          rootDir,
+          settings,
+          taskId: task.id,
+          reason: RemovalReason.ExecutorDispose,
+          force: true,
+        });
+      },
     });
     try {
       worktreePath = pinnedPath;
@@ -778,16 +857,18 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
             && !activeSessionRegistry.isPathActive(pinnedPath);
           if (preserveAsOrphanDirectory) {
             const canonicalRoot = await realpath(rootDir);
+            /*
+             * FNXC:TaskPinnedWorktrees 2026-08-10-01:12:
+             * Recovery directory components must resolve inside their canonical parent. A symlinked ancestor or container fails closed before orphan contents move.
+             */
             const fusionRoot = await ensureContainedDirectory(canonicalRoot, ".fusion");
             const recoveryRoot = await ensureContainedDirectory(fusionRoot, "recovery");
-            const canonicalRecoveryRoot = await ensureContainedDirectory(recoveryRoot, "worktrees");
-            // The path reservation serializes classification, preservation, and
-            // recreation across processes; this final probe also protects against
-            // an in-process owner that registered before the reservation was held.
+            let actualRecoveryRoot = await ensureContainedDirectory(recoveryRoot, "worktrees");
+            // FNXC:TaskPinnedWorktrees 2026-08-10-01:12: The reservation serializes cross-process recovery; recheck in-process liveness immediately before the rename so a newly registered owner is never displaced.
             if (activeSessionRegistry.isPathActive(pinnedPath)) {
               throw new Error(`Task-pinned worktree ${pinnedPath} became active during orphan recovery`);
             }
-            let preservedPath = join(canonicalRecoveryRoot, `${task.id.toLowerCase()}-${randomUUID()}`);
+            let preservedPath = join(actualRecoveryRoot, `${task.id.toLowerCase()}-${randomUUID()}`);
             try {
               await renameWorktreeDirectory(pinnedPath, preservedPath);
             } catch (renameError) {
@@ -798,27 +879,41 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
                * configured worktree root instead of weakening recovery to recursive copy-and-delete.
                */
               const canonicalWorktreesRoot = await realpath(resolveWorktreesDir(rootDir, settings));
-              const localRecoveryRoot = await ensureContainedDirectory(canonicalWorktreesRoot, ".fusion-recovery");
+              const localRecoveryRoot = await ensureContainedDirectory(canonicalWorktreesRoot, WORKTREE_RECOVERY_DIRNAME);
               const localRecoveryWorktrees = await ensureContainedDirectory(localRecoveryRoot, "worktrees");
+              actualRecoveryRoot = localRecoveryWorktrees;
               preservedPath = join(localRecoveryWorktrees, `${task.id.toLowerCase()}-${randomUUID()}`);
               await renameWorktreeDirectory(pinnedPath, preservedPath);
             }
-            await audit?.filesystem({
-              type: "file:write",
-              target: preservedPath,
-              metadata: {
-                taskId: task.id,
-                classification: classification.classification,
-                reason: "task-pinned-orphan-preserved",
-                sourcePath: pinnedPath,
-              },
-            });
-            await store.logEntry(
-              task.id,
-              `Preserved orphaned task-pinned directory ${pinnedPath} before recreation`,
-              preservedPath,
-              runContext,
-            );
+            /*
+             * FNXC:TaskPinnedWorktrees 2026-08-10-01:12:
+             * Once rename has preserved the orphan, audit, task-log, and retention work are independent best-effort observability/housekeeping. Their failures must not strand the pinned path or block recreation, and warnings must retain the concrete formatted failure message.
+             */
+            try {
+              await audit?.filesystem({
+                type: "file:write",
+                target: preservedPath,
+                metadata: {
+                  taskId: task.id,
+                  classification: classification.classification,
+                  reason: "task-pinned-orphan-preserved",
+                  sourcePath: pinnedPath,
+                },
+              });
+            } catch (error) {
+              logger?.warn(`${task.id}: failed to audit preserved orphan ${preservedPath}: ${formatError(error).message}`);
+            }
+            try {
+              await store.logEntry(
+                task.id,
+                `Preserved orphaned task-pinned directory ${pinnedPath} before recreation`,
+                preservedPath,
+                runContext,
+              );
+            } catch (error) {
+              logger?.warn(`${task.id}: failed to log preserved orphan ${preservedPath}: ${formatError(error).message}`);
+            }
+            await prunePreservedOrphanDirectories(actualRecoveryRoot, logger);
           } else {
             await removeWorktree({
               rootDir,

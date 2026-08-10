@@ -110,7 +110,13 @@ This layer complements, rather than replaces, FN-4829 similarity detection, FN-4
 
 Archiving a workspace (multi-repository) task now synchronously removes every recorded per-sub-repository worktree, including archives initiated by `fn_task_archive` and CLI paths that do not construct an executor. Each path is protected by a per-repository cross-process reservation until backend removal and branch cleanup finish. If one removal fails, its reservation is quarantined and the next acquisition reconciles that orphan; successful sibling repositories are still released. `archiveTask(..., { cleanup: false })` intentionally retains worktrees, and the self-healing workspace sweep remains an idempotent backstop.
 
-#### Explicit duplicate-marker guard (FN-5220)
+### Task-pinned orphan recovery
+
+When `worktreeNaming: "task-id"` finds an inactive pinned directory whose Git metadata is incomplete or unregistered, Fusion preserves the whole directory before recreating the task worktree at the same path. The normal preservation root is `<project>/.fusion/recovery/worktrees`. If the configured worktree directory is on another filesystem, Fusion retries the atomic rename under `<worktreesDir>/.fusion-recovery/worktrees` instead of using copy-and-delete.
+
+Each preservation root retains the newest 10 Fusion-generated orphan directories. Pruning is best-effort and skips unknown names, symlinks, unreadable entries, and paths with active sessions. Copy artifacts elsewhere if they need indefinite retention. Worktree discovery, cleanup, and capacity scans treat `.fusion-recovery` as an internal container rather than a task worktree.
+
+### Explicit duplicate-marker guard (FN-5220)
 
 Fusion also recognizes the canonical one-line redirect marker:
 
