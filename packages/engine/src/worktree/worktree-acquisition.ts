@@ -4,7 +4,7 @@ import { lstat, mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile 
 import { exec } from "node:child_process";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { promisify } from "node:util";
-import { acquireWorktreePathReservation, canonicalizeWorktreePath, resolveEngineIncarnationId, resolveEngineNodeId, type RunMutationContext, type Settings, type Task, type TaskStore, type SecretsStore, type WorkspaceLeaseHandle } from "@fusion/core";
+import { acquireWorktreePathReservation, canonicalizeWorktreePath, resolveEngineIncarnationId, resolveEngineNodeId, UNATTRIBUTED_MUTATION_CONTEXT, type RunMutationContext, type Settings, type Task, type TaskStore, type SecretsStore, type WorkspaceLeaseHandle } from "@fusion/core";
 import { generateWorktreeName, resolveTaskWorkingBranch, slugify } from "./worktree-names.js";
 import { resolveTaskWorktreePathForBackend, resolveWorktreesDir, WORKTREE_RECOVERY_DIRNAME } from "./worktree-paths.js";
 import { hydrateWorktreeDb } from "./worktree-db-hydrate.js";
@@ -274,7 +274,8 @@ async function maybeWarnForeignTaskStartPoint(
     taskId: string;
     logger?: { warn: (m: string) => void };
     store: TaskStore;
-    runContext?: RunMutationContext;
+    /** FNXC:Identity 2026-08-09-03:04 (U18 Stage B): required — the only caller resolves it first. */
+    runContext: RunMutationContext;
   },
 ): Promise<void> {
   const { baseBranch, rootDir, worktreePath, taskId, logger, store, runContext } = input;
@@ -326,15 +327,27 @@ async function pinnedWorktreeBranchMatches(rootDir: string, worktreePath: string
 }
 
 export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Promise<AcquireTaskWorktreeResult> {
-  const { task, rootDir, store, settings, pool, logger, audit, runContext, createWorktree, runConfiguredCommand, runInitCommand, taskEnv, secretsStore } = opts;
+  const { task, rootDir, store, settings, pool, logger, audit, runContext: providedRunContext, createWorktree, runConfiguredCommand, runInitCommand, taskEnv, secretsStore } = opts;
+  /*
+  FNXC:Identity 2026-08-15-22:52 (U18/KTD2 Stage B):
+  This file already threaded `runContext` end to end; what U18 changed is that the store now REFUSES
+  an absent one. The option stays optional because its callers differ in what they can supply — the
+  merge lane and the heartbeat always have a run context, while the executor reads its own
+  `currentRunContexts` map and legitimately misses. So the whole file resolves ONCE, here, and the
+  downstream writes take the resolved value. The single marker is deliberate and is Stage C's
+  work list: the executor is where a missing run carrier gets threaded, and no other caller can reach
+  this fallback. Inventing a lane actor here instead would attribute a human-triggered or executor
+  worktree acquisition to a fictional "worktree" agent.
+  */
+  const runContext = providedRunContext ?? UNATTRIBUTED_MUTATION_CONTEXT;
   const persistWorktreeAssignment = async (patch: Parameters<TaskStore["updateTask"]>[1]): Promise<void> => {
     if (!opts.suppressSingularWorktreePersist) {
-      await store.updateTask(task.id, patch);
+      await store.updateTask(task.id, patch, runContext);
       return;
     }
     const { worktree: _worktree, branch: _branch, ...nonSingularPatch } = patch;
     if (Object.keys(nonSingularPatch).length > 0) {
-      await store.updateTask(task.id, nonSingularPatch);
+      await store.updateTask(task.id, nonSingularPatch, runContext);
     }
   };
   const renameWorktreeDirectory = opts.renameWorktreeDirectory ?? rename;
@@ -366,7 +379,7 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
     const refreshSettings = settings.worktrunk?.enabled === true
       ? { ...settings, worktrunk: { ...settings.worktrunk, enabled: false } }
       : settings;
-    const refresh = await refreshReusedWorktreeBase({ task, rootDir, worktreePath: path, store, settings: refreshSettings, audit, logger });
+    const refresh = await refreshReusedWorktreeBase({ task, rootDir, worktreePath: path, store, settings: refreshSettings, audit, logger, runContext });
     /*
     FNXC:WorktreeBaseRefresh 2026-08-09-23:49:
     A declined refresh is an unremarkable outcome, not an execution failure: the checkout is intact and the
@@ -958,7 +971,7 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
         }
       }
       // The removed worktree's session cannot resume into a fresh checkout — clear it so the executor starts clean.
-      await store.updateTask(task.id, { sessionFile: null });
+      await store.updateTask(task.id, { sessionFile: null }, runContext);
     }
 
       const created = await createWorktreeImpl(branchName, pinnedPath, task.id, freshStartPoint, allowSiblingBranchRename, true);
@@ -1178,7 +1191,8 @@ async function verifyResumeBranchNotMisbound(input: {
   store: TaskStore;
   audit?: Pick<RunAuditor, "git" | "filesystem">;
   logger?: { log?: (msg: string) => void; warn?: (msg: string) => void };
-  runContext: RunMutationContext | undefined;
+  /** FNXC:Identity 2026-08-09-03:04 (U18 Stage B): required — both callers sit below the single resolution point above. */
+  runContext: RunMutationContext;
 }): Promise<void> {
   const { worktreePath, branchName, taskId, rootDir, store, audit, logger, runContext } = input;
 
@@ -1285,7 +1299,10 @@ const WORKSPACE_REPO_ACQUIRE_OWNER_KEY = "workspace-repo-acquire";
 export async function acquireWorkspaceRepoWorktree(
   opts: AcquireWorkspaceRepoWorktreeOptions,
 ): Promise<{ worktreePath: string; branch: string; baseCommitSha?: string; alreadyAcquired: boolean }> {
-  const { repoRelPath, workspaceRootDir, task, store, settings, logger, secretsStore, audit, runContext, runConfiguredCommand, taskEnv } = opts;
+  const { repoRelPath, workspaceRootDir, task, store, settings, logger, secretsStore, audit, runContext: providedRunContext, runConfiguredCommand, taskEnv } = opts;
+  /* FNXC:Identity 2026-08-09-03:04 (U18 Stage B): same single-resolution shape as `acquireTaskWorktree`; the
+     per-repo workspace path is reached from `fn_workspace_repo_acquire`, whose actor arrives with U11. */
+  const runContext = providedRunContext ?? UNATTRIBUTED_MUTATION_CONTEXT;
   const registry = opts.registry ?? activeSessionRegistry;
   const { join, isAbsolute, normalize, sep } = await import("node:path");
 

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { ANY_MUTATION_CONTEXT } from "./mutation-context-matchers.js";
 import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -4024,7 +4025,7 @@ describe("executeHeartbeat", () => {
             contentFingerprint: expect.any(String),
           }),
         }),
-      }), expect.objectContaining({ settings: {} }));
+      }), expect.objectContaining({ settings: {} }), ANY_MUTATION_CONTEXT);
     });
 
     it("forwards explicit priority when fn_task_create tool is called", async () => {
@@ -4045,7 +4046,7 @@ describe("executeHeartbeat", () => {
 
       expect(mockTaskStore.createTask).toHaveBeenCalledWith(expect.objectContaining({
         priority: "high",
-      }), expect.any(Object));
+      }), expect.any(Object), ANY_MUTATION_CONTEXT);
     });
   });
 

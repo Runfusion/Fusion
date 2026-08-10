@@ -24,6 +24,7 @@
  */
 
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { ANY_MUTATION_CONTEXT } from "./mutation-context-matchers.js";
 /*
 FNXC:Identity 2026-08-09-03:04 (U18/KTD2):
 These call-arg assertions now include the mutation context the converted sweep passes.
@@ -594,7 +595,7 @@ describe("CE workflow-step executor integration", () => {
       expect(store.moveTask).toHaveBeenCalledWith("FN-CE-1", "done", expect.objectContaining({
         recoveryRehome: true,
         preserveProgress: true,
-      }));
+      }), ANY_MUTATION_CONTEXT);
       expect(live.column).toBe("done");
       expect(live.mergeDetails?.mergeConfirmed).toBe(true);
     });

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { ANY_MUTATION_CONTEXT } from "./mutation-context-matchers.js";
 import type { Agent, AgentStore, Task, TaskStore } from "@fusion/core";
 import { createTaskAssignTool } from "../agent-tools.js";
 
@@ -36,7 +37,7 @@ describe("createTaskAssignTool", () => {
       task_id: "FN-001", agent_id: "agent-002",
     }, undefined as never, undefined as never, undefined as never);
 
-    expect(taskStore.updateTask).toHaveBeenCalledWith("FN-001", { assignedAgentId: "agent-002" });
+    expect(taskStore.updateTask).toHaveBeenCalledWith("FN-001", { assignedAgentId: "agent-002" }, ANY_MUTATION_CONTEXT);
     expect((result.content[0] as { text: string }).text).toBe("Assigned FN-001 to Bea (agent-002).");
   });
 

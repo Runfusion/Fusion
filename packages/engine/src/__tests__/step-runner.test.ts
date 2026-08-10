@@ -11,6 +11,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { ANY_MUTATION_CONTEXT } from "./mutation-context-matchers.js";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -327,8 +328,7 @@ describe("resetStepToBaseline", () => {
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-001",
       expect.stringContaining("git reset to baseSHA"),
-      "rejected",
-    );
+      "rejected", ANY_MUTATION_CONTEXT);
   });
 
   it("skips the session rewind when no checkpoint is provided (partial path)", async () => {
@@ -372,8 +372,7 @@ describe("resetStepToBaseline", () => {
       "FN-001",
       // 0-indexed step 2 is displayed as "Step 2" to match PROMPT.md headings.
       expect.stringContaining("Step 2 plan rewound"),
-      "plan rejected",
-    );
+      "plan rejected", ANY_MUTATION_CONTEXT);
   });
 
   it("falls back to branchWithSummary when navigateTree throws", async () => {

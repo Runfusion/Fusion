@@ -1,4 +1,5 @@
 import "./executor-test-helpers.js";
+import { ANY_MUTATION_CONTEXT } from "./mutation-context-matchers.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Settings, Task, TaskStore } from "@fusion/core";
 
@@ -242,11 +243,10 @@ describe("TriageProcessor paused finalization guard", () => {
     );
 
     expect(store.moveTask).not.toHaveBeenCalled();
-    expect(store.updateTask).toHaveBeenLastCalledWith(task.id, { status: null });
+    expect(store.updateTask).toHaveBeenLastCalledWith(task.id, { status: null }, ANY_MUTATION_CONTEXT);
     expect(store.logEntry).toHaveBeenCalledWith(
       task.id,
-      "Specification approved but task is paused — leaving in triage, will resume on unpause",
-    );
+      "Specification approved but task is paused — leaving in triage, will resume on unpause", undefined, ANY_MUTATION_CONTEXT);
   });
 
   it("does not move to awaiting-approval when the re-read task is userPaused", async () => {
@@ -262,7 +262,7 @@ describe("TriageProcessor paused finalization guard", () => {
 
     expect(store.moveTask).not.toHaveBeenCalled();
     expect(store.updateTask).not.toHaveBeenCalledWith(task.id, expect.objectContaining({ status: "awaiting-approval" }));
-    expect(store.updateTask).toHaveBeenLastCalledWith(task.id, { status: null });
+    expect(store.updateTask).toHaveBeenLastCalledWith(task.id, { status: null }, ANY_MUTATION_CONTEXT);
   });
 
   it("keeps the unpaused approved-spec happy path moving to todo", async () => {

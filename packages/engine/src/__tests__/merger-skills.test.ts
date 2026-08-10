@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { ANY_MUTATION_CONTEXT } from "./mutation-context-matchers.js";
 
 // Mock external dependencies
 vi.mock("../pi.js", () => ({
@@ -601,7 +602,7 @@ describe("aiMergeTask — skill selection non-fatal diagnostics (FN-1510/FN-1511
     });
 
     expect(result.merged).toBe(true);
-    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done", undefined, ANY_MUTATION_CONTEXT);
   });
 
   it("records skill source in context result for debugging", async () => {

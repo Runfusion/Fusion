@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { ANY_MUTATION_CONTEXT } from "./mutation-context-matchers.js";
 import { TaskDocumentPreconditionFailedError, type TaskDocument, type TaskStore } from "@fusion/core";
 import {
   createChatTaskDocumentTools,
@@ -193,7 +194,7 @@ describe("task_prompt_write tool", () => {
       content: "# Verified plan",
     });
 
-    expect(updateTask).toHaveBeenCalledWith(TASK_ID, { prompt: "# Verified plan" }, undefined);
+    expect(updateTask).toHaveBeenCalledWith(TASK_ID, { prompt: "# Verified plan" }, ANY_MUTATION_CONTEXT);
     expect(getTask).toHaveBeenCalledWith(TASK_ID);
     expect(getText(result)).toBe(`Updated PROMPT.md for ${TASK_ID}.`);
   });

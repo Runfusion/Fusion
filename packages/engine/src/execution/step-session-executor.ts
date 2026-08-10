@@ -1415,7 +1415,7 @@ export class StepSessionExecutor {
                 ...(isAgentDelegateTaskToolAvailable(settings, this.options.callerIsEphemeral)
                   ? [createDelegateTaskTool(this.options.agentStore, this.options.store!, { rootDir: this.options.rootDir, sourceTaskId: this.options.sourceTaskId ?? taskDetail.id, sourceAgentId: this.options.sourceAgentId ?? taskDetail.assignedAgentId, callerIsEphemeral: this.options.callerIsEphemeral })]
                   : []),
-                createTaskAssignTool(this.options.agentStore, this.options.store!),
+                createTaskAssignTool(this.options.agentStore, this.options.store!, mutationContextForAgent(this.options.effectiveAgentId ?? taskDetail.assignedAgentId ?? "executor")),
               ]
             : [];
 

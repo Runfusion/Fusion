@@ -1,4 +1,6 @@
 import type { TaskStore } from "@fusion/core";
+/* FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage B): mutation-context constructors for this lane. */
+import { UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 import { classifyForeignOnlyContamination } from "../execution/branch-conflicts.js";
 import type { AutoRecoveryContext, AutoRecoveryDecision, AutoRecoveryFailure, AutoRecoveryHandlers } from "../healing/auto-recovery.js";
 import { resolveReboundTargetForTask } from "@fusion/core";
@@ -92,13 +94,13 @@ export class ContaminationAutoRecoveryHandler implements Pick<AutoRecoveryHandle
         preserveResumeState: true,
         preserveProgress: true,
         preserveWorktree: true,
-      });
+      }, UNATTRIBUTED_MUTATION_CONTEXT);
 
       await this.deps.taskStore.updateTask(task.id, {
         paused: false,
         pausedReason: null,
         error: null,
-      });
+      }, UNATTRIBUTED_MUTATION_CONTEXT);
     }
 
     await this.deps.runAudit.database({

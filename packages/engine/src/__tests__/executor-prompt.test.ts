@@ -1,6 +1,7 @@
 // -nocheck
 /* eslint-disable -eslint/no-unused-vars */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { ANY_MUTATION_CONTEXT } from "./mutation-context-matchers.js";
 import "./executor-test-helpers.js";
 import { AgentSemaphore } from "../concurrency/concurrency.js";
 import { detectReviewHandoffIntent, determineRevisionResetStart } from "../executor.js";
@@ -2683,7 +2684,7 @@ describe("TaskExecutor global pause behavior", () => {
         status: null,
         // FNXC:Lifecycle 2026-07-17-06:15: FN-8141 clears skip-bypass taint on accepted completion.
         bulkCompletionRefusalAt: null,
-      });
+      }, ANY_MUTATION_CONTEXT);
       expect(watchdogSpy).toHaveBeenCalledWith("FN-001", "fn_task_done");
       expect(store.moveTask).toHaveBeenCalledWith(
         "FN-001",
@@ -2855,7 +2856,7 @@ describe("TaskExecutor global pause behavior", () => {
         status: null,
         // FNXC:Lifecycle 2026-07-17-06:15: FN-8141 clears skip-bypass taint on accepted completion.
         bulkCompletionRefusalAt: null,
-      });
+      }, ANY_MUTATION_CONTEXT);
       expect(watchdogSpy).toHaveBeenCalledWith("FN-001", "fn_task_done");
       expect(store.moveTask).toHaveBeenCalledWith(
         "FN-001",

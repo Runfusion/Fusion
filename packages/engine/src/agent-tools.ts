@@ -14,7 +14,7 @@ import { tmpdir } from "node:os";
 import { extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import * as fusionCore from "@fusion/core";
 import type { AgentState, AgentCapability, AgentUpdateInput, AgentLogEntry, Artifact, ArtifactCreateInput, ArtifactWithTask, Task, TaskDocument, TaskDocumentCreateInput, TaskStore, RunMutationContext, MessageStore, Message, SourceType, Settings, ResearchRun, ResearchRunStatus, TaskCreateInput, ReflectionStore, ApprovalRequestStore, ProjectSettings, ChatStore, WorkflowSettingDefinition, GoalStatus, WorkflowIrNode, IdeationCandidate, MissionWithHierarchy, DbTransaction } from "@fusion/core";
-import { listTraits, isBuiltinWorkflowId, AgentStore, validateColumnAgentBindings, ColumnAgentBindingError, stripApprovalBypassFlags, WorkflowSettingRejectionError, resolveEffectiveSettingsById, resolveWorkflowIrById, findOrphanedSettingValues, BUILTIN_WORKFLOW_SETTINGS, MAX_TASK_LIST_TEXT_CHARS, formatCurrentTaskLine, normalizeWorkflowIcon, parseWorkflowIr, WorkflowIrError, assertColumnTraitsValid, ColumnTraitValidationError } from "@fusion/core";
+import { mutationContextForAgent, UNATTRIBUTED_MUTATION_CONTEXT, listTraits, isBuiltinWorkflowId, AgentStore, validateColumnAgentBindings, ColumnAgentBindingError, stripApprovalBypassFlags, WorkflowSettingRejectionError, resolveEffectiveSettingsById, resolveWorkflowIrById, findOrphanedSettingValues, BUILTIN_WORKFLOW_SETTINGS, MAX_TASK_LIST_TEXT_CHARS, formatCurrentTaskLine, normalizeWorkflowIcon, parseWorkflowIr, WorkflowIrError, assertColumnTraitsValid, ColumnTraitValidationError } from "@fusion/core";
 import { promoteHeldTask } from "./execution/hold-release.js";
 import { computeCrossParentDiagnosticClaim, computeCrossParentDiagnosticClaimId, computeParentIntentClaimId, DASHBOARD_USER_ID, dailyMemoryPath, ensureOpenClawMemoryFiles, evaluateImplementationTaskBind, extractAgentProvisioningRequest, findSameAgentDuplicates, getMemoryBackendCapabilities, getProjectMemory, isEphemeralAgent, memoryLongTermPath, normalizeMessageParticipant, reconcileDeterministicDuplicate, resolveAgentProvisioningPolicy, resolveMemoryBackend, resolveResearchSettings, resolveTaskGithubTracking, runDeterministicDuplicateGuard, scheduleQmdProjectMemoryRefresh, searchProjectMemory, shouldSkipBackgroundQmdRefresh } from "@fusion/core";
 import { ResearchOrchestrator } from "./research/research-orchestrator.js";
@@ -1311,16 +1311,18 @@ async function carryCanonicalTaskRouting(
   store: TaskStore,
   canonical: Task,
   input: TaskCreateInput,
+  /** FNXC:Identity 2026-08-09-03:04 (U18 Stage B): the creating agent's context, resolved by `createAgentTask`. */
+  runContext: RunMutationContext,
 ): Promise<Task> {
   // Task creation without an explicit assignee must not mutate an existing duplicate.
   if (input.assignedAgentId === undefined) return canonical;
 
   let task = canonical;
   if (input.assignedAgentId !== canonical.assignedAgentId) {
-    task = await store.updateTask(canonical.id, { assignedAgentId: input.assignedAgentId });
+    task = await store.updateTask(canonical.id, { assignedAgentId: input.assignedAgentId }, runContext);
   }
   if (input.column !== undefined && input.column !== task.column) {
-    task = await store.moveTask(task.id, input.column);
+    task = await store.moveTask(task.id, input.column, undefined, runContext);
   }
   return task;
 }
@@ -1373,6 +1375,17 @@ export async function createAgentTask(
   const rootDir = options?.rootDir;
   const sourceParentTaskId = (input.source?.sourceParentTaskId ?? options?.sourceTaskId)?.trim().toUpperCase();
   const sourceAgentId = input.source?.sourceAgentId ?? options?.sourceAgentId;
+  /*
+  FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage B):
+  Agent-created tasks HAVE an author: the agent whose `fn_task_create` call reached here, carried on
+  `input.source.sourceAgentId` (heartbeat and triage both stamp it). Derive from it rather than
+  marking. The marker survives only for the callers that genuinely have no agent — a plain
+  `createAgentTask` from an import/bootstrap path — and that residue is U9/U11's, not a lane label
+  this function is entitled to invent.
+  */
+  const creationRunContext: RunMutationContext = sourceAgentId
+    ? mutationContextForAgent(sourceAgentId)
+    : UNATTRIBUTED_MUTATION_CONTEXT;
   const crossParentDiagnosticClaim = options?.bypassDuplicateCheck === true
     ? null
     : computeCrossParentDiagnosticClaim({ title: input.title, description: input.description });
@@ -1404,7 +1417,7 @@ export async function createAgentTask(
     if (guard.action === "duplicate" && guard.existing) {
       await validateDuplicateCanonical?.(guard.existing);
       return {
-        task: await carryCanonicalTaskRouting(store, guard.existing, input),
+        task: await carryCanonicalTaskRouting(store, guard.existing, input, creationRunContext),
         wasDuplicate: true,
       };
     }
@@ -1436,7 +1449,7 @@ export async function createAgentTask(
         const canonical = candidates[0];
         if (canonical) {
           await validateDuplicateCanonical?.(canonical);
-          return { task: await carryCanonicalTaskRouting(store, canonical, input), wasDuplicate: true };
+          return { task: await carryCanonicalTaskRouting(store, canonical, input, creationRunContext), wasDuplicate: true };
         }
       } catch (error) {
         log.warn("Cross-parent diagnostic duplicate pre-check failed; aborting creation", {
@@ -1469,7 +1482,7 @@ export async function createAgentTask(
         const canonical = match ? candidates.find((candidate) => candidate.id === match.id) : undefined;
         if (canonical) {
           await validateDuplicateCanonical?.(canonical);
-          return { task: await carryCanonicalTaskRouting(store, canonical, input), wasDuplicate: true };
+          return { task: await carryCanonicalTaskRouting(store, canonical, input, creationRunContext), wasDuplicate: true };
         }
       } catch (error) {
         log.warn("Parent-scoped task duplicate pre-check failed; aborting creation", {
@@ -1491,7 +1504,7 @@ export async function createAgentTask(
       const duplicate = await findDefinedFeatureBootstrapDuplicate(store, input, sourceAgentId, sourceParentTaskId);
       if (duplicate) {
         await validateDuplicateCanonical(duplicate);
-        return { task: await carryCanonicalTaskRouting(store, duplicate, input), wasDuplicate: true };
+        return { task: await carryCanonicalTaskRouting(store, duplicate, input, creationRunContext), wasDuplicate: true };
       }
     }
 
@@ -1541,7 +1554,7 @@ export async function createAgentTask(
     const createdTask = await store.createTask(createInput, {
       settings,
       onProposalClaimConflict: () => { proposalClaimConflict = true; },
-    });
+    }, creationRunContext);
 
     const reconcileCreatedDuplicate = (input as AgentTaskInputWithBootstrap).reconcileCreatedDuplicate;
     const reconcile = await reconcileDeterministicDuplicate(store, {
@@ -1559,9 +1572,9 @@ export async function createAgentTask(
 
     const wasDuplicate = proposalClaimConflict || reconcile.outcome === "archived" || reconcile.outcome === "kept-duplicate";
     const canonical = proposalClaimConflict
-      ? await carryCanonicalTaskRouting(store, createdTask, input)
+      ? await carryCanonicalTaskRouting(store, createdTask, input, creationRunContext)
       : reconcile.outcome === "archived"
-      ? await carryCanonicalTaskRouting(store, reconcile.canonical, input)
+      ? await carryCanonicalTaskRouting(store, reconcile.canonical, input, creationRunContext)
       : reconcile.canonical;
     /*
     FNXC:MissionAdmission 2026-07-23-17:20:
@@ -1888,7 +1901,15 @@ export function createTaskReadTools(store: TaskStore): ToolDefinition[] {
  * @param taskId - The task ID to log entries against
  * @returns ToolDefinition for the `fn_task_log` tool
  */
-export function createTaskLogTool(store: TaskStore, taskId: string): ToolDefinition {
+/*
+FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage B):
+`runContext` is optional and falls back to the marker because the ONLY caller that cannot supply one
+is `executor.ts`, which reads its own `currentRunContexts` map and is Stage C's work. Every other
+caller of this factory already passes a real context. The fallback is resolved once, here, so the
+debt is one greppable line per tool rather than one per store call inside it.
+*/
+export function createTaskLogTool(store: TaskStore, taskId: string, runContextArg?: RunMutationContext): ToolDefinition {
+  const runContext = runContextArg ?? UNATTRIBUTED_MUTATION_CONTEXT;
   return {
     name: "fn_task_log",
     label: "Log Entry",
@@ -1898,7 +1919,7 @@ export function createTaskLogTool(store: TaskStore, taskId: string): ToolDefinit
     parameters: taskLogParams,
     execute: async (_id: string, params: Static<typeof taskLogParams>) => {
       try {
-        await store.logEntry(taskId, params.message, params.outcome);
+        await store.logEntry(taskId, params.message, params.outcome, runContext);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       } catch (err: any) {
         if (typeof err?.message === "string" && err.message.toLowerCase().includes("archived")) {
@@ -1926,7 +1947,13 @@ export function createTaskLogTool(store: TaskStore, taskId: string): ToolDefinit
  * @param runContext - Optional run context for mutation correlation
  * @returns ToolDefinition for the `fn_task_log` tool
  */
-export function createTaskLogToolWithContext(store: TaskStore, taskId: string, runContext?: RunMutationContext): ToolDefinition {
+/**
+ * FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage B):
+ * `runContext` is REQUIRED here. This variant exists precisely to carry one, and its sole caller
+ * (`HeartbeatMonitor.createHeartbeatTools`) always has the heartbeat run's context — an optional
+ * parameter on the "with context" variant meant the attributed tool could still write unattributed.
+ */
+export function createTaskLogToolWithContext(store: TaskStore, taskId: string, runContext: RunMutationContext): ToolDefinition {
   return {
     name: "fn_task_log",
     label: "Log Entry",
@@ -2116,7 +2143,15 @@ export function createTaskDocumentReadTool(store: TaskStore, taskId: string): To
  * FNXC:WorkflowReviewers 2026-07-01-13:22:
  * Plan Review inline fixes must be able to rewrite the task's authoritative PROMPT.md, but that pre-execution reviewer should not need general source-file write tools. Route the write through TaskStore so existing PROMPT.md validation, task directory placement, and task.json sync remain the single persistence path.
  */
-export function createTaskPromptWriteTool(store: TaskStore, taskId: string, runContext?: RunMutationContext): ToolDefinition {
+/*
+FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage B):
+`runContext` is optional and falls back to the marker because the ONLY caller that cannot supply one
+is `executor.ts`, which reads its own `currentRunContexts` map and is Stage C's work. Every other
+caller of this factory already passes a real context. The fallback is resolved once, here, so the
+debt is one greppable line per tool rather than one per store call inside it.
+*/
+export function createTaskPromptWriteTool(store: TaskStore, taskId: string, runContextArg?: RunMutationContext): ToolDefinition {
+  const runContext = runContextArg ?? UNATTRIBUTED_MUTATION_CONTEXT;
   return {
     name: "fn_task_prompt_write",
     label: "Write PROMPT.md",
@@ -2164,7 +2199,15 @@ FNXC:FileScope 2026-07-08-22:40:
 Requirement: when an executing agent must edit files beyond the task's declared `## File Scope`, it should extend the declared scope itself rather than silently editing out-of-scope (which strands those edits — the merger's squash is scoped to `## File Scope`, and cross-task overlap blocking + the merge file-scope invariant both read it). This tool appends validated entries to the `## File Scope` section of PROMPT.md and persists via `store.updateTask({ prompt })`, so the same validation (`validateFileScopeInPromptContent`) and task.json/PROMPT.md sync path as `fn_task_prompt_write` applies, and `parseFileScopeFromPrompt` picks the additions up immediately.
 Entries are validated with `isValidFileScopeEntry` and de-duplicated against existing scope. Marker-free plain `- \`path\`` lines are used (not the merger's `scopeAutoWiden` HTML-comment marker) so these read as first-class declared scope. Caveat: unlike the merge-time auto-widen, this does NOT re-run the peer-claim refusal (files owned by another active task's scope) — the merge-time invariant remains the backstop for genuine cross-task conflicts.
 */
-export function createTaskFileScopeAddTool(store: TaskStore, taskId: string, runContext?: RunMutationContext): ToolDefinition {
+/*
+FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage B):
+`runContext` is optional and falls back to the marker because the ONLY caller that cannot supply one
+is `executor.ts`, which reads its own `currentRunContexts` map and is Stage C's work. Every other
+caller of this factory already passes a real context. The fallback is resolved once, here, so the
+debt is one greppable line per tool rather than one per store call inside it.
+*/
+export function createTaskFileScopeAddTool(store: TaskStore, taskId: string, runContextArg?: RunMutationContext): ToolDefinition {
+  const runContext = runContextArg ?? UNATTRIBUTED_MUTATION_CONTEXT;
   return {
     name: "fn_task_file_scope_add",
     label: "Add to File Scope",
@@ -3175,6 +3218,12 @@ export function createTaskUnarchiveTool(store: TaskStore): ToolDefinition {
   };
 }
 
+/*
+FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage B):
+Derived, not marked: this tool's SOLE caller is the dashboard chat agent, and the delete path here
+already declares that actor on its own `auditContext` (`agentId: "chat"`). U18 makes the task-log and
+lifecycle writes say the same thing the audit row already said.
+*/
 export function createTaskDeleteTool(store: TaskStore): ToolDefinition {
   return {
     name: "fn_task_delete",
@@ -3196,7 +3245,7 @@ export function createTaskDeleteTool(store: TaskStore): ToolDefinition {
             taskId: params.id,
             actor: fusionCore.actorContextForAgent("chat"),
           },
-        });
+        }, mutationContextForAgent("chat"));
         return { content: [{ type: "text" as const, text: `Deleted ${task.id}` }], details: { taskId: task.id } };
       } catch (err: unknown) {
         return { content: [{ type: "text" as const, text: `ERROR: Failed to delete task: ${toolErrorMessage(err)}` }], details: {}, isError: true };
@@ -3205,6 +3254,7 @@ export function createTaskDeleteTool(store: TaskStore): ToolDefinition {
   };
 }
 
+/* FNXC:Identity 2026-08-09-03:04 (U18 Stage B): chat-only tool — same derived `"chat"` actor as fn_task_delete. */
 export function createTaskRetryTool(store: TaskStore): ToolDefinition {
   return {
     name: "fn_task_retry",
@@ -3217,7 +3267,7 @@ export function createTaskRetryTool(store: TaskStore): ToolDefinition {
         if (task.status !== "failed" && task.status !== "stuck-killed") {
           return { content: [{ type: "text" as const, text: `Task ${params.id} is not in a retryable state (status: ${task.status || "none"})` }], details: { taskId: params.id, currentStatus: task.status }, isError: true };
         }
-        await store.updateTask(params.id, { status: null, error: null });
+        await store.updateTask(params.id, { status: null, error: null }, mutationContextForAgent("chat"));
         /*
         FNXC:TaskRetry 2026-07-31-23:59 (review finding on #3152 — the move resolved, the REPORT did not):
         The rebound target is resolved once and reused for the move, the log line, the response text
@@ -3230,8 +3280,8 @@ export function createTaskRetryTool(store: TaskStore): ToolDefinition {
         act on, so a wrong value there is not merely cosmetic.
         */
         const retryTarget = await fusionCore.resolveReboundTargetForTask(store, params.id);
-        await store.moveTask(params.id, retryTarget);
-        await store.logEntry(params.id, "Retry requested via chat tool", `Task reset to ${retryTarget} for retry`);
+        await store.moveTask(params.id, retryTarget, undefined, mutationContextForAgent("chat"));
+        await store.logEntry(params.id, "Retry requested via chat tool", `Task reset to ${retryTarget} for retry`, mutationContextForAgent("chat"));
         return { content: [{ type: "text" as const, text: `Retried ${params.id} → ${retryTarget}` }], details: { taskId: params.id, newColumn: retryTarget } };
       } catch (err: unknown) {
         return { content: [{ type: "text" as const, text: `ERROR: Failed to retry task: ${toolErrorMessage(err)}` }], details: {}, isError: true };
@@ -3317,7 +3367,15 @@ export function createTaskMergeTool(store: TaskStore, _currentTaskId: string): T
   };
 }
 
-export function createTaskUpdateTool(store: TaskStore, taskId: string): ToolDefinition {
+/*
+FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage B):
+`runContext` is optional and falls back to the marker because the ONLY caller that cannot supply one
+is `executor.ts`, which reads its own `currentRunContexts` map and is Stage C's work. Every other
+caller of this factory already passes a real context. The fallback is resolved once, here, so the
+debt is one greppable line per tool rather than one per store call inside it.
+*/
+export function createTaskUpdateTool(store: TaskStore, taskId: string, runContextArg?: RunMutationContext): ToolDefinition {
+  const runContext = runContextArg ?? UNATTRIBUTED_MUTATION_CONTEXT;
   return {
     name: "fn_task_update",
     label: "Update Step / Custom Fields / Dependencies",
@@ -3349,7 +3407,7 @@ export function createTaskUpdateTool(store: TaskStore, taskId: string): ToolDefi
           if (invalidIds.length) {
             return { content: [{ type: "text" as const, text: `ERROR: Unknown dependency task(s): ${invalidIds.join(", ")}` }], details: {}, isError: true };
           }
-          await store.updateTask(taskId, { dependencies: params.dependencies });
+          await store.updateTask(taskId, { dependencies: params.dependencies }, runContext);
         }
         if (params.step !== undefined && params.status !== undefined) {
           const task = await store.updateStep(taskId, params.step, params.status);
@@ -3366,7 +3424,15 @@ export function createTaskUpdateTool(store: TaskStore, taskId: string): ToolDefi
   };
 }
 
-export function createTaskAddDepTool(store: TaskStore, taskId: string): ToolDefinition {
+/*
+FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage B):
+`runContext` is optional and falls back to the marker because the ONLY caller that cannot supply one
+is `executor.ts`, which reads its own `currentRunContexts` map and is Stage C's work. Every other
+caller of this factory already passes a real context. The fallback is resolved once, here, so the
+debt is one greppable line per tool rather than one per store call inside it.
+*/
+export function createTaskAddDepTool(store: TaskStore, taskId: string, runContextArg?: RunMutationContext): ToolDefinition {
+  const runContext = runContextArg ?? UNATTRIBUTED_MUTATION_CONTEXT;
   return {
     name: "fn_task_add_dep",
     label: "Add Task Dependency",
@@ -3403,7 +3469,7 @@ export function createTaskAddDepTool(store: TaskStore, taskId: string): ToolDefi
           };
         }
         if (depId === taskId) return { content: [{ type: "text" as const, text: "ERROR: cannot add self-dependency." }], details: {}, isError: true };
-        await store.updateTask(taskId, { dependencies: [...(task.dependencies || []), depId] });
+        await store.updateTask(taskId, { dependencies: [...(task.dependencies || []), depId] }, runContext);
         return { content: [{ type: "text" as const, text: `Added dependency ${depId} to ${taskId}` }], details: { taskId, dependency: depId } };
       } catch (err: unknown) {
         return { content: [{ type: "text" as const, text: `ERROR: Failed to add dependency: ${toolErrorMessage(err)}` }], details: {}, isError: true };
@@ -5607,7 +5673,16 @@ FN-8207 adds an engine-session reassignment tool because executor fn_task_update
 export function createTaskAssignTool(
   agentStore: AgentStore,
   taskStore: TaskStore,
+  /*
+  FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage B):
+  The assignment's actor is the agent RUNNING the tool, never `params.agent_id` — that names the
+  assignee, and attributing to it would produce an audit row claiming the target assigned itself
+  (the exact inversion `mutationContextForAgent` warns about). Heartbeat, triage and the step-session
+  executor pass their run context; only `executor.ts` still cannot, hence the marker fallback.
+  */
+  runContextArg?: RunMutationContext,
 ): ToolDefinition {
+  const runContext = runContextArg ?? UNATTRIBUTED_MUTATION_CONTEXT;
   return {
     name: "fn_task_assign",
     label: "Assign Task",
@@ -5637,7 +5712,7 @@ export function createTaskAssignTool(
         return { content: [{ type: "text" as const, text: `ERROR: ${verdict.reason}` }], details: {} };
       }
 
-      const assigned = await taskStore.updateTask(task.id, { assignedAgentId: agent.id });
+      const assigned = await taskStore.updateTask(task.id, { assignedAgentId: agent.id }, runContext);
       return {
         content: [{ type: "text" as const, text: `Assigned ${assigned.id} to ${agent.name} (${agent.id}).` }],
         details: { taskId: assigned.id, agentId: agent.id, agentName: agent.name },
@@ -6399,7 +6474,10 @@ export function createAcquireRepoWorktreeTool(opts: {
   runConfiguredCommand?: import("./worktree/worktree-acquisition.js").AcquireWorkspaceRepoWorktreeOptions["runConfiguredCommand"];
   taskEnv?: NodeJS.ProcessEnv;
 }): ToolDefinition {
-  const { workspaceRootDir, workspaceRepos, task, store, settings, logger, secretsStore, runContext, audit, onAcquired, runConfiguredCommand, taskEnv } = opts;
+  const { workspaceRootDir, workspaceRepos, task, store, settings, logger, secretsStore, runContext: providedRunContext, audit, onAcquired, runConfiguredCommand, taskEnv } = opts;
+  /* FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage B): resolved once; `executor.ts` is the only caller
+     and its run carrier lands in Stage C, so this is that stage's work list, not a lane label. */
+  const runContext = providedRunContext ?? UNATTRIBUTED_MUTATION_CONTEXT;
   return {
     name: "fn_acquire_repo_worktree",
     label: "Acquire Repo Worktree",

@@ -1,6 +1,7 @@
 // -nocheck
 /* eslint-disable -eslint/no-unused-vars */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { ANY_MUTATION_CONTEXT } from "./mutation-context-matchers.js";
 import "./executor-test-helpers.js";
 import { AgentSemaphore } from "../concurrency/concurrency.js";
 import { detectReviewHandoffIntent, determineRevisionResetStart } from "../executor.js";
@@ -476,19 +477,16 @@ describe("Workflow Steps Execution", () => {
 
     await executor.execute(task as any);
 
-    const retryRecoveryWrite = store.updateTask.mock.calls.find(
-      ([id, patch, runContext]) => id === "FN-ASSISTANT-STALE"
-        && patch?.sessionFile === null
-        && patch?.recoveryRetryCount === 1
-        && typeof patch?.nextRecoveryAt === "string"
-        && runContext === undefined,
-    );
-    expect(retryRecoveryWrite).toHaveLength(2);
-    expect(retryRecoveryWrite?.[2]).toBeUndefined();
-    expect(store.updateTask.mock.calls).toContainEqual([
-      "FN-ASSISTANT-STALE",
-      { sessionFile: null, status: null, error: null },
-    ]);
+    expect(store.updateTask).toHaveBeenCalledWith("FN-ASSISTANT-STALE", {
+      sessionFile: null,
+      recoveryRetryCount: 1,
+      nextRecoveryAt: expect.any(String),
+    }, ANY_MUTATION_CONTEXT);
+    expect(store.updateTask).toHaveBeenCalledWith("FN-ASSISTANT-STALE", {
+      sessionFile: null,
+      status: null,
+      error: null,
+    });
     expect(store.moveTask).toHaveBeenCalledWith("FN-ASSISTANT-STALE", "todo", { preserveResumeState: true });
     expect(markGraphExecuteSelfRequeued).toHaveBeenCalledWith("FN-ASSISTANT-STALE");
     expect(executingTaskLock.has("FN-ASSISTANT-STALE")).toBe(false);
@@ -538,22 +536,12 @@ describe("Workflow Steps Execution", () => {
 
     await executor.execute(task as any);
 
-    /*
-    FNXC:EngineTests 2026-08-09-12:02:
-    Graph-owned stale-assistant recovery reaches the existing classifier once reused-worktree
-    reconciliation is mocked safe. Assert the absent run context is observably undefined and the
-    two-argument store write retains its exact arity, distinguishing it from the graph wrapper path.
-    */
-    const exhaustedRecoveryWrite = store.updateTask.mock.calls.find(
-      ([id, patch, runContext]) => id === "FN-ASSISTANT-STALE-EXHAUSTED"
-        && patch?.status === "failed"
-        && patch?.error === "Cannot continue from message role: assistant"
-        && patch?.recoveryRetryCount === null
-        && patch?.nextRecoveryAt === null
-        && runContext === undefined,
-    );
-    expect(exhaustedRecoveryWrite).toHaveLength(2);
-    expect(exhaustedRecoveryWrite?.[2]).toBeUndefined();
+    expect(store.updateTask).toHaveBeenCalledWith("FN-ASSISTANT-STALE-EXHAUSTED", {
+      status: "failed",
+      error: "Cannot continue from message role: assistant",
+      recoveryRetryCount: null,
+      nextRecoveryAt: null,
+    }, ANY_MUTATION_CONTEXT);
     expect(store.moveTask).not.toHaveBeenCalledWith("FN-ASSISTANT-STALE-EXHAUSTED", "todo", expect.anything());
     expect(onError).toHaveBeenCalledOnce();
   });

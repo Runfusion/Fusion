@@ -30,6 +30,8 @@ import { existsSync, statSync } from "node:fs";
 import { promisify } from "node:util";
 
 import type { TaskStore } from "@fusion/core";
+/* FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage B): mutation-context constructors for this lane. */
+import { UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 import type { ImplementationExit } from "@fusion/core";
 
 const execAsync = promisify(exec);
@@ -362,13 +364,13 @@ export async function resetStepToBaseline(
     await store.logEntry(
       taskId,
       `RETHINK: Step ${step} plan rewound — session checkpoint ${checkpointId || "N/A"}`,
-      deps.summary,
+      deps.summary, UNATTRIBUTED_MUTATION_CONTEXT,
     );
   } else {
     await store.logEntry(
       taskId,
       `RETHINK: Step ${step} rewound — git reset to ${baselineSha || "N/A"}, session checkpoint ${checkpointId || "N/A"}`,
-      deps.summary,
+      deps.summary, UNATTRIBUTED_MUTATION_CONTEXT,
     );
   }
 

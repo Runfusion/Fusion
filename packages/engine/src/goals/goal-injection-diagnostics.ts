@@ -1,6 +1,8 @@
 import type { Goal } from "@fusion/core";
 import { buildGoalContextSection, type GoalInjectionResult } from "./goal-context-injector.js";
 import type { TaskStore } from "@fusion/core";
+/* FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage B): mutation-context constructors for this lane. */
+import { mutationContextForAgent, UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 import type { GoalAnchoringLane } from "./goal-anchoring-audit.js";
 import { emitGoalAnchoringAudit } from "./goal-anchoring-audit.js";
 import type { EngineRunContext } from "../util/run-audit.js";
@@ -240,7 +242,11 @@ export async function emitGoalInjectionDiagnostic(
   if (input.store && record.taskId) {
     try {
       // FNXC:Identity 2026-08-09-03:04: the engine run context is converted at the store boundary so the log entry carries an actor.
-      await input.store.logEntry(record.taskId, formatAgentLogLine(record), undefined, input.runContext ? toRunMutationContext(input.runContext) : undefined);
+      await input.store.logEntry(record.taskId, formatAgentLogLine(record), undefined, input.runContext
+          ? toRunMutationContext(input.runContext)
+          /* FNXC:Identity 2026-08-09-03:04 (U18 Stage B): no run context on this call still leaves the
+             injecting agent in scope on the diagnostic record itself, so derive from it. */
+          : (input.agentId ? mutationContextForAgent(input.agentId) : UNATTRIBUTED_MUTATION_CONTEXT));
     } catch (error) {
       diagnosticsLog.warn(
         `failed to append goal-injection task log for ${record.taskId}: ${error instanceof Error ? error.message : String(error)}`,

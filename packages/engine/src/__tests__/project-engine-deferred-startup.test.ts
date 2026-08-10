@@ -5,6 +5,7 @@
  * Stale merging/merging-pr statuses clear on the critical path.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { ANY_MUTATION_CONTEXT } from "./mutation-context-matchers.js";
 
 const oauthRefreshStart = vi.fn(async () => undefined);
 const oauthExpiryStart = vi.fn(async () => undefined);
@@ -182,8 +183,8 @@ describe("ProjectEngine deferred startup", () => {
     const engine = makeEngine("proj_stale", true);
     await engine.start();
 
-    expect(updateTask).toHaveBeenCalledWith("FN-1", { status: null });
-    expect(updateTask).toHaveBeenCalledWith("FN-2", { status: null });
+    expect(updateTask).toHaveBeenCalledWith("FN-1", { status: null }, ANY_MUTATION_CONTEXT);
+    expect(updateTask).toHaveBeenCalledWith("FN-2", { status: null }, ANY_MUTATION_CONTEXT);
     expect(updateTask).not.toHaveBeenCalledWith("FN-3", expect.anything());
   });
 

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { ANY_MUTATION_CONTEXT } from "../mutation-context-matchers.js";
 import "../executor-test-helpers.js";
 import { TaskExecutor } from "../../executor.js";
 import { createMockStore, resetExecutorMocks } from "../executor-test-helpers.js";
@@ -305,8 +306,7 @@ describe("merge-node paused-abort retry classification (FN-6735)", () => {
     expect(mergeRequester).not.toHaveBeenCalled();
     expect(store.updateTask).toHaveBeenCalledWith(
       task.id,
-      expect.objectContaining({ status: null, error: null, paused: false }),
-    );
+      expect.objectContaining({ status: null, error: null, paused: false }), ANY_MUTATION_CONTEXT);
   });
 
   const implementationIncompleteMergeNodes = [

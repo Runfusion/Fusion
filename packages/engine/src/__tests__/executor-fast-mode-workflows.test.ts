@@ -6,6 +6,7 @@
 // standard / undefined executionMode data states, and the executor tool
 // injection surface (fn_review_step is deleted in both modes) vs mandatory fn_task_done.
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { ANY_MUTATION_CONTEXT } from "./mutation-context-matchers.js";
 import "./executor-test-helpers.js";
 import { getBuiltinWorkflow } from "@fusion/core";
 import { TaskExecutor } from "../executor.js";
@@ -872,7 +873,7 @@ describe("fast mode workflow/runtime invariants", () => {
       undefined,
       undefined,
     );
-    expect(store.moveTask).toHaveBeenCalledWith("FN-1165-NOOP", "done", expect.objectContaining({ preserveProgress: true }));
+    expect(store.moveTask).toHaveBeenCalledWith("FN-1165-NOOP", "done", expect.objectContaining({ preserveProgress: true }), ANY_MUTATION_CONTEXT);
   });
 
   it("fast builtin:coding executes plain Steps-section headings from fast triage specs", async () => {

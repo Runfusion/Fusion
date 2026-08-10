@@ -129,9 +129,72 @@ callback the boundary controller invokes with a column and a node, never an acto
 `execution/task-revert.ts`, and the inline widening at `executor.ts`'s workflow merge boundary.
 Do not reopen one by relaxing a signature back to the old arity to quiet a caller.
 */
+/*
+FNXC:Identity 2026-08-09-03:04 (U18 step 2, Stage B — engine 292 -> 322, +30 markers over 379 converted sites):
+
+Stage B converted the 379 remaining unconverted mutating call sites in every engine lane EXCEPT
+`executor.ts` (Stage C, which needs a run carrier threaded through hundreds of helper frames rather
+than edited call by call). 349 of those 379 derived a REAL actor; 30 took the marker. The lopsided
+ratio is the point of the stage: merger, triage, project-engine, merger-ai, the reviewer and the
+heartbeat all already carried a `runId`/`agentId`, so they were converted with `toRunMutationContext`
+off a hoisted `EngineRunContext` or with `mutationContextForAgent` off an agent id already in scope.
+Where a lane's run context existed but did not reach a helper, the context was THREADED (a required
+parameter, or a required field on an existing params object) rather than marked — nineteen helpers in
+`merger.ts`, five in `merge/merger-ai.ts`, plus `maybeRetryTransientMerge`, `refreshReusedWorktreeBase`
+and the worktrunk failure handler.
+
+Three lane labels are used as derived actors and none of them are invented by U18 — each is the exact
+`agentId` the same code path already stamps on its own run-audit rows: `"merger"`/`"auto-merge"` in the
+merge lanes, `"triage"` in the planner, `"planner-overseer"` in the recovery handlers, `"chat"` on the
+chat-only task tools, and `"mesh-lease-manager"` on lease recovery. Converting them made the task log
+agree with the audit stream instead of leaving one of the pair anonymous.
+
+The +30 markers Stage B added, each with the unit that owns it:
+
+  - agent-tools.ts (8)
+      -> tool FACTORIES whose only context-less caller is `executor.ts`: `createTaskLogTool`,
+         `createTaskPromptWriteTool`, `createTaskFileScopeAddTool`, `createTaskUpdateTool`,
+         `createTaskAddDepTool`, `createTaskAssignTool`, `createAcquireRepoWorktreeTool`, plus
+         `createAgentTask` for a create with no `source.sourceAgentId`. Each resolves ONCE at the top
+         of the factory, so the debt is one line per tool rather than one per store call inside it.
+         Heartbeat, triage and the step-session executor were wired to pass real contexts; STAGE C
+         (executor) and U9/U11 (the actor-less create) clear the rest.
+  - recovery/foreign-only-contamination.ts (4), auto-recovery-handlers/branch-worktree.ts (2),
+    auto-recovery-handlers/contamination.ts (2), execution/step-runner.ts (2)
+      -> the auto-recovery family. `AutoRecoveryFailure` carries a `runId` and no agent, and the only
+         agent id anywhere near these repairs names the task being repaired — attributing to it would
+         produce a row claiming a task un-stuck itself. Same category and same owner (U13) as Stage A's
+         self-healing sweeps. `step-runner`'s pair is the RETHINK rewind, reached only from
+         `executor.ts`, so it is Stage C's.
+  - merger.ts (2), worktree/worktree-acquisition.ts (2)
+      -> single resolution points on helpers with TWO callers of different actors. `dropAutostashHandle`
+         and `restoreUnrelatedRootDirChanges` are also called by the dashboard's stash-recovery git
+         routes, whose actor is the human who clicked; `acquireTaskWorktree` /
+         `acquireWorkspaceRepoWorktree` are also called by `executor.ts`, which misses its own
+         `currentRunContexts` entry. Filing either under "merger" would be a false attribution, so the
+         engine path derives and the foreign path stays honest. U9 and Stage C.
+  - project-engine.ts (2)
+      -> `stopOverseerTask` (an operator API with no actor until U9/U11) and the
+         `clearStaleMergingStatuses` startup sweep (U13). The other 57 sites in that file derived.
+  - runtimes/in-process-runtime.ts (2)
+      -> runtime startup: a mission-task requeue after error and the worktree-pool double-lease record.
+         The adjacent audit row uses `agentId: "system"`, which is the marker's OWN synthetic agent id,
+         so deriving from it would have manufactured an actor out of the absence of one. U13.
+  - plan-artifact-writeback.ts (1), goals/goal-injection-diagnostics.ts (1),
+    execution/session-token-usage.ts (1), errors/usage-limit-detector.ts (1)
+      -> residual fallbacks on paths that DO derive when the caller supplies anything: the goal
+         diagnostic derives from `input.agentId`, token accounting from `options.agentId ?? role`, and
+         the usage-limit park from `agentType` — only `onProviderAvailable`, a provider-health sweep
+         over every parked task, has no actor at all. U13/U9.
+
+Import hygiene note for whoever moves this number next: `isCountedLine` only skips a line that STARTS
+with `import`, so a marker named on its own line inside a multi-line import block, or spelled out in
+prose, scores as debt it is not. Import the marker with a dedicated one-line `import { ... }` and keep
+the literal off comment lines that do not start with `*`.
+*/
 const BASELINE_BY_PACKAGE: Readonly<Record<string, number>> = {
   core: 33,
-  engine: 292,
+  engine: 322,
 };
 const BASELINE = Object.values(BASELINE_BY_PACKAGE).reduce((sum, n) => sum + n, 0);
 

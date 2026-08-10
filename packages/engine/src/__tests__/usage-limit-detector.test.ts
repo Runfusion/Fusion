@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { ANY_MUTATION_CONTEXT } from "./mutation-context-matchers.js";
 import { isUsageLimitError, UsageLimitPauser, checkSessionError } from "../errors/usage-limit-detector.js";
 import { CredentialInstanceRotator } from "../credential-instance-rotation.js";
 
@@ -178,8 +179,7 @@ describe("UsageLimitPauser", () => {
 
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-002",
-      "Usage limit detected (triage/unknown): overloaded_error",
-    );
+      "Usage limit detected (triage/unknown): overloaded_error", undefined, ANY_MUTATION_CONTEXT);
   });
 
   it("parks active executor tasks on the unavailable provider while other lanes and providers continue", async () => {
@@ -232,8 +232,7 @@ describe("UsageLimitPauser", () => {
 
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-005",
-      expect.stringContaining("merger/anthropic-api"),
-    );
+      expect.stringContaining("merger/anthropic-api"), undefined, ANY_MUTATION_CONTEXT);
   });
 
   it("resumes only exact provider-rate-limit parks after positive provider health", async () => {
@@ -252,8 +251,7 @@ describe("UsageLimitPauser", () => {
     expect(store.pauseTask).toHaveBeenCalledWith("FN-101", false);
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-101",
-      "Provider anthropic is available again; resuming task",
-    );
+      "Provider anthropic is available again; resuming task", undefined, ANY_MUTATION_CONTEXT);
   });
 
   it("does nothing when provider health has no matching persisted parks", async () => {

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ANY_MUTATION_CONTEXT } from "./mutation-context-matchers.js";
 import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -250,9 +251,7 @@ describe("MockAgentRuntime", () => {
           cachedTokens: MOCK_SYNTHETIC_TOKEN_USAGE.cacheRead,
           cacheWriteTokens: MOCK_SYNTHETIC_TOKEN_USAGE.cacheWrite,
         }),
-      },
-      undefined,
-    );
+      }, ANY_MUTATION_CONTEXT);
   });
 
   it("never makes network calls and does not import network SDKs", async () => {

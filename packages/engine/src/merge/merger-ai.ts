@@ -65,6 +65,7 @@ import {
   type TaskStore,
   type WorkspaceLeaseHandle,
   resolveReviewColumns,
+  type RunMutationContext,
 } from "@fusion/core";
 import { selectUserCommentsForAgentContext } from "../agents/agent-user-comments.js";
 import { resolveTaskWorkingBranch } from "../worktree/worktree-names.js";
@@ -84,7 +85,7 @@ import { attachAgentUsageTelemetry, emitAgentSessionStart } from "../agents/agen
 import { withRateLimitRetry } from "../errors/rate-limit-retry.js";
 import { checkSessionError } from "../errors/usage-limit-detector.js";
 import { accumulateSessionTokenUsage } from "../execution/session-token-usage.js";
-import { createRunAuditor, generateSyntheticRunId, type RunAuditor } from "../util/run-audit.js";
+import { createRunAuditor, generateSyntheticRunId, toRunMutationContext, type EngineRunContext, type RunAuditor } from "../util/run-audit.js";
 import { deriveExecutorSignalMemory, evaluateNoOpFinalizeExecutorVeto } from "../overseer/overseer-noop-finalize-veto.js";
 import { createLogger } from "../logger.js";
 import {
@@ -1397,12 +1398,19 @@ export async function runAiMerge(
   });
   const mergeTarget = groupRouting?.mergeTarget ?? resolveTaskMergeTarget(task, { projectDefaultBranch });
   const integrationBranch = mergeTarget.branch;
-  const audit = createRunAuditor(store, {
+  /*
+  FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage B):
+  The merge lane's run context, hoisted out of the inline `createRunAuditor` argument so the run-audit
+  stream and every store mutation on this path carry the SAME run id and the SAME actor. `"merger"` is
+  the agent id this call already used; U18 only made it reach the task log as well.
+  */
+  const mergeRunContext: EngineRunContext = {
     runId: generateSyntheticRunId("ai-merge", taskId),
     agentId: "merger",
     taskId,
     phase: "merge",
-  });
+  };
+  const audit = createRunAuditor(store, mergeRunContext);
 
   const fence = createMergeWriteFence({
     taskId,
@@ -1415,7 +1423,7 @@ export async function runAiMerge(
   });
   // Surface progress on the task detail (status pill) + the task log stream.
   const log = async (message: string): Promise<void> => {
-    await fence.write("log", () => store.logEntry(taskId, message, "AiMerge").catch(() => undefined));
+    await fence.write("log", () => store.logEntry(taskId, message, "AiMerge", toRunMutationContext(mergeRunContext)).catch(() => undefined));
     await fence.write("log", () => store.appendAgentLog(taskId, message, "status", undefined, "merger").catch(() => undefined));
   };
   /*
@@ -1509,7 +1517,7 @@ export async function runAiMerge(
        * FNXC:Lifecycle 2026-06-14-20:02:
        * FN-6461/FN-6455 requires the AI empty-merge lane to demote no-commits tasks whose skipped/incomplete steps outweigh done steps instead of finalizing the operational work as done.
        */
-      await fence.write("lifecycle", () => store.updateTask(taskId, { error: reason }));
+      await fence.write("lifecycle", () => store.updateTask(taskId, { error: reason }, toRunMutationContext(mergeRunContext)));
       if (fence.isOrphaned()) return {
         task, branch, merged: false, noOp: false, ok: true, reason, error: reason,
         worktreeRemoved: false, branchDeleted: false,
@@ -1524,7 +1532,7 @@ export async function runAiMerge(
           branch,
           integrationBranch,
           lane: "ai-empty-merge",
-        }, null, 2),
+        }, null, 2), toRunMutationContext(mergeRunContext),
       ));
       await audit.database({
         type: "task:no-commits-finalize-blocked-incomplete-steps" as Parameters<typeof audit.database>[0]["type"],
@@ -1538,7 +1546,7 @@ export async function runAiMerge(
           lane: "ai-empty-merge",
         },
       });
-      await fence.write("lifecycle", () => store.moveTask(taskId, reboundColumn, { preserveProgress: true, moveSource: "engine" } as Parameters<TaskStore["moveTask"]>[2]));
+      await fence.write("lifecycle", () => store.moveTask(taskId, reboundColumn, { preserveProgress: true, moveSource: "engine" } as Parameters<TaskStore["moveTask"]>[2], toRunMutationContext(mergeRunContext)));
       return {
         task,
         branch,
@@ -1573,7 +1581,7 @@ export async function runAiMerge(
       if (!landedProof) {
         const reason =
           "branch had no net changes vs main — work may have been reverted or lost; operator review required";
-        await fence.write("lifecycle", () => store.updateTask(taskId, { error: reason }));
+        await fence.write("lifecycle", () => store.updateTask(taskId, { error: reason }, toRunMutationContext(mergeRunContext)));
         if (fence.isOrphaned()) return {
           task, branch, merged: false, noOp: false, ok: true, reason, error: reason,
           worktreeRemoved: false, branchDeleted: false,
@@ -1582,7 +1590,7 @@ export async function runAiMerge(
         await fence.write("log", () => store.logEntry(
           taskId,
           `Finalize blocked (empty-merge no-landed-proof guard): ${reason} — moving back to ${reboundColumn} with progress preserved`,
-          JSON.stringify({ branch, integrationBranch, lane: "ai-empty-merge", baseCommitSha: task.baseCommitSha }, null, 2),
+          JSON.stringify({ branch, integrationBranch, lane: "ai-empty-merge", baseCommitSha: task.baseCommitSha }, null, 2), toRunMutationContext(mergeRunContext),
         ));
         await audit.database({
           type: "task:empty-merge-finalize-blocked-no-landed-proof" as Parameters<typeof audit.database>[0]["type"],
@@ -1596,7 +1604,7 @@ export async function runAiMerge(
             hadPriorNoOpProof: false,
           },
         });
-        await fence.write("lifecycle", () => store.moveTask(taskId, reboundColumn, { preserveProgress: true, moveSource: "engine" } as Parameters<TaskStore["moveTask"]>[2]));
+        await fence.write("lifecycle", () => store.moveTask(taskId, reboundColumn, { preserveProgress: true, moveSource: "engine" } as Parameters<TaskStore["moveTask"]>[2], toRunMutationContext(mergeRunContext)));
         return {
           task,
           branch,
@@ -1643,7 +1651,7 @@ export async function runAiMerge(
     const executorVeto = evaluateNoOpFinalizeExecutorVeto({ mergeIsEmpty: true, task, memory: executorMemory, settings });
     if (executorVeto.veto) {
       const vetoReason = executorVeto.reason ?? "overseer failed-executor no-op-finalize veto";
-      await fence.write("lifecycle", () => store.updateTask(taskId, { error: vetoReason }));
+      await fence.write("lifecycle", () => store.updateTask(taskId, { error: vetoReason }, toRunMutationContext(mergeRunContext)));
       if (fence.isOrphaned()) return {
         task, branch, merged: false, noOp: false, ok: true, reason: vetoReason, error: vetoReason,
         worktreeRemoved: false, branchDeleted: false,
@@ -1658,7 +1666,7 @@ export async function runAiMerge(
           branch,
           integrationBranch,
           lane: "ai-empty-merge",
-        }, null, 2),
+        }, null, 2), toRunMutationContext(mergeRunContext),
       ));
       await audit.database({
         type: "overseer:no-op-finalize-vetoed-failed-executor" as Parameters<typeof audit.database>[0]["type"],
@@ -1672,7 +1680,7 @@ export async function runAiMerge(
           lane: "ai-empty-merge",
         },
       });
-      await fence.write("lifecycle", () => store.moveTask(taskId, reboundColumn, { preserveProgress: true, moveSource: "engine" } as Parameters<TaskStore["moveTask"]>[2]));
+      await fence.write("lifecycle", () => store.moveTask(taskId, reboundColumn, { preserveProgress: true, moveSource: "engine" } as Parameters<TaskStore["moveTask"]>[2], toRunMutationContext(mergeRunContext)));
       return {
         task,
         branch,
@@ -1687,13 +1695,13 @@ export async function runAiMerge(
     }
 
     await log(`AI merge: ${branch} had no net changes vs ${integrationBranch} — finalizing as no-op`);
-    const noOpFinalized = await finalizeMerged(store, projectRootDir, taskId, task, branch, integrationBranch, landResult.tipSha, audit, log, { empty: true }, mergeTarget, groupRouting, options.syncGroupPr, fence);
-    await runPushAfterMergeStep({ store, projectRootDir, taskId, settings, integrationBranch, audit, log, options, result: noOpFinalized, fence });
+    const noOpFinalized = await finalizeMerged(store, projectRootDir, taskId, task, branch, integrationBranch, landResult.tipSha, audit, log, { empty: true }, toRunMutationContext(mergeRunContext), mergeTarget, groupRouting, options.syncGroupPr, fence);
+    await runPushAfterMergeStep({ store, projectRootDir, taskId, settings, integrationBranch, audit, log, options, result: noOpFinalized, fence, runContext: toRunMutationContext(mergeRunContext) });
     return noOpFinalized;
   }
 
-  const finalized = await finalizeMerged(store, projectRootDir, taskId, task, branch, integrationBranch, landResult.squashSha, audit, log, { empty: false }, mergeTarget, groupRouting, options.syncGroupPr, fence);
-  await runPushAfterMergeStep({ store, projectRootDir, taskId, settings, integrationBranch, audit, log, options, result: finalized, fence });
+  const finalized = await finalizeMerged(store, projectRootDir, taskId, task, branch, integrationBranch, landResult.squashSha, audit, log, { empty: false }, toRunMutationContext(mergeRunContext), mergeTarget, groupRouting, options.syncGroupPr, fence);
+  await runPushAfterMergeStep({ store, projectRootDir, taskId, settings, integrationBranch, audit, log, options, result: finalized, fence, runContext: toRunMutationContext(mergeRunContext) });
   return finalized;
 }
 
@@ -1709,6 +1717,8 @@ run-audit event; failures additionally get a durable task-log entry.
 */
 async function runPushAfterMergeStep(input: {
   store: TaskStore;
+  /** FNXC:Identity 2026-08-09-03:04 (U18 Stage B): the merge run performing the post-merge push. */
+  runContext: RunMutationContext;
   projectRootDir: string;
   taskId: string;
   settings: Settings;
@@ -1719,11 +1729,12 @@ async function runPushAfterMergeStep(input: {
   result: MergeResult;
   fence: MergeWriteFence;
 }): Promise<void> {
-  const { store, projectRootDir, taskId, settings, integrationBranch, audit, log, options, result, fence } = input;
+  const { store, projectRootDir, taskId, settings, integrationBranch, audit, log, options, result, fence, runContext } = input;
   if (settings.pushAfterMerge !== true || settings.mergeStrategy === "pull-request") return;
   try {
     const pushOutcome = await pushAfterMergeToRemote({
       store,
+      runContext,
       projectRootDir,
       taskId,
       settings,
@@ -1773,7 +1784,7 @@ async function runPushAfterMergeStep(input: {
       await fence.write("log", () => store.logEntry(
         taskId,
         `Push to remote failed after merge — task finalized anyway; local ${integrationBranch} may diverge from ${pushOutcome.remote ?? "origin"}: ${pushOutcome.error}`,
-        "PushToRemoteFailed",
+        "PushToRemoteFailed", runContext,
       ).catch(() => undefined));
     }
   } catch (err: unknown) {
@@ -1791,7 +1802,7 @@ async function runPushAfterMergeStep(input: {
         target: taskId,
         metadata: { integrationBranch, remote: settings.pushRemote ?? "origin", outcome: "aborted" },
       }).catch(() => undefined);
-      await fence.write("log", () => store.logEntry(taskId, message, "PushToRemoteFailed").catch(() => undefined));
+      await fence.write("log", () => store.logEntry(taskId, message, "PushToRemoteFailed", runContext).catch(() => undefined));
       return;
     }
     const message = getErrorMessage(err);
@@ -1806,7 +1817,7 @@ async function runPushAfterMergeStep(input: {
     await fence.write("log", () => store.logEntry(
       taskId,
       `Push to remote threw after merge — task finalized anyway; local ${integrationBranch} may diverge from origin: ${message}`,
-      "PushToRemoteFailed",
+      "PushToRemoteFailed", runContext,
     ).catch(() => undefined));
   }
 }
@@ -2000,7 +2011,13 @@ export async function landWorkspaceTask(
 ): Promise<WorkspaceMergeResult> {
   const taskId = task.id;
   const settings = await store.getSettings();
-  const audit = createRunAuditor(store, {
+  /*
+  FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage B):
+  The merge lane's run context, hoisted out of the inline `createRunAuditor` argument so the run-audit
+  stream and every store mutation on this path carry the SAME run id and the SAME actor. `"merger"` is
+  the agent id this call already used; U18 only made it reach the task log as well.
+  */
+  const mergeRunContext: EngineRunContext = {
     runId: generateSyntheticRunId("ai-merge", taskId),
     agentId: "merger",
     taskId,
@@ -2270,13 +2287,13 @@ export async function landWorkspaceTask(
               expectedIntentFenceToken: durableLandLease.fenceToken,
               resolution: "landed",
               resolvedSha: landResult.squashSha,
-              persistLandedSha: () => persistRepoLandedSha(store, taskId, repoRel, landResult.squashSha),
+              persistLandedSha: () => persistRepoLandedSha(store, taskId, repoRel, landResult.squashSha, toRunMutationContext(mergeRunContext)),
             });
             if (resolved.outcome !== "resolved") {
               throw new Error(`Workspace land intent for ${repoRel} was not resolved (${resolved.outcome})`);
             }
           } else {
-            await persistRepoLandedSha(store, taskId, repoRel, landResult.squashSha);
+            await persistRepoLandedSha(store, taskId, repoRel, landResult.squashSha, toRunMutationContext(mergeRunContext));
           }
         } catch (persistErr: unknown) {
           const pmsg = getErrorMessage(persistErr);
@@ -2380,20 +2397,20 @@ export async function landWorkspaceTask(
     if (hasRevertedEmptyRepo) {
       const reason =
         "branch had no net changes vs main — work may have been reverted or lost; operator review required";
-      await fence.write("lifecycle", () => store.updateTask(taskId, { error: reason }));
+      await fence.write("lifecycle", () => store.updateTask(taskId, { error: reason }, toRunMutationContext(mergeRunContext)));
       if (fence.isOrphaned()) return { taskId, repos, allLanded, finalized: false, finalizeBlockedReason: reason };
       const reboundColumn = await resolveFinalizeReboundColumn(store, taskId);
       await fence.write("log", () => store.logEntry(
         taskId,
         `Finalize blocked (empty-merge no-landed-proof guard, workspace): ${reason} — moving back to ${reboundColumn} with progress preserved`,
-        JSON.stringify({ lane: "ai-empty-merge-workspace", repoCount: repos.length, landedCount, repos: repos.map((r) => r.repo) }, null, 2),
+        JSON.stringify({ lane: "ai-empty-merge-workspace", repoCount: repos.length, landedCount, repos: repos.map((r) => r.repo) }, null, 2), toRunMutationContext(mergeRunContext),
       ).catch(() => undefined));
       await audit.database({
         type: "task:empty-merge-finalize-blocked-no-landed-proof" as Parameters<typeof audit.database>[0]["type"],
         target: taskId,
         metadata: { reason, lane: "ai-empty-merge-workspace", repoCount: repos.length, landedCount, hadPriorNoOpProof: false },
       }).catch(() => undefined);
-      await fence.write("lifecycle", () => store.moveTask(taskId, reboundColumn, { preserveProgress: true, moveSource: "engine" } as Parameters<TaskStore["moveTask"]>[2]));
+      await fence.write("lifecycle", () => store.moveTask(taskId, reboundColumn, { preserveProgress: true, moveSource: "engine" } as Parameters<TaskStore["moveTask"]>[2], toRunMutationContext(mergeRunContext)));
       return { taskId, repos, allLanded, finalized: false, finalizeBlockedReason: reason };
     }
     /*
@@ -2404,7 +2421,7 @@ export async function landWorkspaceTask(
     callback: its already-pushed commits remain recoverable through landedSha/intent evidence, but
     this stale generation must not write the task outcome. Renewal only improves liveness.
     */
-    const finalize = () => finalizeWorkspaceTask(store, taskId, task, repos, fence);
+    const finalize = () => finalizeWorkspaceTask(store, taskId, task, repos, fence, toRunMutationContext(mergeRunContext));
     const withValidDispatchLease = (store as Partial<TaskStore>).withValidWorkspaceLease;
     if (options.workspaceDispatchFence && typeof withValidDispatchLease === "function") {
       try {
@@ -2463,6 +2480,8 @@ async function persistRepoLandedSha(
   taskId: string,
   repoRel: string,
   landedSha: string,
+  /** FNXC:Identity 2026-08-09-03:04 (U18 Stage B): the workspace land run recording the sha. */
+  runContext: RunMutationContext,
 ): Promise<void> {
   // FNXC:Workspace 2026-08-15-06:45: a new landing is strictly after its revert boundary,
   // so clear that invalidation marker while retaining the fresh landedSha as normal proof.
@@ -2510,6 +2529,8 @@ async function finalizeWorkspaceTask(
   task: Task,
   repos: WorkspaceRepoLandResult[],
   fence?: MergeWriteFence,
+  /** FNXC:Identity 2026-08-15-22:52 (U18 Stage B): the workspace land run finalizing the task. */
+  runContext: RunMutationContext,
 ): Promise<boolean> {
   const landed = repos.filter((r) => r.status === "landed" && r.landedSha);
   const workspaceLandedShas: Record<string, string> = {};
@@ -2539,7 +2560,7 @@ async function finalizeWorkspaceTask(
     mergeConfirmed: anyLanded,
   };
   fence?.assertOwned("finalization");
-  await store.updateTask(taskId, { mergeDetails });
+  await store.updateTask(taskId, { mergeDetails }, runContext);
   task.mergeDetails = mergeDetails;
 
   const result: MergeResult = {
@@ -2554,7 +2575,7 @@ async function finalizeWorkspaceTask(
     worktreeRemoved: false,
     branchDeleted: false,
   };
-  await fence?.write("log", () => store.logEntry(taskId, `AI merge (workspace): all ${repos.length} sub-repo(s) landed — task → done`, "AiMerge").catch(() => undefined));
+  await fence?.write("log", () => store.logEntry(taskId, `AI merge (workspace): all ${repos.length} sub-repo(s) landed — task → done`, "AiMerge", runContext).catch(() => undefined));
   fence?.assertOwned("finalization");
   await finalizeTask(store, taskId, result, undefined, undefined, undefined, fence);
   return true;
@@ -2683,6 +2704,8 @@ run-audit event, a task-log entry, and MergeResult.pushedToRemote/pushError.
 */
 export async function pushAfterMergeToRemote(input: {
   store: TaskStore;
+  /** FNXC:Identity 2026-08-09-03:04 (U18 Stage B): the merge run; the sole caller resolves it. */
+  runContext: RunMutationContext;
   projectRootDir: string;
   taskId: string;
   settings: Settings;
@@ -2694,7 +2717,7 @@ export async function pushAfterMergeToRemote(input: {
   onSession?: (session: { dispose: () => void }) => void;
   fence?: MergeWriteFence;
 }): Promise<{ pushed: boolean; remote?: string; targetBranch?: string; refAdvanced?: boolean; rebasedSha?: string; error?: string }> {
-  const { store, projectRootDir, taskId, settings, integrationBranch, audit, log, signal } = input;
+  const { store, projectRootDir, taskId, settings, integrationBranch, audit, log, signal, runContext } = input;
   // FNXC:MergeReliability 2026-08-11-22:17: Post-push recovery diagnostics can outlive
   // cancellation, so direct callers construct the same per-generation write fence.
   const fence = input.fence ?? createMergeWriteFence({ taskId, signal });
@@ -2747,7 +2770,7 @@ export async function pushAfterMergeToRemote(input: {
       target: taskId,
       metadata: { taskId, remote, recoveryBranch, sha: localSha, outcome },
     }).catch(() => undefined);
-    await fence.write("log", () => store.logEntry(taskId, logMessage, logAction).catch(() => undefined));
+    await fence.write("log", () => store.logEntry(taskId, logMessage, logAction, runContext).catch(() => undefined));
   };
   try {
     await git(["push", "--force", remote, `${localSha}:${recoveryRef}`], projectRootDir, { timeout: 120_000 });
@@ -2899,6 +2922,8 @@ async function finalizeMerged(
   audit: RunAuditor,
   log: (message: string) => Promise<void>,
   opts: { empty: boolean },
+  /** FNXC:Identity 2026-08-09-03:04 (U18 Stage B): the merge run finalizing the squash. */
+  runContext: RunMutationContext,
   mergeTarget?: MergeTargetResolution,
   groupRouting?: BranchGroupMergeRouting | null,
   syncGroupPr?: SyncGroupPrFn,
@@ -2937,7 +2962,7 @@ async function finalizeMerged(
     };
     modifiedFiles = landedFiles.length > 0 ? landedFiles : undefined;
     fence?.assertOwned("finalization");
-    await store.updateTask(taskId, { mergeDetails, modifiedFiles });
+    await store.updateTask(taskId, { mergeDetails, modifiedFiles }, runContext);
     task.mergeDetails = mergeDetails;
     task.modifiedFiles = modifiedFiles;
     if (task.lineageId && typeof (store as Partial<TaskStore>).upsertTaskCommitAssociation === "function") {
@@ -2957,7 +2982,7 @@ async function finalizeMerged(
   } else if (mergeTargetPatch) {
     mergeDetails = { ...(task.mergeDetails ?? {}), ...mergeTargetPatch };
     fence?.assertOwned("finalization");
-    await store.updateTask(taskId, { mergeDetails });
+    await store.updateTask(taskId, { mergeDetails }, runContext);
     task.mergeDetails = mergeDetails;
   }
   let branchDeleted = false;
@@ -2975,7 +3000,7 @@ async function finalizeMerged(
     fence?.assertOwned("finalization");
     worktreeRemoved = await gitOk(["worktree", "remove", "--force", task.worktree], projectRootDir);
     fence?.assertOwned("finalization");
-    await store.updateTask(taskId, { worktree: null }).catch(() => undefined);
+    await store.updateTask(taskId, { worktree: null }).catch(() => undefined, runContext);
   }
 
   const result: MergeResult = {
