@@ -499,6 +499,7 @@ pgDescribe("PostgreSQL satellite fusion-dir stores (VAL-DATA-015, VAL-DATA-016)"
   it("AgentStore: write/read agent (jsonb data) → list → find by name → delete", async () => {
     ctx = await setupCtx();
     const { writeAgent, readAgent, listAgentRows, findAgentRowsByName, deleteAgent, agentToData } = await import("../../async-stores/async-agent-store.js");
+    const projectId = "agent-round-trip";
     const now = new Date().toISOString();
     const agent = {
       id: `agent-${randomUUID().slice(0, 8)}`,
@@ -515,8 +516,8 @@ pgDescribe("PostgreSQL satellite fusion-dir stores (VAL-DATA-015, VAL-DATA-016)"
       totalOutputTokens: 50,
     };
 
-    await writeAgent(ctx.layer.db, agent);
-    const fetched = await readAgent(ctx.layer.db, agent.id);
+    await writeAgent(ctx.layer.db, agent, projectId);
+    const fetched = await readAgent(ctx.layer.db, projectId, agent.id);
     expect(fetched).not.toBeNull();
     expect(fetched!.id).toBe(agent.id);
     expect(fetched!.name).toBe("Test Agent");
@@ -532,24 +533,69 @@ pgDescribe("PostgreSQL satellite fusion-dir stores (VAL-DATA-015, VAL-DATA-016)"
     expect(data.title).toBe("Lead");
 
     // Update via upsert (change state)
-    await writeAgent(ctx.layer.db, { ...agent, state: "paused", pauseReason: "testing", updatedAt: now });
-    const afterUpdate = await readAgent(ctx.layer.db, agent.id);
+    await writeAgent(ctx.layer.db, { ...agent, state: "paused", pauseReason: "testing", updatedAt: now }, projectId);
+    const afterUpdate = await readAgent(ctx.layer.db, projectId, agent.id);
     expect(afterUpdate!.state).toBe("paused");
     expect(afterUpdate!.pauseReason).toBe("testing");
 
     // list filtered by state
-    const paused = await listAgentRows(ctx.layer.db, { state: "paused" });
+    const paused = await listAgentRows(ctx.layer.db, projectId, { state: "paused" });
     expect(paused).toHaveLength(1);
-    const active = await listAgentRows(ctx.layer.db, { state: "active" });
+    const active = await listAgentRows(ctx.layer.db, projectId, { state: "active" });
     expect(active).toHaveLength(0);
 
     // find by name
-    const byName = await findAgentRowsByName(ctx.layer.db, "Test Agent");
+    const byName = await findAgentRowsByName(ctx.layer.db, projectId, "Test Agent");
     expect(byName).toHaveLength(1);
 
     // delete
-    expect(await deleteAgent(ctx.layer.db, agent.id)).toBe(true);
-    expect(await readAgent(ctx.layer.db, agent.id)).toBeNull();
+    expect(await deleteAgent(ctx.layer.db, projectId, agent.id)).toBe(true);
+    expect(await readAgent(ctx.layer.db, projectId, agent.id)).toBeNull();
+  });
+
+  it("AgentStore: agent row operations isolate identical ids across projects", async () => {
+    ctx = await setupCtx();
+    const { writeAgent, readAgent, listAgentRows, findAgentRowsByName, deleteAgent } = await import("../../async-stores/async-agent-store.js");
+    const now = new Date().toISOString();
+    const agentId = `shared-agent-${randomUUID().slice(0, 8)}`;
+    const projectA = "agent-project-a";
+    const projectB = "agent-project-b";
+
+    await writeAgent(ctx.layer.db, {
+      id: agentId,
+      name: "Project A Agent",
+      role: "worker",
+      state: "active",
+      createdAt: now,
+      updatedAt: now,
+      metadata: { project: "a" },
+    }, projectA);
+    await writeAgent(ctx.layer.db, {
+      id: agentId,
+      name: "Project B Agent",
+      role: "worker",
+      state: "paused",
+      createdAt: now,
+      updatedAt: now,
+      metadata: { project: "b" },
+    }, projectB);
+
+    await expect(readAgent(ctx.layer.db, projectA, agentId)).resolves.toMatchObject({
+      name: "Project A Agent",
+      metadata: { project: "a" },
+    });
+    await expect(readAgent(ctx.layer.db, projectB, agentId)).resolves.toMatchObject({
+      name: "Project B Agent",
+      metadata: { project: "b" },
+    });
+    await expect(listAgentRows(ctx.layer.db, projectA)).resolves.toMatchObject([{ name: "Project A Agent" }]);
+    await expect(listAgentRows(ctx.layer.db, projectB)).resolves.toMatchObject([{ name: "Project B Agent" }]);
+    await expect(findAgentRowsByName(ctx.layer.db, projectA, "Project B Agent")).resolves.toEqual([]);
+    await expect(findAgentRowsByName(ctx.layer.db, projectB, "Project B Agent")).resolves.toHaveLength(1);
+
+    await expect(deleteAgent(ctx.layer.db, projectA, agentId)).resolves.toBe(true);
+    await expect(readAgent(ctx.layer.db, projectA, agentId)).resolves.toBeNull();
+    await expect(readAgent(ctx.layer.db, projectB, agentId)).resolves.toMatchObject({ name: "Project B Agent" });
   });
 
   it("AgentStore: heartbeat event + history round-trip", async () => {

@@ -232,11 +232,12 @@ export async function writeAgent(handle: QueryHandle, agent: Agent, projectId?: 
  * is responsible for applying ephemeral/permission-policy normalization
  * (parseAgent in the sync store) — this helper returns the raw merged shape.
  */
-export async function readAgent(handle: QueryHandle, agentId: string): Promise<Agent | null> {
+export async function readAgent(handle: QueryHandle, projectId: string, agentId: string): Promise<Agent | null> {
+  const ownership = projectOwnershipPartition(projectId);
   const rows = await handle
     .select(agentColumns)
     .from(schema.project.agents)
-    .where(eq(schema.project.agents.id, agentId));
+    .where(and(eq(schema.project.agents.projectId, ownership), eq(schema.project.agents.id, agentId)));
   const row = rows[0] as AgentRow | undefined;
   if (!row) return null;
   return mergeAgentRow(row);
@@ -268,9 +269,11 @@ export function mergeAgentRow(row: AgentRow): Agent {
  */
 export async function listAgentRows(
   handle: QueryHandle,
+  projectId: string,
   filter?: { state?: AgentState; role?: AgentCapability },
 ): Promise<Agent[]> {
-  const conditions = [];
+  const ownership = projectOwnershipPartition(projectId);
+  const conditions = [eq(schema.project.agents.projectId, ownership)];
   if (filter?.state) {
     conditions.push(eq(schema.project.agents.state, filter.state));
   }
@@ -292,12 +295,14 @@ export async function listAgentRows(
  */
 export async function findAgentRowsByName(
   handle: QueryHandle,
+  projectId: string,
   name: string,
 ): Promise<Agent[]> {
+  const ownership = projectOwnershipPartition(projectId);
   const rows = await handle
     .select(agentColumns)
     .from(schema.project.agents)
-    .where(eq(schema.project.agents.name, name))
+    .where(and(eq(schema.project.agents.projectId, ownership), eq(schema.project.agents.name, name)))
     .orderBy(desc(schema.project.agents.createdAt), desc(schema.project.agents.id));
   return rows.map((row) => mergeAgentRow(row as AgentRow));
 }
@@ -306,10 +311,11 @@ export async function findAgentRowsByName(
  * Delete an agent by id. Cascading foreign keys remove heartbeats, runs,
  * task sessions, API keys, config revisions, and blocked states.
  */
-export async function deleteAgent(handle: QueryHandle, agentId: string): Promise<boolean> {
+export async function deleteAgent(handle: QueryHandle, projectId: string, agentId: string): Promise<boolean> {
+  const ownership = projectOwnershipPartition(projectId);
   const result = await handle
     .delete(schema.project.agents)
-    .where(eq(schema.project.agents.id, agentId))
+    .where(and(eq(schema.project.agents.projectId, ownership), eq(schema.project.agents.id, agentId)))
     .returning({ id: schema.project.agents.id });
   return result.length > 0;
 }
