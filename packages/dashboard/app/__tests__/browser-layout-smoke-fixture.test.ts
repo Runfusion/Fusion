@@ -187,12 +187,17 @@ describe("browser layout smoke fixture", () => {
     expect(html).toContain('data-smoke="quick-add-save-button"');
     expect(html).toContain('data-testid="quick-entry-session-advisor-toggle"');
     expect(html.match(/data-testid="quick-entry-(?:attach|github-toggle|session-advisor-toggle|priority-button|fast-toggle)"/g)).toHaveLength(140);
-    for (const label of ["Save", "Guardar", "Enregistrer", "저장", "保存", "儲存"]) {
+    for (const label of ["Save", "Guardar", "Enregistrer", "저장", "Salvar", "保存", "儲存"]) {
       expect(html).toContain(label);
     }
+
+    const fixture = new DOMParser().parseFromString(html, "text/html");
+    const ptBrSaveButtons = fixture.querySelectorAll<HTMLButtonElement>('[data-locale="pt-BR"]');
+    expect(ptBrSaveButtons).toHaveLength(4);
+    for (const button of ptBrSaveButtons) expect(button.textContent?.trim()).toContain("Salvar");
   });
 
-  it("derives the executable Quick Add fixture cardinality instead of hard-coding the locale count", () => {
+  it("pins the current Quick Add fixture cardinality to the derived locale and composer matrices", () => {
     const html = createSmokeHtml();
     const fixtures = html.match(/data-smoke="quick-add-save-(?:board|list)-(?:minimum|wide)-[^"]+"/g) ?? [];
     expect(quickAddSaveFixtureCount).toBe(28);
