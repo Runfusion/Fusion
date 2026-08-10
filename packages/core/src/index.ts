@@ -2944,6 +2944,60 @@ export {
   setIdentityEnabled,
   __resetIdentityEnabledForTests,
 } from "./identity/identity-enabled.js";
+/*
+FNXC:IdentityPermissions 2026-08-09-03:04:
+The unified permission catalog (U4). Exported from core because the enforcement seam is core's
+mutation surface (R15) and because the engine's read-only shadow evaluation consumes it during the
+Phase 4 shadow period — `agent-permissions.ts` and `agent-permission-policy.ts` stay authoritative
+and exported alongside it until U19b retargets the gate and deletes them.
+*/
+export {
+  PERMISSION_CATALOG,
+  ADMINISTRATIVE_PERMISSIONS,
+  RUNTIME_ACTION_PERMISSIONS,
+  ACTION_CATEGORY_PERMISSIONS,
+  EXEMPT_FLOOR_SOURCE,
+  isCatalogPermission,
+  getPermissionCatalogEntry,
+  listPermissionCatalog,
+  catalogPermissionForAgentPermission,
+  broaderDisposition,
+  narrowerDisposition,
+  resolveGrantSetForRoles,
+  roleDefinitionForAgentCapability,
+  grantSetFromAgentPermissionPolicy,
+  classifyGitCommandForPermissions,
+  defaultPermissionInvocationClassifier,
+  classifyPermissionInvocation,
+  setPermissionInvocationClassifier,
+  __resetPermissionInvocationClassifierForTests,
+  permissionForClassification,
+  can,
+  computePermissionApprovalDedupeKey,
+  resolvePermissionApprovalOutcome,
+  evaluateGrantAuthority,
+  validateBootstrapSeed,
+  type CatalogPermission,
+  type PermissionCatalogEntry,
+  type PermissionDisposition,
+  type PermissionGrant,
+  type ResolvedGrantSet,
+  type RoleDefinition,
+  type PermissionResourceType,
+  type InvocationClassification,
+  type PermissionInvocation,
+  type PermissionInvocationClassifier,
+  type PermissionDecision,
+  type PermissionDecisionSource,
+  type PermissionApprovalOutcome,
+  type CanInput,
+  type GrantAuthorityDecision,
+  type GrantDenialReason,
+  type EvaluateGrantAuthorityInput,
+  type SeedRow,
+  type SeedDenialReason,
+  type SeedValidationResult,
+} from "./identity/permissions.js";
 
 export { pruneTaskLifecycleEvents } from "./task-store/task-lifecycle-event-retention.js";
 
