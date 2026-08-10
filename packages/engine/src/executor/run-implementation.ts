@@ -764,7 +764,7 @@ export async function runImplementation(
       FNXC:Workspace 2026-06-21-12:00:
       KTD1 — every preflight below (base-commit capture, contamination check, worktree-liveness gate) runs git against `worktreePath`, which equals the non-git workspace root in workspace mode. They would all fail. Gate the whole block off in workspace mode; the per-repo equivalents return in Phase B (master U3) against each acquired sub-repo worktree. The non-workspace branch is unchanged.
       */
-      if (!deps.workspaceConfig) {
+      if (!deps.workspaceConfig && !externalExecutionRoute.configured) {
       // Capture the base commit SHA for diff computation whenever a task
       // starts with a newly assigned worktree.
       if (!acquisition.isResume) {
@@ -1511,7 +1511,7 @@ export async function runImplementation(
                 executorLog.warn(`⚡ ${task.id} transient error — retry ${attempt}/${MAX_RECOVERY_RETRIES} in ${delay}: ${errorMessage}`);
                 await deps.store.logEntry(task.id, `Transient error (retry ${attempt}/${MAX_RECOVERY_RETRIES} in ${delay}): ${errorMessage}`, undefined, deps.getRunContextFor(task.id));
               }
-              if (worktreePath && existsSync(worktreePath)) {
+              if (!externalExecutionRoute.configured && worktreePath && existsSync(worktreePath)) {
                 try {
                   const settings = await deps.store.getSettings();
                   await removeWorktree({
@@ -1611,9 +1611,11 @@ export async function runImplementation(
                 FNXC:StuckRequeue 2026-06-27-23:15:
                 Stuck requeue may destroy a checkout that contains only uncommitted step output. Always reconcile lost-work step state before worktree removal, even when preserve-progress is enabled, so a retry cannot skip code that no longer exists.
                 */
-                await deps.resetStepsIfWorkLost(latestTask);
+                if (!externalExecutionRoute.configured) {
+                  await deps.resetStepsIfWorkLost(latestTask);
+                }
 
-                if (worktreePath && existsSync(worktreePath)) {
+                if (!externalExecutionRoute.configured && worktreePath && existsSync(worktreePath)) {
                   try {
                     await removeWorktree({
                       worktreePath,
@@ -3042,7 +3044,7 @@ export async function runImplementation(
           return;
         } else {
           executorLog.log(`${task.id} paused — moving to todo`);
-          if (worktreePath && existsSync(worktreePath)) {
+          if (!externalExecutionRoute.configured && worktreePath && existsSync(worktreePath)) {
             try {
               const settings = await deps.store.getSettings();
               await removeWorktree({
@@ -3566,7 +3568,7 @@ export async function runImplementation(
               await deps.store.logEntry(task.id, `Transient error (retry ${attempt}/${MAX_RECOVERY_RETRIES} in ${delay}): ${errorMessage}`, undefined, deps.getRunContextFor(task.id));
             }
             // Clean up the old worktree so the retry gets a fresh one
-            if (worktreePath && existsSync(worktreePath)) {
+            if (!externalExecutionRoute.configured && worktreePath && existsSync(worktreePath)) {
               try {
                 const settings = await deps.store.getSettings();
                 await removeWorktree({
@@ -3758,10 +3760,12 @@ export async function runImplementation(
             FNXC:StuckRequeue 2026-06-27-23:15:
             Preserve-progress stuck requeues still remove the old checkout. Reconcile steps first so uncommitted-only output is reset to pending while committed progress can remain complete.
             */
-            await deps.resetStepsIfWorkLost(latestTask);
+            if (!externalExecutionRoute.configured) {
+              await deps.resetStepsIfWorkLost(latestTask);
+            }
 
             // Clean up the old worktree so the retry gets a fresh one
-            if (worktreePath && existsSync(worktreePath)) {
+            if (!externalExecutionRoute.configured && worktreePath && existsSync(worktreePath)) {
               try {
                 await removeWorktree({
                   worktreePath,
