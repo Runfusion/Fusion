@@ -32,16 +32,38 @@ import { join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const CORE_SRC = join(fileURLToPath(new URL("../", import.meta.url)));
+const ENGINE_SRC = join(fileURLToPath(new URL("../../../engine/src/", import.meta.url)));
+
+/*
+FNXC:Identity 2026-08-09-03:04 (U18 step 2 — the census roots are per-PACKAGE, not per-file):
+The ratchet scans every package U18 converts, not just the one that owns the marker. A root-per-
+package census is the whole mechanism: if `@fusion/engine` were left unscanned it could accumulate
+markers freely while this test reported core's 33 and stayed green, which is precisely the
+"resolved seam nobody wired" failure the marker exists to prevent.
+
+Rows are keyed `"<package>/<path>"` so a distribution dump names its package, and each root carries
+its own baseline so a regression points at the package that caused it rather than at a single number
+nobody can attribute.
+
+Add a root here the moment a package starts converting. `@fusion/dashboard` and `@runfusion/fusion`
+are U18's step 3; they are deliberately absent until then, because a root asserting a baseline of 0
+over an unconverted package is a claim the package has no debt rather than a claim it has not
+started.
+*/
+const CENSUS_ROOTS: readonly { pkg: string; dir: string }[] = [
+  { pkg: "core", dir: CORE_SRC },
+  { pkg: "engine", dir: ENGINE_SRC },
+];
 
 const MARKER = "UNATTRIBUTED_MUTATION_CONTEXT";
 
-/** Files that mention the marker without being call sites. */
+/** Files that mention the marker without being call sites, keyed `"<package>/<path>"`. */
 const EXCLUDED_FILES = new Set([
-  "identity/mutation-context.ts",
-  "identity/actor.ts",
-  "index.ts",
-  "index.gate.ts",
-  "__test-utils__/mutation-context-fixture.ts",
+  "core/identity/mutation-context.ts",
+  "core/identity/actor.ts",
+  "core/index.ts",
+  "core/index.gate.ts",
+  "core/__test-utils__/mutation-context-fixture.ts",
 ]);
 
 /*
@@ -61,8 +83,32 @@ just a number:
       -> the structural board-store seam consumed by dashboard routes. U9.
 
 This must reach 0. It must never grow.
+
+FNXC:Identity 2026-08-09-03:04 (U18 step 2 — engine baseline is 0, and that is a measurement):
+`@fusion/engine` holds ~1,150 unconverted mutating call sites across 49 production files
+(`logEntry` 658, `updateTask` 370, `moveTask` 98, `createTask` 5, `deleteTask` 3), which the
+deprecated staging overload still absorbs. Its baseline is 0 because the conversion has not run,
+NOT because the package is clean — a marker appearing here before that conversion means someone
+reached for the marker in a lane where executor/reviewer/merger/triage already carry a real
+`runId`/`agentId`, and `toRunMutationContext` in `engine/src/util/run-audit.ts` is the bridge they
+should have used instead.
+
+Known gap this census cannot see: several engine seams re-declare the mutating methods with their
+own narrow structural signatures rather than picking them off `TaskStore`, so they do not inherit
+the required-parameter overload and will keep accepting unattributed writes even after the call-site
+sweep. `Pick<TaskStore, ...>` seams are fine — they carry the overload pair. The hand-written ones
+are: `auth/fallback-model-observer.ts`, `overseer/planner-overseer.ts`,
+`workflows/workflow-work-scheduler.ts`, `workflows/workflow-column-boundary.ts`,
+`workflows/workflow-task-runtime.ts`, `workflows/workflow-completion-summary.ts`,
+`workflows/workflow-graph-task-runner.ts`, `execution/task-revert.ts`, and the inline shape at
+`executor.ts:8874`. Each must restate the requirement when the engine sweep lands, or the sweep
+reports done while those seams stay open.
 */
-const BASELINE = 33;
+const BASELINE_BY_PACKAGE: Readonly<Record<string, number>> = {
+  core: 33,
+  engine: 0,
+};
+const BASELINE = Object.values(BASELINE_BY_PACKAGE).reduce((sum, n) => sum + n, 0);
 
 function isCountedLine(line: string): boolean {
   const trimmed = line.trim();
@@ -80,23 +126,28 @@ function collectTsFiles(dir: string, out: string[] = []): string[] {
   return out;
 }
 
-function censusUsages(): { total: number; byFile: Record<string, number> } {
+function censusUsages(): { total: number; byFile: Record<string, number>; byPackage: Record<string, number> } {
   const byFile: Record<string, number> = {};
+  const byPackage: Record<string, number> = {};
   let total = 0;
-  for (const file of collectTsFiles(CORE_SRC)) {
-    const rel = relative(CORE_SRC, file).split(sep).join("/");
-    if (EXCLUDED_FILES.has(rel)) continue;
-    let count = 0;
-    for (const line of readFileSync(file, "utf8").split("\n")) {
-      if (!isCountedLine(line)) continue;
-      count += line.split(MARKER).length - 1;
-    }
-    if (count > 0) {
-      byFile[rel] = count;
-      total += count;
+  for (const { pkg, dir } of CENSUS_ROOTS) {
+    byPackage[pkg] = 0;
+    for (const file of collectTsFiles(dir)) {
+      const rel = `${pkg}/${relative(dir, file).split(sep).join("/")}`;
+      if (EXCLUDED_FILES.has(rel)) continue;
+      let count = 0;
+      for (const line of readFileSync(file, "utf8").split("\n")) {
+        if (!isCountedLine(line)) continue;
+        count += line.split(MARKER).length - 1;
+      }
+      if (count > 0) {
+        byFile[rel] = count;
+        byPackage[pkg] += count;
+        total += count;
+      }
     }
   }
-  return { total, byFile };
+  return { total, byFile, byPackage };
 }
 
 describe("unattributed actor census (U18 ratchet)", () => {
@@ -116,6 +167,34 @@ describe("unattributed actor census (U18 ratchet)", () => {
       + "That is the intended direction — lower BASELINE to " + total + " in this same commit "
       + "so the ratchet keeps its new floor.",
     ).toBe(BASELINE);
+  });
+
+  /*
+  FNXC:Identity 2026-08-09-03:04:
+  The per-package assertion is not redundant with the total. A conversion that removed five markers
+  in core while adding five in engine leaves the total at 33 and would pass the ratchet above while
+  moving debt into the package that has the most real actors available to derive from — the exact
+  regression this unit is trying to prevent.
+  */
+  it("holds each converted package to its own baseline", () => {
+    const { byPackage, byFile } = censusUsages();
+    for (const { pkg } of CENSUS_ROOTS) {
+      expect(
+        byPackage[pkg],
+        `Unattributed mutation-context usages in @fusion/${pkg} moved from `
+        + `${BASELINE_BY_PACKAGE[pkg]} to ${byPackage[pkg]}. If it GREW, derive a real actor instead `
+        + "(mutationContextForAgent, or toRunMutationContext for an engine lane that already has a "
+        + "run context). If it SHRANK, lower this package's entry in BASELINE_BY_PACKAGE in the same "
+        + `commit.\nCurrent distribution:\n${JSON.stringify(byFile, null, 2)}`,
+      ).toBe(BASELINE_BY_PACKAGE[pkg]);
+    }
+  });
+
+  it("actually scans every converted package root", () => {
+    // A mistyped root silently censuses nothing and reports a healthy zero forever.
+    for (const { pkg, dir } of CENSUS_ROOTS) {
+      expect(collectTsFiles(dir).length, `census root for @fusion/${pkg} resolved to no files`).toBeGreaterThan(0);
+    }
   });
 
   it("counts real call sites, not imports or prose", () => {
