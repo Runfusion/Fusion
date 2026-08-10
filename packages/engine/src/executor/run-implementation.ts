@@ -123,6 +123,7 @@ import {
 import { createFallbackModelObserver } from "../auth/fallback-model-observer.js";
 import { buildSessionSkillContext } from "../cli-runtime/session-skill-context.js";
 import { dropPreHeldExecutorSlot } from "../concurrency/concurrency.js";
+import { resolveAuthoritativeExternalExecutionRoute } from "./resolve-authoritative-external-execution-route.js";
 import { isContextLimitError } from "../errors/context-limit-detector.js";
 import { withRateLimitRetry } from "../errors/rate-limit-retry.js";
 import { recordRetry } from "../errors/retry-burned-logger.js";
@@ -381,7 +382,22 @@ export async function runImplementation(
     // reviewHandoffPolicy, …) pick up workflow values with zero read-site changes.
     // Behavior-inert when nothing is customized (declaration defaults === legacy
     // defaults; absent-default lanes never override).
+    /*
+    FNXC:ExternalExecutionCheckout 2026-08-09-23:53:
+    Execution must re-read persisted routing state and fail closed before worktree acquisition when an operator-owned checkout has drifted or become invalid.
+    */
+    const { task: authoritativeExecutionTask, route: externalExecutionRoute } =
+      await resolveAuthoritativeExternalExecutionRoute(deps.store, task);
+    task = authoritativeExecutionTask;
     const settings = await mergeEffectiveSettings(deps.store, task, await deps.store.getSettings());
+    if (externalExecutionRoute.configured && !externalExecutionRoute.valid) {
+      const message = `Persisted external execution checkout is invalid: ${externalExecutionRoute.reason ?? "unknown error"}`;
+      await deps.store.logEntry(task.id, message, undefined, deps.getRunContextFor(task.id));
+      deps.executing.delete(task.id);
+      executingTaskLock.release(task.id);
+      if (dropPreHeldExecutorSlot(task.id)) deps.options.semaphore?.release();
+      throw new Error(message);
+    }
 
     // Keep runtime plugin workflow step templates synchronized into TaskStore.
     // TaskStore resolves plugin-prefixed workflow IDs from this injected cache
@@ -517,7 +533,7 @@ export async function runImplementation(
       );
     }
 
-    if (task.column === preflightWipLane && !task.worktree) {
+    if (task.column === preflightWipLane && !task.worktree && !externalExecutionRoute.configured) {
       executorLog.error(
         `${task.id}: drift detected — task is in-progress with no worktree. ` +
           `Recovering by creating a fresh worktree. This usually indicates a partial ` +
@@ -532,7 +548,9 @@ export async function runImplementation(
     }
 
     // Hoist worktreePath so it's accessible in the catch block for dep-abort cleanup
-    let worktreePath = task.worktree ?? "";
+    let worktreePath = externalExecutionRoute.configured
+      ? externalExecutionRoute.checkoutPath ?? ""
+      : task.worktree ?? "";
 
     // Set by stuck-abort handlers; the actual moveTask("todo") is deferred to
     // the finally block so deps.executing is cleared first (prevents re-dispatch race).
@@ -622,12 +640,15 @@ export async function runImplementation(
         }
       }
 
-      const hadAssignedWorktree = Boolean(task.worktree);
+      const hadAssignedWorktree = Boolean(task.worktree) || externalExecutionRoute.configured;
       const taskCommandAbortController = new AbortController();
       deps.registerConfiguredCommandController(task.id, taskCommandAbortController);
       /*
       FNXC:Workspace 2026-06-21-12:00:
       KTD1 — in workspace mode `deps.rootDir` is a NON-git parent. Acquiring a root worktree there fails. Skip root acquisition entirely and run the agent session rooted at the browse-only workspace root; the agent acquires per-sub-repo worktrees on demand via fn_acquire_repo_worktree. `task.worktree` stays unset. We synthesize a non-fresh, non-resume acquisition with an empty branch so the downstream env-injection/onStart bookkeeping runs unchanged while every rootDir git preflight (base capture, contamination, liveness) is gated off below. The non-workspace branch is byte-for-byte the original acquisition path.
+
+      FNXC:ExternalExecutionCheckout 2026-08-09-23:53:
+      Operator-routed external checkouts skip Fusion worktree acquisition and run against the persisted checkout.
       */
       const acquisition: AcquireTaskWorktreeResult = deps.workspaceConfig
         ? {
@@ -637,6 +658,14 @@ export async function runImplementation(
             hydrated: true,
             isResume: Boolean(task.sessionFile),
           }
+        : externalExecutionRoute.configured
+          ? {
+              worktreePath: externalExecutionRoute.checkoutPath ?? "",
+              branch: externalExecutionRoute.branch ?? "",
+              source: "existing",
+              hydrated: true,
+              isResume: Boolean(task.sessionFile),
+            }
         : await (async () => {
         try {
           return await acquireTaskWorktree({
@@ -650,6 +679,9 @@ export async function runImplementation(
             runContext: deps.getRunContextFor(task.id),
             runInitCommand: true,
             createWorktree: deps.createWorktree,
+            // FNXC:WorktreeAcquisition 2026-08-09-03:30: This injected creator is native even when project settings
+            // prefer Worktrunk; retain its actual backend so stale-base refresh remains enabled on creation and reuse.
+            createWorktreeBackendKind: "native",
             runConfiguredCommand: (command, cwd, timeoutMs, env) =>
               runConfiguredCommand(
                 command,

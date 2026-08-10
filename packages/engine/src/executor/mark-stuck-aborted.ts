@@ -12,6 +12,7 @@ import type { Task, TaskStore } from "@fusion/core";
 import { executorLog } from "../logger.js";
 import { executingTaskLock } from "../agents/active-session-registry.js";
 import { RemovalReason, removeWorktree } from "../worktree/worktree-pool.js";
+import { resolveExternalExecutionCheckoutRoute } from "../execution/external-execution-checkout.js";
 import { resolveReboundColumnFor } from "./lifecycle-columns.js";
 
 export type MarkStuckAbortedDeps = {
@@ -88,7 +89,14 @@ export function markStuckAborted(
         const settings = await deps.store.getSettings();
         const preserveProgress = settings.preserveProgressOnStuckRequeue !== false;
         const latestTask = await deps.store.getTask(taskId);
-        const worktreePath = deps.getWorktreePath(taskId) ?? latestTask.worktree;
+        const externalExecutionRoute = await resolveExternalExecutionCheckoutRoute(latestTask);
+        /*
+        FNXC:ExternalExecutionCheckout 2026-08-09-22:43:
+        Never remove an operator-owned external checkout during force-requeue cleanup.
+        */
+        const worktreePath = externalExecutionRoute.configured
+          ? undefined
+          : deps.getWorktreePath(taskId) ?? latestTask.worktree;
         /*
         FNXC:Workspace 2026-06-21-22:30:
         F8 — observability for the workspace case. A workspace task has no singular
@@ -125,7 +133,9 @@ export function markStuckAborted(
         FNXC:StuckRequeue 2026-06-27-23:15:
         The force path mirrors normal stuck-requeue cleanup: before reaping a hung executor's worktree, reconcile step progress against committed branch state so preserved progress never points at deleted uncommitted work.
         */
-        await deps.resetStepsIfWorkLost(latestTask);
+        if (!externalExecutionRoute.configured) {
+          await deps.resetStepsIfWorkLost(latestTask);
+        }
 
         let cleanupFailed = false;
         if (worktreePath && existsSync(worktreePath)) {

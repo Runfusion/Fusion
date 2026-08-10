@@ -68,8 +68,13 @@ export function resolveGrokAcpAuthPreferMethods(
  * Official headless/ACP scripting docs recommend `--no-auto-update` for CI and
  * automated clients (https://docs.x.ai/build/cli/headless-scripting). Place it
  * before the `agent` subcommand: `grok --no-auto-update agent … stdio`.
- * Model / plugin-dir flags belong on `grok agent` before the transport:
- * `grok --no-auto-update agent [--plugin-dir <dir>…] [-m <model>] stdio`.
+ *
+ * FNXC:GrokAcp 2026-08-09-00:00:
+ * The released Grok CLI (v1.0.0, latest stable) does not recognize
+ * `--no-auto-update` and exits immediately with "unexpected argument".
+ * Default is now OFF; callers must opt in via noAutoUpdate:true. Fusion
+ * manages its own update cycle, so disabling auto-update in the subprocess
+ * is unnecessary and breaks startup for all users on current Grok CLI.
  */
 export function buildGrokAcpArgs(options?: {
   model?: string;
@@ -77,8 +82,8 @@ export function buildGrokAcpArgs(options?: {
   noAutoUpdate?: boolean;
 }): string[] {
   const args: string[] = [];
-  // Default ON for Fusion automation; callers can pass noAutoUpdate:false.
-  if (options?.noAutoUpdate !== false) {
+  // Default OFF — Grok CLI v1.0.0 rejects --no-auto-update (unknown flag).
+  if (options?.noAutoUpdate === true) {
     args.push("--no-auto-update");
   }
   args.push("agent");

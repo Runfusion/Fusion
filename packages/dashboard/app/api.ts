@@ -4,6 +4,8 @@
  * Existing callers import from `../api` / `../../api`; keep this entrypoint stable
  * while implementation lives under `app/api/*` modules.
  */
+import { api } from "./api/client/client";
+
 export * from "./api/legacy";
 export * from "./api/settings/provider-status";
 export * from "./api/planning/models-usage";
@@ -54,13 +56,16 @@ export interface AgentActivityPage {
 
 export async function getAgentActivity(
   params: Record<string, string | number | undefined> = {},
+  options?: Pick<RequestInit, "signal">,
 ): Promise<AgentActivityPage> {
   const query = new URLSearchParams(
     Object.entries(params)
       .filter((entry): entry is [string, string | number] => entry[1] !== undefined)
       .map(([key, value]) => [key, String(value)]),
   );
-  const response = await fetch(`/api/agent-activity${query.size ? `?${query}` : ""}`);
-  if (!response.ok) throw new Error(`Agent activity request failed: ${response.status}`);
-  return response.json() as Promise<AgentActivityPage>;
+  /*
+  FNXC:AgentActivityClient 2026-08-09-23:44:
+  Activity seeding must use the shared client so project auth, base-path handling, and request identity match every dashboard API request.
+  */
+  return api<AgentActivityPage>(`/agent-activity${query.size ? `?${query}` : ""}`, options);
 }

@@ -89,6 +89,13 @@ describe("AgentsView org chart interactions", () => {
     expect(css).not.toContain(".org-chart-children > .org-chart-node::before");
   });
 
+  it("renders no activity affordance when the stream has no evidence", async () => {
+    render(<AgentsView addToast={vi.fn()} />);
+    fireEvent.click(await screen.findByLabelText("Org Chart view"));
+    const root = await screen.findByTestId("agent-org-chart-viewport");
+    expect(root.querySelector('[data-agent-id="ceo"]')?.getAttribute("data-activity-state")).toBeNull();
+  });
+
   it("renders controls and supports transform interactions", async () => {
     render(<AgentsView addToast={vi.fn()} />);
     fireEvent.click(await screen.findByLabelText("Org Chart view"));

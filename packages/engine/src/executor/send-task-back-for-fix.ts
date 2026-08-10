@@ -2,9 +2,13 @@
  * FNXC:CodeOrganization 2026-08-03-19:00:
  * sendTaskBackForFix peeled from TaskExecutor (U4).
  * Verification/review failure bounce: comment, inject PROMPT failure section, reopen steps, schedule rerun.
+ *
+ * FNXC:ExternalExecutionCheckout 2026-08-09-22:43:
+ * Remediation reuses the live external checkout path and must not persist it as task.worktree.
  */
 import type { Task, TaskStore } from "@fusion/core";
 import type { EngineRunContext } from "../util/run-audit.js";
+import { resolveAuthoritativeExternalExecutionRoute } from "./resolve-authoritative-external-execution-route.js";
 
 export type SendTaskBackForFixDeps = {
   store: TaskStore;
@@ -25,6 +29,7 @@ export type SendTaskBackForFixDeps = {
     worktreePath: string,
     message: string,
     preserveResumeState: boolean,
+    persistWorktreePath?: boolean,
   ) => void;
   maxWorkflowStepRetries: number;
 };
@@ -42,6 +47,14 @@ export async function sendTaskBackForFix(
 ): Promise<void> {
   const taskId = task.id;
   deps.clearCompletedTaskWatchdog(taskId);
+  const { task: authoritativeRemediationTask, route: externalExecutionRoute } =
+    await resolveAuthoritativeExternalExecutionRoute(deps.store, task);
+  if (externalExecutionRoute.configured && !externalExecutionRoute.valid) {
+    throw new Error(`Persisted external execution checkout is invalid: ${externalExecutionRoute.reason ?? "unknown error"}`);
+  }
+  const remediationWorktreePath = externalExecutionRoute.configured
+    ? externalExecutionRoute.checkoutPath ?? ""
+    : worktreePath;
 
   // 1. Add a task comment explaining the failure
   await deps.store.addTaskComment(
@@ -67,7 +80,7 @@ export async function sendTaskBackForFix(
    * this display, remains the safety boundary for unchanged remediation loops.
    */
   await deps.injectWorkflowStepFailureInstructions(
-    task,
+    authoritativeRemediationTask,
     failureFeedback,
     stepName,
     retryPresentation ?? { attempt: deps.maxWorkflowStepRetries, max: deps.maxWorkflowStepRetries },
@@ -96,8 +109,9 @@ export async function sendTaskBackForFix(
   // 6. Schedule the move after the guard unwinds (per guard-unwind requirement)
   deps.scheduleWorkflowRerun(
     taskId,
-    worktreePath,
+    remediationWorktreePath,
     `${taskId}: sent back to in-progress for remediation`,
     preserveResumeState,
+    !externalExecutionRoute.configured,
   );
 }

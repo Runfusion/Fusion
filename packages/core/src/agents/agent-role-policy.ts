@@ -79,6 +79,54 @@ export function canAgentReceiveImplementationTasks(agent: RoleTaggedAgent): bool
   return getAgentAssignmentPolicy(agent) !== "none";
 }
 
+/**
+ * FNXC:WorkflowAgentRouting 2026-08-10-01:15:
+ * The STATIC half of workflow-principal routability, shared so provisioning and the router cannot drift.
+ * A disabled runtime, a paused/errored agent, or a transient per-task worker can never own a workflow stage.
+ * The router adds the dynamic half (session capacity); this predicate is the part provisioning must satisfy
+ * for an instance to be able to route a role at all.
+ *
+ * Extracted after every built-in workflow owner shipped `runtimeConfig: { enabled: false }` while the router
+ * treated `enabled === false` as unavailable — so the only permanent principals for triage/executor/reviewer/
+ * merger were unroutable by construction, and any instance without operator-created role agents held at its
+ * first workflow node.
+ */
+/** True for the four provenance-marked permanent owners that route built-in workflow stages. */
+export function isBuiltinWorkflowRoleAgent(agent: { metadata?: Record<string, unknown> | null }): boolean {
+  return agent.metadata?.builtInWorkflowRole === true;
+}
+
+/**
+ * FNXC:WorkflowAgentRouting 2026-08-10-01:15:
+ * HARD INVARIANT: a built-in workflow role owner is never unroutable.
+ *
+ * These four are the engine's own principals for triage/executor/reviewer/merger. Unlike an operator's agent,
+ * disabling one does not "opt an agent out" — it removes the only thing that can run that workflow stage, and
+ * the engine has no fallback: every task holds at its first node of that role and the hold re-dispatches
+ * forever. That is not a configuration an operator can meaningfully choose, so `runtimeConfig.enabled` is
+ * COERCED back to true for them at the write seam rather than validated and rejected: the write still
+ * succeeds, every other runtimeConfig key the caller sent is preserved, and the system cannot be put into the
+ * deadlocked state by an API call, a UI toggle, a plugin, or a stale record.
+ *
+ * To take a built-in owner out of rotation, add your own agent with that role and route to it — that path
+ * leaves the role routable, which is the property this protects.
+ */
+export function enforceBuiltinWorkflowRoleRoutability<T extends {
+  metadata?: Record<string, unknown> | null;
+  runtimeConfig?: Record<string, unknown> | null;
+}>(agent: T): T {
+  if (!isBuiltinWorkflowRoleAgent(agent)) return agent;
+  if (agent.runtimeConfig?.enabled !== false) return agent;
+  return { ...agent, runtimeConfig: { ...agent.runtimeConfig, enabled: true } };
+}
+
+export function isWorkflowPrincipalEligible(
+  agent: Pick<RoleTaggedAgent, "runtimeConfig"> & { state?: string; id?: string },
+): boolean {
+  if (agent.runtimeConfig?.enabled === false) return false;
+  return agent.state !== "paused" && agent.state !== "error";
+}
+
 export function isImplementationTask(task: Pick<Task, "column">): boolean {
   return IMPLEMENTATION_TASK_COLUMNS.has(task.column);
 }

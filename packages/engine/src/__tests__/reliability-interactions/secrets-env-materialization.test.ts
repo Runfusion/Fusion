@@ -78,8 +78,21 @@ describe("reliability interactions: secrets env materialization", () => {
     expect(existsSync(join(worktree, ".fusion-secrets-env.fingerprint"))).toBe(false);
     expect(execFileSync("git", ["status", "--porcelain"], { cwd: worktree, encoding: "utf8" })).toBe("");
 
+    /*
+    FNXC:SecretsEnvMaterialization 2026-08-09-23:49:
+    Sidecar adoption must not launder REAL dirt into a clean verdict — the refresh still has to SEE it. Advance
+    main first so a git mutation is genuinely required, which is the only situation where the working tree is
+    consulted at all. Per FNXC:WorktreeBaseRefresh 2026-08-09-23:49 the dirt now declines the refresh instead of
+    refusing execution, and the assertion that matters is that the agent's uncommitted work survives untouched.
+    */
+    writeFileSync(join(root, "advance.txt"), "C1\n");
+    execFileSync("git", ["add", "advance.txt"], { cwd: root });
+    execFileSync("git", ["commit", "-m", "C1"], { cwd: root });
+
     writeFileSync(join(worktree, "unrelated.txt"), "dirt\n");
-    await expect(refreshReusedWorktreeBase({ task: { id: "FN-1", baseCommitSha: base } as any, rootDir: root, worktreePath: worktree, store, settings: {} })).resolves.toMatchObject({ kind: "dirty-worktree", executionSafe: false });
+    await expect(refreshReusedWorktreeBase({ task: { id: "FN-1", baseCommitSha: base } as any, rootDir: root, worktreePath: worktree, store, settings: {} })).resolves.toMatchObject({ kind: "dirty-worktree", executionSafe: true, skipped: true });
+    expect(execFileSync("git", ["rev-parse", "HEAD"], { cwd: worktree, encoding: "utf8" }).trim()).toBe(base);
+    expect(readFileSync(join(worktree, "unrelated.txt"), "utf8")).toBe("dirt\n");
   });
 
   it("orphan reap reclaims orphaned env artifacts", async () => {

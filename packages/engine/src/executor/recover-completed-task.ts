@@ -12,6 +12,7 @@ import {
 import { resolvePlannerLanesForTaskAsync } from "../execution/replan-target.js";
 import { executorLog } from "../logger.js";
 import type { EngineRunContext } from "../util/run-audit.js";
+import { resolveAuthoritativeExternalExecutionRoute } from "./resolve-authoritative-external-execution-route.js";
 import { isTaskWorkComplete } from "./task-predicates.js";
 import {
   areExplicitEnabledWorkflowStepsSatisfied,
@@ -139,9 +140,19 @@ export async function recoverCompletedTask(
       return false;
     }
 
-    // Capture modified files if the worktree still exists
-    if (task.worktree && existsSync(task.worktree)) {
-      const modifiedFiles = await deps.captureModifiedFiles(task.worktree, task.baseCommitSha, task.id, undefined, "recovery");
+    const { task: authoritativeRecoveryTask, route: externalExecutionRoute } =
+      await resolveAuthoritativeExternalExecutionRoute(deps.store, task);
+    if (externalExecutionRoute.configured && !externalExecutionRoute.valid) {
+      executorLog.warn(`${task.id}: completed-task recovery refused invalid external execution checkout: ${externalExecutionRoute.reason ?? "unknown error"}`);
+      return false;
+    }
+    const recoveryWorktreePath = externalExecutionRoute.configured
+      ? externalExecutionRoute.checkoutPath
+      : authoritativeRecoveryTask.worktree;
+
+    // Capture modified files if the authoritative execution checkout still exists.
+    if (recoveryWorktreePath && existsSync(recoveryWorktreePath)) {
+      const modifiedFiles = await deps.captureModifiedFiles(recoveryWorktreePath, authoritativeRecoveryTask.baseCommitSha, task.id, undefined, "recovery");
       if (modifiedFiles.length > 0) {
         await deps.store.updateTask(task.id, { modifiedFiles });
         executorLog.log(`${task.id}: recovered ${modifiedFiles.length} modified files`);

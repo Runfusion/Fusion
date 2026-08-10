@@ -61,6 +61,26 @@
   font-family: var(--font-mono);
 }
 
+.live-agent-card-activity {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.live-agent-card-now-doing,
+.live-agent-card-last-step {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.live-agent-card-now-doing {
+  color: var(--text);
+}
+
 .live-agent-card-transcript {
   font-family: var(--font-mono);
   font-size: 11px;

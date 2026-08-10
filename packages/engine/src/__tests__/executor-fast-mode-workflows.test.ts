@@ -9,6 +9,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import "./executor-test-helpers.js";
 import { getBuiltinWorkflow } from "@fusion/core";
 import { TaskExecutor } from "../executor.js";
+import { resolveExternalExecutionCheckoutRoute } from "../execution/external-execution-checkout.js";
 import { WorkflowGraphTaskRunner } from "../workflows/workflow-graph-task-runner.js";
 import { FOREACH_ACTIVE_CONTEXT_KEY } from "../workflows/workflow-node-handlers.js";
 import {
@@ -19,6 +20,12 @@ import {
   mockedStatSync,
   resetExecutorMocks,
 } from "./executor-test-helpers.js";
+
+vi.mock("../execution/external-execution-checkout.js", () => ({
+  resolveExternalExecutionCheckoutRoute: vi.fn(async () => ({ configured: false })),
+}));
+
+const mockedResolveExternalExecutionCheckoutRoute = vi.mocked(resolveExternalExecutionCheckoutRoute);
 
 const now = "2026-06-10T00:00:00.000Z";
 
@@ -70,6 +77,8 @@ function workflowResult() {
 describe("fast mode workflow/runtime invariants", () => {
   beforeEach(() => {
     resetExecutorMocks();
+    mockedResolveExternalExecutionCheckoutRoute.mockReset();
+    mockedResolveExternalExecutionCheckoutRoute.mockResolvedValue({ configured: false });
     mockedExistsSync.mockReturnValue(true);
   });
 
@@ -246,6 +255,111 @@ describe("fast mode workflow/runtime invariants", () => {
         branchName: "fusion/fn-6226",
       },
     });
+  });
+
+  /*
+  FNXC:ExternalExecutionCheckout 2026-08-09-23:53:
+  A valid persisted external execution checkout takes precedence over worktree and branch values in the caller snapshot; the executor must resolve the live task row before routing.
+  */
+  it("prepares a persisted external execution checkout instead of the project task worktree", async () => {
+    const routedTask = task({
+      id: "FN-6097",
+      worktree: "/tmp/project-task-worktree",
+      branch: "fusion/fn-6097",
+      sourceMetadata: {
+        externalExecutionCheckout: "/tmp/external-runtime",
+        externalExecutionBranch: "local/runtime-fixes",
+        externalReviewCheckout: "/tmp/external-runtime",
+      },
+    });
+    const store = createMockStore();
+    store.getTask.mockResolvedValue(routedTask);
+    mockedResolveExternalExecutionCheckoutRoute.mockResolvedValueOnce({
+      configured: true,
+      valid: true,
+      checkoutPath: "/tmp/external-runtime",
+      branch: "local/runtime-fixes",
+    });
+    const executor = new TaskExecutor(store, "/tmp/project-root");
+
+    const runnerSnapshot = {
+      ...routedTask,
+      worktree: "/tmp/stale-project-task-worktree",
+      branch: "fusion/stale-fn-6097",
+      sourceMetadata: undefined,
+    };
+    const result = await (executor as any)
+      .createAuthoritativeWorkflowPrimitives({ experimentalFeatures: { workflowGraphExecutor: true } })
+      .prepareWorktree(
+        { run: { taskId: "FN-6097" }, node: { node: { id: "execute" }, context: {} } },
+        runnerSnapshot,
+      );
+
+    expect(mockedResolveExternalExecutionCheckoutRoute).toHaveBeenCalledWith(routedTask);
+    expect(result).toMatchObject({
+      outcome: "success",
+      data: {
+        worktreePath: "/tmp/external-runtime",
+        branchName: "local/runtime-fixes",
+      },
+    });
+  });
+
+  it("fails closed when the persisted external execution route is invalid", async () => {
+    const routedTask = task({
+      id: "FN-6098",
+      sourceMetadata: {
+        externalExecutionCheckout: "/tmp/external-runtime",
+        externalExecutionBranch: "local/runtime-fixes",
+      },
+    });
+    const store = createMockStore();
+    store.getTask.mockResolvedValue(routedTask);
+    mockedResolveExternalExecutionCheckoutRoute.mockResolvedValueOnce({
+      configured: true,
+      valid: false,
+      reason: "external execution checkout branch mismatch",
+    });
+    const executor = new TaskExecutor(store, "/tmp/project-root");
+
+    const result = await (executor as any)
+      .createAuthoritativeWorkflowPrimitives({ experimentalFeatures: { workflowGraphExecutor: true } })
+      .prepareWorktree(
+        { run: { taskId: "FN-6098" }, node: { node: { id: "execute" }, context: {} } },
+        task({ id: "FN-6098", worktree: "/tmp/project-task-worktree" }),
+      );
+
+    expect(result).toEqual({
+      outcome: "failure",
+      value: "external-execution-checkout-invalid: external execution checkout branch mismatch",
+    });
+    expect(mockedExistsSync).not.toHaveBeenCalledWith("/tmp/project-task-worktree");
+  });
+
+  it("the authoritative executor route resolver re-reads persisted metadata instead of trusting a stale snapshot", async () => {
+    const routedTask = task({
+      id: "FN-6099",
+      sourceMetadata: {
+        externalExecutionCheckout: "/tmp/external-runtime",
+        externalExecutionBranch: "local/runtime-fixes",
+      },
+    });
+    const store = createMockStore();
+    store.getTask.mockResolvedValue(routedTask);
+    mockedResolveExternalExecutionCheckoutRoute.mockResolvedValueOnce({
+      configured: true,
+      valid: false,
+      reason: "external execution checkout branch mismatch",
+    });
+    const executor = new TaskExecutor(store, "/tmp/project-root");
+
+    const result = await (executor as any).resolveAuthoritativeExternalExecutionRoute(
+      task({ id: "FN-6099", sourceMetadata: undefined }),
+    );
+
+    expect(result.task).toEqual(routedTask);
+    expect(mockedResolveExternalExecutionCheckoutRoute).toHaveBeenCalledWith(routedTask);
+    expect(result.route).toMatchObject({ configured: true, valid: false });
   });
 
   it("does not project a fresh graph step or capture its baseline before the executor creates its worktree", async () => {
@@ -936,6 +1050,81 @@ describe("fast mode workflow/runtime invariants", () => {
 
     expect(recovered).toBe(true);
     expect(graph).toHaveBeenCalledWith(liveTask);
+  });
+
+  it("completed-task recovery captures the live external checkout instead of a stale task worktree", async () => {
+    const liveTask = task({
+      id: "FN-7283-EXTERNAL-RECOVERY",
+      executionMode: "fast",
+      enabledWorkflowSteps: [],
+      worktree: "/tmp/stale-managed-worktree",
+      baseCommitSha: "base",
+      steps: [{ name: "Do it", status: "done" }],
+      workflowStepResults: [],
+      sourceMetadata: {
+        externalExecutionCheckout: "/tmp/external-runtime",
+        externalExecutionBranch: "local/runtime-fixes",
+      },
+    });
+    const staleSnapshot = { ...liveTask, sourceMetadata: undefined };
+    const { executor } = makeExecutorForTask(liveTask);
+    mockedResolveExternalExecutionCheckoutRoute.mockResolvedValue({
+      configured: true,
+      valid: true,
+      checkoutPath: "/tmp/external-runtime",
+      branch: "local/runtime-fixes",
+    });
+    const captureModifiedFiles = vi.spyOn(executor as any, "captureModifiedFiles").mockResolvedValue([]);
+
+    const recovered = await executor.recoverCompletedTask(staleSnapshot as any);
+
+    expect(recovered).toBe(true);
+    expect(captureModifiedFiles).toHaveBeenCalledWith(
+      "/tmp/external-runtime",
+      "base",
+      "FN-7283-EXTERNAL-RECOVERY",
+      undefined,
+      "recovery",
+    );
+  });
+
+  it("pre-merge remediation reuses the live external checkout without persisting it as task.worktree", async () => {
+    const liveTask = task({
+      id: "FN-7283-EXTERNAL-REMEDIATION",
+      worktree: "/tmp/stale-managed-worktree",
+      steps: [{ name: "Do it", status: "done" }],
+      sourceMetadata: {
+        externalExecutionCheckout: "/tmp/external-runtime",
+        externalExecutionBranch: "local/runtime-fixes",
+      },
+    });
+    const staleSnapshot = { ...liveTask, sourceMetadata: undefined };
+    const { executor } = makeExecutorForTask(liveTask);
+    mockedResolveExternalExecutionCheckoutRoute.mockResolvedValue({
+      configured: true,
+      valid: true,
+      checkoutPath: "/tmp/external-runtime",
+      branch: "local/runtime-fixes",
+    });
+    vi.spyOn(executor as any, "injectWorkflowStepFailureInstructions").mockResolvedValue(undefined);
+    vi.spyOn(executor as any, "reopenLastStepForRevision").mockResolvedValue(null);
+    const scheduleWorkflowRerun = vi.spyOn(executor as any, "scheduleWorkflowRerun").mockImplementation(() => undefined);
+
+    await (executor as any).sendTaskBackForFix(
+      staleSnapshot,
+      "/tmp/stale-managed-worktree",
+      "fix it",
+      "Code Review",
+      "Review requested changes",
+    );
+
+    expect(scheduleWorkflowRerun).toHaveBeenCalledWith(
+      "FN-7283-EXTERNAL-REMEDIATION",
+      "/tmp/external-runtime",
+      expect.any(String),
+      true,
+      false,
+    );
   });
 
   /*

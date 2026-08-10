@@ -482,6 +482,12 @@ export {
   type SquashAuditRecentMainCommit,
 } from "./merge/merger-squash-audit.js";
 export { reviewStep, type ReviewType, type ReviewVerdict, type ReviewResult, type ReviewOptions } from "./execution/reviewer.js";
+export {
+  inspectExternalGitCheckout,
+  resolveExternalExecutionCheckoutRoute,
+  type ExternalExecutionCheckoutResolution,
+  type ExternalGitCheckoutInspection,
+} from "./execution/external-execution-checkout.js";
 export { createFnAgent, promptWithFallback, describeModel, setHostExtensionPaths, getHostExtensionPaths, wrapToolsWithActionGate, type AgentOptions, type AgentResult } from "./pi.js";
 export { resolveMcpServersForRuntime, resolveMcpServersForStore, type ResolvedMcpServersForRuntime } from "./mcp/mcp-resolution.js";
 export { discoverMcpServers, type DiscoverMcpServersOptions, type DiscoverMcpServersResult } from "./mcp/mcp-discovery-service.js";

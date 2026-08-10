@@ -24,6 +24,7 @@ import { activeSessionRegistry } from "../agents/active-session-registry.js";
 import { resolveExecutorSessionModel } from "../agents/agent-session-helpers.js";
 import { executorLog } from "../logger.js";
 import { mergeEffectiveSettings } from "../project/effective-settings.js";
+import { resolveExternalExecutionCheckoutRoute } from "../execution/external-execution-checkout.js";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { TaskExecutorOptions, ActiveExecutorSessionState } from "./task-executor-options.js";
@@ -160,6 +161,12 @@ export function wireExecutorLifecycle(deps: WireExecutorLifecycleDeps): WireExec
   });
   /* FNXC:WorkflowLifecycle 2026-07-16-10:00: Executor replaces the baseline only for its own TaskStore, so archive awaits abort/sweep/removal before branch deletion without cross-store coupling. */
   const unregisterArchiveWorktreeDisposer = registerArchiveWorktreeDisposer(deps.store, async (task) => {
+    /*
+    FNXC:ExternalExecutionCheckout 2026-08-09-22:43:
+    Operator-owned external checkouts must never be removed on archive.
+    */
+    const externalExecutionRoute = await resolveExternalExecutionCheckoutRoute(task);
+    if (externalExecutionRoute.configured) return;
     if (!task.worktree || await canonicalizeWorktreePath(task.worktree) === await canonicalizeWorktreePath(deps.rootDir)) return;
     await deps.awaitAbortInFlightTaskWork(task.id, "task archived");
     for (const path of activeSessionRegistry.pathsForTask(task.id)) activeSessionRegistry.unregisterPath(path);

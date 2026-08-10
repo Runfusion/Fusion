@@ -9,6 +9,7 @@ import type { Settings, TaskStore } from "@fusion/core";
 import { resolveTaskWorkingBranch } from "../worktree/worktree-names.js";
 import { RemovalReason } from "../worktree/worktree-pool.js";
 import { executorLog } from "../logger.js";
+import { resolveExternalExecutionCheckoutRoute } from "../execution/external-execution-checkout.js";
 import { resolveReboundColumnFor } from "./lifecycle-columns.js";
 
 const execAsync = promisify(exec);
@@ -32,30 +33,39 @@ export async function handleDepAbortCleanup(
 ): Promise<void> {
   executorLog.log(`${taskId} dependency added — work discarded, moved to triage for re-planning`);
 
-  // Remove worktree
-  try {
-    const settings = await deps.store.getSettings() as Settings;
-    await deps.removeOwnWorktreeWithReconcile({
-      worktreePath,
-      settings,
-      taskId,
-      reason: RemovalReason.ExecutorDispose,
-    });
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    executorLog.warn(`${taskId}: failed to remove worktree during dep-abort cleanup (${worktreePath}): ${msg}`);
+  const task = await deps.store.getTask(taskId);
+  const externalExecutionRoute = await resolveExternalExecutionCheckoutRoute(task);
+
+  /*
+  FNXC:ExternalExecutionCheckout 2026-08-09-22:43:
+  Persisted external execution routes are operator-owned checkouts. Executor cleanup may clear Fusion's managed task pointers, but it must never remove the routed directory or delete its branch during dependency abort, retry, pause, stuck-kill, or remediation recovery.
+  */
+  if (!externalExecutionRoute.configured) {
+    try {
+      const settings = await deps.store.getSettings() as Settings;
+      await deps.removeOwnWorktreeWithReconcile({
+        worktreePath,
+        settings,
+        taskId,
+        reason: RemovalReason.ExecutorDispose,
+      });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      executorLog.warn(`${taskId}: failed to remove worktree during dep-abort cleanup (${worktreePath}): ${msg}`);
+    }
   }
 
-  // Delete the branch — use stored branch name if available, fall back to convention
-  const task = await deps.store.getTask(taskId);
+  // Delete only a Fusion-managed branch. External routes remain operator-owned.
   const branch = resolveTaskWorkingBranch(task);
   let branchDeleted = false;
-  try {
-    await execAsync(`git branch -D "${branch}"`, { cwd: deps.rootDir });
-    branchDeleted = true;
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    executorLog.warn(`${taskId}: failed to delete branch during dep-abort cleanup (${branch}): ${msg}`);
+  if (!externalExecutionRoute.configured) {
+    try {
+      await execAsync(`git branch -D "${branch}"`, { cwd: deps.rootDir });
+      branchDeleted = true;
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      executorLog.warn(`${taskId}: failed to delete branch during dep-abort cleanup (${branch}): ${msg}`);
+    }
   }
   if (branchDeleted) {
     // FN-2165 regression guard: null baseBranch on any task that stored this branch

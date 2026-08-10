@@ -10,6 +10,7 @@ import { facadeFields, facadeMethods, type FacadeRestArgs } from "./facade-metho
 import { activeSessionRegistry } from "../agents/active-session-registry.js";
 import { getTaskCompletionBlockerForStore } from "../execution/task-completion.js";
 import { buildWorkflowFailureScopeGuard } from "./workflow-failure-scope-guard.js";
+import { resolveAuthoritativeExternalExecutionRoute } from "./resolve-authoritative-external-execution-route.js";
 import { TaskExecutorWorktreePureFacades } from "./task-executor-worktree-pure-facades.js";
 
 export abstract class TaskExecutorSessionFacades extends TaskExecutorWorktreePureFacades {
@@ -132,6 +133,13 @@ export abstract class TaskExecutorSessionFacades extends TaskExecutorWorktreePur
   }
   protected async holdPlanReviewNoOpContinuation(...args: FacadeRestArgs<typeof impl.holdPlanReviewNoOpContinuationImpl>): ReturnType<typeof impl.holdPlanReviewNoOpContinuationImpl> {
     return impl.holdPlanReviewNoOpContinuationImpl({ store: this.store }, ...args);
+  }
+  /*
+  FNXC:ExternalExecutionCheckout 2026-08-09-22:43:
+  Re-read durable external checkout routing before execution/cleanup (tests call this instance method).
+  */
+  protected async resolveAuthoritativeExternalExecutionRoute(task: import("@fusion/core").Task) {
+    return resolveAuthoritativeExternalExecutionRoute(this.store, task);
   }
   protected async handleDepAbortCleanup(taskId: string, worktreePath: string): ReturnType<typeof impl.handleDepAbortCleanupImpl> { return impl.handleDepAbortCleanupImpl(bags.buildHandleDepAbortCleanupDeps(this), taskId, worktreePath); }
   protected async reopenLastStepForRevision(...args: import("./facade-methods.js").FacadeAfterFirst<typeof impl.reopenLastStepForRevisionImpl>): Promise<{ index: number; name: string; indexes: number[] } | null> { return impl.reopenLastStepForRevisionImpl(this.store, ...args); }

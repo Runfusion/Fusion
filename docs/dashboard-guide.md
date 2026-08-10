@@ -1205,6 +1205,7 @@ Navigation:
 
 Features:
 - Switch between **List**, **Board**, and **Org chart** layouts
+- The org chart and live-agent cards share one refcounted agent-activity stream: one seed request, SSE subscription, and local expiry clock for all mounted consumers. Events are ordered by `(occurredAt, eventId)` so a replay cannot replace newer activity. Nodes show active, idle, or error activity; no-data deliberately renders no extra activity affordance. Recent manager-to-agent handoffs animate along existing connector edges, while reduced-motion preference retains a static direction indicator. Live-agent cards show pushed “now doing” prose immediately; canonical step numbers and last completed steps remain sourced from the existing task-detail poll.
 - Filter by role/state, include/exclude system agents, and inspect health/status
 - **Token Usage by Agent** includes task-derived token counts for ephemeral/task-worker system agents when system agents are shown, matching Agent detail and Command Center Team token surfaces.
 - Agent list cards show the configured **Model** or plugin **Runtime** for each agent, falling back to **Auto** when no override is set

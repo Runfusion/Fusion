@@ -12,6 +12,7 @@ import { activeSessionRegistry, executingTaskLock } from "../agents/active-sessi
 import { executorLog, formatError } from "../logger.js";
 import type { EngineRunContext } from "../util/run-audit.js";
 import { RemovalReason, removeWorktree } from "../worktree/worktree-pool.js";
+import { resolveExternalExecutionCheckoutRoute } from "../execution/external-execution-checkout.js";
 import { preExecutionWorktreeHasWork } from "./worktree-git-refs.js";
 
 export type ReleasePreExecutionWorktreeDeps = {
@@ -30,6 +31,12 @@ export async function releasePreExecutionWorktree(
   try {
     const live = await deps.store.getTask(taskId);
     if (!live?.worktree) return false;
+    /*
+    FNXC:ExternalExecutionCheckout 2026-08-09-22:43:
+    Never release an operator-owned external checkout as a pre-execution worktree.
+    */
+    const externalExecutionRoute = await resolveExternalExecutionCheckoutRoute(live);
+    if (externalExecutionRoute.configured) return false;
     if (live.firstExecutionAt || live.executionStartedAt) return false;
     if (activeSessionRegistry.isPathActive(live.worktree) || activeSessionRegistry.isPathActive(resolvePath(live.worktree))) return false;
     if (deps.hasLiveTaskSessionSurface(taskId) || executingTaskLock.has(taskId)) return false;

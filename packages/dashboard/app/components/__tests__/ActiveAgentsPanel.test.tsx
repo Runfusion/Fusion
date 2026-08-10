@@ -1,11 +1,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import type { ReactElement } from "react";
 import i18next from "i18next";
 import { ActiveAgentsPanel } from "../ActiveAgentsPanel";
 import { ToastProvider } from "../../hooks/useToast";
 import type { Agent } from "../../api";
+import * as apiModule from "../../api";
 import { useLiveTranscript } from "../../hooks/useLiveTranscript";
+import { __resetAgentActivityStoreForTests } from "../../hooks/agentActivityStore";
 import esApp from "../../../../i18n/locales/es/app.json";
 import frApp from "../../../../i18n/locales/fr/app.json";
 import koApp from "../../../../i18n/locales/ko/app.json";
@@ -19,6 +21,24 @@ vi.mock("../../hooks/useLiveTranscript", () => ({
     isConnected: false,
   }),
 }));
+const activitySse = vi.hoisted(() => {
+  let handler: ((event: MessageEvent) => void) | undefined;
+  return {
+    getAgentActivity: vi.fn(),
+    subscribeSse: vi.fn((_url: string, subscription: { events?: Record<string, (event: MessageEvent) => void> }) => {
+      handler = subscription.events?.["agent:activity"];
+      return vi.fn();
+    }),
+    deliver(event: unknown) {
+      handler?.(new MessageEvent("agent:activity", { data: JSON.stringify(event) }));
+    },
+  };
+});
+vi.mock("../../api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../api")>()),
+  getAgentActivity: activitySse.getAgentActivity,
+}));
+vi.mock("../../sse-bus", () => ({ subscribeSse: activitySse.subscribeSse }));
 
 const mockUseLiveTranscript = vi.mocked(useLiveTranscript);
 
@@ -40,6 +60,7 @@ const nonEnglishAppCatalogs = [
 describe("ActiveAgentsPanel", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    activitySse.getAgentActivity.mockResolvedValue({ events: [], nextCursor: null });
     mockUseLiveTranscript.mockReturnValue({
       entries: [],
       isConnected: false,
@@ -47,6 +68,7 @@ describe("ActiveAgentsPanel", () => {
   });
 
   afterEach(async () => {
+    __resetAgentActivityStoreForTests();
     await i18next.changeLanguage("en");
     for (const [locale] of nonEnglishAppCatalogs) {
       if (i18next.hasResourceBundle(locale, "app")) {
@@ -54,6 +76,103 @@ describe("ActiveAgentsPanel", () => {
       }
     }
     i18next.options.returnEmptyString = true;
+  });
+
+  it("renders the canonical last completed task step", async () => {
+    const fetchTaskDetail = vi.spyOn(apiModule, "fetchTaskDetail").mockResolvedValue({
+      id: "FN-activity",
+      currentStep: 2,
+      steps: [
+        { name: "Gather context", status: "done" },
+        { name: "Plan", status: "skipped" },
+        { name: "Implement", status: "in-progress" },
+      ],
+    } as any);
+    // The card's prose is supplied by the shared store in the pushed-update test below.
+    const agent = {
+      id: "agent-activity", name: "Activity agent", role: "executor", state: "running",
+      taskId: "FN-activity", lastHeartbeatAt: new Date().toISOString(),
+    } as Agent;
+
+    renderPanel(<ActiveAgentsPanel agents={[agent]} />);
+    expect(await screen.findByText("Last completed Step 1: Plan")).toBeInTheDocument();
+    expect(fetchTaskDetail).toHaveBeenCalledTimes(1);
+  });
+
+  it("updates pushed prose without refetching task detail", async () => {
+    const fetchTaskDetail = vi.spyOn(apiModule, "fetchTaskDetail").mockResolvedValue({
+      id: "FN-live", currentStep: 1, steps: [{ name: "Plan", status: "in-progress" }],
+    } as any);
+    const agent = {
+      id: "agent-live", name: "Live agent", role: "executor", state: "running",
+      taskId: "FN-live", lastHeartbeatAt: new Date().toISOString(),
+    } as Agent;
+    renderPanel(<ActiveAgentsPanel agents={[agent]} projectId="project" />);
+    await waitFor(() => expect(fetchTaskDetail).toHaveBeenCalledTimes(1));
+
+    activitySse.deliver({
+      eventId: "live-1", seq: "live-1", projectId: "project", agentId: "agent-live",
+      agentAttribution: "agent", taskId: "FN-live", type: "task:started",
+      fromAgentId: null, toAgentId: null, summary: "Implementing live activity",
+      occurredAt: new Date().toISOString(), metadata: null,
+    });
+
+    expect(await screen.findByText("Implementing live activity")).toBeInTheDocument();
+    expect(fetchTaskDetail).toHaveBeenCalledTimes(1);
+  });
+
+  it("retains newer pushed prose when an older frame arrives afterwards", async () => {
+    vi.spyOn(apiModule, "fetchTaskDetail").mockResolvedValue({ id: "FN-order", currentStep: 0, steps: [] } as any);
+    const agent = { id: "agent-order", name: "Ordering agent", role: "executor", state: "running", taskId: "FN-order", lastHeartbeatAt: new Date().toISOString() } as Agent;
+    renderPanel(<ActiveAgentsPanel agents={[agent]} projectId="project" />);
+    await waitFor(() => expect(activitySse.getAgentActivity).toHaveBeenCalledTimes(1));
+    activitySse.deliver({ eventId: "new", seq: "2", projectId: "project", agentId: agent.id, agentAttribution: "agent", taskId: "FN-order", type: "task:started", fromAgentId: null, toAgentId: null, summary: "Newest activity", occurredAt: "2026-08-09T10:00:02.000Z", metadata: null });
+    activitySse.deliver({ eventId: "old", seq: "1", projectId: "project", agentId: agent.id, agentAttribution: "agent", taskId: "FN-order", type: "task:started", fromAgentId: null, toAgentId: null, summary: "Old activity", occurredAt: "2026-08-09T10:00:01.000Z", metadata: null });
+    expect(await screen.findByText("Newest activity")).toBeInTheDocument();
+    expect(screen.queryByText("Old activity")).toBeNull();
+  });
+
+  it("renders pushed prose before the task poll resolves without an empty step row", async () => {
+    vi.spyOn(apiModule, "fetchTaskDetail").mockReturnValue(new Promise(() => {}));
+    const agent = { id: "agent-pending", name: "Pending agent", role: "executor", state: "running", taskId: "FN-pending", lastHeartbeatAt: new Date().toISOString() } as Agent;
+    renderPanel(<ActiveAgentsPanel agents={[agent]} projectId="project" />);
+    await waitFor(() => expect(activitySse.getAgentActivity).toHaveBeenCalledTimes(1));
+    activitySse.deliver({ eventId: "pending", seq: "1", projectId: "project", agentId: agent.id, agentAttribution: "agent", taskId: "FN-pending", type: "task:started", fromAgentId: null, toAgentId: null, summary: "Preparing task", occurredAt: new Date().toISOString(), metadata: null });
+    expect(await screen.findByText("Preparing task")).toBeInTheDocument();
+    expect(document.querySelector(".live-agent-card-last-step")).toBeNull();
+    expect(document.querySelector(".live-agent-card-now-doing")?.textContent).not.toMatch(/Step 0/);
+  });
+
+  it.each([
+    ["no completed step", { currentStep: 1, steps: [{ name: "Queued", status: "pending" }, { name: "Implement", status: "in-progress" }] }],
+    ["no task steps", { currentStep: 0, steps: [] }],
+  ])("does not render a synthetic Step 0 or empty completion row with %s", async (_label, detail) => {
+    vi.spyOn(apiModule, "fetchTaskDetail").mockResolvedValue({ id: "FN-empty", ...detail } as any);
+    const agent = { id: "agent-empty", name: "Empty steps", role: "executor", state: "running", taskId: "FN-empty", lastHeartbeatAt: new Date().toISOString() } as Agent;
+    renderPanel(<ActiveAgentsPanel agents={[agent]} />);
+    await waitFor(() => expect(apiModule.fetchTaskDetail).toHaveBeenCalledTimes(1));
+    expect(document.querySelector(".live-agent-card-last-step")).toBeNull();
+    expect(screen.queryByText(/Step 0:/)).toBeNull();
+  });
+
+  it("does not fetch a task while its card is outside the IntersectionObserver viewport", async () => {
+    class OffscreenObserver {
+      constructor(private readonly callback: IntersectionObserverCallback) {}
+      observe() { this.callback([{ isIntersecting: false } as IntersectionObserverEntry], this as unknown as IntersectionObserver); }
+      disconnect() {}
+      unobserve() {}
+      takeRecords() { return []; }
+      root = null;
+      rootMargin = "0px";
+      thresholds = [];
+    }
+    vi.stubGlobal("IntersectionObserver", OffscreenObserver);
+    const fetchTaskDetail = vi.spyOn(apiModule, "fetchTaskDetail").mockResolvedValue({ id: "FN-offscreen", currentStep: 0, steps: [] } as any);
+    const agent = { id: "agent-offscreen", name: "Offscreen agent", role: "executor", state: "running", taskId: "FN-offscreen", lastHeartbeatAt: new Date().toISOString() } as Agent;
+    renderPanel(<ActiveAgentsPanel agents={[agent]} />);
+    await Promise.resolve();
+    expect(fetchTaskDetail).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
   });
 
   it("renders live transcript text from entries", async () => {
@@ -214,6 +333,7 @@ describe("ActiveAgentsPanel", () => {
 
     expect(screen.getByText("Idle — no task assigned")).toBeInTheDocument();
     expect(screen.queryByText("Connecting...")).toBeNull();
+    expect(document.querySelector(".live-agent-card-activity")).toBeNull();
   });
 
   it("shows 'Starting...' for running agents that haven't picked up a task yet", async () => {

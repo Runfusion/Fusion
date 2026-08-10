@@ -31,6 +31,7 @@ import { makeAncestryBlastRadiusGuard, resetStepToBaseline } from "../execution/
 import { finalizeProvenAutoMergeTask } from "../merge/auto-merge-finalization.js";
 import { createRunAuditor, type EngineRunContext } from "../util/run-audit.js";
 import { executorLog } from "../logger.js";
+import { resolveExternalExecutionCheckoutRoute } from "../execution/external-execution-checkout.js";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- mirror TaskExecutor method surface without re-typing the class
 type AnyFn = (...args: any[]) => any;
@@ -73,16 +74,31 @@ export function createAuthoritativeWorkflowPrimitivesFromExecutor(
       prepareWorktree: async (_ctx, task) => {
         const live = await deps.store.getTask(task.id).catch(() => null);
         const liveTask = live?.id === task.id ? live : null;
+        const routedTask = liveTask ?? task;
+        const externalRoute = await resolveExternalExecutionCheckoutRoute(routedTask);
+        if (externalRoute.configured && !externalRoute.valid) {
+          return {
+            outcome: "failure",
+            value: `external-execution-checkout-invalid: ${externalRoute.reason ?? "unknown error"}`,
+          };
+        }
         /*
         FNXC:WorkflowExecution 2026-06-23-11:49:
         The workflow execute node must not perform a second worktree acquisition ahead of the authoritative executor. Passing the repo root as a prepared worktree makes the inner execute() reject a valid fresh-worktree task as repo-root reuse; pass only an existing task worktree and let execute() acquire when none exists.
 
         FNXC:WorkflowExecution 2026-06-23-22:31:
         Upgrade safety requires the graph primitive to tolerate older or minimal stores that return null or a mismatched row during startup/cutover. Only trust the live row when it is for the requested task; otherwise fall back to the runner snapshot.
+
+        FNXC:ExternalExecutionCheckout 2026-08-09-23:53:
+        Operator-routed external checkouts supply the prepared path/branch when configured.
         */
         const prepared: PreparedWorktree = {
-          worktreePath: liveTask?.worktree || task.worktree || "",
-          branchName: liveTask?.branch || task.branch,
+          worktreePath: externalRoute.configured
+            ? externalRoute.checkoutPath ?? ""
+            : liveTask?.worktree || task.worktree || "",
+          branchName: externalRoute.configured
+            ? externalRoute.branch
+            : liveTask?.branch || task.branch,
         };
         return { outcome: "success", value: "worktree-ready", data: prepared };
       },

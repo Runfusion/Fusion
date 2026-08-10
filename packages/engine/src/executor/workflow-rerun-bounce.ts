@@ -25,6 +25,11 @@ export async function performWorkflowRerunBounce(
   taskId: string,
   worktreePath: string,
   preserveResumeState: boolean = true,
+  /*
+  FNXC:ExternalExecutionCheckout 2026-08-09-22:43:
+  When false, do not persist the remediation path as task.worktree (external checkouts).
+  */
+  persistWorktreePath: boolean = true,
 ): Promise<"bounced" | "skipped-pending" | "deferred-paused"> {
   const pauseLabel = await deps.getExecutionPauseLabel();
   if (pauseLabel) {
@@ -83,7 +88,7 @@ export async function performWorkflowRerunBounce(
       // preserveResumeState is false. Keep the writes so callers and
       // tests can observe the restoration deterministically.
       await deps.store.updateTask(taskId, {
-        worktree: worktreePath,
+        ...(persistWorktreePath ? { worktree: worktreePath } : {}),
         executionStartedAt: originalExecutionStartedAt ?? null,
       });
       const pauseLabelAfterTodo = await deps.getExecutionPauseLabel();
@@ -99,7 +104,7 @@ export async function performWorkflowRerunBounce(
     }
 
     if (latestTask.column === await resolveReboundColumnFor(deps.store, taskId)) {
-      await deps.store.updateTask(taskId, { worktree: worktreePath });
+      if (persistWorktreePath) await deps.store.updateTask(taskId, { worktree: worktreePath });
       const pauseLabelBeforeResume = await deps.getExecutionPauseLabel();
       if (pauseLabelBeforeResume) {
         executorLog.log(`${taskId}: workflow rerun parked in todo — ${pauseLabelBeforeResume} became active before resume`);

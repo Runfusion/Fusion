@@ -20,6 +20,7 @@ export type WorkflowRerunWatchdogDeps = {
     taskId: string,
     worktreePath: string,
     preserveResumeState: boolean,
+    persistWorktreePath?: boolean,
   ) => Promise<"bounced" | "skipped-pending" | "deferred-paused">;
   getExecutionPauseLabel: () => Promise<string | null>;
   resolveResumeLanes: (taskId: string) => Promise<{ wip: string }>;
@@ -31,12 +32,17 @@ export function scheduleWorkflowRerun(
   worktreePath: string,
   successMessage: string,
   preserveResumeState: boolean = true,
+  /*
+  FNXC:ExternalExecutionCheckout 2026-08-09-22:43:
+  When false, bounce must not write the operator external path into task.worktree.
+  */
+  persistWorktreePath: boolean = true,
 ): void {
   deps.clearWorkflowRerunWatchdog(taskId);
 
   setTimeout(async () => {
     try {
-      const outcome = await deps.performWorkflowRerunBounce(taskId, worktreePath, preserveResumeState);
+      const outcome = await deps.performWorkflowRerunBounce(taskId, worktreePath, preserveResumeState, persistWorktreePath);
       if (outcome === "bounced") {
         executorLog.log(successMessage);
       } else if (outcome === "skipped-pending") {
@@ -84,7 +90,7 @@ export function scheduleWorkflowRerun(
     ).catch(() => undefined);
 
     try {
-      const outcome = await deps.performWorkflowRerunBounce(taskId, worktreePath, preserveResumeState);
+      const outcome = await deps.performWorkflowRerunBounce(taskId, worktreePath, preserveResumeState, persistWorktreePath);
       if (outcome === "bounced") {
         executorLog.warn(`${taskId}: workflow rerun watchdog retry succeeded`);
       } else if (outcome === "skipped-pending") {
