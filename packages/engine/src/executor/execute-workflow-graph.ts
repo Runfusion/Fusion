@@ -85,6 +85,7 @@ export type ExecuteWorkflowGraphDeps = {
   outerConcurrencyClaims: Set<string>;
   processWideGraphRouting: Set<string>;
   getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   advanceNoMergeWorkflowToCompleteColumn: AnyFn;
   applyGraphRethinkReset: AnyFn;
   buildBranchPersistence: AnyFn;
@@ -190,11 +191,11 @@ export async function persistWorkflowStepResult(
         const accepted = await deps.store.updateTask(taskId, {
           workflowStepResults: acceptedResult,
           approvedPlanFingerprint: fingerprint,
-        }, deps.getRunContextFor(taskId));
+        }, deps.runContextFor(taskId));
         await deps.store.reconcileSpecDriftWhilePlanningLocked(accepted);
       });
     } else {
-      await deps.store.updateTask(taskId, { workflowStepResults: existing }, deps.getRunContextFor(taskId));
+      await deps.store.updateTask(taskId, { workflowStepResults: existing }, deps.runContextFor(taskId));
     }
     /*
     FNXC:AgentActivityStream 2026-08-09-09:38 (restored 2026-08-15-22:15 after wave-18 shell-ification dropped it):
@@ -343,7 +344,7 @@ export async function executeWorkflowGraph(
           : 0;
         deps.graphToolFailureRunCursors.set(task.id, cursor);
         if (typeof deps.store.updateTask === "function") {
-          await deps.store.updateTask(task.id, { toolFailureDetectorLogCursor: cursor }, deps.getRunContextFor(task.id));
+          await deps.store.updateTask(task.id, { toolFailureDetectorLogCursor: cursor }, deps.runContextFor(task.id));
         }
       }
       let selection: { workflowId: string; stepIds: string[] } | undefined;
@@ -581,7 +582,7 @@ export async function executeWorkflowGraph(
         // the re-running agent can read. Best-effort; logging failures swallowed.
         logTaskEntry: (summary: string, detail?: string) => {
           void deps.store
-            .logEntry(task.id, summary, detail, deps.getRunContextFor(task.id))
+            .logEntry(task.id, summary, detail, deps.runContextFor(task.id))
             .catch(() => {});
         },
         /*
@@ -833,7 +834,7 @@ export async function executeWorkflowGraph(
         }
         await deps.advanceNoMergeWorkflowToCompleteColumn(live as TaskDetail);
         if ((live.graphResumeRetryCount ?? 0) !== 0 || (live.consecutiveToolFailureRetryCount ?? 0) !== 0) {
-          await deps.store.updateTask(task.id, { graphResumeRetryCount: 0, consecutiveToolFailureRetryCount: 0, executorEscalationAttempted: false, toolFailureDetectorLogCursor: null, toolFailureRetryExhaustedAuditEmitted: false }, deps.getRunContextFor(task.id));
+          await deps.store.updateTask(task.id, { graphResumeRetryCount: 0, consecutiveToolFailureRetryCount: 0, executorEscalationAttempted: false, toolFailureDetectorLogCursor: null, toolFailureRetryExhaustedAuditEmitted: false }, deps.runContextFor(task.id));
         }
       }
       return;

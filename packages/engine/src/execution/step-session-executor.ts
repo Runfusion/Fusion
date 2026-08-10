@@ -1388,7 +1388,9 @@ export class StepSessionExecutor {
           // Task log and create tools — task context for step sessions.
           const taskLogTool = this.options.store
             ? [
-                createTaskLogTool(this.options.store, taskDetail.id),
+                /* FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage C): same derivation this file already
+                   uses for `createTaskAssignTool` below — the agent RUNNING the step session. */
+                createTaskLogTool(this.options.store, taskDetail.id, mutationContextForAgent(this.options.effectiveAgentId ?? taskDetail.assignedAgentId ?? "executor")),
                 createTaskLogsReadTool(this.options.store, taskDetail.id),
               ]
             : [];

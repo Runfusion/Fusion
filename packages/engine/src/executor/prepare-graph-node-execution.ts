@@ -20,6 +20,7 @@ import type { EngineRunContext } from "../util/run-audit.js";
 export type PrepareGraphNodeExecutionDeps = {
   store: TaskStore;
   getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   ensureGraphCustomNodeWorktree: (
     task: TaskDetail,
     settings: Settings,
@@ -47,7 +48,7 @@ export async function prepareGraphNodeExecution(
       live.id,
       `Workflow node '${node.id}' assigned worktree is missing — reacquiring before node execution`,
       live.worktree,
-      deps.getRunContextFor(live.id),
+      deps.runContextFor(live.id),
     );
   }
   await deps.ensureGraphCustomNodeWorktree(taskForAcquisition, settings, node.id, executionCodeNode);

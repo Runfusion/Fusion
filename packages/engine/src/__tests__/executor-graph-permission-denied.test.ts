@@ -9,6 +9,8 @@ import {
   WorkflowGraphExecutor,
   workflowNodeErrorCodeContextKey,
 } from "../workflows/workflow-graph-executor.js";
+/* FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage C): the executor threads a real mutation context to every store call, so these assertions pin it rather than accepting `undefined`. */
+import { ANY_MUTATION_CONTEXT } from "./mutation-context-matchers.js";
 
 /*
 FNXC:Authorization 2026-08-09-03:04:
@@ -143,7 +145,7 @@ describe("handleGraphFailure preserves a permission denial's message", () => {
         error: "actor-7 is not permitted to tasks:delete on FN-1234",
         status: "failed",
       },
-      undefined,
+      ANY_MUTATION_CONTEXT,
     );
     expect(store.updateTask).not.toHaveBeenCalledWith(
       live.id,
@@ -156,7 +158,7 @@ describe("handleGraphFailure preserves a permission denial's message", () => {
       live.id,
       "actor-7 is not permitted to tasks:delete on FN-1234",
       undefined,
-      undefined,
+      ANY_MUTATION_CONTEXT,
     );
   });
 
@@ -172,7 +174,7 @@ describe("handleGraphFailure preserves a permission denial's message", () => {
     expect(store.updateTask).toHaveBeenCalledWith(
       live.id,
       { error: "actor-7 is not permitted to tasks:merge", status: "failed" },
-      undefined,
+      ANY_MUTATION_CONTEXT,
     );
   });
 
@@ -188,7 +190,7 @@ describe("handleGraphFailure preserves a permission denial's message", () => {
         error: "Workflow graph terminated with failure at node 'gate'",
         status: "failed",
       },
-      undefined,
+      ANY_MUTATION_CONTEXT,
     );
   });
 
@@ -205,7 +207,7 @@ describe("handleGraphFailure preserves a permission denial's message", () => {
         error: "Workflow graph terminated with failure at node 'gate'",
         status: "failed",
       },
-      undefined,
+      ANY_MUTATION_CONTEXT,
     );
   });
 
@@ -221,7 +223,7 @@ describe("handleGraphFailure preserves a permission denial's message", () => {
         error: "Workflow graph terminated with failure at node 'gate'",
         status: "failed",
       },
-      undefined,
+      ANY_MUTATION_CONTEXT,
     );
   });
 });

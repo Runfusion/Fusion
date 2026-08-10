@@ -45,6 +45,7 @@ export type CreateAuthoritativeWorkflowPrimitivesDeps = {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- merge requester accepts optional signal bag
   mergeRequester?: ((taskId: string, opts?: any) => Promise<any>) | null;
   getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   buildParseStepsDeps: AnyFn;
   createAuthoritativeWorkflowSeams: AnyFn;
   ensureWorkflowMergeBoundaryTask: AnyFn;
@@ -378,7 +379,7 @@ export function createAuthoritativeWorkflowPrimitivesFromExecutor(
             mergeTask.id,
             `Workflow merge blocked before requester: ${missingImplementationProof}`,
             undefined,
-            deps.getRunContextFor(mergeTask.id),
+            deps.runContextFor(mergeTask.id),
           );
           return {
             outcome: "failure",
@@ -391,7 +392,7 @@ export function createAuthoritativeWorkflowPrimitivesFromExecutor(
             mergeTask.id,
             "Workflow merge blocked before requester: implementation steps are incomplete",
             undefined,
-            deps.getRunContextFor(mergeTask.id),
+            deps.runContextFor(mergeTask.id),
           );
           return {
             outcome: "failure",

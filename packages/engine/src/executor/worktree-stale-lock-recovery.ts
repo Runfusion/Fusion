@@ -28,6 +28,7 @@ export type StaleLockRecoveryDeps = {
   rootDir: string;
   store: TaskStore;
   getRunContextFor: (taskId: string) => RunMutationContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
 };
 
 export async function emitStaleLockAudit(
@@ -37,7 +38,7 @@ export async function emitStaleLockAudit(
   targetPath: string,
   metadata: Record<string, unknown>,
 ): Promise<void> {
-  const runContext = deps.getRunContextFor(taskId);
+  const runContext = deps.runContextFor(taskId);
   if (!runContext?.runId || !runContext.agentId) return;
   const auditor = createRunAuditor(deps.store, {
     runId: runContext.runId,
@@ -94,7 +95,7 @@ export async function recoverIndexLockIfStale(
         taskId,
         `Recovered stale worktree index.lock and retrying`,
         resolvePath(deps.rootDir, lockPath),
-        deps.getRunContextFor(taskId),
+        deps.runContextFor(taskId),
       );
       return true;
     }
@@ -142,7 +143,7 @@ export async function recoverExecutorStaleRegistration(
       taskId,
       "Recovered stale worktree registration and retrying",
       staleRegistrationPath,
-      deps.getRunContextFor(taskId),
+      deps.runContextFor(taskId),
     );
     return true;
   }

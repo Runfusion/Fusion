@@ -17,6 +17,8 @@ import type { Task } from "@fusion/core";
 import { TaskExecutor } from "../executor.js";
 import { MAX_RECOVERY_RETRIES } from "../healing/recovery-policy.js";
 import { createMockStore, resetExecutorMocks } from "./executor-test-helpers.js";
+/* FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage C): the executor threads a real mutation context to every store call, so these assertions pin it rather than accepting `undefined`. */
+import { ANY_MUTATION_CONTEXT } from "./mutation-context-matchers.js";
 
 function task(overrides: Partial<Task> = {}): Task {
   return {
@@ -105,12 +107,12 @@ describe("TaskExecutor pre-merge optional-step fix seam", () => {
     Kept as the expected column id rather than calling the resolver here: asserting the product's own
     resolver against itself would pass no matter which column it returned.
     */
-    expect(store.moveTask).toHaveBeenCalledWith(liveTask.id, "todo", { preserveWorktree: true }, UNATTRIBUTED_MUTATION_CONTEXT);
+    expect(store.moveTask).toHaveBeenCalledWith(liveTask.id, "todo", { preserveWorktree: true }, ANY_MUTATION_CONTEXT);
     expect(store.updateTask).toHaveBeenCalledWith(liveTask.id, expect.objectContaining({
       status: "needs-replan",
       recoveryRetryCount: 1,
       nextRecoveryAt: expect.any(String),
-    }), undefined);
+    }), ANY_MUTATION_CONTEXT);
     for (const [, patch] of store.updateTask.mock.calls) {
       expect((patch as Partial<Task>).postReviewFixCount ?? 0).toBe(0);
     }
@@ -194,11 +196,11 @@ describe("TaskExecutor pre-merge optional-step fix seam", () => {
     expect(store.moveTask).not.toHaveBeenCalled();
     expect(store.updateTask).toHaveBeenCalledWith(liveTask.id, {
       graphResumeRetryCount: 1,
-    }, undefined);
+    }, ANY_MUTATION_CONTEXT);
     expect(store.updateTask).not.toHaveBeenCalledWith(
       liveTask.id,
       expect.objectContaining({ status: "failed" }),
-      undefined,
+      ANY_MUTATION_CONTEXT,
     );
   });
 
@@ -223,7 +225,7 @@ describe("TaskExecutor pre-merge optional-step fix seam", () => {
     expect(store.updateTask).toHaveBeenCalledWith(liveTask.id, expect.objectContaining({
       status: "failed",
       error: expect.stringContaining("REQUIRED_ARTIFACT_RECOVERY_EXHAUSTED"),
-    }), undefined);
+    }), ANY_MUTATION_CONTEXT);
     expect(store.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
       mutationType: "task:required-artifact-missing",
       metadata: expect.objectContaining({ action: "park-failed" }),
@@ -290,7 +292,7 @@ describe("TaskExecutor pre-merge optional-step fix seam", () => {
 
       expect(scheduled).toBe(false);
       expect(sendBack).not.toHaveBeenCalled();
-      expect(store.updateTask).not.toHaveBeenCalledWith(liveTask.id, expect.objectContaining({ postReviewFixCount: expect.any(Number) }), undefined);
+      expect(store.updateTask).not.toHaveBeenCalledWith(liveTask.id, expect.objectContaining({ postReviewFixCount: expect.any(Number) }), ANY_MUTATION_CONTEXT);
     }
   });
 
@@ -305,12 +307,12 @@ describe("TaskExecutor pre-merge optional-step fix seam", () => {
     const scheduled = await (executor as any).requestPreMergeOptionalStepFix(liveTask.id, liveTask, reviseInfo);
 
     expect(scheduled).toBe(true);
-    expect(store.updateTask).toHaveBeenCalledWith("FN-7066", { postReviewFixCount: 1 }, undefined);
+    expect(store.updateTask).toHaveBeenCalledWith("FN-7066", { postReviewFixCount: 1 }, ANY_MUTATION_CONTEXT);
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-7066",
       expect.stringContaining("attempt 1/2"),
       expect.stringContaining("packages/engine/src/example.ts:1 needs a guard"),
-      undefined,
+      ANY_MUTATION_CONTEXT,
     );
     expect(sendBack).toHaveBeenCalledWith(
       liveTask,
@@ -350,7 +352,7 @@ describe("TaskExecutor pre-merge optional-step fix seam", () => {
       "FN-7066",
       "AI spec revision requested",
       expect.stringContaining("PROMPT.md is missing the new workflow-order requirement"),
-      undefined,
+      ANY_MUTATION_CONTEXT,
     );
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-7066",
@@ -364,18 +366,18 @@ describe("TaskExecutor pre-merge optional-step fix seam", () => {
       */
       expect.stringMatching(/^Plan Review failed — moved to \S+ for automatic replan \(attempt 1\/unbounded\)$/),
       expect.stringContaining("PROMPT.md is missing the new workflow-order requirement"),
-      undefined,
+      ANY_MUTATION_CONTEXT,
     );
     // Resolved rebound column for the default lineage — see the note above.
-    expect(store.moveTask).toHaveBeenCalledWith("FN-7066", "todo", { preserveWorktree: true }, UNATTRIBUTED_MUTATION_CONTEXT);
-    expect(store.updateTask).toHaveBeenCalledWith("FN-7066", { postReviewFixCount: 1 }, undefined);
+    expect(store.moveTask).toHaveBeenCalledWith("FN-7066", "todo", { preserveWorktree: true }, ANY_MUTATION_CONTEXT);
+    expect(store.updateTask).toHaveBeenCalledWith("FN-7066", { postReviewFixCount: 1 }, ANY_MUTATION_CONTEXT);
     expect(store.updateTask).toHaveBeenCalledWith("FN-7066", {
       status: "needs-replan",
       error: null,
       recoveryRetryCount: null,
       nextRecoveryAt: null,
       graphResumeRetryCount: 0,
-    }, undefined);
+    }, ANY_MUTATION_CONTEXT);
     expect((executor as any).pausedAborted.has("FN-7066")).toBe(false);
   });
 
@@ -474,7 +476,7 @@ describe("TaskExecutor pre-merge optional-step fix seam", () => {
         nodeId: "plan-review",
       });
 
-      expect(store.moveTask).toHaveBeenCalledWith(liveTask.id, "todo", { preserveWorktree: true }, UNATTRIBUTED_MUTATION_CONTEXT);
+      expect(store.moveTask).toHaveBeenCalledWith(liveTask.id, "todo", { preserveWorktree: true }, ANY_MUTATION_CONTEXT);
       expect(abortSpy).not.toHaveBeenCalled();
       expect((executor as any).pausedAborted.has(liveTask.id)).toBe(false);
     } finally {
@@ -499,7 +501,7 @@ describe("TaskExecutor pre-merge optional-step fix seam", () => {
       maxRevisions: "unbounded",
     })).resolves.toBe(false);
     expect(zeroStore.moveTask).not.toHaveBeenCalled();
-    expect(zeroStore.updateTask).not.toHaveBeenCalledWith("FN-7066", { postReviewFixCount: 1 }, undefined);
+    expect(zeroStore.updateTask).not.toHaveBeenCalledWith("FN-7066", { postReviewFixCount: 1 }, ANY_MUTATION_CONTEXT);
 
     const cappedStore = createMockStore();
     const exhaustedTask = task({
@@ -534,7 +536,7 @@ describe("TaskExecutor pre-merge optional-step fix seam", () => {
     expect(cappedStore.updateTask).toHaveBeenCalledWith(
       "FN-7066",
       expect.objectContaining({ status: "awaiting-approval", awaitingApprovalReason: "plan-review-replan-cap" }),
-      undefined,
+      ANY_MUTATION_CONTEXT,
     );
   });
 
@@ -568,13 +570,13 @@ describe("TaskExecutor pre-merge optional-step fix seam", () => {
     })).resolves.toBe(true);
 
     // Resolved rebound column for the default lineage — see the note above.
-    expect(store.moveTask).toHaveBeenCalledWith("FN-7066", "todo", { preserveWorktree: true }, UNATTRIBUTED_MUTATION_CONTEXT);
+    expect(store.moveTask).toHaveBeenCalledWith("FN-7066", "todo", { preserveWorktree: true }, ANY_MUTATION_CONTEXT);
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-7066",
       // Same interpolated-column reason as above; the attempt counter is what matters here.
       expect.stringMatching(/^Plan Review failed — moved to \S+ for automatic replan \(attempt 15\/unbounded\)$/),
       expect.anything(),
-      undefined,
+      ANY_MUTATION_CONTEXT,
     );
   });
 
@@ -610,19 +612,19 @@ describe("TaskExecutor pre-merge optional-step fix seam", () => {
 
     // Halted: no replan side effects.
     expect(store.moveTask).not.toHaveBeenCalled();
-    expect(store.updateTask).not.toHaveBeenCalledWith("FN-7066", { postReviewFixCount: 16 }, undefined);
+    expect(store.updateTask).not.toHaveBeenCalledWith("FN-7066", { postReviewFixCount: 16 }, ANY_MUTATION_CONTEXT);
     // Parked for a person, with the distinct replan-cap reason.
     expect(store.updateTask).toHaveBeenCalledWith(
       "FN-7066",
       expect.objectContaining({ status: "awaiting-approval", awaitingApprovalReason: "plan-review-replan-cap" }),
-      undefined,
+      ANY_MUTATION_CONTEXT,
     );
     // Loud, human-visible halt log naming the cap and the last feedback.
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-7066",
       expect.stringContaining("Plan Review replan cap reached"),
       expect.stringContaining("still disagreeing after fifteen tries"),
-      undefined,
+      ANY_MUTATION_CONTEXT,
     );
   });
 
@@ -745,12 +747,12 @@ describe("TaskExecutor pre-merge optional-step fix seam", () => {
 
     expect(scheduled).toBe(false);
     expect(store.moveTask).not.toHaveBeenCalled();
-    expect(store.updateTask).not.toHaveBeenCalledWith(liveTask.id, expect.objectContaining({ status: "needs-replan" }), undefined);
+    expect(store.updateTask).not.toHaveBeenCalledWith(liveTask.id, expect.objectContaining({ status: "needs-replan" }), ANY_MUTATION_CONTEXT);
     expect(store.logEntry).toHaveBeenCalledWith(
       liveTask.id,
       "Plan Review provider failure — task kept in place",
       expect.stringContaining(liveTask.column),
-      undefined,
+      ANY_MUTATION_CONTEXT,
     );
   });
 
@@ -804,7 +806,7 @@ describe("TaskExecutor pre-merge optional-step fix seam", () => {
         "FN-7066",
         "Cleared stale pause-abort marker before unpaused execution dispatch",
         undefined,
-        undefined,
+        ANY_MUTATION_CONTEXT,
       );
     }
   });
@@ -837,17 +839,17 @@ describe("TaskExecutor pre-merge optional-step fix seam", () => {
 
       if (count < BUDGET) {
         expect(scheduled).toBe(true);
-        expect(store.updateTask).toHaveBeenCalledWith("FN-7066", { postReviewFixCount: count + 1 }, undefined);
+        expect(store.updateTask).toHaveBeenCalledWith("FN-7066", { postReviewFixCount: count + 1 }, ANY_MUTATION_CONTEXT);
         expect(store.logEntry).toHaveBeenCalledWith(
           "FN-7066",
           expect.stringContaining(`attempt ${count + 1}/${BUDGET}`),
           expect.any(String),
-          undefined,
+          ANY_MUTATION_CONTEXT,
         );
         expect(sendBack).toHaveBeenCalledOnce();
       } else {
         expect(scheduled).toBe(false);
-        expect(store.updateTask).not.toHaveBeenCalledWith("FN-7066", expect.objectContaining({ postReviewFixCount: BUDGET + 1 }), undefined);
+        expect(store.updateTask).not.toHaveBeenCalledWith("FN-7066", expect.objectContaining({ postReviewFixCount: BUDGET + 1 }), ANY_MUTATION_CONTEXT);
         expect(sendBack).not.toHaveBeenCalled();
       }
     }
@@ -879,7 +881,7 @@ describe("TaskExecutor pre-merge optional-step fix seam", () => {
         liveTask.id,
         expect.stringContaining(`attempt ${count + 1}/unbounded`),
         expect.stringContaining("Workflow revision key: code-review"),
-        undefined,
+        ANY_MUTATION_CONTEXT,
       );
       expect(sendBack).toHaveBeenCalledWith(
         liveTask,
@@ -1104,7 +1106,7 @@ describe("TaskExecutor pre-merge optional-step fix seam", () => {
 
       expect(scheduled).toBe(count < 2);
       if (count < 2) {
-        expect(store.logEntry).toHaveBeenCalledWith("FN-7066", expect.stringContaining("attempt 2/2"), expect.any(String), undefined);
+        expect(store.logEntry).toHaveBeenCalledWith("FN-7066", expect.stringContaining("attempt 2/2"), expect.any(String), ANY_MUTATION_CONTEXT);
         expect(sendBack).toHaveBeenCalledOnce();
       } else {
         expect(sendBack).not.toHaveBeenCalled();
@@ -1147,7 +1149,7 @@ describe("TaskExecutor pre-merge optional-step fix seam", () => {
       nodeId: "code-review",
       maxRevisions: "unbounded",
     })).resolves.toBe(true);
-    expect(cappedStore.logEntry).toHaveBeenCalledWith("FN-7066", expect.stringContaining("attempt 2/2"), expect.any(String), undefined);
+    expect(cappedStore.logEntry).toHaveBeenCalledWith("FN-7066", expect.stringContaining("attempt 2/2"), expect.any(String), ANY_MUTATION_CONTEXT);
     expect(cappedSendBack).toHaveBeenCalledOnce();
 
     const zeroStore = createMockStore();
@@ -1182,8 +1184,8 @@ describe("TaskExecutor pre-merge optional-step fix seam", () => {
       maxRevisions: "unbounded",
     })).resolves.toBe(true);
 
-    expect(store.logEntry).toHaveBeenCalledWith("FN-7066", expect.stringContaining("attempt 1/1"), expect.stringContaining("Workflow revision key: code-review"), undefined);
-    expect(store.updateTask).toHaveBeenCalledWith("FN-7066", { postReviewFixCount: 2 }, undefined);
+    expect(store.logEntry).toHaveBeenCalledWith("FN-7066", expect.stringContaining("attempt 1/1"), expect.stringContaining("Workflow revision key: code-review"), ANY_MUTATION_CONTEXT);
+    expect(store.updateTask).toHaveBeenCalledWith("FN-7066", { postReviewFixCount: 2 }, ANY_MUTATION_CONTEXT);
     expect(sendBack).toHaveBeenCalledOnce();
   });
 
@@ -1202,7 +1204,7 @@ describe("TaskExecutor pre-merge optional-step fix seam", () => {
       ...reviseInfo,
       maxRevisions: "unbounded",
     })).resolves.toBe(true);
-    expect(unboundedStore.logEntry).toHaveBeenCalledWith("FN-7066", expect.stringContaining("attempt 100/unbounded"), expect.any(String), undefined);
+    expect(unboundedStore.logEntry).toHaveBeenCalledWith("FN-7066", expect.stringContaining("attempt 100/unbounded"), expect.any(String), ANY_MUTATION_CONTEXT);
     expect(unboundedSendBack).toHaveBeenCalledOnce();
 
     const zeroStore = createMockStore();
@@ -1238,7 +1240,7 @@ describe("TaskExecutor pre-merge optional-step fix seam", () => {
 
       expect(scheduled).toBe(false);
       expect(store.updateTask).not.toHaveBeenCalledWith(liveTask.id, expect.objectContaining({ postReviewFixCount: expect.any(Number) }), expect.anything());
-      expect(store.updateTask).not.toHaveBeenCalledWith(liveTask.id, expect.objectContaining({ postReviewFixCount: expect.any(Number) }), undefined);
+      expect(store.updateTask).not.toHaveBeenCalledWith(liveTask.id, expect.objectContaining({ postReviewFixCount: expect.any(Number) }), ANY_MUTATION_CONTEXT);
       expect(sendBack).not.toHaveBeenCalled();
     }
   });

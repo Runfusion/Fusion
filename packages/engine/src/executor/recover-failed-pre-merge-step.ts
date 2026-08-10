@@ -36,6 +36,7 @@ import type { EngineRunContext } from "../util/run-audit.js";
 export type RecoverFailedPreMergeStepDeps = {
   store: TaskStore;
   getRunContextFor?: (taskId: string) => EngineRunContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   resolveFailedPreMergeWorkflowStepBudget: (
     task: Task,
     target: CoreWorkflowStepResult,

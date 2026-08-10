@@ -28,6 +28,7 @@ type AnyFn = (...args: any[]) => any;
 export type HandoffTaskToReviewDeps = {
   store: TaskStore;
   getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   generateCompletionFeatureVideo: AnyFn;
 };
 
@@ -42,7 +43,7 @@ export async function handoffTaskToReview(
   if (reason.startsWith("workflow-")) {
     // FNXC:Identity 2026-08-15-22:52 (U18/KTD2): derived — the executor holds a real per-task run
     // context here (this is the same run that produced `runId`/`agentId` two lines above).
-    const runContext = deps.getRunContextFor(task.id);
+    const runContext = deps.runContextFor(task.id);
     await ensureWorkflowCompletionSummary(deps.store, task as TaskDetail, {
       reason,
       runId,

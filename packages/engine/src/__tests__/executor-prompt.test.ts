@@ -832,8 +832,8 @@ describe("TaskExecutor pause behavior", () => {
     so the bounce carries no `preserveResumeState` — the conditional spreads collapse to `{}`.
     The protective intent is unchanged: pause parks in todo and never marks the task failed.
     */
-    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo", {});
-    expect(store.updateTask).not.toHaveBeenCalledWith("FN-001", { status: "failed" });
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo", {}, ANY_MUTATION_CONTEXT);
+    expect(store.updateTask).not.toHaveBeenCalledWith("FN-001", { status: "failed" }, ANY_MUTATION_CONTEXT);
   });
 
   it("does not move to in-review when paused during execution (graceful session end)", async () => {
@@ -866,12 +866,12 @@ describe("TaskExecutor pause behavior", () => {
     });
 
     // Should NOT move to in-review (paused tasks skip that logic)
-    expect(store.moveTask).not.toHaveBeenCalledWith("FN-001", "in-review");
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-001", "in-review", undefined, ANY_MUTATION_CONTEXT);
     // Should move to todo instead (regression: was stranding in in-progress).
     // Pause-graceful path flags preserveResumeState so the bounce keeps
     // the worktree and accumulated step progress.
-    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo", { preserveResumeState: true });
-    expect(store.updateTask).not.toHaveBeenCalledWith("FN-001", { status: "failed" });
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo", { preserveResumeState: true }, ANY_MUTATION_CONTEXT);
+    expect(store.updateTask).not.toHaveBeenCalledWith("FN-001", { status: "failed" }, ANY_MUTATION_CONTEXT);
   });
 
   it("moves paused task to todo when session ends gracefully (regression for FN-827)", async () => {
@@ -910,11 +910,11 @@ describe("TaskExecutor pause behavior", () => {
     // The critical fix: task must end in todo, not stranded in in-progress.
     // The pause path must also flag preserveResumeState so the move does not
     // wipe accumulated step progress and the worktree pointer.
-    expect(store.moveTask).toHaveBeenCalledWith("FN-805", "todo", { preserveResumeState: true });
+    expect(store.moveTask).toHaveBeenCalledWith("FN-805", "todo", { preserveResumeState: true }, ANY_MUTATION_CONTEXT);
     // Should NOT be marked as failed
-    expect(store.updateTask).not.toHaveBeenCalledWith("FN-805", expect.objectContaining({ status: "failed" }));
+    expect(store.updateTask).not.toHaveBeenCalledWith("FN-805", expect.objectContaining({ status: "failed" }), ANY_MUTATION_CONTEXT);
     // Should log the pause event
-    expect(store.logEntry).toHaveBeenCalledWith("FN-805", expect.stringContaining("Execution paused"));
+    expect(store.logEntry).toHaveBeenCalledWith("FN-805", expect.stringContaining("Execution paused"), undefined, ANY_MUTATION_CONTEXT);
     // Session should be disposed
     expect(disposeFn).toHaveBeenCalled();
     // Stuck detector should have untracked the task
@@ -989,8 +989,8 @@ describe("TaskExecutor pause behavior", () => {
     await executor.resumeOrphaned();
 
     // Only KB-002 should be resumed (KB-001 is paused)
-    expect(store.logEntry).toHaveBeenCalledWith("FN-002", "Resumed after engine restart");
-    expect(store.logEntry).not.toHaveBeenCalledWith("FN-001", expect.anything());
+    expect(store.logEntry).toHaveBeenCalledWith("FN-002", "Resumed after engine restart", undefined, ANY_MUTATION_CONTEXT);
+    expect(store.logEntry).not.toHaveBeenCalledWith("FN-001", expect.anything(), undefined, ANY_MUTATION_CONTEXT);
   });
 
   it("skips resumeOrphaned entirely while enginePaused is active", async () => {
@@ -1046,7 +1046,7 @@ describe("TaskExecutor pause behavior", () => {
     // Agent created at least twice: initial resume + retry when agent finishes without fn_task_done
     // (async worktree validation may allow additional retry cycles within the timeout)
     expect(mockedCreateFnAgent.mock.calls.length).toBeGreaterThanOrEqual(2);
-    expect(store.logEntry).toHaveBeenCalledWith("FN-001", "Resuming execution after unpause", undefined, undefined);
+    expect(store.logEntry).toHaveBeenCalledWith("FN-001", "Resuming execution after unpause", undefined, ANY_MUTATION_CONTEXT);
   });
 
   it("does not resume unpaused in-progress task while global pause is active", async () => {
@@ -1087,7 +1087,7 @@ describe("TaskExecutor pause behavior", () => {
 
     expect(executor).toBeTruthy();
     expect(mockedCreateFnAgent).not.toHaveBeenCalled();
-    expect(store.logEntry).not.toHaveBeenCalledWith("FN-001", "Resuming execution after unpause", undefined, undefined);
+    expect(store.logEntry).not.toHaveBeenCalledWith("FN-001", "Resuming execution after unpause", undefined, ANY_MUTATION_CONTEXT);
   });
 
   it("does not recursively resume when resume logging emits task updated", async () => {
@@ -1163,8 +1163,8 @@ describe("TaskExecutor pause behavior", () => {
 
     await new Promise((r) => setTimeout(r, 30));
 
-    expect(store.updateTask).not.toHaveBeenCalledWith("FN-001", { status: null, error: null });
-    expect(store.logEntry).not.toHaveBeenCalledWith("FN-001", "Resuming execution after unpause", undefined, undefined);
+    expect(store.updateTask).not.toHaveBeenCalledWith("FN-001", { status: null, error: null }, ANY_MUTATION_CONTEXT);
+    expect(store.logEntry).not.toHaveBeenCalledWith("FN-001", "Resuming execution after unpause", undefined, ANY_MUTATION_CONTEXT);
     expect(mockedCreateFnAgent).not.toHaveBeenCalled();
   });
 
@@ -1194,8 +1194,8 @@ describe("TaskExecutor pause behavior", () => {
     const executor = createRoutingExecutor(store, "/tmp/test");
     await executor.resumeOrphaned();
 
-    expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: null, error: null });
-    expect(store.logEntry).toHaveBeenCalledWith("FN-001", "Resumed after engine restart");
+    expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: null, error: null }, ANY_MUTATION_CONTEXT);
+    expect(store.logEntry).toHaveBeenCalledWith("FN-001", "Resumed after engine restart", undefined, ANY_MUTATION_CONTEXT);
   });
 
   it("does not duplicate execution when unpausing already-executing task", async () => {
@@ -1339,7 +1339,7 @@ describe("TaskExecutor pause behavior", () => {
     expect(mockedSessionManager.open).not.toHaveBeenCalled();
 
     // Should persist the session file path on the task
-    expect(store.updateTask).toHaveBeenCalledWith("FN-001", { sessionFile: sessionFilePath });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-001", { sessionFile: sessionFilePath }, ANY_MUTATION_CONTEXT);
   });
 
   it("uses SessionManager.open to resume session when task has sessionFile", async () => {
@@ -1446,7 +1446,7 @@ describe("TaskExecutor pause behavior", () => {
 
     // Task should be moved to todo (ready for resume) with preserveResumeState
     // so step progress and the worktree survive the pause→unpause hop.
-    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo", { preserveResumeState: true });
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo", { preserveResumeState: true }, ANY_MUTATION_CONTEXT);
   });
 
   it("falls back to fresh session when sessionFile no longer exists on disk", async () => {
@@ -1537,7 +1537,7 @@ describe("TaskExecutor pause behavior", () => {
 
     expect(mockedSessionManager.open).not.toHaveBeenCalled();
     expect(mockedSessionManager.create).toHaveBeenCalledWith("/tmp/test/.worktrees/fn-001");
-    expect(store.updateTask).toHaveBeenCalledWith("FN-001", { sessionFile: null });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-001", { sessionFile: null }, ANY_MUTATION_CONTEXT);
 
     await rm(sessionFilePath, { force: true });
   });
@@ -1625,7 +1625,7 @@ describe("swallowed async store failure observability", () => {
     expect(store.moveTask).toHaveBeenCalledWith(
       "FN-8490",
       "todo",
-      expect.objectContaining({ preserveProgress: true, recoveryRehome: true }),
+      expect.objectContaining({ preserveProgress: true, recoveryRehome: true }), ANY_MUTATION_CONTEXT,
     );
     expect(onError).toHaveBeenCalledWith(
       expect.objectContaining({ id: "FN-8490" }),
@@ -1704,7 +1704,7 @@ describe("swallowed async store failure observability", () => {
     expect(store.moveTask).toHaveBeenCalledWith(
       "FN-001",
       "in-review",
-      expect.objectContaining({ workflowMoveSource: "workflow-graph" }),
+      expect.objectContaining({ workflowMoveSource: "workflow-graph" }), ANY_MUTATION_CONTEXT,
     );
     expect(warnSpy).toHaveBeenCalledWith(
       expect.stringContaining("FN-001 failed to log rate-limit retry: step-session retry log failure"),
@@ -1775,7 +1775,7 @@ describe("swallowed async store failure observability", () => {
     expect(store.moveTask).toHaveBeenCalledWith(
       "FN-001",
       "in-review",
-      expect.objectContaining({ workflowMoveSource: "workflow-graph" }),
+      expect.objectContaining({ workflowMoveSource: "workflow-graph" }), ANY_MUTATION_CONTEXT,
     );
     expect(warnSpy).toHaveBeenCalledWith(
       expect.stringContaining("FN-001 failed to log rate-limit retry: main-agent retry log failure"),
@@ -1902,7 +1902,7 @@ describe("swallowed async store failure observability", () => {
     expect(store.moveTask).toHaveBeenCalledWith(
       "FN-001",
       "in-review",
-      expect.objectContaining({ workflowMoveSource: "workflow-graph" }),
+      expect.objectContaining({ workflowMoveSource: "workflow-graph" }), ANY_MUTATION_CONTEXT,
     );
     // The conversation survives the handoff — nothing nulls sessionFile on this path.
     expect(sessionFileClears).toEqual([]);
@@ -2000,7 +2000,7 @@ describe("TaskExecutor executor model hot-swap", () => {
       provider: expect.objectContaining({ name: "openai" }),
       id: "gpt-4o",
     }));
-    expect(store.logEntry).toHaveBeenCalledWith("FN-001", "Model changed to openai/gpt-4o", undefined, undefined);
+    expect(store.logEntry).toHaveBeenCalledWith("FN-001", "Model changed to openai/gpt-4o", undefined, ANY_MUTATION_CONTEXT);
   });
 
   it("does not attempt hot-swap when no active session exists", async () => {
@@ -2161,7 +2161,7 @@ describe("TaskExecutor executor model hot-swap", () => {
 
     await flushTaskUpdated();
 
-    expect(store.logEntry).toHaveBeenCalledWith("FN-001", "Model change failed: API key not found", undefined, undefined);
+    expect(store.logEntry).toHaveBeenCalledWith("FN-001", "Model change failed: API key not found", undefined, ANY_MUTATION_CONTEXT);
     expect((executor as any).activeSessions.has("FN-001")).toBe(true);
   });
 
@@ -2337,8 +2337,8 @@ describe("TaskExecutor global pause behavior", () => {
     const moveCalls = store.moveTask.mock.calls;
     expect(moveCalls.some(([id, column]) => id === "FN-002" && /^(todo|in-review)$/.test(String(column)))).toBe(true);
     expect(moveCalls.some(([id, column]) => id === "FN-001" && /^(todo|in-review)$/.test(String(column)))).toBe(true);
-    expect(store.updateTask).not.toHaveBeenCalledWith("FN-001", { status: "failed" });
-    expect(store.updateTask).not.toHaveBeenCalledWith("FN-002", { status: "failed" });
+    expect(store.updateTask).not.toHaveBeenCalledWith("FN-001", { status: "failed" }, ANY_MUTATION_CONTEXT);
+    expect(store.updateTask).not.toHaveBeenCalledWith("FN-002", { status: "failed" }, ANY_MUTATION_CONTEXT);
   });
 
   it("moves paused tasks to todo (not marked as failed)", async () => {
@@ -2373,8 +2373,8 @@ describe("TaskExecutor global pause behavior", () => {
     worktree exists), so a pause during that first session leaves all steps `pending`
     and the bounce options collapse to `{}`.
     */
-    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo", {});
-    expect(store.updateTask).not.toHaveBeenCalledWith("FN-001", { status: "failed" });
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo", {}, ANY_MUTATION_CONTEXT);
+    expect(store.updateTask).not.toHaveBeenCalledWith("FN-001", { status: "failed" }, ANY_MUTATION_CONTEXT);
   });
 
   it("defers completion handoff when global pause hits after fn_task_done", async () => {
@@ -2421,8 +2421,8 @@ describe("TaskExecutor global pause behavior", () => {
       createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
     });
 
-    expect(store.moveTask).not.toHaveBeenCalledWith("FN-001", "in-review");
-    expect(store.moveTask).not.toHaveBeenCalledWith("FN-001", "todo");
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-001", "in-review", undefined, ANY_MUTATION_CONTEXT);
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-001", "todo", undefined, ANY_MUTATION_CONTEXT);
     expect(
       store.logEntry.mock.calls.some(
         ([id, action]: [string, string]) =>
@@ -2511,13 +2511,13 @@ describe("TaskExecutor global pause behavior", () => {
     expect(taskDoneResult).toBeUndefined();
     expect(store.updateTask).not.toHaveBeenCalledWith(
       "FN-001",
-      expect.objectContaining({ paused: false }),
+      expect.objectContaining({ paused: false }), ANY_MUTATION_CONTEXT,
     );
-    expect(store.moveTask).not.toHaveBeenCalledWith("FN-001", "in-review");
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-001", "in-review", undefined, ANY_MUTATION_CONTEXT);
     expect(store.moveTask).not.toHaveBeenCalledWith(
       "FN-001",
       "in-review",
-      expect.anything(),
+      expect.anything(), ANY_MUTATION_CONTEXT,
     );
     expect(watchdogSpy).not.toHaveBeenCalledWith("FN-001", "fn_task_done");
     expect(
@@ -2611,12 +2611,12 @@ describe("TaskExecutor global pause behavior", () => {
       expect(taskDoneResult).toBeUndefined();
       expect(store.updateTask).not.toHaveBeenCalledWith(
         "FN-001",
-        expect.objectContaining({ paused: false }),
+        expect.objectContaining({ paused: false }), ANY_MUTATION_CONTEXT,
       );
       expect(store.moveTask).not.toHaveBeenCalledWith(
         "FN-001",
         "in-review",
-        expect.objectContaining({ workflowMoveSource: "workflow-graph" }),
+        expect.objectContaining({ workflowMoveSource: "workflow-graph" }), ANY_MUTATION_CONTEXT,
       );
       expect(watchdogSpy).not.toHaveBeenCalledWith("FN-001", "fn_task_done");
       expect(
@@ -2689,10 +2689,10 @@ describe("TaskExecutor global pause behavior", () => {
       expect(store.moveTask).toHaveBeenCalledWith(
         "FN-001",
         "in-review",
-        expect.objectContaining({ workflowMoveSource: "workflow-graph" }),
+        expect.objectContaining({ workflowMoveSource: "workflow-graph" }), ANY_MUTATION_CONTEXT,
       );
-      expect(store.moveTask).not.toHaveBeenCalledWith("FN-001", "todo");
-      expect(store.moveTask).not.toHaveBeenCalledWith("FN-001", "in-progress");
+      expect(store.moveTask).not.toHaveBeenCalledWith("FN-001", "todo", undefined, ANY_MUTATION_CONTEXT);
+      expect(store.moveTask).not.toHaveBeenCalledWith("FN-001", "in-progress", undefined, ANY_MUTATION_CONTEXT);
       expect(
         store.logEntry.mock.calls.some(
           ([id, action]: [string, string]) =>
@@ -2784,12 +2784,12 @@ describe("TaskExecutor global pause behavior", () => {
     */
       expect(store.updateTask).not.toHaveBeenCalledWith(
         "FN-001",
-        expect.objectContaining({ paused: false }),
+        expect.objectContaining({ paused: false }), ANY_MUTATION_CONTEXT,
       );
       expect(store.moveTask).not.toHaveBeenCalledWith(
         "FN-001",
         "in-review",
-        expect.objectContaining({ workflowMoveSource: "workflow-graph" }),
+        expect.objectContaining({ workflowMoveSource: "workflow-graph" }), ANY_MUTATION_CONTEXT,
       );
       expect(watchdogSpy).not.toHaveBeenCalledWith("FN-001", "fn_task_done");
       expect(
@@ -2861,10 +2861,10 @@ describe("TaskExecutor global pause behavior", () => {
       expect(store.moveTask).toHaveBeenCalledWith(
         "FN-001",
         "in-review",
-        expect.objectContaining({ workflowMoveSource: "workflow-graph" }),
+        expect.objectContaining({ workflowMoveSource: "workflow-graph" }), ANY_MUTATION_CONTEXT,
       );
-      expect(store.moveTask).not.toHaveBeenCalledWith("FN-001", "todo");
-      expect(store.moveTask).not.toHaveBeenCalledWith("FN-001", "in-progress");
+      expect(store.moveTask).not.toHaveBeenCalledWith("FN-001", "todo", undefined, ANY_MUTATION_CONTEXT);
+      expect(store.moveTask).not.toHaveBeenCalledWith("FN-001", "in-progress", undefined, ANY_MUTATION_CONTEXT);
       expect(
         store.logEntry.mock.calls.some(
           ([id, action]: [string, string]) =>
@@ -2911,9 +2911,9 @@ describe("TaskExecutor global pause behavior", () => {
     expect(store.moveTask).toHaveBeenCalledWith(
       "FN-001",
       "in-review",
-      expect.objectContaining({ workflowMoveSource: "workflow-graph" }),
+      expect.objectContaining({ workflowMoveSource: "workflow-graph" }), ANY_MUTATION_CONTEXT,
     );
-    expect(store.moveTask).not.toHaveBeenCalledWith("FN-001", "todo");
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-001", "todo", undefined, ANY_MUTATION_CONTEXT);
   });
 
   it("takes no action when globalPause transitions from true to true", async () => {
@@ -2950,9 +2950,9 @@ describe("TaskExecutor global pause behavior", () => {
     expect(store.moveTask).toHaveBeenCalledWith(
       "FN-001",
       "in-review",
-      expect.objectContaining({ workflowMoveSource: "workflow-graph" }),
+      expect.objectContaining({ workflowMoveSource: "workflow-graph" }), ANY_MUTATION_CONTEXT,
     );
-    expect(store.moveTask).not.toHaveBeenCalledWith("FN-001", "todo");
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-001", "todo", undefined, ANY_MUTATION_CONTEXT);
   });
 });
 

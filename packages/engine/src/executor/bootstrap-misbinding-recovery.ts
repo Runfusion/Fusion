@@ -18,6 +18,7 @@ export type BootstrapMisbindingRecoveryDeps = {
   rootDir: string;
   store: TaskStore;
   getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   markGraphExecuteSelfRequeued: (taskId: string) => void;
 };
 
@@ -44,11 +45,11 @@ export async function tryBootstrapMisbindingRecovery(
     ? await classifyTaskWorktree(deps.rootDir, worktreePath)
     : { ok: false as const };
   if (!worktreePath || !worktreeClassification.ok) {
-    await deps.store.logEntry(task.id, `[recovery] bootstrap misbinding detected but worktree unavailable for re-anchor: ${worktreePath ?? "none"}`, undefined, deps.getRunContextFor(task.id));
+    await deps.store.logEntry(task.id, `[recovery] bootstrap misbinding detected but worktree unavailable for re-anchor: ${worktreePath ?? "none"}`, undefined, deps.runContextFor(task.id));
     return false;
   }
 
-  await deps.store.logEntry(task.id, `[recovery] bootstrap-time branch misbinding detected on ${contamination.branchName}: 0 own commits, re-anchoring to ${contamination.baseSha}`, undefined, deps.getRunContextFor(task.id));
+  await deps.store.logEntry(task.id, `[recovery] bootstrap-time branch misbinding detected on ${contamination.branchName}: 0 own commits, re-anchoring to ${contamination.baseSha}`, undefined, deps.runContextFor(task.id));
 
   try {
     const reanchor = await reanchorBranchToBase({
@@ -80,7 +81,7 @@ export async function tryBootstrapMisbindingRecovery(
     await deps.store.moveTask(task.id, await resolveReboundColumnFor(deps.store, task.id), { preserveResumeState: false, preserveWorktree: true });
     return true;
   } catch (error) {
-    await deps.store.logEntry(task.id, `[recovery] bootstrap re-anchor failed; falling back to contamination safety path: ${formatError(error)}`, undefined, deps.getRunContextFor(task.id));
+    await deps.store.logEntry(task.id, `[recovery] bootstrap re-anchor failed; falling back to contamination safety path: ${formatError(error)}`, undefined, deps.runContextFor(task.id));
     return false;
   }
 }

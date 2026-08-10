@@ -1902,14 +1902,13 @@ export function createTaskReadTools(store: TaskStore): ToolDefinition[] {
  * @returns ToolDefinition for the `fn_task_log` tool
  */
 /*
-FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage B):
-`runContext` is optional and falls back to the marker because the ONLY caller that cannot supply one
-is `executor.ts`, which reads its own `currentRunContexts` map and is Stage C's work. Every other
-caller of this factory already passes a real context. The fallback is resolved once, here, so the
-debt is one greppable line per tool rather than one per store call inside it.
+FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage C):
+`runContext` is REQUIRED. Stage B left it optional with a marker fallback because `executor.ts` was
+the one caller that could not supply a context; Stage C threaded the executor's run carrier, so the
+fallback had no reachable caller left and an optional parameter would only be a way for a future
+caller to reintroduce an unattributed write silently.
 */
-export function createTaskLogTool(store: TaskStore, taskId: string, runContextArg?: RunMutationContext): ToolDefinition {
-  const runContext = runContextArg ?? UNATTRIBUTED_MUTATION_CONTEXT;
+export function createTaskLogTool(store: TaskStore, taskId: string, runContext: RunMutationContext): ToolDefinition {
   return {
     name: "fn_task_log",
     label: "Log Entry",
@@ -2144,14 +2143,13 @@ export function createTaskDocumentReadTool(store: TaskStore, taskId: string): To
  * Plan Review inline fixes must be able to rewrite the task's authoritative PROMPT.md, but that pre-execution reviewer should not need general source-file write tools. Route the write through TaskStore so existing PROMPT.md validation, task directory placement, and task.json sync remain the single persistence path.
  */
 /*
-FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage B):
-`runContext` is optional and falls back to the marker because the ONLY caller that cannot supply one
-is `executor.ts`, which reads its own `currentRunContexts` map and is Stage C's work. Every other
-caller of this factory already passes a real context. The fallback is resolved once, here, so the
-debt is one greppable line per tool rather than one per store call inside it.
+FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage C):
+`runContext` is REQUIRED. Stage B left it optional with a marker fallback because `executor.ts` was
+the one caller that could not supply a context; Stage C threaded the executor's run carrier, so the
+fallback had no reachable caller left and an optional parameter would only be a way for a future
+caller to reintroduce an unattributed write silently.
 */
-export function createTaskPromptWriteTool(store: TaskStore, taskId: string, runContextArg?: RunMutationContext): ToolDefinition {
-  const runContext = runContextArg ?? UNATTRIBUTED_MUTATION_CONTEXT;
+export function createTaskPromptWriteTool(store: TaskStore, taskId: string, runContext: RunMutationContext): ToolDefinition {
   return {
     name: "fn_task_prompt_write",
     label: "Write PROMPT.md",
@@ -2200,14 +2198,13 @@ Requirement: when an executing agent must edit files beyond the task's declared 
 Entries are validated with `isValidFileScopeEntry` and de-duplicated against existing scope. Marker-free plain `- \`path\`` lines are used (not the merger's `scopeAutoWiden` HTML-comment marker) so these read as first-class declared scope. Caveat: unlike the merge-time auto-widen, this does NOT re-run the peer-claim refusal (files owned by another active task's scope) — the merge-time invariant remains the backstop for genuine cross-task conflicts.
 */
 /*
-FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage B):
-`runContext` is optional and falls back to the marker because the ONLY caller that cannot supply one
-is `executor.ts`, which reads its own `currentRunContexts` map and is Stage C's work. Every other
-caller of this factory already passes a real context. The fallback is resolved once, here, so the
-debt is one greppable line per tool rather than one per store call inside it.
+FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage C):
+`runContext` is REQUIRED. Stage B left it optional with a marker fallback because `executor.ts` was
+the one caller that could not supply a context; Stage C threaded the executor's run carrier, so the
+fallback had no reachable caller left and an optional parameter would only be a way for a future
+caller to reintroduce an unattributed write silently.
 */
-export function createTaskFileScopeAddTool(store: TaskStore, taskId: string, runContextArg?: RunMutationContext): ToolDefinition {
-  const runContext = runContextArg ?? UNATTRIBUTED_MUTATION_CONTEXT;
+export function createTaskFileScopeAddTool(store: TaskStore, taskId: string, runContext: RunMutationContext): ToolDefinition {
   return {
     name: "fn_task_file_scope_add",
     label: "Add to File Scope",
@@ -3368,14 +3365,13 @@ export function createTaskMergeTool(store: TaskStore, _currentTaskId: string): T
 }
 
 /*
-FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage B):
-`runContext` is optional and falls back to the marker because the ONLY caller that cannot supply one
-is `executor.ts`, which reads its own `currentRunContexts` map and is Stage C's work. Every other
-caller of this factory already passes a real context. The fallback is resolved once, here, so the
-debt is one greppable line per tool rather than one per store call inside it.
+FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage C):
+`runContext` is REQUIRED. Stage B left it optional with a marker fallback because `executor.ts` was
+the one caller that could not supply a context; Stage C threaded the executor's run carrier, so the
+fallback had no reachable caller left and an optional parameter would only be a way for a future
+caller to reintroduce an unattributed write silently.
 */
-export function createTaskUpdateTool(store: TaskStore, taskId: string, runContextArg?: RunMutationContext): ToolDefinition {
-  const runContext = runContextArg ?? UNATTRIBUTED_MUTATION_CONTEXT;
+export function createTaskUpdateTool(store: TaskStore, taskId: string, runContext: RunMutationContext): ToolDefinition {
   return {
     name: "fn_task_update",
     label: "Update Step / Custom Fields / Dependencies",
@@ -3425,14 +3421,13 @@ export function createTaskUpdateTool(store: TaskStore, taskId: string, runContex
 }
 
 /*
-FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage B):
-`runContext` is optional and falls back to the marker because the ONLY caller that cannot supply one
-is `executor.ts`, which reads its own `currentRunContexts` map and is Stage C's work. Every other
-caller of this factory already passes a real context. The fallback is resolved once, here, so the
-debt is one greppable line per tool rather than one per store call inside it.
+FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage C):
+`runContext` is REQUIRED. Stage B left it optional with a marker fallback because `executor.ts` was
+the one caller that could not supply a context; Stage C threaded the executor's run carrier, so the
+fallback had no reachable caller left and an optional parameter would only be a way for a future
+caller to reintroduce an unattributed write silently.
 */
-export function createTaskAddDepTool(store: TaskStore, taskId: string, runContextArg?: RunMutationContext): ToolDefinition {
-  const runContext = runContextArg ?? UNATTRIBUTED_MUTATION_CONTEXT;
+export function createTaskAddDepTool(store: TaskStore, taskId: string, runContext: RunMutationContext): ToolDefinition {
   return {
     name: "fn_task_add_dep",
     label: "Add Task Dependency",
@@ -5677,8 +5672,11 @@ export function createTaskAssignTool(
   FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage B):
   The assignment's actor is the agent RUNNING the tool, never `params.agent_id` — that names the
   assignee, and attributing to it would produce an audit row claiming the target assigned itself
-  (the exact inversion `mutationContextForAgent` warns about). Heartbeat, triage and the step-session
-  executor pass their run context; only `executor.ts` still cannot, hence the marker fallback.
+  (the exact inversion `mutationContextForAgent` warns about). Heartbeat, triage, the step-session
+  executor and (Stage C) `executor.ts` all pass their run context. The marker fallback survives for
+  exactly one caller: the dashboard's chat tool surface (`packages/dashboard/src/chat.ts`), whose
+  actor is the human in the conversation and arrives with U9 — which is why this parameter stays
+  optional while the executor-only factories above became required.
   */
   runContextArg?: RunMutationContext,
 ): ToolDefinition {
@@ -6458,7 +6456,8 @@ export function createAcquireRepoWorktreeTool(opts: {
   settings: Partial<Settings>;
   logger?: { log: (m: string) => void; warn: (m: string) => void };
   secretsStore?: Pick<import("@fusion/core").SecretsStore, "listEnvExportable">;
-  runContext?: RunMutationContext;
+  /* FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage C): required — see the destructure below. */
+  runContext: RunMutationContext;
   audit?: Pick<RunAuditor, "git" | "filesystem">;
   /*
   FNXC:Workspace 2026-06-21-22:30:
@@ -6474,10 +6473,9 @@ export function createAcquireRepoWorktreeTool(opts: {
   runConfiguredCommand?: import("./worktree/worktree-acquisition.js").AcquireWorkspaceRepoWorktreeOptions["runConfiguredCommand"];
   taskEnv?: NodeJS.ProcessEnv;
 }): ToolDefinition {
-  const { workspaceRootDir, workspaceRepos, task, store, settings, logger, secretsStore, runContext: providedRunContext, audit, onAcquired, runConfiguredCommand, taskEnv } = opts;
-  /* FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage B): resolved once; `executor.ts` is the only caller
-     and its run carrier lands in Stage C, so this is that stage's work list, not a lane label. */
-  const runContext = providedRunContext ?? UNATTRIBUTED_MUTATION_CONTEXT;
+  /* FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage C): `executor.ts` is the only caller and now carries
+     a run context, so the option is required and there is no fallback left to resolve. */
+  const { workspaceRootDir, workspaceRepos, task, store, settings, logger, secretsStore, runContext, audit, onAcquired, runConfiguredCommand, taskEnv } = opts;
   return {
     name: "fn_acquire_repo_worktree",
     label: "Acquire Repo Worktree",

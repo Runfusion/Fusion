@@ -14,6 +14,8 @@ import {
   SEAM_SKILL_NAME_CONTEXT_KEY,
   type WorkflowLegacySeams,
 } from "../workflows/workflow-node-handlers.js";
+/* FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage C): the executor threads a real mutation context to every store call, so these assertions pin it rather than dropping the argument. */
+import { ANY_MUTATION_CONTEXT } from "./mutation-context-matchers.js";
 
 const task = { id: "FN-8490", title: "Skill seam", steps: [] } as any;
 const active = { foreachNodeId: "foreach", stepIndex: 0, instanceId: "foreach#0" };
@@ -108,7 +110,7 @@ describe("foreach step-execute skill session selection", () => {
       "compound-engineering:verify", "verify",
     ]));
     expect(options.additionalSkillPaths).toContain("/opt/ce/.fusion-ce-skills");
-    expect(store.logEntry).not.toHaveBeenCalledWith(expect.anything(), expect.stringContaining("[skill-load]"));
+    expect(store.logEntry).not.toHaveBeenCalledWith(expect.anything(), expect.stringContaining("[skill-load]"), undefined, ANY_MUTATION_CONTEXT);
   });
 
   it("warns but retains role-fallback selection when the pinned skill is missing", async () => {
@@ -123,6 +125,6 @@ describe("foreach step-execute skill session selection", () => {
 
     const options = mockedStepSessionExecutor.mock.calls.at(-1)?.[0] as any;
     expect(options.skillSelection.requestedSkillNames).toContain("missing-verify");
-    expect(store.logEntry).toHaveBeenCalledWith(taskDetail.id, expect.stringContaining("[skill-load] Foreach step-execute"));
+    expect(store.logEntry).toHaveBeenCalledWith(taskDetail.id, expect.stringContaining("[skill-load] Foreach step-execute"), undefined, ANY_MUTATION_CONTEXT);
   });
 });

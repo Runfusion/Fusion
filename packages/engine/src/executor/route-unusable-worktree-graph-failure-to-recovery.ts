@@ -20,6 +20,7 @@ import type { ResumeLanes } from "./resolve-resume-lanes.js";
 export type RouteUnusableWorktreeGraphFailureToRecoveryDeps = {
   store: TaskStore;
   getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   pausedAborted: Set<string>;
   resolveResumeLanes: (taskId: string, memo?: { lanes?: ResumeLanes }) => Promise<ResumeLanes>;
   recoverMissingWorktreeSessionStartFailure: (

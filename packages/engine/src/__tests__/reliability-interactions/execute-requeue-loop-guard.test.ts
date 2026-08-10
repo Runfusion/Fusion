@@ -16,6 +16,8 @@ import {
 } from "../../executor.js";
 import { SelfHealingManager } from "../../self-healing.js";
 import { createMockStore, resetExecutorMocks } from "../executor-test-helpers.js";
+/* FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage C): the executor threads a real mutation context to every store call, so these assertions pin it rather than dropping the argument. */
+import { ANY_MUTATION_CONTEXT } from "../mutation-context-matchers.js";
 
 const COMPLETED_BLOCKED_PAUSE_REASON = "completed-work-blocked";
 
@@ -130,7 +132,7 @@ describe("execute requeue loop guard", () => {
         error: expect.stringMatching(/^EXECUTION_DISPATCH_LOOP_EXHAUSTED:/),
         executeRequeueLoopCount: MAX_EXECUTE_REQUEUE_LOOP_CYCLES,
       }),
-      undefined,
+      ANY_MUTATION_CONTEXT,
     );
     expect(h.store.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
       mutationType: "task:execution-dispatch-loop-terminalized",
@@ -163,7 +165,7 @@ describe("execute requeue loop guard", () => {
     expect(h.store.updateTask).toHaveBeenCalledWith(
       "FN-7863-STALE",
       expect.objectContaining({ status: "failed", error: expect.stringMatching(/^EXECUTION_DISPATCH_LOOP_EXHAUSTED:/) }),
-      undefined,
+      ANY_MUTATION_CONTEXT,
     );
   });
 
@@ -196,7 +198,7 @@ describe("execute requeue loop guard", () => {
         error: expect.stringMatching(/^EXECUTION_DISPATCH_LOOP_EXHAUSTED:/),
         executeRequeueLoopCount: MAX_EXECUTE_REQUEUE_LOOP_CYCLES,
       }),
-      undefined,
+      ANY_MUTATION_CONTEXT,
     );
     expect(h.store.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
       mutationType: "task:execution-dispatch-loop-terminalized",
@@ -229,7 +231,7 @@ describe("execute requeue loop guard", () => {
         error: expect.stringMatching(/^EXECUTION_DISPATCH_LOOP_EXHAUSTED:/),
         executeRequeueLoopCount: MAX_EXECUTE_REQUEUE_LOOP_CYCLES,
       }),
-      undefined,
+      ANY_MUTATION_CONTEXT,
     );
   });
 
@@ -271,7 +273,7 @@ describe("execute requeue loop guard", () => {
       "FN-7863-WARN",
       expect.stringContaining(`Execution dispatch loop building: ${EXECUTE_REQUEUE_LOOP_VISIBLE_THRESHOLD}/${MAX_EXECUTE_REQUEUE_LOOP_CYCLES}`),
       undefined,
-      undefined,
+      ANY_MUTATION_CONTEXT,
     );
     expect(h.store.updateTask).not.toHaveBeenCalledWith(
       "FN-7863-WARN",
@@ -299,7 +301,7 @@ describe("execute requeue loop guard", () => {
       h.live.id,
       expect.stringContaining("paused awaiting explicit unpause"),
       undefined,
-      undefined,
+      ANY_MUTATION_CONTEXT,
     );
   });
 
@@ -339,7 +341,7 @@ describe("execute requeue loop guard", () => {
       "FN-7926-PARK",
       expect.stringContaining(`Completed work held — ${blockerReason}; will advance to review when blocker clears`),
       undefined,
-      undefined,
+      ANY_MUTATION_CONTEXT,
     );
     expect(h.store.updateTask).not.toHaveBeenCalledWith(
       "FN-7926-PARK",
@@ -517,7 +519,7 @@ describe("execute requeue loop guard", () => {
       preserveProgress: true,
       preserveResumeState: true,
       preserveWorktree: true,
-    }));
+    }), ANY_MUTATION_CONTEXT);
   });
 
   it.each([
@@ -588,7 +590,7 @@ describe("execute requeue loop guard", () => {
     expect(h.live).toMatchObject({ column: "in-review", paused: false, status: null, blockedBy: null });
     expect(h.store.logEntry).toHaveBeenCalledWith(
       "FN-7926-ADVANCE",
-      expect.stringContaining("Auto-advanced completed blocked work to review after blocker cleared"), undefined, UNATTRIBUTED_MUTATION_CONTEXT,
+      expect.stringContaining("Auto-advanced completed blocked work to review after blocker cleared"), undefined, ANY_MUTATION_CONTEXT,
     );
   });
 

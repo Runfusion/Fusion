@@ -192,9 +192,48 @@ with `import`, so a marker named on its own line inside a multi-line import bloc
 prose, scores as debt it is not. Import the marker with a dedicated one-line `import { ... }` and keep
 the literal off comment lines that do not start with `*`.
 */
+/*
+FNXC:Identity 2026-08-09-03:04 (U18 step 2, Stage C — engine 322 -> 308, and `executor.ts` is now marker-free):
+
+Stage C converted the last engine lane: `executor.ts`'s 479 mutating call sites (211 that carried no
+context at all, plus 268 that passed the PARTIAL `getRunContextFor` and therefore type-checked only
+against U18's deprecated overload while attributing nothing). It was not a call-site edit — the actor
+is not a value in scope at those sites — so the fix was to make the file's existing per-task run
+carrier TOTAL: `runContextFor(taskId)` returns the live `currentRunContexts` entry, or the executor
+lane itself. All 479 sites now pass it, and all 479 derive; Stage C added ZERO markers.
+
+The 14 markers Stage C REMOVED, each because the executor could finally supply what it owed:
+
+  - executor.ts (4 -> 0)
+      -> the column-boundary hooks, the workflow merge-boundary move, the completion summary, and the
+         session-start seam. All four were "the executor has no live run here"; the lane label is the
+         honest answer, not the marker (`"executor"` is the exact agent id `execute()` already stamps
+         on this file's own run context and run-audit rows).
+  - agent-tools.ts (8 -> 2)
+      -> `createTaskLogTool`, `createTaskPromptWriteTool`, `createTaskFileScopeAddTool`,
+         `createTaskUpdateTool`, `createTaskAddDepTool` and `createAcquireRepoWorktreeTool` had
+         `executor.ts` as their ONE context-less caller, so their parameter is now REQUIRED and the
+         fallback is deleted. The two that remain are genuinely not Stage C's: `createAgentTask`'s
+         actor-less create (U9/U11) and `createTaskAssignTool`, whose last context-less caller is the
+         dashboard chat surface (U9) — which is why that one stays optional.
+  - execution/step-runner.ts (2 -> 0)
+      -> the RETHINK rewind's two log rows. `ResetStepDeps.runContext` is required; `executor.ts` is
+         its only caller.
+  - worktree/worktree-acquisition.ts (2 -> 0)
+      -> `acquireTaskWorktree` / `acquireWorkspaceRepoWorktree`. Stage B deliberately kept the option
+         optional and resolved one marker each so ~45 downstream writes had a value; both options are
+         now REQUIRED, which is what turns a future unwired caller into a compile error rather than a
+         silent unattributed write.
+
+What is left in `@fusion/engine` is exactly the population Stage A described and no more: the
+unattended sweeps (`self-healing.ts`, `scheduler.ts` and their extracted helpers), the auto-recovery
+family, and a short tail of operator/provider-health entry points. Every one of them is U13's or
+U9/U11's decision about a SYSTEM actor, not a lane that skipped its threading. No engine lane still
+holds a marker because deriving was more work than marking.
+*/
 const BASELINE_BY_PACKAGE: Readonly<Record<string, number>> = {
   core: 33,
-  engine: 322,
+  engine: 308,
 };
 const BASELINE = Object.values(BASELINE_BY_PACKAGE).reduce((sum, n) => sum + n, 0);
 

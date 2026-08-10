@@ -47,6 +47,7 @@ export type SharedWorkerToolsDeps = {
   rootDir: string;
   messageStore?: import("@fusion/core").MessageStore;
   getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
 };
 
 export function createTaskLogTool(deps: SharedWorkerToolsDeps, taskId: string): ToolDefinition {
@@ -85,11 +86,11 @@ export function createTaskDocumentReadTool(deps: SharedWorkerToolsDeps, taskId: 
 }
 
 export function createTaskPromptWriteTool(deps: SharedWorkerToolsDeps, taskId: string): ToolDefinition {
-  return sharedCreateTaskPromptWriteTool(deps.store, taskId, deps.getRunContextFor(taskId));
+  return sharedCreateTaskPromptWriteTool(deps.store, taskId, deps.runContextFor(taskId));
 }
 
 export function createTaskFileScopeAddTool(deps: SharedWorkerToolsDeps, taskId: string): ToolDefinition {
-  return sharedCreateTaskFileScopeAddTool(deps.store, taskId, deps.getRunContextFor(taskId));
+  return sharedCreateTaskFileScopeAddTool(deps.store, taskId, deps.runContextFor(taskId));
 }
 
 export function createArtifactRegisterTool(

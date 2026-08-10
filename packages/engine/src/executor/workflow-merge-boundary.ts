@@ -20,6 +20,7 @@ export type WorkflowMergeBoundaryProof = {
 export type WorkflowMergeBoundaryDeps = {
   store: TaskStore;
   getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   resolveMergeBoundaryColumn: (taskId: string, nodeId: string) => Promise<string>;
   evaluateWorkflowMergeBoundary: (
     live: TaskDetail,
@@ -74,7 +75,7 @@ export async function ensureWorkflowMergeBoundaryTask(
       : !mergeProof.allResultsTerminal
         ? `non-terminal pre-merge node result ${mergeProof.nonTerminalResult?.workflowStepId ?? "unknown"} (${mergeProof.nonTerminalResult?.status ?? "unknown"})`
         : `foreach step instances incomplete at merge boundary: missing ${mergeProof.missingInstanceIds.join(", ")}`;
-    await deps.store.logEntry(live.id, `Workflow merge boundary blocked: ${reason}`, undefined, deps.getRunContextFor(live.id));
+    await deps.store.logEntry(live.id, `Workflow merge boundary blocked: ${reason}`, undefined, deps.runContextFor(live.id));
     return live;
   }
 
@@ -90,14 +91,14 @@ export async function ensureWorkflowMergeBoundaryTask(
         steps: completedSteps,
         currentStep: Math.max(0, completedSteps.length - 1),
       } as Partial<TaskDetail>,
-      deps.getRunContextFor(live.id),
+      deps.runContextFor(live.id),
     );
     live = (updated as TaskDetail | undefined) ?? { ...live, steps: completedSteps, currentStep: Math.max(0, completedSteps.length - 1) };
     await deps.store.logEntry(
       live.id,
       "Workflow merge boundary completed graph-native task checklist before requesting merge",
       undefined,
-      deps.getRunContextFor(live.id),
+      deps.runContextFor(live.id),
     );
   }
   if (alreadyAtMergeColumn) return live;
@@ -115,17 +116,17 @@ export async function ensureWorkflowMergeBoundaryTask(
   converted — a hole invisible to the census, inside the file that owns the most call sites. The
   shape now mirrors the CANONICAL store arity so the widening cannot weaken the requirement.
   */
-  const runContext = deps.getRunContextFor(live.id);
+  const runContext = deps.runContextFor(live.id);
   const mutationContext: RunMutationContext = runContext ? toRunMutationContext(runContext) : UNATTRIBUTED_MUTATION_CONTEXT;
   const storeWithMove = deps.store as typeof deps.store & {
     moveTask?: (id: string, column: string, options: unknown | undefined, runContext: RunMutationContext) => Promise<TaskDetail | undefined>;
   };
   if (typeof storeWithMove.moveTask === "function") {
     const moved = await storeWithMove.moveTask(live.id, targetColumn, moveOptions, mutationContext);
-    await deps.store.logEntry(live.id, `Workflow merge boundary moved task to ${targetColumn} before requesting merge`, undefined, deps.getRunContextFor(live.id));
+    await deps.store.logEntry(live.id, `Workflow merge boundary moved task to ${targetColumn} before requesting merge`, undefined, deps.runContextFor(live.id));
     return moved ?? { ...live, column: targetColumn };
   }
-  await deps.store.updateTask(live.id, { column: targetColumn } as Partial<TaskDetail>, deps.getRunContextFor(live.id));
-  await deps.store.logEntry(live.id, `Workflow merge boundary moved task to ${targetColumn} before requesting merge`, undefined, deps.getRunContextFor(live.id));
+  await deps.store.updateTask(live.id, { column: targetColumn } as Partial<TaskDetail>, deps.runContextFor(live.id));
+  await deps.store.logEntry(live.id, `Workflow merge boundary moved task to ${targetColumn} before requesting merge`, undefined, deps.runContextFor(live.id));
   return { ...live, column: targetColumn };
 }

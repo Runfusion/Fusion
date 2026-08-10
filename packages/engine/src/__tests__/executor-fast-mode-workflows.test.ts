@@ -233,7 +233,7 @@ describe("fast mode workflow/runtime invariants", () => {
       "FN-6226",
       "Fast mode — custom graph node 'custom-review' skipped",
       undefined,
-      undefined,
+      ANY_MUTATION_CONTEXT,
     );
   });
 
@@ -813,7 +813,7 @@ describe("fast mode workflow/runtime invariants", () => {
       "FN-7271",
       expect.stringContaining("Workflow merge blocked before requester: implementation did not run"),
       undefined,
-      undefined,
+      ANY_MUTATION_CONTEXT,
     );
   });
 
@@ -871,7 +871,7 @@ describe("fast mode workflow/runtime invariants", () => {
       "FN-1165-NOOP",
       expect.stringContaining("implementation did not run"),
       undefined,
-      undefined,
+      ANY_MUTATION_CONTEXT,
     );
     expect(store.moveTask).toHaveBeenCalledWith("FN-1165-NOOP", "done", expect.objectContaining({ preserveProgress: true }), ANY_MUTATION_CONTEXT);
   });

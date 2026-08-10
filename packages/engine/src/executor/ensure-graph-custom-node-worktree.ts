@@ -25,6 +25,7 @@ export type EnsureGraphCustomNodeWorktreeDeps = {
   getWorkspaceConfig: () => WorkspaceConfig | null | undefined;
   setWorkspaceConfig: (config: WorkspaceConfig | null) => void;
   getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   pool?: WorktreePool;
   secretsStore?: Parameters<typeof acquireTaskWorktree>[0]["secretsStore"];
   createWorktree: (
@@ -74,7 +75,7 @@ export async function ensureGraphCustomNodeWorktree(
       task.id,
       `Workflow node '${nodeId}' requires a task worktree — acquiring worktree before node execution`,
       undefined,
-      deps.getRunContextFor(task.id),
+      deps.runContextFor(task.id),
     );
     const acquisition = await acquireTaskWorktree({
       task,
@@ -84,7 +85,7 @@ export async function ensureGraphCustomNodeWorktree(
       pool: deps.pool,
       logger: executorLog,
       audit,
-      runContext: deps.getRunContextFor(task.id),
+      runContext: deps.runContextFor(task.id),
       runInitCommand: true,
       createWorktree: deps.createWorktree,
       createWorktreeBackendKind: "native",
@@ -119,7 +120,7 @@ export async function ensureGraphCustomNodeWorktree(
       task.id,
       `Workflow node '${nodeId}' failed to acquire task worktree: ${message}`,
       undefined,
-      deps.getRunContextFor(task.id),
+      deps.runContextFor(task.id),
     );
     throw error;
   } finally {

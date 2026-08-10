@@ -17,11 +17,14 @@ Adding it is what keeps them load-bearing: left at the old arity every
 `toHaveBeenCalledWith` here would fail, and every `.not.toHaveBeenCalledWith` would pass
 vacuously — an assertion that can no longer fail is worse than one that is red.
 */
-import { UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
+/* FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage C): the merge boundary derives the executor lane instead of marking, so the assertion pins the DERIVED actor — re-marking this site now fails. */
+import { mutationContextFor } from "./mutation-context-matchers.js";
 import "./executor-test-helpers.js";
 import { TaskExecutor } from "../executor.js";
 import { createMockStore } from "./executor-test-helpers.js";
 import type { WorkflowIr } from "@fusion/core";
+/* FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage C): the executor threads a real mutation context to every store call, so these assertions pin it rather than accepting `undefined`. */
+import { ANY_MUTATION_CONTEXT } from "./mutation-context-matchers.js";
 
 function benchmarkIr(): WorkflowIr {
   return {
@@ -131,7 +134,7 @@ describe("U5a — IR-driven merge boundary (scenario 1)", () => {
       { reason: "workflow-merge-boundary", nodeId: "merge-gate", workflowId: "custom:benchmark", runId: "r1" },
     );
     const moveTask = store.moveTask as ReturnType<typeof vi.fn>;
-    expect(moveTask).toHaveBeenCalledWith("FN-B1", "merging", expect.anything(), UNATTRIBUTED_MUTATION_CONTEXT);
+    expect(moveTask).toHaveBeenCalledWith("FN-B1", "merging", expect.anything(), mutationContextFor("executor"));
   });
 
   it("is a no-op when the card is already in the resolved merge column", async () => {
@@ -183,7 +186,7 @@ describe("U5a — IR-driven merge boundary (scenario 1)", () => {
         steps: pendingSteps.map((step) => ({ ...step, status: "done" })),
         currentStep: 1,
       },
-      undefined,
+      ANY_MUTATION_CONTEXT,
     );
     expect(store.moveTask).not.toHaveBeenCalled();
   });

@@ -17,6 +17,7 @@ export type BuildColumnBoundaryHooksDeps = {
   store: TaskStore;
   workflowLifecycleMovesInFlight: Set<string>;
   getRunContextFor?: (taskId: string) => EngineRunContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
 };
 
 export function buildColumnBoundaryHooks(

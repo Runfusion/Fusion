@@ -23,6 +23,7 @@ import {
 export type RecoverCompletedTaskDeps = {
   store: TaskStore;
   getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   executing: Set<string>;
   activeSessions: { has(taskId: string): boolean };
   activeStepExecutors: { has(taskId: string): boolean };
@@ -108,7 +109,7 @@ export async function recoverCompletedTask(
         task.id,
         "Auto-promotion withheld: steps were skipped after a bulk-step-completion refusal with no accepted fn_task_done — requires reviewer or operator sign-off",
         undefined,
-        deps.getRunContextFor(task.id),
+        deps.runContextFor(task.id),
       ).catch(() => undefined);
       return false;
     }

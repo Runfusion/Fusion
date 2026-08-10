@@ -11,10 +11,17 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { ANY_MUTATION_CONTEXT } from "./mutation-context-matchers.js";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+/*
+FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage C):
+`ResetStepDeps.runContext` is required — the RETHINK rewind's log rows must name the run that asked
+for the rewind. The tests supply a real one and assert it reaches the store, so a future caller that
+drops the context fails here rather than silently logging an unattributed destructive reset.
+*/
+import { mutationContextForAgent } from "@fusion/core";
+import { mutationContextFor } from "./mutation-context-matchers.js";
 import {
   runTaskStep,
   resetStepToBaseline,
@@ -23,6 +30,8 @@ import {
   type StepRunnerTask,
   type SessionRef,
 } from "../execution/step-runner.js";
+
+const TEST_RUN_CONTEXT = mutationContextForAgent("agent-step-runner", "run-1");
 
 function makeStore() {
   return {
@@ -315,7 +324,7 @@ describe("resetStepToBaseline", () => {
     // the session rewind + projection happen. (The git path is exercised through
     // the executor characterization test.)
     const result = await resetStepToBaseline(
-      { store, worktreePath: "/wt", sessionRef, reviewType: "code", summary: "rejected" },
+      { store, worktreePath: "/wt", runContext: TEST_RUN_CONTEXT, sessionRef, reviewType: "code", summary: "rejected" },
       makeTask([{ status: "in-progress" }]),
       0,
       "baseSHA",
@@ -328,7 +337,7 @@ describe("resetStepToBaseline", () => {
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-001",
       expect.stringContaining("git reset to baseSHA"),
-      "rejected", ANY_MUTATION_CONTEXT);
+      "rejected", mutationContextFor("agent-step-runner"));
   });
 
   it("skips the session rewind when no checkpoint is provided (partial path)", async () => {
@@ -338,7 +347,7 @@ describe("resetStepToBaseline", () => {
     const sessionRef = makeSessionRef({ navigateTree, branchWithSummary });
 
     const result = await resetStepToBaseline(
-      { store, worktreePath: "/wt", sessionRef, reviewType: "code" },
+      { store, worktreePath: "/wt", runContext: TEST_RUN_CONTEXT, sessionRef, reviewType: "code" },
       makeTask([{ status: "in-progress" }]),
       0,
       "baseSHA",
@@ -358,7 +367,7 @@ describe("resetStepToBaseline", () => {
     const sessionRef = makeSessionRef({ navigateTree });
 
     const result = await resetStepToBaseline(
-      { store, worktreePath: "/wt", sessionRef, reviewType: "plan", summary: "plan rejected" },
+      { store, worktreePath: "/wt", runContext: TEST_RUN_CONTEXT, sessionRef, reviewType: "plan", summary: "plan rejected" },
       makeTask([{ status: "in-progress" }]),
       2,
       undefined,
@@ -372,7 +381,7 @@ describe("resetStepToBaseline", () => {
       "FN-001",
       // 0-indexed step 2 is displayed as "Step 2" to match PROMPT.md headings.
       expect.stringContaining("Step 2 plan rewound"),
-      "plan rejected", ANY_MUTATION_CONTEXT);
+      "plan rejected", mutationContextFor("agent-step-runner"));
   });
 
   it("falls back to branchWithSummary when navigateTree throws", async () => {
@@ -382,7 +391,7 @@ describe("resetStepToBaseline", () => {
     const sessionRef = makeSessionRef({ navigateTree, branchWithSummary });
 
     const result = await resetStepToBaseline(
-      { store, worktreePath: "/wt", sessionRef, reviewType: "code", summary: "why" },
+      { store, worktreePath: "/wt", runContext: TEST_RUN_CONTEXT, sessionRef, reviewType: "code", summary: "why" },
       makeTask([{ status: "in-progress" }]),
       0,
       "baseSHA",
@@ -404,7 +413,7 @@ describe("resetStepToBaseline", () => {
     const blastRadiusGuard = vi.fn().mockResolvedValue("baseSHA is not an ancestor of HEAD");
 
     const result = await resetStepToBaseline(
-      { store, worktreePath: "/wt", sessionRef, reviewType: "code", audit, blastRadiusGuard },
+      { store, worktreePath: "/wt", runContext: TEST_RUN_CONTEXT, sessionRef, reviewType: "code", audit, blastRadiusGuard },
       makeTask([{ status: "in-progress" }]),
       0,
       "baseSHA",
@@ -435,7 +444,7 @@ describe("resetStepToBaseline", () => {
     const blastRadiusGuard = vi.fn().mockRejectedValue(new Error("git exploded"));
 
     const result = await resetStepToBaseline(
-      { store, worktreePath: "/wt", sessionRef, reviewType: "code", blastRadiusGuard },
+      { store, worktreePath: "/wt", runContext: TEST_RUN_CONTEXT, sessionRef, reviewType: "code", blastRadiusGuard },
       makeTask([{ status: "in-progress" }]),
       0,
       "baseSHA",
@@ -454,7 +463,7 @@ describe("resetStepToBaseline", () => {
     const blastRadiusGuard = vi.fn().mockResolvedValue(null);
 
     const result = await resetStepToBaseline(
-      { store, worktreePath: "/wt", sessionRef, reviewType: "code", blastRadiusGuard },
+      { store, worktreePath: "/wt", runContext: TEST_RUN_CONTEXT, sessionRef, reviewType: "code", blastRadiusGuard },
       makeTask([{ status: "in-progress" }]),
       0,
       "baseSHA",

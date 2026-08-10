@@ -105,6 +105,7 @@ export type ExecuteWorkflowStepDeps = {
   activePlanningWorkflowSessions: Set<string>;
   activeWorkflowStepSessions: Map<string, AgentSession>;
   getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   captureModifiedFiles: AnyFn;
   createSpawnAgentTool: AnyFn;
   /** FNXC:CodeOrganization 2026-08-03-22:25: plan-review prompt-write uses shared free factory */
@@ -674,7 +675,7 @@ CRITICAL SCOPING RULES — read before doing anything else:
         fallbackModelId: workflowFallback.modelId,
         fallbackThinkingLevel: workflowStepFallbackThinkingLevel,
         defaultThinkingLevel: workflowStepThinkingLevel,
-        runAuditor: createRunAuditor(deps.store, deps.getRunContextFor(task.id)),
+        runAuditor: createRunAuditor(deps.store, deps.runContextFor(task.id)),
         settings,
         taskEnv: stepEnv,
         mcpServers: await deps.resolveMcpServers(undefined),
