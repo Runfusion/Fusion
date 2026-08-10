@@ -14,6 +14,7 @@ import {
   isEphemeralDeletionPending,
 } from "../ephemeral-deletion-pending.js";
 import { buildInjectedRuntimeEnv } from "../build-injected-runtime-env.js";
+import { releaseExternalExecutionActiveWorktree } from "../active-worktrees.js";
 
 describe("hasLiveSessionSurface", () => {
   it("is true when any session map owns the task", () => {
@@ -72,6 +73,30 @@ describe("getWorktreePath", () => {
     const paths = (id: string) => (id === "T1" ? ["/only"] : []);
     expect(getWorktreePath(null, paths, "T1")).toBe("/only");
     expect(getWorktreePath({ repos: [] }, paths, "T1")).toBeUndefined();
+  });
+});
+
+describe("releaseExternalExecutionActiveWorktree", () => {
+  it("releases only the external task binding and leaves unrelated holders intact", () => {
+    const activeWorktrees = new Map<string, Set<string>>([
+      ["external", new Set(["/operator-owned"])],
+      ["other", new Set(["/managed"])],
+    ]);
+
+    releaseExternalExecutionActiveWorktree(activeWorktrees, "external", true);
+
+    expect(activeWorktrees.has("external")).toBe(false);
+    expect(activeWorktrees.get("other")).toEqual(new Set(["/managed"]));
+  });
+
+  it("preserves managed worktree bindings", () => {
+    const activeWorktrees = new Map<string, Set<string>>([
+      ["managed", new Set(["/managed"])],
+    ]);
+
+    releaseExternalExecutionActiveWorktree(activeWorktrees, "managed", false);
+
+    expect(activeWorktrees.get("managed")).toEqual(new Set(["/managed"]));
   });
 });
 

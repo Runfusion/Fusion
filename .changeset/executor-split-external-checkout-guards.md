@@ -2,6 +2,6 @@
 "@runfusion/fusion": patch
 ---
 
-summary: Preserve external checkout ownership guards across the executor module split.
+summary: Prevent Fusion from modifying or deleting operator-owned external execution checkouts.
 category: fix
-dev: Adds extraction ratchets for cleanup, preflight, reconciliation, and worktree backend wiring.
+dev: Preserves base capture while fencing managed cleanup, reconciliation, and worktree backend behavior.

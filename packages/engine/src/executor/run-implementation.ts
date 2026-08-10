@@ -152,6 +152,7 @@ import { StepSessionExecutor } from "../execution/step-session-executor.js";
 import { isResearchToolSurfaceEnabled } from "../execution/tool-availability.js";
 import { summarizeVerificationOutput } from "../execution/verification-utils.js";
 import { buildAgentPersona } from "./agent-binding-pure.js";
+import { releaseExternalExecutionActiveWorktree } from "./active-worktrees.js";
 import { evaluateImplicitCompletionRefusal } from "./completion-predicates.js";
 import {
   configuredCommandErrorMessage,
@@ -762,14 +763,16 @@ export async function runImplementation(
 
       /*
       FNXC:Workspace 2026-06-21-12:00:
-      KTD1 — every preflight below (base-commit capture, contamination check, worktree-liveness gate) runs git against `worktreePath`, which equals the non-git workspace root in workspace mode. They would all fail. Gate the whole block off in workspace mode; the per-repo equivalents return in Phase B (master U3) against each acquired sub-repo worktree. The non-workspace branch is unchanged.
+      KTD1 — the git preflights below run against `worktreePath`, which equals the non-git workspace root in workspace mode. The per-repo equivalents return in Phase B (master U3) against each acquired sub-repo worktree.
+
+      FNXC:ExternalExecutionCheckout 2026-08-10-03:05:
+      An operator-routed checkout still needs the read-only base snapshot used by modified-file capture. It must not enter contamination or managed-worktree liveness checks: the persisted checkout is deliberately operator-owned and lives outside Fusion's worktree directory.
       */
-      if (!deps.workspaceConfig && !externalExecutionRoute.configured) {
-      // Capture the base commit SHA for diff computation whenever a task
-      // starts with a newly assigned worktree.
-      if (!acquisition.isResume) {
+      if (!deps.workspaceConfig && !acquisition.isResume) {
         await captureBaseCommitSha(deps.store, task, worktreePath, audit, { isResume: false });
       }
+
+      if (!deps.workspaceConfig && !externalExecutionRoute.configured) {
 
       // Contamination check must use a FRESH merge-base with the integration
       // branch — NOT task.baseCommitSha. baseCommitSha is intentionally
@@ -3623,6 +3626,16 @@ export async function runImplementation(
         deps.options.onError?.(task, err instanceof Error ? err : new Error(errorMessage));
       }
     } finally {
+      /*
+      FNXC:ExternalExecutionCheckout 2026-08-10-03:13:
+      External checkouts remain operator-owned and are never removed by Fusion, but every run exit must clear their in-memory active-worktree ownership before any awaited teardown or executor-lock release. This prevents teardown errors from retaining a phantom holder and prevents an old run from deleting a successor run's binding.
+      */
+      releaseExternalExecutionActiveWorktree(
+        deps.activeWorktrees,
+        task.id,
+        externalExecutionRoute.configured,
+      );
+
       if (reviewAddressingActivated) {
         const latestTask = await deps.store.getTask(task.id);
         if (taskDone) {

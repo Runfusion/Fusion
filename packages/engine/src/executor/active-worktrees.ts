@@ -25,3 +25,15 @@ export function getActiveWorktreePaths(
   const set = activeWorktrees.get(taskId);
   return set ? Array.from(set) : [];
 }
+
+/**
+ * FNXC:ExternalExecutionCheckout 2026-08-10-03:13:
+ * Operator-owned external checkouts stay on disk, but the executor must release their in-memory ownership binding on every run exit. Managed worktrees keep their existing lifecycle because their cleanup paths own that binding separately.
+ */
+export function releaseExternalExecutionActiveWorktree(
+  activeWorktrees: Map<string, Set<string>>,
+  taskId: string,
+  externalExecutionConfigured: boolean,
+): void {
+  if (externalExecutionConfigured) activeWorktrees.delete(taskId);
+}
