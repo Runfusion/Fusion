@@ -10,6 +10,9 @@
  *
  * FNXC:WorkflowLifecycleColumns 2026-07-30-21:40:
  * Resume-router gate uses resolved lanes, not default-lineage literals.
+ *
+ * FNXC:WorkflowRemediation 2026-08-09-21:41:
+ * FN-8910: completed work + policy-refused remediation stays parked in review.
  */
 import type { TaskDetail, TaskStore } from "@fusion/core";
 import { COMPLETION_SUMMARY_NODE_ID } from "@fusion/core";
@@ -30,6 +33,11 @@ export type RouteGraphFailureToExecutionResumeDeps = {
   ) => Promise<ResumeLanes>;
   clearTerminalStepFailuresForRetry: (taskId: string) => Promise<void>;
   persistTokenUsage: (taskId: string) => Promise<void>;
+  /**
+   * FNXC:WorkflowRemediation 2026-08-09-21:41:
+   * Detects fire-and-forget remediation / plan-replan nodes (IR action + built-in ids).
+   */
+  isRemediationGraphNode: (taskId: string, failedNode: string | undefined) => Promise<boolean>;
 };
 
 export async function routeGraphFailureToExecutionResume(
@@ -77,6 +85,16 @@ export async function routeGraphFailureToExecutionResume(
      */
     if (failedNode === COMPLETION_SUMMARY_NODE_ID) return false;
     const incompleteSteps = hasNonTerminalWorkflowSteps(live);
+    /*
+     * FNXC:WorkflowRemediation 2026-08-09-21:41:
+     * FN-8910: fire-and-forget remediation nodes have no failure edge. A policy
+     * or budget refusal after implementation is complete must park visibly in
+     * the resolved review lane, not clear blockers and eject the card to planning.
+     * IR workflowAction detection keeps custom renamed remediation nodes covered.
+     */
+    if (!incompleteSteps
+      && (failureValue === "remediation-not-scheduled" || failureValue === "missing-remediation-context")
+      && await deps.isRemediationGraphNode(live.id, failedNode)) return false;
     const implementationIncompleteMergeFailure = isMergeGraphFailure(failedNode) && failureValue === "implementation-incomplete";
     if (implementationIncompleteMergeFailure && !incompleteSteps) return false;
     const prematureMergeWithIncompleteSteps = implementationIncompleteMergeFailure && incompleteSteps;

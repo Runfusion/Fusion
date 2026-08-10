@@ -731,6 +731,8 @@ export function buildRouteGraphFailureToExecutionResumeDeps(host: any): any {
     ...facadeMethods(host, [
       "getRunContextFor", "resolveResumeLanes", "clearTerminalStepFailuresForRetry",
       "persistTokenUsage",
+      // FNXC:WorkflowRemediation 2026-08-09-21:41: FN-8910 completed-review park for refused remediation.
+      "isRemediationGraphNode",
     ]),
   };
 }
