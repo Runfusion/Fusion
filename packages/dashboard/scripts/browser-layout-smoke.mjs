@@ -30,6 +30,45 @@ const planApprovalDesktopScreenshotPath = process.env.FUSION_PLAN_APPROVAL_DESKT
 const planApprovalMobileScreenshotPath = process.env.FUSION_PLAN_APPROVAL_MOBILE_SCREENSHOT;
 const smokeTheme = process.env.FUSION_BROWSER_SMOKE_THEME === "light" ? "light" : "dark";
 
+/*
+FNXC:QuickAddActionRow 2026-07-17-12:00:
+FN-8299 protects the localized Quick Add Save label with a production-CSS browser fixture.
+The Board column's 300px effective minimum content width is the supported boundary: below it,
+a fixed-height single-line action cannot promise an unbreakable label without changing the UX.
+Render every supported translation here so the smoke measures the widest emitted-font label
+instead of assuming French is widest from character count.
+
+FNXC:QuickAddActionRow 2026-07-18-11:22:
+The fixture must include all five production icon controls before Save, including the session
+advisor toggle. Omitting it understates the primary group's minimum width and could conceal a
+300px overflow or wrap regression on either Board or List.
+
+FNXC:QuickAddActionRow 2026-08-07-23:56:
+pt-BR joined the supported translations (the scaffold was previously empty and now carries
+machine-drafted translations) — add it here so the smoke keeps measuring the widest
+emitted-font label across every shipped locale.
+
+FNXC:QuickAddActionRow 2026-08-10-05:12:
+Keep the executable cardinality check derived from these locale and surface matrices. A new
+locale must expand the browser fixture without leaving the runtime assertion stale.
+*/
+const localizedSaveLabels = [
+  ["en", "Save"],
+  ["es", "Guardar"],
+  ["fr", "Enregistrer"],
+  ["ko", "저장"],
+  ["pt-BR", "Salvar"],
+  ["zh-CN", "保存"],
+  ["zh-TW", "儲存"],
+];
+const quickAddComposerFixtureVariants = [
+  ["board", "", "minimum", "300px", "disabled"],
+  ["board", "", "wide", "600px", "disabled"],
+  ["list", "quick-entry--single-line", "minimum", "300px", "enabled"],
+  ["list", "quick-entry--single-line", "wide", "600px", "enabled"],
+];
+export const quickAddSaveFixtureCount = localizedSaveLabels.length * quickAddComposerFixtureVariants.length;
+
 function log(message) {
   console.log(`[dashboard-browser-smoke] ${message}`);
 }
@@ -138,39 +177,8 @@ export function createSmokeHtml() {
       <div class="live-agent-card-footer">Active</div>
     </div>`).join("");
 
-  /*
-  FNXC:QuickAddActionRow 2026-07-17-12:00:
-  FN-8299 protects the localized Quick Add Save label with a production-CSS browser fixture.
-  The Board column's 300px effective minimum content width is the supported boundary: below it,
-  a fixed-height single-line action cannot promise an unbreakable label without changing the UX.
-  Render every supported translation here so the smoke measures the widest emitted-font label
-  instead of assuming French is widest from character count.
-
-  FNXC:QuickAddActionRow 2026-07-18-11:22:
-  The fixture must include all five production icon controls before Save, including the session
-  advisor toggle. Omitting it understates the primary group's minimum width and could conceal a
-  300px overflow or wrap regression on either Board or List.
-
-  FNXC:QuickAddActionRow 2026-08-07-23:56:
-  pt-BR joined the supported translations (the scaffold was previously empty and now carries
-  machine-drafted translations) — add it here so the smoke keeps measuring the widest
-  emitted-font label across every shipped locale.
-  */
-  const localizedSaveLabels = [
-    ["en", "Save"],
-    ["es", "Guardar"],
-    ["fr", "Enregistrer"],
-    ["ko", "저장"],
-    ["pt-BR", "Salvar"],
-    ["zh-CN", "保存"],
-    ["zh-TW", "儲存"],
-  ];
-  const quickAddComposerFixtures = [
-    ["board", "", "minimum", "300px", "disabled"],
-    ["board", "", "wide", "600px", "disabled"],
-    ["list", "quick-entry--single-line", "minimum", "300px", "enabled"],
-    ["list", "quick-entry--single-line", "wide", "600px", "enabled"],
-  ].flatMap(([surface, modifier, width, maxWidth, state]) => localizedSaveLabels.map(([locale, label]) => `
+  const quickAddComposerFixtures = quickAddComposerFixtureVariants.flatMap(
+    ([surface, modifier, width, maxWidth, state]) => localizedSaveLabels.map(([locale, label]) => `
     <section class="quick-entry-smoke-fixture" data-smoke="quick-add-save-${surface}-${width}-${locale}" style="width: min(${maxWidth}, calc(100vw - 24px)); margin: 0 auto 12px;">
       <div class="quick-entry-box quick-entry-box--expanded ${modifier}" data-smoke="quick-add-${surface}-composer">
         <div class="quick-entry-actions" data-smoke="quick-add-save-row">
@@ -185,7 +193,8 @@ export function createSmokeHtml() {
         </div>
       </div>
     </section>
-  `)).join("");
+  `),
+  ).join("");
 
   /*
   FNXC:TaskDetailModalResponsive 2026-07-19-12:00:
@@ -1960,7 +1969,7 @@ async function runSmokeChecks(page, pageUrl) {
   assertSmokeResult(
     "Quick Add localized Save labels fit at the 300px supported minimum on mobile",
     frenchMobileWidth === widestMobileWidth
-      && mobileQuickAddSaveLayout.length === 24
+      && mobileQuickAddSaveLayout.length === quickAddSaveFixtureCount
       && mobileQuickAddSaveLayout.every((layout) => layout.saveOverflow <= 1
         && layout.rowOverflow <= 1
         && layout.composerOverflow <= 1
@@ -2023,7 +2032,7 @@ async function runSmokeChecks(page, pageUrl) {
   assertSmokeResult(
     "Quick Add localized Save labels fit at the 300px supported minimum on desktop",
     frenchDesktopWidth === widestDesktopWidth
-      && desktopQuickAddSaveLayout.length === 24
+      && desktopQuickAddSaveLayout.length === quickAddSaveFixtureCount
       && desktopQuickAddSaveLayout.every((layout) => layout.saveOverflow <= 1
         && layout.rowOverflow <= 1
         && layout.composerOverflow <= 1

@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { createSmokeHtml, prepareBrowserSmoke } from "../../scripts/browser-layout-smoke.mjs";
+import {
+  createSmokeHtml,
+  prepareBrowserSmoke,
+  quickAddSaveFixtureCount,
+} from "../../scripts/browser-layout-smoke.mjs";
 
 describe("browser layout smoke fixture", () => {
   /*
@@ -186,6 +190,13 @@ describe("browser layout smoke fixture", () => {
     for (const label of ["Save", "Guardar", "Enregistrer", "저장", "保存", "儲存"]) {
       expect(html).toContain(label);
     }
+  });
+
+  it("derives the executable Quick Add fixture cardinality instead of hard-coding the locale count", () => {
+    const html = createSmokeHtml();
+    const fixtures = html.match(/data-smoke="quick-add-save-(?:board|list)-(?:minimum|wide)-[^"]+"/g) ?? [];
+    expect(quickAddSaveFixtureCount).toBe(28);
+    expect(fixtures).toHaveLength(quickAddSaveFixtureCount);
   });
 
   /*
