@@ -12,6 +12,14 @@ The test invokes the exported helper directly with a fake store so the assertion
 does not depend on the full sweep pipeline.
 */
 import { describe, expect, it, vi } from "vitest";
+/*
+FNXC:Identity 2026-08-09-03:04 (U18/KTD2):
+These call-arg assertions now include the mutation context the converted sweep passes.
+Adding it is what keeps them load-bearing: left at the old arity every
+`toHaveBeenCalledWith` here would fail, and every `.not.toHaveBeenCalledWith` would pass
+vacuously — an assertion that can no longer fail is worse than one that is red.
+*/
+import { UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 import "@fusion/core"; // register built-in traits
 import type { Task, TaskStore, WorkflowIr } from "@fusion/core";
 import { autoRecoverWorktreeSessionStartFailure } from "../self-healing.js";
@@ -56,7 +64,7 @@ describe("self-healing recovery rebound — trait re-key (U6/KTD-10)", () => {
     const store = fakeStore({ selection: undefined }); // no selection → builtin:coding
     const result = await recover(store, recoveredTask());
     expect(result.outcome).toBe("requeue-todo");
-    expect(store.moveTask).toHaveBeenCalledWith("FN-R1", "todo", expect.objectContaining({ recoveryRehome: true }));
+    expect(store.moveTask).toHaveBeenCalledWith("FN-R1", "todo", expect.objectContaining({ recoveryRehome: true }), UNATTRIBUTED_MUTATION_CONTEXT);
   });
 
   it("requeues to the custom workflow's HOLD column (KTD-10) instead of literal todo", async () => {
@@ -74,7 +82,7 @@ describe("self-healing recovery rebound — trait re-key (U6/KTD-10)", () => {
     } as WorkflowIr;
     const store = fakeStore({ selection: { workflowId: "custom:wf", stepIds: [] }, ir: customIr });
     await recover(store, recoveredTask());
-    expect(store.moveTask).toHaveBeenCalledWith("FN-R1", "backlog", expect.objectContaining({ recoveryRehome: true }));
+    expect(store.moveTask).toHaveBeenCalledWith("FN-R1", "backlog", expect.objectContaining({ recoveryRehome: true }), UNATTRIBUTED_MUTATION_CONTEXT);
   });
 
   it("falls back to the intake column when the custom workflow has no hold column", async () => {
@@ -91,7 +99,7 @@ describe("self-healing recovery rebound — trait re-key (U6/KTD-10)", () => {
     } as WorkflowIr;
     const store = fakeStore({ selection: { workflowId: "custom:nohold", stepIds: [] }, ir: noHoldIr });
     await recover(store, recoveredTask());
-    expect(store.moveTask).toHaveBeenCalledWith("FN-R1", "inbox", expect.objectContaining({ recoveryRehome: true }));
+    expect(store.moveTask).toHaveBeenCalledWith("FN-R1", "inbox", expect.objectContaining({ recoveryRehome: true }), UNATTRIBUTED_MUTATION_CONTEXT);
   });
 
   it("keeps the legacy `todo` fallback when IR resolution fails", async () => {
@@ -103,7 +111,7 @@ describe("self-healing recovery rebound — trait re-key (U6/KTD-10)", () => {
       getTaskWorkflowSelection: vi.fn(() => { throw new Error("selection unavailable"); }),
     } as unknown as TaskStore;
     await recover(store, recoveredTask());
-    expect(store.moveTask).toHaveBeenCalledWith("FN-R1", "todo", expect.objectContaining({ recoveryRehome: true }));
+    expect(store.moveTask).toHaveBeenCalledWith("FN-R1", "todo", expect.objectContaining({ recoveryRehome: true }), UNATTRIBUTED_MUTATION_CONTEXT);
   });
 
   it("preserves progress on the rebound when the card has step progress", async () => {
@@ -112,7 +120,7 @@ describe("self-healing recovery rebound — trait re-key (U6/KTD-10)", () => {
     expect(store.moveTask).toHaveBeenCalledWith(
       "FN-R1",
       "todo",
-      expect.objectContaining({ recoveryRehome: true, preserveProgress: true }),
+      expect.objectContaining({ recoveryRehome: true, preserveProgress: true }), UNATTRIBUTED_MUTATION_CONTEXT,
     );
   });
 });

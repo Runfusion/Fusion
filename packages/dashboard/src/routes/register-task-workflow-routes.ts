@@ -119,7 +119,7 @@ import { buildBoardWorkflowsPayload } from "./board-workflows.js";
 import { resolveNativeStructurePreview } from "../native-structure-preview.js";
 import { isBackwardMoveBlockedByOpenPr, PR_OPEN_BLOCKS_MOVE_BACK_MESSAGE } from "./register-pull-requests-routes.js";
 import { computePlanApprovalFingerprint, isTaskAwaitingPlanning, isWorkspaceTask, type RunAuditEventInput } from "@fusion/core";
-import { FUSION_CLIENT_HEADER, resolveHttpDeleteCallerKind, BOOTSTRAP_ACTOR_CONTEXT } from "@fusion/core";
+import { FUSION_CLIENT_HEADER, resolveHttpDeleteCallerKind, BOOTSTRAP_ACTOR_CONTEXT, UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 import { ApiError, badRequest, conflict, notFound } from "../api-error.js";
 // FNXC:TaskLookup404 2026-07-26-11:40: shared task-miss -> 404 mapping seam.
 import { isTaskLookupMiss, rethrowTaskApiError } from "./task-lookup-error.js";
@@ -2807,11 +2807,21 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       }
 
       const createAiUndoResult = async (): Promise<AiUndoTaskResult> =>
+        /*
+        FNXC:Identity 2026-08-09-03:04 (U18/KTD2):
+        `createAiUndoTask` now REQUIRES a mutation context — the engine seam stopped re-declaring
+        `createTask` at an arity that could not carry one. The real actor here is the human who
+        pressed Undo, which this route cannot resolve until U9 threads authenticated actors through
+        the HTTP layer; the marker holds that place and is greppable for U9's work list. Do not
+        substitute the bootstrap actor: that would make an unwired route indistinguishable from a
+        genuine pre-enablement write.
+        */
         createAiUndoTask({
-          createTask: (input) => scopedStore.createTask(input),
+          createTask: (input, options, runContext) => scopedStore.createTask(input, options, runContext),
           findOpenRevertTaskForSource: (id) => scopedStore.findOpenRevertTaskForSource(id),
           sourceTask: task,
           workflowId: aiUndoWorkflowId,
+          runContext: UNATTRIBUTED_MUTATION_CONTEXT,
         });
 
       /*

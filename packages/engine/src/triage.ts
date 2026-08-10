@@ -3071,6 +3071,8 @@ export class TriageProcessor {
           store: this.store,
           taskId: task.id,
           taskTitle: task.title,
+          // FNXC:Identity 2026-08-09-03:04 (U18/KTD2): derived from the live triage run context.
+          runContext: toRunMutationContext(triageRunContext),
         });
         const onFallbackModelUsed = (payload: Parameters<typeof fallbackObserver>[0]): Promise<void> => {
           planningAttempt.fallbackEngaged = true;

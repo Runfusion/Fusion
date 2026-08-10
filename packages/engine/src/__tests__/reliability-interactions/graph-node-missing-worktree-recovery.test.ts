@@ -1,4 +1,12 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
+/*
+FNXC:Identity 2026-08-09-03:04 (U18/KTD2):
+These call-arg assertions now include the mutation context the converted sweep passes.
+Adding it is what keeps them load-bearing: left at the old arity every
+`toHaveBeenCalledWith` here would fail, and every `.not.toHaveBeenCalledWith` would pass
+vacuously — an assertion that can no longer fail is worse than one that is red.
+*/
+import { UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 import type { TaskDetail } from "@fusion/core";
 import "../executor-test-helpers.js";
 import { PLAN_REVIEW_PROVIDER_FAILURE_HOLD_VALUE } from "../../workflows/workflow-graph-executor.js";
@@ -138,7 +146,7 @@ describe("graph-node unusable-worktree failure recovery (FN-7996)", () => {
     expect(store.moveTask).toHaveBeenCalledWith(
       initial.id,
       "todo",
-      expect.objectContaining({ moveSource: "engine", recoveryRehome: true }),
+      expect.objectContaining({ moveSource: "engine", recoveryRehome: true }), UNATTRIBUTED_MUTATION_CONTEXT,
     );
   });
 
@@ -168,7 +176,7 @@ describe("graph-node unusable-worktree failure recovery (FN-7996)", () => {
     expect(live.column).toBe("in-progress");
     expect(live.status).toBe("failed");
     expect(String(live.error)).toContain("plan-review::plan-review-step");
-    expect(store.moveTask).not.toHaveBeenCalledWith(initial.id, "todo", expect.anything());
+    expect(store.moveTask).not.toHaveBeenCalledWith(initial.id, "todo", expect.anything(), UNATTRIBUTED_MUTATION_CONTEXT);
   });
 
   it("does not intercept graph failures without the worktree refusal signature", async () => {

@@ -43,7 +43,7 @@ import {
 } from "../agents/agent-instructions.js";
 import { buildPromptLayers, collapsePromptLayers } from "./prompt-layers.js";
 import { createFallbackModelObserver } from "../auth/fallback-model-observer.js";
-import { createRunAuditor, generateSyntheticRunId } from "../util/run-audit.js";
+import { createRunAuditor, generateSyntheticRunId, toRunMutationContext, type EngineRunContext } from "../util/run-audit.js";
 import { createMemoryGetTool, createMemorySearchTool, createTaskPromptWriteTool, createWebFetchTool } from "../agent-tools.js";
 import { buildUserCommentsPromptSection } from "../agents/agent-user-comments.js";
 import { resolveMcpServersForStore } from "../mcp/mcp-resolution.js";
@@ -510,15 +510,16 @@ export async function reviewStep(
         options.onText?.(delta);
       }
     };
-    const runAuditor = options.store
-      ? createRunAuditor(options.store, {
-        runId: generateSyntheticRunId("reviewer", options.taskId ?? "review"),
-        agentId: options.agentId ?? "reviewer",
-        taskId: options.taskId,
-        phase: "review",
-        source: "reviewer",
-      })
-      : undefined;
+    /* FNXC:Identity 2026-08-09-03:04 (U18/KTD2): hoisted so run-audit and the fallback observer's
+       task-log write name the SAME reviewer run. Derived attribution. */
+    const reviewerRunContext: EngineRunContext = {
+      runId: generateSyntheticRunId("reviewer", options.taskId ?? "review"),
+      agentId: options.agentId ?? "reviewer",
+      taskId: options.taskId,
+      phase: "review",
+      source: "reviewer",
+    };
+    const runAuditor = options.store ? createRunAuditor(options.store, reviewerRunContext) : undefined;
     const reviewCustomTools = [
       createWebFetchTool(),
       ...(canWritePromptInline && options.store && options.taskId ? [createTaskPromptWriteTool(options.store, options.taskId)] : []),
@@ -563,6 +564,7 @@ export async function reviewStep(
         store: options.store,
         taskId: options.taskId,
         taskTitle: options.taskTitle,
+        runContext: toRunMutationContext(reviewerRunContext),
       }),
       beforeSpawnSession: async () => {
         if (!options.store) return;

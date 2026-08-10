@@ -1195,6 +1195,7 @@ export function buildColumnBoundaryHooksFacadeDeps(host: any): any {
   return {
     store: host.store,
     workflowLifecycleMovesInFlight: host.workflowLifecycleMovesInFlight,
+    getRunContextFor: (taskId: string) => host.getRunContextFor(taskId),
   };
 }
 

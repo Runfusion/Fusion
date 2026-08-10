@@ -3,7 +3,7 @@
  * archiveAsGhostBug peeled from self-healing.ts (U5 / wave19 Slice A).
  */
 import type { TaskStore } from "@fusion/core";
-import { resolveArchiveTargetForTask } from "@fusion/core";
+import { resolveArchiveTargetForTask, UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 import type { GhostBugDecision } from "../triage-domain/triage-preflight.js";
 
 /**
@@ -21,6 +21,7 @@ export async function archiveAsGhostBug(
     taskId,
     "Auto-archived as ghost bug — cited code construct not present on main",
     JSON.stringify({ reason: decision.reason, findings: decision.findings }, null, 2),
+    UNATTRIBUTED_MUTATION_CONTEXT,
   );
   await store.recordActivity({
     type: "task:auto-archived-ghost-bug",
@@ -32,5 +33,5 @@ export async function archiveAsGhostBug(
       findings: decision.findings.slice(0, 10),
     },
   });
-  await store.moveTask(taskId, await resolveArchiveTargetForTask(store, taskId), { moveSource: "engine", recoveryRehome: true });
+  await store.moveTask(taskId, await resolveArchiveTargetForTask(store, taskId), { moveSource: "engine", recoveryRehome: true }, UNATTRIBUTED_MUTATION_CONTEXT);
 }

@@ -1,4 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
+/*
+FNXC:Identity 2026-08-09-03:04 (U18/KTD2):
+These call-arg assertions now include the mutation context the converted sweep passes.
+Adding it is what keeps them load-bearing: left at the old arity every
+`toHaveBeenCalledWith` here would fail, and every `.not.toHaveBeenCalledWith` would pass
+vacuously — an assertion that can no longer fail is worse than one that is red.
+*/
+import { UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 import type { TaskDetail } from "@fusion/core";
 import "../executor-test-helpers.js";
 import {
@@ -580,7 +588,7 @@ describe("execute requeue loop guard", () => {
     expect(h.live).toMatchObject({ column: "in-review", paused: false, status: null, blockedBy: null });
     expect(h.store.logEntry).toHaveBeenCalledWith(
       "FN-7926-ADVANCE",
-      expect.stringContaining("Auto-advanced completed blocked work to review after blocker cleared"),
+      expect.stringContaining("Auto-advanced completed blocked work to review after blocker cleared"), undefined, UNATTRIBUTED_MUTATION_CONTEXT,
     );
   });
 

@@ -1,4 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+/*
+FNXC:Identity 2026-08-09-03:04 (U18/KTD2):
+These call-arg assertions now include the mutation context the converted sweep passes.
+Adding it is what keeps them load-bearing: left at the old arity every
+`toHaveBeenCalledWith` here would fail, and every `.not.toHaveBeenCalledWith` would pass
+vacuously — an assertion that can no longer fail is worse than one that is red.
+*/
+import { UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 import { EventEmitter } from "node:events";
 import type { Settings, Task, TaskStore } from "@fusion/core";
 
@@ -126,7 +134,7 @@ describe("self-healing completion fan-out", () => {
     expect((await store.getTask("FN-PAUSE"))?.blockedBy).toBe("FN-B");
     expect((store as any).logEntry).toHaveBeenCalledWith(
       "FN-CLEAR",
-      expect.stringContaining("FN-4523"),
+      expect.stringContaining("FN-4523"), undefined, UNATTRIBUTED_MUTATION_CONTEXT,
     );
   });
 
@@ -341,7 +349,7 @@ describe("the task:moved fan-out resolves the board's own lanes", () => {
 
     expect(store.updateTask).toHaveBeenCalledWith(
       "FN-DEP",
-      expect.objectContaining({ blockedBy: null }),
+      expect.objectContaining({ blockedBy: null }), UNATTRIBUTED_MUTATION_CONTEXT,
     );
     mgr.stop();
   });

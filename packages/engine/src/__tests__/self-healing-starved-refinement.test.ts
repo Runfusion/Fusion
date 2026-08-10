@@ -1,4 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
+/*
+FNXC:Identity 2026-08-09-03:04 (U18/KTD2):
+These call-arg assertions now include the mutation context the converted sweep passes.
+Adding it is what keeps them load-bearing: left at the old arity every
+`toHaveBeenCalledWith` here would fail, and every `.not.toHaveBeenCalledWith` would pass
+vacuously — an assertion that can no longer fail is worse than one that is red.
+*/
+import { UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -71,7 +79,7 @@ describe("SelfHealingManager.recoverStarvedRefinementTriageTasks", () => {
     await expect(manager.recoverStarvedRefinementTriageTasks()).resolves.toBe(0);
 
     expect(updateTask).toHaveBeenCalledTimes(1);
-    expect(updateTask).toHaveBeenCalledWith("FN-R1", { priority: "normal" });
+    expect(updateTask).toHaveBeenCalledWith("FN-R1", { priority: "normal" }, UNATTRIBUTED_MUTATION_CONTEXT);
     expect(recordRunAuditEvent).toHaveBeenCalledTimes(1);
     expect(recordRunAuditEvent.mock.calls[0][0]).toMatchObject({ mutationType: "task:auto-recover-starved-refinement", target: "FN-R1" });
     vi.useRealTimers();
@@ -131,7 +139,7 @@ describe("SelfHealingManager.recoverStarvedRefinementTriageTasks", () => {
 
     const manager = new SelfHealingManager(store, { rootDir: process.cwd(), getPlanningTaskIds: () => new Set() });
     await expect(manager.recoverStarvedRefinementTriageTasks()).resolves.toBe(1);
-    expect(updateTask).toHaveBeenCalledWith("FN-R9", { priority: "normal" });
+    expect(updateTask).toHaveBeenCalledWith("FN-R9", { priority: "normal" }, UNATTRIBUTED_MUTATION_CONTEXT);
     vi.useRealTimers();
   });
 
@@ -346,7 +354,7 @@ describe("SelfHealingManager.recoverStarvedRefinementTriageTasks", () => {
 
       expect(recovered).toBe(true);
       expect(moveTask).toHaveBeenCalledWith("FN-RG2", "todo");
-      expect(updateTask).not.toHaveBeenCalledWith("FN-RG2", expect.objectContaining({ status: "awaiting-approval" }));
+      expect(updateTask).not.toHaveBeenCalledWith("FN-RG2", expect.objectContaining({ status: "awaiting-approval" }), UNATTRIBUTED_MUTATION_CONTEXT);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

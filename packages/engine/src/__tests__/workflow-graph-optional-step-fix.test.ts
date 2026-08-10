@@ -1,4 +1,12 @@
 import "./executor-test-helpers.js";
+/*
+FNXC:Identity 2026-08-09-03:04 (U18/KTD2):
+These call-arg assertions now include the mutation context the converted sweep passes.
+Adding it is what keeps them load-bearing: left at the old arity every
+`toHaveBeenCalledWith` here would fail, and every `.not.toHaveBeenCalledWith` would pass
+vacuously — an assertion that can no longer fail is worse than one that is red.
+*/
+import { UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 import { DEFAULT_MAX_POST_REVIEW_FIXES } from "@fusion/core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
@@ -97,7 +105,7 @@ describe("TaskExecutor pre-merge optional-step fix seam", () => {
     Kept as the expected column id rather than calling the resolver here: asserting the product's own
     resolver against itself would pass no matter which column it returned.
     */
-    expect(store.moveTask).toHaveBeenCalledWith(liveTask.id, "todo", { preserveWorktree: true });
+    expect(store.moveTask).toHaveBeenCalledWith(liveTask.id, "todo", { preserveWorktree: true }, UNATTRIBUTED_MUTATION_CONTEXT);
     expect(store.updateTask).toHaveBeenCalledWith(liveTask.id, expect.objectContaining({
       status: "needs-replan",
       recoveryRetryCount: 1,
@@ -359,7 +367,7 @@ describe("TaskExecutor pre-merge optional-step fix seam", () => {
       undefined,
     );
     // Resolved rebound column for the default lineage — see the note above.
-    expect(store.moveTask).toHaveBeenCalledWith("FN-7066", "todo", { preserveWorktree: true });
+    expect(store.moveTask).toHaveBeenCalledWith("FN-7066", "todo", { preserveWorktree: true }, UNATTRIBUTED_MUTATION_CONTEXT);
     expect(store.updateTask).toHaveBeenCalledWith("FN-7066", { postReviewFixCount: 1 }, undefined);
     expect(store.updateTask).toHaveBeenCalledWith("FN-7066", {
       status: "needs-replan",
@@ -466,7 +474,7 @@ describe("TaskExecutor pre-merge optional-step fix seam", () => {
         nodeId: "plan-review",
       });
 
-      expect(store.moveTask).toHaveBeenCalledWith(liveTask.id, "todo", { preserveWorktree: true });
+      expect(store.moveTask).toHaveBeenCalledWith(liveTask.id, "todo", { preserveWorktree: true }, UNATTRIBUTED_MUTATION_CONTEXT);
       expect(abortSpy).not.toHaveBeenCalled();
       expect((executor as any).pausedAborted.has(liveTask.id)).toBe(false);
     } finally {
@@ -560,7 +568,7 @@ describe("TaskExecutor pre-merge optional-step fix seam", () => {
     })).resolves.toBe(true);
 
     // Resolved rebound column for the default lineage — see the note above.
-    expect(store.moveTask).toHaveBeenCalledWith("FN-7066", "todo", { preserveWorktree: true });
+    expect(store.moveTask).toHaveBeenCalledWith("FN-7066", "todo", { preserveWorktree: true }, UNATTRIBUTED_MUTATION_CONTEXT);
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-7066",
       // Same interpolated-column reason as above; the attempt counter is what matters here.

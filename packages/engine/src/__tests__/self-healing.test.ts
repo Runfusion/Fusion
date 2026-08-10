@@ -8,6 +8,14 @@ and, because the converted sweeps resolve intake by ROLE, would have quietly
 asserted that the sweeps do nothing.
 */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+/*
+FNXC:Identity 2026-08-09-03:04 (U18/KTD2):
+These call-arg assertions now include the mutation context the converted sweep passes.
+Adding it is what keeps them load-bearing: left at the old arity every
+`toHaveBeenCalledWith` here would fail, and every `.not.toHaveBeenCalledWith` would pass
+vacuously — an assertion that can no longer fail is worse than one that is red.
+*/
+import { UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 
 // Mock node modules
 // Route async `exec` through the `execSync` mock so existing tests that set up
@@ -434,10 +442,10 @@ describe("SelfHealingManager", () => {
       const result = await manager.checkStuckBudget("FN-001");
 
       expect(result).toBe(true);
-      expect(store.updateTask).toHaveBeenCalledWith("FN-001", { stuckKillCount: 1 });
+      expect(store.updateTask).toHaveBeenCalledWith("FN-001", { stuckKillCount: 1 }, UNATTRIBUTED_MUTATION_CONTEXT);
       expect(store.logEntry).toHaveBeenCalledWith(
         "FN-001",
-        expect.stringContaining("Stuck kill 1/6"),
+        expect.stringContaining("Stuck kill 1/6"), undefined, UNATTRIBUTED_MUTATION_CONTEXT,
       );
     });
 
@@ -452,7 +460,7 @@ describe("SelfHealingManager", () => {
       const result = await manager.checkStuckBudget("FN-001");
 
       expect(result).toBe(true);
-      expect(store.updateTask).toHaveBeenCalledWith("FN-001", { stuckKillCount: 3 });
+      expect(store.updateTask).toHaveBeenCalledWith("FN-001", { stuckKillCount: 3 }, UNATTRIBUTED_MUTATION_CONTEXT);
     });
 
     it("walks stuck kills from 0 to max+1 and terminalizes deterministically", async () => {
@@ -480,14 +488,14 @@ describe("SelfHealingManager", () => {
         stuckKillCount: 7,
         status: "failed",
         error: "STUCK_LOOP_EXHAUSTED: stuck kill budget exhausted (7/6) after last reason=loop.",
-      });
+      }, UNATTRIBUTED_MUTATION_CONTEXT);
       expect(store.handoffToReview).toHaveBeenLastCalledWith("FN-001", expect.objectContaining({
         ownerAgentId: null,
         evidence: expect.objectContaining({ reason: "stuck-loop-exhausted", agentId: "self-healing" }),
       }));
       expect(store.logEntry).toHaveBeenLastCalledWith(
         "FN-001",
-        "STUCK_LOOP_EXHAUSTED: stuck kill budget exhausted (7/6), last reason=loop. No further automatic retries will run. Manually retry, pause, or move the task to triage to resume work.",
+        "STUCK_LOOP_EXHAUSTED: stuck kill budget exhausted (7/6), last reason=loop. No further automatic retries will run. Manually retry, pause, or move the task to triage to resume work.", undefined, UNATTRIBUTED_MUTATION_CONTEXT,
       );
     });
 
@@ -523,17 +531,17 @@ describe("SelfHealingManager", () => {
         checkoutLeaseRenewedAt: null,
         checkoutLeaseEpoch: 0,
         nextRecoveryAt: null,
-      }));
+      }), UNATTRIBUTED_MUTATION_CONTEXT);
       expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo", {
         preserveProgress: true,
         preserveStatus: true,
         moveSource: "engine",
         recoveryRehome: true,
-      });
+      }, UNATTRIBUTED_MUTATION_CONTEXT);
       expect(store.handoffToReview).not.toHaveBeenCalled();
       expect(store.logEntry).toHaveBeenCalledWith(
         "FN-001",
-        "STUCK_LOOP_EXHAUSTED: incomplete task exhausted stuck kill budget (7/6), last reason=loop. Parked in todo with progress preserved; no further automatic retries will run until an operator manually retries, decomposes, or rescopes the task.",
+        "STUCK_LOOP_EXHAUSTED: incomplete task exhausted stuck kill budget (7/6), last reason=loop. Parked in todo with progress preserved; no further automatic retries will run until an operator manually retries, decomposes, or rescopes the task.", undefined, UNATTRIBUTED_MUTATION_CONTEXT,
       );
     });
 
@@ -560,13 +568,13 @@ describe("SelfHealingManager", () => {
       expect(store.handoffToReview).not.toHaveBeenCalled();
       expect(store.logEntry).toHaveBeenCalledWith(
         "FN-001",
-        "STUCK_KILL: skipped stuck-budget recovery for loop because the task is user-paused; leaving paused.",
+        "STUCK_KILL: skipped stuck-budget recovery for loop because the task is user-paused; leaving paused.", undefined, UNATTRIBUTED_MUTATION_CONTEXT,
       );
       expect(store.updateTask).not.toHaveBeenCalledWith("FN-001", expect.objectContaining({
         paused: false,
         userPaused: false,
         status: "queued",
-      }));
+      }), UNATTRIBUTED_MUTATION_CONTEXT);
     });
 
     it("does not fall back to executor requeue when todo parking fails", async () => {
@@ -591,23 +599,23 @@ describe("SelfHealingManager", () => {
         status: "failed",
         paused: true,
         pausedReason: "stuck-loop-exhausted-manual-intervention-required",
-      }));
+      }), UNATTRIBUTED_MUTATION_CONTEXT);
       expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo", {
         preserveProgress: true,
         preserveStatus: true,
         moveSource: "engine",
         recoveryRehome: true,
-      });
+      }, UNATTRIBUTED_MUTATION_CONTEXT);
       expect(store.updateTask).not.toHaveBeenCalledWith("FN-001", expect.objectContaining({
         paused: false,
         userPaused: false,
         pausedReason: null,
         status: "queued",
-      }));
+      }), UNATTRIBUTED_MUTATION_CONTEXT);
       expect(store.handoffToReview).not.toHaveBeenCalled();
       expect(store.logEntry).toHaveBeenCalledWith(
         "FN-001",
-        "STUCK_LOOP_EXHAUSTED: incomplete task exhausted stuck kill budget (7/6), last reason=loop. Failed to move task to todo (database is busy); task was marked failed/paused in place and will not be automatically retried.",
+        "STUCK_LOOP_EXHAUSTED: incomplete task exhausted stuck kill budget (7/6), last reason=loop. Failed to move task to todo (database is busy); task was marked failed/paused in place and will not be automatically retried.", undefined, UNATTRIBUTED_MUTATION_CONTEXT,
       );
     });
 
@@ -634,11 +642,11 @@ describe("SelfHealingManager", () => {
         status: "failed",
         paused: true,
         pausedReason: "stuck-loop-exhausted-manual-intervention-required",
-      }));
+      }), UNATTRIBUTED_MUTATION_CONTEXT);
       expect(store.updateTask).not.toHaveBeenCalledWith("FN-001", expect.objectContaining({
         paused: false,
         status: "queued",
-      }));
+      }), UNATTRIBUTED_MUTATION_CONTEXT);
       expect(store.handoffToReview).not.toHaveBeenCalled();
     });
 
@@ -666,11 +674,11 @@ describe("SelfHealingManager", () => {
       expect(store.handoffToReview).not.toHaveBeenCalled();
       expect(store.logEntry).toHaveBeenCalledWith(
         "FN-001",
-        "STUCK_LOOP_EXHAUSTED: incomplete task failed to move to todo (database is busy), and the in-place park patch also failed (write conflict); pre-move park metadata was already applied, but operator verification is required before retry.",
+        "STUCK_LOOP_EXHAUSTED: incomplete task failed to move to todo (database is busy), and the in-place park patch also failed (write conflict); pre-move park metadata was already applied, but operator verification is required before retry.", undefined, UNATTRIBUTED_MUTATION_CONTEXT,
       );
       expect(store.logEntry).not.toHaveBeenCalledWith(
         "FN-001",
-        "STUCK_LOOP_EXHAUSTED: incomplete task exhausted stuck kill budget (7/6), last reason=loop. Failed to move task to todo (database is busy); task was marked failed/paused in place and will not be automatically retried.",
+        "STUCK_LOOP_EXHAUSTED: incomplete task exhausted stuck kill budget (7/6), last reason=loop. Failed to move task to todo (database is busy); task was marked failed/paused in place and will not be automatically retried.", undefined, UNATTRIBUTED_MUTATION_CONTEXT,
       );
     });
 
@@ -698,14 +706,14 @@ describe("SelfHealingManager", () => {
         preserveStatus: true,
         moveSource: "engine",
         recoveryRehome: true,
-      });
+      }, UNATTRIBUTED_MUTATION_CONTEXT);
       expect(store.logEntry).toHaveBeenCalledWith(
         "FN-001",
-        "STUCK_LOOP_EXHAUSTED: incomplete task moved to todo with progress preserved, but post-move park patch failed (write conflict); operator repair is required before retry.",
+        "STUCK_LOOP_EXHAUSTED: incomplete task moved to todo with progress preserved, but post-move park patch failed (write conflict); operator repair is required before retry.", undefined, UNATTRIBUTED_MUTATION_CONTEXT,
       );
       expect(store.logEntry).not.toHaveBeenCalledWith(
         "FN-001",
-        "STUCK_LOOP_EXHAUSTED: incomplete task exhausted stuck kill budget (7/6), last reason=loop. Parked in todo with progress preserved; no further automatic retries will run until an operator manually retries, decomposes, or rescopes the task.",
+        "STUCK_LOOP_EXHAUSTED: incomplete task exhausted stuck kill budget (7/6), last reason=loop. Parked in todo with progress preserved; no further automatic retries will run until an operator manually retries, decomposes, or rescopes the task.", undefined, UNATTRIBUTED_MUTATION_CONTEXT,
       );
       expect(store.handoffToReview).not.toHaveBeenCalled();
     });
@@ -727,14 +735,14 @@ describe("SelfHealingManager", () => {
       expect(store.updateTask).toHaveBeenCalledWith("FN-001", {
         status: "failed",
         error: "STUCK_NO_PROGRESS_CHURN: detected 25 ignored step-update rebuffs after compact-and-resume failed to recover progress. Task is likely too large; decompose via fn_task_create child tasks or rescope. No further automatic retries will run.",
-      });
+      }, UNATTRIBUTED_MUTATION_CONTEXT);
       expect(store.handoffToReview).toHaveBeenCalledWith("FN-001", expect.objectContaining({
         ownerAgentId: null,
         evidence: expect.objectContaining({ reason: "stuck-no-progress-churn", agentId: "self-healing" }),
       }));
       expect(store.logEntry).toHaveBeenCalledWith(
         "FN-001",
-        "STUCK_NO_PROGRESS_CHURN: detected 25 ignored step-update rebuffs after compact-and-resume failed to recover progress. No further automatic retries will run. Pause the task, manually decompose the work via fn_task_create child tasks, or move it to triage to rescope.",
+        "STUCK_NO_PROGRESS_CHURN: detected 25 ignored step-update rebuffs after compact-and-resume failed to recover progress. No further automatic retries will run. Pause the task, manually decompose the work via fn_task_create child tasks, or move it to triage to rescope.", undefined, UNATTRIBUTED_MUTATION_CONTEXT,
       );
       expect(store.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
         domain: "database",
@@ -776,7 +784,7 @@ describe("SelfHealingManager", () => {
       expect(result).toBe(true);
       expect(store.updateTask).not.toHaveBeenCalledWith(
         "FN-001",
-        expect.objectContaining({ error: expect.stringContaining("STUCK_LOOP_EXHAUSTED:") }),
+        expect.objectContaining({ error: expect.stringContaining("STUCK_LOOP_EXHAUSTED:") }), UNATTRIBUTED_MUTATION_CONTEXT,
       );
     });
 
@@ -796,7 +804,7 @@ describe("SelfHealingManager", () => {
         stuckKillCount: 7,
         status: "failed",
         error: "STUCK_LOOP_EXHAUSTED: stuck kill budget exhausted (7/6) after last reason=loop.",
-      });
+      }, UNATTRIBUTED_MUTATION_CONTEXT);
       expect(getSelfHealingLogger().warn).toHaveBeenCalledWith(
         expect.stringContaining("handoffTaskToReview failed (concurrent move)"),
       );
@@ -812,7 +820,7 @@ describe("SelfHealingManager", () => {
       const result = await manager.checkStuckBudget("FN-001");
 
       expect(result).toBe(true);
-      expect(store.updateTask).toHaveBeenCalledWith("FN-001", { stuckKillCount: 1 });
+      expect(store.updateTask).toHaveBeenCalledWith("FN-001", { stuckKillCount: 1 }, UNATTRIBUTED_MUTATION_CONTEXT);
     });
   });
 
@@ -905,8 +913,8 @@ describe("SelfHealingManager", () => {
 
       await manager.runStartupRecovery();
 
-      expect(store.updateTask).toHaveBeenCalledWith("A", { blockedBy: null, overlapBlockedBy: null, status: null });
-      expect(store.logEntry).toHaveBeenCalledWith("A", expect.stringContaining("Auto-recovered (FN-5488): cleared stale blockedBy"));
+      expect(store.updateTask).toHaveBeenCalledWith("A", { blockedBy: null, overlapBlockedBy: null, status: null }, UNATTRIBUTED_MUTATION_CONTEXT);
+      expect(store.logEntry).toHaveBeenCalledWith("A", expect.stringContaining("Auto-recovered (FN-5488): cleared stale blockedBy"), undefined, UNATTRIBUTED_MUTATION_CONTEXT);
     });
 
     it("runStartupRecovery emits engine downtime timing audit metadata", async () => {
@@ -955,7 +963,7 @@ describe("SelfHealingManager", () => {
 
       await manager.runStartupRecovery();
 
-      expect(store.updateTask).not.toHaveBeenCalledWith("A", { blockedBy: null, overlapBlockedBy: null, status: null });
+      expect(store.updateTask).not.toHaveBeenCalledWith("A", { blockedBy: null, overlapBlockedBy: null, status: null }, UNATTRIBUTED_MUTATION_CONTEXT);
     });
   });
 
@@ -2295,12 +2303,12 @@ describe("SelfHealingManager", () => {
         status: "stuck-killed",
         worktree: null,
         branch: null,
-      });
+      }, UNATTRIBUTED_MUTATION_CONTEXT);
       expect(store.logEntry).toHaveBeenCalledWith(
         "FN-1473",
-        expect.stringContaining("no-progress no-task_done failure"),
+        expect.stringContaining("no-progress no-task_done failure"), undefined, UNATTRIBUTED_MUTATION_CONTEXT,
       );
-      expect(store.moveTask).toHaveBeenCalledWith("FN-1473", "todo", { moveSource: "engine", recoveryRehome: true });
+      expect(store.moveTask).toHaveBeenCalledWith("FN-1473", "todo", { moveSource: "engine", recoveryRehome: true }, UNATTRIBUTED_MUTATION_CONTEXT);
 
       managerWithRecovery.stop();
     });
@@ -2326,8 +2334,8 @@ describe("SelfHealingManager", () => {
       const result = await managerWithRecovery.recoverNoProgressNoTaskDoneFailures();
 
       expect(result).toBe(0);
-      expect(store.updateTask).not.toHaveBeenCalledWith("FN-1473", expect.anything());
-      expect(store.moveTask).not.toHaveBeenCalledWith("FN-1473", "todo");
+      expect(store.updateTask).not.toHaveBeenCalledWith("FN-1473", expect.anything(), UNATTRIBUTED_MUTATION_CONTEXT);
+      expect(store.moveTask).not.toHaveBeenCalledWith("FN-1473", "todo", undefined, UNATTRIBUTED_MUTATION_CONTEXT);
 
       managerWithRecovery.stop();
     });
@@ -2353,8 +2361,8 @@ describe("SelfHealingManager", () => {
       const result = await managerWithRecovery.recoverNoProgressNoTaskDoneFailures();
 
       expect(result).toBe(0);
-      expect(store.updateTask).not.toHaveBeenCalledWith("FN-1473", expect.anything());
-      expect(store.moveTask).not.toHaveBeenCalledWith("FN-1473", "todo");
+      expect(store.updateTask).not.toHaveBeenCalledWith("FN-1473", expect.anything(), UNATTRIBUTED_MUTATION_CONTEXT);
+      expect(store.moveTask).not.toHaveBeenCalledWith("FN-1473", "todo", undefined, UNATTRIBUTED_MUTATION_CONTEXT);
 
       managerWithRecovery.stop();
     });
@@ -3662,7 +3670,7 @@ describe("SelfHealingManager", () => {
         worktree: liveWorktree,
         branch: "fusion/fn-3900",
         sessionFile: null,
-      });
+      }, UNATTRIBUTED_MUTATION_CONTEXT);
       /*
       FNXC:MissingWorktreeRecovery 2026-07-26-08:35:
       The rebound is a reopen move, and a reopen clears `task.worktree` unless `preserveWorktree` is
@@ -3672,21 +3680,21 @@ describe("SelfHealingManager", () => {
       expect(store.moveTask).toHaveBeenCalledWith(
         "FN-3900",
         "todo",
-        expect.not.objectContaining({ preserveWorktree: true }),
+        expect.not.objectContaining({ preserveWorktree: true }), UNATTRIBUTED_MUTATION_CONTEXT,
       );
       expect(store.logEntry).toHaveBeenCalledWith(
         "FN-3900",
-        expect.stringContaining("unusable worktree"),
+        expect.stringContaining("unusable worktree"), undefined, UNATTRIBUTED_MUTATION_CONTEXT,
       );
       expect(store.logEntry).toHaveBeenCalledWith(
         "FN-3900",
-        expect.stringContaining(liveWorktree),
+        expect.stringContaining(liveWorktree), undefined, UNATTRIBUTED_MUTATION_CONTEXT,
       );
       expect(store.logEntry).toHaveBeenCalledWith(
         "FN-3900",
-        expect.stringContaining("session-start unusable-worktree assertion"),
+        expect.stringContaining("session-start unusable-worktree assertion"), undefined, UNATTRIBUTED_MUTATION_CONTEXT,
       );
-      expect(store.moveTask).toHaveBeenCalledWith("FN-3900", "todo", { preserveProgress: true, moveSource: "engine", recoveryRehome: true });
+      expect(store.moveTask).toHaveBeenCalledWith("FN-3900", "todo", { preserveProgress: true, moveSource: "engine", recoveryRehome: true }, UNATTRIBUTED_MUTATION_CONTEXT);
 
       managerWithRecovery.stop();
       } finally {
@@ -3781,7 +3789,7 @@ describe("SelfHealingManager", () => {
           worktree: null,
           branch: expectedBranch,
           sessionFile: null,
-        });
+        }, UNATTRIBUTED_MUTATION_CONTEXT);
         managerWithRecovery.stop();
       } finally {
         rmSync(base, { recursive: true, force: true });
@@ -3817,21 +3825,21 @@ describe("SelfHealingManager", () => {
       // task worktree was gone too — the old prose credited the failure to the recorded worktree.
       expect(store.logEntry).toHaveBeenCalledWith(
         "FN-4559",
-        expect.stringContaining("fusion-ai-merge-fn-4559-TGahla"),
+        expect.stringContaining("fusion-ai-merge-fn-4559-TGahla"), undefined, UNATTRIBUTED_MUTATION_CONTEXT,
       );
       expect(store.logEntry).toHaveBeenCalledWith(
         "FN-4559",
-        expect.stringContaining("gone too"),
+        expect.stringContaining("gone too"), undefined, UNATTRIBUTED_MUTATION_CONTEXT,
       );
       expect(store.logEntry).toHaveBeenCalledWith(
         "FN-4559",
-        expect.stringContaining("Auto-recovered"),
+        expect.stringContaining("Auto-recovered"), undefined, UNATTRIBUTED_MUTATION_CONTEXT,
       );
       expect(store.logEntry).toHaveBeenCalledWith(
         "FN-4559",
-        expect.stringContaining("session-start unusable-worktree assertion"),
+        expect.stringContaining("session-start unusable-worktree assertion"), undefined, UNATTRIBUTED_MUTATION_CONTEXT,
       );
-      expect(store.moveTask).toHaveBeenCalledWith("FN-4559", "todo", { preserveProgress: true, moveSource: "engine", recoveryRehome: true });
+      expect(store.moveTask).toHaveBeenCalledWith("FN-4559", "todo", { preserveProgress: true, moveSource: "engine", recoveryRehome: true }, UNATTRIBUTED_MUTATION_CONTEXT);
 
       managerWithRecovery.stop();
       } finally {
@@ -3864,9 +3872,9 @@ describe("SelfHealingManager", () => {
       expect(result).toBe(1);
       expect(store.logEntry).toHaveBeenCalledWith(
         "FN-4560",
-        expect.stringContaining("session-start unusable-worktree assertion"),
+        expect.stringContaining("session-start unusable-worktree assertion"), undefined, UNATTRIBUTED_MUTATION_CONTEXT,
       );
-      expect(store.moveTask).toHaveBeenCalledWith("FN-4560", "todo", { preserveProgress: true, moveSource: "engine", recoveryRehome: true });
+      expect(store.moveTask).toHaveBeenCalledWith("FN-4560", "todo", { preserveProgress: true, moveSource: "engine", recoveryRehome: true }, UNATTRIBUTED_MUTATION_CONTEXT);
 
       managerWithRecovery.stop();
     });
@@ -3901,12 +3909,12 @@ describe("SelfHealingManager", () => {
         worktree: null,
         branch: null,
         sessionFile: null,
-      });
+      }, UNATTRIBUTED_MUTATION_CONTEXT);
       expect(store.logEntry).toHaveBeenCalledWith(
         "FN-4651",
-        expect.stringContaining("Auto-recovered (no-progress): session-start refused unusable worktree"),
+        expect.stringContaining("Auto-recovered (no-progress): session-start refused unusable worktree"), undefined, UNATTRIBUTED_MUTATION_CONTEXT,
       );
-      expect(store.moveTask).toHaveBeenCalledWith("FN-4651", "todo", { moveSource: "engine", recoveryRehome: true });
+      expect(store.moveTask).toHaveBeenCalledWith("FN-4651", "todo", { moveSource: "engine", recoveryRehome: true }, UNATTRIBUTED_MUTATION_CONTEXT);
 
       managerWithRecovery.stop();
     });
@@ -3939,7 +3947,7 @@ describe("SelfHealingManager", () => {
       expect(store.moveTask).not.toHaveBeenCalled();
       expect(store.logEntry).toHaveBeenCalledWith(
         "FN-4651-CAP",
-        "Auto-recovery exhausted (3/3) for unusable-worktree session-start failure — leaving in-review for human inspection",
+        "Auto-recovery exhausted (3/3) for unusable-worktree session-start failure — leaving in-review for human inspection", undefined, UNATTRIBUTED_MUTATION_CONTEXT,
       );
 
       managerWithRecovery.stop();
@@ -3980,8 +3988,8 @@ describe("SelfHealingManager", () => {
           sessionFile: null,
           worktreeSessionRetryCount: 0,
           recoveryRetryCount: 1,
-        }));
-        expect(store.moveTask).toHaveBeenCalledWith(task.id, "todo", { preserveProgress: true, moveSource: "engine", recoveryRehome: true });
+        }), UNATTRIBUTED_MUTATION_CONTEXT);
+        expect(store.moveTask).toHaveBeenCalledWith(task.id, "todo", { preserveProgress: true, moveSource: "engine", recoveryRehome: true }, UNATTRIBUTED_MUTATION_CONTEXT);
       }
       expect(store.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({ mutationType: "task:reconcile-missing-worktree-merge-active" }));
       expect(enqueueMerge).not.toHaveBeenCalled();
@@ -4016,7 +4024,7 @@ describe("SelfHealingManager", () => {
       expect(store.moveTask).not.toHaveBeenCalled();
       expect(store.logEntry).toHaveBeenCalledWith(
         "FN-7802-MERGE-ACTIVE-CAP",
-        "Auto-recovery exhausted (3/3) for merge-active unusable-worktree stale-metadata clears — leaving in-review for human inspection",
+        "Auto-recovery exhausted (3/3) for merge-active unusable-worktree stale-metadata clears — leaving in-review for human inspection", undefined, UNATTRIBUTED_MUTATION_CONTEXT,
       );
       expect(store.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
         mutationType: "task:auto-recover-worktree-session-exhausted",
@@ -4053,8 +4061,8 @@ describe("SelfHealingManager", () => {
         sessionFile: null,
         worktreeSessionRetryCount: 0,
         recoveryRetryCount: 1,
-      }));
-      expect(store.moveTask).toHaveBeenCalledWith("FN-7802-NULL-WORKTREE", "todo", { preserveProgress: true, moveSource: "engine", recoveryRehome: true });
+      }), UNATTRIBUTED_MUTATION_CONTEXT);
+      expect(store.moveTask).toHaveBeenCalledWith("FN-7802-NULL-WORKTREE", "todo", { preserveProgress: true, moveSource: "engine", recoveryRehome: true }, UNATTRIBUTED_MUTATION_CONTEXT);
       managerWithRecovery.stop();
     });
 
@@ -4227,7 +4235,7 @@ describe("SelfHealingManager", () => {
       const result = await managerWithRecovery.reconcileTaskWorktreeMetadata();
 
       expect(result).toBe(1);
-      expect(store.updateTask).toHaveBeenCalledWith("FN-7802-SCOPE", { worktree: null, branch: null, sessionFile: null });
+      expect(store.updateTask).toHaveBeenCalledWith("FN-7802-SCOPE", { worktree: null, branch: null, sessionFile: null }, UNATTRIBUTED_MUTATION_CONTEXT);
       expect(store.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({ mutationType: "task:auto-recover-worktree-metadata-cleared" }));
       managerWithRecovery.stop();
     });
@@ -4446,10 +4454,10 @@ describe("SelfHealingManager", () => {
       expect(store.updateTask).toHaveBeenCalledWith("FN-300", {
         status: null,
         error: null,
-      });
+      }, UNATTRIBUTED_MUTATION_CONTEXT);
       expect(store.logEntry).toHaveBeenCalledWith(
         "FN-300",
-        expect.stringContaining("Auto-recovered"),
+        expect.stringContaining("Auto-recovered"), undefined, UNATTRIBUTED_MUTATION_CONTEXT,
       );
 
       managerWithRecovery.stop();
@@ -4559,12 +4567,12 @@ describe("SelfHealingManager", () => {
         error: null,
         sessionFile: null,
         taskDoneRetryCount: 1,
-      });
+      }, UNATTRIBUTED_MUTATION_CONTEXT);
       expect(store.logEntry).toHaveBeenCalledWith(
         "FN-2164",
-        expect.stringContaining("Auto-retry 1/3"),
+        expect.stringContaining("Auto-retry 1/3"), undefined, UNATTRIBUTED_MUTATION_CONTEXT,
       );
-      expect(store.moveTask).toHaveBeenCalledWith("FN-2164", "todo", { preserveProgress: true, moveSource: "engine", recoveryRehome: true });
+      expect(store.moveTask).toHaveBeenCalledWith("FN-2164", "todo", { preserveProgress: true, moveSource: "engine", recoveryRehome: true }, UNATTRIBUTED_MUTATION_CONTEXT);
 
       managerWithRecovery.stop();
     });
@@ -4730,11 +4738,11 @@ describe("SelfHealingManager", () => {
           insertions: 2,
           deletions: 2,
         }),
-      });
-      expect(store.moveTask).toHaveBeenCalledWith("FN-1673", "done");
+      }, UNATTRIBUTED_MUTATION_CONTEXT);
+      expect(store.moveTask).toHaveBeenCalledWith("FN-1673", "done", undefined, UNATTRIBUTED_MUTATION_CONTEXT);
       expect(store.logEntry).toHaveBeenCalledWith(
         "FN-1673",
-        expect.stringContaining("stale merge status finalized from landed commit 979ba2c"),
+        expect.stringContaining("stale merge status finalized from landed commit 979ba2c"), undefined, UNATTRIBUTED_MUTATION_CONTEXT,
       );
 
       managerWithRecovery.stop();
@@ -4802,8 +4810,8 @@ describe("SelfHealingManager", () => {
           commitSha: "trailerSha123",
           mergeConfirmed: true,
         }),
-      });
-      expect(store.moveTask).toHaveBeenCalledWith("FN-2900", "done");
+      }, UNATTRIBUTED_MUTATION_CONTEXT);
+      expect(store.moveTask).toHaveBeenCalledWith("FN-2900", "done", undefined, UNATTRIBUTED_MUTATION_CONTEXT);
 
       managerWithRecovery.stop();
     });
@@ -4867,7 +4875,7 @@ describe("SelfHealingManager", () => {
           insertions: 104,
           deletions: 1,
         }),
-      });
+      }, UNATTRIBUTED_MUTATION_CONTEXT);
 
       managerWithRecovery.stop();
     });
@@ -4931,11 +4939,11 @@ describe("SelfHealingManager", () => {
           insertions: 154,
           deletions: 0,
         }),
-      });
-      expect(store.moveTask).toHaveBeenCalledWith("FN-2221", "done");
+      }, UNATTRIBUTED_MUTATION_CONTEXT);
+      expect(store.moveTask).toHaveBeenCalledWith("FN-2221", "done", undefined, UNATTRIBUTED_MUTATION_CONTEXT);
       expect(store.logEntry).toHaveBeenCalledWith(
         "FN-2221",
-        expect.stringContaining("stale merge status finalized from landed commit 3b212b9"),
+        expect.stringContaining("stale merge status finalized from landed commit 3b212b9"), undefined, UNATTRIBUTED_MUTATION_CONTEXT,
       );
 
       managerWithRecovery.stop();
@@ -4973,11 +4981,11 @@ describe("SelfHealingManager", () => {
       expect(store.updateTask).toHaveBeenCalledWith("FN-1674", {
         status: null,
         error: null,
-      });
-      expect(store.moveTask).not.toHaveBeenCalledWith("FN-1674", "done");
+      }, UNATTRIBUTED_MUTATION_CONTEXT);
+      expect(store.moveTask).not.toHaveBeenCalledWith("FN-1674", "done", undefined, UNATTRIBUTED_MUTATION_CONTEXT);
       expect(store.logEntry).toHaveBeenCalledWith(
         "FN-1674",
-        expect.stringContaining("stale merge status cleared"),
+        expect.stringContaining("stale merge status cleared"), undefined, UNATTRIBUTED_MUTATION_CONTEXT,
       );
 
       managerWithRecovery.stop();
@@ -5117,7 +5125,7 @@ describe("SelfHealingManager", () => {
       expect(store.updateTask).toHaveBeenCalledWith("FN-3829-stale", { status: null });
       expect(store.logEntry).toHaveBeenCalledWith(
         "FN-3829-stale",
-        expect.stringContaining("cleared stale 'merging' status"),
+        expect.stringContaining("cleared stale 'merging' status"), undefined, UNATTRIBUTED_MUTATION_CONTEXT,
       );
       expect(enqueueMerge).toHaveBeenCalledWith("FN-3829-stale");
 
@@ -5498,7 +5506,7 @@ describe("SelfHealingManager", () => {
       const result = await managerWithRecovery.recoverStaleMergingStatus();
 
       expect(result).toBe(0);
-      expect(store.updateTask).not.toHaveBeenCalledWith("FN-3829-active", { status: null });
+      expect(store.updateTask).not.toHaveBeenCalledWith("FN-3829-active", { status: null }, UNATTRIBUTED_MUTATION_CONTEXT);
 
       managerWithRecovery.stop();
     });
@@ -5527,7 +5535,7 @@ describe("SelfHealingManager", () => {
       const result = await managerWithRecovery.recoverStaleMergingStatus();
 
       expect(result).toBe(0);
-      expect(store.updateTask).not.toHaveBeenCalledWith("FN-3829-fresh", { status: null });
+      expect(store.updateTask).not.toHaveBeenCalledWith("FN-3829-fresh", { status: null }, UNATTRIBUTED_MUTATION_CONTEXT);
 
       managerWithRecovery.stop();
     });
@@ -5563,7 +5571,7 @@ describe("SelfHealingManager", () => {
       expect(store.mergeTask).toHaveBeenCalledWith("FN-352");
       expect(store.logEntry).toHaveBeenCalledWith(
         "FN-352",
-        expect.stringContaining("eligible in-review task was merged"),
+        expect.stringContaining("eligible in-review task was merged"), undefined, UNATTRIBUTED_MUTATION_CONTEXT,
       );
 
       managerWithRecovery.stop();
@@ -5793,7 +5801,7 @@ describe("SelfHealingManager", () => {
       expect(store.mergeTask).not.toHaveBeenCalled();
       expect(store.logEntry).not.toHaveBeenCalledWith(
         "FN-6088",
-        expect.stringContaining("re-enqueued for merge"),
+        expect.stringContaining("re-enqueued for merge"), undefined, UNATTRIBUTED_MUTATION_CONTEXT,
       );
 
       managerWithRecovery.stop();
@@ -5837,16 +5845,16 @@ describe("SelfHealingManager", () => {
         expect.objectContaining({
           status: "failed",
           error: expect.stringContaining("Auto-merge starvation: 3 consecutive enqueue attempts"),
-        }),
+        }), UNATTRIBUTED_MUTATION_CONTEXT,
       );
       expect(store.logEntry).toHaveBeenCalledTimes(1);
       expect(store.logEntry).toHaveBeenCalledWith(
         "FN-4084-starved",
-        expect.stringContaining("Auto-merge starvation"),
+        expect.stringContaining("Auto-merge starvation"), undefined, UNATTRIBUTED_MUTATION_CONTEXT,
       );
       expect(store.logEntry).not.toHaveBeenCalledWith(
         "FN-4084-starved",
-        expect.stringContaining("re-enqueued for merge"),
+        expect.stringContaining("re-enqueued for merge"), undefined, UNATTRIBUTED_MUTATION_CONTEXT,
       );
 
       managerWithRecovery.stop();
@@ -5887,12 +5895,12 @@ describe("SelfHealingManager", () => {
       expect(enqueueMerge).toHaveBeenCalledTimes(5);
       expect(store.updateTask).not.toHaveBeenCalledWith(
         "FN-4084-healthy",
-        expect.objectContaining({ status: "failed" }),
+        expect.objectContaining({ status: "failed" }), UNATTRIBUTED_MUTATION_CONTEXT,
       );
       expect(store.logEntry).toHaveBeenCalledTimes(5);
       expect(store.logEntry).not.toHaveBeenCalledWith(
         "FN-4084-healthy",
-        expect.stringContaining("Auto-merge starvation"),
+        expect.stringContaining("Auto-merge starvation"), undefined, UNATTRIBUTED_MUTATION_CONTEXT,
       );
 
       managerWithRecovery.stop();
@@ -6040,7 +6048,7 @@ describe("SelfHealingManager", () => {
       expect(enqueueMerge).not.toHaveBeenCalled();
       expect(store.logEntry).not.toHaveBeenCalledWith(
         "FN-3829-merging",
-        expect.stringContaining("re-enqueued for merge"),
+        expect.stringContaining("re-enqueued for merge"), undefined, UNATTRIBUTED_MUTATION_CONTEXT,
       );
 
       managerWithRecovery.stop();
@@ -6080,7 +6088,7 @@ describe("SelfHealingManager", () => {
       expect(enqueueMerge).not.toHaveBeenCalled();
       expect(store.logEntry).not.toHaveBeenCalledWith(
         "FN-2997",
-        expect.stringContaining("re-enqueued for merge"),
+        expect.stringContaining("re-enqueued for merge"), undefined, UNATTRIBUTED_MUTATION_CONTEXT,
       );
 
       managerWithRecovery.stop();
@@ -6184,12 +6192,12 @@ describe("SelfHealingManager", () => {
             noOpMerge: true,
             noOpReason: expect.stringContaining("main"),
           }),
-        }),
+        }), UNATTRIBUTED_MUTATION_CONTEXT,
       );
-      expect(store.moveTask).toHaveBeenCalledWith("FN-500", "done");
+      expect(store.moveTask).toHaveBeenCalledWith("FN-500", "done", undefined, UNATTRIBUTED_MUTATION_CONTEXT);
       expect(store.logEntry).toHaveBeenCalledWith(
         "FN-500",
-        expect.stringContaining("Auto-finalized no-op (proven): start point on main; modifiedFiles cleared"),
+        expect.stringContaining("Auto-finalized no-op (proven): start point on main; modifiedFiles cleared"), undefined, UNATTRIBUTED_MUTATION_CONTEXT,
       );
       expect(enqueueMerge).not.toHaveBeenCalled();
 
@@ -6239,13 +6247,13 @@ describe("SelfHealingManager", () => {
 
       expect(result).toBe(1);
       // "Verify"/"Testing" are skipped verification steps → precise reason naming them.
-      expect(store.updateTask).toHaveBeenCalledWith("FN-6461", expect.objectContaining({ error: expect.stringContaining("skipped verification step") }));
-      expect(store.moveTask).toHaveBeenCalledWith("FN-6461", "todo", expect.objectContaining({ preserveProgress: true, moveSource: "engine", recoveryRehome: true }));
-      expect(store.moveTask).not.toHaveBeenCalledWith("FN-6461", "done");
+      expect(store.updateTask).toHaveBeenCalledWith("FN-6461", expect.objectContaining({ error: expect.stringContaining("skipped verification step") }), UNATTRIBUTED_MUTATION_CONTEXT);
+      expect(store.moveTask).toHaveBeenCalledWith("FN-6461", "todo", expect.objectContaining({ preserveProgress: true, moveSource: "engine", recoveryRehome: true }), UNATTRIBUTED_MUTATION_CONTEXT);
+      expect(store.moveTask).not.toHaveBeenCalledWith("FN-6461", "done", undefined, UNATTRIBUTED_MUTATION_CONTEXT);
       expect(store.logEntry).toHaveBeenCalledWith(
         "FN-6461",
         expect.stringContaining("Finalize blocked (no-commits incomplete-work guard)"),
-        expect.stringContaining("self-healing-finalize-no-op-review"),
+        expect.stringContaining("self-healing-finalize-no-op-review"), UNATTRIBUTED_MUTATION_CONTEXT,
       );
       expect((store as any).recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
         mutationType: "task:no-commits-finalize-blocked-incomplete-steps",
@@ -6290,8 +6298,8 @@ describe("SelfHealingManager", () => {
       const result = await managerWithRecovery.finalizeNoOpReviewTasks();
 
       expect(result).toBe(1);
-      expect(store.moveTask).toHaveBeenCalledWith("FN-6462", "done");
-      expect(store.moveTask).not.toHaveBeenCalledWith("FN-6462", "todo", expect.anything());
+      expect(store.moveTask).toHaveBeenCalledWith("FN-6462", "done", undefined, UNATTRIBUTED_MUTATION_CONTEXT);
+      expect(store.moveTask).not.toHaveBeenCalledWith("FN-6462", "todo", expect.anything(), UNATTRIBUTED_MUTATION_CONTEXT);
 
       managerWithRecovery.stop();
     });
@@ -6400,8 +6408,8 @@ describe("SelfHealingManager", () => {
       const result = await managerWithRecovery.finalizeNoOpReviewTasks();
 
       expect(result).toBe(0);
-      expect(store.moveTask).not.toHaveBeenCalledWith("FN-501", "done");
-      expect(store.moveTask).toHaveBeenCalledWith("FN-501", "todo", expect.anything());
+      expect(store.moveTask).not.toHaveBeenCalledWith("FN-501", "done", undefined, UNATTRIBUTED_MUTATION_CONTEXT);
+      expect(store.moveTask).toHaveBeenCalledWith("FN-501", "todo", expect.anything(), UNATTRIBUTED_MUTATION_CONTEXT);
       expect((store as any).recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
         mutationType: "task:finalize-unproven-blocked",
         target: "FN-501",
@@ -6443,7 +6451,7 @@ describe("SelfHealingManager", () => {
       const result = await managerWithRecovery.finalizeNoOpReviewTasks();
 
       expect(result).toBe(0);
-      expect(store.moveTask).not.toHaveBeenCalledWith("FN-501", "done");
+      expect(store.moveTask).not.toHaveBeenCalledWith("FN-501", "done", undefined, UNATTRIBUTED_MUTATION_CONTEXT);
 
       managerWithRecovery.stop();
     });
@@ -6504,7 +6512,7 @@ describe("SelfHealingManager", () => {
       const result = await managerWithRecovery.finalizeNoOpReviewTasks();
 
       expect(result).toBe(0);
-      expect(store.moveTask).not.toHaveBeenCalledWith("FN-502", "done");
+      expect(store.moveTask).not.toHaveBeenCalledWith("FN-502", "done", undefined, UNATTRIBUTED_MUTATION_CONTEXT);
       expect(getSelfHealingLogger().warn).toHaveBeenCalled();
 
       managerWithRecovery.stop();
@@ -6542,7 +6550,7 @@ describe("SelfHealingManager", () => {
       expect(enqueueMerge).not.toHaveBeenCalled();
       expect(store.logEntry).not.toHaveBeenCalledWith(
         "FN-503",
-        expect.stringContaining("re-enqueued"),
+        expect.stringContaining("re-enqueued"), undefined, UNATTRIBUTED_MUTATION_CONTEXT,
       );
 
       managerWithRecovery.stop();
@@ -6598,9 +6606,9 @@ describe("SelfHealingManager", () => {
       expect(result).toBe(1);
       expect(store.logEntry).toHaveBeenCalledWith(
         "FN-1572",
-        expect.stringContaining("in-review task still had incomplete steps"),
+        expect.stringContaining("in-review task still had incomplete steps"), undefined, UNATTRIBUTED_MUTATION_CONTEXT,
       );
-      expect(store.moveTask).toHaveBeenCalledWith("FN-1572", "todo", { preserveProgress: true, moveSource: "engine", recoveryRehome: true });
+      expect(store.moveTask).toHaveBeenCalledWith("FN-1572", "todo", { preserveProgress: true, moveSource: "engine", recoveryRehome: true }, UNATTRIBUTED_MUTATION_CONTEXT);
 
       managerWithRecovery.stop();
     });
@@ -6659,7 +6667,7 @@ describe("SelfHealingManager", () => {
       const result = await managerWithRecovery.recoverStaleIncompleteReviewTasks();
 
       expect(result).toBe(1);
-      expect(store.moveTask).toHaveBeenCalledWith("FN-407-test-1", "todo", { preserveProgress: true, moveSource: "engine", recoveryRehome: true });
+      expect(store.moveTask).toHaveBeenCalledWith("FN-407-test-1", "todo", { preserveProgress: true, moveSource: "engine", recoveryRehome: true }, UNATTRIBUTED_MUTATION_CONTEXT);
 
       managerWithRecovery.stop();
     });
@@ -6687,7 +6695,7 @@ describe("SelfHealingManager", () => {
       const result = await managerWithRecovery.recoverStaleIncompleteReviewTasks();
 
       expect(result).toBe(1);
-      expect(store.moveTask).toHaveBeenCalledWith("FN-407-test-2", "todo", { preserveProgress: true, moveSource: "engine", recoveryRehome: true });
+      expect(store.moveTask).toHaveBeenCalledWith("FN-407-test-2", "todo", { preserveProgress: true, moveSource: "engine", recoveryRehome: true }, UNATTRIBUTED_MUTATION_CONTEXT);
 
       managerWithRecovery.stop();
     });
@@ -6722,7 +6730,7 @@ describe("SelfHealingManager", () => {
       expect(store.moveTask).toHaveBeenCalledWith("FN-350", "done", expect.objectContaining({ moveSource: "engine" }));
       expect(store.logEntry).toHaveBeenCalledWith(
         "FN-350",
-        expect.stringContaining("Auto-finalized from in-review: content proven"),
+        expect.stringContaining("Auto-finalized from in-review: content proven"), undefined, UNATTRIBUTED_MUTATION_CONTEXT,
       );
 
       managerWithRecovery.stop();
@@ -6807,14 +6815,14 @@ describe("SelfHealingManager", () => {
       const result = await managerWithRecovery.recoverMergedReviewTasks();
 
       expect(result).toBe(0);
-      expect(store.moveTask).not.toHaveBeenCalledWith("FN-353", "done");
+      expect(store.moveTask).not.toHaveBeenCalledWith("FN-353", "done", undefined, UNATTRIBUTED_MUTATION_CONTEXT);
       expect(store.updateTask).toHaveBeenCalledWith("FN-353", {
         status: "failed",
         error: "Merge confirmed but finalization blocked: task has incomplete steps",
       });
       expect(store.logEntry).toHaveBeenCalledWith(
         "FN-353",
-        expect.stringContaining("finalization blocked"),
+        expect.stringContaining("finalization blocked"), undefined, UNATTRIBUTED_MUTATION_CONTEXT,
       );
 
       managerWithRecovery.stop();
@@ -6940,7 +6948,7 @@ describe("SelfHealingManager", () => {
         preserveProgress: true,
         moveSource: "engine",
         recoveryRehome: true,
-      });
+      }, UNATTRIBUTED_MUTATION_CONTEXT);
 
       managerWithRecovery.stop();
     });
@@ -6972,7 +6980,7 @@ describe("SelfHealingManager", () => {
       const result = await managerWithRecovery.recoverStuckMergeDeadlocks();
 
       expect(result).toBe(1);
-      expect(store.moveTask).toHaveBeenCalledWith("FN-stuck", "done");
+      expect(store.moveTask).toHaveBeenCalledWith("FN-stuck", "done", undefined, UNATTRIBUTED_MUTATION_CONTEXT);
       expect(store.updateTask).toHaveBeenCalledWith("FN-stuck", expect.objectContaining({
         status: null,
         error: null,
@@ -6980,8 +6988,8 @@ describe("SelfHealingManager", () => {
         worktree: null,
         branch: null,
         mergeDetails: expect.objectContaining({ commitSha: "abc12345", mergeConfirmed: true }),
-      }));
-      expect(store.updateTask).toHaveBeenCalledWith("FN-dep", { blockedBy: null });
+      }), UNATTRIBUTED_MUTATION_CONTEXT);
+      expect(store.updateTask).toHaveBeenCalledWith("FN-dep", { blockedBy: null }, UNATTRIBUTED_MUTATION_CONTEXT);
       expect(mockedRemoveWorktree).toHaveBeenCalledWith(expect.objectContaining({
         rootDir: "/tmp/test-project",
         worktreePath: "/tmp/wt",
@@ -7018,9 +7026,9 @@ describe("SelfHealingManager", () => {
       expect(store.updateTask).toHaveBeenCalledWith("FN-stuck", {
         paused: true,
         pausedReason: "merge-deadlock-detected",
-      });
+      }, UNATTRIBUTED_MUTATION_CONTEXT);
       expect(store.moveTask).not.toHaveBeenCalled();
-      expect(store.updateTask).not.toHaveBeenCalledWith("FN-dep", { blockedBy: null });
+      expect(store.updateTask).not.toHaveBeenCalledWith("FN-dep", { blockedBy: null }, UNATTRIBUTED_MUTATION_CONTEXT);
       expect(getSelfHealingLogger().warn).toHaveBeenCalledWith(expect.stringContaining("paused-for-manual"));
 
       // Model a late superseded merge-body stamp after this exact producer park.
@@ -7162,7 +7170,7 @@ describe("SelfHealingManager", () => {
       const result = await managerWithRecovery.recoverStuckMergeDeadlocks();
 
       // No attribution → no recovery → no move to done.
-      expect(store.moveTask).not.toHaveBeenCalledWith("FN-5441", "done");
+      expect(store.moveTask).not.toHaveBeenCalledWith("FN-5441", "done", undefined, UNATTRIBUTED_MUTATION_CONTEXT);
       // result of 0 OR a "paused-for-manual" path (proof gate) is acceptable;
       // the load-bearing assertion is that we did NOT advance the task to done
       // against the wrong commit.
@@ -7204,7 +7212,7 @@ describe("SelfHealingManager", () => {
       const result = await managerWithRecovery.recoverStuckMergeDeadlocks();
 
       expect(result).toBe(3);
-      expect(store.updateTask).toHaveBeenCalledWith("FN-3842", { blockedBy: null });
+      expect(store.updateTask).toHaveBeenCalledWith("FN-3842", { blockedBy: null }, UNATTRIBUTED_MUTATION_CONTEXT);
 
       managerWithRecovery.stop();
     });
@@ -7273,7 +7281,7 @@ describe("SelfHealingManager", () => {
       expect(store.moveTask).not.toHaveBeenCalled();
       expect(store.logEntry).toHaveBeenCalledWith(
         "FN-1",
-        expect.stringContaining("already-merged rejected FN-1"),
+        expect.stringContaining("already-merged rejected FN-1"), undefined, UNATTRIBUTED_MUTATION_CONTEXT,
       );
 
       managerWithRecovery.stop();
@@ -7383,9 +7391,9 @@ describe("SelfHealingManager", () => {
       const result = await managerWithRecovery.recoverAlreadyMergedReviewTasks();
 
       expect(result).toBe(1);
-      expect(store.updateTask).toHaveBeenCalledWith("FN-hit", expect.objectContaining({ status: null, mergeRetries: 0 }));
-      expect(store.moveTask).toHaveBeenCalledWith("FN-hit", "done");
-      expect(store.updateTask).not.toHaveBeenCalledWith("FN-throw", expect.anything());
+      expect(store.updateTask).toHaveBeenCalledWith("FN-hit", expect.objectContaining({ status: null, mergeRetries: 0 }), UNATTRIBUTED_MUTATION_CONTEXT);
+      expect(store.moveTask).toHaveBeenCalledWith("FN-hit", "done", undefined, UNATTRIBUTED_MUTATION_CONTEXT);
+      expect(store.updateTask).not.toHaveBeenCalledWith("FN-throw", expect.anything(), UNATTRIBUTED_MUTATION_CONTEXT);
 
       managerWithRecovery.stop();
     });
@@ -7459,14 +7467,14 @@ describe("SelfHealingManager", () => {
       expect(result).toBe(1);
       expect(store.updateTask).toHaveBeenCalledWith(
         "FN-4611-shape",
-        expect.objectContaining({ paused: false, status: null, error: null, mergeRetries: 0 }),
+        expect.objectContaining({ paused: false, status: null, error: null, mergeRetries: 0 }), UNATTRIBUTED_MUTATION_CONTEXT,
       );
-      expect(store.moveTask).toHaveBeenCalledWith("FN-4611-shape", "done");
+      expect(store.moveTask).toHaveBeenCalledWith("FN-4611-shape", "done", undefined, UNATTRIBUTED_MUTATION_CONTEXT);
       expect(store.updateTask).toHaveBeenCalledWith("FN-dependent", {
         blockedBy: null,
         overlapBlockedBy: null,
         status: null,
-      });
+      }, UNATTRIBUTED_MUTATION_CONTEXT);
 
       managerWithRecovery.stop();
     });
@@ -7496,17 +7504,17 @@ describe("SelfHealingManager", () => {
       const result = await managerWithRecovery.recoverAlreadyMergedReviewTasks();
 
       expect(result).toBe(0);
-      expect(store.moveTask).not.toHaveBeenCalledWith("FN-incomplete", "done");
+      expect(store.moveTask).not.toHaveBeenCalledWith("FN-incomplete", "done", undefined, UNATTRIBUTED_MUTATION_CONTEXT);
       expect(store.updateTask).toHaveBeenCalledWith(
         "FN-incomplete",
         expect.objectContaining({
           status: "failed",
           error: "Merge confirmed but finalization blocked: task has incomplete steps",
-        }),
+        }), UNATTRIBUTED_MUTATION_CONTEXT,
       );
       expect(store.logEntry).toHaveBeenCalledWith(
         "FN-incomplete",
-        expect.stringContaining("finalization blocked"),
+        expect.stringContaining("finalization blocked"), undefined, UNATTRIBUTED_MUTATION_CONTEXT,
       );
 
       managerWithRecovery.stop();
@@ -7616,7 +7624,7 @@ describe("SelfHealingManager", () => {
       const recovered = await managerWithRecovery.recoverAlreadyMergedReviewTasks();
 
       expect(recovered).toBe(1);
-      expect(storeWithAudit.moveTask).toHaveBeenCalledWith("FN-audit-throw", "done");
+      expect(storeWithAudit.moveTask).toHaveBeenCalledWith("FN-audit-throw", "done", undefined, UNATTRIBUTED_MUTATION_CONTEXT);
       expect(recordRunAuditEvent).toHaveBeenCalledTimes(2);
 
       managerWithRecovery.stop();
@@ -7669,12 +7677,12 @@ describe("SelfHealingManager", () => {
       const result = await managerWithRecovery.recoverReviewTasksWithFailedPreMergeSteps();
 
       expect(result).toBe(1);
-      expect(store.updateTask).toHaveBeenCalledWith("FN-1572", { postReviewFixCount: 1 });
+      expect(store.updateTask).toHaveBeenCalledWith("FN-1572", { postReviewFixCount: 1 }, UNATTRIBUTED_MUTATION_CONTEXT);
       expect(recoverFn).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-1572" }));
       expect(store.logEntry).toHaveBeenCalledWith(
         "FN-1572",
         expect.stringContaining("Auto-reviving in-review task"),
-        expect.stringContaining("Workflow revision key: ws-004"),
+        expect.stringContaining("Workflow revision key: ws-004"), UNATTRIBUTED_MUTATION_CONTEXT,
       );
 
       managerWithRecovery.stop();
@@ -7727,7 +7735,7 @@ describe("SelfHealingManager", () => {
       }]);
 
       await expect(managerWithRecovery.recoverReviewTasksWithFailedPreMergeSteps()).resolves.toBe(1);
-      expect(store.logEntry).toHaveBeenLastCalledWith("FN-1572", expect.stringContaining("attempt 100/unbounded"), expect.stringContaining("Workflow revision key: ws-004"));
+      expect(store.logEntry).toHaveBeenLastCalledWith("FN-1572", expect.stringContaining("attempt 100/unbounded"), expect.stringContaining("Workflow revision key: ws-004"), UNATTRIBUTED_MUTATION_CONTEXT);
       expect(recoverFn).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-1572" }));
 
       managerWithRecovery.stop();
@@ -7779,7 +7787,7 @@ describe("SelfHealingManager", () => {
       ]);
 
       await expect(managerWithRecovery.recoverReviewTasksWithFailedPreMergeSteps()).resolves.toBe(1);
-      expect(store.logEntry).toHaveBeenLastCalledWith("FN-1572", expect.stringContaining("attempt 2/2"), expect.stringContaining("Workflow revision key: code-review"));
+      expect(store.logEntry).toHaveBeenLastCalledWith("FN-1572", expect.stringContaining("attempt 2/2"), expect.stringContaining("Workflow revision key: code-review"), UNATTRIBUTED_MUTATION_CONTEXT);
       expect(recoverFn).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-1572" }));
 
       managerWithRecovery.stop();
@@ -7827,11 +7835,11 @@ describe("SelfHealingManager", () => {
        */
       await expect(managerWithRecovery.recoverReviewTasksWithFailedPreMergeSteps()).resolves.toBe(1);
 
-      expect(store.updateTask).toHaveBeenCalledWith("FN-1572", { postReviewFixCount: 51 });
+      expect(store.updateTask).toHaveBeenCalledWith("FN-1572", { postReviewFixCount: 51 }, UNATTRIBUTED_MUTATION_CONTEXT);
       expect(store.logEntry).toHaveBeenCalledWith(
         "FN-1572",
         expect.stringContaining("Auto-reviving in-review task with failed pre-merge workflow step (attempt 51/unbounded)"),
-        expect.stringContaining("Workflow revision key: code-review"),
+        expect.stringContaining("Workflow revision key: code-review"), UNATTRIBUTED_MUTATION_CONTEXT,
       );
       expect(recoverFn).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-1572", status: "failed" }));
 
@@ -7872,7 +7880,7 @@ describe("SelfHealingManager", () => {
       await expect(managerWithRecovery.recoverReviewTasksWithFailedPreMergeSteps()).resolves.toBe(0);
 
       expect(recoverFn).not.toHaveBeenCalled();
-      expect(store.updateTask).not.toHaveBeenCalledWith("FN-1572", expect.objectContaining({ postReviewFixCount: expect.any(Number) }));
+      expect(store.updateTask).not.toHaveBeenCalledWith("FN-1572", expect.objectContaining({ postReviewFixCount: expect.any(Number) }), UNATTRIBUTED_MUTATION_CONTEXT);
 
       managerWithRecovery.stop();
     });
@@ -7909,7 +7917,7 @@ describe("SelfHealingManager", () => {
       await expect(managerWithRecovery.recoverReviewTasksWithFailedPreMergeSteps()).resolves.toBe(0);
 
       expect(recoverFn).not.toHaveBeenCalled();
-      expect(store.updateTask).not.toHaveBeenCalledWith("FN-1572", expect.objectContaining({ postReviewFixCount: expect.any(Number) }));
+      expect(store.updateTask).not.toHaveBeenCalledWith("FN-1572", expect.objectContaining({ postReviewFixCount: expect.any(Number) }), UNATTRIBUTED_MUTATION_CONTEXT);
 
       managerWithRecovery.stop();
     });
@@ -7942,8 +7950,8 @@ describe("SelfHealingManager", () => {
 
       await expect(managerWithRecovery.recoverReviewTasksWithFailedPreMergeSteps()).resolves.toBe(1);
 
-      expect(store.updateTask).toHaveBeenCalledWith("FN-1572", { postReviewFixCount: 2 });
-      expect(store.logEntry).toHaveBeenLastCalledWith("FN-1572", expect.stringContaining("attempt 1/1"), expect.stringContaining("Workflow revision key: code-review"));
+      expect(store.updateTask).toHaveBeenCalledWith("FN-1572", { postReviewFixCount: 2 }, UNATTRIBUTED_MUTATION_CONTEXT);
+      expect(store.logEntry).toHaveBeenLastCalledWith("FN-1572", expect.stringContaining("attempt 1/1"), expect.stringContaining("Workflow revision key: code-review"), UNATTRIBUTED_MUTATION_CONTEXT);
       expect(recoverFn).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-1572" }));
 
       managerWithRecovery.stop();
@@ -7961,7 +7969,7 @@ describe("SelfHealingManager", () => {
       (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([{ ...baseTask, postReviewFixCount: 0 }]);
 
       await expect(managerWithRecovery.recoverReviewTasksWithFailedPreMergeSteps()).resolves.toBe(1);
-      expect(store.logEntry).toHaveBeenCalledWith("FN-1572", expect.stringContaining("attempt 1/1"), expect.stringContaining("Workflow revision key: ws-004"));
+      expect(store.logEntry).toHaveBeenCalledWith("FN-1572", expect.stringContaining("attempt 1/1"), expect.stringContaining("Workflow revision key: ws-004"), UNATTRIBUTED_MUTATION_CONTEXT);
       expect(recoverFn).toHaveBeenCalledOnce();
 
       managerWithRecovery.stop();
@@ -8294,7 +8302,7 @@ describe("SelfHealingManager", () => {
       expect(result).toBe(1);
       expect(store.logEntry).toHaveBeenCalledWith(
         "FN-4110",
-        expect.stringContaining("In-review stall surfaced [transient-merge-status-no-owner]:"),
+        expect.stringContaining("In-review stall surfaced [transient-merge-status-no-owner]:"), undefined, UNATTRIBUTED_MUTATION_CONTEXT,
       );
       expect(store.updateTask).not.toHaveBeenCalled();
       expect(store.moveTask).not.toHaveBeenCalled();
@@ -8328,7 +8336,7 @@ describe("SelfHealingManager", () => {
       expect(await managerWithRecovery.surfaceInReviewStalls()).toBe(0);
       expect(store.logEntry).not.toHaveBeenCalledWith(
         "FN-4110",
-        expect.stringContaining("In-review stall surfaced ["),
+        expect.stringContaining("In-review stall surfaced ["), undefined, UNATTRIBUTED_MUTATION_CONTEXT,
       );
       expect(store.recordRunAuditEvent).not.toHaveBeenCalledWith(expect.objectContaining({
         mutationType: "task:in-review-stall-deadlock-disposed",
@@ -8382,7 +8390,7 @@ describe("SelfHealingManager", () => {
       expect(await managerWithRecovery.surfaceInReviewStalls()).toBe(1);
       expect(store.logEntry).toHaveBeenLastCalledWith(
         "FN-4110",
-        expect.stringContaining("In-review stall surfaced [merge-retries-exhausted]:"),
+        expect.stringContaining("In-review stall surfaced [merge-retries-exhausted]:"), undefined, UNATTRIBUTED_MUTATION_CONTEXT,
       );
       managerWithRecovery.stop();
     });
@@ -8437,14 +8445,14 @@ describe("SelfHealingManager", () => {
         paused: true,
         pausedReason: "in-review-stall-deadlock",
         status: "failed",
-      }));
+      }), UNATTRIBUTED_MUTATION_CONTEXT);
       expect(store.logEntry).toHaveBeenCalledWith(
         "FN-9999",
-        expect.stringContaining("In-review stall auto-disposed [merge-blocker]: deadlock-prevention threshold reached after 3 identical stalls"),
+        expect.stringContaining("In-review stall auto-disposed [merge-blocker]: deadlock-prevention threshold reached after 3 identical stalls"), undefined, UNATTRIBUTED_MUTATION_CONTEXT,
       );
       expect(store.logEntry).not.toHaveBeenCalledWith(
         "FN-9999",
-        expect.stringContaining("In-review stall surfaced [merge-blocker]"),
+        expect.stringContaining("In-review stall surfaced [merge-blocker]"), undefined, UNATTRIBUTED_MUTATION_CONTEXT,
       );
       expect(store.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
         domain: "database",
@@ -8476,7 +8484,7 @@ describe("SelfHealingManager", () => {
       ]);
 
       expect(await managerWithRecovery.surfaceInReviewStalls()).toBe(1);
-      expect(store.logEntry).toHaveBeenCalledWith("FN-9999", expect.stringContaining("In-review stall surfaced [merge-blocker]:"));
+      expect(store.logEntry).toHaveBeenCalledWith("FN-9999", expect.stringContaining("In-review stall surfaced [merge-blocker]:"), undefined, UNATTRIBUTED_MUTATION_CONTEXT);
       expect(store.updateTask).not.toHaveBeenCalled();
       expect(store.recordRunAuditEvent).not.toHaveBeenCalled();
       managerWithRecovery.stop();
@@ -8502,7 +8510,7 @@ describe("SelfHealingManager", () => {
       ]);
 
       expect(await managerWithRecovery.surfaceInReviewStalls()).toBe(1);
-      expect(store.logEntry).toHaveBeenCalledWith("FN-9999", expect.stringContaining("In-review stall surfaced [merge-blocker]:"));
+      expect(store.logEntry).toHaveBeenCalledWith("FN-9999", expect.stringContaining("In-review stall surfaced [merge-blocker]:"), undefined, UNATTRIBUTED_MUTATION_CONTEXT);
       expect(store.updateTask).not.toHaveBeenCalled();
       expect(store.recordRunAuditEvent).not.toHaveBeenCalled();
       managerWithRecovery.stop();
@@ -8533,7 +8541,7 @@ describe("SelfHealingManager", () => {
         ]);
 
       expect(await managerWithRecovery.surfaceInReviewStalls()).toBe(1);
-      expect(store.logEntry).toHaveBeenCalledWith("FN-9999", expect.stringContaining("In-review stall surfaced [merge-blocker]:"));
+      expect(store.logEntry).toHaveBeenCalledWith("FN-9999", expect.stringContaining("In-review stall surfaced [merge-blocker]:"), undefined, UNATTRIBUTED_MUTATION_CONTEXT);
       expect(store.updateTask).not.toHaveBeenCalled();
       expect(store.recordRunAuditEvent).not.toHaveBeenCalled();
 
@@ -8570,9 +8578,9 @@ describe("SelfHealingManager", () => {
       expect(await managerWithRecovery.surfaceInReviewStalled()).toBe(1);
       expect(store.logEntry).toHaveBeenCalledWith(
         "FN-5093",
-        expect.stringContaining("In-review stalled surfaced [in-review-stalled]: quiet"),
+        expect.stringContaining("In-review stalled surfaced [in-review-stalled]: quiet"), undefined, UNATTRIBUTED_MUTATION_CONTEXT,
       );
-      expect(store.logEntry).toHaveBeenCalledWith("FN-5093", expect.stringContaining("lastActivitySource=column-moved"));
+      expect(store.logEntry).toHaveBeenCalledWith("FN-5093", expect.stringContaining("lastActivitySource=column-moved"), undefined, UNATTRIBUTED_MUTATION_CONTEXT);
       managerWithRecovery.stop();
     });
 
@@ -8707,11 +8715,11 @@ describe("SelfHealingManager", () => {
       expect(await managerWithRecovery.surfaceStalePausedReviews()).toBe(1);
       expect(store.logEntry).toHaveBeenCalledWith(
         "FN-4233",
-        expect.stringContaining("Stale paused review surfaced [stale-paused-review]: paused"),
+        expect.stringContaining("Stale paused review surfaced [stale-paused-review]: paused"), undefined, UNATTRIBUTED_MUTATION_CONTEXT,
       );
       expect(store.logEntry).toHaveBeenCalledWith(
         "FN-4233",
-        expect.stringContaining("disposition options — unpause, retry, archive, or create follow-up task"),
+        expect.stringContaining("disposition options — unpause, retry, archive, or create follow-up task"), undefined, UNATTRIBUTED_MUTATION_CONTEXT,
       );
       managerWithRecovery.stop();
     });
@@ -8787,11 +8795,11 @@ describe("SelfHealingManager", () => {
       expect(await managerWithRecovery.surfaceStalePausedTodos()).toBe(1);
       expect(store.logEntry).toHaveBeenCalledWith(
         "FN-5034",
-        expect.stringContaining("Stale paused todo surfaced [stale-paused-todo]: paused"),
+        expect.stringContaining("Stale paused todo surfaced [stale-paused-todo]: paused"), undefined, UNATTRIBUTED_MUTATION_CONTEXT,
       );
       expect(store.logEntry).toHaveBeenCalledWith(
         "FN-5034",
-        expect.stringContaining("disposition options — unpause, move to triage, archive, or create follow-up task"),
+        expect.stringContaining("disposition options — unpause, move to triage, archive, or create follow-up task"), undefined, UNATTRIBUTED_MUTATION_CONTEXT,
       );
       managerWithRecovery.stop();
     });
@@ -9000,7 +9008,7 @@ describe("SelfHealingManager", () => {
 
       expect(result).toBe(1);
       expect(store.updateTask).not.toHaveBeenCalled();
-      expect(store.moveTask).toHaveBeenCalledWith("FN-9003", "todo", { preserveProgress: true, moveSource: "engine", recoveryRehome: true });
+      expect(store.moveTask).toHaveBeenCalledWith("FN-9003", "todo", { preserveProgress: true, moveSource: "engine", recoveryRehome: true }, UNATTRIBUTED_MUTATION_CONTEXT);
 
       managerWithRecovery.stop();
     });
@@ -9698,10 +9706,10 @@ describe("SelfHealingManager", () => {
       const result = await managerWithRecovery.recoverOrphanedPlanningTasks();
 
       expect(result).toBe(1);
-      expect(store.updateTask).toHaveBeenCalledWith("FN-200", { status: null });
+      expect(store.updateTask).toHaveBeenCalledWith("FN-200", { status: null }, UNATTRIBUTED_MUTATION_CONTEXT);
       expect(store.logEntry).toHaveBeenCalledWith(
         "FN-200",
-        "Auto-recovered orphaned planning task — agent session lost, cleared for re-planning",
+        "Auto-recovered orphaned planning task — agent session lost, cleared for re-planning", undefined, UNATTRIBUTED_MUTATION_CONTEXT,
       );
 
       managerWithRecovery.stop();
@@ -9796,7 +9804,7 @@ describe("SelfHealingManager", () => {
       const result = await managerWithRecovery.recoverOrphanedPlanningTasks();
 
       expect(result).toBe(1);
-      expect(store.updateTask).toHaveBeenCalledWith("FN-202", { status: null });
+      expect(store.updateTask).toHaveBeenCalledWith("FN-202", { status: null }, UNATTRIBUTED_MUTATION_CONTEXT);
 
       managerWithRecovery.stop();
     });
@@ -9917,9 +9925,9 @@ describe("clearStaleBlockedBy", () => {
     const recovered = await manager.clearStaleBlockedBy();
 
     expect(recovered).toBe(1);
-    expect(store.updateTask).toHaveBeenCalledWith("A", { blockedBy: null, overlapBlockedBy: null, status: null });
-    expect(store.logEntry).toHaveBeenCalledWith("A", expect.stringContaining("FN-MISSING"));
-    expect(store.logEntry).toHaveBeenCalledWith("A", expect.stringContaining("missing"));
+    expect(store.updateTask).toHaveBeenCalledWith("A", { blockedBy: null, overlapBlockedBy: null, status: null }, UNATTRIBUTED_MUTATION_CONTEXT);
+    expect(store.logEntry).toHaveBeenCalledWith("A", expect.stringContaining("FN-MISSING"), undefined, UNATTRIBUTED_MUTATION_CONTEXT);
+    expect(store.logEntry).toHaveBeenCalledWith("A", expect.stringContaining("missing"), undefined, UNATTRIBUTED_MUTATION_CONTEXT);
     manager.stop();
   });
 
@@ -9940,8 +9948,8 @@ describe("clearStaleBlockedBy", () => {
     const recovered = await manager.clearStaleBlockedBy();
 
     expect(recovered).toBe(1);
-    expect(store.updateTask).toHaveBeenCalledWith("A", { blockedBy: null, overlapBlockedBy: null, status: null });
-    expect(store.logEntry).toHaveBeenCalledWith("A", expect.stringContaining("soft-deleted at 2026-05-22T00:00:00.000Z"));
+    expect(store.updateTask).toHaveBeenCalledWith("A", { blockedBy: null, overlapBlockedBy: null, status: null }, UNATTRIBUTED_MUTATION_CONTEXT);
+    expect(store.logEntry).toHaveBeenCalledWith("A", expect.stringContaining("soft-deleted at 2026-05-22T00:00:00.000Z"), undefined, UNATTRIBUTED_MUTATION_CONTEXT);
     manager.stop();
   });
 
@@ -9962,8 +9970,8 @@ describe("clearStaleBlockedBy", () => {
     const recovered = await manager.clearStaleBlockedBy();
 
     expect(recovered).toBe(1);
-    expect(store.updateTask).toHaveBeenCalledWith("A", { blockedBy: null });
-    expect(store.logEntry).toHaveBeenCalledWith("A", expect.stringContaining("Auto-recovered (FN-4091): cleared stale blockedBy — blocker FN-DELETED soft-deleted at 2026-05-22T00:00:00.000Z"));
+    expect(store.updateTask).toHaveBeenCalledWith("A", { blockedBy: null }, UNATTRIBUTED_MUTATION_CONTEXT);
+    expect(store.logEntry).toHaveBeenCalledWith("A", expect.stringContaining("Auto-recovered (FN-4091): cleared stale blockedBy — blocker FN-DELETED soft-deleted at 2026-05-22T00:00:00.000Z"), undefined, UNATTRIBUTED_MUTATION_CONTEXT);
     manager.stop();
   });
 
@@ -9985,9 +9993,9 @@ describe("clearStaleBlockedBy", () => {
     const recovered = await manager.clearStaleBlockedBy();
 
     expect(recovered).toBe(1);
-    expect(store.updateTask).toHaveBeenCalledWith("A", { blockedBy: "FN-LIVE", status: "queued" });
-    expect(store.logEntry).toHaveBeenCalledWith("A", expect.stringContaining("soft-deleted"));
-    expect(store.logEntry).toHaveBeenCalledWith("A", expect.stringContaining("now blocked by FN-LIVE"));
+    expect(store.updateTask).toHaveBeenCalledWith("A", { blockedBy: "FN-LIVE", status: "queued" }, UNATTRIBUTED_MUTATION_CONTEXT);
+    expect(store.logEntry).toHaveBeenCalledWith("A", expect.stringContaining("soft-deleted"), undefined, UNATTRIBUTED_MUTATION_CONTEXT);
+    expect(store.logEntry).toHaveBeenCalledWith("A", expect.stringContaining("now blocked by FN-LIVE"), undefined, UNATTRIBUTED_MUTATION_CONTEXT);
     manager.stop();
   });
 
@@ -10031,9 +10039,9 @@ describe("clearStaleBlockedBy", () => {
     const recovered = await manager.clearStaleBlockedBy();
 
     expect(recovered).toBe(1);
-    expect(store.updateTask).toHaveBeenCalledWith("A", { blockedBy: null, overlapBlockedBy: null, status: null });
-    expect(store.logEntry).toHaveBeenCalledWith("A", expect.stringContaining(blockerId));
-    expect(store.logEntry).toHaveBeenCalledWith("A", expect.stringContaining(column));
+    expect(store.updateTask).toHaveBeenCalledWith("A", { blockedBy: null, overlapBlockedBy: null, status: null }, UNATTRIBUTED_MUTATION_CONTEXT);
+    expect(store.logEntry).toHaveBeenCalledWith("A", expect.stringContaining(blockerId), undefined, UNATTRIBUTED_MUTATION_CONTEXT);
+    expect(store.logEntry).toHaveBeenCalledWith("A", expect.stringContaining(column), undefined, UNATTRIBUTED_MUTATION_CONTEXT);
     manager.stop();
   });
 
@@ -10048,9 +10056,9 @@ describe("clearStaleBlockedBy", () => {
     const recovered = await manager.clearStaleBlockedBy();
 
     expect(recovered).toBe(1);
-    expect(store.updateTask).toHaveBeenCalledWith("A", { blockedBy: null, overlapBlockedBy: null, status: null });
-    expect(store.logEntry).toHaveBeenCalledWith("A", expect.stringContaining(blockerId));
-    expect(store.logEntry).toHaveBeenCalledWith("A", expect.stringContaining("in-review + paused"));
+    expect(store.updateTask).toHaveBeenCalledWith("A", { blockedBy: null, overlapBlockedBy: null, status: null }, UNATTRIBUTED_MUTATION_CONTEXT);
+    expect(store.logEntry).toHaveBeenCalledWith("A", expect.stringContaining(blockerId), undefined, UNATTRIBUTED_MUTATION_CONTEXT);
+    expect(store.logEntry).toHaveBeenCalledWith("A", expect.stringContaining("in-review + paused"), undefined, UNATTRIBUTED_MUTATION_CONTEXT);
     manager.stop();
   });
 
@@ -10065,9 +10073,9 @@ describe("clearStaleBlockedBy", () => {
     const recovered = await manager.clearStaleBlockedBy();
 
     expect(recovered).toBe(1);
-    expect(store.updateTask).toHaveBeenCalledWith("A", { blockedBy: null, overlapBlockedBy: null, status: null });
-    expect(store.logEntry).toHaveBeenCalledWith("A", expect.stringContaining(blockerId));
-    expect(store.logEntry).toHaveBeenCalledWith("A", expect.stringContaining("mergeRetries 3/3"));
+    expect(store.updateTask).toHaveBeenCalledWith("A", { blockedBy: null, overlapBlockedBy: null, status: null }, UNATTRIBUTED_MUTATION_CONTEXT);
+    expect(store.logEntry).toHaveBeenCalledWith("A", expect.stringContaining(blockerId), undefined, UNATTRIBUTED_MUTATION_CONTEXT);
+    expect(store.logEntry).toHaveBeenCalledWith("A", expect.stringContaining("mergeRetries 3/3"), undefined, UNATTRIBUTED_MUTATION_CONTEXT);
     manager.stop();
   });
 
@@ -10096,8 +10104,8 @@ describe("clearStaleBlockedBy", () => {
     const recovered = await manager.clearStaleBlockedBy();
 
     expect(recovered).toBe(1);
-    expect(store.updateTask).toHaveBeenCalledWith("A", { blockedBy: null, overlapBlockedBy: null, status: null });
-    expect(store.logEntry).toHaveBeenCalledWith("A", expect.stringContaining("not among unresolved dependencies"));
+    expect(store.updateTask).toHaveBeenCalledWith("A", { blockedBy: null, overlapBlockedBy: null, status: null }, UNATTRIBUTED_MUTATION_CONTEXT);
+    expect(store.logEntry).toHaveBeenCalledWith("A", expect.stringContaining("not among unresolved dependencies"), undefined, UNATTRIBUTED_MUTATION_CONTEXT);
     manager.stop();
   });
 
@@ -10132,9 +10140,9 @@ describe("clearStaleBlockedBy", () => {
     const recovered = await manager.clearStaleBlockedBy();
 
     expect(recovered).toBe(1);
-    expect(store.updateTask).toHaveBeenCalledWith("A", { blockedBy: null, overlapBlockedBy: null, status: null });
-    expect(store.logEntry).toHaveBeenCalledWith("A", expect.stringContaining(`blocker=${blockerId}`));
-    expect(store.logEntry).toHaveBeenCalledWith("A", expect.stringContaining("reason=unbacked-merging"));
+    expect(store.updateTask).toHaveBeenCalledWith("A", { blockedBy: null, overlapBlockedBy: null, status: null }, UNATTRIBUTED_MUTATION_CONTEXT);
+    expect(store.logEntry).toHaveBeenCalledWith("A", expect.stringContaining(`blocker=${blockerId}`), undefined, UNATTRIBUTED_MUTATION_CONTEXT);
+    expect(store.logEntry).toHaveBeenCalledWith("A", expect.stringContaining("reason=unbacked-merging"), undefined, UNATTRIBUTED_MUTATION_CONTEXT);
     manager.stop();
     vi.useRealTimers();
   });
@@ -10180,7 +10188,7 @@ describe("clearStaleBlockedBy", () => {
     const recovered = await manager.clearStaleBlockedBy();
 
     expect(recovered).toBe(1);
-    expect(store.updateTask).toHaveBeenCalledWith("A", { blockedBy: null, overlapBlockedBy: null, status: null });
+    expect(store.updateTask).toHaveBeenCalledWith("A", { blockedBy: null, overlapBlockedBy: null, status: null }, UNATTRIBUTED_MUTATION_CONTEXT);
     manager.stop();
     vi.useRealTimers();
   });
@@ -10215,8 +10223,8 @@ describe("clearStaleBlockedBy", () => {
     const recovered = await manager.clearStaleBlockedBy();
 
     expect(recovered).toBe(1);
-    expect(store.updateTask).toHaveBeenCalledWith("FN-4013", { blockedBy: null, overlapBlockedBy: null, status: null });
-    expect(store.logEntry).toHaveBeenCalledWith("FN-4013", expect.stringContaining("missing-worktree session start"));
+    expect(store.updateTask).toHaveBeenCalledWith("FN-4013", { blockedBy: null, overlapBlockedBy: null, status: null }, UNATTRIBUTED_MUTATION_CONTEXT);
+    expect(store.logEntry).toHaveBeenCalledWith("FN-4013", expect.stringContaining("missing-worktree session start"), undefined, UNATTRIBUTED_MUTATION_CONTEXT);
     manager.stop();
   });
 
@@ -10281,9 +10289,9 @@ describe("clearStaleBlockedBy", () => {
     const recovered = await manager.clearStaleBlockedBy();
 
     expect(recovered).toBe(1);
-    expect(store.updateTask).toHaveBeenCalledWith("FN-4076", { blockedBy: null });
-    expect(store.logEntry).toHaveBeenCalledWith("FN-4076", expect.stringContaining("FN-4091"));
-    expect(store.logEntry).toHaveBeenCalledWith("FN-4076", expect.stringContaining("FN-MISSING"));
+    expect(store.updateTask).toHaveBeenCalledWith("FN-4076", { blockedBy: null }, UNATTRIBUTED_MUTATION_CONTEXT);
+    expect(store.logEntry).toHaveBeenCalledWith("FN-4076", expect.stringContaining("FN-4091"), undefined, UNATTRIBUTED_MUTATION_CONTEXT);
+    expect(store.logEntry).toHaveBeenCalledWith("FN-4076", expect.stringContaining("FN-MISSING"), undefined, UNATTRIBUTED_MUTATION_CONTEXT);
     manager.stop();
   });
 
@@ -10298,9 +10306,9 @@ describe("clearStaleBlockedBy", () => {
     const recovered = await manager.clearStaleBlockedBy();
 
     expect(recovered).toBe(1);
-    expect(store.updateTask).toHaveBeenCalledWith("FN-4076", { blockedBy: null });
-    expect(store.logEntry).toHaveBeenCalledWith("FN-4076", expect.stringContaining("FN-4091"));
-    expect(store.logEntry).toHaveBeenCalledWith("FN-4076", expect.stringContaining("done"));
+    expect(store.updateTask).toHaveBeenCalledWith("FN-4076", { blockedBy: null }, UNATTRIBUTED_MUTATION_CONTEXT);
+    expect(store.logEntry).toHaveBeenCalledWith("FN-4076", expect.stringContaining("FN-4091"), undefined, UNATTRIBUTED_MUTATION_CONTEXT);
+    expect(store.logEntry).toHaveBeenCalledWith("FN-4076", expect.stringContaining("done"), undefined, UNATTRIBUTED_MUTATION_CONTEXT);
     manager.stop();
   });
 
@@ -10315,7 +10323,7 @@ describe("clearStaleBlockedBy", () => {
     const recovered = await manager.clearStaleBlockedBy();
 
     expect(recovered).toBe(1);
-    expect(store.updateTask).toHaveBeenCalledWith("FN-4076", { blockedBy: null });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-4076", { blockedBy: null }, UNATTRIBUTED_MUTATION_CONTEXT);
     manager.stop();
   });
 
@@ -10348,10 +10356,10 @@ describe("clearStaleBlockedBy", () => {
 
     // FN-5434: stale queued-status cleanup remains stateful but is no longer logged/count-recovered.
     expect(recovered).toBe(0);
-    expect(store.updateTask).toHaveBeenCalledWith("FN-3170", { blockedBy: null, overlapBlockedBy: null, status: null });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-3170", { blockedBy: null, overlapBlockedBy: null, status: null }, UNATTRIBUTED_MUTATION_CONTEXT);
     expect(store.logEntry).not.toHaveBeenCalledWith(
       "FN-3170",
-      expect.stringContaining("cleared stale queued status"),
+      expect.stringContaining("cleared stale queued status"), undefined, UNATTRIBUTED_MUTATION_CONTEXT,
     );
     manager.stop();
   });
@@ -10371,7 +10379,7 @@ describe("clearStaleBlockedBy", () => {
     const recovered = await manager.clearStaleBlockedBy();
 
     expect(recovered).toBe(0);
-    expect(store.updateTask).not.toHaveBeenCalledWith("FN-3170", expect.any(Object));
+    expect(store.updateTask).not.toHaveBeenCalledWith("FN-3170", expect.any(Object), UNATTRIBUTED_MUTATION_CONTEXT);
     const refreshedLogs = (store.logEntry as ReturnType<typeof vi.fn>).mock.calls.filter(
       ([taskId, message]) => taskId === "FN-3170" && String(message).includes("refreshed stale blockedBy"),
     );
@@ -10394,8 +10402,8 @@ describe("clearStaleBlockedBy", () => {
     const recovered = await manager.clearStaleBlockedBy();
 
     expect(recovered).toBe(1);
-    expect(store.updateTask).toHaveBeenCalledWith("FN-3170", { blockedBy: "FN-3169", status: "queued" });
-    expect(store.logEntry).toHaveBeenCalledWith("FN-3170", expect.stringContaining("refreshed stale blockedBy"));
+    expect(store.updateTask).toHaveBeenCalledWith("FN-3170", { blockedBy: "FN-3169", status: "queued" }, UNATTRIBUTED_MUTATION_CONTEXT);
+    expect(store.logEntry).toHaveBeenCalledWith("FN-3170", expect.stringContaining("refreshed stale blockedBy"), undefined, UNATTRIBUTED_MUTATION_CONTEXT);
     manager.stop();
   });
 });
@@ -10459,7 +10467,7 @@ describe("FN-4538 overlapBlockedBy self-healing", () => {
       "FN-TARGET",
       "Auto-recovered: preserved queued status — still blocked by file scope overlap with FN-ACTIVE",
     );
-    expect(store.updateTask).not.toHaveBeenCalledWith("FN-TARGET", expect.objectContaining({ status: null }));
+    expect(store.updateTask).not.toHaveBeenCalledWith("FN-TARGET", expect.objectContaining({ status: null }), UNATTRIBUTED_MUTATION_CONTEXT);
     manager.stop();
   });
 
@@ -10600,7 +10608,7 @@ describe("FN-4538 overlapBlockedBy self-healing", () => {
 
     await manager.clearStaleBlockedBy();
 
-    expect(store.updateTask).toHaveBeenCalledWith("FN-TARGET", { blockedBy: null, overlapBlockedBy: null, status: null });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-TARGET", { blockedBy: null, overlapBlockedBy: null, status: null }, UNATTRIBUTED_MUTATION_CONTEXT);
     manager.stop();
   });
 
@@ -10613,7 +10621,7 @@ describe("FN-4538 overlapBlockedBy self-healing", () => {
 
     await manager.reconcileCompletedTask("FN-X");
 
-    expect(store.updateTask).toHaveBeenCalledWith("FN-TARGET", { blockedBy: null, overlapBlockedBy: null, status: null });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-TARGET", { blockedBy: null, overlapBlockedBy: null, status: null }, UNATTRIBUTED_MUTATION_CONTEXT);
     manager.stop();
   });
 
@@ -10626,7 +10634,7 @@ describe("FN-4538 overlapBlockedBy self-healing", () => {
     await manager.clearStaleBlockedBy();
 
     expect(store.updateTask).toHaveBeenCalledWith("FN-TARGET", { blockedBy: null, status: "queued" });
-    expect(store.updateTask).not.toHaveBeenCalledWith("FN-TARGET", expect.objectContaining({ status: null }));
+    expect(store.updateTask).not.toHaveBeenCalledWith("FN-TARGET", expect.objectContaining({ status: null }), UNATTRIBUTED_MUTATION_CONTEXT);
     manager.stop();
   });
   it("FN-783: clearStaleBlockedBy clears queued status when overlap blocker no longer shares effective write scope", async () => {
@@ -10646,10 +10654,10 @@ describe("FN-4538 overlapBlockedBy self-healing", () => {
 
     await manager.clearStaleBlockedBy();
 
-    expect(store.updateTask).toHaveBeenCalledWith("FN-TARGET", { blockedBy: null, overlapBlockedBy: null, status: null });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-TARGET", { blockedBy: null, overlapBlockedBy: null, status: null }, UNATTRIBUTED_MUTATION_CONTEXT);
     expect(store.logEntry).not.toHaveBeenCalledWith(
       "FN-TARGET",
-      "Auto-recovered: preserved queued status — still blocked by file scope overlap with FN-ACTIVE",
+      "Auto-recovered: preserved queued status — still blocked by file scope overlap with FN-ACTIVE", undefined, UNATTRIBUTED_MUTATION_CONTEXT,
     );
     manager.stop();
   });
@@ -10857,9 +10865,9 @@ describe("stale triage processing eviction before recovery", () => {
     vi.setSystemTime(new Date("2026-01-01T01:00:00.000Z"));
 
     expect(await manager.recoverOrphanedPlanningTasks()).toBe(2);
-    expect(store.updateTask).toHaveBeenCalledWith("FN-hung", { status: null });
-    expect(store.updateTask).toHaveBeenCalledWith("FN-stuck-aborted", { status: null });
-    expect(store.updateTask).not.toHaveBeenCalledWith("FN-live", { status: null });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-hung", { status: null }, UNATTRIBUTED_MUTATION_CONTEXT);
+    expect(store.updateTask).toHaveBeenCalledWith("FN-stuck-aborted", { status: null }, UNATTRIBUTED_MUTATION_CONTEXT);
+    expect(store.updateTask).not.toHaveBeenCalledWith("FN-live", { status: null }, UNATTRIBUTED_MUTATION_CONTEXT);
 
     vi.clearAllMocks();
     (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
@@ -10870,9 +10878,9 @@ describe("stale triage processing eviction before recovery", () => {
     ]);
 
     expect(await manager.recoverStarvedRefinementTriageTasks()).toBe(2);
-    expect(store.updateTask).toHaveBeenCalledWith("FN-hung", { priority: "high" });
-    expect(store.updateTask).toHaveBeenCalledWith("FN-stuck-aborted", { priority: "high" });
-    expect(store.updateTask).not.toHaveBeenCalledWith("FN-live", { priority: "high" });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-hung", { priority: "high" }, UNATTRIBUTED_MUTATION_CONTEXT);
+    expect(store.updateTask).toHaveBeenCalledWith("FN-stuck-aborted", { priority: "high" }, UNATTRIBUTED_MUTATION_CONTEXT);
+    expect(store.updateTask).not.toHaveBeenCalledWith("FN-live", { priority: "high" }, UNATTRIBUTED_MUTATION_CONTEXT);
 
     manager.stop();
   });
@@ -10972,7 +10980,7 @@ describe("recoverDoneTaskMergeMetadata", () => {
         commitSha: "merge1",
         mergeConfirmed: true,
       }),
-    }));
+    }), UNATTRIBUTED_MUTATION_CONTEXT);
 
     manager.stop();
   });
@@ -11023,7 +11031,7 @@ describe("recoverDoneTaskMergeMetadata", () => {
         "packages/engine/src/merger-ai.ts",
         "packages/engine/src/self-healing.ts",
       ],
-    });
+    }, UNATTRIBUTED_MUTATION_CONTEXT);
 
     manager.stop();
   });
@@ -11089,7 +11097,7 @@ describe("recoverDoneTaskMergeMetadata", () => {
       mergeDetails: expect.objectContaining({
         commitSha: "merge1",
       }),
-    });
+    }, UNATTRIBUTED_MUTATION_CONTEXT);
 
     manager.stop();
   });
@@ -11122,7 +11130,7 @@ describe("recoverDoneTaskMergeMetadata", () => {
     expect(store.updateTask).toHaveBeenCalledWith("FN-4646-A", expect.objectContaining({
       mergeDetails: expect.objectContaining({ landedFiles: [] }),
       modifiedFiles: undefined,
-    }));
+    }), UNATTRIBUTED_MUTATION_CONTEXT);
 
     manager.stop();
   });
@@ -11154,7 +11162,7 @@ describe("recoverDoneTaskMergeMetadata", () => {
     expect(store.updateTask).toHaveBeenCalledWith("FN-4646-B", expect.objectContaining({
       mergeDetails: expect.objectContaining({ landedFiles: [] }),
       modifiedFiles: undefined,
-    }));
+    }), UNATTRIBUTED_MUTATION_CONTEXT);
 
     manager.stop();
   });
@@ -11199,7 +11207,7 @@ describe("recoverDoneTaskMergeMetadata", () => {
     expect(store.updateTask).not.toHaveBeenCalled();
     expect(store.logEntry).not.toHaveBeenCalledWith(
       "FN-7231",
-      expect.stringContaining("invalid workflow merge proof"),
+      expect.stringContaining("invalid workflow merge proof"), undefined, UNATTRIBUTED_MUTATION_CONTEXT,
     );
     expect(mockedExecSync.mock.calls.some(([cmd]) => String(cmd).includes("git diff --name-only"))).toBe(false);
 
@@ -11237,7 +11245,7 @@ describe("recoverDoneTaskMergeMetadata", () => {
         commitSha: "merge1",
         rebaseBaseSha: "base1",
       }),
-    });
+    }, UNATTRIBUTED_MUTATION_CONTEXT);
 
     manager.stop();
   });
@@ -11271,7 +11279,7 @@ describe("recoverDoneTaskMergeMetadata", () => {
       mergeDetails: expect.objectContaining({
         rebaseBaseSha: "existing-base",
       }),
-    });
+    }, UNATTRIBUTED_MUTATION_CONTEXT);
 
     manager.stop();
   });
@@ -11304,7 +11312,7 @@ describe("recoverDoneTaskMergeMetadata", () => {
       mergeDetails: expect.not.objectContaining({
         rebaseBaseSha: expect.any(String),
       }),
-    });
+    }, UNATTRIBUTED_MUTATION_CONTEXT);
 
     manager.stop();
   });
@@ -11391,7 +11399,7 @@ describe("recoverDoneTaskMergeMetadata", () => {
       mergeDetails: expect.objectContaining({
         commitSha: "mergeSha",
       }),
-    });
+    }, UNATTRIBUTED_MUTATION_CONTEXT);
     expect(mockedExecSync).toHaveBeenCalledWith(
       expect.stringContaining("--reverse"),
       expect.anything(),
@@ -11426,7 +11434,7 @@ describe("recoverDoneTaskMergeMetadata", () => {
     const repaired = await manager.recoverDoneTaskMergeMetadata();
 
     expect(repaired).toBe(1);
-    expect(store.updateTask).toHaveBeenCalledWith("FN-3373", { mergeDetails: undefined });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-3373", { mergeDetails: undefined }, UNATTRIBUTED_MUTATION_CONTEXT);
 
     manager.stop();
   });
@@ -11895,7 +11903,7 @@ describe("SelfHealingManager reclaimSelfOwnedBranchConflicts", () => {
 
     const recovered = await manager.reclaimSelfOwnedBranchConflicts();
     expect(recovered).toBe(1);
-    expect(store.updateTask).toHaveBeenCalledWith("FN-509", expect.objectContaining({ worktree: null, branch: null, status: null, paused: false }));
+    expect(store.updateTask).toHaveBeenCalledWith("FN-509", expect.objectContaining({ worktree: null, branch: null, status: null, paused: false }), UNATTRIBUTED_MUTATION_CONTEXT);
     expect((store as any).recordRunAuditEvent).toHaveBeenCalledWith(
       expect.objectContaining({
         domain: "git",
@@ -11920,7 +11928,7 @@ describe("SelfHealingManager reclaimSelfOwnedBranchConflicts", () => {
 
     const recovered = await manager.reclaimSelfOwnedBranchConflicts();
     expect(recovered).toBe(1);
-    expect(store.updateTask).toHaveBeenCalledWith("FN-500", expect.objectContaining({ worktree: "/tmp/fn-500", branch: "fusion/fn-500", status: null, paused: false }));
+    expect(store.updateTask).toHaveBeenCalledWith("FN-500", expect.objectContaining({ worktree: "/tmp/fn-500", branch: "fusion/fn-500", status: null, paused: false }), UNATTRIBUTED_MUTATION_CONTEXT);
   });
 
   it("normalizes an out-of-root self-healing reclaim before persisting it", async () => {
@@ -11947,7 +11955,7 @@ describe("SelfHealingManager reclaimSelfOwnedBranchConflicts", () => {
       targetPath,
       taskId: "FN-8400",
     }));
-    expect(store.updateTask).toHaveBeenCalledWith("FN-8400", expect.objectContaining({ worktree: targetPath }));
+    expect(store.updateTask).toHaveBeenCalledWith("FN-8400", expect.objectContaining({ worktree: targetPath }), UNATTRIBUTED_MUTATION_CONTEXT);
     expect((store as any).recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
       metadata: expect.objectContaining({ worktreePath: targetPath }),
     }));
@@ -12039,7 +12047,7 @@ describe("SelfHealingManager reclaimSelfOwnedBranchConflicts", () => {
       status: "failed",
       paused: true,
       pausedReason: "branch-conflict-unrecoverable",
-    }));
+    }), UNATTRIBUTED_MUTATION_CONTEXT);
     expect(store.handoffToReview).toHaveBeenCalledWith("FN-503", expect.objectContaining({
       evidence: expect.objectContaining({ reason: "branch-conflict-unrecoverable-repromote" }),
     }));
@@ -12105,7 +12113,7 @@ describe("SelfHealingManager reclaimSelfOwnedBranchConflicts", () => {
       status: "failed",
       paused: true,
       pausedReason: "branch-conflict-unrecoverable",
-    }));
+    }), UNATTRIBUTED_MUTATION_CONTEXT);
     expect(store.handoffToReview).toHaveBeenCalledWith("FN-502", expect.objectContaining({
       evidence: expect.objectContaining({ reason: "branch-conflict-unrecoverable-repromote" }),
     }));
@@ -12162,7 +12170,7 @@ describe("SelfHealingManager reclaimStaleActiveBranches (FN-4546)", () => {
     expect(recovered).toBe(1);
     expect(mockedExecSync).toHaveBeenCalledWith(expect.stringContaining("git branch -D \"fusion/fn-1001\""), expect.anything());
     expect(mockedExecSync).toHaveBeenCalledWith(expect.stringContaining("git worktree prune"), expect.anything());
-    expect(store.updateTask).toHaveBeenCalledWith("FN-1001", { worktree: null, branch: null, baseCommitSha: null });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-1001", { worktree: null, branch: null, baseCommitSha: null }, UNATTRIBUTED_MUTATION_CONTEXT);
     expect((store as any).recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
       domain: "git",
       mutationType: "branch:stale-active-reclaim",
@@ -12253,10 +12261,10 @@ describe("SelfHealingManager reclaimStaleActiveBranches (FN-4546)", () => {
     expect(recovered).toBe(1);
     expect(mockedExecSync).toHaveBeenCalledWith(expect.stringContaining("git branch -D \"fusion/fn-1001\""), expect.anything());
     expect(getSelfHealingLogger().warn).not.toHaveBeenCalledWith(expect.stringContaining("stale-active-branch-rescue-needed FN-1001"));
-    expect(store.updateTask).toHaveBeenCalledWith("FN-1001", { worktree: null, branch: null, baseCommitSha: null });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-1001", { worktree: null, branch: null, baseCommitSha: null }, UNATTRIBUTED_MUTATION_CONTEXT);
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-1001",
-      expect.stringContaining("reason=complete-column-unique-commits-force"),
+      expect.stringContaining("reason=complete-column-unique-commits-force"), undefined, UNATTRIBUTED_MUTATION_CONTEXT,
     );
     expect((store as any).recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
       domain: "git",
@@ -12628,7 +12636,7 @@ describe("autoMerge gating for mutating in-review sweeps (FN-5147)", () => {
       expect(surfaced).toBe(1);
       expect(store.logEntry).toHaveBeenCalledWith(
         "FN-OVERRIDE",
-        expect.stringContaining("In-review stall surfaced ["),
+        expect.stringContaining("In-review stall surfaced ["), undefined, UNATTRIBUTED_MUTATION_CONTEXT,
       );
     } finally {
       vi.useRealTimers();
@@ -12664,7 +12672,7 @@ describe("autoMerge gating for mutating in-review sweeps (FN-5147)", () => {
       expect(surfaced).toBe(1);
       expect(store.logEntry).not.toHaveBeenCalledWith(
         "FN-MANUAL",
-        expect.stringContaining("In-review stall surfaced ["),
+        expect.stringContaining("In-review stall surfaced ["), undefined, UNATTRIBUTED_MUTATION_CONTEXT,
       );
     } finally {
       vi.useRealTimers();
@@ -12758,7 +12766,7 @@ describe("FN-5335 triple-proof no-action unit coverage", () => {
     const recovered = await manager.recoverStuckMergeDeadlocks();
     expect(recovered).toBe(0);
     expect(store.moveTask).not.toHaveBeenCalled();
-    expect(store.updateTask).not.toHaveBeenCalledWith("FN-SMD", { paused: true });
+    expect(store.updateTask).not.toHaveBeenCalledWith("FN-SMD", { paused: true }, UNATTRIBUTED_MUTATION_CONTEXT);
     expect((store as any).recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({ mutationType: "task:stuck-merge-deadlock-no-action" }));
   });
 
@@ -12909,7 +12917,7 @@ describe("FN-5335 triple-proof no-action unit coverage", () => {
 
     const result = await manager.finalizeNoOpReviewTasks();
     expect(result).toBe(0);
-    expect(store.moveTask).not.toHaveBeenCalledWith("FN-NOOP", "todo", expect.anything());
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-NOOP", "todo", expect.anything(), UNATTRIBUTED_MUTATION_CONTEXT);
     expect((store as any).recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({ mutationType: "task:finalize-no-op-review-no-action" }));
   });
 
@@ -12971,10 +12979,10 @@ describe("FN-5335 triple-proof no-action unit coverage", () => {
         preserveResumeState: true,
         moveSource: "engine",
         recoveryRehome: true,
-      }));
+      }), UNATTRIBUTED_MUTATION_CONTEXT);
       expect(tasks.get("FN-H")?.userPaused).not.toBe(true);
-      expect(store.updateTask).toHaveBeenCalledWith("FN-D", { overlapBlockedBy: null, status: null });
-      expect(store.logEntry).toHaveBeenCalledWith("FN-H", expect.stringContaining("FN-6292"));
+      expect(store.updateTask).toHaveBeenCalledWith("FN-D", { overlapBlockedBy: null, status: null }, UNATTRIBUTED_MUTATION_CONTEXT);
+      expect(store.logEntry).toHaveBeenCalledWith("FN-H", expect.stringContaining("FN-6292"), undefined, UNATTRIBUTED_MUTATION_CONTEXT);
       expect(store.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
         mutationType: "task:reconcile-dependency-blocking-lease",
         target: "FN-H",
@@ -13021,7 +13029,7 @@ describe("FN-5335 triple-proof no-action unit coverage", () => {
 
       await expect(manager.reconcileDependencyBlockingLeases()).resolves.toBe(1);
       /* The dependent is released rather than left blocked behind a holder that is not coming back. */
-      expect(store.updateTask).toHaveBeenCalledWith("FN-D", { overlapBlockedBy: null, status: null });
+      expect(store.updateTask).toHaveBeenCalledWith("FN-D", { overlapBlockedBy: null, status: null }, UNATTRIBUTED_MUTATION_CONTEXT);
       manager.stop();
     });
 
@@ -13055,7 +13063,7 @@ describe("FN-5335 triple-proof no-action unit coverage", () => {
       vi.spyOn(manager as any, "evaluateBackwardMoveTripleProof").mockResolvedValue({ ok: true, stalenessMs: 10_000, reason: "test" });
 
       await expect(manager.reconcileDependencyBlockingLeases()).resolves.toBe(1);
-      expect(store.moveTask).toHaveBeenCalledWith("FN-H2", expect.anything(), expect.objectContaining({ recoveryRehome: true }));
+      expect(store.moveTask).toHaveBeenCalledWith("FN-H2", expect.anything(), expect.objectContaining({ recoveryRehome: true }), UNATTRIBUTED_MUTATION_CONTEXT);
       manager.stop();
     });
 
@@ -13067,8 +13075,8 @@ describe("FN-5335 triple-proof no-action unit coverage", () => {
       vi.spyOn(manager as any, "evaluateBackwardMoveTripleProof").mockResolvedValue({ ok: true, stalenessMs: 10_000, reason: "test", metadata: {} });
 
       await expect(manager.reconcileDependencyBlockingLeases()).resolves.toBe(1);
-      expect(store.moveTask).toHaveBeenCalledWith("FN-H", "todo", expect.objectContaining({ moveSource: "engine", recoveryRehome: true }));
-      expect(store.updateTask).not.toHaveBeenCalledWith("FN-D", { overlapBlockedBy: null, status: null });
+      expect(store.moveTask).toHaveBeenCalledWith("FN-H", "todo", expect.objectContaining({ moveSource: "engine", recoveryRehome: true }), UNATTRIBUTED_MUTATION_CONTEXT);
+      expect(store.updateTask).not.toHaveBeenCalledWith("FN-D", { overlapBlockedBy: null, status: null }, UNATTRIBUTED_MUTATION_CONTEXT);
       manager.stop();
     });
 
@@ -13116,7 +13124,7 @@ describe("FN-5335 triple-proof no-action unit coverage", () => {
       vi.spyOn(manager as any, "evaluateBackwardMoveTripleProof").mockResolvedValue({ ok: true, stalenessMs: 10_000, reason: "test", metadata: {} });
 
       await expect(manager.reconcileDependencyBlockingLeases()).resolves.toBe(1);
-      expect(store.moveTask).toHaveBeenCalledWith("FN-H", "todo", expect.objectContaining({ moveSource: "engine", recoveryRehome: true }));
+      expect(store.moveTask).toHaveBeenCalledWith("FN-H", "todo", expect.objectContaining({ moveSource: "engine", recoveryRehome: true }), UNATTRIBUTED_MUTATION_CONTEXT);
       manager.stop();
     });
 
@@ -13238,9 +13246,9 @@ describe("FN-5335 triple-proof no-action unit coverage", () => {
         moveSource: "engine",
         recoveryRehome: true,
         bypassGuards: true,
-      }));
-      expect(store.updateTask).toHaveBeenCalledWith("FN-6778", { status: "queued", blockedBy: "FN-6777" });
-      expect(store.updateTask).toHaveBeenCalledWith("FN-6779", { status: "queued", blockedBy: "FN-6770" });
+      }), UNATTRIBUTED_MUTATION_CONTEXT);
+      expect(store.updateTask).toHaveBeenCalledWith("FN-6778", { status: "queued", blockedBy: "FN-6777" }, UNATTRIBUTED_MUTATION_CONTEXT);
+      expect(store.updateTask).toHaveBeenCalledWith("FN-6779", { status: "queued", blockedBy: "FN-6770" }, UNATTRIBUTED_MUTATION_CONTEXT);
       expect(tasks.get("FN-6778")?.column).toBe("todo");
       expect(tasks.get("FN-6778")?.blockedBy).toBe("FN-6777");
       expect(tasks.get("FN-6779")?.blockedBy).toBe("FN-6770");
@@ -13267,7 +13275,7 @@ describe("FN-5335 triple-proof no-action unit coverage", () => {
 
       await expect(manager.reconcileInReviewUnmetDependencies()).resolves.toBe(0);
       expect(store.moveTask).not.toHaveBeenCalled();
-      expect(store.updateTask).not.toHaveBeenCalledWith("FN-OK", expect.objectContaining({ status: "queued" }));
+      expect(store.updateTask).not.toHaveBeenCalledWith("FN-OK", expect.objectContaining({ status: "queued" }), UNATTRIBUTED_MUTATION_CONTEXT);
       manager.stop();
     });
 
@@ -13481,7 +13489,7 @@ describe("stranded AI merge clean-room recovery", () => {
     }));
     expect(testStore.logEntry).toHaveBeenCalledWith(
       "FN-5858",
-      expect.stringContaining("Auto-recovered stranded AI merge clean-room commit dddddddd"),
+      expect.stringContaining("Auto-recovered stranded AI merge clean-room commit dddddddd"), undefined, UNATTRIBUTED_MUTATION_CONTEXT,
     );
   });
 });

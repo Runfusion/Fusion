@@ -19,7 +19,7 @@ import { existsSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import type { AgentHeartbeatRun, AgentStore, MessageStore, PermanentAgentGatingContext, ProviderInstanceRef, ResolvedMcpServerDefinition, TaskDetail, Settings, SteeringComment, TaskStore } from "@fusion/core";
-import { isValidProviderInstanceId, resolvePersistAgentThinkingLog, resolveExecutorFallbackModel } from "@fusion/core";
+import { isValidProviderInstanceId, mutationContextForAgent, resolvePersistAgentThinkingLog, resolveExecutorFallbackModel } from "@fusion/core";
 
 import {
   createResolvedAgentSession,
@@ -1534,12 +1534,18 @@ Follow instructions precisely and avoid unrelated changes.`,
               permanentAgentGating: this.options.permanentAgentGating,
               taskId: taskDetail.id,
               taskTitle: taskDetail.title,
+              /* FNXC:Identity 2026-08-09-03:04 (U18/KTD2): derived — the step session resolves a
+                 REAL acting agent (column/effective agent, else the task's assignee), which is the
+                 agent doing the write, not the agent being written about. */
               onFallbackModelUsed: createFallbackModelObserver({
                 agent: "executor",
                 label: "workflow step agent",
                 store: this.store,
                 taskId: taskDetail.id,
                 taskTitle: taskDetail.title,
+                runContext: mutationContextForAgent(
+                  this.options.effectiveAgentId ?? taskDetail.assignedAgentId ?? "executor",
+                ),
               }),
               taskEnv: this.options.taskEnv,
             });

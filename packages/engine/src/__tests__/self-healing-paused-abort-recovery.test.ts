@@ -1,4 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+/*
+FNXC:Identity 2026-08-09-03:04 (U18/KTD2):
+These call-arg assertions now include the mutation context the converted sweep passes.
+Adding it is what keeps them load-bearing: left at the old arity every
+`toHaveBeenCalledWith` here would fail, and every `.not.toHaveBeenCalledWith` would pass
+vacuously — an assertion that can no longer fail is worse than one that is red.
+*/
+import { UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 import { EventEmitter } from "node:events";
 
 vi.mock("node:fs", async (importOriginal) => {
@@ -103,7 +111,7 @@ describe("recoverPausedAbortFailures", () => {
         reason: "pause-abort-active-work",
         createdAt: "2026-06-20T02:30:00.000Z",
       },
-    });
+    }, UNATTRIBUTED_MUTATION_CONTEXT);
     // Already in todo — must NOT be moved.
     expect(store.moveTask).not.toHaveBeenCalled();
     // FNXC:WorkflowLifecycle A1 releases via the wired clearPhantomExecutorBinding,
@@ -131,11 +139,11 @@ describe("recoverPausedAbortFailures", () => {
     const recovered = await manager.recoverPausedAbortFailures();
 
     expect(recovered).toBe(1);
-    expect(store.updateTask).toHaveBeenNthCalledWith(1, "FN-7001", { status: null, error: null });
+    expect(store.updateTask).toHaveBeenNthCalledWith(1, "FN-7001", { status: null, error: null }, UNATTRIBUTED_MUTATION_CONTEXT);
     expect(store.moveTask).toHaveBeenCalledWith(
       "FN-7001",
       "todo",
-      { preserveProgress: true, moveSource: "engine", recoveryRehome: true },
+      { preserveProgress: true, moveSource: "engine", recoveryRehome: true }, UNATTRIBUTED_MUTATION_CONTEXT,
     );
     expect(store.updateTask).toHaveBeenNthCalledWith(2, "FN-7001", {
       workflowTransitionNotification: {
@@ -146,7 +154,7 @@ describe("recoverPausedAbortFailures", () => {
         reason: "pause-abort-active-work",
         createdAt: "2026-06-20T02:30:00.000Z",
       },
-    });
+    }, UNATTRIBUTED_MUTATION_CONTEXT);
     expect((store.updateTask as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0])
       .toBeLessThan((store.moveTask as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0]);
     expect((store.moveTask as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0])
@@ -171,16 +179,16 @@ describe("recoverPausedAbortFailures", () => {
     const recovered = await manager.recoverPausedAbortFailures();
 
     expect(recovered).toBe(1);
-    expect(store.updateTask).toHaveBeenCalledWith("FN-7002", { status: null, error: null });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-7002", { status: null, error: null }, UNATTRIBUTED_MUTATION_CONTEXT);
     expect(store.updateTask).not.toHaveBeenCalledWith(
       "FN-7002",
-      expect.objectContaining({ workflowTransitionNotification: expect.anything() }),
+      expect.objectContaining({ workflowTransitionNotification: expect.anything() }), UNATTRIBUTED_MUTATION_CONTEXT,
     );
     expect(store.moveTask).not.toHaveBeenCalled();
     expect(clearBinding).toHaveBeenCalledWith("FN-7002");
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-7002",
-      "Auto-recovered: in-review pause-abort park cleared — preserved for normal review progression",
+      "Auto-recovered: in-review pause-abort park cleared — preserved for normal review progression", undefined, UNATTRIBUTED_MUTATION_CONTEXT,
     );
     expect(store.recordRunAuditEvent).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -220,12 +228,12 @@ describe("recoverPausedAbortFailures", () => {
     const recovered = await manager.recoverPausedAbortFailures();
 
     expect(recovered).toBe(1);
-    expect(store.updateTask).toHaveBeenCalledWith("FN-7749", { status: null, error: null });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-7749", { status: null, error: null }, UNATTRIBUTED_MUTATION_CONTEXT);
     expect(store.moveTask).not.toHaveBeenCalled();
     expect(clearBinding).toHaveBeenCalledWith("FN-7749");
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-7749",
-      "Auto-recovered: in-review pause-abort park cleared — preserved for normal review progression",
+      "Auto-recovered: in-review pause-abort park cleared — preserved for normal review progression", undefined, UNATTRIBUTED_MUTATION_CONTEXT,
     );
     expect(store.recordRunAuditEvent).toHaveBeenCalledWith(
       expect.objectContaining({

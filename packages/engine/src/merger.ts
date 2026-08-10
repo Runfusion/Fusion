@@ -1171,6 +1171,16 @@ async function attemptInMergeVerificationFix(
     const mergerFallbackModel = resolveMergerFallbackModel(settings);
       // FN-5279: verification-fix sessions run in the resolved integration root,
     // which is the reused task worktree in handoff mode.
+    /* FNXC:Identity 2026-08-09-03:04 (U18/KTD2): the merge lane's own run context, hoisted so the
+       run-audit stream and the fallback observer's task-log write name the SAME run. Derived
+       attribution — the observer's `agent` field is a lane label, not an actor id. */
+    const verificationFixRunContext: EngineRunContext = {
+      runId: mergeRunContext?.runId ?? generateSyntheticRunId("merge", taskId),
+      agentId: mergeRunContext?.agentId ?? "merger",
+      taskId,
+      phase: "merge",
+      source: "merger",
+    };
     const { session } = await createResolvedAgentSession({
       sessionPurpose: "merger",
       runtimeHint: mergerRuntimeHint,
@@ -1204,13 +1214,7 @@ Do not refactor, rename broadly, or make opportunistic improvements.
       fallbackModelId: mergerFallbackModel.modelId,
       fallbackThinkingLevel: resolveMergerFallbackThinkingLevel(settings, mergerTask?.mergerThinkingLevel),
       defaultThinkingLevel: resolveMergerThinkingLevel(settings, mergerTask?.mergerThinkingLevel),
-      runAuditor: createRunAuditor(store, {
-        runId: mergeRunContext?.runId ?? generateSyntheticRunId("merge", taskId),
-        agentId: mergeRunContext?.agentId ?? "merger",
-        taskId,
-        phase: "merge",
-        source: "merger",
-      }),
+      runAuditor: createRunAuditor(store, verificationFixRunContext),
       settings,
       mcpServers: await resolveMergerMcpServers(store, assignedAgent?.id),
       // FNXC:PluginSkills 2026-07-12-00:00: Merger verification-fix sessions forward plugin skill body dirs with requested names so plugin merge guidance is discoverable in live sessions.
@@ -1224,6 +1228,7 @@ Do not refactor, rename broadly, or make opportunistic improvements.
         store,
         taskId,
         taskTitle: taskForSkillContext?.title,
+        runContext: toRunMutationContext(verificationFixRunContext),
       }),
     });
     // Register so engine.stop() can dispose this session — without this the
@@ -2477,6 +2482,15 @@ ${fileList}
 
   mergerLog.log(`${taskId}: starting autostash-conflict resolution agent (${conflictedFiles.length} file(s))`);
 
+  /* FNXC:Identity 2026-08-09-03:04 (U18/KTD2): hoisted so run-audit and the fallback observer's
+     task-log write name the SAME run. Derived attribution — `agent` is a lane label, not an actor. */
+  const autostashConflictRunContext: EngineRunContext = {
+    runId: generateSyntheticRunId("merge", taskId),
+    agentId: "merger",
+    taskId,
+    phase: "merge",
+    source: "merger",
+  };
   const { session } = await createResolvedAgentSession({
     sessionPurpose: "merger",
     runtimeHint: mergerRuntimeHint,
@@ -2495,13 +2509,7 @@ ${fileList}
     fallbackModelId: mergerFallbackModel.modelId,
     fallbackThinkingLevel: resolveMergerFallbackThinkingLevel(settings, mergerTask?.mergerThinkingLevel),
     defaultThinkingLevel: resolveMergerThinkingLevel(settings, mergerTask?.mergerThinkingLevel),
-    runAuditor: createRunAuditor(store, {
-      runId: generateSyntheticRunId("merge", taskId),
-      agentId: "merger",
-      taskId,
-      phase: "merge",
-      source: "merger",
-    }),
+    runAuditor: createRunAuditor(store, autostashConflictRunContext),
     settings,
     mcpServers: await resolveMergerMcpServers(store, assignedAgent?.id),
     // FNXC:PluginSkills 2026-07-12-00:00: Autostash conflict sessions must preserve plugin skill body dirs from the shared skill context.
@@ -2515,6 +2523,7 @@ ${fileList}
       store,
       taskId,
       taskTitle: taskForSkillContext?.title,
+      runContext: toRunMutationContext(autostashConflictRunContext),
     }),
   });
   emitAgentSessionStart({
@@ -2925,6 +2934,15 @@ ${fileList}
 
   mergerLog.log(`${taskId}: starting autostash hard-fail recovery agent (${stashFiles.length} file(s))`);
 
+  /* FNXC:Identity 2026-08-09-03:04 (U18/KTD2): hoisted so run-audit and the fallback observer's
+     task-log write name the SAME run. Derived attribution — `agent` is a lane label, not an actor. */
+  const autostashHardFailRunContext: EngineRunContext = {
+    runId: generateSyntheticRunId("merge", taskId),
+    agentId: "merger",
+    taskId,
+    phase: "merge",
+    source: "merger",
+  };
   const { session } = await createResolvedAgentSession({
     sessionPurpose: "merger",
     runtimeHint: mergerRuntimeHint,
@@ -2943,13 +2961,7 @@ ${fileList}
     fallbackModelId: mergerFallbackModel.modelId,
     fallbackThinkingLevel: resolveMergerFallbackThinkingLevel(settings, mergerTask?.mergerThinkingLevel),
     defaultThinkingLevel: resolveMergerThinkingLevel(settings, mergerTask?.mergerThinkingLevel),
-    runAuditor: createRunAuditor(store, {
-      runId: generateSyntheticRunId("merge", taskId),
-      agentId: "merger",
-      taskId,
-      phase: "merge",
-      source: "merger",
-    }),
+    runAuditor: createRunAuditor(store, autostashHardFailRunContext),
     settings,
     mcpServers: await resolveMergerMcpServers(store, assignedAgent?.id),
     // FNXC:PluginSkills 2026-07-12-00:00: Autostash hard-fail recovery sessions keep plugin body discovery paths aligned with requested plugin skills.
@@ -2963,6 +2975,7 @@ ${fileList}
       store,
       taskId,
       taskTitle: taskForSkillContext?.title,
+      runContext: toRunMutationContext(autostashHardFailRunContext),
     }),
   });
   emitAgentSessionStart({
@@ -6001,6 +6014,15 @@ You are assisting with a paused \`git pull --rebase\`.
   // FNXC:Settings-MergerModel 2026-07-16-00:00: merger retries use the dedicated project fallback lane before the shared global fallback pair.
 
   const mergerFallbackModel = resolveMergerFallbackModel(settings);
+  /* FNXC:Identity 2026-08-09-03:04 (U18/KTD2): hoisted so run-audit and the fallback observer's
+     task-log write name the SAME run. Derived attribution — `agent` is a lane label, not an actor. */
+  const rebaseConflictRunContext: EngineRunContext = {
+    runId: generateSyntheticRunId("merge", taskId),
+    agentId: "merger",
+    taskId,
+    phase: "merge",
+    source: "merger",
+  };
   const { session } = await createResolvedAgentSession({
     sessionPurpose: "merger",
     runtimeHint: options?.runtimeHint,
@@ -6019,13 +6041,7 @@ You are assisting with a paused \`git pull --rebase\`.
     fallbackModelId: mergerFallbackModel.modelId,
     fallbackThinkingLevel: resolveMergerFallbackThinkingLevel(settings, mergerTask?.mergerThinkingLevel),
     defaultThinkingLevel: resolveMergerThinkingLevel(settings, mergerTask?.mergerThinkingLevel),
-    runAuditor: createRunAuditor(store, {
-      runId: generateSyntheticRunId("merge", taskId),
-      agentId: "merger",
-      taskId,
-      phase: "merge",
-      source: "merger",
-    }),
+    runAuditor: createRunAuditor(store, rebaseConflictRunContext),
     settings,
     mcpServers: await resolveMergerMcpServers(store),
     taskId,
@@ -6034,6 +6050,7 @@ You are assisting with a paused \`git pull --rebase\`.
       label: "rebase conflict resolver",
       store,
       taskId,
+      runContext: toRunMutationContext(rebaseConflictRunContext),
     }),
   });
   // Register so engine.stop() can dispose this session — without this, an
@@ -11034,6 +11051,15 @@ async function runAiAgentForCommit(params: AiAgentParams): Promise<{ success: bo
   // FN-5279: Layer 3 / merge-authoring AI runs in the resolved integration
   // root so arbiter edits land in the reused task worktree when handoff mode
   // is active.
+  /* FNXC:Identity 2026-08-09-03:04 (U18/KTD2): hoisted so run-audit and the fallback observer's
+     task-log write name the SAME run. Derived attribution — `agent` is a lane label, not an actor. */
+  const mergeAuthoringRunContext: EngineRunContext = {
+    runId: generateSyntheticRunId("merge", taskId),
+    agentId: "merger",
+    taskId,
+    phase: "merge",
+    source: "merger",
+  };
   const { session } = await createResolvedAgentSession({
     sessionPurpose: "merger",
     runtimeHint: mergerRuntimeHint,
@@ -11053,13 +11079,7 @@ async function runAiAgentForCommit(params: AiAgentParams): Promise<{ success: bo
     fallbackModelId: mergerFallbackModel.modelId,
     fallbackThinkingLevel: resolveMergerFallbackThinkingLevel(settings, mergerTask?.mergerThinkingLevel),
     defaultThinkingLevel: resolveMergerThinkingLevel(settings, mergerTask?.mergerThinkingLevel),
-    runAuditor: createRunAuditor(store, {
-      runId: generateSyntheticRunId("merge", taskId),
-      agentId: "merger",
-      taskId,
-      phase: "merge",
-      source: "merger",
-    }),
+    runAuditor: createRunAuditor(store, mergeAuthoringRunContext),
     settings,
     // FNXC:McpConfig 2026-06-25-23:04: The primary merge-authoring agent is part of the merger lane and receives the resolved MCP set under the shared runtime-support guard, matching conflict/verification merge sessions without exposing secret material.
     mcpServers: await resolveMergerMcpServers(store, assignedAgent?.id),
@@ -11074,6 +11094,7 @@ async function runAiAgentForCommit(params: AiAgentParams): Promise<{ success: bo
       store,
       taskId,
       taskTitle: taskForSkillContext?.title,
+      runContext: toRunMutationContext(mergeAuthoringRunContext),
     }),
   });
 

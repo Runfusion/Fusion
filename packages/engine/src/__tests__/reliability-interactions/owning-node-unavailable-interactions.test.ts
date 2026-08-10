@@ -1,4 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+/*
+FNXC:Identity 2026-08-09-03:04 (U18/KTD2):
+These call-arg assertions now include the mutation context the converted sweep passes.
+Adding it is what keeps them load-bearing: left at the old arity every
+`toHaveBeenCalledWith` here would fail, and every `.not.toHaveBeenCalledWith` would pass
+vacuously — an assertion that can no longer fail is worse than one that is red.
+*/
+import { UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 import { existsSync } from "node:fs";
 import type { NodeStatus, OwningNodeHandoffPolicy, Task, TaskStore } from "@fusion/core";
 import { TaskStore as CoreTaskStore } from "@fusion/core";
@@ -263,10 +271,10 @@ describeIfGit("reliability interactions: owning-node unavailable handoff", () =>
 
     await scheduler.schedule();
 
-    expect(store.logEntry).not.toHaveBeenCalledWith(task.id, expect.stringContaining("Owning-node handoff applied"));
+    expect(store.logEntry).not.toHaveBeenCalledWith(task.id, expect.stringContaining("Owning-node handoff applied"), undefined, UNATTRIBUTED_MUTATION_CONTEXT);
     expect(reconcileLeaseRow).toHaveBeenCalledTimes(1);
     expect(reconcileLeaseRow).toHaveBeenCalledWith(task.id);
-    expect(store.updateTask).toHaveBeenCalledWith(task.id, { status: "queued" });
+    expect(store.updateTask).toHaveBeenCalledWith(task.id, { status: "queued" }, UNATTRIBUTED_MUTATION_CONTEXT);
   });
 
   it("FN-4813: scheduler reassigns local dispatch when owner offline and policy is reassign-to-local", async () => {
@@ -292,8 +300,8 @@ describeIfGit("reliability interactions: owning-node unavailable handoff", () =>
 
     await scheduler.schedule();
 
-    expect(store.logEntry).toHaveBeenCalledWith(task.id, expect.stringContaining("Owning-node handoff applied"));
+    expect(store.logEntry).toHaveBeenCalledWith(task.id, expect.stringContaining("Owning-node handoff applied"), undefined, UNATTRIBUTED_MUTATION_CONTEXT);
     expect(store.moveTask).toHaveBeenCalledWith(task.id, "in-progress", expect.any(Object));
-    expect(store.updateTask).not.toHaveBeenCalledWith(task.id, expect.objectContaining({ effectiveNodeId: "node-b" }));
+    expect(store.updateTask).not.toHaveBeenCalledWith(task.id, expect.objectContaining({ effectiveNodeId: "node-b" }), UNATTRIBUTED_MUTATION_CONTEXT);
   });
 });

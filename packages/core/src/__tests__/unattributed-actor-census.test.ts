@@ -84,29 +84,54 @@ just a number:
 
 This must reach 0. It must never grow.
 
-FNXC:Identity 2026-08-09-03:04 (U18 step 2 — engine baseline is 0, and that is a measurement):
-`@fusion/engine` holds ~1,150 unconverted mutating call sites across 49 production files
-(`logEntry` 658, `updateTask` 370, `moveTask` 98, `createTask` 5, `deleteTask` 3), which the
-deprecated staging overload still absorbs. Its baseline is 0 because the conversion has not run,
-NOT because the package is clean — a marker appearing here before that conversion means someone
-reached for the marker in a lane where executor/reviewer/merger/triage already carry a real
-`runId`/`agentId`, and `toRunMutationContext` in `engine/src/util/run-audit.ts` is the bridge they
-should have used instead.
+FNXC:Identity 2026-08-09-03:04 (U18 step 2, Stage A — engine baseline is 292, and it is a WORK LIST):
+`@fusion/engine` held ~1,134 unconverted mutating call sites across 49 production files when Stage A
+started. Stage A converted the genuinely ACTORLESS sweeps and closed the structural seams; Stages B
+and C own the rest. Ownership of the 292, so the number names work rather than sitting as a total:
 
-Known gap this census cannot see: several engine seams re-declare the mutating methods with their
-own narrow structural signatures rather than picking them off `TaskStore`, so they do not inherit
-the required-parameter overload and will keep accepting unattributed writes even after the call-site
-sweep. `Pick<TaskStore, ...>` seams are fine — they carry the overload pair. The hand-written ones
-are: `auth/fallback-model-observer.ts`, `overseer/planner-overseer.ts`,
+  - self-healing.ts (229), scheduler.ts (40), scheduling/cron-runner.ts (1)
+      -> unattended system sweeps: a timer reconciling rows nobody asked it to touch. No session, no
+         request, no acting agent, so there is nothing to derive FROM — the only agent ids in scope
+         name the SUBJECT of a repair, and attributing to those would produce audit rows claiming a
+         task rebounded or unblocked itself. Whether these lanes get a real system actor is U13's
+         design decision; Stage A deliberately did not make it, so U13 inherits this list.
+  - healing/restart-recovery-coordinator.ts (3), surfacing-sweeps.ts (1), healing/stale-task-reporter.ts
+    (1), healing/stuck-task-detector.ts (1), scheduling/routine-runner.ts (1),
+    scheduling/backlog-pressure-reporter.ts (1), missions/unlinked-missions-advisory-reporter.ts (1),
+    execution/hold-release.ts (1), execution/replan-target.ts (1)
+      -> the same sweeps, extracted into helper modules. They are listed separately only because the
+         census is per file; they are not a separate decision. Converting the three sweep entry points
+         while leaving their own extracted helpers unconverted would have left the sweep half-marked.
+  - executor.ts (4), workflows/workflow-task-runtime.ts (2), workflows/workflow-work-scheduler.ts (2),
+    workflows/workflow-work-processor.ts (1), overseer/planner-overseer.ts (1),
+    missions/mission-execution-loop.ts (1)
+      -> the fallback path at each seam Stage A closed. Every one of these sits where the lane has a
+         run id but no actor (graph completion summaries, lease-renewal loss, the records-only
+         planner monitor), or where the executor's `currentRunContexts` has no live entry. U13 again.
+
+Stage A produced NO marker in merger.ts, triage.ts, or the executor's fallback-observer and column
+boundary: those lanes already carry a real `runId`/`agentId`, so they were converted with
+`toRunMutationContext` / `mutationContextForAgent`. That asymmetry is the point — the marker is for
+sites with no actor available, not for sites where deriving one was more work.
+
+FNXC:Identity 2026-08-09-03:04 (Stage A — the nine structural seams are CLOSED):
+Nine engine seams re-declared the mutating store methods with their own narrow signatures and no
+context parameter, so they did not inherit the deprecated/canonical overload pair and would have
+kept accepting unattributed writes even after every call site was converted — a sweep reporting done
+over holes the census cannot see. All nine now restate the requirement, each mirroring the CANONICAL
+store arity (which is also what keeps a real `TaskStore` structurally assignable, since the
+deprecated overload cannot absorb a `RunMutationContext` in an `outcome`/`options` slot):
+`auth/fallback-model-observer.ts`, `overseer/planner-overseer.ts`,
 `workflows/workflow-work-scheduler.ts`, `workflows/workflow-column-boundary.ts`,
 `workflows/workflow-task-runtime.ts`, `workflows/workflow-completion-summary.ts`,
-`workflows/workflow-graph-task-runner.ts`, `execution/task-revert.ts`, and the inline shape at
-`executor.ts:8874`. Each must restate the requirement when the engine sweep lands, or the sweep
-reports done while those seams stay open.
+`workflows/workflow-graph-task-runner.ts` (restated on the hooks BUNDLE — the move hook is a
+callback the boundary controller invokes with a column and a node, never an actor),
+`execution/task-revert.ts`, and the inline widening at `executor.ts`'s workflow merge boundary.
+Do not reopen one by relaxing a signature back to the old arity to quiet a caller.
 */
 const BASELINE_BY_PACKAGE: Readonly<Record<string, number>> = {
   core: 33,
-  engine: 0,
+  engine: 292,
 };
 const BASELINE = Object.values(BASELINE_BY_PACKAGE).reduce((sum, n) => sum + n, 0);
 

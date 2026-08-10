@@ -24,6 +24,14 @@
  */
 
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+/*
+FNXC:Identity 2026-08-09-03:04 (U18/KTD2):
+These call-arg assertions now include the mutation context the converted sweep passes.
+Adding it is what keeps them load-bearing: left at the old arity every
+`toHaveBeenCalledWith` here would fail, and every `.not.toHaveBeenCalledWith` would pass
+vacuously — an assertion that can no longer fail is worse than one that is red.
+*/
+import { UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -613,7 +621,7 @@ describe("CE workflow-step executor integration", () => {
       const handled = await (executor as any).finalizeMergeConfirmedWorkflowGraphTask("FN-CE-1", "test");
 
       expect(handled).toBe(false);
-      expect(store.moveTask).not.toHaveBeenCalledWith("FN-CE-1", "done", expect.anything());
+      expect(store.moveTask).not.toHaveBeenCalledWith("FN-CE-1", "done", expect.anything(), UNATTRIBUTED_MUTATION_CONTEXT);
       expect(store.logEntry).toHaveBeenCalledWith(
         "FN-CE-1",
         expect.stringContaining("merge-confirmed finalization blocked"),
@@ -694,8 +702,8 @@ describe("CE workflow-step executor integration", () => {
         undefined,
       );
       // The card must never reach the review column on unproven implementation.
-      expect(store.moveTask).not.toHaveBeenCalledWith("FN-CE-1", "in-review", expect.anything());
-      expect(store.moveTask).not.toHaveBeenCalledWith("FN-CE-1", "in-review");
+      expect(store.moveTask).not.toHaveBeenCalledWith("FN-CE-1", "in-review", expect.anything(), UNATTRIBUTED_MUTATION_CONTEXT);
+      expect(store.moveTask).not.toHaveBeenCalledWith("FN-CE-1", "in-review", undefined, UNATTRIBUTED_MUTATION_CONTEXT);
     });
 
     it("uses moveTask for workflow graph column transitions so lifecycle notifications fire", async () => {
@@ -736,7 +744,7 @@ describe("CE workflow-step executor integration", () => {
         }),
       );
       expect(store.updateTask).toHaveBeenCalledWith("FN-CE-1", { status: "queued" });
-      expect(store.updateTask).not.toHaveBeenCalledWith("FN-CE-1", expect.objectContaining({ column: "in-progress" }));
+      expect(store.updateTask).not.toHaveBeenCalledWith("FN-CE-1", expect.objectContaining({ column: "in-progress" }), UNATTRIBUTED_MUTATION_CONTEXT);
     });
 
     it("moves direct-to-merge workflow tasks into in-review before requesting merge", async () => {
@@ -802,7 +810,7 @@ describe("CE workflow-step executor integration", () => {
             workflowId: "builtin:quick-fix",
             runId: "run-merge",
           }),
-        }),
+        }), UNATTRIBUTED_MUTATION_CONTEXT,
       );
       expect(mergeRequester).toHaveBeenCalledWith("FN-CE-1", expect.objectContaining({ signal: expect.any(AbortSignal) }));
       expect(live.column).toBe("in-review");

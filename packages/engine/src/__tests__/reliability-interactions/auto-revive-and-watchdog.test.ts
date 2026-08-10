@@ -1,4 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
+/*
+FNXC:Identity 2026-08-09-03:04 (U18/KTD2):
+These call-arg assertions now include the mutation context the converted sweep passes.
+Adding it is what keeps them load-bearing: left at the old arity every
+`toHaveBeenCalledWith` here would fail, and every `.not.toHaveBeenCalledWith` would pass
+vacuously — an assertion that can no longer fail is worse than one that is red.
+*/
+import { UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 import type { Task } from "@fusion/core";
 import { RestartRecoveryCoordinator } from "../../healing/restart-recovery-coordinator.js";
 
@@ -34,7 +42,7 @@ describe("reliability interactions: auto-revive + watchdog", () => {
     const rc = new RestartRecoveryCoordinator(store, executor);
     await rc.recoverInterruptedRuns();
     expect(store.moveTask).toHaveBeenCalledTimes(1);
-    expect(store.moveTask).toHaveBeenCalledWith("FN-1", "todo");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-1", "todo", undefined, UNATTRIBUTED_MUTATION_CONTEXT);
   });
 
   it("Case 8: recovery coordinator skips resume when no in-progress candidates", async () => {
@@ -51,6 +59,6 @@ describe("reliability interactions: auto-revive + watchdog", () => {
     const rc = new RestartRecoveryCoordinator(store, executor);
     await rc.recoverInterruptedRuns();
     expect(store.updateTask).toHaveBeenCalled();
-    expect(store.moveTask).toHaveBeenCalledWith("FN-3", "todo");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-3", "todo", undefined, UNATTRIBUTED_MUTATION_CONTEXT);
   });
 });

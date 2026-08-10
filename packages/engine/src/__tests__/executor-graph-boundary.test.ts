@@ -10,6 +10,14 @@ These call the executor's merge-boundary resolution directly (via `as any`) so t
 assertion does not depend on the full agent-session execute() path.
 */
 import { describe, expect, it, vi } from "vitest";
+/*
+FNXC:Identity 2026-08-09-03:04 (U18/KTD2):
+These call-arg assertions now include the mutation context the converted sweep passes.
+Adding it is what keeps them load-bearing: left at the old arity every
+`toHaveBeenCalledWith` here would fail, and every `.not.toHaveBeenCalledWith` would pass
+vacuously — an assertion that can no longer fail is worse than one that is red.
+*/
+import { UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 import "./executor-test-helpers.js";
 import { TaskExecutor } from "../executor.js";
 import { createMockStore } from "./executor-test-helpers.js";
@@ -123,7 +131,7 @@ describe("U5a — IR-driven merge boundary (scenario 1)", () => {
       { reason: "workflow-merge-boundary", nodeId: "merge-gate", workflowId: "custom:benchmark", runId: "r1" },
     );
     const moveTask = store.moveTask as ReturnType<typeof vi.fn>;
-    expect(moveTask).toHaveBeenCalledWith("FN-B1", "merging", expect.anything());
+    expect(moveTask).toHaveBeenCalledWith("FN-B1", "merging", expect.anything(), UNATTRIBUTED_MUTATION_CONTEXT);
   });
 
   it("is a no-op when the card is already in the resolved merge column", async () => {

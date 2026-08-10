@@ -1,4 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+/*
+FNXC:Identity 2026-08-09-03:04 (U18/KTD2):
+These call-arg assertions now include the mutation context the converted sweep passes.
+Adding it is what keeps them load-bearing: left at the old arity every
+`toHaveBeenCalledWith` here would fail, and every `.not.toHaveBeenCalledWith` would pass
+vacuously — an assertion that can no longer fail is worse than one that is red.
+*/
+import { UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 import { EventEmitter } from "node:events";
 
 vi.mock("node:fs", async (importOriginal) => {
@@ -117,8 +125,8 @@ describe("recoverInProgressLimbo", () => {
       worktreeSessionRetryCount: null,
       taskDoneRetryCount: null,
       sessionFile: null,
-    }));
-    expect(store.moveTask).toHaveBeenCalledWith("FN-5149", "todo", { preserveProgress: true, moveSource: "engine", recoveryRehome: true });
+    }), UNATTRIBUTED_MUTATION_CONTEXT);
+    expect(store.moveTask).toHaveBeenCalledWith("FN-5149", "todo", { preserveProgress: true, moveSource: "engine", recoveryRehome: true }, UNATTRIBUTED_MUTATION_CONTEXT);
     expect(store.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
       domain: "database",
       mutationType: "task:auto-recover-in-progress-limbo",
