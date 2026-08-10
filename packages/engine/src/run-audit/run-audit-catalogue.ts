@@ -30,7 +30,7 @@ import type { DatabaseMutationType } from "../util/run-audit.js";
  * Every name is a verified literal member of the `DatabaseMutationType` union; the array type
  * enforces member-validity at compile time, so an invented name is a type error.
  */
-export const DELIVERY_PIPELINE_RUN_AUDIT_EVENTS: Readonly<DatabaseMutationType[]> = [
+export const DELIVERY_PIPELINE_RUN_AUDIT_EVENTS_LITERALS = [
   /* ── 1. Delivery-pipeline finalization ─────────────────────────────────── */
   "task:completed-blocked-parked",
   "task:completed-blocked-advanced",
@@ -66,16 +66,26 @@ export const DELIVERY_PIPELINE_RUN_AUDIT_EVENTS: Readonly<DatabaseMutationType[]
   "agent:error-retry-exhausted",
   "agent:error-parked-unrecoverable",
   "agent:heartbeat-move-skipped-soft-delete",
-] as const satisfies Readonly<DatabaseMutationType[]>;
+] as const;
+
+/**
+ * The 32-event literal union of the curated catalogue. `as const` preserves the literal element
+ * tuples so the notes map can be keyed by exactly the catalogued events (rather than widening to the
+ * full `DatabaseMutationType` union). The exported array below is still typed as
+ * `Readonly<DatabaseMutationType[]>`, so member-validity remains compile-time-enforced: assigning
+ * this literal array is only valid because every literal is a member of the real union.
+ */
+type DeliveryPipelineRunAuditEvent = (typeof DELIVERY_PIPELINE_RUN_AUDIT_EVENTS_LITERALS)[number];
+
+export const DELIVERY_PIPELINE_RUN_AUDIT_EVENTS: Readonly<DatabaseMutationType[]> =
+  DELIVERY_PIPELINE_RUN_AUDIT_EVENTS_LITERALS;
 
 /**
  * One-line "what it records / when it fires" commentary for each catalogued event, framed with the
  * run-audit metadata convention (ids/outcomes-only; never prose). `docs/run-audit.md` carries the
  * full per-event reference; this compact map keeps the catalogue self-describing in source.
  */
-export const DELIVERY_PIPELINE_RUN_AUDIT_EVENT_NOTES: Readonly<
-  Record<(typeof DELIVERY_PIPELINE_RUN_AUDIT_EVENTS)[number], string>
-> = {
+export const DELIVERY_PIPELINE_RUN_AUDIT_EVENT_NOTES: Readonly<Record<DeliveryPipelineRunAuditEvent, string>> = {
   /* ── 1. Delivery-pipeline finalization ─────────────────────────────────── */
   "task:completed-blocked-parked":
     "A fully implemented task is parked instead of advancing to review because a live completion blocker applies.",
