@@ -1052,6 +1052,11 @@ describe("fast mode workflow/runtime invariants", () => {
     expect(graph).toHaveBeenCalledWith(liveTask);
   });
 
+  /*
+  FNXC:ExternalExecutionCheckout 2026-08-10-01:06:
+  Recovery and remediation must resolve the persisted live task, not a stale caller snapshot.
+  A configured route is usable only when it provides the concrete operator-owned checkout path.
+  */
   it("completed-task recovery captures the live external checkout instead of a stale task worktree", async () => {
     const liveTask = task({
       id: "FN-7283-EXTERNAL-RECOVERY",
@@ -1079,6 +1084,7 @@ describe("fast mode workflow/runtime invariants", () => {
     const recovered = await executor.recoverCompletedTask(staleSnapshot as any);
 
     expect(recovered).toBe(true);
+    expect(mockedResolveExternalExecutionCheckoutRoute).toHaveBeenCalledWith(liveTask);
     expect(captureModifiedFiles).toHaveBeenCalledWith(
       "/tmp/external-runtime",
       "base",
@@ -1118,6 +1124,7 @@ describe("fast mode workflow/runtime invariants", () => {
       "Review requested changes",
     );
 
+    expect(mockedResolveExternalExecutionCheckoutRoute).toHaveBeenCalledWith(liveTask);
     expect(scheduleWorkflowRerun).toHaveBeenCalledWith(
       "FN-7283-EXTERNAL-REMEDIATION",
       "/tmp/external-runtime",
@@ -1125,6 +1132,35 @@ describe("fast mode workflow/runtime invariants", () => {
       true,
       false,
     );
+  });
+
+  it("pre-merge remediation fails closed when a configured route has no checkout path", async () => {
+    const liveTask = task({
+      id: "FN-7283-EXTERNAL-REMEDIATION-MISSING-PATH",
+      worktree: "/tmp/stale-managed-worktree",
+      steps: [{ name: "Do it", status: "done" }],
+      sourceMetadata: {
+        externalExecutionCheckout: "/tmp/external-runtime",
+        externalExecutionBranch: "local/runtime-fixes",
+      },
+    });
+    const { executor } = makeExecutorForTask(liveTask);
+    mockedResolveExternalExecutionCheckoutRoute.mockResolvedValue({
+      configured: true,
+      valid: true,
+      branch: "local/runtime-fixes",
+    });
+    const scheduleWorkflowRerun = vi.spyOn(executor as any, "scheduleWorkflowRerun").mockImplementation(() => undefined);
+
+    await expect((executor as any).sendTaskBackForFix(
+      liveTask,
+      "/tmp/stale-managed-worktree",
+      "fix it",
+      "Code Review",
+      "Review requested changes",
+    )).rejects.toThrow("checkoutPath is missing");
+
+    expect(scheduleWorkflowRerun).not.toHaveBeenCalled();
   });
 
   /*

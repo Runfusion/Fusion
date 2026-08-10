@@ -23,6 +23,7 @@ import { canonicalizePath } from "./session-worktree-paths.js";
 import { resolveDiffBaseRef } from "./worktree-git-refs.js";
 import { evaluatePromptDerivedNoCommitEligibility } from "./prompt-derived-eligibility.js";
 import { getNoCommitEligibilityReason } from "./no-commit-eligibility.js";
+import { resolveAuthoritativeExternalExecutionRoute } from "./resolve-authoritative-external-execution-route.js";
 
 const execAsync = promisify(exec);
 
@@ -198,9 +199,30 @@ export async function verifyWorktreeInvariants(
     }
     return { ok: true };
   }
-  const branchName = resolveTaskWorkingBranch(task);
+  /*
+  FNXC:ExternalExecutionCheckout 2026-08-09-23:53:
+  Completion verification must use the live external route and reject invalid persisted metadata rather than falling back to a stale Fusion-managed worktree snapshot.
+  */
+  const { task: authoritativeVerificationTask, route: externalExecutionRoute } =
+    await resolveAuthoritativeExternalExecutionRoute(deps.store, task);
+  if (externalExecutionRoute.configured && !externalExecutionRoute.valid) {
+    return {
+      ok: false,
+      reason: "wrong_toplevel",
+      observed: externalExecutionRoute.reason ?? "invalid persisted external execution checkout",
+      expected: "valid persisted external execution checkout",
+    };
+  }
+  const branchName = externalExecutionRoute.configured
+    ? externalExecutionRoute.branch ?? ""
+    : resolveTaskWorkingBranch(authoritativeVerificationTask);
   // Non-workspace tasks hold a one-element set; fall back to its sole member to preserve the original singular resolution.
-  const worktreePath = worktreePathOverride ?? task.worktree ?? deps.getActiveWorktreePaths(task.id)[0] ?? null;
+  const worktreePath = externalExecutionRoute.configured
+    ? externalExecutionRoute.checkoutPath ?? null
+    : worktreePathOverride
+      ?? authoritativeVerificationTask.worktree
+      ?? deps.getActiveWorktreePaths(task.id)[0]
+      ?? null;
 
   if (!worktreePath) {
     return {
@@ -248,12 +270,17 @@ export async function verifyWorktreeInvariants(
     if (observedTopLevelRaw) {
       const observedTopLevel = canonicalizePath(observedTopLevelRaw);
 
-      if (
-        observedTopLevel === expectedRoot ||
-        !isInsideWorktreesDir(deps.rootDir, observedTopLevel, settings) ||
-        observedTopLevel !== expectedWorktreeRealpath
-      ) {
-        if (allowReanchor && observedTopLevel !== expectedRoot && isInsideWorktreesDir(deps.rootDir, observedTopLevel, settings)) {
+      /*
+      FNXC:ExternalExecutionCheckout 2026-08-09-23:53:
+      An operator-routed checkout must match its validated Git top-level exactly. Nested-worktree re-anchoring is reserved for Fusion-managed worktrees and must not widen this ownership boundary.
+      */
+      const violatesCheckoutBoundary = externalExecutionRoute.configured
+        ? observedTopLevel !== expectedWorktreeRealpath
+        : observedTopLevel === expectedRoot
+          || !isInsideWorktreesDir(deps.rootDir, observedTopLevel, settings)
+          || observedTopLevel !== expectedWorktreeRealpath;
+      if (violatesCheckoutBoundary) {
+        if (!externalExecutionRoute.configured && allowReanchor && observedTopLevel !== expectedRoot && isInsideWorktreesDir(deps.rootDir, observedTopLevel, settings)) {
           const reanchor = await detectNestedWorktreeRoot(deps.rootDir, worktreePath, settings);
           if (reanchor.reanchored) {
             await deps.store.updateTask(task.id, { worktree: reanchor.root });

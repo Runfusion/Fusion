@@ -55,6 +55,11 @@ describe("dependency-abort cleanup requeues to a DECLARED column", () => {
     expect(store.moveTask).not.toHaveBeenCalledWith("FN-DEP", "triage");
   });
 
+  /*
+  FNXC:ExternalExecutionCheckout 2026-08-10-01:06:
+  Dependency-abort cleanup must re-read persisted ownership and ignore stale managed-path arguments,
+  so Fusion never removes or branch-deletes an operator-owned external checkout.
+  */
   it("does not remove or delete an operator-owned external execution checkout", async () => {
     resetExecutorMocks();
     const store = createMockStore();
@@ -70,8 +75,9 @@ describe("dependency-abort cleanup requeues to a DECLARED column", () => {
     const executor = new TaskExecutor(store, "/tmp/test");
     const removeManagedWorktree = vi.spyOn(executor as any, "removeOwnWorktreeWithReconcile");
 
-    await (executor as any).handleDepAbortCleanup("FN-EXT", "/tmp/operator-owned-checkout");
+    await (executor as any).handleDepAbortCleanup("FN-EXT", "/tmp/test/.worktrees/fn-ext");
 
+    expect(store.getTask).toHaveBeenCalledWith("FN-EXT");
     expect(removeManagedWorktree).not.toHaveBeenCalled();
     expect(mockedExec).not.toHaveBeenCalledWith(
       expect.stringContaining("git branch -D"),

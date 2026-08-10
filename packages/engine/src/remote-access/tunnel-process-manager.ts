@@ -26,11 +26,16 @@ import type {
 export interface TunnelProcessManagerOptions {
   maxLogEntries?: number;
   stopTimeoutMs?: number;
+  restartBaseDelayMs?: number;
+  restartMaxDelayMs?: number;
+  autoRestart?: boolean;
   spawnImpl?: typeof spawn;
 }
 
 const DEFAULT_MAX_LOG_ENTRIES = 400;
 const DEFAULT_STOP_TIMEOUT_MS = 5_000;
+const DEFAULT_RESTART_BASE_DELAY_MS = 1_000;
+const DEFAULT_RESTART_MAX_DELAY_MS = 30_000;
 const execFileAsync = promisify(execFile);
 const execAsync = promisify(exec);
 
@@ -102,6 +107,9 @@ function toStateError(code: TunnelErrorCode, err: unknown): { code: TunnelErrorC
 export class TunnelProcessManager extends EventEmitter implements TunnelManager {
   private readonly maxLogEntries: number;
   private readonly defaultStopTimeoutMs: number;
+  private readonly restartBaseDelayMs: number;
+  private readonly restartMaxDelayMs: number;
+  private readonly autoRestart: boolean;
   private readonly spawnImpl: typeof spawn;
 
   private status: TunnelStatusSnapshot = {
@@ -120,14 +128,20 @@ export class TunnelProcessManager extends EventEmitter implements TunnelManager 
   private processHandle: ManagedTunnelProcess | null = null;
   private readinessTimer: NodeJS.Timeout | null = null;
   private stopTimer: NodeJS.Timeout | null = null;
+  private restartTimer: NodeJS.Timeout | null = null;
   private operationChain: Promise<void> = Promise.resolve();
   private expectedStop = false;
   private activeStopPromise: Promise<void> | null = null;
+  private desiredTunnel: { provider: TunnelProvider; config: TunnelProviderConfig } | null = null;
+  private restartAttempt = 0;
 
   constructor(options: TunnelProcessManagerOptions = {}) {
     super();
     this.maxLogEntries = options.maxLogEntries ?? DEFAULT_MAX_LOG_ENTRIES;
     this.defaultStopTimeoutMs = options.stopTimeoutMs ?? DEFAULT_STOP_TIMEOUT_MS;
+    this.restartBaseDelayMs = options.restartBaseDelayMs ?? DEFAULT_RESTART_BASE_DELAY_MS;
+    this.restartMaxDelayMs = options.restartMaxDelayMs ?? DEFAULT_RESTART_MAX_DELAY_MS;
+    this.autoRestart = options.autoRestart ?? true;
     this.spawnImpl = options.spawnImpl ?? spawn;
   }
 
@@ -155,12 +169,22 @@ export class TunnelProcessManager extends EventEmitter implements TunnelManager 
       if (this.processHandle || this.status.state === "starting" || this.status.state === "running") {
         throw new Error("already_running:tunnel process is already active");
       }
-      await this.startInternal(provider, config);
+      this.clearRestartTimer();
+      this.desiredTunnel = { provider, config };
+      try {
+        await this.startInternal(provider, config);
+      } catch (error) {
+        this.desiredTunnel = null;
+        throw error;
+      }
     });
   }
 
   async stop(): Promise<void> {
     return this.runExclusive(async () => {
+      this.desiredTunnel = null;
+      this.restartAttempt = 0;
+      this.clearRestartTimer();
       await this.stopInternal();
     });
   }
@@ -225,6 +249,8 @@ export class TunnelProcessManager extends EventEmitter implements TunnelManager 
 
   async switchProvider(target: TunnelProvider, config: TunnelProviderConfig): Promise<void> {
     return this.runExclusive(async () => {
+      this.clearRestartTimer();
+      this.desiredTunnel = { provider: target, config };
       const previousProvider = this.status.provider;
       if (this.processHandle) {
         await this.stopInternal();
@@ -233,6 +259,7 @@ export class TunnelProcessManager extends EventEmitter implements TunnelManager 
       try {
         await this.startInternal(target, config);
       } catch (error) {
+        this.desiredTunnel = null;
         const stateError = toStateError("switch_failed", error);
         const redactedMessage = this.redactForProviderConfig(target, config, stateError.message);
         this.updateStatus({
@@ -307,21 +334,38 @@ export class TunnelProcessManager extends EventEmitter implements TunnelManager 
 
     this.emitLog("info", "manager", `Starting ${provider} tunnel: ${command.redactedPreview}`);
 
-    const supervised = superviseSpawn(command.command, command.args, {
-      cwd: command.cwd,
-      env: command.env,
-      shell: false,
-      stdio: ["ignore", "pipe", "pipe"],
-      maxLifetimeMs: 24 * 60 * 60 * 1_000,
-      spawnImpl: this.spawnImpl,
-    });
+    let supervised: ReturnType<typeof superviseSpawn>;
+    try {
+      supervised = superviseSpawn(command.command, command.args, {
+        cwd: command.cwd,
+        env: command.env,
+        shell: false,
+        stdio: ["ignore", "pipe", "pipe"],
+        maxLifetimeMs: 24 * 60 * 60 * 1_000,
+        spawnImpl: this.spawnImpl,
+      });
+    } catch (error) {
+      const stateError = toStateError("start_failed", error);
+      const redactedMessage = redactTunnelText(stateError.message, command.sensitiveValues);
+      this.updateStatus({
+        provider,
+        state: "failed",
+        pid: null,
+        stoppedAt: nowIso(),
+        url: null,
+        lastError: { ...stateError, message: redactedMessage },
+      });
+      this.emitLog("error", "manager", `Spawn failure for ${provider}: ${redactedMessage}`);
+      throw error;
+    }
     const child = supervised.child;
 
-    this.processHandle = {
+    const managedHandle: ManagedTunnelProcess = {
       provider,
       child,
       command,
     };
+    this.processHandle = managedHandle;
     this.expectedStop = false;
 
     this.updateStatus({ pid: child.pid ?? null });
@@ -342,9 +386,9 @@ export class TunnelProcessManager extends EventEmitter implements TunnelManager 
     attachStream(child.stderr, "stderr", stderrBuffer);
 
     child.once("error", (error) => {
-      const maskedMessage = maskSensitive(normalizeError(error).message, this.processHandle);
+      const maskedMessage = maskSensitive(normalizeError(error).message, managedHandle);
       this.emitLog("error", "manager", `Spawn failure for ${provider}: ${maskedMessage}`);
-      this.handleUnexpectedExit("start_failed", `Spawn failure: ${maskedMessage}`);
+      this.handleUnexpectedExit(managedHandle, "start_failed", `Spawn failure: ${maskedMessage}`);
     });
 
     child.once("close", (code, signal) => {
@@ -355,6 +399,10 @@ export class TunnelProcessManager extends EventEmitter implements TunnelManager 
         this.handleOutputLine("stderr", line);
       }
 
+      if (this.processHandle !== managedHandle) {
+        return;
+      }
+
       const reason = signal ? `signal ${signal}` : `exit code ${code ?? 0}`;
       if (this.expectedStop) {
         this.emitLog("info", "manager", `Tunnel process stopped (${reason})`);
@@ -363,13 +411,14 @@ export class TunnelProcessManager extends EventEmitter implements TunnelManager 
       }
 
       this.emitLog("error", "manager", `Tunnel process exited unexpectedly (${reason})`);
-      this.handleUnexpectedExit("process_exit", `Process exited unexpectedly (${reason})`);
+      this.handleUnexpectedExit(managedHandle, "process_exit", `Process exited unexpectedly (${reason})`);
     });
 
     this.readinessTimer = setTimeout(() => {
       if (this.status.state === "starting" && this.processHandle?.provider === provider) {
         this.emitLog("error", "manager", `Readiness timed out after ${command.readinessTimeoutMs}ms`);
-        this.handleUnexpectedExit("readiness_timeout", `Tunnel readiness timeout after ${command.readinessTimeoutMs}ms`);
+        this.handleUnexpectedExit(managedHandle, "readiness_timeout", `Tunnel readiness timeout after ${command.readinessTimeoutMs}ms`);
+        killManagedProcess(managedHandle.child, "SIGTERM");
       }
     }, command.readinessTimeoutMs);
     this.readinessTimer.unref?.();
@@ -456,10 +505,14 @@ export class TunnelProcessManager extends EventEmitter implements TunnelManager 
       startedAt: this.status.startedAt ?? nowIso(),
       lastError: null,
     });
+    this.restartAttempt = 0;
     this.emitLog("info", "manager", `${processHandle.provider} tunnel is running`);
   }
 
-  private handleUnexpectedExit(code: TunnelErrorCode, message: string): void {
+  private handleUnexpectedExit(handle: ManagedTunnelProcess, code: TunnelErrorCode, message: string): void {
+    if (this.processHandle !== handle) {
+      return;
+    }
     this.clearReadinessTimer();
     if (this.stopTimer) {
       clearTimeout(this.stopTimer);
@@ -482,6 +535,46 @@ export class TunnelProcessManager extends EventEmitter implements TunnelManager 
         at: nowIso(),
       },
     });
+    this.scheduleRestart();
+  }
+
+  private scheduleRestart(): void {
+    if (!this.autoRestart || !this.desiredTunnel || this.restartTimer) {
+      return;
+    }
+
+    this.restartAttempt += 1;
+    const delayMs = Math.min(
+      this.restartBaseDelayMs * (2 ** Math.max(0, this.restartAttempt - 1)),
+      this.restartMaxDelayMs,
+    );
+    const provider = this.desiredTunnel.provider;
+    this.emitLog("warn", "manager", `Scheduling ${provider} tunnel restart in ${delayMs}ms (attempt ${this.restartAttempt})`);
+
+    this.restartTimer = setTimeout(() => {
+      this.restartTimer = null;
+      void this.runExclusive(async () => {
+        const desired = this.desiredTunnel;
+        if (!desired || this.processHandle) {
+          return;
+        }
+        try {
+          await this.startInternal(desired.provider, desired.config);
+        } catch (error) {
+          const message = this.redactForProviderConfig(
+            desired.provider,
+            desired.config,
+            normalizeError(error).message,
+          );
+          this.emitLog("error", "manager", `Automatic ${desired.provider} tunnel restart failed: ${message}`);
+          this.scheduleRestart();
+        }
+      }).catch((error: unknown) => {
+        this.emitLog("error", "manager", `Automatic tunnel restart scheduling failed: ${normalizeError(error).message}`);
+        this.scheduleRestart();
+      });
+    }, delayMs);
+    this.restartTimer.unref?.();
   }
 
   private finalizeStoppedState(): void {
@@ -508,6 +601,13 @@ export class TunnelProcessManager extends EventEmitter implements TunnelManager 
     if (this.readinessTimer) {
       clearTimeout(this.readinessTimer);
       this.readinessTimer = null;
+    }
+  }
+
+  private clearRestartTimer(): void {
+    if (this.restartTimer) {
+      clearTimeout(this.restartTimer);
+      this.restartTimer = null;
     }
   }
 
