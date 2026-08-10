@@ -11,7 +11,7 @@
 import { mkdir, readFile, writeFile, readdir, unlink, rename, access, appendFile } from "node:fs/promises";
 import { constants as fsConstants, type FSWatcher } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
-import { randomUUID, randomBytes, createHash } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import type {
   Agent,
@@ -98,11 +98,18 @@ import {
   deleteTaskSession as deleteTaskSessionAsync,
   readApiKeys as readApiKeysAsync,
   insertApiKey as insertApiKeyAsync,
+  findApiKeyByLookupId as findApiKeyByLookupIdAsync,
   revokeApiKeyRow as revokeApiKeyRowAsync,
   getLastBlockedState as getLastBlockedStateAsync,
   setLastBlockedState as setLastBlockedStateAsync,
   clearLastBlockedState as clearLastBlockedStateAsync,
 } from "../async-stores/async-agent-store.js";
+/*
+FNXC:Identity 2026-08-09-03:04:
+KTD4 — API keys hash through the FAST token module, never through `identity/credentials.ts`. A key is
+presented on every request; the password KDF costs ~200ms per derivation by design.
+*/
+import { mintToken, parseToken, TOKEN_PREFIX, verifyTokenSecret } from "../identity/tokens.js";
 import { createLogger } from "../process/logger.js";
 import { FsWatchPollController } from "../process/fs-watch-poll-controller.js";
 import {
@@ -2241,8 +2248,20 @@ export class AgentStore extends EventEmitter {
   }
 
   /**
-   * Create an API key for an agent.
-   * Persists only the SHA-256 token hash; plaintext token is returned once.
+   * FNXC:Identity 2026-08-09-03:04:
+   * Create an API key for an agent, in the KTD4 `fnk_lookupid_secret` format.
+   *
+   * MIGRATED, not merely reformatted. The previous mint was `randomBytes(32)` hex hashed with a bare
+   * unsalted SHA-256 — no prefix, no lookup id, no expiry — so the only possible verification was
+   * "hash the presented value and scan every row", the exact cost KTD4 exists to avoid. The entropy
+   * was never the problem; the missing lookup id was. The new shape persists a public `lookupId` and
+   * an HMAC of the secret, so {@link verifyApiKeyToken} is a single-row lookup plus a constant-time
+   * compare, and a leaked string is classifiable by its `fnk_` prefix.
+   *
+   * Hashing goes through `identity/tokens.ts` and never through `identity/credentials.ts`: a token is
+   * presented on every request and a password KDF here would cost ~200ms per call.
+   *
+   * Plaintext token is returned exactly once and never persisted.
    */
   async createApiKey(agentId: string, options?: { label?: string }): Promise<AgentApiKeyCreateResult> {
     return this.withLock(agentId, async () => {
@@ -2251,15 +2270,16 @@ export class AgentStore extends EventEmitter {
         throw new Error(`Agent ${agentId} not found`);
       }
 
-      const token = randomBytes(32).toString("hex");
-      const tokenHash = createHash("sha256").update(token).digest("hex");
+      const minted = mintToken(TOKEN_PREFIX.agentKey);
+      const token = minted.token;
       const createdAt = new Date().toISOString();
       const label = options?.label?.trim();
 
       const key: AgentApiKey = {
         id: `key-${randomUUID().slice(0, 8)}`,
         agentId,
-        tokenHash,
+        lookupId: minted.lookupId,
+        secretHash: minted.secretHash,
         createdAt,
         ...(label ? { label } : {}),
       };
@@ -2272,6 +2292,27 @@ export class AgentStore extends EventEmitter {
 
       return { key, token };
     });
+  }
+
+  /**
+   * FNXC:Identity 2026-08-09-03:04:
+   * KTD4 verification: parse, ONE lookup on the token's public `lookupId`, then a constant-time HMAC
+   * compare. A malformed or wrong-prefix value costs no query at all, and a valid lookup id paired
+   * with a wrong secret fails on the compare rather than on the lookup — so the lookup id being
+   * public leaks nothing beyond "a key with this handle exists".
+   *
+   * Returns null for revoked keys and for LEGACY pre-U6 rows: a row carrying only `tokenHash` has no
+   * lookup id, so it cannot be reached through this path by construction. That is deliberate — the
+   * alternative is reinstating the table scan this method exists to remove. Legacy keys are re-minted
+   * rather than re-verified.
+   */
+  async verifyApiKeyToken(token: string): Promise<AgentApiKey | null> {
+    const parsed = parseToken(token, TOKEN_PREFIX.agentKey);
+    if (!parsed) return null;
+    const key = await findApiKeyByLookupIdAsync(this.asyncLayer!.db, parsed.lookupId);
+    if (!key || key.revokedAt || !key.secretHash) return null;
+    if (!verifyTokenSecret(parsed.secret, key.secretHash)) return null;
+    return key;
   }
 
   /**

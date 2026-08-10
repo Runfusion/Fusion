@@ -2999,6 +2999,61 @@ export {
   type SeedValidationResult,
 } from "./identity/permissions.js";
 
+/*
+FNXC:Identity 2026-08-09-03:04:
+U6 — the credential, token, and session services. The password path and the machine-token path are
+exported from SEPARATE modules on purpose (KTD4): a slow KDF is correct for a password and
+catastrophic for a token presented on every request. Re-exporting them from one barrel is fine;
+merging their implementations is not, and `identity-credentials.test.ts` asserts the separation.
+*/
+export {
+  PASSWORD_SCRYPT_PARAMS,
+  PASSWORD_KEY_LENGTH,
+  PASSWORD_SALT_LENGTH,
+  hashPassword,
+  hashPasswordSync,
+  verifyPassword,
+  verifyPasswordSync,
+  passwordNeedsRehash,
+} from "./identity/credentials.js";
+export {
+  TOKEN_PREFIX,
+  TOKEN_HMAC_KEY_ENV,
+  TOKEN_LOOKUP_ID_BYTES,
+  TOKEN_SECRET_BYTES,
+  tokenHmacKeyFromSecret,
+  resolveTokenHmacKey,
+  isTokenHmacKeyConfigured,
+  hashTokenSecret,
+  mintToken,
+  parseToken,
+  verifyToken,
+  verifyTokenSecret,
+  type TokenPrefix,
+  type ParsedToken,
+  type MintedToken,
+} from "./identity/tokens.js";
+export {
+  HUMAN_SESSION_POLICY,
+  AGENT_SESSION_POLICY,
+  createSession,
+  startSession,
+  verifySession,
+  authorizeAgentToolCall,
+  renewAgentSession,
+  rotateSessionForPrivilegeChange,
+  revokeSession,
+  getSession,
+  listSessionsForActor,
+  type SessionKind,
+  type ActorSession,
+  type IssuedSession,
+  type CreateSessionInput,
+  type VerifySessionOptions,
+  type SessionVerification,
+  type SessionRejectionReason,
+} from "./identity/sessions.js";
+
 export { pruneTaskLifecycleEvents } from "./task-store/task-lifecycle-event-retention.js";
 
 export { buildConsumerId } from "./task-store/task-lifecycle-consumer-identity.js";
