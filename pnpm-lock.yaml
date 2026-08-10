@@ -327,8 +327,8 @@ importers:
         specifier: ^0.16.0
         version: 0.16.0
       '@xterm/addon-unicode11':
-        specifier: ^0.8.0
-        version: 0.8.0(@xterm/xterm@5.5.0)
+        specifier: ^0.9.0
+        version: 0.9.0
       '@xterm/addon-web-links':
         specifier: ^0.11.0
         version: 0.11.0(@xterm/xterm@5.5.0)
@@ -3682,10 +3682,8 @@ packages:
   '@xterm/addon-search@0.16.0':
     resolution: {integrity: sha512-9OeuBFu0/uZJPu+9AHKY6g/w0Czyb/Ut0A5t79I4ULoU4IfU5BEpPFVGQxP4zTTMdfZEYkVIRYbHBX1xWwjeSA==}
 
-  '@xterm/addon-unicode11@0.8.0':
-    resolution: {integrity: sha512-LxinXu8SC4OmVa6FhgwsVCBZbr8WoSGzBl2+vqe8WcQ6hb1r6Gj9P99qTNdPiFPh4Ceiu2pC8xukZ6+2nnh49Q==}
-    peerDependencies:
-      '@xterm/xterm': ^5.0.0
+  '@xterm/addon-unicode11@0.9.0':
+    resolution: {integrity: sha512-FxDnYcyuXhNl+XSqGZL/t0U9eiNb/q3EWT5rYkQT/zuig8Gz/VagnQANKHdDWFM2lTMk9ly0EFQxxxtZUoRetw==}
 
   '@xterm/addon-web-links@0.11.0':
     resolution: {integrity: sha512-nIHQ38pQI+a5kXnRaTgwqSHnX7KE6+4SVoceompgHL26unAxdfP6IPqUTSYPQgSwM56hsElfoNrrW5V7BUED/Q==}
@@ -10960,9 +10958,7 @@ snapshots:
 
   '@xterm/addon-search@0.16.0': {}
 
-  '@xterm/addon-unicode11@0.8.0(@xterm/xterm@5.5.0)':
-    dependencies:
-      '@xterm/xterm': 5.5.0
+  '@xterm/addon-unicode11@0.9.0': {}
 
   '@xterm/addon-web-links@0.11.0(@xterm/xterm@5.5.0)':
     dependencies:
