@@ -49,7 +49,7 @@ export const LEGACY_COLUMN_IDS = ["triage", "todo", "in-progress", "in-review", 
  * the two classes separately instead of silently netting them.
  */
 export const ROLE_RECEIVER_TOKENS = [
-  "role", "agentType", "agent", "lane", "capability", "sessionPurpose", "surface", "purpose", "agentRole",
+  "role", "agentType", "agent", "lane", "capability", "sessionPurpose", "surface", "purpose", "agentRole", "workflowRole",
 ];
 
 /*
@@ -161,7 +161,7 @@ export function findComparisons(filePath, source) {
       const deliberate = hasDeliberateMarker(originalLines, index);
       const isRole = ROLE_RECEIVER_TOKENS.includes(receiver)
         || comparedAgainstSiblingValues(strippedLines, index, receiver, ROLE_ONLY_SIBLING_VALUES);
-      const isStatus = /status/i.test(receiver)
+      const isStatus = /status|outcome/i.test(receiver)
         || comparedAgainstSiblingValues(strippedLines, index, receiver, STATUS_ONLY_SIBLING_VALUES);
       findings.push({
         file: filePath,
