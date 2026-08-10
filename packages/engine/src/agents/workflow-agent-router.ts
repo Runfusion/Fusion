@@ -2,6 +2,7 @@ import {
   canAgentReceiveImplementationTasks,
   classifyWorkflowAgentNode,
   isEphemeralAgent,
+  isWorkflowPrincipalEligible,
   resolveColumnAgentBinding,
   type Agent,
   type TaskDetail,
@@ -133,13 +134,10 @@ function available(agent: Agent | undefined, activeSessions: ReadonlyMap<string,
    * never satisfy a role-pool route, even when their singular compatibility role
    * matches. A named transient identity is likewise unavailable and holds closed.
    */
-  if (
-    !agent
-    || isEphemeralAgent(agent)
-    || agent.runtimeConfig?.enabled === false
-    || agent.state === "paused"
-    || agent.state === "error"
-  ) return false;
+  // FNXC:WorkflowAgentRouting 2026-08-10-01:15: the static half is shared with provisioning
+  // (isWorkflowPrincipalEligible) so "what provisioning must produce" and "what routing accepts"
+  // cannot drift apart again — that drift is what left every built-in owner unroutable.
+  if (!agent || isEphemeralAgent(agent) || !isWorkflowPrincipalEligible(agent)) return false;
   const max = agent.runtimeConfig?.maxWorkflowSessions;
   return typeof max !== "number" || activeSessions.get(agent.id) === undefined || activeSessions.get(agent.id)! < max;
 }

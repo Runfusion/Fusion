@@ -1,7 +1,8 @@
 import { existsSync } from "node:fs";
-import { readFile, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { mkdir, readFile, realpath, rename, stat, writeFile } from "node:fs/promises";
 import { exec } from "node:child_process";
-import { isAbsolute, resolve } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import { promisify } from "node:util";
 import {acquireWorktreePathReservation, canonicalizeWorktreePath, type RunMutationContext, type Settings, type Task, type TaskStore, type SecretsStore} from "@fusion/core";
 import { generateWorktreeName, resolveTaskWorkingBranch, slugify } from "./worktree-names.js";
@@ -109,6 +110,8 @@ export interface AcquireTaskWorktreeOptions {
   }>;
   taskEnv?: NodeJS.ProcessEnv;
   backend?: WorktreeBackend;
+  /** Test seam for filesystem-device recovery behavior. */
+  renameWorktreeDirectory?: typeof rename;
   /** Execution callers opt in; planning, review, and merge reuse remain unchanged. */
   refreshStaleBase?: boolean;
 }
@@ -144,6 +147,24 @@ export class RepoRootWorktreeError extends Error {
 }
 
 const INIT_OUTCOME_MAX_CHARS = 2_000;
+
+async function ensureContainedDirectory(parentCanonicalPath: string, name: string): Promise<string> {
+  const candidate = join(parentCanonicalPath, name);
+  try {
+    await mkdir(candidate);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+  }
+  const canonicalCandidate = await realpath(candidate);
+  const candidateRelative = relative(parentCanonicalPath, canonicalCandidate);
+  if (candidateRelative === "" || candidateRelative.startsWith("..") || isAbsolute(candidateRelative)) {
+    throw new Error(`Refusing to use recovery directory outside the project root: ${canonicalCandidate}`);
+  }
+  if (!(await stat(canonicalCandidate)).isDirectory()) {
+    throw new Error(`Refusing to use non-directory recovery path: ${canonicalCandidate}`);
+  }
+  return canonicalCandidate;
+}
 
 function configuredCommandErrorMessage(result: { spawnError?: string | Error; timedOut?: boolean; exitCode?: number | null }): string {
   if (result.spawnError) return `Failed to start command: ${result.spawnError}`;
@@ -240,6 +261,7 @@ async function pinnedWorktreeBranchMatches(rootDir: string, worktreePath: string
 
 export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Promise<AcquireTaskWorktreeResult> {
   const { task, rootDir, store, settings, pool, logger, audit, runContext, createWorktree, runConfiguredCommand, runInitCommand, taskEnv, secretsStore } = opts;
+  const renameWorktreeDirectory = opts.renameWorktreeDirectory ?? rename;
   const refreshExistingWorktree = async (
     path: string,
     backendKind: WorktreeBackend["kind"],
@@ -422,77 +444,89 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
   Acquisition delegates branch creation to the isolated-worktree primitive. The project root remains
   on its current branch; task branch selection must never use a root-checkout `git checkout` or `git switch`.
   */
-  const createWorktreeImpl = async (
+  const createWorktreeWithoutReservation = async (
     createBranch: string,
     createPath: string,
     createTaskId: string,
     startPoint?: string,
     allowRename?: boolean,
   ): Promise<{ path: string; branch: string; backendKind: WorktreeBackend["kind"] }> => {
-      if (createWorktree) {
-        const created = await createWorktree(createBranch, createPath, createTaskId, startPoint, allowRename);
-        return { ...created, backendKind: opts.createWorktreeBackendKind ?? backend.kind };
-      }
-      const reservation = await acquireWorktreePathReservation({
-        canonicalPath: await canonicalizeWorktreePath(createPath),
-        worktreesDir: resolveWorktreesDir(rootDir, settings),
+    try {
+      const created = await backend.create({
         rootDir,
-        /*
-        FNXC:WorkflowLifecycle 2026-07-16-10:00:
-        A failed archive removal leaves a durable quarantine record. The next
-        owner must reconcile that old pinned path while it exclusively holds
-        the reservation, rather than colliding with it during creation.
-        */
-        reconcileQuarantined: async () => {
-          await removeWorktree({
-            worktreePath: createPath,
-            rootDir,
-            settings,
-            taskId: createTaskId,
-            reason: RemovalReason.ExecutorDispose,
-            force: true,
-          });
-        },
+        branch: createBranch,
+        worktreePath: createPath,
+        startPoint,
+        taskId: createTaskId,
+        allowSiblingBranchRename: allowRename,
       });
-      try {
-        const created = await backend.create({
-          rootDir,
-          branch: createBranch,
-          worktreePath: createPath,
-          startPoint,
-          taskId: createTaskId,
-          allowSiblingBranchRename: allowRename,
+      if (backend.kind === "worktrunk") {
+        await audit?.git({
+          type: "worktree:worktrunk-create",
+          target: created.path,
+          metadata: { branch: created.branch },
         });
-        if (backend.kind === "worktrunk") {
-          await audit?.git({
-            type: "worktree:worktrunk-create",
-            target: created.path,
-            metadata: { branch: created.branch },
-          });
-        }
-        await persistWorktreeBackendKind(created.path, backend.kind);
-        return { ...created, backendKind: backend.kind };
-      } catch (error) {
-        if (backend.kind === "worktrunk" && error instanceof WorktrunkOperationError) {
-          // FNXC:WorktreeAcquisition 2026-07-16-00:00: FN-8132 requires native fallback collision dispositions to be audited just like direct native acquisition.
-          const nativeBackend = new NativeWorktreeBackend({ logger: logger ?? undefined, audit });
-          const fallback = () => nativeBackend.create({
-            rootDir,
-            branch: createBranch,
-            worktreePath: createPath,
-            startPoint,
-            taskId: createTaskId,
-            allowSiblingBranchRename: allowRename,
-          });
-          const created = await handleWorktrunkFailure("create", error, fallback) as { path: string; branch: string };
-          await persistWorktreeBackendKind(created.path, "native");
-          return { ...created, backendKind: "native" };
-        }
-        throw error;
-      } finally {
-        if (reservation.state === "held") await reservation.release();
       }
-    };
+      await persistWorktreeBackendKind(created.path, backend.kind);
+      return { ...created, backendKind: backend.kind };
+    } catch (error) {
+      if (backend.kind !== "worktrunk" || !(error instanceof WorktrunkOperationError)) throw error;
+      // FNXC:WorktreeAcquisition 2026-07-16-00:00: FN-8132 requires native fallback collision dispositions to be audited just like direct native acquisition.
+      const nativeBackend = new NativeWorktreeBackend({ logger: logger ?? undefined, audit });
+      const fallback = () => nativeBackend.create({
+        rootDir,
+        branch: createBranch,
+        worktreePath: createPath,
+        startPoint,
+        taskId: createTaskId,
+        allowSiblingBranchRename: allowRename,
+      });
+      const created = await handleWorktrunkFailure("create", error, fallback) as { path: string; branch: string };
+      await persistWorktreeBackendKind(created.path, "native");
+      return { ...created, backendKind: "native" };
+    }
+  };
+
+  const createWorktreeImpl = async (
+    createBranch: string,
+    createPath: string,
+    createTaskId: string,
+    startPoint?: string,
+    allowRename?: boolean,
+    reservationHeld = false,
+  ): Promise<{ path: string; branch: string; backendKind: WorktreeBackend["kind"] }> => {
+    if (createWorktree) {
+      const created = await createWorktree(createBranch, createPath, createTaskId, startPoint, allowRename);
+      return { ...created, backendKind: opts.createWorktreeBackendKind ?? backend.kind };
+    }
+    if (reservationHeld) return createWorktreeWithoutReservation(createBranch, createPath, createTaskId, startPoint, allowRename);
+    const reservation = await acquireWorktreePathReservation({
+      canonicalPath: await canonicalizeWorktreePath(createPath),
+      worktreesDir: resolveWorktreesDir(rootDir, settings),
+      rootDir,
+      /*
+      FNXC:WorkflowLifecycle 2026-07-16-10:00:
+      A failed archive removal leaves a durable quarantine record. The next
+      owner must reconcile that old pinned path while it exclusively holds
+      the reservation, rather than colliding with it during creation.
+      */
+      reconcileQuarantined: async () => {
+        await removeWorktree({
+          worktreePath: createPath,
+          rootDir,
+          settings,
+          taskId: createTaskId,
+          reason: RemovalReason.ExecutorDispose,
+          force: true,
+        });
+      },
+    });
+    try {
+      return await createWorktreeWithoutReservation(createBranch, createPath, createTaskId, startPoint, allowRename);
+    } finally {
+      if (reservation.state === "held") await reservation.release();
+    }
+  };
 
   const logConfiguredCopyFileResults = async (results: WorktreeCopyFileResult[], source: "fresh" | "pool") => {
     if (results.length === 0) return;
@@ -685,8 +719,18 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
       await store.updateTask(task.id, { worktree: pinnedPath });
     }
 
-    worktreePath = pinnedPath;
-    branch = branchName;
+    const reservation = await acquireWorktreePathReservation({
+      canonicalPath: await canonicalizeWorktreePath(pinnedPath),
+      worktreesDir: resolveWorktreesDir(rootDir, settings),
+      rootDir,
+      isLiveWorktree: async () => {
+        if (activeSessionRegistry.isPathActive(pinnedPath)) return true;
+        return (await classifyTaskWorktree(rootDir, pinnedPath)).ok;
+      },
+    });
+    try {
+      worktreePath = pinnedPath;
+      branch = branchName;
 
     if (existsSync(pinnedPath)) {
       const classification = await classifyTaskWorktree(rootDir, pinnedPath);
@@ -729,14 +773,62 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
       );
       if (isInsideWorktreesDir(rootDir, pinnedPath, settings)) {
         try {
-          await removeWorktree({
-            rootDir,
-            worktreePath: pinnedPath,
-            settings,
-            reason: RemovalReason.PoolPrune,
-            taskId: task.id,
-            audit: undefined,
-          });
+          const preserveAsOrphanDirectory = !classification.ok
+            && (classification.classification === "incomplete" || classification.classification === "unregistered")
+            && !activeSessionRegistry.isPathActive(pinnedPath);
+          if (preserveAsOrphanDirectory) {
+            const canonicalRoot = await realpath(rootDir);
+            const fusionRoot = await ensureContainedDirectory(canonicalRoot, ".fusion");
+            const recoveryRoot = await ensureContainedDirectory(fusionRoot, "recovery");
+            const canonicalRecoveryRoot = await ensureContainedDirectory(recoveryRoot, "worktrees");
+            // The path reservation serializes classification, preservation, and
+            // recreation across processes; this final probe also protects against
+            // an in-process owner that registered before the reservation was held.
+            if (activeSessionRegistry.isPathActive(pinnedPath)) {
+              throw new Error(`Task-pinned worktree ${pinnedPath} became active during orphan recovery`);
+            }
+            let preservedPath = join(canonicalRecoveryRoot, `${task.id.toLowerCase()}-${randomUUID()}`);
+            try {
+              await renameWorktreeDirectory(pinnedPath, preservedPath);
+            } catch (renameError) {
+              if ((renameError as NodeJS.ErrnoException).code !== "EXDEV") throw renameError;
+              /*
+               * FNXC:TaskPinnedWorktrees 2026-08-09-03:20:
+               * Configured worktrees may live on another filesystem. Preserve atomically beside the
+               * configured worktree root instead of weakening recovery to recursive copy-and-delete.
+               */
+              const canonicalWorktreesRoot = await realpath(resolveWorktreesDir(rootDir, settings));
+              const localRecoveryRoot = await ensureContainedDirectory(canonicalWorktreesRoot, ".fusion-recovery");
+              const localRecoveryWorktrees = await ensureContainedDirectory(localRecoveryRoot, "worktrees");
+              preservedPath = join(localRecoveryWorktrees, `${task.id.toLowerCase()}-${randomUUID()}`);
+              await renameWorktreeDirectory(pinnedPath, preservedPath);
+            }
+            await audit?.filesystem({
+              type: "file:write",
+              target: preservedPath,
+              metadata: {
+                taskId: task.id,
+                classification: classification.classification,
+                reason: "task-pinned-orphan-preserved",
+                sourcePath: pinnedPath,
+              },
+            });
+            await store.logEntry(
+              task.id,
+              `Preserved orphaned task-pinned directory ${pinnedPath} before recreation`,
+              preservedPath,
+              runContext,
+            );
+          } else {
+            await removeWorktree({
+              rootDir,
+              worktreePath: pinnedPath,
+              settings,
+              reason: RemovalReason.PoolPrune,
+              taskId: task.id,
+              audit: undefined,
+            });
+          }
         } catch (removeErr) {
           /*
            * FNXC:TaskPinnedWorktrees 2026-07-16-12:30:
@@ -756,8 +848,11 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
       await store.updateTask(task.id, { sessionFile: null });
     }
 
-    const created = await createWorktreeImpl(branchName, pinnedPath, task.id, freshStartPoint, allowSiblingBranchRename);
-    return finalizeCreatedWorktree(created, "fresh", "normal");
+      const created = await createWorktreeImpl(branchName, pinnedPath, task.id, freshStartPoint, allowSiblingBranchRename, true);
+      return await finalizeCreatedWorktree(created, "fresh", "normal");
+    } finally {
+      if (reservation.state === "held") await reservation.release();
+    }
   };
 
   if (pinned) {

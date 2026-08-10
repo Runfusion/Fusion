@@ -625,6 +625,15 @@ ordinary re-dispatch rather than parked.
 const MAX_SESSION_CONTENTION_HOLD_RETRIES = 10;
 const SESSION_CONTENTION_HOLD_BACKOFF_MS = process.env.VITEST || process.env.NODE_ENV === "test" ? 0 : 5_000;
 const SESSION_CONTENTION_HOLD_MAX_BACKOFF_MS = 60_000;
+/*
+FNXC:WorkflowAgentRouting 2026-08-10-01:15:
+Backoff ladder for a workflow-principal hold (unroutable role pool / unavailable named owner). Mirrors the
+session-contention ladder, including the test-mode zero so suites do not wait on wall-clock. The ceiling is
+higher than contention's because an unroutable pool clears on OPERATOR action (enable/add an agent), not on
+another task finishing, so polling it every few seconds only burns CPU.
+*/
+const PRINCIPAL_HOLD_BACKOFF_MS = process.env.VITEST || process.env.NODE_ENV === "test" ? 0 : 15_000;
+const PRINCIPAL_HOLD_MAX_BACKOFF_MS = 300_000;
 /** How long to wait before recovering a completed task still stuck in in-progress. */
 const COMPLETED_TASK_WATCHDOG_MS = 60_000;
 /** How long to wait before retrying a workflow rerun handoff that never reached in-progress. */
@@ -7850,13 +7859,39 @@ export class TaskExecutor {
          * loudly for the never-clears variant — so the next occurrence is greppable.
          */
         const neverClears = principalHoldReason.startsWith("workflow-principal-routing-unavailable:");
+        /*
+         * FNXC:WorkflowAgentRouting 2026-08-10-01:15:
+         * A hold with no cooldown is a HOT LOOP. Nothing here stops the scheduler re-dispatching the task
+         * immediately, so the run re-enters, re-fences, re-suspends and re-parks the work item — observed at
+         * ~3.5 re-dispatches/second across every task, pinning a core and writing ~19k `workflowWorkItem`
+         * audit rows/hour while ZERO work executed. The hold also never increments `attempt`, so no retry
+         * budget is consumed and no existing guard can ever fire; it spins until an operator intervenes.
+         *
+         * Record a per-task backoff keyed on the hold REASON and let `execute()` skip dispatch while it is
+         * live — the same self-recovering shape as `holdForSessionContention`. A changed reason resets the
+         * ladder (genuinely new information), and the first occurrence still logs immediately so the hold
+         * stays greppable; repeats inside the window are silent so the task log is not flooded either.
+         */
+        const priorHold = this.principalHoldBackoff.get(task.id);
+        const repeated = priorHold?.reason === principalHoldReason;
+        const attempt = repeated ? priorHold!.attempt + 1 : 1;
+        this.principalHoldBackoff.set(task.id, {
+          reason: principalHoldReason,
+          attempt,
+          until: Date.now() + Math.min(
+            PRINCIPAL_HOLD_MAX_BACKOFF_MS,
+            PRINCIPAL_HOLD_BACKOFF_MS * 2 ** (attempt - 1),
+          ),
+        });
         const holdMessage = `[workflow-graph] ${task.id} held at graph node — ${principalHoldReason}`;
-        if (neverClears) {
-          executorLog.error(`${holdMessage} (workflow principal routing is unavailable; this hold cannot self-clear)`);
-        } else {
-          executorLog.warn(holdMessage);
+        if (!repeated) {
+          if (neverClears) {
+            executorLog.error(`${holdMessage} (workflow principal routing is unavailable; this hold cannot self-clear)`);
+          } else {
+            executorLog.warn(holdMessage);
+          }
+          await this.store.logEntry(task.id, `Workflow stage held — ${principalHoldReason}`).catch(() => undefined);
         }
-        await this.store.logEntry(task.id, `Workflow stage held — ${principalHoldReason}`).catch(() => undefined);
         /*
          * FNXC:WorkflowAgentRouting 2026-08-07-23:50:
          * The task must end this run with EXACTLY ONE active continuation, and the hold
@@ -7892,6 +7927,9 @@ export class TaskExecutor {
         }
         return;
       }
+      // FNXC:WorkflowAgentRouting 2026-08-10-01:15: this run cleared the principal fence, so any prior hold
+      // is resolved — drop the ladder so a later hold starts from the short delay rather than a stale one.
+      this.clearPrincipalHoldBackoff(task.id);
       /* Direct graph node fences are terminalized only after the interpreter
        * returns, preserving their historical principal through all handler and
        * tool-gate calls while ensuring completed work cannot render as active.
@@ -11487,6 +11525,27 @@ export class TaskExecutor {
   */
   private sessionContentionHoldAttempts = new Map<string, number>();
 
+  /*
+  FNXC:WorkflowAgentRouting 2026-08-10-01:15:
+  Per-task cooldown for a workflow-principal hold, so an unroutable role pool is a cheap wait instead of a
+  dispatch hot loop. IN-MEMORY on purpose, matching the session-contention hold: it needs no schema change,
+  and a restart clearing it is correct — a restart is exactly when agent configuration may have changed.
+  */
+  private principalHoldBackoff = new Map<string, { reason: string; attempt: number; until: number }>();
+
+  /** True while a principal hold is still cooling down, so dispatch should not re-enter the graph. */
+  private isPrincipalHoldCoolingDown(taskId: string): boolean {
+    const hold = this.principalHoldBackoff.get(taskId);
+    if (!hold) return false;
+    if (Date.now() >= hold.until) return false;
+    return true;
+  }
+
+  /** Clear the cooldown once the task dispatches for any other reason. */
+  private clearPrincipalHoldBackoff(taskId: string): void {
+    this.principalHoldBackoff.delete(taskId);
+  }
+
   private clearSessionContentionHold(taskId: string): void {
     this.sessionContentionHoldAttempts.delete(taskId);
   }
@@ -14016,6 +14075,18 @@ export class TaskExecutor {
     both pass the graphRouting.has gate, both enter executeWorkflowGraph, and one park
     status=failed while the other still owned work (FN-8471 overseer thrash).
     */
+    /*
+    FNXC:WorkflowAgentRouting 2026-08-10-01:15:
+    Honor an active principal-hold cooldown BEFORE the graph is entered. Without this the hold is recorded and
+    then immediately re-tested by the next dispatch, which is the hot loop itself: re-entering only to re-fence
+    and re-park costs a graph run, two work-item writes, and two audit rows per pass for a condition that can
+    only change when an operator enables or adds an agent. Skipping here is what makes the hold a real wait.
+    */
+    if (this.isPrincipalHoldCoolingDown(task.id)) {
+      executorLog.debug(`execute() called for ${task.id} while a workflow-principal hold is cooling down — deferring`);
+      if (dropPreHeldExecutorSlot(task.id)) this.options.semaphore?.release();
+      return;
+    }
     if (this.graphRouting.has(task.id)) {
       // Duplicate dispatch while the graph runner owns this task — drop it,
       // mirroring the executingTaskLock duplicate-invocation behavior.
