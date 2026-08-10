@@ -60,7 +60,9 @@ export const LEGACY_COLUMN_IDS = ["triage", "todo", "in-progress", "in-review", 
 
 /** Receiver names that denote an agent role / lane rather than a task column. */
 export const ROLE_RECEIVER_TOKENS = [
-  "role", "agentType", "agent", "lane", "capability", "sessionPurpose", "surface", "purpose", "agentRole", "workflowRole",
+  "role", "agentType", "agent", "lane", "capability", "sessionPurpose", "surface", "purpose", "agentRole",
+  /* FNXC:LifecycleColumnCensus 2026-08-10-06:00: Workflow work items persist the triage/executor/reviewer/merger role vocabulary. */
+  "workflowRole",
   /*
   FNXC:LifecycleColumnCensus 2026-07-30-22:00 (fleet phase — the work order was sending workers at
   non-columns):
