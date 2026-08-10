@@ -23,6 +23,7 @@ import {
   BOOTSTRAP_ACTOR_CONTEXT,
   BOOTSTRAP_ACTOR_ID,
   RESERVED_ACTOR_IDS,
+  UNATTRIBUTED_ACTOR_ID,
   ReservedActorIdError,
   actorRefFromApprovalSnapshot,
   actorRefFromConfigChangedBy,
@@ -108,11 +109,20 @@ describe("actor model (pure)", () => {
     });
   });
 
-  it("reserves the bootstrap id and the ambiguous-agent id", () => {
+  /*
+  FNXC:Identity 2026-08-09-03:04:
+  U18 added a THIRD reserved id, `system:unattributed` - the marker for a call site the required
+  mutation-context parameter reached before a real actor existed for it. It is reserved for the same
+  reason as the other two: an id that means "we do not know who this is" is exactly the id an
+  attacker would want to materialize as a real actor and grant permissions to.
+  */
+  it("reserves the bootstrap id, the ambiguous-agent id, and the unattributed marker", () => {
     expect(isReservedActorId(BOOTSTRAP_ACTOR_ID)).toBe(true);
     expect(isReservedActorId(AMBIGUOUS_ACTOR_ID)).toBe(true);
+    expect(isReservedActorId(UNATTRIBUTED_ACTOR_ID)).toBe(true);
     expect(AMBIGUOUS_ACTOR_ID).toBe("unknown-agent");
-    expect(RESERVED_ACTOR_IDS).toEqual([BOOTSTRAP_ACTOR_ID, AMBIGUOUS_ACTOR_ID]);
+    expect(UNATTRIBUTED_ACTOR_ID).toBe("system:unattributed");
+    expect(RESERVED_ACTOR_IDS).toEqual([BOOTSTRAP_ACTOR_ID, AMBIGUOUS_ACTOR_ID, UNATTRIBUTED_ACTOR_ID]);
     expect(isReservedActorId("human-1")).toBe(false);
   });
 

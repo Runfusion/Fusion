@@ -17,7 +17,7 @@ export class TerminalFailureApplyRejected extends Error {
   }
 }
 import {and, eq, sql} from "drizzle-orm";
-import type {Task, Column, ColumnId, HandoffToReviewOptions} from "../types.js";
+import type {Task, Column, ColumnId, HandoffToReviewOptions, RunMutationContext} from "../types.js";
 import {VALID_TRANSITIONS, COLUMNS} from "../types.js";
 import {serializeWorkflowIr} from "../workflows/workflow-ir.js";
 import {emitWorkflowLifecycleEvent} from "../workflow-events.js";
@@ -246,7 +246,16 @@ function enforcePooledColumnCapacity(args: {
   return step(0, 0);
 }
 
-export async function moveTaskImpl(store: TaskStore, id: string, toColumn: ColumnId, options?: MoveTaskOptions,): Promise<Task> {
+/*
+FNXC:Identity 2026-08-09-03:04 (U18):
+`MoveTaskInternalOptions.runContext` already exists and is read at ~20 sites below to attribute the
+move audit rows, but the PUBLIC `moveTask` had no way to supply it - it always called
+`moveTaskInternal` with `{ fromHandoff, movePolicyPreflight }` only, so every operator/engine move
+fell back to the synthetic `agentId: "system" / runId: "unknown"` pair. U18's required parameter is
+wired straight into that carrier here, which is what turns the new argument into real attribution
+rather than a seam nobody read.
+*/
+export async function moveTaskImpl(store: TaskStore, id: string, toColumn: ColumnId, options?: MoveTaskOptions, runContext?: RunMutationContext,): Promise<Task> {
     // FNXC:RuntimeTaskOrchestrationAsync 2026-06-24-14:15:
     // Backend-mode moveTask: the moveTaskInternal orchestration now handles
     // backend mode by using layer.transactionImmediate(async (tx) => ...) instead
@@ -258,7 +267,7 @@ export async function moveTaskImpl(store: TaskStore, id: string, toColumn: Colum
     // runtime-validate: flag-ON against the task's resolved workflow, flag-OFF
     // via the VALID_TRANSITIONS lookup (non-legacy ids reject as before).
     const movePolicyPreflight = await store.prepareWorkflowMovePolicyPreflight(id, toColumn, options, { fromHandoff: false });
-    return store.withTaskLock(id, () => store.moveTaskInternal(id, toColumn, options, { fromHandoff: false, movePolicyPreflight }));
+    return store.withTaskLock(id, () => store.moveTaskInternal(id, toColumn, options, { fromHandoff: false, movePolicyPreflight, ...(runContext ? { runContext } : {}) }));
   }
 
 export interface MoveTaskIfResult {

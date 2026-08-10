@@ -136,8 +136,60 @@ downstream cleanup, and the reservation below is what actually enforces the inva
 */
 export const AMBIGUOUS_ACTOR_ID = "unknown-agent";
 
+/*
+FNXC:Identity 2026-08-09-03:04:
+THE UNATTRIBUTED MARKER (U18). Distinct from the bootstrap actor, and the distinction is the whole
+point.
+
+U18 makes the mutation-context PARAMETER required across the mutating store surface. Most call sites
+being converted have no authenticated actor yet, because the units that will supply one have not
+landed: HTTP routes get theirs in U9, the CLI in U11, and engine sweeps/schedulers/self-healing in
+U13. If those sites pass `BOOTSTRAP_ACTOR_CONTEXT` in the meantime, the result LOOKS like attribution
+while meaning nothing — an audit row would claim the write was a pre-enablement bootstrap write, the
+required parameter would report as satisfied everywhere, and the later units would have no work list
+to find. That is the inert-seam failure `docs/solutions/architecture-patterns/resolved-seams-nobody-wired.md`
+documents, wearing a different disguise.
+
+So an unwired call site says so, explicitly and greppably: `UNATTRIBUTED_ACTOR_CONTEXT` means "this
+call site has not yet been given a real actor; the unit that owns this surface must replace it." Grep
+the identifier to get that work list. `packages/core/src/__tests__/unattributed-actor-census.test.ts`
+ratchets the count DOWN — it may never grow.
+
+Use it ONLY where nothing real is derivable. Where an agent id, a run context, or an authenticated
+session is already in scope, derive the real actor (`actorContextForAgent`) instead; a marker written
+over a derivable actor is a lie that also inflates the census.
+
+It is RESERVED for the same reason the bootstrap and ambiguous ids are: it must never become a
+`central.actors` row or hold a role grant. It is `kind: "system"` and holds no permissions — while
+identity is off `can()` short-circuits, and once identity is on an unattributed write is exactly the
+write that should be denied rather than silently authorized.
+*/
+export const UNATTRIBUTED_ACTOR_ID = "system:unattributed";
+
+/** The in-memory unattributed marker actor. See {@link UNATTRIBUTED_ACTOR_ID}. */
+export const UNATTRIBUTED_ACTOR: ActorRef = {
+  id: UNATTRIBUTED_ACTOR_ID,
+  kind: "system",
+  displayName: "Unattributed (pending identity wiring)",
+};
+
+/**
+ * Mutation context for a call site U18 converted but could not attribute. Replace it — do not
+ * propagate it. See {@link UNATTRIBUTED_ACTOR_ID} for which unit owns which surface.
+ */
+export const UNATTRIBUTED_ACTOR_CONTEXT: ActorContext = { actor: UNATTRIBUTED_ACTOR };
+
+/** True for the U18 unattributed marker. Lets a future `can()` deny it explicitly rather than by accident. */
+export function isUnattributedActorContext(context: ActorContext | undefined): boolean {
+  return context?.actor.id === UNATTRIBUTED_ACTOR_ID;
+}
+
 /** Ids that can never be created as a real actor or receive a role grant. */
-export const RESERVED_ACTOR_IDS: readonly string[] = [BOOTSTRAP_ACTOR_ID, AMBIGUOUS_ACTOR_ID];
+export const RESERVED_ACTOR_IDS: readonly string[] = [
+  BOOTSTRAP_ACTOR_ID,
+  AMBIGUOUS_ACTOR_ID,
+  UNATTRIBUTED_ACTOR_ID,
+];
 
 /** True when `id` is reserved and therefore refused by actor creation and by role granting. */
 export function isReservedActorId(id: string): boolean {

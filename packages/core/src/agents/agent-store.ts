@@ -110,6 +110,7 @@ KTD4 — API keys hash through the FAST token module, never through `identity/cr
 presented on every request; the password KDF costs ~200ms per derivation by design.
 */
 import { mintToken, parseToken, TOKEN_PREFIX, verifyTokenSecret } from "../identity/tokens.js";
+import { mutationContextForAgent, UNATTRIBUTED_MUTATION_CONTEXT } from "../identity/mutation-context.js";
 import { createLogger } from "../process/logger.js";
 import { FsWatchPollController } from "../process/fs-watch-poll-controller.js";
 import {
@@ -1568,7 +1569,7 @@ export class AgentStore extends EventEmitter {
 
     // Log the assignment to the task when a non-empty taskId is provided
     if (taskId && this.taskStore) {
-      await this.taskStore.logEntry(taskId, `Task assigned to agent ${agentId}`, undefined, runContext);
+      await this.taskStore.logEntry(taskId, `Task assigned to agent ${agentId}`, undefined, runContext ?? mutationContextForAgent(agentId));
     }
 
     return updated;
@@ -1700,7 +1701,7 @@ export class AgentStore extends EventEmitter {
       throw error;
     }
 
-    const claimedTask = await this.taskStore.updateTask(taskId, { assignedAgentId: agentId }, runContext);
+    const claimedTask = await this.taskStore.updateTask(taskId, { assignedAgentId: agentId }, runContext ?? mutationContextForAgent(agentId));
     await this.syncExecutionTaskLink(agentId, taskId);
 
     return { ok: true, task: claimedTask };
@@ -1814,7 +1815,7 @@ export class AgentStore extends EventEmitter {
               taskId,
               "Warning: central checkout claim succeeded but per-project mirror update failed",
               undefined,
-              runContext,
+              runContext ?? mutationContextForAgent(agentId),
             );
             const latestTask = await this.taskStore.getTask(taskId);
             if (!latestTask) {
@@ -1824,7 +1825,7 @@ export class AgentStore extends EventEmitter {
           }
         }
 
-        await this.taskStore.logEntry(taskId, `Checked out by agent ${agentId}`, undefined, runContext);
+        await this.taskStore.logEntry(taskId, `Checked out by agent ${agentId}`, undefined, runContext ?? mutationContextForAgent(agentId));
         return result.task;
       }
 
@@ -1858,7 +1859,7 @@ export class AgentStore extends EventEmitter {
         throw new CheckoutConflictError(taskId, currentHolder ?? "unknown", agentId);
       }
 
-      await this.taskStore.logEntry(taskId, `Checked out by agent ${agentId}`, undefined, runContext);
+      await this.taskStore.logEntry(taskId, `Checked out by agent ${agentId}`, undefined, runContext ?? mutationContextForAgent(agentId));
       return result.task;
     }
 
@@ -1871,7 +1872,7 @@ export class AgentStore extends EventEmitter {
       return this.taskStore.updateTask(taskId, {
         checkoutRunId: leaseContext?.runId ?? task.checkoutRunId ?? null,
         checkoutLeaseRenewedAt: nextRenewedAt,
-      });
+      }, runContext ?? mutationContextForAgent(agentId));
     }
 
     const updated = await this.taskStore.updateTask(taskId, {
@@ -1881,8 +1882,8 @@ export class AgentStore extends EventEmitter {
       checkoutRunId: leaseContext?.runId ?? null,
       checkoutLeaseRenewedAt: nextRenewedAt,
       checkoutLeaseEpoch: nextEpoch,
-    });
-    await this.taskStore.logEntry(taskId, `Checked out by agent ${agentId}`, undefined, runContext);
+    }, runContext ?? mutationContextForAgent(agentId));
+    await this.taskStore.logEntry(taskId, `Checked out by agent ${agentId}`, undefined, runContext ?? mutationContextForAgent(agentId));
     return updated;
   }
 
@@ -1922,8 +1923,8 @@ export class AgentStore extends EventEmitter {
       checkoutNodeId: null,
       checkoutRunId: null,
       checkoutLeaseRenewedAt: null,
-    });
-    await this.taskStore.logEntry(taskId, `Released by agent ${agentId}`, undefined, runContext);
+    }, runContext ?? mutationContextForAgent(agentId));
+    await this.taskStore.logEntry(taskId, `Released by agent ${agentId}`, undefined, runContext ?? mutationContextForAgent(agentId));
     return updated;
   }
 
@@ -1935,6 +1936,14 @@ export class AgentStore extends EventEmitter {
       throw new Error("TaskStore not configured for checkout operations");
     }
 
+    /*
+    FNXC:Identity 2026-08-09-03:04 (U18):
+    NOT `actorContextForAgent(...)` here, unlike every other checkout path in this file. Force-release
+    evicts a holder ON BEHALF OF someone else, and the only agent id in scope is the evicted holder's,
+    read off the task row - attributing the eviction to the agent being evicted would be a false
+    audit row. The real actor is the operator or engine lane that asked for the force-release, and it
+    arrives with U11/U13.
+    */
     const updated = await this.taskStore.updateTask(taskId, {
       checkedOutBy: null,
       checkedOutAt: null,
@@ -1942,8 +1951,8 @@ export class AgentStore extends EventEmitter {
       checkoutRunId: null,
       checkoutLeaseRenewedAt: null,
       checkoutLeaseEpoch: null,
-    });
-    await this.taskStore.logEntry(taskId, "Checkout force-released", undefined, runContext);
+    }, runContext ?? UNATTRIBUTED_MUTATION_CONTEXT);
+    await this.taskStore.logEntry(taskId, "Checkout force-released", undefined, runContext ?? UNATTRIBUTED_MUTATION_CONTEXT);
     return updated;
   }
 
@@ -2383,10 +2392,16 @@ export class AgentStore extends EventEmitter {
             throw new Error(`Agent ${agentId} holds checkout for task ${task.id}; pass force=true to delete`);
           }
 
+          /*
+          FNXC:Identity 2026-08-09-03:04 (U18):
+          `agentId` here is the agent BEING DELETED, not the actor doing the deleting, so deriving
+          from it would attribute the unassignment to its own victim. The operator/API actor that
+          requested the delete arrives with U9/U11.
+          */
           await this.taskStore.updateTask(task.id, {
             assignedAgentId: options?.reassignTo ?? null,
             checkedOutBy: task.checkedOutBy === agentId ? null : undefined,
-          });
+          }, UNATTRIBUTED_MUTATION_CONTEXT);
         }
       }
 

@@ -2887,6 +2887,10 @@ export {
   BOOTSTRAP_ACTOR_ID,
   actorContextForAgent,
   AMBIGUOUS_ACTOR_ID,
+  UNATTRIBUTED_ACTOR,
+  UNATTRIBUTED_ACTOR_CONTEXT,
+  UNATTRIBUTED_ACTOR_ID,
+  isUnattributedActorContext,
   RESERVED_ACTOR_IDS,
   NON_ACTIVE_ACTOR_STATUSES,
   ReservedActorIdError,
@@ -2911,6 +2915,12 @@ export {
   type DelegationDecision,
   type DelegationDenialReason,
 } from "./identity/actor.js";
+export {
+  UNATTRIBUTED_MUTATION_CONTEXT,
+  UNATTRIBUTED_RUN_AGENT_ID,
+  UNATTRIBUTED_RUN_ID,
+  mutationContextForAgent,
+} from "./identity/mutation-context.js";
 export {
   createActor,
   getActor,

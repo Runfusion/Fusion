@@ -2394,6 +2394,10 @@ export {
   BOOTSTRAP_ACTOR_CONTEXT,
   BOOTSTRAP_ACTOR_ID,
   AMBIGUOUS_ACTOR_ID,
+  UNATTRIBUTED_ACTOR,
+  UNATTRIBUTED_ACTOR_CONTEXT,
+  UNATTRIBUTED_ACTOR_ID,
+  isUnattributedActorContext,
   RESERVED_ACTOR_IDS,
   ReservedActorIdError,
   actorContextForAgent,
@@ -2407,4 +2411,10 @@ export {
   type ActorRef,
   type ActorStatus,
 } from "./identity/actor.js";
+export {
+  UNATTRIBUTED_MUTATION_CONTEXT,
+  UNATTRIBUTED_RUN_AGENT_ID,
+  UNATTRIBUTED_RUN_ID,
+  mutationContextForAgent,
+} from "./identity/mutation-context.js";
 export { isIdentityEnabled, setIdentityEnabled } from "./identity/identity-enabled.js";

@@ -1,4 +1,5 @@
 import type { Task } from "../types.js";
+import { UNATTRIBUTED_MUTATION_CONTEXT } from "../identity/mutation-context.js";
 import type { TaskStore } from "../store.js";
 import { computeContentFingerprint } from "./duplicate-detection.js";
 import { isNearDuplicateCanonicalInactive } from "./near-duplicate-canonical.js";
@@ -213,12 +214,17 @@ export async function reconcileDeterministicDuplicate(
       return { outcome: "kept-duplicate", canonical: args.createdTask };
     }
 
+    /*
+    FNXC:Identity 2026-08-09-03:04 (U18):
+    The deterministic-duplicate guard runs inside the create path; same reasoning as duplicate-intake
+    - the creating actor is the honest attribution and it becomes available with U9/U11/U13.
+    */
     await store.updateTask(args.createdTask.id, {
       sourceMetadataPatch: {
         contentFingerprint: args.fingerprint,
         deterministicDuplicateOf: olderSibling.id,
       },
-    });
+    }, UNATTRIBUTED_MUTATION_CONTEXT);
     /*
     FNXC:WorkflowResolvedColumns 2026-07-30-19:45 (#2808 review — coderabbit):
     COMPENSATED, not merely documented.
@@ -238,12 +244,12 @@ export async function reconcileDeterministicDuplicate(
     that is the one that explains what went wrong.
     */
     try {
-      await store.moveTask(args.createdTask.id, await resolveArchiveTargetForTask(store, args.createdTask.id));
+      await store.moveTask(args.createdTask.id, await resolveArchiveTargetForTask(store, args.createdTask.id), undefined, UNATTRIBUTED_MUTATION_CONTEXT);
     } catch (moveError) {
       try {
         await store.updateTask(args.createdTask.id, {
           sourceMetadataPatch: { deterministicDuplicateOf: null },
-        });
+        }, UNATTRIBUTED_MUTATION_CONTEXT);
       } catch (rollbackError) {
         args.logger?.warn("Failed to roll back the deterministic-duplicate stamp after a rejected archive move", {
           taskId: args.createdTask.id,
