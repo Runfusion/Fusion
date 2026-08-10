@@ -83,9 +83,28 @@ const mockUseTasks = vi.fn(() => ({
   archiveAllDone: vi.fn(),
   refreshTasks: vi.fn(),
 }));
-vi.mock("../../hooks/useTasks", () => ({
-  useTasks: (_options?: any) => mockUseTasks(),
-}));
+/*
+FNXC:DashboardTests 2026-08-09-08:02:
+Commit 132026545 (FN-8796 'stabilize task-detail lifecycle snapshots') added `mergeTaskSnapshot`
+to hooks/useTasks.ts, imported by components this test renders (`<App />`). A curated vi.mock
+decorator for "../../hooks/useTasks" must surface every export those components import (`useTasks` +
+`mergeTaskSnapshot`) or the fixture throws `No "mergeTaskSnapshot" export is defined on the useTasks
+mock` at import time.
+
+FNXC:DashboardTests 2026-08-09-08:25:
+This directly mirrors the App.test.tsx / navigation-history fixtures: the file renders `<App />` and
+drives the SSE merge path at App.tsx:2179 (`liveTask.id` where `liveTask = mergeTaskSnapshot(snapshot,
+boardTask)` for retained task detail popups), so `mergeTaskSnapshot: vi.fn()` returning `undefined`
+makes `liveTask.id` throw. Surface the real implementation via a partial `importOriginal` mock while
+`useTasks` stays mocked.
+*/
+vi.mock("../../hooks/useTasks", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../hooks/useTasks")>();
+  return {
+    ...actual,
+    useTasks: (_options?: any) => mockUseTasks(),
+  };
+});
 
 vi.mock("../../hooks/useInsights", () => ({
   useInsights: () => ({
