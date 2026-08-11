@@ -232,12 +232,25 @@ export async function writeAgent(handle: QueryHandle, agent: Agent, projectId?: 
  * is responsible for applying ephemeral/permission-policy normalization
  * (parseAgent in the sync store) — this helper returns the raw merged shape.
  */
-export async function readAgent(handle: QueryHandle, projectId: string, agentId: string): Promise<Agent | null> {
-  const ownership = projectOwnershipPartition(projectId);
+/*
+FNXC:MultiProjectIsolation 2026-08-11-02:13:
+Scope agent reads by project when the caller has a bound project id. Unbound
+harnesses (empty/undefined projectId) must not filter through
+`projectOwnershipPartition`'s `__legacy_unscoped__` fallback — that would hide
+GUC-defaulted rows and, via AgentStore.backendProjectId's throw-on-empty path,
+surface as `agent-backend-unavailable` on ordinary createTask in project-agnostic
+pg tests (PR #3415 gate).
+*/
+export async function readAgent(handle: QueryHandle, projectId: string | null | undefined, agentId: string): Promise<Agent | null> {
+  const boundProjectId = projectId?.trim() || "";
+  const conditions = [eq(schema.project.agents.id, agentId)];
+  if (boundProjectId) {
+    conditions.push(eq(schema.project.agents.projectId, boundProjectId));
+  }
   const rows = await handle
     .select(agentColumns)
     .from(schema.project.agents)
-    .where(and(eq(schema.project.agents.projectId, ownership), eq(schema.project.agents.id, agentId)));
+    .where(and(...conditions));
   const row = rows[0] as AgentRow | undefined;
   if (!row) return null;
   return mergeAgentRow(row);
@@ -269,11 +282,14 @@ export function mergeAgentRow(row: AgentRow): Agent {
  */
 export async function listAgentRows(
   handle: QueryHandle,
-  projectId: string,
+  projectId: string | null | undefined,
   filter?: { state?: AgentState; role?: AgentCapability },
 ): Promise<Agent[]> {
-  const ownership = projectOwnershipPartition(projectId);
-  const conditions = [eq(schema.project.agents.projectId, ownership)];
+  const boundProjectId = projectId?.trim() || "";
+  const conditions = [];
+  if (boundProjectId) {
+    conditions.push(eq(schema.project.agents.projectId, boundProjectId));
+  }
   if (filter?.state) {
     conditions.push(eq(schema.project.agents.state, filter.state));
   }
@@ -295,14 +311,18 @@ export async function listAgentRows(
  */
 export async function findAgentRowsByName(
   handle: QueryHandle,
-  projectId: string,
+  projectId: string | null | undefined,
   name: string,
 ): Promise<Agent[]> {
-  const ownership = projectOwnershipPartition(projectId);
+  const boundProjectId = projectId?.trim() || "";
+  const conditions = [eq(schema.project.agents.name, name)];
+  if (boundProjectId) {
+    conditions.push(eq(schema.project.agents.projectId, boundProjectId));
+  }
   const rows = await handle
     .select(agentColumns)
     .from(schema.project.agents)
-    .where(and(eq(schema.project.agents.projectId, ownership), eq(schema.project.agents.name, name)))
+    .where(and(...conditions))
     .orderBy(desc(schema.project.agents.createdAt), desc(schema.project.agents.id));
   return rows.map((row) => mergeAgentRow(row as AgentRow));
 }
@@ -311,11 +331,15 @@ export async function findAgentRowsByName(
  * Delete an agent by id. Cascading foreign keys remove heartbeats, runs,
  * task sessions, API keys, config revisions, and blocked states.
  */
-export async function deleteAgent(handle: QueryHandle, projectId: string, agentId: string): Promise<boolean> {
-  const ownership = projectOwnershipPartition(projectId);
+export async function deleteAgent(handle: QueryHandle, projectId: string | null | undefined, agentId: string): Promise<boolean> {
+  const boundProjectId = projectId?.trim() || "";
+  const conditions = [eq(schema.project.agents.id, agentId)];
+  if (boundProjectId) {
+    conditions.push(eq(schema.project.agents.projectId, boundProjectId));
+  }
   const result = await handle
     .delete(schema.project.agents)
-    .where(and(eq(schema.project.agents.projectId, ownership), eq(schema.project.agents.id, agentId)))
+    .where(and(...conditions))
     .returning({ id: schema.project.agents.id });
   return result.length > 0;
 }

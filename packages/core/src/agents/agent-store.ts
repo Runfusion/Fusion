@@ -769,7 +769,7 @@ export class AgentStore extends EventEmitter {
   async findAgentByName(name: string, executor?: QueryHandle): Promise<Agent | null> {
     // FNXC:SqliteFinalRemoval 2026-06-25-23:45:
     // Backend mode: read via async Drizzle helper, filter ephemeral in-memory.
-        const agents = await findAgentRowsByNameAsync(executor ?? this.asyncLayer!.db, this.backendProjectId, name);
+        const agents = await findAgentRowsByNameAsync(executor ?? this.asyncLayer!.db, this.asyncLayer?.projectId, name);
     for (const agent of agents) {
       if (!isEphemeralAgent(agent)) {
         return this.parseAgent(agent as unknown as AgentData);
@@ -889,7 +889,7 @@ export class AgentStore extends EventEmitter {
     FNXC:SqliteDualPathCleanup 2026-07-26-14:05:
     Agent reads are PostgreSQL-only via readAgentAsync. Populate getCachedAgent memory so sync heartbeat resolveAgentConfig can honor per-agent runtimeConfig without a SQLite handle.
     */
-    const agent = await readAgentAsync(this.asyncLayer!.db, this.backendProjectId, agentId);
+    const agent = await readAgentAsync(this.asyncLayer!.db, this.asyncLayer?.projectId, agentId);
     const parsed = agent ? this.parseAgent(agent) : null;
     if (parsed) this.agentMemoryCache.set(agentId, parsed);
     else this.agentMemoryCache.delete(agentId);
@@ -2006,7 +2006,7 @@ export class AgentStore extends EventEmitter {
     // FNXC:WorkflowAgentRouting 2026-08-07-03:12:
     // Role-pool membership is canonical multi-tag state, so SQL must not use the
     // deprecated singular projection to exclude a matching durable principal.
-    const agents = await listAgentRowsAsync(executor ?? this.asyncLayer!.db, this.backendProjectId, { state: filter?.state });
+    const agents = await listAgentRowsAsync(executor ?? this.asyncLayer!.db, this.asyncLayer?.projectId, { state: filter?.state });
     return agents
       .map((a) => this.parseAgent(a as unknown as AgentData))
       .filter((agent) => !filter?.role || agent.roles.includes(filter.role))
@@ -2243,7 +2243,7 @@ export class AgentStore extends EventEmitter {
       // FNXC:SqliteFinalRemoval 2026-06-25-23:55:
       // Backend mode: delete via async Drizzle helper (cascading FKs handle
       // heartbeats, runs, task sessions, API keys, config revisions, etc.).
-            await deleteAgentAsync(this.asyncLayer!.db, this.backendProjectId, agentId);
+            await deleteAgentAsync(this.asyncLayer!.db, this.asyncLayer?.projectId, agentId);
 
       // FN-7723: keep this instance's own change-detection snapshot in sync
       // with its own delete so a later poll never mistakes the row's absence
