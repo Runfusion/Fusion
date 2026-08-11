@@ -5,6 +5,12 @@
  * FNXC:WorkflowOptionalStepFix 2026-06-26-16:35:
  * Inline graph optional-step remediation consumes `postReviewFixCount` BEFORE calling `sendTaskBackForFix`, matching self-healing's budget-first ordering. Persistent optional-step REVISE loops are bounded by the resolved optional-group budget; `"unbounded"` intentionally skips the ceiling check so the step cycles until it returns APPROVE/APPROVE_WITH_NOTES or a human intervenes.
  *
+ * FNXC:PlanReviewReplan 2026-08-10-18:32:
+ * PLAN REVIEW IS THE EXCEPTION to the note above: its `"unbounded"` budget is backstopped by
+ * `planReviewReplanCap` (default `DEFAULT_PLAN_REVIEW_REPLAN_CAP`), so it parks at
+ * `awaiting-approval` rather than cycling until a human notices. Every other optional group still
+ * cycles freely when unbounded.
+ *
  * FNXC:WorkflowRevisionBudget 2026-06-30-20:48:
  * Live Plan Review/spec and Code Review remediation must honor explicit workflow setting values before node `maxRevisions`, and must treat unset values as unbounded for those two built-in review paths. Browser Verification keeps the existing `maxPostReviewFixes` fallback unless its node config explicitly changes it.
  *
@@ -25,9 +31,10 @@
  * FNXC:RemediationVisibility 2026-07-26-19:20:
  * Unscheduled remediation (zero budget, non-REVISE hard fail) must log loudly, never silently park.
  */
-import type { Task, TaskStore, WorkflowStepResult as CoreWorkflowStepResult } from "@fusion/core";
+import type { Task, TaskStore, WorkflowReviewFinding, WorkflowStepResult as CoreWorkflowStepResult } from "@fusion/core";
 import {
   DEFAULT_MAX_POST_REVIEW_FIXES,
+  DEFAULT_PLAN_REVIEW_REPLAN_CAP,
   hasPreMergeRemediationAutoMergeHold,
   PLAN_REVIEW_GROUP_ID,
   resolveOptionalReviewRevisionBudget,
@@ -45,7 +52,6 @@ import {
 import {
   countPlanReviewRevisionAttempts,
   formatPlanReviewRevisionFeedback,
-  PLAN_REVIEW_FEEDBACK_HISTORY_LIMIT,
 } from "../plan-review-feedback-history.js";
 import { executorLog } from "../logger.js";
 import type { EngineRunContext } from "../util/run-audit.js";
@@ -60,6 +66,12 @@ export type RequestPreMergeOptionalStepFixInfo = {
   failureValue?: string;
   nodeId?: string;
   maxRevisions?: unknown;
+  /**
+   * FNXC:ReviewSeverityGate 2026-08-10-17:33:
+   * Structured findings from a review-kind gate, carried so remediation can present them grouped by
+   * priority instead of as one undifferentiated prose blob. Absent for prose-only / non-review steps.
+   */
+  findings?: WorkflowReviewFinding[];
 };
 
 export type RequestPreMergeOptionalStepFixDeps = {
@@ -87,6 +99,7 @@ export type RequestPreMergeOptionalStepFixDeps = {
     preserveResumeState: boolean,
     mergeVerificationFailure: boolean,
     retryPresentation?: { attempt: number; max?: number },
+    findings?: WorkflowReviewFinding[],
   ) => Promise<void>;
 };
 
@@ -218,13 +231,35 @@ export async function requestPreMergeOptionalStepFix(
      * FN-7561: an unset Plan Review revision budget resolves to "unbounded" (see FNXC:WorkflowRevisionBudget above), which by design skips the ceiling check — so a task whose planner and reviewer persistently disagree, or whose reviewer keeps hard-failing, replans triage↔plan-review forever, silently burning a triage + review LLM call every cycle (FN-7525 ran 13+ attempts overnight with zero operator visibility). Enforce a finite safety ceiling even when unbounded: once hit, emit a loud
      * halting log entry and STOP replanning so the gate falls through to a visible failed/parked state a human can act on. Explicit numeric operator budgets are still honored as-is above; this only backstops the unbounded DEFAULT.
      */
-    if (budget.unbounded && currentCount >= PLAN_REVIEW_FEEDBACK_HISTORY_LIMIT) {
-      // U3: the unbounded-default safety ceiling now parks awaiting-approval with
-      // the replan-cap reason (re-owned from the deleted triage gate) so the
-      // non-convergence surfaces to a human instead of silently sitting in place.
+    /*
+     * FNXC:PlanReviewReplan 2026-08-10-18:32:
+     * The unbounded-default backstop is now the `planReviewReplanCap` workflow setting, not
+     * `PLAN_REVIEW_FEEDBACK_HISTORY_LIMIT`.
+     *
+     * Two bugs in one line. First, `planReviewReplanCap` is operator-facing — declared, validated,
+     * documented in settings-reference.md and editable in the Workflow Editor — and NOTHING read it:
+     * an operator lowering the cap changed nothing. Second, the ceiling it should have been was a
+     * bound on how much reviewer PROSE is replayed into the next planning prompt, whose own comment
+     * says it is "bounded independently of persistence and retry accounting" — so trimming the prompt
+     * history would have silently tightened a safety ceiling, and two unrelated concerns shared one
+     * number. `DEFAULT_PLAN_REVIEW_REPLAN_CAP` holds the previously-effective 15 so splitting them is
+     * a pure re-wiring, not a silent behavior change.
+     *
+     * `0` is honored (park on the first REVISE), which is why the comparison is `>=` against a
+     * possibly-zero cap rather than a truthiness check.
+     */
+    const unboundedReplanCap = typeof settings.planReviewReplanCap === "number"
+      && Number.isInteger(settings.planReviewReplanCap)
+      && settings.planReviewReplanCap >= 0
+      ? settings.planReviewReplanCap
+      : DEFAULT_PLAN_REVIEW_REPLAN_CAP;
+    if (budget.unbounded && currentCount >= unboundedReplanCap) {
+      // U3: the unbounded-default safety ceiling parks awaiting-approval with the replan-cap reason
+      // (re-owned from the deleted triage gate) so non-convergence surfaces to a human instead of
+      // silently sitting in place.
       await deps.parkPlanReviewReplanCapExhausted(
         taskId,
-        String(PLAN_REVIEW_FEEDBACK_HISTORY_LIMIT),
+        String(unboundedReplanCap),
         currentCount,
         feedback,
       );
@@ -322,6 +357,7 @@ export async function requestPreMergeOptionalStepFix(
     true,
     false,
     { attempt: nextCount, max: budget.unbounded ? undefined : budget.max },
+    info.findings,
   );
   return true;
 }

@@ -3,6 +3,7 @@ import type { TaskMoveLanes } from "./workflows/workflow-lifecycle-traits.js";
 import { TaskLaneCache } from "./task-lane-cache.js";
 import { randomUUID } from "node:crypto";
 import { WEDGE_RENOTIFY_COOLDOWN_MS } from "./types/task/task-core.js";
+import { clearTerminalFailureAutoRecoveryBudget } from "./tasks/terminal-failure-auto-recovery.js";
 import { join } from "node:path";
 import { and, desc, eq, isNull, ne, sql } from "drizzle-orm";
 import { createCurrentPlanEvidence, diffSpecLocks, isSpecLockActive, type CurrentPlanEvidence, type PlanEvidenceBindings, type SpecLock } from "./planner/spec-lock.js";
@@ -111,7 +112,7 @@ import type { IntakeOwnershipExemption } from "./tasks/task-intake-owner-resolve
 // the single import source for all consumers (re-exports preserved below).
 import { TASK_JSONB_COLUMNS, type TaskRow, type TaskPersistSerializationContext, type TaskColumnDescriptor } from "./task-store/persistence.js";
 import { pgRowToTaskRow as pgRowToTaskRowExternal, rowToTask as rowToTaskExternal, rowToBranchGroup as rowToBranchGroupExternal, generateBranchGroupId as generateBranchGroupIdExternal, computeTimedExecutionMs as computeTimedExecutionMsExternal, archiveEntryToTask as archiveEntryToTaskExternal, summarizeAgentLog as summarizeAgentLogExternal, rowToTaskDocument as rowToTaskDocumentExternal, rowToArtifact as rowToArtifactExternal, rowToTaskDocumentRevision as rowToTaskDocumentRevisionExternal, rowToGoalCitation as rowToGoalCitationExternal } from "./task-store/serialization.js";
-import { moveTaskImpl, moveTaskIfImpl, handoffToReviewImpl, moveTaskInternalImpl, type MoveTaskIfResult } from "./task-store/moves.js";
+import { moveTaskImpl, moveTaskIfImpl, handoffToReviewImpl, moveTaskInternalImpl, TerminalFailureApplyRejected, type MoveTaskIfResult } from "./task-store/moves.js";
 import { recordGoalCitationsImpl, insertTaskWithFtsRecoveryImpl2, assertTaskIdAvailableImpl, atomicWriteTaskJsonImpl2, createTaskWithDistributedReservationImpl, toStoredWorkflowStepImpl, ensureWorkflowStepForTemplateImpl, resolveEnabledWorkflowStepsImpl, setTaskBranchGroupImpl, getTaskColumnsImpl, prepareWorkflowMovePolicyPreflightImpl, updateTaskCustomFieldsImpl, listWorkflowPromptOverridesForProjectImpl, listWorkflowWorkItemsForTaskImpl, listDueWorkflowWorkItemsImpl, rewriteBlockedByResidueDependentsForRemovalImpl, getAllDocumentsImpl, deleteWorkflowStepImpl, toWorkflowDefinitionImpl, materializeDefaultWorkflowStepsImpl, reconcileTaskCustomFieldsForSchemaImpl, getTaskMovedCountsByDayImpl, getGoalStoreImpl, upsertTaskCommitAssociationImpl } from "./task-store/workflow-task-create-ops.js";
 import { applyLegacyWorkflowStepOverridesImpl, archiveDbImpl, assertNoDependencyCycleImpl, atomicCreateTaskJsonImpl, buildActiveTaskDependencyLookupImpl, buildArchivedAgentLogFieldsImpl, buildTaskIdIntegrityFallbackReportImpl, createBranchGroupImpl, dbImpl, detectAndCacheTaskIdIntegrityReportImpl, findLiveDependentsImpl, findLiveLineageChildrenImpl, getLegacyWorkflowStepSnapshotImpl, getMalformedTaskMetadataReasonImpl, getMergeQueuedTaskIdsAsyncImpl, insertRunAuditEventRowImpl, insertTaskImpl, invokeTaskCreatedHookImpl, isTaskArchivedAsyncImpl, isTaskArchivedImpl, isTaskIdPresentInArchivedTasksTableAsyncImpl, isTaskIdPresentInArchivedTasksTableImpl, logTaskCreateConflictImpl, maybeResolveTombstonedTaskIdImpl, mergeTaskIdIntegrityReportsImpl, optionalGroupIdSetImpl, patchTaskRowInTransactionImpl, readConfigFastImpl, readConfigImpl, readPromptForArchiveImpl, readTaskFromDbImpl, reconcileDistributedTaskIdStateOnOpenImpl, recordActivityFromListenerImpl, recordDependencyCycleRejectedAuditImpl, refreshTaskIdIntegrityReportImpl, resolveLocalNodeIdForTaskAllocationImpl, runTaskFtsWriteWithRecoveryImpl, scanAndRecordCitationsImpl, taskIdExistsAnywhereImpl, throwSoftDeletedWriteBlockedImpl, toBuiltInWorkflowStepImpl, trackDeferredTaskCreatedWorkImpl, upsertTaskImpl, withConfigLockImpl, withTaskLockImpl, withWorktreeAllocationLockImpl } from "./task-store/task-id-integrity.js";
 import { claimNextToolFailureRetryImpl, createTaskVerificationRequestImpl, claimTaskVerificationRequestImpl, finishTaskVerificationRequestImpl, clearNearDuplicateReferencesToFailSoftImpl, clearWorkflowRunStepInstancesAsyncImpl, clearWorkflowRunStepInstancesImpl, computeMovedSettingsTargetWorkflowIdsImpl, ensureBranchGroupForSourceImpl, ensurePrEntityForSourceImpl, findRecentTasksByContentFingerprintImpl, getActiveMergingTaskImpl, getActivePrEntityBySourceImpl, getBranchGroupByBranchNameImpl, getBranchGroupBySourceImpl, getBranchGroupImpl, getBranchProgressByTaskImpl, getMutationsForRunImpl, getPrEntityByNumberImpl, getPrEntityImpl, getPrThreadStateImpl, getTasksByAssignedAgentImpl, getWorkflowPromptOverridesAsyncImpl, getWorkflowSettingValuesAsyncImpl, getWorkflowSettingValuesImpl, getWorkflowSettingsProjectIdImpl, getWorkflowWorkItemImpl, insertCompletionHandoffWorkflowWorkAuditImpl, listActivePrEntitiesImpl, listBranchGroupsImpl, listPrThreadStatesImpl, listTasksByBranchGroupImpl, listWorkflowSettingValuesForProjectImpl, loadWorkflowRunBranchesImpl, hasWorkflowRunStepInstancesForTaskImpl, loadWorkflowRunStepInstancesAsyncImpl, loadWorkflowRunStepInstancesImpl, markToolFailureRetryExhaustedAuditImpl, mergeCustomFieldPatchImpl, normalizeMergeRequestStateImpl, normalizeWorkflowWorkItemKindImpl, normalizeWorkflowWorkItemStateImpl, parseWorkflowPromptOverrideJsonImpl, recordPrThreadOutcomeImpl, resetAllStepsToPendingImpl, resetPromptCheckboxesImpl, resolveWorkflowMoveActorImpl, resolveWorkflowSettingDeclarationsImpl, saveWorkflowRunStepInstanceAsyncImpl, saveWorkflowRunStepInstanceImpl, transitionMergeRequestStateImpl, transitionWorkflowWorkItemSyncImpl, updateTaskImpl, updateWorkflowPromptOverridesImpl, upsertMergeRequestRecordImpl, workflowStateForMergeRequestStateImpl } from "./task-store/branch-and-pr-entities.js";
@@ -306,6 +307,12 @@ export interface MoveTaskOptions {
 /** @internal Extracted to task-store/moves.ts */
 export interface MoveTaskInternalOptions {
   fromHandoff: boolean;
+  /** @internal Fence-validated inside moveTaskInternal's transaction for terminal-failure recovery. */
+  terminalFailureApply?: {
+    applyToken: string;
+    patch: Parameters<TaskStore["updateTask"]>[1];
+    expectedColumn: ColumnId;
+  };
   runContext?: Pick<RunMutationContext, "runId" | "agentId"> | { runId?: string; agentId?: string };
   ownerAgentId?: string | null;
   evidence?: HandoffToReviewOptions["evidence"];
@@ -1741,10 +1748,178 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
           status: "active",
           transitionedAt: new Date(now).toISOString(),
           ...(Object.keys(lastNotifiedAtByReason).length > 0 ? { lastNotifiedAtByReason } : {}),
+          ...(prior?.autoRecovery ? { autoRecovery: prior.autoRecovery } : {}),
+          ...(prior?.budgetRevision !== undefined ? { budgetRevision: prior.budgetRevision } : {}),
         },
       };
     });
     return result;
+  }
+  /*
+  FNXC:TaskWedgeNotifications 2026-08-10-18:54:
+  Generic terminal parks use a dedicated durable budget because transient recovery
+  writers clear `recoveryRetryCount`. The apply token is only minted here; a later
+  fenced move consumes it, so a clock-based abandonment check never authorizes a move.
+  */
+  async claimTerminalFailureAutoRecoveryAttempt(
+    taskId: string,
+    options: { maxAttempts: number; maxResumes: number; minAttemptSpacingMs: number; claimApplyGraceMs: number },
+  ): Promise<{ outcome: "resume" | "claimed"; attempt: number; applyToken: string } | { outcome: "already-claimed"; attempt: number } | { outcome: "exhausted"; attempts: number }> {
+    let result: { outcome: "resume" | "claimed"; attempt: number; applyToken: string } | { outcome: "already-claimed"; attempt: number } | { outcome: "exhausted"; attempts: number } = { outcome: "already-claimed", attempt: 0 };
+    await this.updateTaskAtomic(taskId, (current) => {
+      const now = Date.now();
+      const prior = current.wedgeNotification?.autoRecovery;
+      const attempts = typeof prior?.attempts === "number" && Number.isFinite(prior.attempts) && prior.attempts >= 0 ? Math.trunc(prior.attempts) : 0;
+      // FNXC:TaskWedgeNotifications 2026-08-10-20:11: The sweep's pre-claim read can race
+      // a real forward move or deletion. A claim is a park charge, so only a live failed row
+      // may spend it; the fenced apply rechecks this again when it performs the lifecycle move.
+      if (current.status !== "failed" || current.deletedAt != null) {
+        result = { outcome: "already-claimed", attempt: attempts };
+        return null;
+      }
+      const resumes = typeof prior?.resumeCount === "number" && Number.isFinite(prior.resumeCount) && prior.resumeCount >= 0 ? Math.trunc(prior.resumeCount) : 0;
+      const lastAttempt = Date.parse(prior?.lastAttemptAt ?? "");
+      const retryApplied = Date.parse(prior?.retryAppliedAt ?? "");
+      const unapplied = !Number.isFinite(retryApplied) || !Number.isFinite(lastAttempt) || retryApplied < lastAttempt;
+      const started = Date.parse(prior?.lastApplyStartedAt ?? prior?.lastAttemptAt ?? "");
+      if (attempts > 0 && unapplied && Number.isFinite(started) && now - started < options.claimApplyGraceMs) {
+        result = { outcome: "already-claimed", attempt: attempts };
+        return null;
+      }
+      if (attempts > 0 && attempts <= options.maxAttempts && unapplied && resumes < options.maxResumes) {
+        const applyToken = randomUUID();
+        result = { outcome: "resume", attempt: attempts, applyToken };
+        return { wedgeNotification: {
+          ...(current.wedgeNotification ?? { reasonKey: "terminal-failed", episodeId: randomUUID(), status: "resolved" as const, transitionedAt: new Date(now).toISOString() }),
+          budgetRevision: (current.wedgeNotification?.budgetRevision ?? 0) + 1,
+          autoRecovery: { ...prior!, resumeCount: resumes + 1, lastApplyStartedAt: new Date(now).toISOString(), applyToken, lastBudgetWriteAt: new Date(now).toISOString() },
+        } };
+      }
+      if (attempts >= options.maxAttempts) {
+        result = { outcome: "exhausted", attempts };
+        if (Number.isFinite(Date.parse(prior?.exhaustedAt ?? ""))) return null;
+        return { wedgeNotification: {
+          ...(current.wedgeNotification ?? { reasonKey: "terminal-failed", episodeId: randomUUID(), status: "resolved" as const, transitionedAt: new Date(now).toISOString() }),
+          budgetRevision: (current.wedgeNotification?.budgetRevision ?? 0) + 1,
+          autoRecovery: { ...prior!, exhaustedAt: new Date(now).toISOString(), lastBudgetWriteAt: new Date(now).toISOString() },
+        } };
+      }
+      if (Number.isFinite(lastAttempt) && now - lastAttempt < options.minAttemptSpacingMs) {
+        result = { outcome: "already-claimed", attempt: attempts };
+        return null;
+      }
+      const applyToken = randomUUID();
+      const startedAt = new Date(now).toISOString();
+      result = { outcome: "claimed", attempt: attempts + 1, applyToken };
+      return { wedgeNotification: {
+        ...(current.wedgeNotification ?? { reasonKey: "terminal-failed", episodeId: randomUUID(), status: "resolved" as const, transitionedAt: startedAt }),
+        budgetRevision: (current.wedgeNotification?.budgetRevision ?? 0) + 1,
+        autoRecovery: {
+          ...prior, attempts: attempts + 1, lastAttemptAt: startedAt, retryAppliedAt: undefined,
+          resumeCount: 0, lastApplyStartedAt: startedAt, applyToken, lastBudgetWriteAt: startedAt,
+          ...(attempts === 0 ? { budgetStartedAt: startedAt } : {}),
+          ...(prior?.escalationReason === "auto-recovery-disabled" ? { escalationNotifiedAt: undefined, escalationReason: undefined } : {}),
+        },
+      } };
+    });
+    return result;
+  }
+  async markTerminalFailureAutoRecoveryBudgetExhausted(taskId: string, options: { maxAttempts: number }): Promise<"stamped" | "already-stamped" | "not-exhausted" | "no-budget"> {
+    let result: "stamped" | "already-stamped" | "not-exhausted" | "no-budget" = "no-budget";
+    await this.updateTaskAtomic(taskId, (current) => {
+      const budget = current.wedgeNotification?.autoRecovery;
+      if (!budget) { result = "no-budget"; return null; }
+      const attempts = typeof budget.attempts === "number" && Number.isFinite(budget.attempts) && budget.attempts >= 0 ? Math.trunc(budget.attempts) : 0;
+      if (attempts < options.maxAttempts) { result = "not-exhausted"; return null; }
+      if (Number.isFinite(Date.parse(budget.exhaustedAt ?? ""))) { result = "already-stamped"; return null; }
+      const now = new Date().toISOString(); result = "stamped";
+      return { wedgeNotification: { ...current.wedgeNotification!, budgetRevision: (current.wedgeNotification!.budgetRevision ?? 0) + 1, autoRecovery: { ...budget, exhaustedAt: now, lastBudgetWriteAt: now } } };
+    });
+    return result;
+  }
+  async markTerminalFailureAutoRecoveryEscalationDelivered(
+    taskId: string,
+    input: { dispatchOutcome: "delivered" | "suppressed"; escalationReason: "budget-exhausted" | "auto-recovery-disabled" },
+  ): Promise<"stamped" | "already-stamped" | "not-stamped-stale-suppression" | "no-budget"> {
+    let result: "stamped" | "already-stamped" | "not-stamped-stale-suppression" | "no-budget" = "no-budget";
+    await this.updateTaskAtomic(taskId, (current) => {
+      const wedge = current.wedgeNotification;
+      const budget = wedge?.autoRecovery;
+      if (!wedge || !budget) { result = "no-budget"; return null; }
+      if (
+        (budget.escalationNotifiedAt && budget.escalationReason === input.escalationReason)
+        || (budget.escalationReason === "budget-exhausted" && input.escalationReason === "auto-recovery-disabled")
+      ) { result = "already-stamped"; return null; }
+      if (input.dispatchOutcome === "suppressed") {
+        const notifiedAt = Date.parse(wedge.lastNotifiedAtByReason?.["terminal-failed"] ?? "");
+        const floor = Date.parse(input.escalationReason === "budget-exhausted" ? budget.exhaustedAt ?? "" : budget.budgetStartedAt ?? "");
+        if (!Number.isFinite(notifiedAt) || !Number.isFinite(floor) || notifiedAt < floor) {
+          result = "not-stamped-stale-suppression";
+          return null;
+        }
+      }
+      const now = new Date().toISOString(); result = "stamped";
+      return { wedgeNotification: {
+        ...wedge, budgetRevision: (wedge.budgetRevision ?? 0) + 1,
+        autoRecovery: { ...budget, escalationNotifiedAt: now, escalationReason: input.escalationReason, lastBudgetWriteAt: now },
+      } };
+    });
+    return result;
+  }
+  async resetTerminalFailureAutoRecoveryBudget(taskId: string): Promise<void> {
+    await this.updateTaskAtomic(taskId, (current) => {
+      const wedge = current.wedgeNotification;
+      if (!wedge?.autoRecovery) return null;
+      return { wedgeNotification: clearTerminalFailureAutoRecoveryBudget(wedge, new Date().toISOString()) };
+    });
+  }
+  /*
+  FNXC:TaskWedgeNotifications 2026-08-10-18:54:
+  R38c is used because the current move implementation owns its transaction and cannot accept
+  a companion task patch. Consume the fence before the internal move under the task lock: exactly
+  one observer is authorized to move, while a crash leaves a cleared, non-failed row that no
+  automatic recovery path re-moves. A wall-clock window is never a move authorization.
+  */
+  async applyTerminalFailureAutoRecoveryRetry(
+    taskId: string,
+    input: { applyToken: string; patch: Parameters<TaskStore["updateTask"]>[1]; targetColumn: ColumnId; moveOptions: MoveTaskOptions },
+  ): Promise<{ outcome: "applied"; task: Task } | { outcome: "superseded" | "not-failed" | "deleted" | "no-budget" }> {
+    return this.withTaskLock(taskId, async () => {
+      const live = await this.readTaskForMove(taskId);
+      const budget = live.wedgeNotification?.autoRecovery;
+      if (!budget) return { outcome: "no-budget" };
+      if (live.deletedAt != null) return { outcome: "deleted" };
+      if (live.status !== "failed") return { outcome: "not-failed" };
+      if (!budget.applyToken || budget.applyToken !== input.applyToken) return { outcome: "superseded" };
+      /*
+      FNXC:TaskWedgeNotifications 2026-08-10-20:40:
+      The apply fence is validated only inside `moveTaskInternal`'s advisory-locked transaction,
+      which consumes it while persisting the failure clear and column move. An in-process task lock
+      is merely a local belt: separate engine processes must not be able to carry the same token
+      into two moves, and a failed move must roll back all three changes together.
+      */
+      const expectedColumn = live.column;
+      try {
+        const moved = await this.moveTaskInternal(
+          taskId,
+          input.targetColumn,
+          input.moveOptions,
+          {
+            fromHandoff: false,
+            terminalFailureApply: {
+              applyToken: input.applyToken,
+              patch: input.patch,
+              expectedColumn,
+            },
+          },
+          live,
+        );
+        return { outcome: "applied", task: moved };
+      } catch (error) {
+        if (error instanceof TerminalFailureApplyRejected) return { outcome: error.outcome };
+        throw error;
+      }
+    });
   }
   async claimNextToolFailureRetry(taskId: string, expectedCursor: number, maxRetries: number): Promise<import("./task-store/branch-and-pr-entities.js").ToolFailureRetryClaim> {
     return claimNextToolFailureRetryImpl(this, taskId, expectedCursor, maxRetries);
@@ -2111,13 +2286,16 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   cached answer only. Explicit metadata wins; runtime and process bridge EventEmitters do not call this
   method and deliberately DROP lanes because absent metadata safely preserves their listener fallback.
   */
-  override emit<E extends string | symbol>(event: E, ...args: any[]): boolean {
+  override emit(event: unknown, ...args: any[]): boolean {
+    // event: unknown keeps the decorator assignable to EventEmitter<TaskStoreEvents>'s
+    // generic `emit<E extends string|symbol>(name: K|E, ...)` signature while still
+    // forwarding arbitrary non-typed keys (agent:log, settings:updated, …).
     if (event === "task:updated" && args.length === 1) {
       const task = args[0] as Task;
       const lanes = this.laneCache.get(task.id);
-      if (lanes !== undefined) return EventEmitter.prototype.emit.call(this, event, task, { lanes });
+      if (lanes !== undefined) return EventEmitter.prototype.emit.call(this, event as string, task, { lanes });
     }
-    return EventEmitter.prototype.emit.call(this, event, ...args);
+    return EventEmitter.prototype.emit.call(this, event as string, ...args);
   }
 
   async updateStep( id: string, stepIndex: number, status: import("./types.js").StepStatus, options?: { source?: "graph" }, ): Promise<Task> {
@@ -2746,6 +2924,8 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   public async recordRunAuditEventBackend( tx: DbTransaction, event: { domain: string; mutationType: string; target: string; taskId: string; agentId: string; runId: string; metadata: Record<string, unknown>; }, ): Promise<void> {    return recordRunAuditEventBackendImpl(this, tx, event);
   }
   async deleteTask( id: string, options?: { removeDependencyReferences?: boolean; removeLineageReferences?: boolean; allowResurrection?: boolean; githubIssueAction?: GithubIssueAction; closureContext?: TaskDeleteClosureContext; auditContext?: TaskDeleteAuditContext; }, ): Promise<Task> {
+    // FNXC:TaskWedgeNotifications 2026-08-10-20:30: The backend delete transaction clears
+    // a terminal-failure budget only after it wins the soft-delete claim; never pre-clear here.
     return deleteTaskImpl(this, id, options);
   }
   async deleteTaskIf(

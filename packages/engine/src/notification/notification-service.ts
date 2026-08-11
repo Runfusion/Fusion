@@ -11,12 +11,12 @@ import type {
   Task,
 } from "@fusion/core";
 import type { LifecycleColumns, TaskMoveLanes, WorkflowIrResolverStore } from "@fusion/core";
-import { DASHBOARD_USER_ID, isTaskNotFoundError, NotificationDispatcher, resolveProjectColumnsForRoles, resolveReviewColumns, resolveTaskLifecycleColumns, resolveWorkflowIrForTask, WEDGE_RENOTIFY_COOLDOWN_MS } from "@fusion/core";
+import { DASHBOARD_USER_ID, isTaskNotFoundError, MAX_TERMINAL_FAILURE_AUTO_RETRIES, NotificationDispatcher, resolveProjectColumnsForRoles, resolveReviewColumns, resolveTaskLifecycleColumns, resolveWorkflowIrForTask, WEDGE_RENOTIFY_COOLDOWN_MS } from "@fusion/core";
 import { DEFAULT_NTFY_EVENTS, buildNtfyClickUrl, formatTaskIdentifier } from "../util/notifier.js";
 import { schedulerLog } from "../logger.js";
 import { NtfyNotificationProvider } from "./ntfy-provider.js";
 import { WebhookNotificationProvider } from "./webhook-provider.js";
-import { describeTaskRecoveryOwner, describeTaskWedge, isTaskProgressing, type TaskWedgeDescriptor } from "./task-wedge-notification.js";
+import { classifyTerminalFailureAutoRecoveryForTask, describeTaskRecoveryOwner, describeTaskWedge, isTaskProgressing, shouldWithholdWedgeAlertForAutoRecovery, type TaskWedgeDescriptor } from "./task-wedge-notification.js";
 
 export interface NotificationServiceOptions {
   /** Project identifier for notification deep links */
@@ -46,6 +46,10 @@ interface NotificationServiceStore {
   getTask?(id: string): Promise<Task | undefined> | Task | undefined;
   /** Durable compare-and-set for restart-safe wedge delivery episodes. */
   claimTaskWedgeNotificationEpisode?(taskId: string, reasonKey: string | null): Promise<{ episodeId?: string; claimed: boolean }>;
+  /** Optional so lightweight notification fakes retain their structural surface. */
+  markTerminalFailureAutoRecoveryBudgetExhausted?(taskId: string, options: { maxAttempts: number }): Promise<"stamped" | "already-stamped" | "not-exhausted" | "no-budget">;
+  /** Optional; self-healing's concrete store is the durable backstop when absent. */
+  markTerminalFailureAutoRecoveryEscalationDelivered?(taskId: string, input: { dispatchOutcome: "delivered" | "suppressed"; escalationReason: "budget-exhausted" | "auto-recovery-disabled" }): Promise<"stamped" | "already-stamped" | "not-stamped-stale-suppression" | "no-budget">;
   /*
   FNXC:WorkflowResolvedColumns 2026-07-30-23:10 (fleet phase — notification lifecycle guards):
   The workflow-IR resolver surface, OPTIONAL. The real `TaskStore` implements all three; declaring them
@@ -154,10 +158,10 @@ export class NotificationService {
   links never reject: `maybeNotifyTaskWedge` already owns its own error handling, and a rejected link
   would poison every later notification for that task.
   */
-  private readonly wedgeHandlingChains = new Map<string, Promise<void>>();
+  private readonly wedgeHandlingChains = new Map<string, Promise<unknown>>();
 
   /** Queues wedge handling for one task behind any handling already in flight for it. */
-  private enqueueWedgeHandling(taskId: string, run: () => Promise<void>): Promise<void> {
+  private enqueueWedgeHandling<T>(taskId: string, run: () => Promise<T>): Promise<T> {
     const previous = this.wedgeHandlingChains.get(taskId) ?? Promise.resolve();
     const next = previous.then(run, run);
     this.wedgeHandlingChains.set(taskId, next);
@@ -369,6 +373,8 @@ export class NotificationService {
     }
   };
 
+  private autoRecoveryEnabled = true;
+
   private handleTaskUpdated = (task: Task, meta?: { lanes?: TaskMoveLanes }): void => {
     /*
     FNXC:TaskWedgeNotifications 2026-08-09-06:30:
@@ -378,6 +384,7 @@ export class NotificationService {
     */
     const recoveryOwner = task.status === "failed" ? describeTaskRecoveryOwner(task) : null;
     const wedge = describeTaskWedge(task);
+    const autoRecoveryWithheld = wedge != null && shouldWithholdWedgeAlertForAutoRecovery(task, { autoRecoveryEnabled: this.autoRecoveryEnabled });
     /*
     FNXC:TaskWedgeNotifications 2026-07-22-14:30:
     A generic failed push may have been scheduled before a terminal error was
@@ -409,7 +416,7 @@ export class NotificationService {
       return;
     }
 
-    if (task.status === "failed" && recoveryOwner) {
+    if (task.status === "failed" && (recoveryOwner || autoRecoveryWithheld)) {
       this.failureNotificationSuppressedCount += 1;
       schedulerLog.debug(`[notify] ${task.id} recovery-owned failure — suppressed notification`);
     } else if (task.status === "failed" && !wedge) {
@@ -530,11 +537,20 @@ export class NotificationService {
   resolved-then-reparked reason to begin a new actionable episode.
   */
   /** Delivers a self-healing no-action escalation through the durable wedge episode seam. */
-  async notifyTaskWedge(task: Task, descriptor: TaskWedgeDescriptor): Promise<void> {
-    await this.enqueueWedgeHandling(task.id, () => this.maybeNotifyTaskWedge(task, descriptor));
+  async notifyTaskWedge(
+    task: Task,
+    descriptor: TaskWedgeDescriptor,
+    options?: { source?: "auto-recovery-escalation" },
+  ): Promise<"delivered" | "suppressed" | "unavailable"> {
+    return this.enqueueWedgeHandling(task.id, () => this.maybeNotifyTaskWedge(task, descriptor, options));
   }
 
-  private async maybeNotifyTaskWedge(task: Task, suppliedDescriptor?: TaskWedgeDescriptor | null): Promise<void> {
+  private async maybeNotifyTaskWedge(
+    task: Task,
+    suppliedDescriptor?: TaskWedgeDescriptor | null,
+    options?: { source?: "auto-recovery-escalation" },
+  ): Promise<"delivered" | "suppressed" | "unavailable"> {
+    if (options?.source !== "auto-recovery-escalation" && shouldWithholdWedgeAlertForAutoRecovery(task, { autoRecoveryEnabled: this.autoRecoveryEnabled })) return "unavailable";
     /*
     FNXC:TaskWedgeNotifications 2026-08-10-04:35:
     `getTask` throws TaskNotFoundError for soft-deleted rows instead of returning
@@ -547,17 +563,34 @@ export class NotificationService {
     } catch (error) {
       const detail = isTaskNotFoundError(error) ? "not found" : error instanceof Error ? error.message : String(error);
       schedulerLog.warn(`[notify] ${task.id} wedge live-read failed (${detail}) — suppressed notification`);
-      return;
+      return "unavailable";
     }
+    const classification = classifyTerminalFailureAutoRecoveryForTask(liveTask, { autoRecoveryEnabled: this.autoRecoveryEnabled });
+    const requestedAutoRecoveryEscalation = options?.source === "auto-recovery-escalation";
+    const ownEscalation = requestedAutoRecoveryEscalation
+      || (suppliedDescriptor === undefined && classification.action === "notify");
+    /*
+    FNXC:TaskWedgeNotifications 2026-08-10-20:32:
+    The sweep can hold a snapshot while a manual retry, reset, or another engine
+    advances the live row. A source-tagged terminal-failed dispatch is valid only
+    while the live budget still owes the same escalation; otherwise it must not
+    turn a stale snapshot into an alert or delivery stamp. Non-terminal supplied
+    descriptors retain their existing behavior and never become budget stamps.
+    */
+    if (
+      requestedAutoRecoveryEscalation
+      && suppliedDescriptor?.reasonKey === "terminal-failed"
+      && classification.action !== "notify"
+    ) return "unavailable";
     const recoveryOwner = describeTaskRecoveryOwner(liveTask);
-    if (recoveryOwner) {
+    if (recoveryOwner && !ownEscalation) {
       // Recovery ownership is not a wedge episode. Resolve only an episode we
       // can prove active, avoiding a write/claim for a never-notified snapshot.
       if (this.activeWedgeReasons.has(task.id) || liveTask.wedgeNotification?.status === "active") {
         this.activeWedgeReasons.delete(task.id);
         await this.store.claimTaskWedgeNotificationEpisode?.(task.id, null);
       }
-      return;
+      return "unavailable";
     }
     /*
     FNXC:TaskWedgeNotifications 2026-08-10-04:35:
@@ -621,15 +654,43 @@ export class NotificationService {
         this.activeWedgeReasons.delete(task.id);
         await this.store.claimTaskWedgeNotificationEpisode?.(task.id, null);
       }
-      return;
+      return "unavailable";
+    }
+    const isAutoRecoveryEscalationDispatch = ownEscalation && descriptor.reasonKey === "terminal-failed";
+    if (isAutoRecoveryEscalationDispatch && classification.action === "notify" && classification.reason === "budget-exhausted") {
+      try {
+        await this.store.markTerminalFailureAutoRecoveryBudgetExhausted?.(task.id, { maxAttempts: MAX_TERMINAL_FAILURE_AUTO_RETRIES });
+      } catch (error) {
+        schedulerLog.debug(`[notify] ${task.id} could not mark terminal recovery exhaustion: ${error instanceof Error ? error.message : String(error)}`);
+      }
     }
     if (this.store.claimTaskWedgeNotificationEpisode) {
       const claim = await this.store.claimTaskWedgeNotificationEpisode(task.id, descriptor.reasonKey);
-      if (!claim.claimed || !claim.episodeId) return;
+      if (!claim.claimed || !claim.episodeId) {
+        /*
+        FNXC:TaskWedgeNotifications 2026-08-10-20:40:
+        A durable episode-CAS decline proves an equivalent terminal-failed dispatch is already
+        inside the current cooldown. Stamp this escalation at the shared seam, subject to the
+        store's budget/owed-marker floor validation, so a service-first suppression cannot wait
+        for a later sweep and reopen into a repeat alert. The fallback episode is intentionally
+        excluded: its process-local cooldown cannot prove a durable budget delivery.
+        */
+        if (isAutoRecoveryEscalationDispatch && classification.action === "notify") {
+          try {
+            await this.store.markTerminalFailureAutoRecoveryEscalationDelivered?.(task.id, {
+              dispatchOutcome: "suppressed",
+              escalationReason: classification.reason,
+            });
+          } catch (error) {
+            schedulerLog.debug(`[notify] ${task.id} could not stamp suppressed terminal recovery delivery: ${error instanceof Error ? error.message : String(error)}`);
+          }
+        }
+        return "suppressed";
+      }
       episode = claim.episodeId;
     } else {
       episode = this.claimFallbackWedgeNotificationEpisode(task.id, descriptor.reasonKey, task.updatedAt);
-      if (!episode) return;
+      if (!episode) return "suppressed";
     }
     const link = buildNtfyClickUrl({ dashboardHost: this.dashboardHost, projectId: this.options.projectId, taskId: task.id });
     const content = [
@@ -653,6 +714,17 @@ export class NotificationService {
     } catch (error) {
       schedulerLog.log(`[notify] ${task.id} wedge mailbox message failed: ${error instanceof Error ? error.message : String(error)}`);
     }
+    if (isAutoRecoveryEscalationDispatch && classification.action === "notify") {
+      try {
+        await this.store.markTerminalFailureAutoRecoveryEscalationDelivered?.(task.id, {
+          dispatchOutcome: "delivered",
+          escalationReason: classification.reason,
+        });
+      } catch (error) {
+        schedulerLog.debug(`[notify] ${task.id} could not stamp terminal recovery delivery: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+    return "delivered";
   }
 
   private claimFallbackWedgeNotificationEpisode(taskId: string, reasonKey: string, updatedAt: string): string | undefined {
@@ -1044,6 +1116,9 @@ export class NotificationService {
   }
 
   private refreshFailureNotificationSettings(settings: Settings): void {
+    // Fail open when no maintenance pass can own the retry budget; classic wedge notification remains available.
+    this.autoRecoveryEnabled = settings.autoRecovery?.mode !== "off"
+      && (settings.maintenanceIntervalMs === undefined || settings.maintenanceIntervalMs > 0);
     this.failureNotificationDelayMs =
       typeof settings.failureNotificationDelayMs === "number" && settings.failureNotificationDelayMs >= 0
         ? settings.failureNotificationDelayMs

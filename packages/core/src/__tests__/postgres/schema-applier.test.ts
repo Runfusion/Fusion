@@ -95,6 +95,7 @@ import {
   SPEC_LOCK_DRIFT_REPORT_VERSION,
   SPEC_LOCK_SOURCE_REVISION_BIGINT_VERSION,
   MEMORY_RECALL_RECORDS_VERSION,
+  MISSION_FEATURE_SPEC_ALIGNMENT_VERSION,
 } from "../../postgres/schema-applier.js";
 import { ProjectPartitionRekeyError, rekeyFallbackProjectPartition } from "../../postgres/migration-stamping.js";
 import type { PluginSchemaInitHook } from "../../postgres/plugin-schema-hook.js";
@@ -123,7 +124,8 @@ describe("schema-applier: immutable migration identities", () => {
     expect(SPEC_LOCK_DRIFT_REPORT_VERSION).toBe("0050");
     expect(SPEC_LOCK_SOURCE_REVISION_BIGINT_VERSION).toBe("0051");
     expect(MEMORY_RECALL_RECORDS_VERSION).toBe("0052");
-    expect(SCHEMA_BASELINE_VERSION).toBe("0052");
+    expect(MISSION_FEATURE_SPEC_ALIGNMENT_VERSION).toBe("0053");
+    expect(SCHEMA_BASELINE_VERSION).toBe("0053");
   });
 
   it("keeps monitor and approval isolation assigned to version 0003", () => {
@@ -1791,6 +1793,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       SPEC_LOCK_DRIFT_REPORT_VERSION,
       SPEC_LOCK_SOURCE_REVISION_BIGINT_VERSION,
       MEMORY_RECALL_RECORDS_VERSION,
+      MISSION_FEATURE_SPEC_ALIGNMENT_VERSION,
     ]);
     expect((await applySchemaBaseline(ctx.db, { pluginHooks: [] })).applied).toBe(false);
   });
@@ -1869,6 +1872,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       SPEC_LOCK_DRIFT_REPORT_VERSION,
       SPEC_LOCK_SOURCE_REVISION_BIGINT_VERSION,
       MEMORY_RECALL_RECORDS_VERSION,
+      MISSION_FEATURE_SPEC_ALIGNMENT_VERSION,
     ]);
   });
 
@@ -2080,6 +2084,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       SPEC_LOCK_DRIFT_REPORT_VERSION,
       SPEC_LOCK_SOURCE_REVISION_BIGINT_VERSION,
       MEMORY_RECALL_RECORDS_VERSION,
+      MISSION_FEATURE_SPEC_ALIGNMENT_VERSION,
     ]);
   });
 
@@ -2172,6 +2177,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       SPEC_LOCK_DRIFT_REPORT_VERSION,
       SPEC_LOCK_SOURCE_REVISION_BIGINT_VERSION,
       MEMORY_RECALL_RECORDS_VERSION,
+      MISSION_FEATURE_SPEC_ALIGNMENT_VERSION,
     ]);
   });
 
@@ -2264,6 +2270,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       SPEC_LOCK_DRIFT_REPORT_VERSION,
       SPEC_LOCK_SOURCE_REVISION_BIGINT_VERSION,
       MEMORY_RECALL_RECORDS_VERSION,
+      MISSION_FEATURE_SPEC_ALIGNMENT_VERSION,
     ]);
   });
 });

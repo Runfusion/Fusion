@@ -14,7 +14,7 @@
  */
 
 import { spawn, spawnSync } from "node:child_process";
-import { globSync, readFileSync, writeFileSync, readdirSync, mkdirSync, renameSync } from "node:fs";
+import { existsSync, globSync, readFileSync, writeFileSync, readdirSync, mkdirSync, renameSync } from "node:fs";
 import { cpus } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -1014,6 +1014,50 @@ export function readTimingsSnapshot(snapshotPath) {
   }
 }
 
+/*
+ * FNXC:CITestSharding 2026-08-10-18:03:
+ * Deleted test files leave phantom snapshot entries that degrade shard balancing
+ * and keep the governance guard red. Pruning removes only entries whose file is
+ * gone and must never restamp capturedAt, because a fabricated timestamp would
+ * launder the 30-day staleness budget.
+ */
+/**
+ * Return a timing snapshot without entries whose repo-relative files no longer
+ * exist. The input snapshot is not mutated and its capturedAt value is copied
+ * byte-for-byte so pruning cannot substitute for a real timing refresh.
+ *
+ * @param {{ capturedAt: string, packages?: Record<string, { files?: Record<string, number> }> }} snapshot
+ * @param {{ projectRoot?: string, existsSync?: (path: string) => boolean }} [options]
+ * @returns {{ snapshot: object, removedPaths: string[] }}
+ */
+export function pruneMissingTimingFiles(snapshot, options = {}) {
+  const projectRoot = options.projectRoot ?? process.cwd();
+  const fileExists = options.existsSync ?? existsSync;
+  const packages = {};
+  const removedPaths = [];
+
+  for (const [packageName, packageTimings] of Object.entries(snapshot.packages ?? {})) {
+    const files = {};
+    for (const [file, duration] of Object.entries(packageTimings?.files ?? {})) {
+      if (fileExists(path.join(projectRoot, file))) {
+        files[file] = duration;
+      } else {
+        removedPaths.push(file);
+      }
+    }
+    if (Object.keys(files).length > 0) packages[packageName] = { ...packageTimings, files };
+  }
+
+  return { snapshot: { ...snapshot, packages }, removedPaths };
+}
+
+function writeTimingSnapshot(snapshotPath, snapshot) {
+  mkdirSync(path.dirname(snapshotPath), { recursive: true });
+  const tmp = `${snapshotPath}.tmp.${process.pid}`;
+  writeFileSync(tmp, `${JSON.stringify(snapshot, null, 2)}\n`, "utf8");
+  renameSync(tmp, snapshotPath);
+}
+
 /**
  * Discover candidate vitest JSON reporter output files in a directory.
  * Looks for files matching `*timings*.json` (the convention CI shards write).
@@ -1091,10 +1135,7 @@ export function writeTimings(options = {}) {
     return { written: false, snapshot: existing, reason: "newer-snapshot" };
   }
 
-  mkdirSync(path.dirname(snapshotPath), { recursive: true });
-  const tmp = `${snapshotPath}.tmp.${process.pid}`;
-  writeFileSync(tmp, `${JSON.stringify(snapshot, null, 2)}\n`, "utf8");
-  renameSync(tmp, snapshotPath);
+  writeTimingSnapshot(snapshotPath, snapshot);
   const pkgCount = Object.keys(snapshot.packages).length;
   console.log(`[ci-test-shard] wrote ${TIMINGS_SNAPSHOT_RELATIVE} (${pkgCount} packages, capturedAt ${capturedAt}).`);
   return { written: true, snapshot };
@@ -1231,6 +1272,20 @@ export function buildShardCommands(shardEntries, options = {}) {
 }
 
 export async function main(argv = process.argv.slice(2), env = process.env) {
+  if (argv.includes("--prune-timings")) {
+    const snapshotPath = path.join(process.cwd(), TIMINGS_SNAPSHOT_RELATIVE);
+    const existing = readTimingsSnapshot(snapshotPath);
+    if (!existing) {
+      console.error("[ci-test-shard] no valid timing snapshot present; prune unavailable.");
+      process.exitCode = 1;
+      return;
+    }
+    const { snapshot, removedPaths } = pruneMissingTimingFiles(existing, { projectRoot: process.cwd() });
+    writeTimingSnapshot(snapshotPath, snapshot);
+    console.log(`[ci-test-shard] pruned ${removedPaths.length} missing timing file${removedPaths.length === 1 ? "" : "s"} from ${TIMINGS_SNAPSHOT_RELATIVE}.`);
+    return;
+  }
+
   if (argv.includes("--write-timings")) {
     const dirIdx = argv.indexOf("--inputs-dir");
     const inputDir = dirIdx >= 0 ? argv[dirIdx + 1] : undefined;

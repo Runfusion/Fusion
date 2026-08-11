@@ -1,4 +1,4 @@
-import type { Task } from "@fusion/core";
+import { classifyTerminalFailureAutoRecovery, type TerminalFailureAutoRecoveryDecision, type Task } from "@fusion/core";
 import { hasTransientMergeRecoveryOwner } from "../errors/transient-merge-error-classifier.js";
 
 /** A bounded, operator-safe description of a task that cannot make progress. */
@@ -141,6 +141,34 @@ Terminal task updates are the shared delivery seam for merger, executor, heartbe
 and self-healing writers. Classify only states that have no scheduled owner; raw
 error output is never used as an idempotency key or forwarded into audit metadata.
 */
+/*
+FNXC:TaskWedgeNotifications 2026-08-10-18:54:
+Core owns only the durable budget rules. The generic failure classification stays here so
+specific terminal descriptors cannot drift from notification withholding or self-healing.
+A past display mirror is not a live recovery owner for this adapter.
+*/
+export function classifyTerminalFailureAutoRecoveryForTask(
+  task: Task,
+  options: { autoRecoveryEnabled: boolean; inTerminalSuccessColumn?: boolean; isArchivedOrDeleted?: boolean; now?: number },
+): TerminalFailureAutoRecoveryDecision {
+  const now = options.now ?? Date.now();
+  const nextRecoveryAt = Date.parse(task.nextRecoveryAt ?? "");
+  return classifyTerminalFailureAutoRecovery(task, {
+    isGenericTerminalFailure: describeTaskWedge(task)?.reasonKey === "terminal-failed",
+    hasRecoveryOwner: describeTaskRecoveryOwner(task) !== null && Number.isFinite(nextRecoveryAt) && nextRecoveryAt > now,
+    isProgressing: isTaskProgressing(task),
+    inTerminalSuccessColumn: options.inTerminalSuccessColumn === true,
+    isArchivedOrDeleted: options.isArchivedOrDeleted === true || task.deletedAt != null,
+    autoRecoveryEnabled: options.autoRecoveryEnabled,
+    now: () => now,
+  });
+}
+
+export function shouldWithholdWedgeAlertForAutoRecovery(task: Task, options: { autoRecoveryEnabled: boolean }): boolean {
+  const decision = classifyTerminalFailureAutoRecoveryForTask(task, options);
+  return decision.action === "retry" || (decision.action === "skip" && decision.reason === "escalation-already-delivered");
+}
+
 export function describeTaskWedge(task: Task): TaskWedgeDescriptor | null {
   if (isTaskProgressing(task)) return null;
   const error = task.error ?? "";

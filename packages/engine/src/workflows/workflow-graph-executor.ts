@@ -1257,6 +1257,13 @@ export class WorkflowGraphExecutor {
               ...(parseRequiredArtifactMissingValue(verdictRaw) ? { failureValue: verdictRaw } : {}),
               nodeId: node.id,
               maxRevisions: node.config?.maxRevisions,
+              /*
+               * FNXC:ReviewSeverityGate 2026-08-10-17:33:
+               * Carry the structured findings into remediation so PROMPT.md can present them grouped by
+               * priority. Without this the implementer only ever saw `feedback` prose and could not tell
+               * a blocking defect from an optional note.
+               */
+              ...(stepFindings?.length ? { findings: stepFindings } : {}),
             };
             context[optionalStepFailureContextKey(node.id)] = failureContext;
             /*

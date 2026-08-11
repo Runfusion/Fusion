@@ -1444,6 +1444,7 @@ export async function runImplementation(
             deps.clearCompletedTaskWatchdog(task.id);
             executorLog.log(`✓ ${task.id} implementation complete — graph interpreter owns the remaining lifecycle`);
             const liveModified = (await deps.store.getTask(task.id).catch(() => task)).modifiedFiles ?? [];
+            handedOffForReview = true;
             reportImplementationExit?.("complete-from-live-files");
             graphCompletion({ modifiedFiles: liveModified });
             return;
@@ -1666,6 +1667,22 @@ export async function runImplementation(
       const codeReviewVerdicts = new Map<number, ReviewVerdict>();
 
       let wasPaused = false;
+      /*
+      FNXC:SessionResume 2026-08-10-17:33:
+      Set when the run ends by handing the COMPLETED implementation to the graph for review, rather than
+      by finishing or failing the task. The distinction matters because a review gate can bounce the card
+      straight back here for remediation in the SAME worktree: before this flag the `finally` below nulled
+      `sessionFile` on every non-paused exit, so pause -> unpause was the only path that ever resumed a
+      conversation and every remediation round restarted cold — re-reading the repo and re-deriving the
+      change it had just written, once per round. Preserving the session across the review round-trip is
+      what makes a bounce a follow-up turn instead of a fresh investigation.
+
+      Scoped deliberately to the handoff exits, NOT to every non-terminal exit: paths that require a fresh
+      session (context overflow, stale assistant continuation, worktree reacquisition, non-continuable
+      session, task-done retry) clear `sessionFile` explicitly and synchronously at their own site, and the
+      resume guard re-validates the persisted worktree before reopening. Those defenses stay authoritative.
+      */
+      let handedOffForReview = false;
       // Mutable ref — populated after createFnAgent, tools access lazily via closure
       const sessionRef: { current: AgentSession | null } = { current: null };
       /*
@@ -2233,12 +2250,26 @@ export async function runImplementation(
 
           executorLog.debug(`${task.id}: calling promptWithFallback()...`);
           if (isResuming) {
-            // Session already has full conversation history — just tell the
-            // agent it was paused and should pick up where it left off.
+            /*
+             * Session already has full conversation history — re-prompt with a short continuation
+             * instead of the full execution prompt.
+             *
+             * FNXC:SessionResume 2026-08-10-17:33:
+             * A resume is no longer only a pause/unpause: a review gate can bounce a completed
+             * implementation back here for remediation with the same session. The remediation findings
+             * are written into PROMPT.md (`## Workflow Step Failure`) by sendTaskBackForFix AFTER this
+             * conversation's last turn, so the agent has never seen them. This prompt must therefore
+             * direct a re-read of PROMPT.md unconditionally — the previous wording ("you were paused,
+             * pick up where you left off") would silently skip the findings and the remediation round
+             * would do nothing, bouncing again on the next review.
+             */
             await promptWithFallback(session, [
-              "Your session was paused and has now been resumed.",
-              "Continue working on the task from where you left off.",
-              "Review the current state of your worktree and proceed with the next pending step.",
+              "Your session was resumed.",
+              "PROMPT.md may have been UPDATED since your last turn — re-read it now before doing anything else.",
+              "If it contains a `## Workflow Step Failure` section, a review gate requested changes: address those findings. Fix every P0; fix P1 unless you have a concrete reason not to, and say which you declined and why. P2 items are optional.",
+              "If it contains a `## Review Advisory Notes` section, those are non-blocking suggestions — address them only if cheap and clearly correct.",
+              "Otherwise continue the task from where you left off.",
+              "Review the current state of your worktree, then proceed with the next pending step.",
             ].join("\n"));
           } else {
             const customFieldDefs = await deps.resolveTaskCustomFieldDefs(task.id);
@@ -2431,6 +2462,7 @@ export async function runImplementation(
             // at the implementation-complete boundary and hand control back.
             deps.clearCompletedTaskWatchdog(task.id);
             executorLog.log(`✓ ${task.id} implementation complete — graph interpreter owns the remaining lifecycle`);
+            handedOffForReview = true;
             reportImplementationExit?.("complete");
             graphCompletion({ modifiedFiles });
             return;
@@ -2507,6 +2539,7 @@ export async function runImplementation(
                 deadlocks the merge queue) now lives with the node in the IR, where the routing
                 decision is.
                 */
+                handedOffForReview = true;
                 reportImplementationExit?.("review-handoff-pending-review");
                 pendingReviewParked = true;
                 break;
@@ -2726,6 +2759,7 @@ export async function runImplementation(
               // executeWorkflowGraph, KTD-5) — nothing to gate before handoff.
               deps.clearCompletedTaskWatchdog(task.id);
               executorLog.log(`✓ ${task.id} implementation complete (retry) — graph interpreter owns the remaining lifecycle`);
+              handedOffForReview = true;
               reportImplementationExit?.("complete-after-retry");
               graphCompletion({ modifiedFiles });
               return;
@@ -2810,11 +2844,19 @@ export async function runImplementation(
           session.dispose();
           // Terminate all spawned child agents when parent session ends
           await deps.terminateAllChildren(task.id);
-          // Clear session file when task completes or fails (not when paused —
-          // the file is preserved so unpause can resume the conversation).
-          // Check both the local flag (graceful exit) and the instance set
-          // (error path where dispose caused prompt to throw).
-          if (!wasPaused && !deps.pausedAborted.has(task.id)) {
+          /*
+           * Clear session file when task completes or fails (not when paused —
+           * the file is preserved so unpause can resume the conversation).
+           * Check both the local flag (graceful exit) and the instance set
+           * (error path where dispose caused prompt to throw).
+           *
+           * FNXC:SessionResume 2026-08-10-17:33:
+           * Also preserved across a review handoff (`handedOffForReview`): a review gate may bounce the
+           * card back here for remediation in the same worktree, and that round should continue the
+           * conversation instead of re-deriving the change from scratch. See the flag's declaration for
+           * why this is scoped to the handoff exits rather than to every non-terminal exit.
+           */
+          if (!wasPaused && !handedOffForReview && !deps.pausedAborted.has(task.id)) {
             deps.store.updateTask(task.id, { sessionFile: null }).catch((err: unknown) => {
               const msg = err instanceof Error ? err.message : String(err);
               executorLog.warn(`${task.id} failed to clear sessionFile: ${msg}`);

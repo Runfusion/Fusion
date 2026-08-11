@@ -2419,6 +2419,8 @@ export default function kbExtension(pi: ExtensionAPI) {
       const autoPauseClearPatch = buildAutoPauseClearPatch(task);
       const clearedDeadlockAutoPause = Object.keys(autoPauseClearPatch).length > 0;
       const retryLogSuffix = clearedDeadlockAutoPause ? ", cleared deadlock auto-pause" : "";
+      // FNXC:TaskWedgeNotifications 2026-08-10-20:15: an operator retry ends the prior terminal-failure episode and mints a fresh budget.
+      await store.resetTerminalFailureAutoRecoveryBudget(params.id);
 
       if (isMissingWorktreeSessionRetry) {
         await store.updateTask(params.id, {

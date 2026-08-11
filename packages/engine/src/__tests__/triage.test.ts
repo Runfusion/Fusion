@@ -5781,6 +5781,83 @@ describe("taskCreate tool model inheritance", () => {
       });
     });
 
+    /*
+    FNXC:TriagePlanningRetry 2026-08-10-18:32:
+    An UNCLASSIFIED planning failure used to restore the card's claimable status and write nothing
+    else — no counter, no nextRecoveryAt, no park — so triage rediscovery re-admitted it every poll
+    forever. Measured: 48 unrecognized "Request timed out." failures across 10 tasks in 30 hours with
+    0-minute gaps; FN-8950 alone burned 8 attempts over ~8 hours without ever reaching implementation.
+    These pin the bound: retry with backoff while budget remains, then park `failed` for a human.
+    */
+    it("schedules a bounded backoff retry for an unclassified planning failure", async () => {
+      const task = {
+        id: "FN-GENERIC-RETRY",
+        title: "Generic planning failure",
+        description: "Unclassified planning failure should retry with backoff",
+        column: "triage",
+        status: "planning",
+        dependencies: [],
+        steps: [],
+        currentStep: 0,
+        log: [],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      } as unknown as Task;
+      const store = createMockStore({
+        getTask: vi.fn().mockResolvedValue({ ...task, attachments: [] }),
+      });
+      // Deliberately a string no classifier recognizes.
+      mockCreateFnAgent.mockRejectedValue(new Error("kaboom: something nobody classified"));
+
+      const processor = new TriageProcessor(store, "/test/root", { pollIntervalMs: 100_000 });
+      await processor.specifyTask(task);
+
+      const retryWrite = store.updateTask.mock.calls.find(
+        ([id, patch]) => id === "FN-GENERIC-RETRY" && patch?.recoveryRetryCount === 1,
+      );
+      expect(retryWrite, "an unclassified failure must consume a bounded retry").toBeDefined();
+      expect(typeof retryWrite?.[1]?.nextRecoveryAt).toBe("string");
+      // Must NOT park while budget remains.
+      expect(store.updateTask).not.toHaveBeenCalledWith(
+        "FN-GENERIC-RETRY",
+        expect.objectContaining({ status: "failed" }),
+      );
+    });
+
+    it("parks an unclassified planning failure once the retry budget is exhausted", async () => {
+      const task = {
+        id: "FN-GENERIC-EXHAUSTED",
+        title: "Generic planning failure",
+        description: "Unclassified planning failure should park after the budget is spent",
+        column: "triage",
+        status: "planning",
+        recoveryRetryCount: 3,
+        dependencies: [],
+        steps: [],
+        currentStep: 0,
+        log: [],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      } as unknown as Task;
+      const store = createMockStore({
+        getTask: vi.fn().mockResolvedValue({ ...task, attachments: [] }),
+      });
+      mockCreateFnAgent.mockRejectedValue(new Error("kaboom: something nobody classified"));
+
+      const processor = new TriageProcessor(store, "/test/root", { pollIntervalMs: 100_000 });
+      await processor.specifyTask(task);
+
+      const parkWrite = store.updateTask.mock.calls.find(
+        ([id, patch]) => id === "FN-GENERIC-EXHAUSTED" && patch?.status === "failed",
+      );
+      // `status: "failed"` is what suppresses triage rediscovery — without it the card is re-picked.
+      expect(parkWrite, "an exhausted budget must park the card for a human").toBeDefined();
+      expect(parkWrite?.[1]?.error).toContain("PLANNING_FAILED_EXHAUSTED:");
+      expect(parkWrite?.[1]?.error).toContain("kaboom: something nobody classified");
+      expect(parkWrite?.[1]?.recoveryRetryCount).toBeNull();
+      expect(parkWrite?.[1]?.nextRecoveryAt).toBeNull();
+    });
+
     it("does not overwrite an existing title during terminal fallback exhaustion", async () => {
       const task = {
         id: "FN-7961-EXISTING",

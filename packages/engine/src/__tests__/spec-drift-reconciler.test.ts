@@ -14,6 +14,20 @@ describe("SpecDriftReconciler", () => {
     expect(report?.findings).toContainEqual(expect.objectContaining({ kind: "scope-creep", path: "src/outside.ts" }));
     expect(persisted).toHaveLength(1);
   });
+  it("projects mission alignment after the report is durably persisted", async () => {
+    const persisted: string[] = [];
+    const projected: string[] = [];
+    const reconciler = new SpecDriftReconciler({
+      snapshot: async () => ({ latestLock: lock, currentPlan: evidence, approvedPlanFingerprint: "approved", modifiedFiles: ["src/outside.ts"] }),
+      persist: async (_taskId, report) => { persisted.push(report.alignment); },
+      onPersisted: async (_taskId, report) => { projected.push(report.alignment); },
+    });
+
+    await reconciler.reconcile("FN-MISSION");
+    expect(persisted).toEqual(["diverged-needs-review"]);
+    expect(projected).toEqual(persisted);
+  });
+
   it("retries a failed persistence write without waiting for restart", async () => {
     vi.useFakeTimers();
     let attempts = 0;
@@ -96,6 +110,90 @@ describe("SpecDriftReconciler", () => {
     await expect(new SpecDriftReconciler(createStoreSpecDriftRepository(cleanStore)).reconcile(task.id)).resolves.toMatchObject({ alignment: "on-plan" });
     await expect(new SpecDriftReconciler(createStoreSpecDriftRepository(sameLockStore)).reconcile(task.id)).resolves.toMatchObject({ alignment: "on-plan" });
     await expect(new SpecDriftReconciler(createStoreSpecDriftRepository(unavailableStore)).reconcile("FN-UNAVAILABLE")).resolves.toMatchObject({ alignment: "unavailable" });
+  });
+
+  /*
+  FNXC:SpecDrift 2026-08-10-18:32 (connection-exhaustion incident):
+  Each reconcile costs a DEDICATED PostgreSQL connection — `appendSpecDriftReport` takes the
+  session-scoped planning advisory lock, which opens its own `max: 1` session. So concurrency here is
+  a connection count, not just a scheduling detail.
+
+  The regression: `project-engine.ts` enqueues every task at runtime-boundary setup
+  (`listTasks({ includeArchived: true })`) and `enqueue` released each id into its own microtask. On a
+  1,082-task project that opened ~1,082 lock sessions at once against `max_connections = 500`; the
+  cluster saturated ~25s into boot, every later query failed with "sorry, too many clients already",
+  and Fusion wedged on "starting" behind the migration holding server. Measured 4,777 lock sessions in
+  17 seconds. This asserts the bound that makes a large project survive boot.
+  */
+  it("bounds concurrent reconciles so a whole-project enqueue cannot exhaust connections", async () => {
+    let active = 0;
+    let peak = 0;
+    let completed = 0;
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const reconciler = new SpecDriftReconciler({
+      snapshot: async () => ({ latestLock: lock, currentPlan: evidence, approvedPlanFingerprint: "approved" }),
+      persist: async () => {
+        active += 1;
+        peak = Math.max(peak, active);
+        await gate;
+        active -= 1;
+        completed += 1;
+      },
+    }, { maxConcurrent: 4 });
+
+    for (let i = 0; i < 200; i += 1) reconciler.enqueue(`FN-${i}`);
+    // Let every queued id get a chance to start before releasing the gate.
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(peak).toBeLessThanOrEqual(4);
+
+    release?.();
+    await vi.waitFor(() => expect(completed).toBe(200), { timeout: 5_000 });
+    // Bounded, but still drains everything — throughput is preserved, only fan-out is capped.
+    expect(peak).toBeLessThanOrEqual(4);
+  });
+
+  it("does not run the same task twice concurrently", async () => {
+    // Two sessions on one task would contend on its own advisory lock while holding two connections.
+    let active = 0;
+    let peak = 0;
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const reconciler = new SpecDriftReconciler({
+      snapshot: async () => ({ latestLock: lock, currentPlan: evidence, approvedPlanFingerprint: "approved" }),
+      persist: async () => { active += 1; peak = Math.max(peak, active); await gate; active -= 1; },
+    }, { maxConcurrent: 4 });
+
+    reconciler.enqueue("FN-SAME");
+    reconciler.enqueue("FN-SAME");
+    reconciler.enqueue("FN-SAME");
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(peak).toBe(1);
+    release?.();
+  });
+
+  it("backs a persistent outage off exponentially instead of re-firing every second", async () => {
+    vi.useFakeTimers();
+    let attempts = 0;
+    const reconciler = new SpecDriftReconciler({
+      snapshot: async () => ({ latestLock: lock, currentPlan: evidence, approvedPlanFingerprint: "approved" }),
+      persist: async () => { attempts += 1; throw new Error("persistent outage"); },
+    });
+    await expect(reconciler.reconcile("FN-BACKOFF")).rejects.toThrow("persistent outage");
+    expect(attempts).toBe(1);
+
+    // First retry lands inside the base window (jittered to 0.5-1x).
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(attempts).toBe(2);
+
+    // The second must NOT fire at another flat 1s — that lockstep re-fire is what kept the
+    // connection pool exhausted once every task started failing for the same shared reason.
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(attempts).toBe(2);
+
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(attempts).toBe(3);
+    vi.useRealTimers();
   });
 
   it("does not leak queued writes after stop", async () => {

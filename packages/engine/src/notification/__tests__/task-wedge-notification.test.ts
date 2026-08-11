@@ -267,7 +267,7 @@ describe("task wedge notifications", () => {
     store.setLiveReadError(new TaskNotFoundError("FN-8501"));
     await service.start();
 
-    await expect(service.notifyTaskWedge(task(), describeTaskWedge(task())!)).resolves.toBeUndefined();
+    await expect(service.notifyTaskWedge(task(), describeTaskWedge(task())!)).resolves.toBe("unavailable");
     store.emit(task());
     await flushWedgeHandling();
 

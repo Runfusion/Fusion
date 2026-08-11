@@ -517,6 +517,13 @@ export type DatabaseMutationType =
   | "mergeQueue:stale-lease-on-column-exit"
   | "mergeQueue:auto-cleanup-stale-row"
   | "task:auto-recover-already-merged"
+  /*
+  FNXC:TaskWedgeNotifications 2026-08-10-19:12:
+  Generic terminal recovery records only durable identifiers and bounded outcomes.
+  The apply token is a fencing capability, so audit rows must never persist it or task error prose.
+  */
+  | "task:auto-recover-terminal-failure"
+  | "task:auto-recover-terminal-failure-exhausted"
   | "task:auto-recover-finalize-already-on-main"
   /** Metadata: { taskId, previousColumn, targetColumn, commitSha, status, blockedBy, overlapBlockedBy, reason } */
   | "task:auto-merge-finalize-column-mismatch-reconciled"

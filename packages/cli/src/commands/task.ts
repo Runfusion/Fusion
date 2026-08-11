@@ -1524,6 +1524,8 @@ export async function runTaskRetry(id: string, projectName?: string) {
     const autoPauseClearPatch = buildAutoPauseClearPatch(task);
     const clearedDeadlockAutoPause = Object.keys(autoPauseClearPatch).length > 0;
     const retryLogSuffix = clearedDeadlockAutoPause ? ", cleared deadlock auto-pause" : "";
+    // FNXC:TaskWedgeNotifications 2026-08-10-20:15: a human Retry proves intervention and mints a fresh bounded terminal-failure budget.
+    await context.store.resetTerminalFailureAutoRecoveryBudget(id);
 
     if (isMissingWorktreeSessionRetry) {
       await retryBoardCall(context, id, "move task", () => context.store.moveTask(id, retryHoldColumn as never, { preserveProgress: true }));

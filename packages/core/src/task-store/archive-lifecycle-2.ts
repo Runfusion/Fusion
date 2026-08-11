@@ -21,6 +21,7 @@ import {buildDeleteCallerAuditFields, buildDeleteClosureAuditFields, type TaskDe
 import {notifyOperatorOfNonOperatorDelete} from "../task-delete-notice.js";
 import "../builtin-traits.js";
 import {normalizeTaskPriority} from "../tasks/task-priority.js";
+import {clearTerminalFailureAutoRecoveryBudget} from "../tasks/terminal-failure-auto-recovery.js";
 import {generateTaskLineageId} from "../tasks/task-lineage.js";
 import {sanitizeFileScopeInPromptContent} from "../task-store/file-scope.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
@@ -207,6 +208,20 @@ async function deleteTaskBackendWithClaimResultImpl(store: TaskStore, id: string
         const reloaded = await readTaskRowInTransaction(tx, id, { includeDeleted: true }, projectId);
         if (!reloaded) throw new TaskNotFoundError(id);
         return { claimed: false, task: store.rowToTask(store.pgRowToTaskRow(reloaded)), lineageOutcome: { clearedChildIds: [] as string[], evidenceVersionByChild: new Map<string, number>(), evidenceUnavailableChildIds: [], evidenceInsertAttempts: 0 } };
+      }
+      /*
+      FNXC:TaskWedgeNotifications 2026-08-10-20:30:
+      A soft-deleted row is invisible to the recovery sweep. Clear its terminal-failure budget
+      only after this transaction won the first-delete claim, so a declined conditional delete
+      cannot mute a live card and every backend delete path shares the same atomic boundary.
+      */
+      const deletedRow = await readTaskRowInTransaction(tx, id, { includeDeleted: true }, projectId);
+      if (!deletedRow) throw new TaskNotFoundError(id);
+      const deletedTask = store.rowToTask(store.pgRowToTaskRow(deletedRow));
+      if (deletedTask.wedgeNotification?.autoRecovery) {
+        await tx.update(schema.project.tasks)
+          .set({ wedgeNotification: JSON.stringify(clearTerminalFailureAutoRecoveryBudget(deletedTask.wedgeNotification, deletedAt)) })
+          .where(and(eq(schema.project.tasks.projectId, projectId), eq(schema.project.tasks.id, id)));
       }
       // Clear lineage references and approval only after locked candidates were revalidated.
       const lineageOutcome = context

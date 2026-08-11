@@ -2434,6 +2434,26 @@ export interface Settings extends GlobalSettings, ProjectSettings {
   leanPlanning?: boolean;
   /** Auto-approve generated specs and skip the independent spec reviewer. */
   autoApproveSpec?: boolean;
+  /** Wall-clock timeout (ms) for a single triage planning/specification AI turn.
+   *
+   *  FNXC:TriagePlanningTimeout 2026-08-10-18:32:
+   *  Workflow-native (like `leanPlanning`/`autoApproveSpec` above) — it never lived in project or
+   *  global settings, so it is declared HERE rather than on `ProjectSettings`, and must never be
+   *  added to `MOVED_SETTINGS_KEYS`. `workflowStepTimeoutMs` covers pre-merge workflow STEPS only
+   *  and never applied to the planning session, which had no Fusion-side ceiling at all: the
+   *  provider SDK's 300s `APIConnectionTimeoutError` caps time-to-first-byte and is cleared once
+   *  headers arrive, so a hung stream ran unbounded (observed: 126 minutes). On timeout the session
+   *  is aborted and the failure consumes one attempt of the bounded planning retry budget.
+   *  Default: {@link DEFAULT_PLANNING_TIMEOUT_MS}. */
+  planningTimeoutMs?: number;
+  /** Ceiling on consecutive Plan Review REVISE → replan cycles before the task is parked at
+   *  `awaiting-approval` with `awaitingApprovalReason: "plan-review-replan-cap"`.
+   *
+   *  FNXC:PlanReviewReplan 2026-08-10-18:32:
+   *  Workflow-native. Applies to the UNBOUNDED default only: an explicit `planReviewMaxRevisions`
+   *  or node `maxRevisions` budget is a stricter, earlier gate and wins. Unset uses
+   *  {@link DEFAULT_PLAN_REVIEW_REPLAN_CAP}; `0` parks on the first REVISE. */
+  planReviewReplanCap?: number;
   /** Index signature for dynamic settings access */
   [key: string]: unknown;
 }

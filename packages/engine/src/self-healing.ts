@@ -119,7 +119,13 @@ import { runSurfacingSweep, hours, type SurfacingCycle } from "./surfacing-sweep
    self-healing-git-evidence.ts. Imported back here because call sites remain. */
 import { SelfHealingGitEvidence, execAsync, shellQuote } from "./self-healing-git-evidence.js";
 import { evaluateParkedAgentTaskLink, PARKED_AGENT_LINK_FRESH_RUN_MS } from "./agents/task-agent-sync.js";
-import { describeSelfHealingNoActionWedge } from "./notification/task-wedge-notification.js";
+import { classifyTerminalFailureAutoRecoveryForTask, describeSelfHealingNoActionWedge, describeTaskWedge } from "./notification/task-wedge-notification.js";
+import {
+  MAX_TERMINAL_FAILURE_AUTO_RESUMES,
+  MAX_TERMINAL_FAILURE_AUTO_RETRIES,
+  TERMINAL_FAILURE_CLAIM_APPLY_GRACE_MS,
+} from "@fusion/core";
+import { BASE_DELAY_MS, computeRecoveryDecision, MAX_DELAY_MS } from "./healing/recovery-policy.js";
 
 export {
   COMPLETED_BLOCKED_PAUSE_REASON,
@@ -879,6 +885,8 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
   // ── Maintenance timer ───────────────────────────────────────────────
   private maintenanceInterval: ReturnType<typeof setInterval> | null = null;
   private maintenanceRunning = false;
+  /** In-process belt only; the durable apply token remains the cross-process fence. */
+  private autoRecoverTerminalFailuresInFlight = false;
 
   // ── Event listener cleanup ──────────────────────────────────────────
   private settingsListener: ((data: { settings: Settings; previous: Settings }) => void) | null = null;
@@ -1760,6 +1768,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       { name: "recover-orphan-only-scope-violations", fn: () => this.recoverOrphanOnlyScopeViolations().then(() => undefined) },
       { name: "recover-stuck-merge-deadlocks", fn: () => this.recoverStuckMergeDeadlocks().then(() => undefined) },
       { name: "misclassified-failures", fn: () => this.recoverMisclassifiedFailures().then(() => undefined) },
+      { name: "auto-recover-terminal-failures", fn: () => this.autoRecoverTerminalFailures().then(() => undefined) },
       { name: "partial-progress-no-task-done", fn: () => this.recoverPartialProgressNoTaskDoneFailures().then(() => undefined) },
       { name: "orphaned-executions", fn: () => this.recoverOrphanedExecutions().then(() => undefined) },
       { name: "approved-triage", fn: () => this.recoverApprovedTriageTasks().then(() => undefined) },
@@ -2867,6 +2876,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           { name: "recover-misclassified-failures", fn: () => this.recoverMisclassifiedFailures() },
           { name: "recover-no-progress-no-task-done", fn: () => this.recoverNoProgressNoTaskDoneFailures() },
           { name: "recover-paused-abort-failures", fn: () => this.recoverPausedAbortFailures() },
+          { name: "auto-recover-terminal-failures", fn: () => this.autoRecoverTerminalFailures() },
           { name: "recover-partial-progress-no-task-done", fn: () => this.recoverPartialProgressNoTaskDoneFailures() },
           { name: "recover-orphaned-executions", fn: () => this.recoverOrphanedExecutions() },
           { name: "recover-approved-triage", fn: () => this.recoverApprovedTriageTasks() },
@@ -12519,6 +12529,245 @@ const movedTask = await this.store.moveTask(task.id, completeLane);
    *
    * @returns Number of tasks recovered
    */
+  /*
+  FNXC:TaskWedgeNotifications 2026-08-10-20:15:
+  Generic terminal parks are retried from their durable wedge budget, not from the
+  transient display mirror. The claim token is consumed by TaskStore's fenced apply
+  transition; this sweep intentionally never moves a card itself.
+  */
+  async autoRecoverTerminalFailures(): Promise<number> {
+    if (this.autoRecoverTerminalFailuresInFlight) return 0;
+    const settings = await this.store.getSettings();
+    if (settings.globalPause || settings.enginePaused) return 0;
+    this.autoRecoverTerminalFailuresInFlight = true;
+    try {
+      // A disabled maintenance interval drains already-withheld escalations but must not claim retries.
+      const enabled = settings.autoRecovery?.mode !== "off"
+        && (settings.maintenanceIntervalMs === undefined || settings.maintenanceIntervalMs > 0);
+      const tasks = await this.store.listTasks({ slim: true });
+      const completeColumns = await resolveProjectColumnsForRoles(this.store, ["complete"]);
+      const archivedColumns = await resolveProjectColumnsForRoles(this.store, ["archived"]);
+      const reviewColumnsByWorkflow = new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>();
+      let changed = 0;
+      type TerminalFailureAuditOutcome = "retried" | "resumed-claim" | "already-claimed" | "apply-superseded" | "apply-aborted-not-failed" | "budget-reset-on-success" | "budget-reset-stale" | "cleared-stale-recovery-mirror" | "notified" | "notify-suppressed" | "notify-suppressed-stale" | "notify-unavailable" | "escalation-already-delivered";
+      /*
+      FNXC:TaskWedgeNotifications 2026-08-10-20:32:
+      A terminal-failure recovery is otherwise invisible after it clears status.
+      Emit a bounded audit record for every material recovery or escalation result;
+      retain only ids, counters, columns, and fixed outcomes so opaque task errors
+      and the rotating apply token never enter durable telemetry.
+      */
+      const auditTerminalFailure = async (
+        task: Task,
+        outcome: TerminalFailureAuditOutcome,
+        input: { attempt?: number; escalationReason?: "budget-exhausted" | "auto-recovery-disabled"; markedExhausted?: boolean } = {},
+      ): Promise<void> => {
+        try {
+          await createRunAuditor(this.store, {
+            runId: generateSyntheticRunId("auto-recover-terminal-failure", task.id),
+            agentId: "self-healing",
+            taskId: task.id,
+            taskLineageId: task.lineageId,
+            phase: "auto-recover-terminal-failure",
+          }).database({
+            type: input.escalationReason ? "task:auto-recover-terminal-failure-exhausted" : "task:auto-recover-terminal-failure",
+            target: task.id,
+            metadata: {
+              taskId: task.id,
+              attempt: input.attempt,
+              maxAttempts: MAX_TERMINAL_FAILURE_AUTO_RETRIES,
+              column: task.column,
+              escalationOwed: input.escalationReason !== undefined,
+              escalationReason: input.escalationReason,
+              markedExhausted: input.markedExhausted === true,
+              outcome,
+            },
+          });
+        } catch (error) {
+          log.debug(`autoRecoverTerminalFailures: audit write failed for ${task.id}: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      };
+      const escalateTerminalFailure = async (
+        task: Task,
+        reason: "budget-exhausted" | "auto-recovery-disabled",
+      ): Promise<{ outcome: Extract<TerminalFailureAuditOutcome, "notified" | "notify-suppressed" | "notify-suppressed-stale" | "notify-unavailable">; markedExhausted: boolean }> => {
+        let markedExhausted = false;
+        if (reason === "budget-exhausted") {
+          // FNXC:TaskWedgeNotifications 2026-08-10-20:01: A claim CAS can discover that a
+          // concurrent writer spent the final attempt after the classifier selected retry. That
+          // race still owes the same marker-first escalation as the ordinary notify branch; never
+          // drop it merely because the CAS, rather than the classifier, found exhaustion.
+          try {
+            markedExhausted = await this.store.markTerminalFailureAutoRecoveryBudgetExhausted(task.id, { maxAttempts: MAX_TERMINAL_FAILURE_AUTO_RETRIES }) === "stamped";
+          } catch (error) {
+            log.debug(`autoRecoverTerminalFailures: could not mark exhaustion for ${task.id}: ${error instanceof Error ? error.message : String(error)}`);
+          }
+        }
+        const descriptor = describeTaskWedge(task);
+        const service = getActiveNotificationService();
+        let outcome: "delivered" | "suppressed" | "unavailable" = "unavailable";
+        if (descriptor && service) {
+          try {
+            outcome = await service.notifyTaskWedge(task, descriptor, { source: "auto-recovery-escalation" });
+          } catch (error) {
+            log.debug(`autoRecoverTerminalFailures: terminal recovery notification failed for ${task.id}: ${error instanceof Error ? error.message : String(error)}`);
+          }
+        }
+        if ((outcome === "delivered" || outcome === "suppressed") && service) {
+          try {
+            const stamped = await this.store.markTerminalFailureAutoRecoveryEscalationDelivered(task.id, {
+              dispatchOutcome: outcome,
+              escalationReason: reason,
+            });
+            const auditOutcome = outcome === "delivered"
+              ? "notified"
+              : stamped === "not-stamped-stale-suppression"
+                ? "notify-suppressed-stale"
+                : "notify-suppressed";
+            await auditTerminalFailure(task, auditOutcome, { escalationReason: reason, markedExhausted });
+            return { outcome: auditOutcome, markedExhausted };
+          } catch (error) {
+            // FNXC:TaskWedgeNotifications 2026-08-10-21:05: A failed durable
+            // confirmation leaves the escalation owed for the next sweep.
+            log.debug(`autoRecoverTerminalFailures: could not stamp terminal recovery delivery for ${task.id}: ${error instanceof Error ? error.message : String(error)}`);
+          }
+        }
+        await auditTerminalFailure(task, "notify-unavailable", { escalationReason: reason, markedExhausted });
+        return { outcome: "notify-unavailable", markedExhausted };
+      };
+      for (const snapshot of tasks) {
+        if (snapshot.status !== "failed" && !snapshot.wedgeNotification?.autoRecovery) continue;
+        let task = await this.store.getTask(snapshot.id);
+        if (!task) continue;
+        /*
+        FNXC:TaskWedgeNotifications 2026-08-10-19:22:
+        The retry display mirror is not recovery ownership after its window expires. The wedge
+        descriptor intentionally recognizes any parseable mirror, including a past one, so clear
+        stale mirrors before classification or a re-failed card is silently classified non-generic.
+        This write preserves the durable budget and its apply fence; only a budget-owned watermark
+        and revision may advance with the mirror clear.
+        */
+        const hasRecoveryMirror = typeof task.recoveryRetryCount === "number";
+        const mirrorIsLive = typeof task.nextRecoveryAt === "string" && Date.parse(task.nextRecoveryAt) > Date.now();
+        // FNXC:TaskWedgeNotifications 2026-08-10-21:05: Disabled recovery drains
+        // owed alerts and resets budgets only; it must not mutate a display mirror.
+        if (enabled && task.status === "failed" && hasRecoveryMirror && !mirrorIsLive) {
+          await this.store.updateTaskAtomic(task.id, (current) => {
+            const currentHasMirror = typeof current.recoveryRetryCount === "number";
+            const currentMirrorIsLive = typeof current.nextRecoveryAt === "string" && Date.parse(current.nextRecoveryAt) > Date.now();
+            if (current.status !== "failed" || !currentHasMirror || currentMirrorIsLive) return null;
+            const budget = current.wedgeNotification?.autoRecovery;
+            if (!budget) return { recoveryRetryCount: null, nextRecoveryAt: null };
+            const now = new Date().toISOString();
+            return {
+              recoveryRetryCount: null,
+              nextRecoveryAt: null,
+              wedgeNotification: {
+                ...current.wedgeNotification!,
+                budgetRevision: (current.wedgeNotification!.budgetRevision ?? 0) + 1,
+                autoRecovery: { ...budget, lastBudgetWriteAt: now },
+              },
+            };
+          });
+          await auditTerminalFailure(task, "cleared-stale-recovery-mirror");
+          task = await this.store.getTask(snapshot.id);
+          if (!task) continue;
+        }
+        const decision = classifyTerminalFailureAutoRecoveryForTask(task, {
+          autoRecoveryEnabled: enabled,
+          inTerminalSuccessColumn: completeColumns.has(task.column),
+          isArchivedOrDeleted: archivedColumns.has(task.column) || task.deletedAt != null,
+        });
+        if (decision.action === "reset-budget") {
+          await this.store.resetTerminalFailureAutoRecoveryBudget(task.id);
+          await auditTerminalFailure(task, decision.reason === "budget-stale" ? "budget-reset-stale" : "budget-reset-on-success");
+          changed += 1;
+          continue;
+        }
+        if (decision.action === "notify") {
+          await escalateTerminalFailure(task, decision.reason);
+          continue;
+        }
+        if (decision.action === "skip") {
+          if (decision.reason === "escalation-already-delivered") {
+            await auditTerminalFailure(task, "escalation-already-delivered");
+          }
+          continue;
+        }
+        if (!enabled) continue;
+        if (this.options.hasLiveSessionSurface?.(task.id) || executingTaskLock.has(task.id) || this.options.getExecutingTaskIds?.().has(task.id)) continue;
+        /*
+        FNXC:TaskWedgeNotifications 2026-08-10-19:53:
+        Requeuing a failed review-lane card is a backward lifecycle move, so it needs the
+        same triple proof as every other review recovery before spending an auto-recovery
+        attempt. The fenced apply prevents duplicate moves; this proof independently proves
+        that no live session, usable worktree, or recent activity still owns the card.
+        */
+        if ((await this.resolveReviewColumnsFor(task.id, reviewColumnsByWorkflow)).has(task.column)) {
+          const proof = await this.evaluateBackwardMoveTripleProof(task, {
+            stage: "auto-recover-terminal-failure",
+            graceMs: settings.taskStuckTimeoutMs ?? STALE_ACTIVE_BRANCH_EXECUTION_GRACE_MS,
+            stalenessAnchor: task.columnMovedAt ?? task.updatedAt,
+            reason: "auto-recover-terminal-failure-review-candidate",
+          });
+          if (!proof.ok) {
+            await this.emitBackwardMoveNoAction(
+              task,
+              "auto-recover-terminal-failure",
+              "task:auto-recover-terminal-failure",
+              proof,
+            );
+            continue;
+          }
+        }
+        const rawAttempts = task.wedgeNotification?.autoRecovery?.attempts;
+        const attempts = typeof rawAttempts === "number" && Number.isFinite(rawAttempts) && rawAttempts >= 0
+          ? Math.trunc(rawAttempts)
+          : 0;
+        const spacing = attempts <= 0 ? 0 : 0.9 * Math.min(BASE_DELAY_MS * 2 ** (attempts - 1), MAX_DELAY_MS);
+        const claim = await this.store.claimTerminalFailureAutoRecoveryAttempt(task.id, {
+          maxAttempts: MAX_TERMINAL_FAILURE_AUTO_RETRIES,
+          maxResumes: MAX_TERMINAL_FAILURE_AUTO_RESUMES,
+          minAttemptSpacingMs: spacing,
+          claimApplyGraceMs: TERMINAL_FAILURE_CLAIM_APPLY_GRACE_MS,
+        });
+        if (claim.outcome === "exhausted") {
+          await escalateTerminalFailure(task, "budget-exhausted");
+          continue;
+        }
+        if (claim.outcome === "already-claimed") {
+          await auditTerminalFailure(task, "already-claimed", { attempt: claim.attempt });
+          continue;
+        }
+        const delayMs = computeRecoveryDecision({ recoveryRetryCount: claim.attempt - 1 }).delayMs;
+        const applied = await this.store.applyTerminalFailureAutoRecoveryRetry(task.id, {
+          applyToken: claim.applyToken,
+          patch: {
+            status: null,
+            error: null,
+            paused: false,
+            recoveryRetryCount: claim.attempt,
+            nextRecoveryAt: new Date(Date.now() + delayMs).toISOString(),
+          },
+          targetColumn: await resolveReboundTargetForTask(this.store, task.id),
+          moveOptions: { preserveProgress: true, moveSource: "engine" },
+        });
+        if (applied.outcome === "applied") {
+          await this.store.logEntry(task.id, `Auto-recovered generic terminal failure (attempt ${claim.attempt}/${MAX_TERMINAL_FAILURE_AUTO_RETRIES})`);
+          await auditTerminalFailure(task, claim.outcome === "resume" ? "resumed-claim" : "retried", { attempt: claim.attempt });
+          changed += 1;
+        } else if (applied.outcome === "superseded" || applied.outcome === "no-budget") {
+          await auditTerminalFailure(task, "apply-superseded", { attempt: claim.attempt });
+        } else {
+          await auditTerminalFailure(task, "apply-aborted-not-failed", { attempt: claim.attempt });
+        }
+      }
+      return changed;
+    } finally {
+      this.autoRecoverTerminalFailuresInFlight = false;
+    }
+  }
+
   async recoverMisclassifiedFailures(): Promise<number> {
     try {
       /*

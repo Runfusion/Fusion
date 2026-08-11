@@ -8,7 +8,9 @@
 
 The default `knowledgeGraphDir` is `.fusion-knowledge/graph`, deliberately outside ignored `.fusion/`. It contains `nodes.json`, `edges.json`, and `manifest.json`; all use sorted, LF JSON. Nodes and edges are written before the manifest so a torn write safely triggers a full rebuild. The manifest records SHA-256 fingerprints and import references, enabling changed files only to be re-extracted and deleted file ownership to be pruned.
 
-The artifact is intentionally not committed by this change. Operators may review and commit it with `git add .fusion-knowledge/graph`; it is not ignored.
+The artifact is not committed. As of 2026-08-10 `.fusion-knowledge/` is gitignored: the graph is deterministic and fully regenerable from source (the manifest's SHA-256 fingerprints drive incremental rebuilds), so tracking it preserves nothing a rebuild cannot reproduce, while costing ~85MB of irreversible, compounding history bloat on every clone and CI checkout — `edges.json` alone is 43MB, past GitHub's 50MB warning threshold. Regenerate it with `fn knowledge-graph build` rather than pulling it.
+
+An operator who explicitly wants a snapshot in history can still force one with `git add -f .fusion-knowledge/graph`; prefer a rebuild.
 
 ## Model
 

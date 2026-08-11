@@ -446,7 +446,9 @@ pgDescribe("plan approval status persistence", () => {
 
     const afterReplace = await store.getTask(task.id);
     expect(afterReplace.approvedPlanFingerprint).toBeUndefined();
-    expect((await store.getLatestSpecDriftReport(task.id))?.alignment).toBe("unavailable");
+    // FNXC:SpecLock 2026-08-10-16:40: A dependency replacement invalidates admission but remains
+    // structurally comparable to the retained lock, so the roadmap receives divergence—not silence.
+    expect((await store.getLatestSpecDriftReport(task.id))?.alignment).toBe("diverged-needs-review");
 
     await store.updateTask(task.id, { status: "awaiting-approval" });
     expect((await request(createApp(), "POST", `/api/tasks/${task.id}/approve-plan`)).status).toBe(200);

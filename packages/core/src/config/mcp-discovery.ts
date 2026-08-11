@@ -1,6 +1,7 @@
 import type { McpSecretImportDescriptor } from "./mcp-config.js";
 import { importMcpServersJson } from "./mcp-config.js";
 import type { McpServerDefinition } from "../types.js";
+import { isBuiltInMcpServerName } from "./mcp-builtin-descriptor.js";
 
 export interface McpDiscoverySource {
   id: string;
@@ -110,7 +111,7 @@ export function parseDiscoveredMcpServersFromFile(args: { source: McpDiscoverySo
   try {
     const normalized = normalizeDiscoveryContents(args.source, args.contents);
     const result = importMcpServersJson(normalized, { scope: args.source.scope });
-    const servers = result.definitions.map((definition) => ({
+    const servers = result.definitions.filter((definition) => !isBuiltInMcpServerName(definition.name)).map((definition) => ({
       source: args.source,
       definition,
       secretsToCreate: result.secretsToCreate.filter((secret) => secret.serverName === definition.name),

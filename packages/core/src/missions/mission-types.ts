@@ -495,6 +495,14 @@ export interface ResearchFeatureProvenance {
 
 export type ImplementationStopReason = "budget-exhausted" | "operator-intervention";
 
+/**
+ * FNXC:SpecLockMissionAlignment 2026-08-10-16:17:
+ * Alignment is a persisted roadmap projection from the linked task's deterministic drift report.
+ * It stays separate from delivery and validation lifecycle state, so divergence never fabricates
+ * completion or blocks work.
+ */
+export type MissionFeatureSpecAlignment = "on-plan" | "diverged-needs-review" | "diverged-relocked-approved" | "unavailable";
+
 export interface MissionFeature {
   /** Unique identifier (e.g., "F-J6K9AB-G7H3") */
   id: string;
@@ -510,6 +518,8 @@ export interface MissionFeature {
   acceptanceCriteria?: string;
   /** Current lifecycle status */
   status: FeatureStatus;
+  /** Orthogonal, machine-derived alignment of the linked task's current plan and execution. */
+  specAlignment?: MissionFeatureSpecAlignment;
   /** Durable lineage when this canonical feature came from Fusion Research. */
   researchProvenance?: ResearchFeatureProvenance;
   /** ISO-8601 timestamp of creation */

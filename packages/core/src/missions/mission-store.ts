@@ -326,6 +326,7 @@ interface FeatureRow {
   description: string | null;
   acceptanceCriteria: string | null;
   status: string;
+  specAlignment: string | null;
   createdAt: string;
   updatedAt: string;
   loopState: string | null;
@@ -624,6 +625,7 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
       description: row.description || undefined,
       acceptanceCriteria: row.acceptanceCriteria || undefined,
       status: row.status as FeatureStatus,
+      specAlignment: row.specAlignment as import("./mission-types.js").MissionFeatureSpecAlignment || undefined,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
       loopState: (row.loopState as import("./mission-types.js").FeatureLoopState) || "idle",
@@ -2217,8 +2219,8 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
     };
 
     this.db.prepare(`
-      INSERT INTO mission_features (id, sliceId, title, description, acceptanceCriteria, status, loopState, implementationAttemptCount, validatorAttemptCount, createdAt, updatedAt)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO mission_features (id, sliceId, title, description, acceptanceCriteria, status, specAlignment, loopState, implementationAttemptCount, validatorAttemptCount, createdAt, updatedAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       feature.id,
       feature.sliceId,
@@ -2226,6 +2228,7 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
       feature.description ?? null,
       feature.acceptanceCriteria ?? null,
       feature.status,
+      feature.specAlignment ?? null,
       feature.loopState ?? "idle",
       feature.implementationAttemptCount ?? 0,
       feature.validatorAttemptCount ?? 0,
@@ -2302,6 +2305,7 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
         description = ?,
         acceptanceCriteria = ?,
         status = ?,
+        specAlignment = ?,
         taskId = ?,
         loopState = ?,
         implementationAttemptCount = ?,
@@ -2317,6 +2321,7 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
       updated.description ?? null,
       updated.acceptanceCriteria ?? null,
       updated.status,
+      updated.specAlignment ?? null,
       updated.taskId ?? null,
       updated.loopState ?? "idle",
       updated.implementationAttemptCount ?? 0,

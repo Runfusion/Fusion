@@ -61,7 +61,12 @@ const sections: Array<{ key: SpecLockSection; headings: string[]; required: bool
 ];
 
 const hash = (value: string): string => createHash("sha256").update(value, "utf8").digest("hex");
-const normalizeText = (value: string): string => value.replace(/\r\n?/g, "\n").replace(/[ \t]+/g, " ").trim();
+/*
+FNXC:SpecLock 2026-08-10-16:34:
+Mission prose is structurally hashed, not line-layout hashed. Collapse every whitespace run so a
+cosmetic paragraph reflow cannot create a deterministic plan-deviation finding.
+*/
+const normalizeText = (value: string): string => value.replace(/\s+/g, " ").trim();
 const normalizeListItems = (value: string): string[] => value.split("\n")
   .map((line) => line.replace(/^\s*(?:[-*+]\s+|\d+[.)]\s+)/, "").replace(/[ \t]+/g, " ").trim())
   .filter(Boolean);

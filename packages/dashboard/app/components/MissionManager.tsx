@@ -103,7 +103,6 @@ import {
   fetchMissionInterviewDrafts,
   discardMissionInterviewDraft,
   fetchTaskDetail,
-  fetchSpecLock,
   apiGetBranchGroup,
   api,
   type AiSessionSummary,
@@ -1273,33 +1272,20 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
   branch, member count, or PR state into the current mission.
   */
   /*
-  FNXC:SpecLockMissionAlignment 2026-08-09-08:25:
-  FN-8845 keeps delivery status and spec alignment independent. Mission cards obtain the
-  persisted task report instead of inferring alignment from a task column, so an archived or
-  unlinked feature never gains a fabricated roadmap projection.
+  FNXC:SpecLockMissionAlignment 2026-08-10-16:17:
+  FN-8845 keeps delivery status and spec alignment independent. Mission reconciliation persists
+  its deterministic projection on linked features; render that shared state rather than performing
+  browser-only task-report joins that can disagree with periodic/autopilot reconciliation. An
+  unlinked or archived feature remains unavailable and never receives a fabricated projection.
   */
-  const [featureSpecAlignments, setFeatureSpecAlignments] = useState<Record<string, DriftAlignment>>({});
-
-  useEffect(() => {
-    let cancelled = false;
-    const linkedFeatures = selectedMission?.milestones.flatMap((milestone) =>
-      milestone.slices.flatMap((slice) => slice.features.flatMap((feature) => feature.taskId ? [feature] : [])),
-    ) ?? [];
-    setFeatureSpecAlignments({});
-    if (!isActive || linkedFeatures.length === 0) return () => { cancelled = true; };
-
-    void Promise.all(linkedFeatures.map(async (feature) => {
-      try {
-        const evidence = await fetchSpecLock(feature.taskId!, projectId);
-        return [feature.id, evidence.report?.alignment ?? "unavailable"] as const;
-      } catch {
-        return [feature.id, "unavailable"] as const;
-      }
-    })).then((entries) => {
-      if (!cancelled) setFeatureSpecAlignments(Object.fromEntries(entries));
-    });
-    return () => { cancelled = true; };
-  }, [isActive, projectId, selectedMission]);
+  const featureSpecAlignments = useMemo<Record<string, DriftAlignment>>(() => Object.fromEntries(
+    (selectedMission?.milestones ?? []).flatMap((milestone) => milestone.slices.flatMap((slice) =>
+      slice.features.map((feature) => [
+        feature.id,
+        feature.taskId ? (feature.specAlignment ?? "unavailable") : "unavailable",
+      ] as const),
+    )),
+  ), [selectedMission]);
 
   useEffect(() => {
     let cancelled = false;
