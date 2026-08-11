@@ -33,6 +33,8 @@ import { fileURLToPath } from "node:url";
 
 const CORE_SRC = join(fileURLToPath(new URL("../", import.meta.url)));
 const ENGINE_SRC = join(fileURLToPath(new URL("../../../engine/src/", import.meta.url)));
+const DASHBOARD_SRC = join(fileURLToPath(new URL("../../../dashboard/src/", import.meta.url)));
+const CLI_SRC = join(fileURLToPath(new URL("../../../cli/src/", import.meta.url)));
 
 /*
 FNXC:Identity 2026-08-09-03:04 (U18 step 2 — the census roots are per-PACKAGE, not per-file):
@@ -46,13 +48,21 @@ its own baseline so a regression points at the package that caused it rather tha
 nobody can attribute.
 
 Add a root here the moment a package starts converting. `@fusion/dashboard` and `@runfusion/fusion`
-are U18's step 3; they are deliberately absent until then, because a root asserting a baseline of 0
-over an unconverted package is a claim the package has no debt rather than a claim it has not
-started.
+were deliberately absent until Stage D, because a root asserting a baseline of 0 over an unconverted
+package is a claim the package has no debt rather than a claim it has not started. Stage D converted
+both, so both now carry a REAL baseline.
+
+Only `packages/dashboard/src` is censused, not `packages/dashboard/app`. `app/` is the browser client:
+it reaches the store exclusively over HTTP (`api.createTask`, `api.moveTask`, ...) and holds no store
+call site at all, so a root over it would assert a permanent, meaningless zero — and, worse, would
+hide the fact that the dashboard's actual debt lives entirely in `src`. When U9 threads the
+authenticated actor it changes `src` route handlers, not `app`.
 */
 const CENSUS_ROOTS: readonly { pkg: string; dir: string }[] = [
   { pkg: "core", dir: CORE_SRC },
   { pkg: "engine", dir: ENGINE_SRC },
+  { pkg: "dashboard", dir: DASHBOARD_SRC },
+  { pkg: "cli", dir: CLI_SRC },
 ];
 
 const MARKER = "UNATTRIBUTED_MUTATION_CONTEXT";
@@ -231,9 +241,77 @@ family, and a short tail of operator/provider-health entry points. Every one of 
 U9/U11's decision about a SYSTEM actor, not a lane that skipped its threading. No engine lane still
 holds a marker because deriving was more work than marking.
 */
+/*
+FNXC:Identity 2026-08-09-03:04 (U18 step 3, Stage D — @fusion/dashboard 150 and @runfusion/fusion 2, over 216 converted sites):
+
+Stage D converted the last two packages: 151 mutating call sites in `@fusion/dashboard` and 67 in
+`@runfusion/fusion`. 147 of the dashboard's were visible to the compiler; the other four were reached
+ONLY through the two structural seams described at the end of this note, which is what a seam does. The two numbers are lopsided in OPPOSITE directions from the engine stages, and
+both asymmetries are the point.
+
+DASHBOARD — 150, essentially one per converted site, and that is correct rather than lazy. Every write
+in this package is made on behalf of somebody the package cannot name yet: an HTTP handler acts for the
+authenticated human (U9), a tracker/reconciler acts for nobody at all (U13). There is no run id, no
+agent id and no lane label anywhere to derive from — unlike merger/triage/executor, which already
+stamped an agent id on their own audit rows. Ownership, so the number is a work list:
+
+  - routes/register-task-workflow-routes.ts (67), routes/register-git-github.ts (16),
+    routes/register-planning-subtask-routes.ts (12), routes/register-gitlab.ts (3),
+    routes/register-workflow-routes.ts (2), routes/register-messaging-scripts.ts (1),
+    research-routes.ts (1), planning.ts (3), pr-conflict-resolver.ts (7), triage-trait.ts (7)
+      -> HTTP request surfaces. The actor is the authenticated session; U9 resolves it and threads it
+         through the route layer. The marker is at the CALL SITE, not aliased once per file, because
+         U9's work is per handler and an alias would silently absorb every unattributed route added
+         between now and then.
+  - github-tracking-reconciler.ts (11), github-source-issue-close.ts (5), github-issue-comment.ts (4),
+    github-tracking-comments.ts (2), github-tracking.ts (1), github-tracking-state.ts (1),
+    gitlab-source-issue-reconciler.ts (2), gitlab-lifecycle.ts (1), monitor-trait.ts (1),
+    routes/register-signal-routes.ts (1), routes/automation-step-execution.ts (1), server.ts (1)
+      -> unattended lanes: poll/reconcile sweeps, external-event lifecycle hooks, the HMAC signal
+         webhook (whose caller is a machine, and the shared secret proves the connector rather than
+         an actor), the automation runner, and the CLI-relaunch listener. Same category and same owner
+         (U13) as the engine's self-healing sweeps.
+
+CLI — 2 over 67 converted sites, and the small number is a real property, not a collapse:
+
+  - identity/cli-operator-mutation-context.ts (1)
+      -> the ONE open question behind ~50 `fn task …` / `fn pr …` call sites and the extension's
+         operator branch: who is the human at this terminal? There is exactly one of them per process
+         invocation, so one resolver answers all of them, and U11 replaces its body without touching a
+         single call site. Fifty copies of that row would tell U11 nothing the first told it, while
+         burying the CLI's genuinely different second debt below.
+  - commands/task-lifecycle.ts (1)
+      -> `processPullRequestMergeTask`, the CLI daemon's unattended PR-merge drain (polled by
+         `daemon.ts`, `serve.ts` and `dashboard.ts`). A different question with a different owner
+         (U13, or U11 if it is reclassified), resolved once and threaded into all 21 of its writes —
+         including both finalize helpers, whose parameter is REQUIRED so a future caller cannot
+         finalize a merge unattributed and still compile.
+
+What Stage D DERIVED rather than marked, so the asymmetry above is not "deriving was more work": every
+`fn_*` extension tool that writes resolves its caller through `resolveExtensionMutationContext`, and an
+AGENT caller produces a real actor via `mutationContextForAgent` off the session-identity registry,
+carrying `ctx.runId` when the engine supplied one. Eight tools do this today (`fn_task_update`,
+`fn_task_retry`, `fn_task_delete`, the two GitHub imports, the three GitLab imports, `fn_delegate_task`).
+
+And what Stage D FAILED CLOSED rather than marked: an `ambiguous` principal — two live agent sessions
+sharing one cwd — REFUSES the write instead of taking the marker. The marker means "a later unit fills
+this in"; ambiguity means "there are two candidates and we must not guess". Marking it would have
+laundered a genuine safety stop into ordinary deferred debt and hidden it from U11 as well. See the
+long note above `resolveExtensionMutationContext` in `packages/cli/src/extension.ts`.
+
+Stage D also closed two STRUCTURAL seams in `@fusion/dashboard`, the dashboard's equivalent of Stage
+A's nine engine seams. Neither involves a marker, so neither is visible in this census, which is
+exactly why they are recorded here: `CliRelaunchTaskStoreLike` in `src/server.ts` (a re-declaration of
+`updateTask`/`moveTask`/`logEntry` fed by an `as unknown as` cast, so nothing would ever have
+complained) and the `updateTaskCustomFields` inline widening in
+`src/routes/register-task-workflow-routes.ts`. Both now restate the canonical arity. Do not relax
+either back to quiet a caller.
+*/
 const BASELINE_BY_PACKAGE: Readonly<Record<string, number>> = {
   core: 33,
   engine: 308,
+  dashboard: 150,
+  cli: 2,
 };
 const BASELINE = Object.values(BASELINE_BY_PACKAGE).reduce((sum, n) => sum + n, 0);
 

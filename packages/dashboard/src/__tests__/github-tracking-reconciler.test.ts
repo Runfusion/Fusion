@@ -1,3 +1,4 @@
+import { UNATTRIBUTED_CONTEXT_MATCHER } from "./mutation-context-matchers.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { TaskStore } from "@fusion/core";
 import { GitHubTrackingReconciler, RECONCILE_CONCURRENCY_LIMIT, RECONCILE_SCAN_LIMIT } from "../github-tracking-reconciler.js";
@@ -153,7 +154,7 @@ describe("GitHubTrackingReconciler", () => {
 
     expect(result.errors).toBe(1);
     expect(result.closed).toBe(1);
-    expect((store.logEntry as any)).toHaveBeenCalledWith("FN-1", "Failed to reconcile GitHub tracking issue", "boom");
+    expect((store.logEntry as any)).toHaveBeenCalledWith("FN-1", "Failed to reconcile GitHub tracking issue", "boom", UNATTRIBUTED_CONTEXT_MATCHER);
   });
 
   it("skips and logs when auth is unavailable", async () => {
@@ -163,7 +164,7 @@ describe("GitHubTrackingReconciler", () => {
     const result = await new GitHubTrackingReconciler().reconcile(store);
 
     expect(result.skipped).toBe(1);
-    expect((store.logEntry as any)).toHaveBeenCalledWith("FN-1", "Skipped GitHub tracking issue reconciliation", "no auth");
+    expect((store.logEntry as any)).toHaveBeenCalledWith("FN-1", "Skipped GitHub tracking issue reconciliation", "no auth", UNATTRIBUTED_CONTEXT_MATCHER);
   });
 
   it("respects concurrency cap", async () => {
@@ -229,7 +230,7 @@ describe("GitHubTrackingReconciler", () => {
       expect(mockSetIssueState).toHaveBeenCalledWith("o", "r", 1, "closed", "completed");
       expect((store.updateTask as any)).toHaveBeenCalledWith("FN-1", {
         sourceIssue: { ...sourceIssue, closedAt: "2026-06-18T10:00:00.000Z" },
-      });
+      }, UNATTRIBUTED_CONTEXT_MATCHER);
       expect(result).toMatchObject({ closed: 1, skipped: 0, errors: 0 });
     });
 
@@ -247,7 +248,7 @@ describe("GitHubTrackingReconciler", () => {
       expect(mockSetIssueState).not.toHaveBeenCalled();
       expect((store.updateTask as any)).toHaveBeenCalledWith("FN-7", {
         sourceIssue: { ...sourceIssue, closedAt: "2026-06-01T12:00:00Z" },
-      });
+      }, UNATTRIBUTED_CONTEXT_MATCHER);
       expect(result).toMatchObject({ closed: 0, skipped: 1, errors: 0 });
     });
 
@@ -283,7 +284,7 @@ describe("GitHubTrackingReconciler", () => {
       const result = await new GitHubTrackingReconciler().reconcileSourceIssues(store);
 
       expect(result).toMatchObject({ closed: 1, errors: 0 });
-      expect((store.logEntry as any)).toHaveBeenCalledWith("FN-9", "Failed to persist GitHub source issue closed timestamp", "db locked");
+      expect((store.logEntry as any)).toHaveBeenCalledWith("FN-9", "Failed to persist GitHub source issue closed timestamp", "db locked", UNATTRIBUTED_CONTEXT_MATCHER);
     });
 
     it("skips source issue reconciliation when close-on-done is disabled", async () => {

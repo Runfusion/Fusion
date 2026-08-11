@@ -25,6 +25,7 @@ have introduced.
 - Live-merge protection via BOTH independent signals: the in-process lease, and a fresh updatedAt.
 - The pre-existing retry paths (failed / status-none merge stall) must be unchanged.
 */
+import { UNATTRIBUTED_CONTEXT_MATCHER } from "./mutation-context-matchers.js";
 import { describe, expect, it, vi } from "vitest";
 import express from "express";
 import type { Task, TaskStore } from "@fusion/core";
@@ -145,6 +146,7 @@ describe("POST /api/tasks/:id/retry — orphaned merge-active status (FN-8004)",
     expect(updateTask).toHaveBeenCalledWith(
       "FN-8004",
       expect.objectContaining({ status: null, error: null }),
+      UNATTRIBUTED_CONTEXT_MATCHER,
     );
     // ...and STAY in in-review. Moving completed work to todo would re-run it.
     expect(moveTask).not.toHaveBeenCalled();
@@ -201,6 +203,7 @@ describe("POST /api/tasks/:id/retry — orphaned merge-active status (FN-8004)",
     expect(updateTask).toHaveBeenCalledWith(
       "FN-8004",
       expect.objectContaining({ status: null, error: null }),
+      UNATTRIBUTED_CONTEXT_MATCHER,
     );
     expect(moveTask).not.toHaveBeenCalled();
   });

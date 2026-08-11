@@ -1,3 +1,16 @@
+/*
+FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage D — why every mutation context in this file is the MARKER):
+
+This module runs UNATTENDED: a poll/reconcile sweep or a lifecycle hook reacting to an external event,
+not a request anyone made. There is no session, no run and no acting agent to derive from, and the only
+ids in scope name the task being reconciled — attributing to those would produce audit rows claiming a
+task reconciled itself, the same false attribution the engine's self-healing sweeps refused in Stage A.
+
+So each write carries the unattributed marker, counted by the U18 census and ratcheted DOWN.
+Whether these lanes get a real SYSTEM actor is U13's decision; it is deliberately not made here.
+*/
+// FNXC:Identity 2026-08-09-03:04: one-line import on purpose — the U18 census counts any non-`import`-prefixed line naming the marker, so a multi-line import block would score as debt it is not.
+import { UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 import type { Task, TaskStore, WorkflowIr } from "@fusion/core";
 import { completeColumnsForTask } from "./task-lifecycle-lanes.js";
 import { resolveGitLabClient, resolveGitLabTarget, safeLogGitLabEntry } from "./gitlab-lifecycle.js";
@@ -93,7 +106,7 @@ export class GitLabSourceIssueReconciler {
             skipped += 1;
             continue;
           }
-          await store.updateTask(task.id, { sourceIssue: { ...sourceIssue, closedAt } });
+          await store.updateTask(task.id, { sourceIssue: { ...sourceIssue, closedAt } }, UNATTRIBUTED_MUTATION_CONTEXT);
           filled += 1;
           continue;
         }
@@ -104,7 +117,7 @@ export class GitLabSourceIssueReconciler {
           skipped += 1;
           continue;
         }
-        await store.updateTask(task.id, { sourceIssue: { ...sourceIssue, closedAt } });
+        await store.updateTask(task.id, { sourceIssue: { ...sourceIssue, closedAt } }, UNATTRIBUTED_MUTATION_CONTEXT);
         filled += 1;
       } catch (error) {
         errors += 1;

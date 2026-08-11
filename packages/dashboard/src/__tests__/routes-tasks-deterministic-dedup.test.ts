@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { UNATTRIBUTED_CONTEXT_MATCHER } from "./mutation-context-matchers.js";
 import { describe, expect, it, vi } from "vitest";
 import express from "express";
 import { computeContentFingerprint, type Column, type Task, type TaskStore } from "@fusion/core";
@@ -285,7 +286,7 @@ describe("task deterministic dedup", () => {
     const res = await performRequest(app, "POST", "/api/tasks", JSON.stringify({ title: TITLE, description: DESCRIPTION, acknowledgedDuplicates: ["FN-1"] }), { "content-type": "application/json" });
     expect(res.status).toBe(200);
     expect((res.body as Task).id).toBe("FN-1");
-    expect(store.moveTask).toHaveBeenCalledWith("FN-101", "archived");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-101", "archived", undefined, UNATTRIBUTED_CONTEXT_MATCHER);
     expect(store.recordActivity).toHaveBeenCalledWith(expect.objectContaining({
       type: "task:auto-archived-deterministic-duplicate",
       metadata: { canonicalTaskId: "FN-1", contentFingerprint: FINGERPRINT },

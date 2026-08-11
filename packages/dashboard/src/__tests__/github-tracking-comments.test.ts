@@ -1,3 +1,4 @@
+import { UNATTRIBUTED_CONTEXT_MATCHER } from "./mutation-context-matchers.js";
 import { EventEmitter } from "node:events";
 import { beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import type { TaskStore } from "@fusion/core";
@@ -727,11 +728,20 @@ describe("GitHubTrackingCommentService", () => {
       "FN-1",
       "Posted GitHub tracking comment",
       "owner/repo#42 (in-progress)",
+      UNATTRIBUTED_CONTEXT_MATCHER,
     );
+    /*
+    FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage D — do not leave a negative assertion vacuous):
+    Every `logEntry` in this service now passes a fourth argument, so the three-argument form of this
+    NEGATIVE assertion could no longer match any real call and would have passed even if the failure
+    breadcrumb WAS written. Extended with a trailing `expect.anything()` so it keeps asserting what it
+    was written to assert; the claim under test is "no failure entry was logged", not who logged it.
+    */
     expect(store.logEntry).not.toHaveBeenCalledWith(
       "FN-1",
       "Failed to post GitHub tracking comment",
       "store unavailable",
+      expect.anything(),
     );
 
     service.stop();
@@ -761,6 +771,7 @@ describe("GitHubTrackingCommentService", () => {
       "FN-1",
       "Posted GitHub tracking comment",
       "owner/repo#42 (done)",
+      UNATTRIBUTED_CONTEXT_MATCHER,
     );
   });
 
@@ -816,6 +827,7 @@ describe("GitHubTrackingCommentService", () => {
       "FN-1",
       "Failed to post GitHub tracking comment",
       "Linked issue metadata is incomplete",
+      UNATTRIBUTED_CONTEXT_MATCHER,
     );
   });
 
@@ -833,6 +845,7 @@ describe("GitHubTrackingCommentService", () => {
       "FN-1",
       "Failed to post GitHub tracking comment",
       "rate limited",
+      UNATTRIBUTED_CONTEXT_MATCHER,
     );
 
     mockCommentOnIssue.mockResolvedValueOnce(undefined);

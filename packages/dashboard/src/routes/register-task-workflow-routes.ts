@@ -1,3 +1,10 @@
+/*
+FNXC:Identity 2026-08-15-22:52 (U18/KTD2 Stage D — why every mutation context in this file is the MARKER):
+The actor for these writes is the authenticated human on the other end of the HTTP request. Until U9
+resolves that actor from the session, each write says so explicitly with the unattributed marker.
+*/
+// FNXC:Identity 2026-08-15-22:52: one-line import on purpose — the U18 census counts any non-`import`-prefixed line naming the marker.
+import { UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 import { createIngestedCheckResolver, createLogger, isCurrentSpecDriftReport, resolveRequiredCheckNames } from "@fusion/core";
 import type { Request, Response } from "express";
 
@@ -120,6 +127,7 @@ import { resolveNativeStructurePreview } from "../native-structure-preview.js";
 import { isBackwardMoveBlockedByOpenPr, PR_OPEN_BLOCKS_MOVE_BACK_MESSAGE } from "./register-pull-requests-routes.js";
 import { computePlanApprovalFingerprint, isTaskAwaitingPlanning, isWorkspaceTask, type RunAuditEventInput } from "@fusion/core";
 import { FUSION_CLIENT_HEADER, resolveHttpDeleteCallerKind, BOOTSTRAP_ACTOR_CONTEXT, UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
+import type { RunMutationContext } from "@fusion/core";
 import { ApiError, badRequest, conflict, notFound } from "../api-error.js";
 // FNXC:TaskLookup404 2026-07-26-11:40: shared task-miss -> 404 mapping seam.
 import { isTaskLookupMiss, rethrowTaskApiError } from "./task-lookup-error.js";
@@ -1152,6 +1160,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         task.id,
         "In-review user comment re-engagement suppressed",
         PR_OPEN_BLOCKS_MOVE_BACK_MESSAGE,
+        UNATTRIBUTED_MUTATION_CONTEXT,
       );
       return { task, reengaged: false, suppressedReason: "blocking-pr" };
     }
@@ -1160,7 +1169,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       status: null,
       error: null,
       sessionFile: null,
-    });
+    }, UNATTRIBUTED_MUTATION_CONTEXT);
     const lastDoneStep = [...(task.steps ?? [])]
       .map((step, index) => ({ step, index }))
       .reverse()
@@ -1170,7 +1179,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
     }
 
     const reengageColumn = await resolveWipColumnForTask(scopedStore, task.id);
-    const reengagedTask = await scopedStore.moveTask(task.id, reengageColumn, { preserveProgress: true });
+    const reengagedTask = await scopedStore.moveTask(task.id, reengageColumn, { preserveProgress: true }, UNATTRIBUTED_MUTATION_CONTEXT);
     await triggerCommentWakeForAssignedAgent(scopedStore, reengagedTask, wake);
     return { task: reengagedTask, reengaged: true };
   }
@@ -2218,6 +2227,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       const task = await scopedStore.createTask(
         createInput,
         { onSummarize, settings: { autoSummarizeTitles: settings.autoSummarizeTitles } },
+        UNATTRIBUTED_MUTATION_CONTEXT,
       );
 
       // Newly created tasks are still triage/todo and cannot be worktree-acquired until
@@ -2228,7 +2238,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
               task.id,
               (((task.title ?? "").trim() || task.description).slice(0, 60)),
             ),
-          })
+          }, UNATTRIBUTED_MUTATION_CONTEXT)
         : task;
 
       const taskWithBranchContext = requestedBranchMode === "shared-group" && sharedFeatureBranch
@@ -2238,7 +2248,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
             await scopedStore.setTaskBranchGroup(taskWithAutoBranch.id, group.id);
             const taskSegment = ((taskWithAutoBranch.title ?? "").trim() || taskWithAutoBranch.description).slice(0, 60);
             const workingBranch = derivePerTaskBranch(sharedFeatureBranch, taskSegment);
-            return scopedStore.updateTask(taskWithAutoBranch.id, { branch: workingBranch });
+            return scopedStore.updateTask(taskWithAutoBranch.id, { branch: workingBranch }, UNATTRIBUTED_MUTATION_CONTEXT);
           })()
         : taskWithAutoBranch;
 
@@ -2579,7 +2589,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         preserveProgress,
         allocateWorktree,
         moveSource: "user",
-      });
+      }, UNATTRIBUTED_MUTATION_CONTEXT);
       res.json(task);
     } catch (err: unknown) {
       if (err instanceof ApiError) {
@@ -2841,7 +2851,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
             revertedAt: new Date().toISOString(),
             ...(revertCommitSha ? { revertedCommitSha: revertCommitSha } : {}),
           },
-        });
+        }, UNATTRIBUTED_MUTATION_CONTEXT);
       };
 
       if (mode === "ai") {
@@ -2998,7 +3008,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
                 // PR already exists for this sub-repo's branch, just link it.
                 const prInfo: PrInfo = { ...existingPr, manual: true };
                 await persistPrInfo(prInfo);
-                await scopedStore.logEntry(task.id, "Linked existing revert PR", `${target.repoBranch.repo}: PR #${prInfo.number}: ${prInfo.url}`);
+                await scopedStore.logEntry(task.id, "Linked existing revert PR", `${target.repoBranch.repo}: PR #${prInfo.number}: ${prInfo.url}`, UNATTRIBUTED_MUTATION_CONTEXT);
                 resultRepos.push({ repo: target.repoBranch.repo, revertBranch, prUrl: prInfo.url, prNumber: prInfo.number, existingPr: true });
                 continue;
               }
@@ -3018,7 +3028,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
               });
               const prInfo: PrInfo = { ...created, manual: true };
               await persistPrInfo(prInfo);
-              await scopedStore.logEntry(task.id, "Created revert PR", `${target.repoBranch.repo}: PR #${prInfo.number}: ${prInfo.url}`);
+              await scopedStore.logEntry(task.id, "Created revert PR", `${target.repoBranch.repo}: PR #${prInfo.number}: ${prInfo.url}`, UNATTRIBUTED_MUTATION_CONTEXT);
               resultRepos.push({ repo: target.repoBranch.repo, revertBranch, prUrl: prInfo.url, prNumber: prInfo.number });
             }
 
@@ -3192,7 +3202,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
           // open (or all-state) PR already exists for this branch, just link it.
           const prInfo: PrInfo = { ...existingPr, manual: true };
           await persistPrInfo(prInfo);
-          await scopedStore.logEntry(task.id, "Linked existing revert PR", `PR #${prInfo.number}: ${prInfo.url}`);
+          await scopedStore.logEntry(task.id, "Linked existing revert PR", `PR #${prInfo.number}: ${prInfo.url}`, UNATTRIBUTED_MUTATION_CONTEXT);
           res.json({
             mode: "pr",
             clean: true,
@@ -3261,7 +3271,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
             });
             const prInfo: PrInfo = { ...created, manual: true };
             await persistPrInfo(prInfo);
-            await scopedStore.logEntry(task.id, "Created revert PR", `PR #${prInfo.number}: ${prInfo.url}`);
+            await scopedStore.logEntry(task.id, "Created revert PR", `PR #${prInfo.number}: ${prInfo.url}`, UNATTRIBUTED_MUTATION_CONTEXT);
             res.json({
               mode: "pr",
               clean: true,
@@ -3515,9 +3525,9 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
           sessionFile: null,
           ...autoPauseClearPatch,
           ...buildManualRetryResetPatch({ resetMergeRetries: true }),
-        });
-        await scopedStore.logEntry(req.params.id, `Retry requested from dashboard (unusable worktree session-start recovery → ${reboundColumn}, preserving progress${retryLogSuffix})`);
-        const updated = await scopedStore.moveTask(req.params.id, reboundColumn, { preserveProgress: true });
+        }, UNATTRIBUTED_MUTATION_CONTEXT);
+        await scopedStore.logEntry(req.params.id, `Retry requested from dashboard (unusable worktree session-start recovery → ${reboundColumn}, preserving progress${retryLogSuffix})`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
+        const updated = await scopedStore.moveTask(req.params.id, reboundColumn, { preserveProgress: true }, UNATTRIBUTED_MUTATION_CONTEXT);
         res.json(updated);
         return;
       }
@@ -3542,14 +3552,15 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
             error: null,
             ...autoPauseClearPatch,
             ...buildManualRetryResetPatch(),
-          });
+          }, UNATTRIBUTED_MUTATION_CONTEXT);
           await scopedStore.logEntry(
             req.params.id,
             isInReviewExecutionStall
               ? `Retry requested from dashboard (stranded in-review execution retry → ${reboundColumn}, preserving progress${retryLogSuffix})`
               : `Retry requested from dashboard (execution failure in-review → ${reboundColumn}, preserving progress${retryLogSuffix})`,
+            undefined, UNATTRIBUTED_MUTATION_CONTEXT,
           );
-          const updated = await scopedStore.moveTask(req.params.id, reboundColumn, { preserveProgress: true });
+          const updated = await scopedStore.moveTask(req.params.id, reboundColumn, { preserveProgress: true }, UNATTRIBUTED_MUTATION_CONTEXT);
           res.json(updated);
           return;
         }
@@ -3559,8 +3570,8 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
           error: null,
           ...autoPauseClearPatch,
           ...buildManualRetryResetPatch({ resetMergeRetries: true }),
-        });
-        await scopedStore.logEntry(req.params.id, `Retry requested from dashboard (in-review merge retry, mergeRetries reset${retryLogSuffix})`);
+        }, UNATTRIBUTED_MUTATION_CONTEXT);
+        await scopedStore.logEntry(req.params.id, `Retry requested from dashboard (in-review merge retry, mergeRetries reset${retryLogSuffix})`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
         const updated = await scopedStore.getTask(req.params.id);
         res.json(updated);
         return;
@@ -3575,14 +3586,14 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         baseCommitSha: null,
         ...autoPauseClearPatch,
         ...buildManualRetryResetPatch({ resetMergeRetries: true }),
-      });
+      }, UNATTRIBUTED_MUTATION_CONTEXT);
 
       if (retrySpecification) {
         const { rm } = await import("node:fs/promises");
         const { join } = await import("node:path");
         const promptPath = join(scopedStore.getRootDir(), ".fusion", "tasks", task.id, "PROMPT.md");
         await rm(promptPath, { force: true });
-        await scopedStore.logEntry(req.params.id, "Retry requested from dashboard (planning retry budget reset)");
+        await scopedStore.logEntry(req.params.id, "Retry requested from dashboard (planning retry budget reset)", undefined, UNATTRIBUTED_MUTATION_CONTEXT);
         const updated = await scopedStore.getTask(req.params.id);
         res.json(updated);
         return;
@@ -3614,6 +3625,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
             await scopedStore.logEntry(
               req.params.id,
               `Reset ${completedSteps.length} step(s) to pending — branch had no commits (uncommitted work lost)`,
+              undefined, UNATTRIBUTED_MUTATION_CONTEXT,
             );
           }
         } catch {
@@ -3621,9 +3633,9 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         }
       }
 
-      await scopedStore.logEntry(req.params.id, "Retry requested from dashboard (stuck kill budget reset)");
+      await scopedStore.logEntry(req.params.id, "Retry requested from dashboard (stuck kill budget reset)", undefined, UNATTRIBUTED_MUTATION_CONTEXT);
       const reboundColumn = await resolveReboundColumnForTask(scopedStore, req.params.id);
-      const updated = await scopedStore.moveTask(req.params.id, reboundColumn);
+      const updated = await scopedStore.moveTask(req.params.id, reboundColumn, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
       res.json(updated);
     } catch (err: unknown) {
       if (err instanceof ApiError) {
@@ -3708,15 +3720,16 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         }
       }
 
-      await scopedStore.updateTask(req.params.id, RESET_TASK_FIELDS);
+      await scopedStore.updateTask(req.params.id, RESET_TASK_FIELDS, UNATTRIBUTED_MUTATION_CONTEXT);
 
       await scopedStore.logEntry(
         req.params.id,
         "Task reset by user — all progress cleared, fresh worktree and branch will be allocated",
+        undefined, UNATTRIBUTED_MUTATION_CONTEXT,
       );
 
       const resetColumn = await resolveReboundColumnForTask(scopedStore, req.params.id);
-      await scopedStore.moveTask(req.params.id, resetColumn);
+      await scopedStore.moveTask(req.params.id, resetColumn, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
       await clearRebuiltSpecWorkflowPins(scopedStore, req.params.id);
       let updated = await scopedStore.getTask(req.params.id);
       if (!updated) {
@@ -3756,11 +3769,12 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         behaviour exactly while making the column follow the resolved rebound target.
         */
         const driftCorrection = { ...RESET_DRIFT_CORRECTION_FIELDS, column: resetColumn };
-        await scopedStore.updateTask(req.params.id, driftCorrection);
+        await scopedStore.updateTask(req.params.id, driftCorrection, UNATTRIBUTED_MUTATION_CONTEXT);
         await scopedStore.logEntry(
           req.params.id,
           `Auto-corrected reset drift after moveTask — normalized task back to ${resetColumn} with cleared worktree/branch bindings`,
           JSON.stringify(offendingSnapshot),
+          UNATTRIBUTED_MUTATION_CONTEXT,
         );
         await emitResetDriftAudit(scopedStore, req.params.id, offendingSnapshot);
         updated = await scopedStore.getTask(req.params.id);
@@ -3816,7 +3830,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       }
 
       const refinedTask = await scopedStore.refineTask(req.params.id, trimmedFeedback);
-      await scopedStore.logEntry(req.params.id, "Refinement requested", trimmedFeedback);
+      await scopedStore.logEntry(req.params.id, "Refinement requested", trimmedFeedback, UNATTRIBUTED_MUTATION_CONTEXT);
       res.status(201).json(refinedTask);
     } catch (err: unknown) {
       if (err instanceof ApiError) {
@@ -4065,7 +4079,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       // Update all tasks in parallel
       const updatePromises = taskIds.map(async (taskId) => {
         try {
-          const updated = await scopedStore.updateTask(taskId, updates);
+          const updated = await scopedStore.updateTask(taskId, updates, UNATTRIBUTED_MUTATION_CONTEXT);
           return { success: true, task: updated };
         } catch (err: unknown) {
       if (err instanceof ApiError) {
@@ -4790,14 +4804,14 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
           await scopedStore.updateTask(task.id, {
             ...approvalPatch,
             status: "awaiting-approval",
-          });
+          }, UNATTRIBUTED_MUTATION_CONTEXT);
           await scopedStore.moveTask(task.id, reboundColumn, {
             preserveStatus: true,
             workflowMoveSource: "plan-approval",
-          });
+          }, UNATTRIBUTED_MUTATION_CONTEXT);
         } else {
           // Preserve the historical same-column move behavior and its guards.
-          await scopedStore.moveTask(task.id, reboundColumn);
+          await scopedStore.moveTask(task.id, reboundColumn, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
         }
         /*
          * FNXC:PlanApproval 2026-08-03-18:53:
@@ -4806,7 +4820,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
          * fingerprint, or explicitly clear a prior fingerprint when PROMPT.md was unreadable,
          * so a stale plan can never bypass a later manual approval gate.
          */
-        const approved = await scopedStore.updateTask(task.id, approvalPatch);
+        const approved = await scopedStore.updateTask(task.id, approvalPatch, UNATTRIBUTED_MUTATION_CONTEXT);
         /*
         FNXC:SpecDrift 2026-08-09-07:36:
         Publish the deterministic report before the approval handoff seeds graph execution. A
@@ -4830,7 +4844,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         void handoff;
         // Activity logging is secondary to the now-durable decision. Do not turn
         // a successful approval into a 500 if the bounded log append is unavailable.
-        await scopedStore.logEntry(task.id, "Plan approved by user").catch((error) => {
+        await scopedStore.logEntry(task.id, "Plan approved by user", undefined, UNATTRIBUTED_MUTATION_CONTEXT).catch((error) => {
           severityAuditLog.warn(`Failed to record plan approval activity for ${task.id}: ${error instanceof Error ? error.message : String(error)}`);
         });
         return approved;
@@ -4877,7 +4891,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         // carrying the legacy release-authorization hold can now be rejected normally.
 
         // Log the rejection
-        await scopedStore.logEntry(task.id, "Plan rejected by user", "Specification will be regenerated");
+        await scopedStore.logEntry(task.id, "Plan rejected by user", "Specification will be regenerated", UNATTRIBUTED_MUTATION_CONTEXT);
 
         /*
          * FNXC:PlanApproval 2026-08-03-19:03:
@@ -4899,7 +4913,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
           await scopedStore.moveTask(task.id, intakeColumn, {
             preserveStatus: true,
             workflowMoveSource: "plan-approval",
-          });
+          }, UNATTRIBUTED_MUTATION_CONTEXT);
         }
 
         // Clear status to return to normal triage state
@@ -4909,7 +4923,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
          * clear and PROMPT.md removal, so the regenerated plan is always treated as new and
          * requires fresh manual approval (it must never inherit the rejected plan's fingerprint).
          */
-        await scopedStore.updateTask(task.id, { status: null, approvedPlanFingerprint: null });
+        await scopedStore.updateTask(task.id, { status: null, approvedPlanFingerprint: null }, UNATTRIBUTED_MUTATION_CONTEXT);
         return await scopedStore.getTask(task.id);
       });
       res.json(updated);
@@ -5021,15 +5035,15 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       }
 
       if (task.status === "awaiting-approval") {
-        await scopedStore.logEntry(task.id, "Expedite requested — operator action required", "approve-plan required");
+        await scopedStore.logEntry(task.id, "Expedite requested — operator action required", "approve-plan required", UNATTRIBUTED_MUTATION_CONTEXT);
         return res.json({ task, expedited: false, requiresOperatorAction: "approve-plan" });
       }
       if (task.status === "failed") {
-        await scopedStore.logEntry(task.id, "Expedite requested — operator action required", "retry-failed required");
+        await scopedStore.logEntry(task.id, "Expedite requested — operator action required", "retry-failed required", UNATTRIBUTED_MUTATION_CONTEXT);
         return res.json({ task, expedited: false, requiresOperatorAction: "retry-failed" });
       }
       if (task.status === "stuck-killed") {
-        await scopedStore.logEntry(task.id, "Expedite requested — operator action required", "retry-stuck required");
+        await scopedStore.logEntry(task.id, "Expedite requested — operator action required", "retry-stuck required", UNATTRIBUTED_MUTATION_CONTEXT);
         return res.json({ task, expedited: false, requiresOperatorAction: "retry-stuck" });
       }
 
@@ -5048,10 +5062,10 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
 
       const updated = await scopedStore.updateTask(task.id, {
         nextRecoveryAt: undefined,
-      });
+      }, UNATTRIBUTED_MUTATION_CONTEXT);
       await scopedStore.logEntry(task.id, "Refinement expedited", strandedEntry?.reasons.includes("recovery-backoff")
         ? "Cleared nextRecoveryAt"
-        : "Expedite request recorded for stale refinement");
+        : "Expedite request recorded for stale refinement", UNATTRIBUTED_MUTATION_CONTEXT);
 
       res.json({
         task: updated,
@@ -5735,7 +5749,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       */
       if (task.column === respecifyTarget) {
         // Log the revision request
-        await scopedStore.logEntry(task.id, "AI spec revision requested", feedback);
+        await scopedStore.logEntry(task.id, "AI spec revision requested", feedback, UNATTRIBUTED_MUTATION_CONTEXT);
 
         // Remove the existing spec so replanning starts from the task
         // description and feedback rather than revising stale PROMPT.md content.
@@ -5745,7 +5759,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         await rm(promptPath, { force: true });
 
         // Update status to indicate needs replanning
-        await scopedStore.updateTask(task.id, { status: "needs-replan" });
+        await scopedStore.updateTask(task.id, { status: "needs-replan" }, UNATTRIBUTED_MUTATION_CONTEXT);
 
         const updated = await scopedStore.getTask(task.id);
         res.json(updated);
@@ -5774,10 +5788,10 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       }
 
       // Log the revision request
-      await scopedStore.logEntry(task.id, "AI spec revision requested", feedback);
+      await scopedStore.logEntry(task.id, "AI spec revision requested", feedback, UNATTRIBUTED_MUTATION_CONTEXT);
 
       // Move to triage for replanning
-      const updated = await scopedStore.moveTask(task.id, respecifyTarget);
+      const updated = await scopedStore.moveTask(task.id, respecifyTarget, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
 
       // Remove the existing spec so replanning starts from the task
       // description and feedback rather than revising stale PROMPT.md content.
@@ -5787,7 +5801,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       await rm(promptPath, { force: true });
 
       // Update status to indicate needs replanning
-      await scopedStore.updateTask(task.id, { status: "needs-replan" });
+      await scopedStore.updateTask(task.id, { status: "needs-replan" }, UNATTRIBUTED_MUTATION_CONTEXT);
 
       res.json(updated);
     } catch (err: unknown) {
@@ -5844,14 +5858,14 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
           ? "todo"
           : "triage";
 
-      await scopedStore.logEntry(task.id, "Specification rebuild requested by user");
+      await scopedStore.logEntry(task.id, "Specification rebuild requested by user", undefined, UNATTRIBUTED_MUTATION_CONTEXT);
       await clearRebuiltSpecWorkflowPins(scopedStore, task.id);
 
       if (task.column !== replanColumn) {
         await scopedStore.moveTask(task.id, replanColumn, {
           moveSource: "user",
           recoveryRehome: true,
-        });
+        }, UNATTRIBUTED_MUTATION_CONTEXT);
       }
 
       // Remove the existing spec so rebuilds produce a fresh PROMPT.md instead
@@ -5862,7 +5876,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       await rm(promptPath, { force: true });
 
       // Update status to indicate needs replanning
-      await scopedStore.updateTask(task.id, { status: "needs-replan" });
+      await scopedStore.updateTask(task.id, { status: "needs-replan" }, UNATTRIBUTED_MUTATION_CONTEXT);
 
       /*
       FNXC:WorkflowReplan 2026-07-16-12:00:
@@ -6398,7 +6412,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         }
       }
 
-      const task = await scopedStore.updateTask(req.params.id, updates);
+      const task = await scopedStore.updateTask(req.params.id, updates, UNATTRIBUTED_MUTATION_CONTEXT);
       if (
         dismissNearDuplicate === true
         && task.sourceMetadata?.duplicateSource === "triage-marker"
@@ -6496,7 +6510,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
 
       const task = await scopedStore.updateTask(req.params.id, {
         assignedAgentId: agentId === null ? null : agentId,
-      });
+      }, UNATTRIBUTED_MUTATION_CONTEXT);
       res.json(task);
     } catch (err: unknown) {
       if (err instanceof ApiError) {
@@ -6534,7 +6548,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         updates.status = null;
       }
 
-      const task = await scopedStore.updateTask(req.params.id, updates as Parameters<typeof scopedStore.updateTask>[1]);
+      const task = await scopedStore.updateTask(req.params.id, updates as Parameters<typeof scopedStore.updateTask>[1], UNATTRIBUTED_MUTATION_CONTEXT);
       res.json(task);
     } catch (err: unknown) {
       if (err instanceof ApiError) {
@@ -6611,10 +6625,22 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         throw badRequest("customFields must be an object");
       }
 
+      /*
+      FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage D — STRUCTURAL SEAM, closed):
+      This inline widening RE-DECLARES a mutating store method, so it did not inherit the store's own
+      `runContext` parameter and would have kept accepting unattributed custom-field writes after
+      every ordinary call site was converted — the same class of hole as the nine engine seams Stage A
+      closed, and invisible to the census because no marker is involved either way.
+
+      The re-declaration now carries the context, and the argument below supplies it. Keep the
+      parameter required here even though `TaskStore`'s own is still optional: this seam exists
+      precisely because the real signature does not reach it.
+      */
       const storeWithFields = scopedStore as TaskStore & {
         updateTaskCustomFields?: (
           taskId: string,
           patch: Record<string, unknown>,
+          runContext: RunMutationContext,
         ) => Promise<{ ok: true; task: Task } | { ok: false; rejection: { code: string; fieldId: string; detail: string } }>;
       };
       if (typeof storeWithFields.updateTaskCustomFields !== "function") {
@@ -6624,6 +6650,8 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       const result = await storeWithFields.updateTaskCustomFields(
         req.params.id,
         patch as Record<string, unknown>,
+        // FNXC:Identity 2026-08-09-03:04 (U18): the actor is the authenticated human who edited the field; U9 threads it here.
+        UNATTRIBUTED_MUTATION_CONTEXT,
       );
       if (!result.ok) {
         throw new ApiError(400, result.rejection.detail, {
@@ -6653,7 +6681,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       const task = await scopedStore.updateTask(req.params.id, {
         assigneeUserId: null,
         status: null,
-      });
+      }, UNATTRIBUTED_MUTATION_CONTEXT);
       res.json(task);
     } catch (err: unknown) {
       if (err instanceof ApiError) {
@@ -6887,7 +6915,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         addressing: nextAddressing,
       };
 
-      await scopedStore.updateTask(task.id, { reviewState: nextReviewState });
+      await scopedStore.updateTask(task.id, { reviewState: nextReviewState }, UNATTRIBUTED_MUTATION_CONTEXT);
 
       let steeringCommentId: string | null = null;
       const steeringComment = await scopedStore.addSteeringComment(task.id, steeringText, "user");
@@ -6920,7 +6948,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         }
       }
 
-      await scopedStore.logEntry(task.id, "Same-task review revision requested", `${selectedItems.length} item(s) submitted from review tab`);
+      await scopedStore.logEntry(task.id, "Same-task review revision requested", `${selectedItems.length} item(s) submitted from review tab`, UNATTRIBUTED_MUTATION_CONTEXT);
       res.json({ task: updatedTask, reviewState: nextReviewState });
     } catch (err: unknown) {
       if (err instanceof ApiError) {
@@ -6971,7 +6999,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
           status: null,
           error: null,
           sessionFile: null,
-        });
+        }, UNATTRIBUTED_MUTATION_CONTEXT);
         const lastDoneStep = [...task.steps]
           .map((step, index) => ({ step, index }))
           .reverse()
@@ -6980,7 +7008,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
           await scopedStore.updateStep(task.id, lastDoneStep.index, "pending");
         }
         const prFeedbackColumn = await resolveWipColumnForTask(scopedStore, task.id);
-        updatedTask = await scopedStore.moveTask(task.id, prFeedbackColumn, { preserveProgress: true });
+        updatedTask = await scopedStore.moveTask(task.id, prFeedbackColumn, { preserveProgress: true }, UNATTRIBUTED_MUTATION_CONTEXT);
       }
 
       const hasActiveSession = Boolean(updatedTask.sessionFile);
@@ -6993,7 +7021,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         });
       }
 
-      await scopedStore.logEntry(task.id, "Address PR feedback requested", `${prLabel} queued via ce-resolve-pr-feedback skill prompt`);
+      await scopedStore.logEntry(task.id, "Address PR feedback requested", `${prLabel} queued via ce-resolve-pr-feedback skill prompt`, UNATTRIBUTED_MUTATION_CONTEXT);
       res.json({ task: updatedTask });
     } catch (err: unknown) {
       if (err instanceof ApiError) {
@@ -7012,9 +7040,9 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       await scopedStore.updateTask(req.params.id, {
         assigneeUserId: null,
         status: null,
-      });
+      }, UNATTRIBUTED_MUTATION_CONTEXT);
       const unassignColumn = await resolveReboundColumnForTask(scopedStore, req.params.id);
-      const task = await scopedStore.moveTask(req.params.id, unassignColumn);
+      const task = await scopedStore.moveTask(req.params.id, unassignColumn, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
       res.json(task);
     } catch (err: unknown) {
       if (err instanceof ApiError) {
@@ -7200,7 +7228,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
           */
           actor: BOOTSTRAP_ACTOR_CONTEXT,
         },
-      });
+      }, UNATTRIBUTED_MUTATION_CONTEXT);
       scheduleReleaseExecutionAgentBindings(engine, req.params.id, runtimeLogger);
       res.json(task);
     } catch (err: unknown) {

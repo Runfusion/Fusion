@@ -1,3 +1,4 @@
+import { UNATTRIBUTED_CONTEXT_MATCHER } from "./mutation-context-matchers.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Task } from "@fusion/core";
 
@@ -740,7 +741,7 @@ describe("maybeCreateTrackingIssue", () => {
     });
 
     expect(summarizeTitleMock).toHaveBeenCalledWith(longDescription, rootDir, "anthropic", "claude");
-    expect(updateTask).toHaveBeenCalledWith("FN-1", { title: "AI generated title" });
+    expect(updateTask).toHaveBeenCalledWith("FN-1", { title: "AI generated title" }, UNATTRIBUTED_CONTEXT_MATCHER);
     expect(createIssueMock).toHaveBeenCalledWith(expect.objectContaining({ title: "[FN-1] AI generated title" }));
     expect(recordActivity).toHaveBeenCalledWith(expect.objectContaining({ metadata: { type: "github-tracking-title-summarized" } }));
   });
