@@ -7329,7 +7329,14 @@ describe("SelfHealingManager", () => {
       const now = new Date().toISOString();
       const tasks = new Map<string, Task>([["FN-1", { id: "FN-1", column: "in-review", paused: false, status: "failed", mergeRetries: 3, mergeDetails: undefined, baseBranch: "main", branch: "fusion/fn-1", worktree: "/tmp/wt", dependencies: [], steps: [], currentStep: 0, description: "x", log: [], createdAt: now, updatedAt: now } as Task]]);
       const eventedStore = createMockStore({
-        getSettings: vi.fn().mockResolvedValue({ globalPause: false, enginePaused: false, ntfyEnabled: true, ntfyTopic: "topic", failureNotificationMode: "sticky-only", failureNotificationDelayMs: 50 }),
+        /*
+        FNXC:SelfHealingNotifications 2026-08-11-02:16:
+        When maintenance retries are disabled, no sweep owns terminal failures; task-wedged notifications must fail open.
+
+        FNXC:SelfHealingNotifications 2026-08-11-21:10:
+        Disable the wedge settle window here so this fixture isolates recovery ownership instead of waiting through the production debounce.
+        */
+        getSettings: vi.fn().mockResolvedValue({ globalPause: false, enginePaused: false, maintenanceIntervalMs: 0, wedgeNotificationSettleMs: 0, ntfyEnabled: true, ntfyTopic: "topic", failureNotificationMode: "sticky-only", failureNotificationDelayMs: 50 }),
         listTasks: vi.fn().mockImplementation(async () => Array.from(tasks.values())),
         getTask: vi.fn().mockImplementation(async (id: string) => tasks.get(id)),
       });
