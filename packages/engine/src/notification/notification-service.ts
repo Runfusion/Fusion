@@ -18,6 +18,9 @@ import { NtfyNotificationProvider } from "./ntfy-provider.js";
 import { WebhookNotificationProvider } from "./webhook-provider.js";
 import { classifyTerminalFailureAutoRecoveryForTask, describeTaskRecoveryOwner, describeTaskWedge, isTaskProgressing, shouldWithholdWedgeAlertForAutoRecovery, type TaskWedgeDescriptor } from "./task-wedge-notification.js";
 
+type PendingWedgeCompletionOutcome = "delivered" | "suppressed" | "cleared" | "rearmed" | "held" | "absent" | "unreadable";
+type PendingWedgeCompletionResult = { outcome: PendingWedgeCompletionOutcome; reasonKey?: string; remainingMs?: number };
+
 export interface NotificationServiceOptions {
   /** Project identifier for notification deep links */
   projectId?: string;
@@ -31,6 +34,8 @@ export interface NotificationServiceOptions {
   agentNameResolver?: (agentId: string) => Promise<string | null> | string | null;
   /** Test hook to override failed-notification grace period (default 60_000ms). */
   failedNotificationGraceMs?: number;
+  /** Test hook for the durable terminal-wedge settle window. */
+  wedgeNotificationSettleMs?: number;
 }
 
 interface NotificationServiceStoreEvents {
@@ -46,6 +51,8 @@ interface NotificationServiceStore {
   getTask?(id: string): Promise<Task | undefined> | Task | undefined;
   /** Durable compare-and-set for restart-safe wedge delivery episodes. */
   claimTaskWedgeNotificationEpisode?(taskId: string, reasonKey: string | null): Promise<{ episodeId?: string; claimed: boolean }>;
+  markTaskWedgeNotificationPending?(taskId: string, descriptor: { reasonKey: string; source: "auto" | "supplied"; reason: string; action: string; gate?: string }, options?: { staleAfterMs?: number }): Promise<{ since: string; armed: boolean; restamped: boolean }>;
+  clearTaskWedgeNotificationPending?(taskId: string, reasonKey?: string): Promise<boolean>;
   /** Optional so lightweight notification fakes retain their structural surface. */
   markTerminalFailureAutoRecoveryBudgetExhausted?(taskId: string, options: { maxAttempts: number }): Promise<"stamped" | "already-stamped" | "not-exhausted" | "no-budget">;
   /** Optional; self-healing's concrete store is the durable backstop when absent. */
@@ -127,6 +134,10 @@ export class NotificationService {
   private failureNotificationSuppressedCount = 0;
   private failureNotificationDelayMs = 60_000;
   private failureNotificationMode: "sticky-only" | "all" | "terminal-only" = "sticky-only";
+  private wedgeNotificationSettleMs = 300_000;
+  private maintenanceIntervalMs = 900_000;
+  private wedgeNotificationSuppressedCount = 0;
+  private readonly pendingWedgeNotifications = new Map<string, { timer?: NodeJS.Timeout; descriptor: TaskWedgeDescriptor; source: "auto" | "supplied"; since: string; task: Task }>();
   /** Compatibility fallback for lightweight test stores without the durable TaskStore CAS. */
   private readonly activeWedgeReasons = new Map<string, string>();
   /*
@@ -158,14 +169,28 @@ export class NotificationService {
   links never reject: `maybeNotifyTaskWedge` already owns its own error handling, and a rejected link
   would poison every later notification for that task.
   */
-  private readonly wedgeHandlingChains = new Map<string, Promise<unknown>>();
+  private readonly wedgeHandlingChains = new Map<string, Promise<void>>();
 
-  /** Queues wedge handling for one task behind any handling already in flight for it. */
-  private enqueueWedgeHandling<T>(taskId: string, run: () => Promise<T>): Promise<T> {
+  /**
+   * Queues wedge handling for one task behind any handling already in flight for it.
+   *
+   * FNXC:TaskWedgeNotifications 2026-08-11-19:20:
+   * This queue deliberately resolves only to void and never rejects. Timer and sweep callers use
+   * the public completion wrapper's closure-captured outcome; an in-chain observation calls the
+   * queue-free core directly. Re-entering this queue from a link would wait on its own successor
+   * and permanently deadlock all later wedge handling for that task.
+   */
+  private enqueueWedgeHandling(taskId: string, run: () => Promise<void>): Promise<void> {
     const previous = this.wedgeHandlingChains.get(taskId) ?? Promise.resolve();
-    const next = previous.then(run, run);
+    const execute = async (): Promise<void> => {
+      try {
+        await run();
+      } catch (error) {
+        schedulerLog.debug(`[notify] ${taskId} wedge handling failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    };
+    const next = previous.then(execute, execute);
     this.wedgeHandlingChains.set(taskId, next);
-    /* Drop the entry only if no later link was appended while this one ran. */
     void next.finally(() => {
       if (this.wedgeHandlingChains.get(taskId) === next) this.wedgeHandlingChains.delete(taskId);
     });
@@ -179,6 +204,7 @@ export class NotificationService {
     this.chatStore = options.chatStore;
     this.failedNotificationGraceMs = options.failedNotificationGraceMs ?? 60_000;
     this.failureNotificationDelayMs = this.failedNotificationGraceMs;
+    this.wedgeNotificationSettleMs = options.wedgeNotificationSettleMs ?? 300_000;
   }
 
   attachChatStore(chatStore: NotificationChatStore): void {
@@ -242,6 +268,8 @@ export class NotificationService {
     }
     this.pendingFailureNotifications.clear();
     this.pendingFailureStartTimes.clear();
+    for (const pending of this.pendingWedgeNotifications.values()) if (pending.timer) clearTimeout(pending.timer);
+    this.pendingWedgeNotifications.clear();
 
     await this.dispatcher.shutdownAll();
     this.started = false;
@@ -341,6 +369,20 @@ export class NotificationService {
   private async handleTaskMovedAsync(data: { task: Task; from: Column; to: Column }): Promise<void> {
     await this.maybeSuppressTransientFailedNotification(data.task, `moved to ${data.to}`);
 
+    /*
+    FNXC:TaskWedgeNotifications 2026-08-11-18:57:
+    task:moved is a production recovery path that does not enter maybeNotifyTaskWedge. A pending
+    durable hold must be cleared when its subject visibly progresses, including workflow-renamed
+    hold/WIP/terminal lanes, so its timer or restart sweep cannot alert after that recovery.
+    */
+    const movedProgressedLanes = await resolveProjectColumnsForRoles(this.store, ["hold", "countsTowardWip", "complete", "archived"]);
+    if (
+      movedProgressedLanes.has(data.to)
+      || (typeof data.task.status === "string" && data.task.status !== "failed")
+    ) {
+      await this.clearPendingWedgeNotification(data.task.id);
+    }
+
     const movedLifecycle = await this.resolveLifecycleColumnsForTask(data.task.id);
 
     if ((await this.resolveReviewColumnsForTask(data.task.id)).has(data.to)) {
@@ -392,7 +434,7 @@ export class NotificationService {
     only operator notification; dispatch-time suppression below covers races.
     */
     if (wedge) this.cancelPendingFailureNotification(task.id, "classified-terminal-wedge");
-    void this.enqueueWedgeHandling(task.id, () => this.maybeNotifyTaskWedge(task));
+    void this.enqueueWedgeHandling(task.id, async () => { await this.maybeNotifyTaskWedge(task); });
     void this.maybeSuppressTransientFailedNotification(task, `status=${task.status ?? "undefined"}`);
 
     /*
@@ -542,7 +584,9 @@ export class NotificationService {
     descriptor: TaskWedgeDescriptor,
     options?: { source?: "auto-recovery-escalation" },
   ): Promise<"delivered" | "suppressed" | "unavailable"> {
-    return this.enqueueWedgeHandling(task.id, () => this.maybeNotifyTaskWedge(task, descriptor, options));
+    let result: "delivered" | "suppressed" | "unavailable" = "unavailable";
+    await this.enqueueWedgeHandling(task.id, async () => { result = await this.maybeNotifyTaskWedge(task, descriptor, options); });
+    return result;
   }
 
   private async maybeNotifyTaskWedge(
@@ -586,6 +630,7 @@ export class NotificationService {
     if (recoveryOwner && !ownEscalation) {
       // Recovery ownership is not a wedge episode. Resolve only an episode we
       // can prove active, avoiding a write/claim for a never-notified snapshot.
+      await this.clearPendingWedgeNotification(task.id);
       if (this.activeWedgeReasons.has(task.id) || liveTask.wedgeNotification?.status === "active") {
         this.activeWedgeReasons.delete(task.id);
         await this.store.claimTaskWedgeNotificationEpisode?.(task.id, null);
@@ -651,11 +696,30 @@ export class NotificationService {
         || (!isActiveSelfHealingNoAction && typeof task.status === "string" && task.status !== "failed")
         || (isActiveSelfHealingNoAction && ["queued", "planning", "in-progress", "merging", "merging-pr", "merged", "done"].includes(task.status ?? ""));
       if (hasProgressed) {
+        await this.clearPendingWedgeNotification(task.id);
         this.activeWedgeReasons.delete(task.id);
         await this.store.claimTaskWedgeNotificationEpisode?.(task.id, null);
       }
       return "unavailable";
     }
+    const source: "auto" | "supplied" = suppliedDescriptor === undefined ? "auto" : "supplied";
+    if (this.wedgeNotificationSettleMs > 0) {
+      const marked = typeof this.store.markTaskWedgeNotificationPending === "function"
+        ? await this.store.markTaskWedgeNotificationPending(task.id, { ...descriptor, source }, { staleAfterMs: this.resolveStaleHoldHorizonMs() })
+        : this.markFallbackWedgePending(task, descriptor, { staleAfterMs: this.resolveStaleHoldHorizonMs() });
+      const existing = this.pendingWedgeNotifications.get(task.id);
+      this.pendingWedgeNotifications.set(task.id, { ...existing, descriptor, source, since: marked.since, task });
+      if (marked.armed) {
+        this.armPendingWedgeTimer(task.id, this.wedgeNotificationSettleMs);
+        return "unavailable";
+      }
+      const completion = await this.runPendingWedgeCompletion(task.id);
+      if ((completion.outcome === "held" || completion.outcome === "rearmed") && !this.pendingWedgeNotifications.get(task.id)?.timer) {
+        this.armPendingWedgeTimer(task.id, completion.remainingMs ?? this.wedgeNotificationSettleMs);
+      }
+      return completion.outcome === "delivered" ? "delivered" : completion.outcome === "suppressed" ? "suppressed" : "unavailable";
+    }
+    await this.clearPendingWedgeNotification(task.id);
     const isAutoRecoveryEscalationDispatch = ownEscalation && descriptor.reasonKey === "terminal-failed";
     if (isAutoRecoveryEscalationDispatch && classification.action === "notify" && classification.reason === "budget-exhausted") {
       try {
@@ -725,6 +789,174 @@ export class NotificationService {
       }
     }
     return "delivered";
+  }
+
+  /*
+  FNXC:TaskWedgeNotifications 2026-08-11-18:28:
+  Deferred wedge delivery is serialized per task. The timer enters through the public wrapper;
+  in-chain observations call the queue-free core to avoid awaiting a successor link of themselves.
+  Lightweight stores retain this hold only in memory: restart durability requires the production
+  pending-marker API, and stores without getTask can only observe recovery on later task updates.
+  */
+  getWedgeNotificationSettleMs(): number { return this.wedgeNotificationSettleMs; }
+
+  /*
+  FNXC:TaskWedgeNotifications 2026-08-11-19:08:
+  A restart-lost timer leaves periodic maintenance as the only deferred-delivery driver.
+  Keep this horizon beyond the resolved maintenance interval so its next tick observes a
+  re-stamped hold as fresh and can deliver it, rather than re-stamping forever.
+  */
+  private resolveStaleHoldHorizonMs(): number {
+    return Math.max(
+      this.wedgeNotificationSettleMs * 4,
+      this.maintenanceIntervalMs + this.wedgeNotificationSettleMs,
+    );
+  }
+
+  private markFallbackWedgePending(
+    task: Task,
+    descriptor: TaskWedgeDescriptor,
+    options: { forceRestamp?: boolean; staleAfterMs?: number } = {},
+  ): { since: string; armed: boolean; restamped: boolean } {
+    const prior = this.pendingWedgeNotifications.get(task.id);
+    const sameReason = prior?.descriptor.reasonKey === descriptor.reasonKey;
+    const age = prior ? Date.now() - Date.parse(prior.since) : Number.NaN;
+    const stale = sameReason
+      && typeof options.staleAfterMs === "number"
+      && Number.isFinite(options.staleAfterMs)
+      && Number.isFinite(age)
+      && age > options.staleAfterMs;
+    if (sameReason && !options.forceRestamp && !stale) return { since: prior.since, armed: false, restamped: false };
+    return { since: new Date().toISOString(), armed: true, restamped: prior != null };
+  }
+
+  private armPendingWedgeTimer(taskId: string, delayMs: number): void {
+    const pending = this.pendingWedgeNotifications.get(taskId);
+    if (!pending) return;
+    if (pending.timer) clearTimeout(pending.timer);
+    const timer = setTimeout(() => {
+      const entry = this.pendingWedgeNotifications.get(taskId);
+      if (entry) delete entry.timer;
+      void this.completePendingWedgeNotification(taskId).then((result) => {
+        if (result.outcome === "held" || result.outcome === "rearmed") this.armPendingWedgeTimer(taskId, result.remainingMs ?? this.wedgeNotificationSettleMs);
+      }).catch(() => undefined);
+    }, Math.max(1, Math.min(delayMs, this.wedgeNotificationSettleMs)));
+    timer.unref?.();
+    pending.timer = timer;
+  }
+
+  private async clearPendingWedgeNotification(taskId: string): Promise<void> {
+    const pending = this.pendingWedgeNotifications.get(taskId);
+    if (pending?.timer) clearTimeout(pending.timer);
+    this.pendingWedgeNotifications.delete(taskId);
+    try {
+      if (typeof this.store.clearTaskWedgeNotificationPending === "function") await this.store.clearTaskWedgeNotificationPending(taskId);
+    } catch (error) {
+      schedulerLog.debug(`[notify] ${taskId} could not clear pending wedge: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  async completePendingWedgeNotification(taskId: string): Promise<PendingWedgeCompletionResult> {
+    let result: PendingWedgeCompletionResult = { outcome: "absent" };
+    await this.enqueueWedgeHandling(taskId, async () => { result = await this.runPendingWedgeCompletion(taskId); });
+    return result;
+  }
+
+  private async runPendingWedgeCompletion(taskId: string): Promise<PendingWedgeCompletionResult> {
+    try {
+      /*
+      FNXC:TaskWedgeNotifications 2026-08-11-18:57:
+      A zero window is an exit from deferred delivery, not permission for a stale timer or sweep
+      candidate to dispatch. New observations still use maybeNotifyTaskWedge's legacy immediate
+      branch; existing durable evidence is cleared here to prevent an unwindowed duplicate.
+      */
+      if (this.wedgeNotificationSettleMs === 0) {
+        await this.clearPendingWedgeNotification(taskId);
+        return { outcome: "cleared" };
+      }
+      const cached = this.pendingWedgeNotifications.get(taskId);
+      let task: Task | undefined;
+      try {
+        task = typeof this.store.getTask === "function" ? await this.store.getTask(taskId) : cached?.task;
+      } catch {
+        await this.clearPendingWedgeNotification(taskId);
+        return { outcome: "unreadable" };
+      }
+      if (!task) {
+        await this.clearPendingWedgeNotification(taskId);
+        /*
+        FNXC:TaskWedgeNotifications 2026-08-11-19:15:
+        A completion with neither a live read nor the hold snapshot has no subject
+        to revalidate or safely format for delivery. Report it as unreadable rather
+        than absent so compatibility-store callers cannot mistake lost evidence for
+        a completed deferred episode.
+        */
+        return { outcome: "unreadable" };
+      }
+      const durablePending = task.wedgeNotification?.pending;
+      if (!durablePending && !cached) return { outcome: "absent" };
+      const source = durablePending?.source ?? cached!.source;
+      let descriptor: TaskWedgeDescriptor = durablePending
+        ? { reasonKey: durablePending.reasonKey, reason: durablePending.reason, action: durablePending.action, ...(durablePending.gate ? { gate: durablePending.gate } : {}) }
+        : cached!.descriptor;
+
+      const terminalLanes = await resolveProjectColumnsForRoles(this.store, ["complete", "archived"]);
+      const progressedLanes = await resolveProjectColumnsForRoles(this.store, ["hold", "countsTowardWip", "complete", "archived"]);
+      const activeSelfHealing = task.wedgeNotification?.status === "active" && task.wedgeNotification.reasonKey.startsWith("self-healing-no-action:");
+      const hasProgressed = progressedLanes.has(task.column)
+        || (!activeSelfHealing && typeof task.status === "string" && task.status !== "failed")
+        || (activeSelfHealing && ["queued", "planning", "in-progress", "merging", "merging-pr", "merged", "done"].includes(task.status ?? ""));
+      const suppliedHeldOrProgressing = source === "supplied" && (task.paused === true || task.userPaused === true || task.autoMerge === false || isTaskProgressing(task));
+      if (task.deletedAt != null || terminalLanes.has(task.column) || describeTaskRecoveryOwner(task) != null || hasProgressed || suppliedHeldOrProgressing) {
+        await this.clearPendingWedgeNotification(taskId);
+        return { outcome: "cleared" };
+      }
+
+      if (source === "auto") {
+        const fresh = describeTaskWedge(task);
+        if (!fresh) {
+          await this.clearPendingWedgeNotification(taskId);
+          return { outcome: "cleared" };
+        }
+        if (fresh.reasonKey !== descriptor.reasonKey) {
+          const marked = typeof this.store.markTaskWedgeNotificationPending === "function"
+            ? await this.store.markTaskWedgeNotificationPending(taskId, { ...fresh, source }, { staleAfterMs: this.resolveStaleHoldHorizonMs() })
+            : this.markFallbackWedgePending(task, fresh);
+          this.pendingWedgeNotifications.set(taskId, { ...cached, descriptor: fresh, source, since: marked.since, task });
+          return { outcome: "rearmed", reasonKey: fresh.reasonKey, remainingMs: this.wedgeNotificationSettleMs };
+        }
+        descriptor = fresh;
+      }
+
+      const since = Date.parse(durablePending?.since ?? cached!.since);
+      const age = Number.isFinite(since) ? Date.now() - since : Number.POSITIVE_INFINITY;
+      if (age > this.resolveStaleHoldHorizonMs()) {
+        const marked = typeof this.store.markTaskWedgeNotificationPending === "function"
+          ? await this.store.markTaskWedgeNotificationPending(taskId, { ...descriptor, source }, { staleAfterMs: 0 })
+          : this.markFallbackWedgePending(task, descriptor, { forceRestamp: true });
+        this.pendingWedgeNotifications.set(taskId, { ...cached, descriptor, source, since: marked.since, task });
+        return { outcome: "rearmed", reasonKey: descriptor.reasonKey, remainingMs: this.wedgeNotificationSettleMs };
+      }
+      const remainingMs = this.wedgeNotificationSettleMs - Math.max(0, age);
+      if (remainingMs > 0) return { outcome: "held", reasonKey: descriptor.reasonKey, remainingMs };
+
+      const claim = this.store.claimTaskWedgeNotificationEpisode
+        ? await this.store.claimTaskWedgeNotificationEpisode(taskId, descriptor.reasonKey)
+        : (() => { const episodeId = this.claimFallbackWedgeNotificationEpisode(taskId, descriptor.reasonKey, task.updatedAt); return { episodeId, claimed: episodeId !== undefined }; })();
+      await this.clearPendingWedgeNotification(taskId);
+      if (!claim.claimed || !claim.episodeId) {
+        this.wedgeNotificationSuppressedCount += 1;
+        return { outcome: "suppressed", reasonKey: descriptor.reasonKey };
+      }
+      const payload = this.createTaskPayload(task, "task-wedged", { wedgeReason: descriptor.reasonKey, reason: descriptor.reason, action: descriptor.action, ...(descriptor.gate ? { gate: descriptor.gate } : {}), notificationDedupeKey: `task-wedge:${claim.episodeId}` });
+      void this.dispatch("task-wedged", payload);
+      const content = `**${formatTaskIdentifier(task)} needs operator action**\n\n${descriptor.reason}\nRecommended action: ${descriptor.action}`;
+      try { await this.options.messageStore?.sendMessageOnce?.({ fromId: "system", fromType: "system", toId: DASHBOARD_USER_ID, toType: "user", type: "system", content, metadata: { taskId, kind: "task-wedge", wedgeReason: descriptor.reasonKey } }, `task-wedge:${claim.episodeId}`); } catch { /* mailbox is independently best-effort */ }
+      return { outcome: "delivered", reasonKey: descriptor.reasonKey };
+    } catch (error) {
+      schedulerLog.debug(`[notify] ${taskId} pending wedge completion failed: ${error instanceof Error ? error.message : String(error)}`);
+      return { outcome: "unreadable" };
+    }
   }
 
   private claimFallbackWedgeNotificationEpisode(taskId: string, reasonKey: string, updatedAt: string): string | undefined {
@@ -1124,6 +1356,14 @@ export class NotificationService {
         ? settings.failureNotificationDelayMs
         : this.failedNotificationGraceMs;
     this.failureNotificationMode = settings.failureNotificationMode ?? "sticky-only";
+    this.wedgeNotificationSettleMs = typeof settings.wedgeNotificationSettleMs === "number" && Number.isFinite(settings.wedgeNotificationSettleMs) && settings.wedgeNotificationSettleMs >= 0
+      ? settings.wedgeNotificationSettleMs
+      : this.options.wedgeNotificationSettleMs ?? 300_000;
+    this.maintenanceIntervalMs = typeof settings.maintenanceIntervalMs === "number"
+      && Number.isFinite(settings.maintenanceIntervalMs)
+      && settings.maintenanceIntervalMs > 0
+      ? settings.maintenanceIntervalMs
+      : 900_000;
   }
 
   private async maybeNotifyImmediateFailure(task: Task): Promise<void> {
@@ -1272,8 +1512,8 @@ export class NotificationService {
     this.maybeNotify(task.id, eventType, eventType === "failed" ? pending.payload : this.createTaskPayload(task, eventType));
   }
 
-  getMetrics(): { failureNotificationSuppressedCount: number } {
-    return { failureNotificationSuppressedCount: this.failureNotificationSuppressedCount };
+  getMetrics(): { failureNotificationSuppressedCount: number; wedgeNotificationSuppressedCount: number } {
+    return { failureNotificationSuppressedCount: this.failureNotificationSuppressedCount, wedgeNotificationSuppressedCount: this.wedgeNotificationSuppressedCount };
   }
 
   getPendingFailureCount(): number {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { normalizeWorkflowReviewFindings, upsertWorkflowStepResult, MAX_WORKFLOW_STEP_PRIOR_ATTEMPTS } from "../workflows/workflow-step-results.js";
+import { applySupersededFindingIds, MAX_WORKFLOW_REVIEW_FINDINGS, MAX_WORKFLOW_STEP_PRIOR_ATTEMPTS, normalizeSupersededFindingIds, normalizeWorkflowReviewFindings, upsertWorkflowStepResult } from "../workflows/workflow-step-results.js";
 import type { WorkflowStepResult } from "../types.js";
 
 function makeResult(overrides: Partial<WorkflowStepResult> = {}): WorkflowStepResult {
@@ -30,6 +30,49 @@ describe("normalizeWorkflowReviewFindings", () => {
       { title: "x".repeat(241), body: "body" },
       { title: "title", body: "x".repeat(4001) },
     ])).toBeUndefined();
+  });
+
+  it("preserves valid non-open resolutions but normalizes open and invalid values away", () => {
+    expect(normalizeWorkflowReviewFindings([
+      { id: "receipt", title: "Receipt", body: "Fixed", resolution: "resolved-in-review" },
+      { id: "stale", title: "Stale", body: "Fixed elsewhere", resolution: "superseded" },
+      { id: "open", title: "Open", body: "Fix", resolution: "open" },
+      { id: "invalid", title: "Invalid", body: "Still valid", resolution: "fixed" },
+      { id: "null", title: "Null", body: "Still valid", resolution: null },
+    ])).toEqual([
+      { id: "receipt", title: "Receipt", body: "Fixed", resolution: "resolved-in-review" },
+      { id: "stale", title: "Stale", body: "Fixed elsewhere", resolution: "superseded" },
+      { id: "open", title: "Open", body: "Fix" },
+      { id: "invalid", title: "Invalid", body: "Still valid" },
+      { id: "null", title: "Null", body: "Still valid" },
+    ]);
+  });
+});
+
+describe("superseded finding claims", () => {
+  it("normalizes bounded, deduplicated string ids", () => {
+    expect(normalizeSupersededFindingIds([" c1 ", 4, "c1", "", "c2"])).toEqual(["c1", "c2"]);
+    expect(normalizeSupersededFindingIds(Array.from({ length: MAX_WORKFLOW_REVIEW_FINDINGS + 1 }, (_, index) => `f${index}`))).toHaveLength(MAX_WORKFLOW_REVIEW_FINDINGS);
+    expect(normalizeSupersededFindingIds({})).toBeUndefined();
+  });
+
+  it("stamps only unresolved findings outside the claiming result", () => {
+    const prior = makeResult({ workflowStepId: "cleanup", findings: [
+      { id: "c1", title: "Open", body: "Fix" },
+      { id: "receipt", title: "Receipt", body: "Fixed", resolution: "resolved-in-review" },
+    ], priorAttempts: [{ ...makeResult({ workflowStepId: "cleanup", findings: [{ id: "c1", title: "Old", body: "Old" }] }) }] });
+    const claimant = makeResult({ workflowStepId: "code", findings: [{ id: "c1", title: "Own", body: "Own" }] });
+    const next = applySupersededFindingIds([prior, claimant], ["c1", "receipt"], { excludeWorkflowStepId: "code", sourceWorkflowStepId: "cleanup" });
+    expect(next?.[0].findings).toEqual([
+      { id: "c1", title: "Open", body: "Fix", resolution: "superseded" },
+      { id: "receipt", title: "Receipt", body: "Fixed", resolution: "resolved-in-review" },
+    ]);
+    const unrelated = makeResult({ workflowStepId: "other-review", findings: [{ id: "c1", title: "Different lane", body: "Must remain open" }] });
+    const scoped = applySupersededFindingIds([prior, unrelated, claimant], ["c1"], { excludeWorkflowStepId: "code", sourceWorkflowStepId: "cleanup" });
+    expect(scoped?.[1].findings?.[0]).not.toHaveProperty("resolution");
+    expect(next?.[0].priorAttempts).toEqual(prior.priorAttempts);
+    expect(next?.[1]).toBe(claimant);
+    expect(applySupersededFindingIds(next, ["missing"], { excludeWorkflowStepId: "code", sourceWorkflowStepId: "cleanup" })).toBe(next);
   });
 });
 

@@ -1763,6 +1763,52 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     });
     return result;
   }
+  /** Atomically records the durable evidence needed to complete a deferred wedge notification. */
+  async markTaskWedgeNotificationPending(
+    taskId: string,
+    descriptor: { reasonKey: string; source: "auto" | "supplied"; reason: string; action: string; gate?: string },
+    options?: { staleAfterMs?: number },
+  ): Promise<{ since: string; armed: boolean; restamped: boolean }> {
+    const now = new Date().toISOString();
+    let result = { since: now, armed: false, restamped: false };
+    await this.updateTaskAtomic(taskId, (current) => {
+      const prior = current.wedgeNotification;
+      const pending = prior?.pending;
+      if (prior?.status === "active" && prior.reasonKey === descriptor.reasonKey) {
+        return null;
+      }
+      const pendingSince = pending ? Date.parse(pending.since) : Number.NaN;
+      const stale = pending?.reasonKey === descriptor.reasonKey
+        && typeof options?.staleAfterMs === "number"
+        && Number.isFinite(options.staleAfterMs)
+        && Number.isFinite(pendingSince)
+        && Date.now() - pendingSince > options.staleAfterMs;
+      if (pending?.reasonKey === descriptor.reasonKey && !stale) {
+        result = { since: pending.since, armed: false, restamped: false };
+        return null;
+      }
+      const nextPending = { since: now, ...descriptor };
+      result = { since: now, armed: true, restamped: pending != null };
+      return {
+        wedgeNotification: prior
+          ? { ...prior, pending: nextPending }
+          : { reasonKey: descriptor.reasonKey, episodeId: "", status: "resolved", transitionedAt: now, pending: nextPending },
+      };
+    });
+    return result;
+  }
+  /** Removes deferred wedge evidence without changing the active episode or cooldown history. */
+  async clearTaskWedgeNotificationPending(taskId: string, reasonKey?: string): Promise<boolean> {
+    let cleared = false;
+    await this.updateTaskAtomic(taskId, (current) => {
+      const prior = current.wedgeNotification;
+      if (!prior?.pending || (reasonKey !== undefined && prior.pending.reasonKey !== reasonKey)) return null;
+      const { pending: _pending, ...withoutPending } = prior;
+      cleared = true;
+      return { wedgeNotification: withoutPending };
+    });
+    return cleared;
+  }
   /*
   FNXC:TaskWedgeNotifications 2026-08-10-18:54:
   Generic terminal parks use a dedicated durable budget because transient recovery

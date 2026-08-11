@@ -22,8 +22,9 @@ const RENAMED_IR = {
   ],
 };
 
-function fixture(workflowIr?: unknown) {
+function fixture(workflowIr?: unknown, settleMs = 0, maintenanceIntervalMs?: number) {
   const listeners = new Set<Listener>();
+  const movedListeners = new Set<(data: { task: Task; from: string; to: string }) => void>();
   let wedge: Task["wedgeNotification"];
   let liveTask: Task | undefined;
   let liveReadError: Error | undefined;
@@ -37,22 +38,43 @@ function fixture(workflowIr?: unknown) {
     return { claimed: true, episodeId: wedge.episodeId };
   });
   const store = {
-    getSettings: async () => ({ ntfyEnabled: true, ntfyTopic: "test" }) as Settings,
+    getSettings: async () => ({ ntfyEnabled: true, ntfyTopic: "test", ...(maintenanceIntervalMs === undefined ? {} : { maintenanceIntervalMs }) }) as Settings,
     getTask: async () => {
       if (liveReadError) throw liveReadError;
       return liveTask;
     },
-    on: (event: string, listener: Listener) => { if (event === "task:updated") listeners.add(listener); },
+    on: (event: string, listener: Listener | ((data: { task: Task; from: string; to: string }) => void)) => {
+      if (event === "task:updated") listeners.add(listener as Listener);
+      if (event === "task:moved") movedListeners.add(listener as (data: { task: Task; from: string; to: string }) => void);
+    },
     off: () => undefined,
     emit: (task: Task) => listeners.forEach((listener) => listener(task)),
+    emitMoved: (task: Task, from: string, to: string) => movedListeners.forEach((listener) => listener({ task, from, to })),
     setLiveTask: (next: Task | undefined) => { liveTask = next; },
     setLiveReadError: (next: Error | undefined) => { liveReadError = next; },
     claimTaskWedgeNotificationEpisode,
+    markTaskWedgeNotificationPending: vi.fn(async (_taskId: string, descriptor: any, options?: { staleAfterMs?: number }) => {
+      const now = new Date().toISOString();
+      const pending = wedge?.pending;
+      const stale = pending !== undefined && pending.reasonKey === descriptor.reasonKey && typeof options?.staleAfterMs === "number" && Date.now() - Date.parse(pending.since) > options.staleAfterMs;
+      if (wedge?.status === "active" && wedge.reasonKey === descriptor.reasonKey) return { since: pending?.since ?? now, armed: false, restamped: false };
+      if (pending !== undefined && pending.reasonKey === descriptor.reasonKey && !stale) return { since: pending.since, armed: false, restamped: false };
+      wedge = wedge ? { ...wedge, pending: { since: now, ...descriptor } } : { reasonKey: descriptor.reasonKey, episodeId: "", status: "resolved", transitionedAt: now, pending: { since: now, ...descriptor } };
+      if (liveTask) liveTask = { ...liveTask, wedgeNotification: wedge };
+      return { since: now, armed: true, restamped: pending != null };
+    }),
+    clearTaskWedgeNotificationPending: vi.fn(async () => {
+      if (!wedge?.pending) return false;
+      const { pending: _pending, ...rest } = wedge;
+      wedge = rest;
+      if (liveTask) liveTask = { ...liveTask, wedgeNotification: wedge };
+      return true;
+    }),
     /* Absent → the helper keeps the legacy ids, which is every pre-existing case in this file. */
     ...(workflowIr ? { listWorkflowDefinitions: async () => [{ ir: workflowIr }] } : {}),
   };
   const sendMessageOnce = vi.fn(async (_input: unknown, _key: string) => ({ message: {} as any, inserted: true }));
-  const service = new NotificationService(store as any, { messageStore: { on: () => undefined, sendMessageOnce } as any, failedNotificationGraceMs: 60_000 });
+  const service = new NotificationService(store as any, { messageStore: { on: () => undefined, sendMessageOnce } as any, failedNotificationGraceMs: 60_000, wedgeNotificationSettleMs: settleMs });
   const sendNotification = vi.fn(async () => ({ success: true, providerId: "test" }));
   const provider: NotificationProvider = { getProviderId: () => "test", isEventSupported: () => true, sendNotification };
   service.registerProvider(provider);
@@ -61,7 +83,7 @@ function fixture(workflowIr?: unknown) {
 }
 
 /* Creates a restart-safe claim fake so NotificationService tests exercise delivery policy, not storage implementation. */
-function cooldownFixture({ durable = true }: { durable?: boolean } = {}) {
+function cooldownFixture({ durable = true, settleMs = 0 }: { durable?: boolean; settleMs?: number } = {}) {
   const listeners = new Set<Listener>();
   let wedge: Task["wedgeNotification"];
   const stamps = new Map<string, number>();
@@ -90,7 +112,7 @@ function cooldownFixture({ durable = true }: { durable?: boolean } = {}) {
     } : {}),
   };
   const sendMessageOnce = vi.fn(async (_input: unknown, _key: string) => ({ message: {} as any, inserted: true }));
-  const service = new NotificationService(store as any, { messageStore: { on: () => undefined, sendMessageOnce } as any });
+  const service = new NotificationService(store as any, { messageStore: { on: () => undefined, sendMessageOnce } as any, wedgeNotificationSettleMs: settleMs });
   const sendNotification = vi.fn(async () => ({ success: true, providerId: "test" }));
   service.registerProvider({ getProviderId: () => "test", isEventSupported: () => true, sendNotification });
   const task = (overrides: Partial<Task> = {}): Task => ({ id: "FN-8691", title: "Blocked task", description: "", column: "in-review", status: "failed", error: "BLOCKED: dependency unavailable", dependencies: [], steps: [], currentStep: 0, log: [], createdAt: "2026-08-01T12:00:00.000Z", updatedAt: new Date().toISOString(), ...overrides } as Task);
@@ -103,6 +125,228 @@ async function flushWedgeHandling() {
 }
 
 describe("task wedge notifications", () => {
+  it("withholds terminal alerts when the task recovers inside the settle window", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-11T12:00:00.000Z"));
+    const { store, service, sendMessageOnce, sendNotification, task, getWedge } = fixture(undefined, 1_000);
+    await service.start();
+    store.setLiveTask(task({ error: "BLOCKED: upstream", column: "in-review" }));
+    store.emit(task({ error: "BLOCKED: upstream", column: "in-review" }));
+    await flushWedgeHandling();
+    expect(getWedge()?.pending).toBeDefined();
+    const recovered = task({ status: "in-progress", error: undefined, column: "in-progress", log: [{ action: "Auto-recovered: retry succeeded" }] as any });
+    store.setLiveTask(recovered);
+    store.emit(recovered);
+    await flushWedgeHandling();
+    await vi.advanceTimersByTimeAsync(1_001);
+    expect(sendNotification).not.toHaveBeenCalled();
+    expect(sendMessageOnce).not.toHaveBeenCalled();
+    expect(getWedge()?.pending).toBeUndefined();
+    await service.stop();
+    vi.useRealTimers();
+  });
+
+  it("re-arms an early timer completion on durable and compatibility stores", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-11T12:00:00.000Z"));
+
+    const durable = fixture(undefined, 1_000);
+    await durable.service.start();
+    const durableFailed = durable.task({ error: "BLOCKED: upstream" });
+    durable.store.setLiveTask(durableFailed);
+    durable.store.emit(durableFailed);
+    await flushWedgeHandling();
+    await vi.advanceTimersByTimeAsync(500);
+    (durable.service as any).wedgeNotificationSettleMs = 2_000;
+    await vi.advanceTimersByTimeAsync(500);
+    expect(durable.sendNotification).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(durable.sendNotification).toHaveBeenCalledTimes(1);
+    await durable.service.stop();
+
+    const compatibility = cooldownFixture({ durable: false, settleMs: 1_000 });
+    await compatibility.service.start();
+    const compatibilityFailed = compatibility.task({ error: "BLOCKED: upstream" });
+    compatibility.store.emit(compatibilityFailed);
+    await flushWedgeHandling();
+    await vi.advanceTimersByTimeAsync(500);
+    (compatibility.service as any).wedgeNotificationSettleMs = 2_000;
+    await vi.advanceTimersByTimeAsync(500);
+    expect(compatibility.sendNotification).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(compatibility.sendNotification).toHaveBeenCalledTimes(1);
+    await compatibility.service.stop();
+    vi.useRealTimers();
+  });
+
+  it("re-arms stale timer completions before delivering on durable and compatibility stores", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-11T12:00:00.000Z"));
+
+    const durable = fixture(undefined, 1_000);
+    await durable.service.start();
+    const durableFailed = durable.task({ error: "BLOCKED: upstream" });
+    durable.store.setLiveTask(durableFailed);
+    durable.store.emit(durableFailed);
+    await flushWedgeHandling();
+    vi.setSystemTime(new Date("2026-08-11T14:00:00.000Z"));
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(durable.sendNotification).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(durable.sendNotification).toHaveBeenCalledTimes(1);
+    await durable.service.stop();
+
+    const compatibility = cooldownFixture({ durable: false, settleMs: 1_000 });
+    await compatibility.service.start();
+    const compatibilityFailed = compatibility.task({ error: "BLOCKED: upstream" });
+    compatibility.store.emit(compatibilityFailed);
+    await flushWedgeHandling();
+    vi.setSystemTime(new Date("2026-08-11T16:00:00.000Z"));
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(compatibility.sendNotification).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(compatibility.sendNotification).toHaveBeenCalledTimes(1);
+    await compatibility.service.stop();
+    vi.useRealTimers();
+  });
+
+  it("completes against a compatibility snapshot and fails quiet without one", async () => {
+    vi.useFakeTimers();
+    const compatibility = cooldownFixture({ durable: false, settleMs: 1_000 });
+    await compatibility.service.start();
+    const failed = compatibility.task({ error: "BLOCKED: upstream" });
+    compatibility.store.emit(failed);
+    await flushWedgeHandling();
+    await vi.advanceTimersByTimeAsync(1_001);
+    expect(compatibility.sendNotification).toHaveBeenCalledTimes(1);
+    await compatibility.service.stop();
+
+    const unreadable = cooldownFixture({ durable: false, settleMs: 1_000 });
+    await unreadable.service.start();
+    await expect(unreadable.service.completePendingWedgeNotification("FN-missing")).resolves.toEqual({ outcome: "unreadable" });
+    expect(unreadable.sendNotification).not.toHaveBeenCalled();
+    await unreadable.service.stop();
+    vi.useRealTimers();
+  });
+
+  it("uses a configured maintenance interval to keep stale holds deliverable after a restart", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-11T12:00:00.000Z"));
+    const { store, service, sendNotification, task, setWedge } = fixture(undefined, 1_000, 1_800_000);
+    await service.start();
+    const since = new Date(Date.now() - 1_000_000).toISOString();
+    const pending = {
+      reasonKey: "terminal-failed", episodeId: "", status: "resolved" as const, transitionedAt: since,
+      pending: { since, reasonKey: "terminal-failed", source: "auto" as const, reason: "The task entered a terminal failed state and needs operator intervention.", action: "Inspect the task failure and retry or replan it." },
+    };
+    setWedge(pending);
+    store.setLiveTask(task({ error: "boom", wedgeNotification: pending }));
+
+    // The age exceeds the old hard-coded 15-minute horizon but not maintenance + window.
+    expect((service as any).resolveStaleHoldHorizonMs()).toBe(1_801_000);
+    await expect(service.completePendingWedgeNotification("FN-8501")).resolves.toMatchObject({ outcome: "delivered" });
+    expect(sendNotification).toHaveBeenCalledTimes(1);
+    await service.stop();
+    vi.useRealTimers();
+  });
+
+  it("clears an outstanding hold when the settle window switches to zero without a duplicate dispatch", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-11T12:00:00.000Z"));
+    const { store, service, sendMessageOnce, sendNotification, task, getWedge } = fixture(undefined, 1_000);
+    await service.start();
+    const failed = task({ error: "BLOCKED: upstream", column: "in-review" });
+    store.setLiveTask(failed);
+    store.emit(failed);
+    await flushWedgeHandling();
+    expect(getWedge()?.pending).toBeDefined();
+
+    // This models a settings refresh after an operator restores legacy immediate delivery.
+    (service as any).wedgeNotificationSettleMs = 0;
+    await expect(service.completePendingWedgeNotification(failed.id)).resolves.toEqual({ outcome: "cleared" });
+    expect(getWedge()?.pending).toBeUndefined();
+    expect(sendNotification).not.toHaveBeenCalled();
+
+    store.emit(failed);
+    await flushWedgeHandling();
+    expect(sendNotification).toHaveBeenCalledTimes(1);
+    expect(sendMessageOnce).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(sendNotification).toHaveBeenCalledTimes(1);
+    await service.stop();
+    vi.useRealTimers();
+  });
+
+  it("clears a pending hold from the subscribed task:moved recovery path", async () => {
+    vi.useFakeTimers();
+    const { store, service, sendMessageOnce, sendNotification, task, getWedge } = fixture(RENAMED_IR, 1_000);
+    await service.start();
+    const failed = task({ error: "BLOCKED: upstream", column: "checking" });
+    store.setLiveTask(failed);
+    store.emit(failed);
+    await flushWedgeHandling();
+    expect(getWedge()?.pending).toBeDefined();
+
+    const recovered = task({ column: "shipped", status: "done", error: undefined });
+    store.setLiveTask(recovered);
+    store.emitMoved(recovered, "checking", "shipped");
+    await flushWedgeHandling();
+    await vi.advanceTimersByTimeAsync(1_001);
+    expect(getWedge()?.pending).toBeUndefined();
+    expect(sendNotification).not.toHaveBeenCalled();
+    expect(sendMessageOnce).not.toHaveBeenCalled();
+    await service.stop();
+    vi.useRealTimers();
+  });
+
+  it("revalidates an auto hold and restarts it when the live reason changes", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-11T12:00:00.000Z"));
+    const { store, service, sendMessageOnce, task } = fixture(undefined, 1_000);
+    await service.start();
+    store.setLiveTask(task({ error: "BLOCKED: upstream", column: "in-review" }));
+    store.emit(task({ error: "BLOCKED: upstream", column: "in-review" }));
+    await flushWedgeHandling();
+    store.setLiveTask(task({ error: "Tool failure retries exhausted", column: "in-review" }));
+    await vi.advanceTimersByTimeAsync(1_001);
+    expect(sendMessageOnce).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1_001);
+    expect(sendMessageOnce).toHaveBeenCalledTimes(1);
+    expect((sendMessageOnce.mock.calls[0]?.[0] as any).content).toContain("tool-failure retries");
+    await service.stop();
+    vi.useRealTimers();
+  });
+
+  it("clears a supplied hold when the live task becomes user-paused", async () => {
+    vi.useFakeTimers();
+    const { service, store, sendMessageOnce, task } = fixture(undefined, 1_000);
+    const stalled = task({ status: "in-review", error: undefined, paused: false, userPaused: false });
+    const descriptor = describeSelfHealingNoActionWedge(stalled, "reconcile-in-review-unmet-dependencies", { taskActive: false })!;
+    await service.start();
+    store.setLiveTask(stalled);
+    await service.notifyTaskWedge(stalled, descriptor);
+    store.setLiveTask({ ...stalled, userPaused: true });
+    await vi.advanceTimersByTimeAsync(1_001);
+    expect(sendMessageOnce).not.toHaveBeenCalled();
+    await service.stop();
+    vi.useRealTimers();
+  });
+
+  it("keeps the void queue live after an in-chain pending completion", async () => {
+    vi.useFakeTimers();
+    const { store, service, sendMessageOnce, task } = fixture(undefined, 1_000);
+    await service.start();
+    store.setLiveTask(task({ error: "BLOCKED: upstream", column: "in-review" }));
+    store.emit(task({ error: "BLOCKED: upstream", column: "in-review" }));
+    await flushWedgeHandling();
+    store.emit(task({ error: "BLOCKED: upstream", column: "in-review", updatedAt: "2026-08-11T12:00:01.000Z" }));
+    await flushWedgeHandling();
+    await vi.advanceTimersByTimeAsync(1_001);
+    expect(sendMessageOnce).toHaveBeenCalledTimes(1);
+    await service.stop();
+    vi.useRealTimers();
+  });
+
   /*
   FNXC:TaskWedgeNotifications 2026-08-01-15:35:
   A BLOCKED task can resolve and re-wedge as scheduler/self-healing touch it. A
@@ -364,7 +608,7 @@ describe("task wedge notifications", () => {
     await vi.waitFor(() => expect(sendMessageOnce).toHaveBeenCalledTimes(1));
     await service.stop();
 
-    const restarted = new NotificationService(store as any, { messageStore: { on: () => undefined, sendMessageOnce } as any });
+    const restarted = new NotificationService(store as any, { messageStore: { on: () => undefined, sendMessageOnce } as any, wedgeNotificationSettleMs: 0 });
     restarted.registerProvider({ getProviderId: () => "restarted", isEventSupported: () => true, sendNotification });
     await restarted.start();
     store.emit(task({ updatedAt: "2026-07-22T12:01:00.000Z" }));

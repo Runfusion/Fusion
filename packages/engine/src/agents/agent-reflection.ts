@@ -9,11 +9,12 @@ import type {
   ReflectionMetrics,
   ReflectionStore,
   ReflectionTrigger,
+  RecallCaptureWriter,
   Task,
   TaskStore,
 } from "@fusion/core";
 import { createLogger } from "../logger.js";
-import { resolveProjectDefaultModel, columnsWithFlag, resolveWorkflowIrForTask} from "@fusion/core";
+import { NOOP_RECALL_CAPTURE_WRITER, resolveProjectDefaultModel, columnsWithFlag, resolveWorkflowIrForTask} from "@fusion/core";
 import { createFnAgent, promptWithFallback } from "../pi.js";
 import { resolveMcpServersForStore } from "../mcp/mcp-resolution.js";
 import { createRunAuditor, generateSyntheticRunId, type EngineRunContext, type RunAuditor } from "../util/run-audit.js";
@@ -71,6 +72,7 @@ export interface AgentReflectionServiceOptions {
   rootDir: string;
   modelProvider?: string;
   modelId?: string;
+  captureWriter?: RecallCaptureWriter;
 }
 
 export class AgentReflectionService {
@@ -81,6 +83,7 @@ export class AgentReflectionService {
   private readonly modelProvider?: string;
 
   private readonly modelId?: string;
+  private readonly captureWriter: RecallCaptureWriter;
 
   constructor(options: AgentReflectionServiceOptions) {
     this.agentStore = options.agentStore;
@@ -89,6 +92,7 @@ export class AgentReflectionService {
     this.rootDir = options.rootDir;
     this.modelProvider = options.modelProvider;
     this.modelId = options.modelId;
+    this.captureWriter = options.captureWriter ?? NOOP_RECALL_CAPTURE_WRITER;
   }
 
   private async resolveReflectionModel(): Promise<{ provider?: string; modelId?: string }> {
@@ -263,6 +267,9 @@ export class AgentReflectionService {
         suggestedImprovements: [],
         summary: this.buildCapturedSummary(task, outcome, metrics),
       });
+
+      // FNXC:AgentReflection 2026-08-11-10:55: completion invokes this method inside signal-task-complete's detached async wrapper; the void writer preserves that non-blocking boundary while retaining a deterministic outcome summary.
+      this.captureWriter.capture({ origin: "task-completion", taskId, agentId, title: task.title, summary: this.buildCapturedSummary(task, outcome, metrics) });
 
       await this.emitReflectionAudit(auditor, "reflection:captured", agentId, trigger, { taskId, ...options }, {
         reflectionId: reflection.id,

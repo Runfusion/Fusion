@@ -169,7 +169,7 @@ const LEGACY_TERMINAL_PAIR: ReadonlySet<string> = new Set(["done", "archived"]);
 /** Outcome of resolving one due work item for the planning-continuation drain. */
 export type PlanningContinuationResolution =
   | { kind: "actionable"; item: WorkflowWorkItem; task: Task }
-  | { kind: "skip"; item: WorkflowWorkItem; reason: "not-planning" | "paused" | "awaiting-approval" }
+  | { kind: "skip"; item: WorkflowWorkItem; reason: "paused" | "awaiting-approval" }
   | {
       kind: "orphan";
       item: WorkflowWorkItem;
@@ -180,7 +180,12 @@ export type PlanningContinuationResolution =
  * FNXC:WorkflowScheduling 2026-07-21-22:31:
  * Classify a due work item after a per-item task load. Lookup failures and
  * terminal/missing tasks become orphans (cancel); paused planning items stay
- * held without cancel; non-planning due rows are skipped by this drain.
+ * held without cancel.
+ *
+ * FNXC:WorkflowScheduling 2026-08-11-17:30: `waitReason` no longer gates this —
+ * see the note at the `isTaskBlockedOnApproval` guard for the strand that gate
+ * caused. The remaining guards (terminal, approval, pause, dispatchable) apply
+ * to every continuation regardless of why it stopped.
  */
 export function resolvePlanningContinuationCandidate(
   item: WorkflowWorkItem,
@@ -194,9 +199,30 @@ export function resolvePlanningContinuationCandidate(
   if (task.deletedAt || terminal.has(task.column)) {
     return { kind: "orphan", item, reason: "task-terminal" };
   }
-  if (item.waitReason !== "planning") {
-    return { kind: "skip", item, reason: "not-planning" };
-  }
+  /*
+  FNXC:WorkflowScheduling 2026-08-11-17:30:
+  EVERY due `kind: "task"` continuation is this drain's work, whatever its `waitReason`. This used to
+  skip anything but `waitReason: "planning"` as "belonging to a different drain" — but no such drain
+  exists. `listDueWorkflowWorkItems` has exactly two callers: this pass, and the self-healing reclaim
+  sweep, which deliberately refuses to touch `runnable`/`retrying` rows because they are "the
+  dispatcher's own queue" (`workflows/stranded-continuation-reclaim.ts`). So a runnable non-planning
+  row was owned by nobody: skipped here every ~2s poll with no state change and no audit row, and
+  passed over there by design. Silent, permanent, and invisible — the board simply looks idle.
+
+  Observed on the Fusion board 2026-08-11: eight cards (FN-8901/8902/8953/8955/8956/8958/8987/8988)
+  sat runnable for up to 8h while the engine was unpaused with 0 tasks in progress and 4 of 10
+  worktrees used. Three carried `waitReason: "capacity"` (written by the capacity-suspend path in
+  `workflow-column-boundary-hooks.ts` — the graph correctly parks a card when the board is full, and
+  nothing ever resumed it once capacity freed); five carried a NULL reason. The 09:04 reclaim sweep
+  had just moved them `held -> runnable`, which HANDED them to this drain and simultaneously put them
+  out of the sweep's own reach — so the auto-resume fix made the strand tighter than the wedge it
+  repaired.
+
+  Dispatch is node-agnostic (`executor.execute(task)` re-enters the durable graph at the card's own
+  node) and admission-gated by `admitPlanningContinuation`, which re-checks the real live-task cap.
+  A capacity-parked row therefore resumes only when a slot is genuinely free — accepting it here
+  cannot reintroduce the over-cap dispatch the suspend exists to prevent.
+  */
   /*
   FNXC:PlanApprovalHold 2026-07-27-19:30 (U7 / R4):
   Dispatching a planning continuation starts a Plan Review run, so a card blocked
@@ -266,9 +292,11 @@ export const PARKED_CONTINUATION_DEFER_MS = 60_000;
  *
  * Only the OPERATOR-PARK skips qualify (`awaiting-approval`, `paused`): those are
  * open-ended waits on a human, which is what makes them able to accumulate.
- * `not-planning` is deliberately excluded — that item belongs to a different
- * drain, and deferring another owner's work would be this drain reaching outside
- * its own lane.
+ *
+ * FNXC:WorkflowScheduling 2026-08-11-17:30: `not-planning` was the third skip
+ * reason here and is now gone — this drain owns every `kind: "task"` row, so a
+ * non-planning continuation is dispatched rather than skipped and has nothing
+ * left to defer.
  *
  * Pure and separately exported so the deferral is testable without constructing a
  * runtime, matching why `resolvePlanningContinuationCandidate` is exported.
@@ -1318,6 +1346,17 @@ export class InProcessRuntime
       }
 
       // 5c. Initialize AgentReflectionService (requires agentStore and reflectionStore)
+      let recallCaptureWriter: import("@fusion/core").RecallCaptureWriter | undefined;
+      try {
+        const layer = this.taskStore.getAsyncLayer?.();
+        if (layer) {
+          const { createRecallCaptureWriter } = await import("@fusion/core");
+          recallCaptureWriter = createRecallCaptureWriter({ layer, logger: runtimeLog });
+        }
+      } catch (captureInitError) {
+        // FNXC:MemoryRecallCapture 2026-08-11-10:55: optional recall initialization cannot block runtime startup.
+        runtimeLog.warn("Recall capture initialization failed; automatic capture remains disabled:", captureInitError instanceof Error ? captureInitError.message : captureInitError);
+      }
       let reflectionService: import("../agents/agent-reflection.js").AgentReflectionService | undefined;
       if (agentStoreForReflection && reflectionStoreForService) {
         try {
@@ -1327,6 +1366,7 @@ export class InProcessRuntime
             taskStore: this.taskStore,
             reflectionStore: reflectionStoreForService,
             rootDir: this.config.workingDirectory,
+            ...(recallCaptureWriter ? { captureWriter: recallCaptureWriter } : {}),
           });
           runtimeLog.log("AgentReflectionService initialized");
         } catch (reflServiceErr) {

@@ -1276,6 +1276,52 @@ describe("TaskReviewTab", () => {
     expect(screen.queryByTestId("task-review-create-pr")).toBeNull();
   });
 
+  it("renders resolved findings as audit rows without revision checkboxes on desktop and mobile", async () => {
+    const task = makeTask();
+    const items = [
+      { id: "c1", summary: "Earlier cleanup", body: "Earlier finding", resolution: "superseded" as const },
+      { id: "c2", summary: "Earlier error", body: "Earlier finding", resolution: "superseded" as const },
+      { id: "c3", summary: "Earlier timeout", body: "Earlier finding", resolution: "superseded" as const },
+      { id: "r1", summary: "Receipt one", body: "Fixed: explicit catch", resolution: "resolved-in-review" as const },
+      { id: "r2", summary: "Receipt two", body: "Fixed: timeout budget", resolution: "resolved-in-review" as const },
+      { id: "o1", summary: "Open finding", body: "The only actionable item" },
+    ];
+    apiMocks.fetchTaskReview.mockResolvedValue({
+      reviewState: { source: "reviewer-agent", summary: { verdict: "REVISE", reviewType: "code", summary: "Needs fixes" }, items, addressing: [] },
+      automationStatus: null,
+      emptyMessage: null,
+    });
+    apiMocks.reviseTaskReviewItems.mockResolvedValue({ task: makeTask(), reviewState: { source: "reviewer-agent", items: [], addressing: [] } });
+
+    const renderAt = async (mobile: boolean) => {
+      Object.defineProperty(window, "matchMedia", {
+        configurable: true,
+        value: vi.fn().mockReturnValue({ matches: mobile, addEventListener: vi.fn(), removeEventListener: vi.fn() }),
+      });
+      return renderWithAct(<TaskReviewTab task={task} addToast={vi.fn()} />);
+    };
+
+    const desktop = await renderAt(false);
+    expect(await screen.findAllByRole("checkbox")).toHaveLength(1);
+    expect(screen.getAllByText("Fixed in review")).toHaveLength(2);
+    expect(screen.getAllByText("Superseded")).toHaveLength(3);
+    expect(screen.queryAllByLabelText(/Earlier cleanup|Receipt one/)).toHaveLength(0);
+    expect(document.querySelectorAll(".task-review-tab__item-selection")).toHaveLength(1);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("checkbox"));
+      fireEvent.click(screen.getByRole("button", { name: "Request revision" }));
+    });
+    expect(apiMocks.reviseTaskReviewItems).toHaveBeenCalledWith(task.id, [expect.objectContaining({ id: "o1" })], undefined);
+    desktop.unmount();
+
+    apiMocks.reviseTaskReviewItems.mockClear();
+    const mobile = await renderAt(true);
+    expect(await screen.findAllByRole("checkbox")).toHaveLength(1);
+    expect(document.querySelectorAll("[data-review-resolution]")).toHaveLength(5);
+    expect(document.querySelectorAll(".task-review-tab__item-selection")).toHaveLength(1);
+    mobile.unmount();
+  });
+
   it("submits reviewer-agent selections through same revision action", async () => {
     const task = makeTask();
     apiMocks.fetchTaskReview.mockResolvedValue({

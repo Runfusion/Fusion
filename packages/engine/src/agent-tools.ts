@@ -4592,7 +4592,15 @@ export function createMissionTools(store: TaskStore, context: MissionToolActorCo
       if (!("addResearchFeature" in missionStore)) return missionToolResult("Research promotion requires the PostgreSQL mission store", { code: "POSTGRES_REQUIRED" }, true);
       let promoted: Awaited<ReturnType<typeof fusionCore.promoteResearchFinding>>;
       try {
-        promoted = await fusionCore.promoteResearchFinding(store.getResearchStore() as never, missionStore, p);
+        const layer = store.getAsyncLayer();
+        promoted = await fusionCore.promoteResearchFinding(
+          store.getResearchStore() as never,
+          missionStore,
+          p,
+          layer
+            ? fusionCore.createRecallCaptureWriter({ layer, logger: fusionCore.createLogger("research-recall-capture") })
+            : fusionCore.NOOP_RECALL_CAPTURE_WRITER,
+        );
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         return missionToolResult(message, { code: message.includes("not completed") ? "RUN_NOT_COMPLETED" : message.includes("not found") ? "FINDING_OR_RUN_NOT_FOUND" : "PROMOTION_FAILED", runId: p.runId, findingId: p.findingId }, true);
@@ -5963,10 +5971,12 @@ export function createResearchTools(options: ResearchToolsOptions): ToolDefiniti
           .map((type) => registry.getProvider(type))
           .filter((provider): provider is NonNullable<typeof provider> => Boolean(provider)),
       });
+      const layer = options.store.getAsyncLayer();
       orchestratorState.orchestrator = new ResearchOrchestrator({
         store: resolveResearchStore(),
         stepRunner,
         maxConcurrentRuns: resolved.limits.maxConcurrentRuns,
+        ...(layer ? { recallCaptureWriter: fusionCore.createRecallCaptureWriter({ layer, logger: fusionCore.createLogger("research-recall-capture") }) } : {}),
       });
     }
 

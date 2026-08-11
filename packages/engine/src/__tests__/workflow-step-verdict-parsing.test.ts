@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { inferWorkflowStepVerdictFromProse, parseWorkflowStepVerdict } from "../executor.js";
+import { inferWorkflowStepVerdictFromProse, parseWorkflowStepOutput, parseWorkflowStepVerdict } from "../executor.js";
 import { proseSignalsClearApproval, extractJsonObjectCandidates, classifyReviewVerdictToken } from "../execution/reviewer.js";
 
 describe("parseWorkflowStepVerdict", () => {
@@ -17,6 +17,20 @@ describe("parseWorkflowStepVerdict", () => {
 
   it("returns null for invalid verdict", () => {
     expect(parseWorkflowStepVerdict('{"verdict":"PASS"}')).toBeNull();
+  });
+
+  it("preserves normalized supersession claims with resolved finding receipts", () => {
+    const parsed = parseWorkflowStepOutput('{"verdict":"REVISE","notes":"reviewed","findings":[{"id":"r1","title":"Receipt","body":"Fixed in this review","resolution":"resolved-in-review"},{"id":"o1","title":"Open","body":"Still needs work"}],"supersededFindingSourceWorkflowStepId":"cleanup-review","supersededFindingIds":[" c1 ",42,"c1","c2"]}');
+    expect(parsed).toMatchObject({
+      verdict: "REVISE",
+      supersededFindingSourceWorkflowStepId: "cleanup-review",
+      supersededFindingIds: ["c1", "c2"],
+      findings: [
+        { id: "r1", resolution: "resolved-in-review" },
+        { id: "o1" },
+      ],
+    });
+    expect(parsed.findings?.[1]).not.toHaveProperty("resolution");
   });
 
   it("recognizes CLOSE_NO_OP only for the Plan Review optional group", () => {

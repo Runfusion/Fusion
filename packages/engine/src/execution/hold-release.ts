@@ -55,6 +55,7 @@ import {
   isPlanReviewSatisfied,
   type TaskStore,
   type Task,
+  type TaskReleaseGateVerdict,
   type WorkflowIr,
   type WorkflowIrNode,
   type WorkflowIrV2,
@@ -217,108 +218,57 @@ export async function checkAndRecordUnplannedExecutionBlock(
   }
 }
 
-export async function isUnplannedForExecution(store: TaskStore, task: Task, ir: WorkflowIr): Promise<boolean> {
-  /*
-  FNXC:PlanReview 2026-07-19-00:40 (U3):
-  The graph is the SOLE Plan Review owner (triage's out-of-graph gate is deleted).
-  When a workflow places the plan-review node in a PRE-RELEASE column (the
-  benchmark's Plan Review in the Todo hold column — i.e. NOT a wip column), the
-  card must not release into execution until the graph has reached its durable
-  capacity boundary. Releasing first would skip the gate. This does not fire
-  when Plan Review already lives in a WIP column.
-  */
-  /*
-  FNXC:PlanReview 2026-07-26-14:05:
-  The gate is PLAN-IN-PLACE only: it applies when Plan Review runs in the very column the card is
-  held in (Coding (Ideas) / the benchmark's Plan Review in Todo), which is the same condition the
-  other two consumers of this resolver already require (`seedPreReleasePlanReviewContinuation`,
-  `evaluateStrandedHoldContinuation`). Without the column check, moving the default workflow's Plan
-  Review out of the wip column into the planning column turned "non-wip" into "pre-release" for every
-  card in Todo — including cards whose graph never routes through Todo at all — and the capacity
-  sweep stopped releasing them (no continuation for a boundary they never reach). A review node in an
-  upstream column the card has already left is not something this sweep gates on.
-  */
-  /*
-  FNXC:PlanReview 2026-07-26-17:10:
-  The gate also requires Plan Review to be ENABLED for this task. It exists to stop a card entering
-  implementation before its plan gate ran; a task whose plan-review group is toggled OFF has no such
-  gate, and holding it produced a deadlock — nothing would ever record the evidence the hold was
-  waiting for.
-  */
+export interface UnplannedForExecutionEvaluation {
+  unplanned: boolean;
+  reason: "plan-review-pending" | "planning-status" | "needs-replan" | "duplicate-prompt" | "seed-prompt" | null;
+  readyAtCapacityBoundary: boolean;
+  planReview?: NonNullable<TaskReleaseGateVerdict["planReview"]>;
+}
+
+/*
+FNXC:PromoteVisibility 2026-08-11-20:38:
+Release dispatch and board enrichment consume one structured decision so the browser does not keep a
+second gate. Continuations, PROMPT.md, and workflow IR are invisible to the browser, so verdicts carry expiry evidence.
+*/
+export async function evaluateUnplannedForExecution(store: TaskStore, task: Task, ir: WorkflowIr): Promise<UnplannedForExecutionEvaluation> {
   const preReleaseReview = resolvePreReleasePlanReviewNode(ir);
-  const preReleaseReviewEnabled = preReleaseReview
-    ? isWorkflowOptionalGroupEnabled(
-      task.enabledWorkflowSteps,
-      preReleaseReview.id,
-      (preReleaseReview.config as { defaultOn?: boolean } | undefined)?.defaultOn ?? false,
-    )
-    : false;
-  if (preReleaseReview && preReleaseReviewEnabled && preReleaseReview.column === task.column) {
-    // Compatibility for tasks planned before durable continuations existed and
-    // for narrow store adapters that expose only the legacy review result.
-    const legacySatisfied = task.workflowStepResults?.some(isPlanReviewSatisfied);
-    if (!legacySatisfied) {
-      if (typeof store.listWorkflowWorkItemsForTask !== "function") return true;
-      // FNXC:StrandedHoldContinuation 2026-07-26-15:45:
-      // FN-8592 defines graph idleness over every active continuation kind;
-      // filtering to task continuations would allow a live non-task run to be
-      // mistaken for an idle graph and receive a duplicate plan-review seed.
-      const continuations = await store.listWorkflowWorkItemsForTask(task.id);
-      const active = continuations.filter((item) => ACTIVE_WORKFLOW_WORK_ITEM_STATES.includes(item.state));
-      // Readiness is represented by the graph's durable boundary continuation,
-      // not by a special-case review result. Optional groups that are disabled
-      // are still traversed and therefore reach the same capacity boundary.
-      const readyAtCapacityBoundary = active.some(
-        (item) => item.waitReason === "capacity" && item.sourceColumn === task.column,
-      );
-      if (!readyAtCapacityBoundary) return true;
-    }
+  const defaultOn = (preReleaseReview?.config as { defaultOn?: boolean } | undefined)?.defaultOn ?? false;
+  const enabled = preReleaseReview ? isWorkflowOptionalGroupEnabled(task.enabledWorkflowSteps, preReleaseReview.id, defaultOn) : false;
+  const appliesToColumn = preReleaseReview?.column === task.column;
+  const satisfied = task.workflowStepResults?.some(isPlanReviewSatisfied) === true;
+  const planReview = preReleaseReview ? { nodeId: preReleaseReview.id, column: preReleaseReview.column!, defaultOn, enabled, appliesToColumn, satisfied } : undefined;
+  let readyAtCapacityBoundary = false;
+  if (preReleaseReview && enabled && appliesToColumn && !satisfied) {
+    if (typeof store.listWorkflowWorkItemsForTask !== "function") return { unplanned: true, reason: "plan-review-pending", readyAtCapacityBoundary, planReview };
+    const active = (await store.listWorkflowWorkItemsForTask(task.id)).filter((item) => ACTIVE_WORKFLOW_WORK_ITEM_STATES.includes(item.state));
+    readyAtCapacityBoundary = active.some((item) => item.waitReason === "capacity" && item.sourceColumn === task.column);
+    if (!readyAtCapacityBoundary) return { unplanned: true, reason: "plan-review-pending", readyAtCapacityBoundary, planReview };
   }
-  // Still-live triage/executor statuses (kept, not triage-plan-review-owned):
-  // `planning` = triage is actively writing PROMPT.md; `needs-replan` = the
-  // executor's graph replan rebound parked the card for another planning pass.
-  if (task.status === "planning") return true;
+  if (task.status === "planning") return { unplanned: true, reason: "planning-status", readyAtCapacityBoundary, planReview };
+  if (task.status === "needs-replan") return { unplanned: true, reason: "needs-replan", readyAtCapacityBoundary, planReview };
+  const flags = findColumn(ir, task.column) ? resolveColumnFlags(findColumn(ir, task.column)!) : {};
+  if (flags.intake !== true && flags.hold !== true) return { unplanned: false, reason: null, readyAtCapacityBoundary, planReview };
   /*
-  FNXC:WorkflowScheduling 2026-07-13-11:20:
-  `needs-replan` is unplanned-by-decree: Plan Review rejected the current PROMPT.md and the
-  plan-in-place rebound parks the card in "todo" awaiting the triage service's replan. Without
-  this check the capacity-hold sweep read the real (rejected) prompt, judged the card planned,
-  and released it into execution — re-running the plan the reviewer just rejected and racing
-  triage, which only flips the dispatch-blocking `planning` status after acquiring its
-  semaphore slot.
+  FNXC:DuplicateIntake 2026-08-11-20:53:
+  A durable duplicate-only title is executable-state evidence even when a narrow store adapter
+  cannot expose PROMPT.md. Check it before filesystem access so every release surface preserves
+  the duplicate redirect refusal rather than accidentally releasing the card.
   */
-  if (task.status === "needs-replan") return true;
-
-  /*
-  FNXC:WorkflowScheduling 2026-07-19-02:10 (U4):
-  Gate the bootstrap-stub check on the TRAIT, not the literal "todo" id. An
-  unplanned card rests in a pre-wip column — an `intake` column (Ideas / the
-  renamed "Planning") OR a `hold` column (the default workflow's `todo` is
-  hold+reset-on-entry). Keying the OR-branch on `task.column === "todo"` both
-  hard-coded the default id and missed a renamed intake column (FN-7648); the
-  trait predicate covers every variant, so the literal-todo branch is removed.
-  */
-  const currentColumn = findColumn(ir, task.column);
-  const currentFlags = currentColumn ? resolveColumnFlags(currentColumn) : {};
-  if (currentFlags.intake !== true && currentFlags.hold !== true) return false;
-
-  if (typeof store.getTasksDir !== "function") return false;
+  if (isDuplicateRedirectOnlyPrompt(undefined, task.title)) return { unplanned: true, reason: "duplicate-prompt", readyAtCapacityBoundary, planReview };
+  if (typeof store.getTasksDir !== "function") return { unplanned: false, reason: null, readyAtCapacityBoundary, planReview };
   try {
-    const promptContent = await readFile(getPromptPath(store.getTasksDir(), task.id), "utf-8");
-    // isUnplannedSeedPrompt also matches the refineTask seed shape (no task-id prefix),
-    // so an unplanned refinement promoted out of a manual intake is held for planning
-    // instead of releasing into execution with a feedback-only prompt.
-    /*
-    FNXC:DuplicateIntake 2026-08-01-19:24:
-    A DUPLICATE-only PROMPT is unplanned for execution (FN-8704). Hold capacity release
-    until triage writes a real plan — filesystem validation is the twin of this check.
-    */
-    if (isDuplicateRedirectOnlyPrompt(promptContent)) return true;
-    return isUnplannedSeedPrompt(promptContent, task.id, task.title, task.description);
+    const prompt = await readFile(getPromptPath(store.getTasksDir(), task.id), "utf-8");
+    if (isDuplicateRedirectOnlyPrompt(prompt, task.title)) return { unplanned: true, reason: "duplicate-prompt", readyAtCapacityBoundary, planReview };
+    const unplanned = isUnplannedSeedPrompt(prompt, task.id, task.title, task.description);
+    return { unplanned, reason: unplanned ? "seed-prompt" : null, readyAtCapacityBoundary, planReview };
   } catch {
-    // Missing prompt is handled by filesystem validation elsewhere; do not block on it here.
-    return false;
+    return { unplanned: false, reason: null, readyAtCapacityBoundary, planReview };
   }
+}
+
+/** Compatibility wrapper retained for scheduler and release callers. */
+export async function isUnplannedForExecution(store: TaskStore, task: Task, ir: WorkflowIr): Promise<boolean> {
+  return (await evaluateUnplannedForExecution(store, task, ir)).unplanned;
 }
 
 /**
@@ -369,6 +319,32 @@ function resolveReleaseTarget(ir: WorkflowIr, fromColumn: string, preferCapacity
   const forwardNeighbor = neighbors.find((n) => orderedIds.indexOf(n) > fromIdx);
   if (forwardNeighbor) return forwardNeighbor;
   return neighbors.find((n) => n !== fromColumn);
+}
+
+/** Evaluate the exact hold-to-target refusal without dispatch side effects. */
+export async function evaluateTaskReleaseGate(store: TaskStore, task: Task, options: { ir?: WorkflowIr } = {}): Promise<TaskReleaseGateVerdict | undefined> {
+  const ir = options.ir ?? await resolveWorkflowIrForTask(store, task.id);
+  if (!isHeldTask(ir, task)) return undefined;
+  const releaseTargetColumn = resolveReleaseTarget(ir, task.column, true);
+  if (!releaseTargetColumn) return undefined;
+  const targetColumn = findColumn(ir, releaseTargetColumn);
+  const targetCountsTowardWip = targetColumn ? resolveColumnFlags(targetColumn).countsTowardWip === true : false;
+  const result = targetCountsTowardWip
+    ? await evaluateUnplannedForExecution(store, task, ir)
+    : { unplanned: false, reason: null, readyAtCapacityBoundary: false };
+  const blockedOnApproval = targetCountsTowardWip && isTaskBlockedOnApproval(task);
+  return {
+    promoteBlocked: result.unplanned || blockedOnApproval,
+    unplannedForExecution: result.unplanned,
+    blockedOnApproval,
+    reason: result.reason ?? (blockedOnApproval ? "awaiting-approval" : null),
+    readyAtCapacityBoundary: result.readyAtCapacityBoundary,
+    ...(result.planReview ? { planReview: result.planReview } : {}),
+    releaseTargetColumn,
+    targetCountsTowardWip,
+    evaluatedAt: new Date().toISOString(),
+    ...(task.updatedAt ? { evaluatedForUpdatedAt: task.updatedAt } : {}),
+  };
 }
 
 // ── Dependency satisfaction (KTD-5 + FN-5719 dual-accept) ─────────────────────

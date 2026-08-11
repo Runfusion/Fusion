@@ -12,3 +12,4 @@ export * from "./resolve-imports.js";
 export * from "./derive-modules.js";
 export * from "./graph-builder.js";
 export * from "./graph-query.js";
+export * from "./inferred-edge-writer.js";

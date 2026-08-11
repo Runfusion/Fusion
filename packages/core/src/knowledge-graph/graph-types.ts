@@ -16,7 +16,7 @@ export type EdgeProvenance = "extracted" | "inferred";
 export type GraphOwner = "file" | "derived";
 export type GraphNodeKind = "file" | "module" | "symbol" | "doc-concept" | "rationale";
 export type SymbolKind = "function" | "class" | "interface" | "type-alias" | "enum" | "variable" | "namespace" | "alias";
-export type EdgeKind = "contains" | "imports" | "re-exports";
+export type EdgeKind = "contains" | "imports" | "re-exports" | "relates-to" | "rationale-supports";
 export interface SourceLocation { path: string; line: number; column: number }
 export interface GraphNode { id: string; kind: GraphNodeKind; name: string; owner: GraphOwner; ownerPath: string; source: SourceLocation; attributes: Record<string,string> }
 export interface GraphEdge { id: string; kind: EdgeKind; from: string; to: string; provenance: EdgeProvenance; owner: GraphOwner; ownerPath: string; source: SourceLocation; attributes: Record<string,string> }

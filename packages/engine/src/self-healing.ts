@@ -1769,6 +1769,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       // not stalled by a leaked `status: "merging"` on an already-done task.
       { name: "reconcile-stale-merger-status", fn: () => this.reconcileStaleMergerStatus().then(() => undefined) },
       { name: "reconcile-stale-duplicate-decision", fn: () => this.reconcileStaleDuplicateDecisionPause().then(() => undefined) },
+      { name: "reconcile-pending-wedge-notification", fn: () => this.reconcilePendingWedgeNotifications().then(() => undefined) },
       { name: "recover-already-merged-review", fn: () => this.recoverAlreadyMergedReviewTasks().then(() => undefined) },
       { name: "recover-post-done-noncontinuable-wedge", fn: () => this.recoverPostDoneNonContinuableWedge().then(() => undefined) },
       { name: "recover-completion-handoff-limbo", fn: () => this.recoverCompletionHandoffLimbo().then(() => undefined) },
@@ -2857,6 +2858,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           { name: "reconcile-done-task-integrity", fn: () => this.reconcileDoneTaskIntegrity() },
           { name: "reconcile-stale-merger-status", fn: () => this.reconcileStaleMergerStatus() },
           { name: "reconcile-stale-duplicate-decision", fn: () => this.reconcileStaleDuplicateDecisionPause() },
+      { name: "reconcile-pending-wedge-notification", fn: () => this.reconcilePendingWedgeNotifications() },
           // FNXC:OrphanedPendingSteps 2026-07-22-16:35 (FN-8492 review follow-up): also
           // steady-state — a step session can die without an engine restart, and startup-only
           // cadence left that case riding the 3×30-min stall escalator to a deadlock park.
@@ -7220,6 +7222,42 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
    * actionable. Its audit payload is ids/outcomes-only so stale-decision recovery never stores
    * prompt or decision prose; active canonicals and user-owned pauses remain untouched.
    */
+  /*
+  FNXC:TaskWedgeNotifications 2026-08-11-18:28:
+  Durable pending wedge evidence survives a process restart while its timer does not. This bounded
+  sweep only selects candidates and records the completion result; NotificationService remains the
+  sole authority for live-row validation, stale-hold re-stamping, and dispatch.
+  */
+  async reconcilePendingWedgeNotifications(): Promise<number> {
+    try {
+      const service = getActiveNotificationService();
+      const windowMs = service?.getWedgeNotificationSettleMs() ?? 300_000;
+      const now = Date.now();
+      const tasks = await this.store.listTasks({ slim: true, includeArchived: false, limit: 500 });
+      let processed = 0;
+      for (const task of tasks.filter((candidate) => {
+        const since = candidate.wedgeNotification?.pending?.since;
+        return typeof since === "string" && now - Date.parse(since) >= windowMs;
+      }).slice(0, 50)) {
+        const pending = task.wedgeNotification!.pending!;
+        let outcome: string = "deferred";
+        try {
+          outcome = service ? (await service.completePendingWedgeNotification(task.id)).outcome : "deferred";
+        } catch {
+          outcome = "failed";
+        }
+        await createRunAuditor(this.store, {
+          runId: generateSyntheticRunId("reconcile-pending-wedge-notification", task.id), agentId: "self-healing", taskId: task.id, taskLineageId: task.lineageId, phase: "reconcile-pending-wedge-notification",
+        }).database({ type: "task:reconcile-pending-wedge-notification" as DatabaseMutationType, target: task.id, metadata: { taskId: task.id, reasonKey: pending.reasonKey, pendingAgeMs: Math.max(0, now - Date.parse(pending.since)), outcome } });
+        processed += 1;
+      }
+      return processed;
+    } catch (error) {
+      log.warn(`reconcilePendingWedgeNotifications failed: ${error instanceof Error ? error.message : String(error)}`);
+      return 0;
+    }
+  }
+
   async reconcileStaleDuplicateDecisionPause(): Promise<number> {
     try {
       const tasks = await this.store.listTasks({ slim: true, includeArchived: false, limit: 500 });
@@ -7806,8 +7844,6 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
               task.deletedAt != null
               || task.column === archivedColumn
               || task.column === doneColumn
-              || task.column === "archived"
-              || task.column === "done"
             ),
             taskPaused: task?.userPaused === true || task?.paused === true,
             live: live(item.taskId),

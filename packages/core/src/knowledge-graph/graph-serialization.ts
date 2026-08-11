@@ -47,7 +47,7 @@ export const serializeManifest = (manifest: GraphManifest) => canonicalJson({
 
 const owners = new Set<GraphOwner>(["file", "derived"]);
 const nodeKinds = new Set<GraphNodeKind>(["file", "module", "symbol", "doc-concept", "rationale"]);
-const edgeKinds = new Set<EdgeKind>(["contains", "imports", "re-exports"]);
+const edgeKinds = new Set<EdgeKind>(["contains", "imports", "re-exports", "relates-to", "rationale-supports"]);
 const hasStringMap = (value: unknown): value is Record<string, string> => !!value && typeof value === "object" && !Array.isArray(value) && Object.values(value).every(entry => typeof entry === "string");
 const validPath = (value: unknown) => {
   if (typeof value !== "string" || value.length === 0) return false;

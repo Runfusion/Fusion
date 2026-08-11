@@ -3,6 +3,7 @@ import { constants as fsConstants } from "node:fs";
 import { isAbsolute, resolve, relative, normalize, sep, dirname } from "node:path";
 import {
   readProjectMemory,
+  buildMemoryPreSteeringNudge,
   type Agent,
   type AgentMemoryInclusionMode,
   type AgentRatingSummary,
@@ -203,15 +204,12 @@ async function formatMemorySection(
 
   if (inclusionMode === "index") {
     const indexBody = await buildMemoryIndex({ rootDir, agentId });
-    if (!indexBody) {
-      return "";
-    }
     return [
       "## Agent Memory",
       "",
       "Memory is provided in index mode. Use fn_memory_search first, then fn_memory_get for relevant files/lines.",
-      "",
-      indexBody,
+      buildMemoryPreSteeringNudge("index"),
+      ...(indexBody ? ["", indexBody] : []),
     ].join("\n");
   }
 
@@ -226,6 +224,7 @@ async function formatMemorySection(
     "",
     "This is memory for this agent only. Keep it separate from workspace Project Memory; use it for durable preferences, operating habits, and context that should follow this agent across tasks.",
     "Additional daily/dream files under .fusion/agent-memory/{agentId}/ are searchable with fn_memory_search.",
+    buildMemoryPreSteeringNudge("full"),
     "",
   ];
 
@@ -395,20 +394,21 @@ export async function buildAgentChatPrompt(options: {
   agentStore?: AgentStore;
   basePrompt: string;
   includeProjectMemory?: boolean;
+  inclusionMode?: AgentMemoryInclusionMode;
 }): Promise<string> {
-  const { agent, rootDir, agentStore, basePrompt, includeProjectMemory = false } = options;
+  const { agent, rootDir, agentStore, basePrompt, includeProjectMemory = false, inclusionMode = "full" } = options;
 
   const titleSuffix = agent.title?.trim() ? `, ${agent.title.trim()}` : "";
   const identitySection = `## Identity\n\nYou are ${agent.name}${titleSuffix} (agent ID: ${agent.id}, role: ${agent.role}).`;
 
   const instructionParts = [identitySection];
 
-  const resolvedInstructions = await resolveAgentInstructionsWithRatings(agent, rootDir, agentStore);
+  const resolvedInstructions = await resolveAgentInstructionsWithRatings(agent, rootDir, agentStore, inclusionMode);
   if (resolvedInstructions.trim()) {
     instructionParts.push(resolvedInstructions);
   }
 
-  if (includeProjectMemory) {
+  if (includeProjectMemory && inclusionMode !== "off") {
     try {
       const projectMemory = (await readProjectMemory(rootDir)).trim();
       if (projectMemory) {

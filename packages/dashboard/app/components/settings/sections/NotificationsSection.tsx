@@ -114,6 +114,21 @@ export function NotificationsSection({ form, setForm, testNotificationLoading, t
               failureNotificationDelayMs: v !== null && Number.isFinite(v) && v >= 0 ? v : 0,
             }))}
           />
+          <SettingsNumberRow
+            descriptor={{
+              key: "wedgeNotificationSettleMs",
+              label: t("settings.notifications.wedgeNotificationSettleMs", "Terminal-wedge settle window (ms)"),
+              help: t("settings.notifications.wedgeNotificationSettleMsHelp", "How long a terminal failure must persist before an operator alert. 0 = notify immediately. Default: 300000 (5 minutes)."),
+              scope: "global",
+              min: 0,
+              step: 1000,
+            }}
+            value={form.wedgeNotificationSettleMs ?? 300000}
+            onChange={(v) => setForm((f) => ({
+              ...f,
+              wedgeNotificationSettleMs: v !== null && Number.isFinite(v) && v >= 0 ? v : 0,
+            }))}
+          />
         </div>
       </div>
 

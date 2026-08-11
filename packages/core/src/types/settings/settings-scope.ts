@@ -474,6 +474,8 @@ export interface GlobalSettings {
   /** How long a task must remain in `status='failed'` before a push notification fires.
    *  Set to 0 to dispatch immediately (legacy behavior). Default: 30000 ms. */
   failureNotificationDelayMs?: number;
+  /** How long a wedge must persist before an operator alert. 0 restores immediate legacy delivery; default 300000 ms. */
+  wedgeNotificationSettleMs?: number;
   /** `sticky-only` (default) defers failure notifications by `failureNotificationDelayMs`
    *  and suppresses them if the task self-recovers. `all` restores the legacy
    *  immediate-dispatch behavior. `terminal-only` suppresses failure notifications

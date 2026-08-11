@@ -72,6 +72,28 @@ describe("injectWorkflowStepFailureInstructions", () => {
     expect(content).toContain("Original plan body.");
   });
 
+  it("keeps receipts out of actionable findings while preserving a do-not-redo audit block", async () => {
+    await injectWorkflowStepFailureInstructions(
+      store,
+      task,
+      "prose feedback",
+      "Code Review",
+      { attempt: 1, max: 3 },
+      [
+        finding({ id: "o1", title: "Open finding", body: "Implement this", severity: "high" }),
+        finding({ id: "r1", title: "Receipt", body: "Fixed: already committed", severity: "critical", resolution: "resolved-in-review" }),
+        finding({ id: "c1", title: "Earlier lane", body: "No longer applies", resolution: "superseded" }),
+      ],
+    );
+
+    const content = await readFile(promptPath, "utf-8");
+    expect(content).toContain("Open finding");
+    expect(content).toContain("Already resolved during this review pass — do NOT redo");
+    expect(content).toContain("Fixed: already committed");
+    expect(content).toContain("No longer applies");
+    expect(content.indexOf("Open finding")).toBeLessThan(content.indexOf("Already resolved during this review pass"));
+  });
+
   it("falls back to prose feedback when the step produced no structured findings", async () => {
     await injectWorkflowStepFailureInstructions(store, task, "prose feedback", "Verification", { attempt: 1, max: 2 });
 

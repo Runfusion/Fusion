@@ -35,6 +35,8 @@ import {
 } from "./memory-backend.js";
 import { appendRecallInstructionSection } from "./recall/recall-instructions.js";
 import type { RecallSearchHit } from "./recall/recall-types.js";
+import { buildMemoryPreSteeringNudge } from "./memory-pre-steering.js";
+import type { AgentMemoryInclusionMode } from "../types/settings/settings-scope.js";
 
 // ── Default Scaffold ─────────────────────────────────────────────────
 
@@ -340,6 +342,7 @@ export function buildTriageMemoryInstructions(
   rootDir: string,
   settings?: MemorySettings,
   recallHits?: readonly RecallSearchHit[],
+  inclusionMode: AgentMemoryInclusionMode = "full",
 ): string {
   void rootDir; // Parameter kept for future use (e.g., checking file existence)
   const ctx = resolveMemoryInstructionContext(settings);
@@ -354,6 +357,8 @@ export function buildTriageMemoryInstructions(
     return appendRecallInstructionSection(`
 ## Project Memory
 
+${buildMemoryPreSteeringNudge(inclusionMode)}
+
 This project has a memory system that stores durable project learnings.
 
 **Before writing the specification:**
@@ -367,6 +372,8 @@ This project has a memory system that stores durable project learnings.
     // File backend: mention the explicit path
     return appendRecallInstructionSection(`
 ## Project Memory
+
+${buildMemoryPreSteeringNudge(inclusionMode)}
 
 This project has OpenClaw-style memory files:
 - \`.fusion/memory/MEMORY.md\` — curated long-term memory for durable decisions, conventions, and pitfalls
@@ -388,6 +395,8 @@ Do not read all memory directly by default. If memory is irrelevant, skip it.
   // QMD/non-file writable backend: generic instructions without specific path
   return appendRecallInstructionSection(`
 ## Project Memory
+
+${buildMemoryPreSteeringNudge(inclusionMode)}
 
 This project has a memory system that stores durable project learnings.
 
@@ -427,6 +436,7 @@ export function buildExecutionMemoryInstructions(
   rootDir: string,
   settings?: MemorySettings,
   recallHits?: readonly RecallSearchHit[],
+  inclusionMode: AgentMemoryInclusionMode = "full",
 ): string {
   void rootDir; // Parameter kept for future use (e.g., checking file existence)
   const ctx = resolveMemoryInstructionContext(settings);
@@ -441,6 +451,8 @@ export function buildExecutionMemoryInstructions(
     return appendRecallInstructionSection(`
 ## Project Memory
 
+${buildMemoryPreSteeringNudge(inclusionMode)}
+
 This project has a memory system that stores durable project learnings.
 
 **At the start of execution:**
@@ -454,6 +466,8 @@ This project has a memory system that stores durable project learnings.
     // File backend: mention the explicit path with full read/write instructions
     return appendRecallInstructionSection(`
 ## Project Memory
+
+${buildMemoryPreSteeringNudge(inclusionMode)}
 
 This project has OpenClaw-style memory files:
 - \`.fusion/memory/MEMORY.md\` — curated long-term memory for durable decisions, conventions, and pitfalls
@@ -490,6 +504,8 @@ This project has OpenClaw-style memory files:
   return appendRecallInstructionSection(`
 ## Project Memory
 
+${buildMemoryPreSteeringNudge(inclusionMode)}
+
 This project has a memory system that stores durable project learnings accumulated from past task runs.
 
 **At the start of execution:**
@@ -515,6 +531,7 @@ export function buildReviewerMemoryInstructions(
   rootDir: string,
   settings?: MemorySettings,
   recallHits?: readonly RecallSearchHit[],
+  inclusionMode: AgentMemoryInclusionMode = "full",
 ): string {
   void rootDir;
   const ctx = resolveMemoryInstructionContext(settings);
@@ -524,6 +541,8 @@ export function buildReviewerMemoryInstructions(
 
   return appendRecallInstructionSection(`
 ## Project Memory
+
+${buildMemoryPreSteeringNudge(inclusionMode)}
 
 This project has a memory system that stores durable project learnings.
 

@@ -24,6 +24,8 @@ import { TodoStore } from "../stores/todo-store.js";
 import { AsyncTodoStore } from "../async-stores/async-todo-store.js";
 import { AsyncInsightStore } from "../async-stores/async-insight-store.js";
 import { AsyncResearchStore } from "../async-stores/async-research-store.js";
+import { createRecallCaptureWriter } from "../memory/recall-capture.js";
+import { createLogger } from "../process/logger.js";
 import { assertColumnTraitsValid } from "../workflows/trait-registry.js";
 import { BoardConfig, BranchGroup, MergeRequestRecord, Task, WorkflowStepTemplate, WorkflowWorkItem, WorkflowWorkItemKind } from "../types.js";
 import { WorkflowFieldDefinition, WorkflowIr, WorkflowIrColumn } from "../workflows/workflow-ir-types.js";
@@ -494,7 +496,16 @@ export function getInsightStoreImpl(store: TaskStore): InsightStore | AsyncInsig
       if (!layer) {
         throw new Error("InsightStore is not available: AsyncDataLayer not initialized in backend mode");
       }
-      store.insightStore = new AsyncInsightStore(layer);
+      /*
+       * FNXC:InsightRecallCapture 2026-08-11-10:56:
+       * This lazy factory is the sole backend AsyncInsightStore composition root. Supplying the
+       * live writer here keeps every upsert origin automatic while standalone constructors retain
+       * the writer's no-op default.
+       */
+      store.insightStore = new AsyncInsightStore(layer, createRecallCaptureWriter({
+        layer,
+        logger: createLogger("insight-recall-capture"),
+      }));
 
     }
     return store.insightStore;

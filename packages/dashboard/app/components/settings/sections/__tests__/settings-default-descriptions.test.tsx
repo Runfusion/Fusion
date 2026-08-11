@@ -141,6 +141,7 @@ const SETTING_DESCRIPTION_KEYS: Record<string, string> = {
    */
   agentClarificationEnabled: "notifications.agentClarificationHint",
   failureNotificationDelayMs: "notifications.howLongAFailureMustPersistBeforeA",
+  wedgeNotificationSettleMs: "notifications.wedgeNotificationSettleMsHelp",
   failureNotificationMode: "notifications.stickyFailuresOnlyDefault",
   ntfyEnabled: "notifications.ntfyEnabledHint",
   ntfyTopic: "notifications.yourNtfyShTopicName164Alphanumeric",

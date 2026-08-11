@@ -8368,7 +8368,9 @@
     "addressPrFeedback": "",
     "addressPrFeedbackFailed": "",
     "addressPrFeedbackStarted": "",
-    "addressingPrFeedback": ""
+    "addressingPrFeedback": "",
+    "fixedInReview": "검토 중 수정됨",
+    "superseded": "대체됨"
   },
   "tasks": {
     "addTaskPlaceholder": "작업 추가...",

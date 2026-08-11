@@ -62,8 +62,20 @@ function consistent(graph: KnowledgeGraph, manifest: GraphManifest): boolean {
       || !isSyntheticAnchor(node, moduleCanonicalPath(node.ownerPath, moduleFiles));
     return node.owner !== "file" || node.source.path !== node.ownerPath || hasSyntheticMarker(node);
   })) return false;
+  const nodesById = new Map(graph.nodes.map(node => [node.id, node]));
   if (graph.edges.some(edge => {
     if (edge.id !== edgeId(edge.kind, edge.from, edge.to)) return true;
+    /*
+    FNXC:KnowledgeGraphInferredEdges 2026-08-11-10:56:
+    FN-8933 anchors an inferred LLM relation to its existing `from` node instead of accepting an
+    LLM-supplied location. It may cross ownership classes, so parser/derived edge restrictions do
+    not apply, but its persisted owner and source must remain exactly that canonical node anchor.
+    */
+    if (edge.provenance === "inferred") {
+      const anchor = nodesById.get(edge.from);
+      return !anchor || !nodesById.has(edge.to) || edge.owner !== anchor.owner || edge.ownerPath !== anchor.ownerPath
+        || edge.source.path !== anchor.source.path || edge.source.line !== anchor.source.line || edge.source.column !== anchor.source.column;
+    }
     if (edge.owner === "derived") return edge.kind !== "contains"
       || edge.from !== moduleNodeId(edge.ownerPath)
       || !isSyntheticAnchor(edge, moduleCanonicalPath(edge.ownerPath, moduleFiles));

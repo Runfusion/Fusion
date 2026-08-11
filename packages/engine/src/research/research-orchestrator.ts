@@ -1,4 +1,4 @@
-import type { AsyncResearchStore, ResearchStore } from "@fusion/core";
+import { NOOP_RECALL_CAPTURE_WRITER, type AsyncResearchStore, type RecallCaptureWriter, type ResearchStore } from "@fusion/core";
 import type {
   ResearchCancellationState,
   ResearchOrchestrationConfig,
@@ -45,6 +45,7 @@ export interface ResearchOrchestratorOptions {
   store: ResearchExecutorStore;
   stepRunner: ResearchStepRunnerApi;
   maxConcurrentRuns?: number;
+  recallCaptureWriter?: RecallCaptureWriter;
 }
 
 interface ActiveRunState {
@@ -62,6 +63,7 @@ export class ResearchOrchestrator {
   private readonly store: ResearchExecutorStore;
   private readonly stepRunner: ResearchStepRunnerApi;
   private readonly semaphore: AgentSemaphore;
+  private readonly recallCaptureWriter: RecallCaptureWriter;
   private readonly activeRuns = new Map<string, ActiveRunState>();
   private readonly cancellation = new Map<string, ResearchCancellationState>();
 
@@ -69,6 +71,7 @@ export class ResearchOrchestrator {
     this.store = options.store;
     this.stepRunner = options.stepRunner;
     this.semaphore = new AgentSemaphore(options.maxConcurrentRuns ?? 3);
+    this.recallCaptureWriter = options.recallCaptureWriter ?? NOOP_RECALL_CAPTURE_WRITER;
   }
 
   async createRun(config: ResearchOrchestrationConfig): Promise<string> {
@@ -416,6 +419,21 @@ export class ResearchOrchestrator {
       ],
       citations,
       synthesizedOutput: output,
+    });
+
+    const run = await this.store.getRun(runId);
+    /*
+    FNXC:ResearchRecallCapture 2026-08-11-10:56:
+    Finalization owns the synthesized research outcome. Its detached capture must never extend the
+    research lifecycle or turn optional recall persistence into a completed-run failure.
+    */
+    this.recallCaptureWriter.capture({
+      origin: "research-finding",
+      title: run?.topic?.trim() || run?.query?.trim() || "Research synthesis",
+      summary: `Research synthesis completed with ${citations.length} cited sources${confidence === undefined ? "" : ` at confidence ${confidence}`}.`,
+      sessionId: runId,
+      researchRunId: runId,
+      tags: ["research", "synthesis", ...(run?.tags ?? [])],
     });
   }
 

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import type { TaskStore, Task, TaskDetail, Settings } from "@fusion/core";
+import type { Agent, TaskStore, Task, TaskDetail, Settings } from "@fusion/core";
 import { applyOriginalDescription, builtinSeamPrompt, buildBootstrapPrompt, computePlanApprovalFingerprint, MAX_TASK_LIST_TEXT_CHARS, renderTriagePolicyPlaceholders, resolveAgentPrompt } from "@fusion/core";
 import {
   TriageProcessor,
@@ -571,6 +571,22 @@ describe("buildSpecificationPrompt", () => {
   });
 
   describe("memoryEnabled setting", () => {
+    it.each(["off", "index", "full"] as const)("uses assigned-agent %s memory inclusion mode", (mode) => {
+      const prompt = buildSpecificationPrompt(
+        baseTask,
+        ".fusion/tasks/KB-001/PROMPT.md",
+        { memoryEnabled: true } as Settings,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        { id: "planner", runtimeConfig: { agentMemoryInclusionMode: mode } } as Agent,
+      );
+
+      expect(prompt.includes("query memory before re-reading")).toBe(mode !== "off");
+      if (mode === "index") expect(prompt).toContain("fn_memory_search");
+    });
+
     it("includes memory instructions when memoryEnabled: true", () => {
       const settings: Settings = {
         maxConcurrent: 2,

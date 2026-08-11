@@ -25,10 +25,14 @@ export function hasTerminalReconcileCapability(missionStore: unknown): missionSt
 }
 
 export type MissionReconcileExtensionHook = (context: { feature: MissionFeature; task?: Task }) => Promise<void> | void;
+/**
+ * FNXC:MissionAutoReconcile 2026-08-11-05:20:
+ * Dry-run plans are operator-facing mutation previews. Keep task linking and spec-alignment writes distinct from lifecycle status updates so preview mode names the same mutation kind that apply mode performs.
+ */
 export interface MissionReconcilePassResult {
   missionsScanned: number; featuresScanned: number; statusUpdates: number; badgeRepairs: number;
   badgeRepairsSkipped: number; terminalRepairs: number; terminalSkipped: number; conflicts: number;
-  failures: number; skippedReason?: "archived"; planned?: Array<{ featureId: string; action: "status" | "terminal-done" | "badge-clear" }>;
+  failures: number; skippedReason?: "archived"; planned?: Array<{ featureId: string; action: "status" | "link" | "spec-alignment" | "terminal-done" | "badge-clear" }>;
 }
 export interface ReconcileMissionStateDeps {
   taskStore: TaskStore; missionStore: object;
@@ -44,6 +48,10 @@ function titleKey(sliceId: string, title: string): string { return `${sliceId}\0
 function hasRepairCapability(store: unknown): store is RepairCapability {
   return typeof (store as Record<string, unknown> | null | undefined)?.repairFeatureValidationState === "function";
 }
+/*
+FNXC:MissionAutoReconcile 2026-08-11-04:57 DELIBERATE-LITERAL:
+The physical archived lane remains a compatibility terminal signal before workflow resolution; custom workflows are checked against their resolved archived lane immediately afterward.
+*/
 async function isArchivedTask(taskStore: TaskStore, task: Task): Promise<boolean> {
   if (task.deletedAt || task.column === "archived") return true;
   const ir = await resolveWorkflowIrForTask(taskStore, task.id).catch(() => undefined);
@@ -73,7 +81,8 @@ export async function reconcileMissionState(
   if (options.missionId && requested?.status === "archived") return { ...result, skippedReason: "archived" };
   const selected = (missions as Array<{ id: string; status: string }>).filter((mission) => mission.status !== "archived");
   const listTasks = (deps.taskStore as unknown as { listTasks?: (options: { slim: boolean; includeArchived: boolean }) => Promise<Task[]> }).listTasks;
-  const liveTasks = listTasks ? await listTasks({ slim: true, includeArchived: false }) : [];
+  // FNXC:MissionAutoReconcile 2026-08-11-05:20: TaskStore methods use their receiver; optional-capability probing must not detach listTasks from deps.taskStore.
+  const liveTasks = listTasks ? await listTasks.call(deps.taskStore, { slim: true, includeArchived: false }) : [];
   const selectedIds = new Set(selected.map((mission) => mission.id));
   const byTitle = new Map<string, Task | null>();
   for (const task of liveTasks) {
@@ -106,7 +115,7 @@ export async function reconcileMissionState(
           normalized title in this slice. Do not attach a moved task to an arbitrary duplicate
           feature; an operator must make ambiguous roadmap ownership explicit.
           */
-          if (options.dryRun) result.planned!.push({ featureId: feature.id, action: "status" });
+          if (options.dryRun) result.planned!.push({ featureId: feature.id, action: "link" });
           else feature = await missionApi.linkFeatureToTask(feature.id, task.id);
         }
         const terminalCandidate = Boolean(explicitTaskId && task && await isArchivedTask(deps.taskStore, task));
@@ -124,10 +133,11 @@ export async function reconcileMissionState(
           Reconciliation has always projected spec alignment independently of delivery status.
           Preserve that projection even when the lifecycle decision is a no-op, while routing its
           write through the same explicit actor boundary as every automatic reconcile mutation.
+          Dry-run previews must also require that write capability so they never promise an unavailable mutation.
           */
-          if (feature.specAlignment !== decision.alignment) {
-            if (options.dryRun) result.planned!.push({ featureId: feature.id, action: "status" });
-            else if (missionApi.updateFeature) await missionApi.updateFeature(feature.id, { specAlignment: decision.alignment }, { actor });
+          if (feature.specAlignment !== decision.alignment && missionApi.updateFeature) {
+            if (options.dryRun) result.planned!.push({ featureId: feature.id, action: "spec-alignment" });
+            else await missionApi.updateFeature(feature.id, { specAlignment: decision.alignment }, { actor });
           }
           const wip = task.column !== undefined && !plannerColumns.includes(task.column) && decision.kind === "update" && decision.status === "in-progress";
           const complete = decision.kind === "update" && decision.status === "done" && (!assertions.length || feature.lastValidatorStatus === "passed");

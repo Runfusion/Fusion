@@ -8368,7 +8368,9 @@
     "addressPrFeedback": "",
     "addressPrFeedbackFailed": "",
     "addressPrFeedbackStarted": "",
-    "addressingPrFeedback": ""
+    "addressingPrFeedback": "",
+    "fixedInReview": "已在審查中修正",
+    "superseded": "已被取代"
   },
   "tasks": {
     "addTaskPlaceholder": "新增任務……",

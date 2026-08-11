@@ -27,6 +27,8 @@ import {
   type SharedPgTaskStoreHarness,
 } from "../../__test-utils__/pg-test-harness.js";
 import type { AsyncResearchStore } from "../../async-stores/async-research-store.js";
+import { createRecallCaptureWriter } from "../../memory/recall-capture.js";
+import { listRecall } from "../../memory/recall/recall-store.js";
 import type {
   ResearchModelSettings,
   ResearchProviderConfig,
@@ -77,6 +79,7 @@ function makeStubStepRunner(mode: "ok" | "no-sources"): ResearchStepRunnerApi {
 pgTest("Research run execution (PostgreSQL backend mode)", () => {
   const h: SharedPgTaskStoreHarness = createSharedPgTaskStoreTestHarness({
     prefix: "fusion_research_exec",
+    projectId: "research-execution-capture",
   });
 
   beforeAll(h.beforeAll);
@@ -131,6 +134,41 @@ pgTest("Research run execution (PostgreSQL backend mode)", () => {
     // Status reflected by getRunStatus (now async).
     const status = await orchestrator.getRunStatus(runId);
     expect(status.status).toBe("completed");
+  });
+
+  /*
+  FNXC:MemoryRecallCapture 2026-08-11-12:06:
+  Research finalization is reachable through the production orchestrator and must receive a live
+  recall writer at its composition root. This uses the real async layer and recall store, rather
+  than an injected hook, so removing ProjectEngine's equivalent writer wiring cannot be mistaken
+  for a complete automatic-capture implementation.
+  */
+  it("captures a finalized research outcome through the live recall store", async () => {
+    const store = research();
+    const writer = createRecallCaptureWriter({ layer: h.layer(), logger: { warn: () => {} } });
+    const orchestrator = new ResearchOrchestrator({
+      store,
+      stepRunner: makeStubStepRunner("ok"),
+      maxConcurrentRuns: 1,
+      recallCaptureWriter: writer,
+    });
+
+    const runId = await orchestrator.createRun({
+      providers: [{ type: "stub" }],
+      maxSources: 1,
+      maxSynthesisRounds: 1,
+    });
+    await expect(orchestrator.startRun(runId, "Recall finalized research")).resolves.toMatchObject({
+      status: "completed",
+    });
+    await writer.flushPendingCaptures();
+
+    expect(await listRecall(h.layer(), { limit: 10 })).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        kind: "solution",
+        source: expect.objectContaining({ origin: "deep-research", sessionId: runId }),
+      }),
+    ]));
   });
 
   it("persists a failed status when a step yields no sources (clean failure, no unhandled throw)", async () => {

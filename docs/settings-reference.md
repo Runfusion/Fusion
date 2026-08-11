@@ -95,6 +95,7 @@ Fallback thinking-level values are applied at runtime when Fusion swaps from the
 | `agentClarificationEnabled` | `boolean` | `false` | Legacy default for programmatic Planning Mode session notification eligibility. Dashboard Planning Mode always starts its infinite, user-validated interview with follow-up questions enabled; this setting no longer suppresses questions or creates a final summary. |
 | `failureNotificationMode` | `"sticky-only" \| "terminal-only" \| "all"` | `"sticky-only"` | Failure notification behavior. `sticky-only` defers failed-task notifications by `failureNotificationDelayMs` and suppresses transient self-recoveries. `terminal-only` suppresses while auto-retry is still active and only dispatches when `paused === true` or `column === "in-review"` with `status === "failed"`. `all` restores legacy immediate failure notifications. |
 | `failureNotificationDelayMs` | `number` | `30000` | Delay window (ms) before evaluating/sending a `failed` notification in `sticky-only` and `terminal-only` modes. Set `0` for immediate dispatch in legacy `all` mode. |
+| `wedgeNotificationSettleMs` | `number` | `300000` | Time a terminal wedge must persist before its operator alert. `0` restores immediate delivery and clears outstanding holds. Production stores persist holds across restart; lightweight stores retain them only in memory. A stale hold is re-stamped using a horizon derived from the 15-minute maintenance interval, so an outage can delay a still-wedged alert rather than dispatching on stale evidence. |
 | `ntfyTopic` | `string` | `undefined` | ntfy topic name. |
 | `ntfyBaseUrl` | `string` | `undefined` | Optional custom ntfy server base URL (must use `http://` or `https://`). If blank/unset, Fusion uses `https://ntfy.sh` for both runtime and test notifications. |
 | `ntfyAccessToken` | `string` | `undefined` | Optional ntfy access token. When set, Fusion sends `Authorization: Bearer <token>` with ntfy publish requests, including Settings → Notifications test sends. Leave blank/unset to publish without authentication. |
@@ -1945,3 +1946,5 @@ Settings → Authentication can hold multiple named credential accounts for each
 ### Knowledge graph artifact location
 
 `knowledgeGraphDir` is an optional project setting. Its default is `.fusion-knowledge/graph`; keep it outside `.fusion`, which is ignored. The directory is intentionally committable and is refreshed with `fn knowledge-graph build`.
+
+`agentMemoryInclusionMode` also controls memory-first pre-steering across triage, execution, review, heartbeat, and agent chat instruction assembly: `full` supplies detailed search-first guidance, `index` supplies a terse form, and `off` suppresses it.

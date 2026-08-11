@@ -111,6 +111,7 @@ import {
   listFeaturesByIds,
   listFeatures,
   listFeaturesForMilestone,
+  listFeaturesForMission,
   listAllFeatures,
   updateFeature,
   deleteFeature,
@@ -694,17 +695,11 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
   }
 
   private async getMissionBlockedDescriptorsWithHandle(handle: QueryHandle, missionId: string, lockStops = false): Promise<MissionBlockerDescriptor[]> {
-    const allFeatures = await listAllFeatures(handle);
-    const featureMission = new Map<string, string>();
-    for (const feature of allFeatures) {
-      const slice = await getSlice(handle, feature.sliceId);
-      const milestone = slice ? await getMilestone(handle, slice.milestoneId) : undefined;
-      if (milestone) featureMission.set(feature.id, milestone.missionId);
-    }
+    const features = await listFeaturesForMission(handle, missionId);
     const stopsQuery = handle.select().from(schema.project.missionLineageStops)
       .where(and(eq(schema.project.missionLineageStops.projectId, missionProjectId()), eq(schema.project.missionLineageStops.missionId, missionId)));
     const stops = lockStops ? await stopsQuery.for("update") : await stopsQuery;
-    const roots = allFeatures.filter((feature) => featureMission.get(feature.id) === missionId && !feature.generatedFromFeatureId && feature.loopState === "blocked");
+    const roots = features.filter((feature) => !feature.generatedFromFeatureId && feature.loopState === "blocked");
     return classifyMissionResumeBlockers({ rootFeatures: roots, lineageStops: stops, missionId }).blockers;
   }
 
@@ -1721,6 +1716,11 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
           const rows = await tx.select({ column: schema.project.tasks.column, updatedAt: schema.project.tasks.updatedAt, deletedAt: schema.project.tasks.deletedAt })
             .from(schema.project.tasks).where(and(eq(schema.project.tasks.projectId, missionProjectId()), eq(schema.project.tasks.id, fence.taskId))).for("update");
           const task = rows[0];
+          /*
+          FNXC:MissionValidationRepair 2026-08-11-03:04 DELIBERATE-LITERAL:
+          The locked verifier must match the producer's physical legacy-row predicate; renamed
+          archive lanes remain live until archival soft-deletes them.
+          */
           const liveness = task && !task.deletedAt && task.column !== "archived" ? "live" : "absent";
           if (fence.taskLiveness === "live") {
             if (liveness !== "live" || task!.column !== fence.taskColumn || task!.updatedAt !== fence.taskUpdatedAt) throw new RepairGroundTruthStaleError(featureId);
@@ -2038,24 +2038,35 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
     const run = await getValidatorRun(this.db, runId);
     if (!run) throw new Error(`Validator run ${runId} not found`);
     if (run.status !== "running") throw new Error(`Validator run ${runId} is not in 'running' status`);
-    const feature = await getFeature(this.db, run.featureId);
-    if (!feature) throw new Error(`Feature ${run.featureId} not found`);
     const now = new Date().toISOString();
     const loopState: FeatureLoopState = result === "passed" ? "passed" : result === "failed" ? "needs_fix" : result === "blocked" ? "blocked" : "validating";
     const updatedRun: MissionValidatorRun = { ...run, status: result, summary, blockedReason, completedAt: now, updatedAt: now };
-    const won = await this.layer.transactionImmediate(async (tx) => {
+    /*
+    FNXC:MissionValidation 2026-08-11-05:26:
+    A validator run becomes historical when a newer admission replaces feature.lastValidatorRunId. Complete the historical run, but only the current owner may project loop state or trigger passed-run reconciliation.
+    */
+    const completion = await this.layer.transactionImmediate(async (tx) => {
+      await tx.select().from(schema.project.missionFeatures).where(and(
+        eq(schema.project.missionFeatures.projectId, missionProjectId()),
+        eq(schema.project.missionFeatures.id, run.featureId),
+      )).for("update");
+      const feature = await getFeature(tx, run.featureId);
+      if (!feature) throw new Error(`Feature ${run.featureId} not found`);
       const winner = await transitionRunningValidatorRun(tx, updatedRun);
-      if (!winner) return false;
-      await updateFeature(tx, { ...feature, loopState, lastValidatorStatus: result, updatedAt: now });
-      return true;
+      if (!winner) return { won: false, ownsFeature: false, feature };
+      const ownsFeature = feature.lastValidatorRunId === run.id;
+      if (ownsFeature) await updateFeature(tx, { ...feature, loopState, lastValidatorStatus: result, updatedAt: now });
+      return { won: true, ownsFeature, feature };
     });
-    if (!won) return (await getValidatorRun(this.db, runId)) ?? updatedRun;
-    const updatedFeature = await getFeature(this.db, feature.id);
-    if (updatedFeature) this.emit("feature:updated", updatedFeature);
-    await this.recomputeSliceStatus(feature.sliceId);
+    if (!completion.won) return (await getValidatorRun(this.db, runId)) ?? updatedRun;
+    if (completion.ownsFeature) {
+      const updatedFeature = await getFeature(this.db, completion.feature.id);
+      if (updatedFeature) this.emit("feature:updated", updatedFeature);
+      await this.recomputeSliceStatus(completion.feature.sliceId);
+    }
     const durationMs = Math.max(0, Date.parse(now) - Date.parse(run.startedAt));
     this.emit("validator-run:completed", updatedRun, result, durationMs);
-    if (result === "passed") await this.reconcileSupersededGeneratedFixFeatures(feature.sliceId);
+    if (result === "passed" && completion.ownsFeature) await this.reconcileSupersededGeneratedFixFeatures(completion.feature.sliceId);
     return updatedRun;
   }
 
@@ -2098,18 +2109,35 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
     if (!mission) throw new Error(`Mission ${milestone.missionId} not found`);
     const now = new Date().toISOString();
     const updatedRun: MissionValidatorRun = { ...run, status: "error", summary: reason, completedAt: now, updatedAt: now };
-    const shouldUpdateFeature = mission.status !== "archived" && mission.status !== "complete" && feature.status !== "done";
-    const won = await this.layer.transactionImmediate(async (tx) => {
+    const reaped = await this.layer.transactionImmediate(async (tx) => {
+      await tx.select().from(schema.project.missionFeatures).where(and(
+        eq(schema.project.missionFeatures.projectId, missionProjectId()),
+        eq(schema.project.missionFeatures.id, run.featureId),
+      )).for("update");
+      const currentFeature = await getFeature(tx, run.featureId);
+      if (!currentFeature) throw new Error(`Feature ${run.featureId} not found`);
       const winner = await transitionRunningValidatorRun(tx, updatedRun);
-      if (!winner) return false;
-      if (shouldUpdateFeature) await updateFeature(tx, { ...feature, loopState: "needs_fix", lastValidatorStatus: "error", updatedAt: now });
-      return true;
+      if (!winner) return { won: false, updatedFeature: false, feature: currentFeature };
+      const ownsFeature = currentFeature.lastValidatorRunId === run.id;
+      /*
+      FNXC:MissionValidation 2026-08-11-05:54:
+      Reaper eligibility must use mission state protected by the same transaction as the feature update. A mission that becomes archived or complete after the preflight read must not be reopened by a stale validator reap.
+      */
+      await tx.select().from(schema.project.missions).where(and(
+        eq(schema.project.missions.projectId, missionProjectId()),
+        eq(schema.project.missions.id, mission.id),
+      )).for("update");
+      const currentMission = await getMission(tx, mission.id);
+      if (!currentMission) throw new Error(`Mission ${mission.id} not found`);
+      const shouldUpdateFeature = ownsFeature && currentMission.status !== "archived" && currentMission.status !== "complete" && currentFeature.status !== "done";
+      if (shouldUpdateFeature) await updateFeature(tx, { ...currentFeature, loopState: "needs_fix", lastValidatorStatus: "error", updatedAt: now });
+      return { won: true, updatedFeature: shouldUpdateFeature, feature: currentFeature };
     });
-    if (!won) return (await getValidatorRun(this.db, runId)) ?? updatedRun;
-    if (shouldUpdateFeature) {
-      const updatedFeature = await getFeature(this.db, feature.id);
+    if (!reaped.won) return (await getValidatorRun(this.db, runId)) ?? updatedRun;
+    if (reaped.updatedFeature) {
+      const updatedFeature = await getFeature(this.db, reaped.feature.id);
       if (updatedFeature) this.emit("feature:updated", updatedFeature);
-      await this.recomputeSliceStatus(feature.sliceId);
+      await this.recomputeSliceStatus(reaped.feature.sliceId);
     }
     this.emit("validator-run:completed", updatedRun, "error", Math.max(0, Date.parse(now) - Date.parse(run.startedAt)));
     return updatedRun;

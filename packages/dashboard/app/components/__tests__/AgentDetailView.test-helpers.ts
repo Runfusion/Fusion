@@ -24,6 +24,7 @@ export const mockUpdateAgentInstructions = vi.fn<ApiModule["updateAgentInstructi
 export const mockUpdateAgentSoul = vi.fn<ApiModule["updateAgentSoul"]>();
 export const mockUpdateAgentMemory = vi.fn<ApiModule["updateAgentMemory"]>();
 export const mockFetchAgentMemoryFiles = vi.fn<ApiModule["fetchAgentMemoryFiles"]>();
+export const mockFetchAgentMemoryConsolidations = vi.fn<ApiModule["fetchAgentMemoryConsolidations"]>();
 export const mockFetchAgentMemoryFile = vi.fn<ApiModule["fetchAgentMemoryFile"]>();
 export const mockSaveAgentMemoryFile = vi.fn<ApiModule["saveAgentMemoryFile"]>();
 export const mockFetchWorkspaceFileContent = vi.fn<ApiModule["fetchWorkspaceFileContent"]>();
@@ -72,6 +73,7 @@ vi.mock("../../api", () => ({
   updateAgentSoul: (...args: Parameters<ApiModule["updateAgentSoul"]>) => mockUpdateAgentSoul(...args),
   updateAgentMemory: (...args: Parameters<ApiModule["updateAgentMemory"]>) => mockUpdateAgentMemory(...args),
   fetchAgentMemoryFiles: (...args: Parameters<ApiModule["fetchAgentMemoryFiles"]>) => mockFetchAgentMemoryFiles(...args),
+  fetchAgentMemoryConsolidations: (...args: Parameters<ApiModule["fetchAgentMemoryConsolidations"]>) => mockFetchAgentMemoryConsolidations(...args),
   fetchAgentMemoryFile: (...args: Parameters<ApiModule["fetchAgentMemoryFile"]>) => mockFetchAgentMemoryFile(...args),
   saveAgentMemoryFile: (...args: Parameters<ApiModule["saveAgentMemoryFile"]>) => mockSaveAgentMemoryFile(...args),
   fetchAgentTasks: (...args: Parameters<ApiModule["fetchAgentTasks"]>) => mockFetchAgentTasks(...args),
@@ -346,6 +348,7 @@ export function setupAgentDetailMocks() {
   mockFetchWorkspaceFileContent.mockResolvedValue({ content: "", mtime: "2024-01-01T00:00:00.000Z", size: 0 });
   mockSaveWorkspaceFileContent.mockResolvedValue({ success: true, mtime: "2024-01-01T00:00:00.000Z", size: 0 });
   mockUpdateAgentInstructions.mockResolvedValue({} as any);
+  mockFetchAgentMemoryConsolidations.mockResolvedValue({ agentId: "agent-001", events: [] });
   mockFetchAgentMemoryFiles.mockResolvedValue({
     files: [
       {

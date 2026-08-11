@@ -340,6 +340,18 @@ export async function reviewStep(
   const validatorFallbackProvider = validatorFallback.provider;
   const validatorFallbackModelId = validatorFallback.modelId;
 
+  // Resolve the routed reviewer once so both its instructions and project-memory policy
+  // honor the same per-agent override.
+  const assignedAgentId = options.agentId ?? options.task?.assignedAgentId ?? null;
+  const agentStore = options.agentStore;
+  const memoryAgent =
+    options.rootDir
+    && agentStore
+    && assignedAgentId
+    && typeof (agentStore as { getAgent?: unknown }).getAgent === "function"
+      ? await agentStore.getAgent(assignedAgentId).catch(() => null)
+      : null;
+
   let reviewerInstructions = "";
   if (options.agentStore && options.rootDir) {
     try {
@@ -375,8 +387,14 @@ export async function reviewStep(
   // FN-6235: built-in reviewer policy is sourced from the resolved workflow IR review node;
   // explicit reviewer role overrides still win, and the built-in default keeps this fail-soft.
   const reviewerBasePrompt = userReviewerPrompt || workflowReviewerPrompt || resolveAgentPrompt("reviewer");
-  const memorySection = options.rootDir && effectiveSettings?.memoryEnabled !== false
-    ? buildReviewerMemoryInstructions(options.rootDir, effectiveSettings)
+  /*
+  FNXC:MemoryPreSteering 2026-08-11-11:30:
+  FN-8934 requires project-memory guidance to use the routed reviewer's mode as well as
+  its instruction section, so an explicit off override suppresses every memory nudge.
+  */
+  const reviewerMemoryMode = resolveAgentMemoryInclusionMode({ agent: memoryAgent, globalSettings: effectiveSettings }).mode;
+  const memorySection = options.rootDir && effectiveSettings?.memoryEnabled !== false && reviewerMemoryMode !== "off"
+    ? buildReviewerMemoryInstructions(options.rootDir, effectiveSettings, undefined, reviewerMemoryMode)
     : "";
 
   const reviewerPluginContributions = await buildPluginPromptSection(
@@ -411,15 +429,6 @@ export async function reviewStep(
   }
 
   // A routed reviewer principal owns its memory/runtime identity for this session.
-  const assignedAgentId = options.agentId ?? options.task?.assignedAgentId ?? null;
-  const agentStore = options.agentStore;
-  const memoryAgent =
-    options.rootDir
-    && agentStore
-    && assignedAgentId
-    && typeof (agentStore as { getAgent?: unknown }).getAgent === "function"
-      ? await agentStore.getAgent(assignedAgentId).catch(() => null)
-      : null;
   const memoryTools = options.rootDir && effectiveSettings?.memoryEnabled !== false
     ? [
         createMemorySearchTool(options.rootDir, effectiveSettings, memoryAgent ? {

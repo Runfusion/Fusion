@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   applyReviewSeverityGate,
   formatFindingsByPriority,
+  formatResolvedFindings,
   isBlockingFinding,
   resolveReviewBlockingSeverity,
   DEFAULT_CODE_REVIEW_BLOCKING_SEVERITY,
@@ -64,6 +65,13 @@ describe("isBlockingFinding", () => {
 
   it("blocks everything at threshold \"any\"", () => {
     expect(isBlockingFinding(finding({ severity: "low" }), "any")).toBe(true);
+  });
+
+  it("never blocks review receipts or superseded findings", () => {
+    for (const resolution of ["resolved-in-review", "superseded"] as const) {
+      expect(isBlockingFinding(finding({ severity: "critical", resolution }), "critical")).toBe(false);
+      expect(isBlockingFinding(finding({ severity: "critical", resolution }), "any")).toBe(false);
+    }
   });
 });
 
@@ -133,6 +141,16 @@ describe("applyReviewSeverityGate", () => {
     expect(result.downgraded).toBe(false);
   });
 
+  it("keeps an all-resolved REVISE fail-closed while exposing only audit receipts", () => {
+    const result = applyReviewSeverityGate({
+      verdict: "REVISE",
+      findings: [finding({ id: "receipt", severity: "critical", resolution: "resolved-in-review" })],
+      threshold: "any",
+    });
+    expect(result).toMatchObject({ verdict: "REVISE", downgraded: false, blocking: [], advisory: [] });
+    expect(result.resolved.map((item) => item.id)).toEqual(["receipt"]);
+  });
+
   it("only ever relaxes — an APPROVE carrying a critical finding is left alone", () => {
     for (const verdict of ["APPROVE", "APPROVE_WITH_NOTES", "CLOSE_NO_OP", undefined]) {
       const result = applyReviewSeverityGate({
@@ -171,5 +189,12 @@ describe("formatFindingsByPriority", () => {
   it("presents unclassified findings with the strongest obligation, matching the fail-closed gate", () => {
     const out = formatFindingsByPriority([finding({ title: "unknown", body: "x" })]);
     expect(out).toContain("### Unclassified — treat as must fix");
+  });
+
+  it("omits non-open findings from priorities and renders audit receipts separately", () => {
+    const receipt = finding({ id: "receipt", title: "Fixed", body: "Already handled", resolution: "resolved-in-review" });
+    expect(formatFindingsByPriority([receipt])).toBe("");
+    expect(formatResolvedFindings([receipt])).toContain("Already resolved during this review pass — do NOT redo");
+    expect(formatResolvedFindings([receipt])).toContain("[resolved-in-review]");
   });
 });

@@ -22,7 +22,7 @@ import { HeartbeatMonitor } from "../agent-heartbeat.js";
 import { MemoryConsolidationError } from "../memory/index.js";
 
 function outcome(changed = false, skipped?: "in-progress") {
-  return { graphChanged: changed, graphRecoveryReason: changed ? "inconsistent-artifact" as const : null, parsedFiles: 0, reusedFiles: 1, prunedFiles: 0, nodeCount: 1, edgeCount: 0, recallCandidates: 1, recallCreated: changed ? 1 : 0, recallDuplicate: changed ? 0 : 1, crossRefUpdated: 0, crossRefUnchanged: 1, crossRefMissing: 0, durationMs: 1, changed, ...(skipped ? { skipped } : {}) };
+  return { graphChanged: changed, graphRecoveryReason: changed ? "inconsistent-artifact" as const : null, parsedFiles: 0, reusedFiles: 1, prunedFiles: 0, nodeCount: 1, edgeCount: 0, recallCandidates: 1, recallCreated: changed ? 1 : 0, recallDuplicate: changed ? 0 : 1, crossRefUpdated: 0, crossRefUnchanged: 1, crossRefMissing: 0, semanticsWritten: changed ? 1 : 0, semanticsDeduped: changed ? 2 : 0, semanticsDroppedUnresolved: changed ? 3 : 0, durationMs: 1, changed, ...(skipped ? { skipped } : {}) };
 }
 
 function fixture(enabled: unknown, metadata: Record<string, unknown> = {}) {
@@ -68,10 +68,12 @@ describe("Memory Keeper heartbeat hook", () => {
     const second = await monitor(f).executeHeartbeat({ agentId: "memory", source: "timer" });
     expect(first?.status).toBe("completed"); expect(second?.status).toBe("completed");
     expect(memory.run).toHaveBeenCalledWith({ agentId: "memory", projectId: "resolved-project" });
-    expect(f.audits).toEqual([
+    expect(f.audits).toEqual(expect.arrayContaining([
+      expect.objectContaining({ mutationType: "memory:semantics-inferred", target: "memory", metadata: expect.objectContaining({ agentId: "memory", edgesWritten: 1, edgesDeduped: 2, edgesDroppedUnresolved: 3 }) }),
       expect.objectContaining({ mutationType: "memory:consolidation-completed", target: "memory", metadata: expect.objectContaining({ agentId: "memory", graphRecoveryReason: "inconsistent-artifact", recallCreated: 1 }) }),
       expect.objectContaining({ mutationType: "memory:consolidation-skipped", target: "memory", metadata: expect.objectContaining({ agentId: "memory", reason: "in-progress" }) }),
-    ]);
+    ]));
+    expect(JSON.stringify(f.audits)).not.toContain("distinctive model prose");
   });
 
   it("routes recoverable tick failures through completeRun and the shared exhaustion budget", async () => {

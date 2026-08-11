@@ -809,6 +809,17 @@ export type DatabaseMutationType =
   | "memory:consolidation-completed"
   | "memory:consolidation-skipped"
   | "memory:consolidation-failed"
+  /*
+   * FNXC:MemoryAgent 2026-08-11-10:55:
+   * FN-8933 semantic and capture telemetry remains ids/counts/outcomes-only. `memory:semantics-inferred`
+   * carries edge/proposal counts; `memory:semantics-skipped` carries a closed reason; capture events
+   * carry a recall record id (when created), origin, and fixed outcome/error class only. Never record
+   * edge or node labels, recalled prose, prompt text, model output, or model reasoning in metadata.
+   */
+  | "memory:semantics-inferred"
+  | "memory:semantics-skipped"
+  | "memory:capture-recorded"
+  | "memory:capture-failed"
   | "task:in-review-stall-deadlock-disposed"
   | "task:in-review-stall-terminal-provider-error"
   | "task:finalize-unproven-blocked"

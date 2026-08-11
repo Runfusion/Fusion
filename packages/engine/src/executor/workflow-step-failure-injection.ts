@@ -6,7 +6,7 @@
 import { join } from "node:path";
 import { readFile, writeFile } from "node:fs/promises";
 import type { Task, TaskStore, WorkflowReviewFinding } from "@fusion/core";
-import { formatFindingsByPriority } from "@fusion/core";
+import { formatFindingsByPriority, formatResolvedFindings, isOpenWorkflowReviewFinding } from "@fusion/core";
 import { executorLog } from "../logger.js";
 import { buildWorkflowFailureScopeGuard } from "./workflow-failure-scope-guard.js";
 
@@ -39,6 +39,7 @@ export async function injectReviewAdvisoryNotes(
   stepName: string,
   findings: WorkflowReviewFinding[],
 ): Promise<void> {
+  findings = findings.filter(isOpenWorkflowReviewFinding);
   if (findings.length === 0) return;
   const promptPath = join(store.getFusionDir(), "tasks", task.id, "PROMPT.md");
   let content: string;
@@ -93,12 +94,13 @@ export async function injectWorkflowStepFailureInstructions(
   const failureSectionHeader = "## Workflow Step Failure";
   const scopeGuard = buildWorkflowFailureScopeGuard(task, content);
   const prioritized = findings?.length ? formatFindingsByPriority(findings) : "";
+  const resolved = findings?.length ? formatResolvedFindings(findings) : "";
   const feedbackBlock = prioritized
     ? `**Findings:**
 
-${prioritized}`
+${prioritized}${resolved ? `\n\n${resolved}` : ""}`
     : `**Failure Feedback:**
-${failureFeedback}`;
+${failureFeedback}${resolved ? `\n\n${resolved}` : ""}`;
   /*
    * FNXC:ReviewSeverityGate 2026-08-10-17:33:
    * The closing instruction sanctions an explicit DECLINE with rationale. Previously the only sanctioned

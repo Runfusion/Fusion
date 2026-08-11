@@ -114,7 +114,7 @@ describe("NotificationService deferred failure notifications", () => {
       markTerminalFailureAutoRecoveryBudgetExhausted: marker,
       markTerminalFailureAutoRecoveryEscalationDelivered: stamp,
     });
-    const service = new NotificationService(store as any);
+    const service = new NotificationService(store as any, { wedgeNotificationSettleMs: 0 });
     await service.start();
     const exhausted = task({
       id: "FN-suppressed-exhaustion",
@@ -166,7 +166,7 @@ describe("NotificationService deferred failure notifications", () => {
       isEventSupported: () => true,
       sendNotification,
     };
-    const service = new NotificationService(store as any, { failedNotificationGraceMs: 100 });
+    const service = new NotificationService(store as any, { failedNotificationGraceMs: 100, wedgeNotificationSettleMs: 0 });
     service.registerProvider(provider);
     await service.start();
     return { store, service, sendNotification };
@@ -196,6 +196,7 @@ describe("NotificationService deferred failure notifications", () => {
     const service = new NotificationService(store as any, {
       messageStore: { on: () => undefined, sendMessageOnce } as any,
       failedNotificationGraceMs: 100,
+      wedgeNotificationSettleMs: 0,
     });
     service.registerProvider({ getProviderId: () => "mock", isEventSupported: () => true, sendNotification });
     await service.start();
@@ -238,7 +239,7 @@ describe("NotificationService deferred failure notifications", () => {
     expect(sendNotification).toHaveBeenCalledTimes(1);
 
     await service.stop();
-    const restarted = new NotificationService(store as any, { messageStore: { on: () => undefined, sendMessageOnce } as any });
+    const restarted = new NotificationService(store as any, { messageStore: { on: () => undefined, sendMessageOnce } as any, wedgeNotificationSettleMs: 0 });
     restarted.registerProvider({ getProviderId: () => "restarted", isEventSupported: () => true, sendNotification });
     await restarted.start();
     store.emit("task:updated", exhausted);

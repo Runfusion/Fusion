@@ -56,6 +56,7 @@ type DisplayReviewItem = {
   path?: string;
   line?: number;
   severity?: "low" | "medium" | "high" | "critical";
+  resolution?: "open" | "resolved-in-review" | "superseded";
   createdAt?: string;
   status: "queued" | "in-progress" | "addressed" | "failed";
   addressing?: AddressingRecord;
@@ -135,6 +136,7 @@ function getDisplayReviewItems(review: ReviewState): DisplayReviewItem[] {
       path: item.path,
       line: item.line,
       severity: item.severity,
+      resolution: item.resolution,
       createdAt: item.createdAt,
       status: addressing?.status ?? "queued",
       addressing,
@@ -212,7 +214,7 @@ export function TaskReviewTab({
       return authorTypeFilter === "bot" ? authorInfo.authorIsBot : !authorInfo.authorIsBot;
     });
   }, [authorTypeFilter, displayItems]);
-  const visibleItemIds = useMemo(() => new Set(filteredDisplayItems.map((item) => item.id)), [filteredDisplayItems]);
+  const visibleItemIds = useMemo(() => new Set(filteredDisplayItems.filter((item) => !item.resolution || item.resolution === "open").map((item) => item.id)), [filteredDisplayItems]);
   const canRevise = selected.length > 0 && !revising;
   const canAddressPrFeedback = isPrMode
     && Boolean(getTaskPrimaryPrInfo(task))
@@ -286,7 +288,10 @@ export function TaskReviewTab({
       ? "status-dot status-dot--pending"
       : "status-dot status-dot--online";
 
-  const toggleSelected = (id: string) => setSelected((prev) => (prev.includes(id) ? prev.filter((v) => v !== id) : [...prev, id]));
+  const toggleSelected = (id: string) => {
+    if (displayItems.some((item) => item.id === id && item.resolution && item.resolution !== "open")) return;
+    setSelected((prev) => (prev.includes(id) ? prev.filter((value) => value !== id) : [...prev, id]));
+  };
 
   const onRefresh = async () => {
     try {
@@ -567,19 +572,30 @@ export function TaskReviewTab({
             const prState = isPrMode ? item.item?.state : undefined;
             const prUrl = isPrMode ? item.item?.htmlUrl ?? item.addressing?.snapshot?.url : undefined;
             const summaryPrefix = item.path && !isPrMode ? `${item.path}: ` : "";
+            const isOpen = !item.resolution || item.resolution === "open";
+            const resolutionLabel = item.resolution === "resolved-in-review"
+              ? t("taskReview.fixedInReview", "Fixed in review")
+              : t("taskReview.superseded", "Superseded");
 
             return (
-              <li key={item.id} className="task-review-tab__item card" data-review-comment-author-type={authorType}>
+              <li key={item.id} className={`task-review-tab__item card${isOpen ? "" : " task-review-tab__item--informational"}`} data-review-comment-author-type={authorType} {...(!isOpen ? { "data-review-resolution": item.resolution } : {})}>
                 <div className="task-review-tab__item-inner">
-                  <label htmlFor={checkboxId} className="task-review-tab__direct-item task-review-tab__direct-item--selectable">
-                    <div className="task-review-tab__item-header">
-                      <div className="task-review-tab__item-selection">
-                        <input id={checkboxId} type="checkbox" checked={selected.includes(item.id)} onChange={() => toggleSelected(item.id)} />
-                        <span className="task-review-tab__item-summary">{summaryPrefix}{item.summary}</span>
+                  {isOpen ? (
+                    <label htmlFor={checkboxId} className="task-review-tab__direct-item task-review-tab__direct-item--selectable">
+                      <div className="task-review-tab__item-header">
+                        <div className="task-review-tab__item-selection">
+                          <input id={checkboxId} type="checkbox" checked={selected.includes(item.id)} onChange={() => toggleSelected(item.id)} />
+                          <span className="task-review-tab__item-summary">{summaryPrefix}{item.summary}</span>
+                        </div>
+                        <span className={`task-review-tab__status task-review-tab__status--${item.status}`}>{item.status}</span>
                       </div>
-                      <span className={`task-review-tab__status task-review-tab__status--${item.status}`}>{item.status}</span>
+                    </label>
+                  ) : (
+                    <div className="task-review-tab__item-header">
+                      <span className="task-review-tab__item-summary">{summaryPrefix}{item.summary}</span>
+                      <span className="task-review-tab__resolution-badge">{resolutionLabel}</span>
                     </div>
-                  </label>
+                  )}
                   {/*
                   FNXC:TaskReview 2026-06-27-00:00:
                   Every Review-tab item needs visible author provenance across PR live items, reviewer-agent items, and snapshot-only addressing records. Render a deterministic avatar image only for human GitHub logins; missing authors and bots use generic icons so there is never an empty or broken avatar shell.

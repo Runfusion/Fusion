@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { RepairGroundTruthStaleError, type TaskStore } from "@fusion/core";
+import * as fusionCore from "@fusion/core";
+import { RepairGroundTruthStaleError, listRecall, type RecallCaptureWriterWithTestDrain, type TaskStore } from "@fusion/core";
 import { createSharedPgTaskStoreTestHarness, pgDescribe, type SharedPgTaskStoreHarness } from "../../../core/src/__test-utils__/pg-test-harness.js";
 import { createMissionTools } from "../agent-tools.js";
 
@@ -113,8 +114,9 @@ describe("createMissionTools", () => {
   it("promotes completed findings through the idempotent mission-store facade", async () => {
     const addResearchFeature = vi.fn().mockResolvedValue({ reused: false, feature: { id: "F-1", status: "defined" } });
     const store = {
-      getResearchStore: () => ({ getRun: vi.fn().mockResolvedValue({ id: "R-1", status: "completed", results: { findings: [{ heading: "Finding", content: "Evidence", sources: ["https://source.example"] }] } }) }),
+      getResearchStore: () => ({ getRun: vi.fn().mockResolvedValue({ id: "R-1", status: "completed", tags: [], results: { findings: [{ id: "finding-b481c893", heading: "Finding", content: "Evidence", sources: ["https://source.example"] }] } }) }),
       getMissionStore: () => ({ addResearchFeature }),
+      getAsyncLayer: () => undefined,
     } as never;
     const tool = createMissionTools(store).find((candidate) => candidate.name === "fn_research_promote_finding")!;
     const result = await tool.execute("call", { runId: "R-1", findingId: "finding-b481c893", sliceId: "SL-1" });
@@ -257,6 +259,60 @@ pgDescribe("mission validation repair agent tool", () => {
     expect(result.isError).not.toBe(true);
     expect(await h.store().getMissionStore().getFeature(feature.id))
       .toMatchObject({ status: "defined", loopState: "idle" });
+  });
+
+  /*
+  FNXC:MemoryRecallCapture 2026-08-11-12:17:
+  The agent tool is a named production composition root for research-promotion capture. Retain the
+  real writer's test-only drain so this verifies both factory composition and the actual recall row,
+  rather than proving only that promoteResearchFinding accepts a hand-injected callback.
+  */
+  it("captures a promoted finding through the agent-tool composition root", async () => {
+    const store = h.store();
+    const researchStore = store.getResearchStore();
+    const run = await researchStore.createRun({ query: "Capture through agent tools", tags: ["agent-tool"] });
+    await researchStore.updateRun(run.id, { status: "running" });
+    await researchStore.updateRun(run.id, {
+      status: "completed",
+      results: {
+        summary: "Agent-tool research result",
+        findings: [{ id: "finding-agent-capture", heading: "Capture finding", content: "Persist recall through the live writer.", sources: [] }],
+      },
+    });
+    const missionStore = store.getMissionStore();
+    const mission = await missionStore.createMission({ title: "Promotion capture" });
+    const milestone = await missionStore.addMilestone(mission.id, { title: "Milestone" });
+    const slice = await missionStore.addSlice(milestone.id, { title: "Slice" });
+    const realCreateRecallCaptureWriter = fusionCore.createRecallCaptureWriter;
+    const writerFactory = vi.spyOn(fusionCore, "createRecallCaptureWriter");
+    let writer: RecallCaptureWriterWithTestDrain | undefined;
+    writerFactory.mockImplementation((deps) => {
+      writer = realCreateRecallCaptureWriter(deps);
+      return writer;
+    });
+
+    try {
+      const tool = createMissionTools(store, { agentId: "agent-capture" })
+        .find((candidate) => candidate.name === "fn_research_promote_finding")!;
+      const result = await tool.execute("capture", {
+        runId: run.id,
+        findingId: "finding-agent-capture",
+        sliceId: slice.id,
+      });
+      expect(result.isError).not.toBe(true);
+      expect(writerFactory).toHaveBeenCalledWith(expect.objectContaining({ layer: store.getAsyncLayer() }));
+      // The spy wraps the real factory, so its returned drain observes the actual detached insert.
+      await writer!.flushPendingCaptures();
+      expect(await listRecall(store.getAsyncLayer()!, { limit: 10 })).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          kind: "solution",
+          source: expect.objectContaining({ origin: "deep-research" }),
+          tags: expect.arrayContaining([`research-run:${run.id}`]),
+        }),
+      ]));
+    } finally {
+      writerFactory.mockRestore();
+    }
   });
 
   it("re-resolves a real stale fence exactly once before clearing", async () => {

@@ -78,3 +78,4 @@ nothing and its cards are invisible to every sweep that queries by role. The thr
 project scope. The fix cannot be a changed default for the reason above — sweeps want the widening and
 the aggregators do not — so it wants an opt-in
 (`{ untraitedProject: "declared-columns" }`). Recorded at three call sites in `self-healing.ts`.
+| `releaseGate` board enrichment | **union** | shares `awaitingPlanning`'s hold-lane union and request cap, with a per-request workflow-IR cache; it includes timestamped evidence because retaining a stale Promote decision is unsafe |

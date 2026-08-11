@@ -34,6 +34,15 @@ export const notificationsSearchEntries: SettingsSearchEntry[] = [
   },
   {
     sectionId: "notifications",
+    key: "wedgeNotificationSettleMs",
+    labelKey: "settings.notifications.wedgeNotificationSettleMs",
+    labelFallback: "Terminal-wedge settle window (ms)",
+    helpKey: "settings.notifications.wedgeNotificationSettleMsHelp",
+    helpFallback: "How long a terminal failure must persist before an operator alert. 0 = notify immediately. Default: 300000 (5 minutes).",
+    keywords: ["noise", "debounce", "wedge", "recovered"],
+  },
+  {
+    sectionId: "notifications",
     key: "ntfyDashboardHost",
     labelKey: "settings.notifications.dashboardHostname",
     labelFallback: "Dashboard Hostname",

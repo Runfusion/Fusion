@@ -65,6 +65,7 @@ const PRETEST_CHECKS = [
   "scripts/check-no-test-timeout-appeasement.mjs",
   "scripts/check-changeset-format.mjs",
   "scripts/check-routes-modular.mjs",
+  "scripts/check-runtime-skill-loader-drift.mjs",
 ];
 const STATIC_STEP_IDS = PRETEST_CHECKS.map((script) => `static-check:${script.slice("scripts/".length, -".mjs".length)}`);
 

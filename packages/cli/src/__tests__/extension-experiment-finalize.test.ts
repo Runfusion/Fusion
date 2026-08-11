@@ -53,6 +53,9 @@ vi.mock("@fusion/core", () => ({
   })),
   COLUMNS: [],
   COLUMN_LABELS: {},
+  // FNXC:CliTests 2026-08-11-02:58: extension.ts builds mission and feature status schemas during tool registration.
+  MISSION_STATUSES: ["planning", "active", "blocked", "complete", "archived"],
+  FEATURE_STATUSES: ["defined", "triaged", "in-progress", "done", "blocked"],
   validateNodeOverrideChange: vi.fn(),
   RESEARCH_RUN_STATUSES: [],
   isResearchExperimentalEnabled: vi.fn(() => true),

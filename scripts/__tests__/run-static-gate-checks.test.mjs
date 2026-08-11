@@ -24,6 +24,7 @@ const EXPECTED_GATE_CHECKS = [
   check("changeset-format"),
   check("mock-completeness"),
   check("inert-sync-lane-conversions"),
+  check("runtime-skill-loader-drift"),
 ];
 
 function createFixture() {

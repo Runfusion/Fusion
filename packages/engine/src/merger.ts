@@ -85,6 +85,7 @@ import {
   resolveTitleSummarizerSettingsModel,
   resolveAgentPrompt,
   resolvePersistAgentThinkingLog,
+  resolveAgentMemoryInclusionMode,
   summarizeCommitBody,
   summarizeCommitSubject,
   summarizeMergeCommit,
@@ -10962,7 +10963,13 @@ async function runAiAgentForCommit(params: AiAgentParams): Promise<{ success: bo
       const agents = await options.agentStore.listAgents({ role: "merger" });
       for (const agent of agents) {
         if (agent.instructionsText || agent.instructionsPath) {
-          mergerInstructions = await resolveAgentInstructions(agent, rootDir);
+          /*
+          FNXC:MemoryPreSteering 2026-08-11-11:54:
+          FN-8934 requires merger prompts to honor the selected principal's memory mode.
+          Passing the resolved mode prevents off/index settings from silently receiving full-memory steering.
+          */
+          const memoryMode = resolveAgentMemoryInclusionMode({ agent, globalSettings: settings }).mode;
+          mergerInstructions = await resolveAgentInstructions(agent, rootDir, undefined, memoryMode);
           break;
         }
       }

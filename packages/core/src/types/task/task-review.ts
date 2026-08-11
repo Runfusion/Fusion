@@ -15,6 +15,7 @@ export type TaskReviewVerdict = "APPROVE" | "APPROVE_WITH_NOTES" | "REVISE" | "R
 export type TaskReviewerType = "plan" | "code";
 export type TaskReviewItemStatus = "queued" | "in-progress" | "addressed" | "failed";
 export type TaskReviewFindingSeverity = "low" | "medium" | "high" | "critical";
+export type TaskReviewFindingResolution = "open" | "resolved-in-review" | "superseded";
 
 export interface LegacyTaskReviewItem {
   id: string;
@@ -100,6 +101,7 @@ export interface TaskReviewStateItem {
   step?: number;
   summary?: string;
   severity?: TaskReviewFindingSeverity;
+  resolution?: TaskReviewFindingResolution;
 }
 
 export type ReviewAddressingStatus = "queued" | "in-progress" | "addressed" | "failed";
@@ -114,6 +116,7 @@ export interface ReviewAddressingSnapshot {
   filePath?: string;
   lineNumber?: number;
   severity?: TaskReviewFindingSeverity;
+  resolution?: TaskReviewFindingResolution;
   threadId?: string;
   url?: string;
 }
@@ -171,6 +174,7 @@ export interface TaskReviewDataItem {
   filePath?: string;
   line?: number;
   severity?: TaskReviewFindingSeverity;
+  resolution?: TaskReviewFindingResolution;
   threadId?: string;
   reviewState?: string | null;
   /** Machine-readable reviewer verdict when the source supplied one. */

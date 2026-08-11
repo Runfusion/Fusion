@@ -63,6 +63,7 @@ import {
   isReviewBudgetExhaustedApproval,
   isTaskAwaitingPlanApproval,
   isTaskBlockedOnApprovalHold,
+  resolvePromoteSuppressed,
 } from "../utils/reviewBudgetApproval";
 import { canStartPrFeedbackAddressing, getTaskPrimaryPrInfo } from "../utils/prFeedback";
 import type { ToastType } from "../hooks/useToast";
@@ -1615,7 +1616,7 @@ function TaskCardComponent({
     || planReviewGateUnsatisfied
     || isAwaitingApproval
     || isBlockedOnApprovalHold;
-  const showPromoteAction = Boolean(onPromote) && !isStillInPlanning;
+  const showPromoteAction = Boolean(onPromote) && !resolvePromoteSuppressed(task, isStillInPlanning);
   const showIdleTodoBadge = !isPaused
     && isHoldColumn
     && !visualStatus

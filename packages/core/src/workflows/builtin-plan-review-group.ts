@@ -46,7 +46,7 @@ Be specific: cite the plan section or file path for every finding and explain th
 - CLOSE_NO_OP: implementation must not proceed because the premise is stale, the work is already satisfied, redundant, or a duplicate. The notes field MUST begin with exactly one existing completion sentinel: PREMISE STALE:, NO-OP:, NOOP:, REDUNDANT:, or DUPLICATE:. For duplicates, use DUPLICATE: FN-NNNN ... when the canonical task is known.
 - Every blocking issue MUST appear as an entry in \`findings\` with its severity. Prose in \`notes\` alone does not block, and is not a durable input to the next planning round.
 - Final output: output exactly one trailing JSON object on the final line (no markdown fences, no surrounding prose):
-{"verdict":"APPROVE|APPROVE_WITH_NOTES|REVISE|CLOSE_NO_OP","notes":"...","findings":[{"id":"stable-id","title":"concise issue","body":"actionable correction","severity":"critical|high|medium|low"}]}`;
+{"verdict":"APPROVE|APPROVE_WITH_NOTES|REVISE|CLOSE_NO_OP","notes":"...","findings":[{"id":"stable-id","title":"concise issue","body":"actionable correction","severity":"critical|high|medium|low","resolution":"open|resolved-in-review|superseded"}]}`;
 
 /*
 FNXC:PlanReviewStep 2026-07-27-06:10:

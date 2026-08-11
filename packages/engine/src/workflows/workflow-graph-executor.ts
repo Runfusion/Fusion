@@ -1072,6 +1072,12 @@ export class WorkflowGraphExecutor {
           const stepFindings = this.workflowReviewKind(node) && Array.isArray(exitContextPatch?.findings)
             ? exitContextPatch.findings as WorkflowStepResult["findings"]
             : undefined;
+          const supersededFindingSourceWorkflowStepId = this.workflowReviewKind(node) && typeof exitContextPatch?.supersededFindingSourceWorkflowStepId === "string"
+            ? exitContextPatch.supersededFindingSourceWorkflowStepId
+            : undefined;
+          const supersededFindingIds = supersededFindingSourceWorkflowStepId && this.workflowReviewKind(node) && Array.isArray(exitContextPatch?.supersededFindingIds)
+            ? exitContextPatch.supersededFindingIds.filter((id): id is string => typeof id === "string")
+            : undefined;
           /*
            * FNXC:WorkflowStepResults 2026-07-07-00:00:
            * A non-verdict `stepStatus === "failed"` (dispatch/infra exception, not a
@@ -1107,6 +1113,7 @@ export class WorkflowGraphExecutor {
             ...(stepOutput !== undefined ? { output: stepOutput } : {}),
             ...(stepNotes !== undefined ? { notes: stepNotes } : {}),
             ...(stepFindings?.length ? { findings: stepFindings } : {}),
+            ...(supersededFindingSourceWorkflowStepId && supersededFindingIds?.length ? { supersededFindingSourceWorkflowStepId, supersededFindingIds } : {}),
             startedAt: stepStartedAt,
             completedAt: new Date().toISOString(),
           });
@@ -2007,6 +2014,13 @@ export class WorkflowGraphExecutor {
     const findings = this.workflowReviewKind(node) && Array.isArray(contextPatch.findings)
       ? contextPatch.findings as WorkflowStepResult["findings"]
       : undefined;
+    /* FNXC:WorkflowReviewFindings 2026-08-11-19:39: This ordinary writer and the optional-group exit writer above carry explicit review supersession claims to the shared persistence sink. */
+    const supersededFindingSourceWorkflowStepId = this.workflowReviewKind(node) && typeof contextPatch.supersededFindingSourceWorkflowStepId === "string"
+      ? contextPatch.supersededFindingSourceWorkflowStepId
+      : undefined;
+    const supersededFindingIds = supersededFindingSourceWorkflowStepId && this.workflowReviewKind(node) && Array.isArray(contextPatch.supersededFindingIds)
+      ? contextPatch.supersededFindingIds.filter((id): id is string => typeof id === "string")
+      : undefined;
     /*
      * FNXC:WorkflowStepResults 2026-07-07-00:00:
      * CE `source:"node"` skill-gate failures share the same `(no feedback
@@ -2032,6 +2046,7 @@ export class WorkflowGraphExecutor {
       ...(output !== undefined ? { output } : {}),
       ...(notes !== undefined ? { notes } : {}),
       ...(findings?.length ? { findings } : {}),
+      ...(supersededFindingSourceWorkflowStepId && supersededFindingIds?.length ? { supersededFindingSourceWorkflowStepId, supersededFindingIds } : {}),
       startedAt: started?.startedAt ?? new Date().toISOString(),
       completedAt: new Date().toISOString(),
     });

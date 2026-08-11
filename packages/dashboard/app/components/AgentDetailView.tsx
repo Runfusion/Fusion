@@ -13,8 +13,8 @@ import {
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { AgentDetail, AgentState, AgentHeartbeatRun, AgentBudgetStatus, ModelInfo, MemoryFileInfo, AgentCapability, PluginRuntimeInfo, SkillContent, AgentOnboardingSummary, AgentMailboxResponse, AgentPromptSizePoint } from "../api";
-import { fetchAgent, updateAgent, updateAgentState, deleteAgent, isAgentHeartbeatEnabled, withAgentHeartbeatEnabled, fetchAgentLogsWithMeta, fetchAgentRunLogs, fetchAgentChildren, fetchAgentRuns, fetchAgentRunDetail, startAgentRun, stopAgentRun, updateAgentInstructions, updateAgentSoul, updateAgentMemory, fetchAgentMemoryFiles, fetchAgentMemoryFile, saveAgentMemoryFile, fetchAgentTasks, fetchChainOfCommand, fetchAgentBudgetStatus, resetAgentBudget, fetchWorkspaceFileContent, saveWorkspaceFileContent, fetchModels, fetchPluginRuntimes, fetchAgents, fetchSettings, fetchSettingsByScope, upgradeAgentHeartbeatProcedure, fetchSkillContent, uploadAgentAvatar, deleteAgentAvatar, fetchAgentMailbox, markMessageRead, fetchAgentPromptSizes } from "../api";
-import type { Agent } from "../api";
+import { fetchAgent, updateAgent, updateAgentState, deleteAgent, isAgentHeartbeatEnabled, withAgentHeartbeatEnabled, fetchAgentLogsWithMeta, fetchAgentRunLogs, fetchAgentChildren, fetchAgentRuns, fetchAgentRunDetail, startAgentRun, stopAgentRun, updateAgentInstructions, updateAgentSoul, updateAgentMemory, fetchAgentMemoryFiles, fetchAgentMemoryFile, fetchAgentMemoryConsolidations, saveAgentMemoryFile, fetchAgentTasks, fetchChainOfCommand, fetchAgentBudgetStatus, resetAgentBudget, fetchWorkspaceFileContent, saveWorkspaceFileContent, fetchModels, fetchPluginRuntimes, fetchAgents, fetchSettings, fetchSettingsByScope, upgradeAgentHeartbeatProcedure, fetchSkillContent, uploadAgentAvatar, deleteAgentAvatar, fetchAgentMailbox, markMessageRead, fetchAgentPromptSizes } from "../api";
+import type { Agent, MemoryConsolidationEvent } from "../api";
 import type { AgentLogEntry, Task, Message, ParticipantType, AgentPermissionPolicy, AgentPermissionPolicyRules, AgentPermission, ThinkingLevel, Settings as CoreSettings } from "@fusion/core";
 import {
   AGENT_PERMISSIONS,
@@ -2956,11 +2956,31 @@ function MemoryTab({
   const [savingSelectedFile, setSavingSelectedFile] = useState(false);
   const [selectedFileJustSaved, setSelectedFileJustSaved] = useState(false);
   const [fileSwitchHint, setFileSwitchHint] = useState("");
+  const [consolidations, setConsolidations] = useState<MemoryConsolidationEvent[]>([]);
+  const [consolidationsLoading, setConsolidationsLoading] = useState(false);
+  const [consolidationsError, setConsolidationsError] = useState("");
   const justSavedTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const selectedFileJustSavedTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const isReadOnly = agent.state === "running";
+  const isMemoryKeeper = agent.metadata?.builtInMemoryAgent === true;
   const hasInlineChanges = memory !== (agent.memory ?? "");
+
+  const loadConsolidations = useCallback(async () => {
+    if (!isMemoryKeeper) return;
+    setConsolidationsLoading(true);
+    setConsolidationsError("");
+    try {
+      const result = await fetchAgentMemoryConsolidations(agent.id, 50, projectId);
+      setConsolidations(result.events);
+    } catch (err) {
+      setConsolidationsError(getErrorMessage(err));
+    } finally {
+      setConsolidationsLoading(false);
+    }
+  }, [agent.id, isMemoryKeeper, projectId]);
+
+  useEffect(() => { void loadConsolidations(); }, [loadConsolidations]);
 
   const selectedMemoryFile = useMemo(
     () => memoryFiles.find((file) => file.path === selectedFilePath),
@@ -3104,6 +3124,38 @@ function MemoryTab({
         <p className="config-description">
           {t("agents.memoryDescription", "Store context that belongs to this agent only. Workspace memory, daily notes, dreams, and qmd search live in project settings under Project Memory.")}
         </p>
+        {isMemoryKeeper && (
+          <section className="memory-consolidation-history" aria-label={t("agents.consolidationHistory", "Consolidation history")}>
+            {/*
+            FNXC:MemoryConsolidationHistory 2026-08-11-11:13:
+            FN-8934 keeps Memory Keeper history in its existing Memory tab and renders
+            only existing audit metadata, never memory content or synthesized audit prose.
+            */}
+            <div className="memory-consolidation-history__heading">
+              <h4>{t("agents.consolidationHistory", "Consolidation history")}</h4>
+              <button className="btn btn-sm" onClick={() => void loadConsolidations()} disabled={consolidationsLoading}>
+                <RefreshCw size={14} />{t("common.refresh", "Refresh")}
+              </button>
+            </div>
+            {consolidationsLoading ? <LoadingSpinner /> : consolidationsError ? (
+              <p className="config-hint">{t("agents.consolidationHistoryError", "Unable to load consolidation history: {{error}}", { error: consolidationsError })}</p>
+            ) : consolidations.length === 0 ? (
+              <p className="config-hint">{t("agents.consolidationHistoryEmpty", "No consolidation activity yet.")}</p>
+            ) : (
+              <ul className="memory-consolidation-history__list">
+                {consolidations.map((event) => {
+                  const outcome = event.mutationType.endsWith("completed") ? t("agents.consolidationCompleted", "Completed") : event.mutationType.endsWith("skipped") ? t("agents.consolidationSkipped", "Skipped") : t("agents.consolidationFailed", "Failed");
+                  const metadata = event.metadata ?? {};
+                  const details = ["graphChanged", "parsedFiles", "recallCreated", "reason", "stage"].flatMap((key) => metadata[key] === undefined ? [] : [`${key}: ${String(metadata[key])}`]);
+                  return <li key={event.id} className={`memory-consolidation-history__row memory-consolidation-history__row--${event.mutationType.split("-").at(-1)}`}>
+                    <span>{relativeTime(event.timestamp, t)}</span><strong>{outcome}</strong>{details.length > 0 && <span>{details.join(" · ")}</span>}
+                  </li>;
+                })}
+              </ul>
+            )}
+          </section>
+        )}
+
         {isReadOnly && (
           <p className="config-hint config-hint--block-spacing">
             {t("agents.memoryReadOnly", "Read-only while this agent is running.")}

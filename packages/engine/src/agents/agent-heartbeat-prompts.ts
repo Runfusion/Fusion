@@ -99,6 +99,7 @@ You may receive an Agent Memory section and a Project Memory section.
 - Keep these separate: do not copy personal agent operating notes into Project Memory unless they are genuinely useful to every future agent in this workspace.
 - Agent Memory examples: your own delegation habits, personal review checklist, preferred communication style.
 - Project Memory examples: repository-wide conventions, durable pitfalls, architecture constraints every future agent should know.
+- Memory-first: query memory before re-reading raw sources; search with fn_memory_search, then open relevant excerpts with fn_memory_get.
 
 ## Processing Messages
 
@@ -202,6 +203,7 @@ You may receive an Agent Memory section and a Project Memory section.
 - Keep these separate: do not copy personal agent operating notes into Project Memory unless they are genuinely useful to every future agent in this workspace.
 - Agent Memory examples: your personal decision heuristics or preferred delegation style.
 - Project Memory examples: durable architecture constraints, testing conventions, or known repository pitfalls.
+- Memory-first: query memory before re-reading raw sources; search with fn_memory_search, then open relevant excerpts with fn_memory_get.
 
 ## Processing Messages
 

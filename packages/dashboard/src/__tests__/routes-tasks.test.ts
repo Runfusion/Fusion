@@ -2905,6 +2905,54 @@ describe("POST /tasks/:id/review/address", () => {
     expect(store.getAgentLogs).not.toHaveBeenCalled();
   });
 
+  it("projects resolution and rejects resolved workflow findings from revision requests", async () => {
+    const task = {
+      ...FAKE_TASK_DETAIL,
+      id: "FN-8956",
+      column: "in-review",
+      status: "awaiting-user-review",
+      assignedAgentId: null,
+      sessionFile: null,
+      workflowStepResults: [{
+        workflowStepId: "custom-code-review",
+        workflowStepName: "Code review",
+        source: "node",
+        status: "failed",
+        reviewKind: "code",
+        verdict: "REVISE",
+        output: "Structured review findings",
+        findings: [
+          { id: "receipt", title: "Receipt", body: "Fixed in review", resolution: "resolved-in-review" },
+          { id: "stale", title: "Stale", body: "Fixed later", resolution: "superseded" },
+          { id: "open", title: "Open", body: "Still needs work" },
+        ],
+      }],
+    };
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(task);
+    (store.getAgentLogs as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    authorizeMarkedTopLevelReviewNodes({ id: "custom-code-review" });
+    (store.addSteeringComment as ReturnType<typeof vi.fn>).mockResolvedValue({ id: "sc-8956" });
+    (store.moveTask as ReturnType<typeof vi.fn>).mockResolvedValue({ ...task, column: "in-progress", status: null });
+
+    const review = await REQUEST(buildApp(), "GET", "/api/tasks/FN-8956/review");
+    expect(review.status).toBe(200);
+    expect(review.body.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ resolution: "resolved-in-review" }),
+      expect.objectContaining({ resolution: "superseded" }),
+      expect.not.objectContaining({ resolution: expect.anything() }),
+    ]));
+    const byBody = new Map(review.body.items.map((item: { itemId: string; body: string }) => [item.body, item.itemId]));
+    const resolved = await REQUEST(buildApp(), "POST", "/api/tasks/FN-8956/review/address", JSON.stringify({
+      selectedItems: [{ id: byBody.get("Fixed in review"), source: "reviewer-agent" }],
+    }), { "Content-Type": "application/json" });
+    expect(resolved.status).toBe(400);
+
+    const open = await REQUEST(buildApp(), "POST", "/api/tasks/FN-8956/review/address", JSON.stringify({
+      selectedItems: [{ id: byBody.get("Still needs work"), source: "reviewer-agent" }],
+    }), { "Content-Type": "application/json" });
+    expect(open.status).toBe(200);
+  });
+
   it("does not expose materialized template identities even when manually marked", async () => {
     const taskWithMaterializedResult = {
       ...FAKE_TASK_DETAIL,

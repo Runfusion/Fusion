@@ -193,6 +193,7 @@ export const DEFAULT_GLOBAL_SETTINGS = {
   ntfyDashboardHost: undefined,
   taskTokenBudget: undefined,
   failureNotificationDelayMs: 30000,
+  wedgeNotificationSettleMs: 300000,
   failureNotificationMode: "sticky-only",
   webhookEnabled: false,
   webhookUrl: undefined,

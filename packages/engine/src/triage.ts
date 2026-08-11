@@ -3273,6 +3273,7 @@ export class TriageProcessor {
               originalDescription: typeof originalDescriptionDocument?.content === "string" ? originalDescriptionDocument.content : undefined,
               planReviewFeedbackHistory,
             },
+            assignedAgent,
           );
           /*
           FNXC:TriagePlanningTimeout 2026-08-10-18:32:
@@ -5537,6 +5538,7 @@ export function buildSpecificationPrompt(
   existingPrompt?: string,
   feedback?: string,
   planningContext?: { plan?: string; originalDescription?: string; planReviewFeedbackHistory?: string[] },
+  memoryAgent?: Agent | null,
 ): string {
   const hasFeedback = Boolean(feedback?.trim());
   const planDocument = planningContext?.plan?.trim();
@@ -5574,9 +5576,15 @@ When writing PROMPT.md, add this as an explicit requirement under completion doc
   // When enabled, agents consult project memory for durable project learnings.
   // Backend-aware: instructions branch based on memoryBackendType (file, readonly, qmd)
   const memoryEnabled = settings?.memoryEnabled !== false;
+  const memoryMode = resolveAgentMemoryInclusionMode({ agent: memoryAgent, globalSettings: settings }).mode;
   let memorySection = "";
-  if (memoryEnabled) {
-    memorySection = "\n\n" + buildTriageMemoryInstructions("", settings);
+  /*
+  FNXC:MemoryPreSteering 2026-08-11-11:13:
+  FN-8934 closes triage's mode gap: project-memory instructions must follow the
+  same off/index/full policy as assigned-agent instructions, not always inject full memory.
+  */
+  if (memoryEnabled && memoryMode !== "off") {
+    memorySection = "\n\n" + buildTriageMemoryInstructions("", settings, undefined, memoryMode);
   }
 
   let taskDefinitionLanguageSection = "";

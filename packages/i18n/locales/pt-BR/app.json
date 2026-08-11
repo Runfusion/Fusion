@@ -8364,7 +8364,9 @@
     "showRawText": "Mostrar texto bruto",
     "startedAtSep": " · Iniciado: {{timestamp}}",
     "updateFailed": "Falha ao atualizar {{taskId}}: {{error}}",
-    "upToDate": "Atualizado"
+    "upToDate": "Atualizado",
+    "fixedInReview": "Corrigido na revisão",
+    "superseded": "Substituído"
   },
   "tasks": {
     "addTaskPlaceholder": "Adicionar uma tarefa...",

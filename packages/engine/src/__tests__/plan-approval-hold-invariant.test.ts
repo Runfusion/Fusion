@@ -550,13 +550,20 @@ describe("#4 an operator-parked item leaves the due window instead of starving t
     expect(resolveParkedContinuationDeferral(resolved, NOW)).toBeNull();
   });
 
-  it("never defers a non-planning item — that item belongs to a different drain", () => {
+  /*
+  FNXC:WorkflowScheduling 2026-08-11-17:30:
+  This case previously asserted that a `capacity` item is SKIPPED as "not-planning" because it
+  "belongs to a different drain". No such drain exists, and that skip stranded eight cards for up to
+  8h on 2026-08-11. The deferral outcome is unchanged (still null) but for the opposite reason: the
+  item is actionable now, and deferring ready work would stall the lane.
+  */
+  it("never defers a non-planning item — it is actionable, and deferring ready work stalls the lane", () => {
     const resolved = resolvePlanningContinuationCandidate(
       dueItem({ waitReason: "capacity" }),
       task(),
     );
 
-    expect(resolved.kind === "skip" && resolved.reason).toBe("not-planning");
+    expect(resolved.kind).toBe("actionable");
     expect(resolveParkedContinuationDeferral(resolved, NOW)).toBeNull();
   });
 

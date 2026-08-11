@@ -62,14 +62,43 @@ describe("resolvePlanningContinuationCandidate", () => {
     ).toEqual({ kind: "orphan", item, reason: "task-terminal" });
   });
 
-  it("skips non-planning and paused planning items without cancelling", () => {
-    const capacity = workItem("cap", "capacity");
-    expect(resolvePlanningContinuationCandidate(capacity, task("T-cap"))).toEqual({
+  /*
+  FNXC:WorkflowScheduling 2026-08-11-17:30:
+  The invariant, not the repro: EVERY waitReason a writer can persist must dispatch. The board strand
+  was found through `capacity` rows, but five of the eight stuck cards carried a NULL reason, so a
+  capacity-only assertion would have re-shipped the wedge for the majority case. Enumerated surfaces:
+  `"planning"` (`plan-review-continuation.ts`), `"capacity"` (`workflow-column-boundary-hooks.ts`), and
+  undefined (every upsert path that omits it). Skipping is now reserved for operator parks alone.
+  */
+  it.each(["planning", "capacity", undefined] as const)(
+    "dispatches a due continuation whatever stopped it (waitReason=%s)",
+    (waitReason) => {
+      const item = workItem(`live-${waitReason ?? "none"}`, waitReason);
+      const live = task("T-live", { column: "todo" });
+
+      expect(resolvePlanningContinuationCandidate(item, live)).toEqual({
+        kind: "actionable",
+        item,
+        task: live,
+      });
+    },
+  );
+
+  /*
+  FNXC:WorkflowScheduling 2026-08-11-17:30:
+  An operator park still outranks the waitReason relaxation above — a capacity-parked card belonging
+  to a PAUSED task must stay skipped, or the relaxation would start dispatching work a human stopped.
+  */
+  it("still skips an operator-parked task even on a non-planning continuation", () => {
+    const capacity = workItem("cap-paused", "capacity");
+    expect(resolvePlanningContinuationCandidate(capacity, task("T-cap", { paused: true }))).toEqual({
       kind: "skip",
       item: capacity,
-      reason: "not-planning",
+      reason: "paused",
     });
+  });
 
+  it("skips paused planning items without cancelling", () => {
     const paused = workItem("paused", "planning");
     expect(resolvePlanningContinuationCandidate(paused, task("T-p", { paused: true }))).toEqual({
       kind: "skip",
@@ -90,12 +119,17 @@ describe("resolvePlanningContinuationCandidate", () => {
 });
 
 describe("selectActionablePlanningContinuations", () => {
-  it("retains only planning items whose tasks are present, unpaused, and non-terminal", () => {
+  it("retains every continuation whose task is present, unpaused, and non-terminal", () => {
     /*
     FNXC:WorkflowScheduling 2026-07-21-22:31:
     Regression for the FN-8470→FN-8471 starvation class: a deleted/archived
     earlier due row must not remain "actionable" and must not prevent a later
     live planning continuation from being selected.
+
+    FNXC:WorkflowScheduling 2026-08-11-17:30:
+    `capacity` and NULL-waitReason rows on live tasks now survive selection — they are this drain's
+    work too. Only the TASK's condition (missing, parked, terminal) removes a row; why the
+    continuation stopped never does.
     */
     const selected = selectActionablePlanningContinuations([
       { item: workItem("eligible", "planning"), task: task("T-1") },
@@ -113,6 +147,8 @@ describe("selectActionablePlanningContinuations", () => {
 
     expect(selected.map(({ item, task: selectedTask }) => [item.id, selectedTask.id])).toEqual([
       ["eligible", "T-1"],
+      ["capacity", "T-2"],
+      ["no-wait-reason", "T-5"],
       ["later-live", "FN-8471"],
     ]);
   });

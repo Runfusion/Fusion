@@ -8117,6 +8117,37 @@ describe("TaskCard mission badge", () => {
     expect(pricedPromotable.container.querySelector(".card-promote-cost-row .card-cost-indicator")).not.toBeNull();
   });
 
+  it("uses a fresh server release verdict before the conservative Promote fallback", () => {
+    const base = {
+      column: "todo",
+      status: null as any,
+      enabledWorkflowSteps: undefined,
+      workflowStepResults: undefined,
+      steps: [{ name: "Implement", status: "pending" }] as any,
+    };
+    const verdict = {
+      promoteBlocked: false,
+      unplannedForExecution: false,
+      blockedOnApproval: false,
+      reason: null,
+      readyAtCapacityBoundary: true,
+      evaluatedAt: "2026-08-11T20:00:00.000Z",
+    } as const;
+    const allowed = render(<TaskCard task={makeTask({ id: "FN-8987-allowed", ...base, releaseGate: verdict })} taskColumnFlags={{ hold: true }} onOpenDetail={noop} addToast={noop} onPromote={vi.fn()} />);
+    expect(screen.getByTestId("card-promote-FN-8987-allowed")).toBeInTheDocument();
+    allowed.unmount();
+
+    const blocked = render(<TaskCard task={makeTask({ id: "FN-8987-blocked", ...base, releaseGate: { ...verdict, promoteBlocked: true, unplannedForExecution: true, reason: "plan-review-pending" } })} taskColumnFlags={{ hold: true }} onOpenDetail={noop} addToast={noop} onPromote={vi.fn()} />);
+    expect(screen.queryByTestId("card-promote-FN-8987-blocked")).toBeNull();
+    expect(blocked.container.querySelector(".card-action-row")).toBeNull();
+    expect(blocked.container.querySelector(".card-promote-action")).toBeNull();
+    blocked.unmount();
+
+    const fallback = render(<TaskCard task={makeTask({ id: "FN-8987-fallback", ...base })} taskColumnFlags={{ hold: true }} onOpenDetail={noop} addToast={noop} onPromote={vi.fn()} />);
+    expect(screen.queryByTestId("card-promote-FN-8987-fallback")).toBeNull();
+    fallback.unmount();
+  });
+
   it("does not render a promote action when onPromote is omitted", () => {
     render(
       <TaskCard

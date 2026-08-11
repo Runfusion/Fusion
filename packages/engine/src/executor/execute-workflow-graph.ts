@@ -27,6 +27,7 @@ import {
   resolveMaxConsecutiveToolFailureRetries,
   resolveWorkflowIrForTask,
   upsertWorkflowStepResult,
+  applySupersededFindingIds,
 } from "@fusion/core";
 import type { ImplementationExit } from "./implementation-exit.js";
 import type { WorkflowGraphTaskRunResult } from "../workflows/workflow-graph-task-runner.js";
@@ -126,6 +127,73 @@ const principalHoldBackoff = new Map<string, { reason: string; attempt: number; 
 /** Clears the ladder for a task; exported so tests and recovery paths can reset it deterministically. */
 export function clearPrincipalHoldBackoff(taskId: string): void {
   principalHoldBackoff.delete(taskId);
+}
+
+/**
+ * Persists graph review evidence and applies explicit prior-lane supersession in
+ * the same write. Exported for production-shaped graph-writer tests.
+ */
+export async function persistWorkflowStepResult(
+  deps: Pick<ExecuteWorkflowGraphDeps, "store" | "getRunContextFor" | "readTaskArtifact">,
+  taskId: string,
+  result: CoreWorkflowStepResult,
+): Promise<void> {
+  if (typeof deps.store.updateTask !== "function") return;
+  try {
+    const live = await deps.store.getTask(taskId);
+    const isPlanReviewResult = result.workflowStepId === PLAN_REVIEW_GROUP_ID
+      || result.workflowStepName === "Plan Review";
+    const resultToPersist = isPlanReviewResult
+      ? {
+          ...result,
+          planReviewAttemptCount: nextPlanReviewAttemptCount(
+            live?.workflowStepResults?.find((existing) => existing.workflowStepId === result.workflowStepId),
+            result,
+          ),
+        }
+      : result;
+    const upserted = upsertWorkflowStepResult(
+      live?.workflowStepResults,
+      resultToPersist,
+      isPlanReviewResult ? { maxPriorAttempts: PLAN_REVIEW_FEEDBACK_HISTORY_LIMIT } : undefined,
+    );
+    /*
+    FNXC:WorkflowReviewFindings 2026-08-11-20:30:
+    Prompt and declared-script review nodes converge at this persistence sink. A supersession claim names
+    its prior workflow result, so duplicate finding IDs in other review lanes remain actionable.
+    */
+    const existing = applySupersededFindingIds(upserted, resultToPersist.supersededFindingIds ?? [], {
+      excludeWorkflowStepId: resultToPersist.workflowStepId,
+      sourceWorkflowStepId: resultToPersist.supersededFindingSourceWorkflowStepId ?? "",
+    }) ?? upserted;
+    if (isPlanReviewResult && isPlanReviewSatisfied(resultToPersist) && deps.store.isBackendMode()) {
+      const prompt = await deps.readTaskArtifact(taskId, "PROMPT.md");
+      if (!prompt?.trim()) throw new Error("Plan Review cannot accept an unreadable PROMPT.md without a spec lock");
+      const fingerprint = computePlanApprovalFingerprint(prompt);
+      await deps.store.withPlanningLifecycleLock(taskId, async () => {
+        const fresh = await deps.store.getTask(taskId);
+        const acceptedUpserted = upsertWorkflowStepResult(
+          fresh.workflowStepResults,
+          resultToPersist,
+          { maxPriorAttempts: PLAN_REVIEW_FEEDBACK_HISTORY_LIMIT },
+        );
+        const acceptedResult = applySupersededFindingIds(acceptedUpserted, resultToPersist.supersededFindingIds ?? [], {
+          excludeWorkflowStepId: resultToPersist.workflowStepId,
+          sourceWorkflowStepId: resultToPersist.supersededFindingSourceWorkflowStepId ?? "",
+        }) ?? acceptedUpserted;
+        await deps.store.lockCurrentPlanWhilePlanningLocked(taskId, fingerprint, prompt);
+        const accepted = await deps.store.updateTask(taskId, {
+          workflowStepResults: acceptedResult,
+          approvedPlanFingerprint: fingerprint,
+        }, deps.getRunContextFor(taskId));
+        await deps.store.reconcileSpecDriftWhilePlanningLocked(accepted);
+      });
+    } else {
+      await deps.store.updateTask(taskId, { workflowStepResults: existing }, deps.getRunContextFor(taskId));
+    }
+  } catch {
+    // Result recording is additive visibility — never affect the graph run.
+  }
 }
 
 export async function executeWorkflowGraph(
@@ -464,65 +532,8 @@ export async function executeWorkflowGraph(
         holdPlanReviewNoOp: async (nodeTask, suspension) => {
           continuation = await deps.holdPlanReviewNoOpContinuation(nodeTask, suspension, continuation, resolvedRunId);
         },
-        recordWorkflowStepResult: async (taskId: string, result: CoreWorkflowStepResult) => {
-          if (typeof deps.store.updateTask !== "function") return;
-          try {
-            const live = await deps.store.getTask(taskId);
-            /*
-            FNXC:WorkflowStepResults 2026-07-09-00:25:
-            FN-7727: route through the shared, pure upsert helper instead of a
-            bare `existing[idx] = result` replace-in-place — a self-healing
-            recovery re-run of this same node (e.g. code-review sent back for
-            fix) must preserve the prior `status:"failed"` entry's history in
-            `priorAttempts` rather than silently overwriting it.
-            */
-            const isPlanReviewResult = result.workflowStepId === PLAN_REVIEW_GROUP_ID
-              || result.workflowStepName === "Plan Review";
-            const resultToPersist = isPlanReviewResult
-              ? {
-                  ...result,
-                  planReviewAttemptCount: nextPlanReviewAttemptCount(
-                    live?.workflowStepResults?.find((existing) => existing.workflowStepId === result.workflowStepId),
-                    result,
-                  ),
-                }
-              : result;
-            const existing = upsertWorkflowStepResult(
-              live?.workflowStepResults,
-              resultToPersist,
-              isPlanReviewResult ? { maxPriorAttempts: PLAN_REVIEW_FEEDBACK_HISTORY_LIMIT } : undefined,
-            );
-            if (isPlanReviewResult && isPlanReviewSatisfied(resultToPersist) && deps.store.isBackendMode()) {
-              /*
-              FNXC:SpecLock 2026-08-09-20:21:
-              A graph Plan Review pass is an acceptance producer, not merely progress telemetry.
-              Create its immutable lock before publishing the satisfied result that scheduler and
-              hold-release consume; a lock failure leaves the old unsatisfied result in place.
-              */
-              const prompt = await deps.readTaskArtifact(taskId, "PROMPT.md");
-              if (!prompt?.trim()) throw new Error("Plan Review cannot accept an unreadable PROMPT.md without a spec lock");
-              const fingerprint = computePlanApprovalFingerprint(prompt);
-              await deps.store.withPlanningLifecycleLock(taskId, async () => {
-                const fresh = await deps.store.getTask(taskId);
-                const acceptedResult = upsertWorkflowStepResult(
-                  fresh.workflowStepResults,
-                  resultToPersist,
-                  { maxPriorAttempts: PLAN_REVIEW_FEEDBACK_HISTORY_LIMIT },
-                );
-                await deps.store.lockCurrentPlanWhilePlanningLocked(taskId, fingerprint, prompt);
-                const accepted = await deps.store.updateTask(taskId, {
-                  workflowStepResults: acceptedResult,
-                  approvedPlanFingerprint: fingerprint,
-                }, deps.getRunContextFor(taskId));
-                await deps.store.reconcileSpecDriftWhilePlanningLocked(accepted);
-              });
-            } else {
-              await deps.store.updateTask(taskId, { workflowStepResults: existing }, deps.getRunContextFor(taskId));
-            }
-          } catch {
-            // Result recording is additive visibility — never affect the run.
-          }
-        },
+        recordWorkflowStepResult: (taskId: string, result: CoreWorkflowStepResult) =>
+          persistWorkflowStepResult(deps, taskId, result),
         requestPreMergeOptionalStepFix: (taskId, info) => deps.requestPreMergeOptionalStepFix(taskId, task, info),
         // U5c (U1 KTD-1/2/3/12): wire the production lifecycle-move hooks so the
         // graph interpreter owns the card's column moves (was reverted in U5a

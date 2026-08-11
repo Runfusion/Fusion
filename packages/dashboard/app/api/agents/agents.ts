@@ -43,6 +43,18 @@ export function withAgentHeartbeatEnabled<T extends Pick<Agent, "runtimeConfig">
   return { ...(agent.runtimeConfig ?? {}), enabled };
 }
 
+export interface MemoryConsolidationEvent {
+  id: string;
+  timestamp: string;
+  mutationType: "memory:consolidation-completed" | "memory:consolidation-skipped" | "memory:consolidation-failed";
+  runId: string;
+  metadata?: Record<string, unknown>;
+}
+
+export function fetchAgentMemoryConsolidations(agentId: string, limit = 50, projectId?: string): Promise<{ agentId: string; events: MemoryConsolidationEvent[] }> {
+  return api<{ agentId: string; events: MemoryConsolidationEvent[] }>(withProjectId(`/agents/${encodeURIComponent(agentId)}/memory-consolidations?limit=${Math.min(Math.max(Math.trunc(limit), 1), 100)}`, projectId));
+}
+
 export interface AgentPromptSizePoint {
   runId: string;
   createdAt: string;

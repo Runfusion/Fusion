@@ -59,6 +59,12 @@ describe("project-memory", () => {
   });
 
   describe("buildReviewerMemoryInstructions", () => {
+    it("injects full steering for its readable backend and honors inclusion mode", () => {
+      expect(buildReviewerMemoryInstructions(testDir, { memoryBackendType: "qmd" })).toContain("query memory before re-reading");
+      expect(buildReviewerMemoryInstructions(testDir, { memoryBackendType: "qmd" }, undefined, "index")).toContain("Memory-first:");
+      expect(buildReviewerMemoryInstructions(testDir, { memoryBackendType: "qmd" }, undefined, "off")).not.toContain("query memory before re-reading");
+    });
+
     it("gives reviewers read-only project memory guidance", () => {
       const instructions = buildReviewerMemoryInstructions(testDir, { memoryBackendType: "qmd" });
 
@@ -585,6 +591,22 @@ describe("project-memory", () => {
       expect(instructions).toContain("memory_search");
       expect(instructions).toContain("memory_get");
       expect(instructions).not.toContain(".fusion/memory/MEMORY.md");
+    });
+  });
+
+  describe("pre-steering coverage for project-memory builders", () => {
+    const builders = [buildTriageMemoryInstructions, buildExecutionMemoryInstructions] as const;
+    const readableBackends = ["readonly", "file", "qmd"] as const;
+
+    it.each(builders.flatMap((builder) => readableBackends.map((memoryBackendType) => [builder.name, builder, memoryBackendType] as const)))("injects full steering into %s %s backend", (_name, builder, memoryBackendType) => {
+      expect(builder(testDir, { memoryBackendType })).toContain("query memory before re-reading");
+    });
+
+    it("uses the terse index nudge and suppresses it when off", () => {
+      for (const builder of builders) {
+        expect(builder(testDir, { memoryBackendType: "qmd" }, undefined, "index")).toContain("Memory-first:");
+        expect(builder(testDir, { memoryBackendType: "qmd" }, undefined, "off")).not.toContain("query memory before re-reading");
+      }
     });
   });
 

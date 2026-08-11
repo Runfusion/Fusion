@@ -535,6 +535,24 @@ describe("reviewStep — spec review type", () => {
     expect(opts.customTools?.map((tool: any) => tool.name)).toEqual(["fn_web_fetch", "fn_memory_search", "fn_memory_get"]);
   });
 
+  it.each(["off", "index", "full"] as const)("uses assigned reviewer %s memory inclusion mode", async (mode) => {
+    mockedCreateFnAgent.mockResolvedValue(createMockSession("### Verdict: APPROVE\n### Summary\nGood spec."));
+    await reviewStep(
+      "/tmp/worktree", "FN-050", 0, "Spec Review", "spec", "# Task: KB-050",
+      undefined,
+      {
+        rootDir: "/tmp/project",
+        agentId: "reviewer-1",
+        agentStore: { getAgent: vi.fn().mockResolvedValue({ id: "reviewer-1", runtimeConfig: { agentMemoryInclusionMode: mode } }) } as any,
+        settings: { memoryBackendType: "qmd" } as any,
+      },
+    );
+
+    const prompt = mockedCreateFnAgent.mock.calls[0][0].systemPrompt;
+    expect(prompt.includes("query memory before re-reading")).toBe(mode !== "off");
+    if (mode === "index") expect(prompt).toContain("fn_memory_search");
+  });
+
   it("omits reviewer memory tools and instructions when memory is disabled", async () => {
     mockedCreateFnAgent.mockResolvedValue(
       createMockSession("### Verdict: APPROVE\n### Summary\nGood spec."),

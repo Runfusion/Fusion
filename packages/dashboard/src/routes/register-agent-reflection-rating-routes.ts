@@ -21,6 +21,42 @@ export function __setAgentReflectionServiceForTests(service: EngineAgentReflecti
 export function registerAgentReflectionRatingRoutes(ctx: ApiRoutesContext): void {
   const { router, getProjectContext, rethrowAsApiError } = ctx;
 
+  /*
+  FNXC:MemoryConsolidationHistory 2026-08-11-11:13:
+  FN-8934 exposes only the compact, existing FN-8932 consolidation audit rows.
+  The route intentionally passes through structured metadata without inventing memory prose.
+  */
+  router.get("/agents/:id/memory-consolidations", async (req, res) => {
+    try {
+      const { store: scopedStore } = await getProjectContext(req);
+      const { AgentStore } = await import("@fusion/core");
+      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir(), asyncLayer: scopedStore.getAsyncLayer() ?? undefined });
+      await agentStore.init();
+      const agentId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+      if (!agentId) throw badRequest("Agent id is required");
+      if (!await agentStore.getAgent(agentId)) throw notFound("Agent not found");
+      const rawLimit = Number.parseInt(String(req.query.limit ?? "50"), 10);
+      const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(rawLimit, 1), 100) : 50;
+      const consolidationTypes = [
+        "memory:consolidation-completed",
+        "memory:consolidation-skipped",
+        "memory:consolidation-failed",
+      ] as const;
+      // Filter in the store query: its SQL limit applies before returned rows can be merged.
+      const rows = await Promise.all(consolidationTypes.map((mutationType) => (
+        scopedStore.getRunAuditEventsAsync({ agentId, mutationType, limit: 100 })
+      )));
+      const events = rows.flat()
+        .sort((left, right) => right.timestamp.localeCompare(left.timestamp))
+        .slice(0, limit)
+        .map(({ id, timestamp, mutationType, runId, metadata }) => ({ id, timestamp, mutationType, runId, metadata }));
+      res.json({ agentId, events });
+    } catch (err: unknown) {
+      if (err instanceof ApiError) throw err;
+      rethrowAsApiError(err);
+    }
+  });
+
   /**
    * GET /api/agents/:id/reflections/latest
    * Fetch the most recent reflection for an agent.

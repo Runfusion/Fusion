@@ -1,6 +1,7 @@
-import type { WorkflowReviewFinding, WorkflowReviewFindingSeverity, WorkflowStepResult } from "../types.js";
+import type { WorkflowReviewFinding, WorkflowReviewFindingResolution, WorkflowReviewFindingSeverity, WorkflowStepResult } from "../types.js";
 
 export const WORKFLOW_REVIEW_FINDING_SEVERITIES = ["low", "medium", "high", "critical"] as const;
+export const WORKFLOW_REVIEW_FINDING_RESOLUTIONS = ["open", "resolved-in-review", "superseded"] as const;
 export const MAX_WORKFLOW_REVIEW_FINDINGS = 20;
 const MAX_FINDING_ID_LENGTH = 128;
 const MAX_FINDING_TITLE_LENGTH = 240;
@@ -33,7 +34,10 @@ export function normalizeWorkflowReviewFindings(raw: unknown): WorkflowReviewFin
       ? Math.floor(value.line)
       : undefined;
     const severity = isWorkflowReviewFindingSeverity(value.severity) ? value.severity : undefined;
-    normalized.push({ id, title, body, ...(filePath ? { filePath } : {}), ...(line ? { line } : {}), ...(severity ? { severity } : {}) });
+    const resolution = isWorkflowReviewFindingResolution(value.resolution) && value.resolution !== "open"
+      ? value.resolution
+      : undefined;
+    normalized.push({ id, title, body, ...(filePath ? { filePath } : {}), ...(line ? { line } : {}), ...(severity ? { severity } : {}), ...(resolution ? { resolution } : {}) });
   }
   return normalized.length > 0 ? normalized : undefined;
 }
@@ -46,6 +50,52 @@ function boundedTrimmedString(value: unknown, maxLength: number): string | undef
 
 export function isWorkflowReviewFindingSeverity(value: unknown): value is WorkflowReviewFindingSeverity {
   return typeof value === "string" && (WORKFLOW_REVIEW_FINDING_SEVERITIES as readonly string[]).includes(value);
+}
+
+export function isWorkflowReviewFindingResolution(value: unknown): value is WorkflowReviewFindingResolution {
+  return typeof value === "string" && (WORKFLOW_REVIEW_FINDING_RESOLUTIONS as readonly string[]).includes(value);
+}
+
+/** Historical findings and explicit `open` findings remain actionable. */
+export function isOpenWorkflowReviewFinding(finding: WorkflowReviewFinding): boolean {
+  return finding.resolution === undefined || finding.resolution === "open";
+}
+
+/** Normalize untrusted reviewer claims before they can target persisted prior-lane findings. */
+export function normalizeSupersededFindingIds(raw: unknown): string[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const ids = [...new Set(raw
+    .map((value) => boundedTrimmedString(value, MAX_FINDING_ID_LENGTH))
+    .filter((value): value is string => value !== undefined))]
+    .slice(0, MAX_WORKFLOW_REVIEW_FINDINGS);
+  return ids.length > 0 ? ids : undefined;
+}
+
+/**
+ * Apply a later review step's explicit supersession claim only to its named prior result,
+ * preserving other lanes that may use the same finding IDs.
+ */
+export function applySupersededFindingIds(
+  results: WorkflowStepResult[] | undefined,
+  ids: string[],
+  options: { excludeWorkflowStepId: string; sourceWorkflowStepId: string },
+): WorkflowStepResult[] | undefined {
+  if (!results || ids.length === 0 || !options.sourceWorkflowStepId) return results;
+  const claimed = new Set(ids);
+  let changed = false;
+  const next = results.map((result) => {
+    if (result.workflowStepId !== options.sourceWorkflowStepId || result.workflowStepId === options.excludeWorkflowStepId || !result.findings?.length) return result;
+    let findingsChanged = false;
+    const findings = result.findings.map((finding) => {
+      if (!claimed.has(finding.id) || !isOpenWorkflowReviewFinding(finding)) return finding;
+      findingsChanged = true;
+      return { ...finding, resolution: "superseded" as const };
+    });
+    if (!findingsChanged) return result;
+    changed = true;
+    return { ...result, findings };
+  });
+  return changed ? next : results;
 }
 
 /*

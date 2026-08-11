@@ -8368,7 +8368,9 @@
     "addressPrFeedback": "",
     "addressPrFeedbackFailed": "",
     "addressPrFeedbackStarted": "",
-    "addressingPrFeedback": ""
+    "addressingPrFeedback": "",
+    "fixedInReview": "Corrigé pendant la révision",
+    "superseded": "Remplacé"
   },
   "tasks": {
     "addTaskPlaceholder": "Ajouter une tâche…",

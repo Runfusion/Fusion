@@ -2,7 +2,7 @@
 
 # Knowledge graph
 
-`fn knowledge-graph build` creates a deterministic, committable structure graph for the FN-8920 memory epic. It is the embedding-free first layer: no LLM, vector recall, MCP API, inferred relationships, or capability bundle is included.
+`fn knowledge-graph build` creates the deterministic structure graph for the FN-8920 memory epic. Memory Keeper may subsequently add clearly provenance-tagged inferred semantic relationships; deterministic extraction itself remains LLM-free.
 
 ## Artifact and configuration
 
@@ -14,7 +14,7 @@ An operator who explicitly wants a snapshot in history can still force one with 
 
 ## Model
 
-Nodes are `file`, `module`, `symbol`, `doc-concept`, or `rationale`. Edges are `contains`, `imports`, and `re-exports`, and always include source, owner (`file` or `derived`), and provenance (`extracted` or reserved `inferred`). IDs are path-derived (`file:path`, `module:dir`, `symbol:path#name`, `doc:path#slug~index`, and `rationale:path#area@stamp~index`) with reserved separators percent-escaped.
+Nodes are `file`, `module`, `symbol`, `doc-concept`, or `rationale`. Structural edges are `contains`, `imports`, and `re-exports`; semantic edges are `relates-to` and `rationale-supports`. Every edge includes source, owner (`file` or `derived`), and provenance (`extracted` or `inferred`). IDs are path-derived (`file:path`, `module:dir`, `symbol:path#name`, `doc:path#slug~index`, and `rationale:path#area@stamp~index`) with reserved separators percent-escaped.
 
 TypeScript/TSX parsing is parser-only. Exported declarations become symbols; duplicate exports collapse to one earliest-position node with `declarationCount`, including invalid source. Syntax errors remain best-effort. `export *` records a re-export relationship but cannot expand names without a checker. Relative imports are resolved lexically using `.ts`, `.tsx`, and index candidates; package and tsconfig aliases are out of scope.
 
@@ -34,7 +34,11 @@ Every real source position is recorded as a repository-relative path, line, and 
 
 FNXC rationale is first-class data. TypeScript-family comment ranges come from the parsed tree, not a raw scanner, which prevents strings, regexes, template text, and JSX text from becoming rationale. Markdown recognizes HTML comments outside fenced or narrowly defined indented code; code state gates the comment opener only, so an already-open multi-header comment is not truncated by indentation. Each stamped header starts a separate rationale node and runs to the next header in its comment.
 
-`queryNodes(filter)`, `neighbors(id, options)`, and `shortestPath(from, to)` are deterministic in-process APIs. Neighbor and path results retain complete edge objects, including source, ownership, and `extracted` provenance. `inferred` is reserved in the schema for the later memory-agent layer and is not emitted by this layer.
+`queryNodes(filter)`, `neighbors(id, options)`, and `shortestPath(from, to)` are deterministic in-process APIs. Neighbor and path results retain complete edge objects, including source, ownership, and provenance. The sole inferred-edge writer stamps `inferred` unconditionally and accepts an input type with no provenance field, so model output can never masquerade as deterministic extraction.
+
+## Automatic recall capture
+
+Memory capture is optional and detached. `RecallCaptureWriter.capture()` returns `void`, so task completion, research finalization/promotion, and insight upsert cannot await recall persistence. Completed tasks and research findings capture `solution` records with task-completion/deep-research provenance; insights capture `decision` records with the available `other` provenance. Live writers are composed at the in-process reflection runtime, research orchestrator construction, research-promotion callers, and the lazy async insight-store factory; absent memory falls back to a shared no-op writer.
 
 ## Non-goals
 

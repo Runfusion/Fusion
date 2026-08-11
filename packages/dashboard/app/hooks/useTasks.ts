@@ -1,3 +1,8 @@
+import {
+  isReleaseGateVerdictFresh,
+  RELEASE_GATE_VERDICT_MAX_AGE_MS,
+  releaseGateEvidenceFingerprint,
+} from "../utils/releaseGate";
 import { useState, useEffect, useCallback, useRef } from "react";
 import type { Task, Column, ColumnId, TaskCreateInput, MergeResult, GithubIssueAction, AgentLogEntry } from "@fusion/core";
 // FNXC:WorkflowLifecycleColumns 2026-07-30-11:50: these are AGENT ROLE comparisons, not
@@ -52,10 +57,13 @@ const TASK_CACHE_ROW_LIMITS = [500, 250, 100, 50] as const;
 
 function toCachedTaskRow(task: Task): Task {
   const log = (task as Task & { log?: unknown }).log;
-  if (!Array.isArray(log) || log.length === 0) {
-    return task;
-  }
-  const { log: _droppedLog, ...rest } = task as Task & { log?: unknown };
+  if ((!Array.isArray(log) || log.length === 0) && task.releaseGate === undefined) return task;
+  const { log: _droppedLog, releaseGate: _transientReleaseGate, ...rest } = task as Task & { log?: unknown };
+  /*
+  FNXC:PromoteVisibility 2026-08-11-21:06:
+  A cached release verdict has no hook-local evidence provenance and may already be expired. Persist
+  the task snapshot without it so cache hydration immediately takes the conservative Promote fallback.
+  */
   return rest as Task;
 }
 
@@ -247,6 +255,39 @@ function carryAwaitingPlanning(current: Task, incoming: Task): boolean | undefin
 }
 
 /*
+FNXC:PromoteVisibility 2026-08-11-20:38:
+A wrong badge self-corrects, but a wrong Promote decision can start execution. SSE lacks the IR,
+continuation, and prompt inputs, so retain a REST verdict only across identical visible evidence and
+its server row clock, bounded by TTL; every doubt drops to the conservative fallback.
+*/
+function carryReleaseGate(
+  current: Task,
+  incoming: Task,
+  merged: Task,
+  provenance: Map<string, import("../utils/releaseGate").ReleaseGateProvenance> | undefined,
+  now = Date.now(),
+): Task["releaseGate"] {
+  if (incoming.releaseGate !== undefined) {
+    const freshProvenance = { fingerprint: releaseGateEvidenceFingerprint(merged), capturedAt: now };
+    /*
+    FNXC:PromoteVisibility 2026-08-11-21:06:
+    A complete response may arrive after a newer row. Its verdict is evidence only when it was
+    evaluated for the row being rendered, rather than merely being a defined payload field.
+    */
+    if (!isReleaseGateVerdictFresh(incoming.releaseGate, merged, freshProvenance, now)) {
+      provenance?.delete(current.id);
+      return undefined;
+    }
+    provenance?.set(current.id, freshProvenance);
+    return incoming.releaseGate;
+  }
+  if (!current.releaseGate) return undefined;
+  const retained = isReleaseGateVerdictFresh(current.releaseGate, merged, provenance?.get(current.id), now);
+  if (!retained) provenance?.delete(current.id);
+  return retained ? current.releaseGate : undefined;
+}
+
+/*
 FNXC:TaskDetailStateStability 2026-08-05-02:55:
 The scheduler can refresh the board while a task-detail host holds a newer queued dependency or
 file-overlap snapshot. Providers (SWR, SSE, fetchTaskDetail, and local mutations) do not share an
@@ -265,6 +306,8 @@ FNXC:TaskDetailStateStability 2026-08-09-07:13:
 FN-8796 showed that an absent or equal local clock is not evidence of staleness.
 */
 export interface TaskSnapshotMergeOptions {
+  /** Hook-local, non-persisted evidence captured when GET /api/tasks supplied a release verdict. */
+  releaseGateProvenance?: Map<string, import("../utils/releaseGate").ReleaseGateProvenance>;
   /** A complete board/detail fetch can resolve an otherwise ambiguous legacy column clock. */
   fullSnapshot?: boolean;
   /** A canonical task:moved SSE payload names its destination, even when its clock ties the visible row. */
@@ -359,6 +402,14 @@ export function mergeTaskSnapshot<T extends Task>(
     ? carryAwaitingPlanning(current, incoming)
     : current.awaitingPlanning;
   /*
+  FNXC:PromoteVisibility 2026-08-11-21:06:
+  A delayed snapshot cannot attach a defined verdict over a newer task row.
+  */
+  const acceptsReleaseGateSnapshot = acceptsIncomingSnapshot || acceptsEqualClockFields;
+  merged.releaseGate = acceptsReleaseGateSnapshot
+    ? carryReleaseGate(current, incoming, merged as unknown as Task, options.releaseGateProvenance)
+    : current.releaseGate;
+  /*
   FNXC:TaskStatusConsistency 2026-08-07-06:10:
   `recentAgentActivityAt` is a client-only bridge from an agent-log event to the next task snapshot.
   Preserve it while a stale payload is rejected so live Planning does not flash back to Queued. A
@@ -417,10 +468,6 @@ export function applyLocalTaskPatch<T extends Task>(current: T, patch: Partial<T
     return current;
   }
   return merged as T;
-}
-
-function mergeIncomingTask(current: Task, incoming: Task, options?: TaskSnapshotMergeOptions): Task {
-  return mergeTaskSnapshot(current, incoming, options);
 }
 
 export interface UseTasksOptions {
@@ -495,7 +542,9 @@ export function useTasks(options?: UseTasksOptions) {
         console.info("[swr-cache] hit tasks=", cachedTasks.length, "projectId=", projectId);
       }
     }
-    return Array.isArray(cachedTasks) ? filterActiveTasks(cachedTasks.map(normalizeTask)) : [];
+    return Array.isArray(cachedTasks)
+      ? filterActiveTasks(cachedTasks.map(normalizeTask).map(({ releaseGate: _releaseGate, ...task }) => task as Task))
+      : [];
   });
   const [isStale, setIsStale] = useState(true);
   const [lastRefreshErrorAt, setLastRefreshErrorAt] = useState<number | null>(null);
@@ -511,7 +560,63 @@ export function useTasks(options?: UseTasksOptions) {
   const includeArchived = false;
   const includeArchivedRef = useRef(includeArchived);
   const tasksRef = useRef(tasks);
+  /*
+  FNXC:PromoteVisibility 2026-08-11-20:53:
+  This is deliberately hook-local rather than Task state or persistent cache. It records only the
+  browser-visible evidence paired with a REST verdict, so an SSE patch can retain that verdict only
+  while it remains provably valid; task removal and failed retention prune it.
+  */
+  const releaseGateProvenanceRef = useRef(new Map<string, import("../utils/releaseGate").ReleaseGateProvenance>());
   const fetchVersionRef = useRef(0);
+  const mergeIncomingTask = (current: Task, incoming: Task, mergeOptions?: TaskSnapshotMergeOptions): Task =>
+    mergeTaskSnapshot(current, incoming, { ...mergeOptions, releaseGateProvenance: releaseGateProvenanceRef.current });
+
+  /*
+  FNXC:PromoteVisibility 2026-08-11-21:06:
+  Freshness cannot be checked only when SSE or fetch merges a row: an idle board can receive no
+  further snapshots for longer than the verdict TTL. Wake at the earliest expiry and remove each
+  expired or unverifiable verdict, ensuring TaskCard never renders a stale server decision.
+  */
+  useEffect(() => {
+    const now = Date.now();
+    let earliestExpiry = Number.POSITIVE_INFINITY;
+    let needsPrune = false;
+    for (const task of tasks) {
+      if (!task.releaseGate) continue;
+      if (!isReleaseGateVerdictFresh(task.releaseGate, task, releaseGateProvenanceRef.current.get(task.id), now)) {
+        needsPrune = true;
+        continue;
+      }
+      const evaluatedAt = Date.parse(task.releaseGate.evaluatedAt);
+      earliestExpiry = Math.min(earliestExpiry, evaluatedAt + RELEASE_GATE_VERDICT_MAX_AGE_MS);
+    }
+
+    const prune = () => {
+      setTasks((previous) => {
+        let changed = false;
+        const checkedAt = Date.now();
+        const next = previous.map((task) => {
+          if (!task.releaseGate || isReleaseGateVerdictFresh(task.releaseGate, task, releaseGateProvenanceRef.current.get(task.id), checkedAt)) {
+            return task;
+          }
+          changed = true;
+          releaseGateProvenanceRef.current.delete(task.id);
+          return { ...task, releaseGate: undefined };
+        });
+        if (changed) tasksRef.current = next;
+        return changed ? next : previous;
+      });
+    };
+
+    if (needsPrune) {
+      prune();
+      return;
+    }
+    if (!Number.isFinite(earliestExpiry)) return;
+    const timer = window.setTimeout(prune, Math.max(0, earliestExpiry - now) + 1);
+    return () => window.clearTimeout(timer);
+  }, [tasks]);
+
   /*
   FNXC:DashboardResume 2026-08-05-18:17:
   A resumed list request is a point-in-time server snapshot, while task SSE is a later committed
@@ -649,6 +754,14 @@ export function useTasks(options?: UseTasksOptions) {
         return;
       }
       const normalizedFetchedTasks = filterActiveTasks(fetchedTasks.map(normalizeTask));
+      for (const task of normalizedFetchedTasks) {
+        if (task.releaseGate !== undefined) {
+          releaseGateProvenanceRef.current.set(task.id, {
+            fingerprint: releaseGateEvidenceFingerprint(task),
+            capturedAt: Date.now(),
+          });
+        }
+      }
       /*
       FNXC:ArchivePagination 2026-07-08-01:30:
       A generic refresh (SSE reconnect resync, tab-visibility regain, delete-
@@ -704,6 +817,10 @@ export function useTasks(options?: UseTasksOptions) {
       const nextTasks = archivedCarryOver.length > 0
         ? [...reconciledFetchedTasks, ...archivedCarryOver]
         : reconciledFetchedTasks;
+      const retainedTaskIds = new Set(nextTasks.map((task) => task.id));
+      for (const taskId of releaseGateProvenanceRef.current.keys()) {
+        if (!retainedTaskIds.has(taskId)) releaseGateProvenanceRef.current.delete(taskId);
+      }
       tasksRef.current = nextTasks;
       setTasks(nextTasks);
       for (const [taskId, mutation] of liveTaskMutationsRef.current) {

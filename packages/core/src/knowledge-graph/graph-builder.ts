@@ -50,7 +50,9 @@ export async function buildKnowledgeGraph(options: BuildKnowledgeGraphOptions) {
     ? {
       schemaVersion: prior.graph.schemaVersion,
       nodes: prior.graph.nodes.filter(node => node.owner !== "derived"),
-      edges: prior.graph.edges.filter(edge => edge.owner !== "derived" && edge.kind !== "imports" && edge.kind !== "re-exports"),
+      // FNXC:KnowledgeGraphInferredEdges 2026-08-11-10:56: FN-8933 semantic edges are durable LLM
+      // conclusions, not parser-owned facts, so an incremental structural rebuild must retain them.
+      edges: prior.graph.edges.filter(edge => edge.provenance === "inferred" || (edge.owner !== "derived" && edge.kind !== "imports" && edge.kind !== "re-exports")),
     }
     : { schemaVersion: KNOWLEDGE_GRAPH_SCHEMA_VERSION, nodes: [], edges: [] };
   const manifest: GraphManifest = prior.ok
@@ -73,7 +75,7 @@ export async function buildKnowledgeGraph(options: BuildKnowledgeGraphOptions) {
     if (!previous) addedFiles++;
     parsedFiles++;
     graph.nodes = graph.nodes.filter(node => node.ownerPath !== relPath);
-    graph.edges = graph.edges.filter(edge => edge.ownerPath !== relPath);
+    graph.edges = graph.edges.filter(edge => edge.provenance === "inferred" || edge.ownerPath !== relPath);
     const result = (options.extractFile ?? extractFile)({ relPath, content }, options.deps);
     graph.nodes.push(...result.nodes);
     graph.edges.push(...result.edges);
@@ -86,7 +88,7 @@ export async function buildKnowledgeGraph(options: BuildKnowledgeGraphOptions) {
     deletedFiles++;
     delete manifest.files[relPath];
     graph.nodes = graph.nodes.filter(node => node.ownerPath !== relPath);
-    graph.edges = graph.edges.filter(edge => edge.ownerPath !== relPath);
+    graph.edges = graph.edges.filter(edge => edge.provenance === "inferred" || edge.ownerPath !== relPath);
   }
 
   const discovered = new Set(files);
@@ -112,7 +114,24 @@ export async function buildKnowledgeGraph(options: BuildKnowledgeGraphOptions) {
   const derived = deriveModules(graph.nodes);
   graph.nodes.push(...derived.nodes);
   graph.edges.push(...derived.edges);
-  const nodeIds = new Set(graph.nodes.map(node => node.id));
+  const nodesById = new Map(graph.nodes.map(node => [node.id, node]));
+  /*
+  FNXC:KnowledgeGraphInferredEdges 2026-08-11-11:53:
+  An incremental structural rebuild replaces parsed node anchors while retaining inferred semantic
+  edges by stable endpoint id. Re-anchor each retained inferred edge to its current `from` node so
+  the persisted artifact remains self-consistent after a heading, rationale, or symbol moves lines.
+  */
+  graph.edges = graph.edges.map(edge => {
+    if (edge.provenance !== "inferred") return edge;
+    const anchor = nodesById.get(edge.from);
+    return anchor ? {
+      ...edge,
+      owner: anchor.owner,
+      ownerPath: anchor.ownerPath,
+      source: { ...anchor.source },
+    } : edge;
+  });
+  const nodeIds = new Set(nodesById.keys());
   graph.edges = graph.edges.filter(edge => nodeIds.has(edge.from) && nodeIds.has(edge.to));
 
   // Validate the deliberately narrow internal-invariant throw surface before any defensive

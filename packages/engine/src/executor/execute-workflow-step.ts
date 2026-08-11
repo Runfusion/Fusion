@@ -18,6 +18,8 @@ import type {
 } from "@fusion/core";
 import {
   applyReviewSeverityGate,
+  isOpenWorkflowReviewFinding,
+  MAX_WORKFLOW_REVIEW_FINDINGS,
   finalizePlanningSegment,
   resolveExecutorFallbackModel,
   resolvePersistAgentThinkingLog,
@@ -334,6 +336,20 @@ export async function executeWorkflowStep(
         nodeBlockingSeverity: (workflowStep as WorkflowStep & { blockingSeverity?: unknown }).blockingSeverity,
       })
       : undefined;
+    /*
+     * FNXC:WorkflowReviewFindings 2026-08-11-19:39:
+     * Prior open findings make cross-lane supersession an explicit reviewer claim rather than a
+     * commit-timestamp inference, so receipts cannot be mistaken for new executor work.
+     */
+    const priorFindings = reviewFindingsContract
+      ? (task.workflowStepResults ?? []).flatMap((result) => result.workflowStepId === workflowStep.id
+        ? []
+        : (result.findings ?? []).filter(isOpenWorkflowReviewFinding).map((finding) => ({ finding, result })))
+        .slice(0, MAX_WORKFLOW_REVIEW_FINDINGS)
+      : [];
+    const priorFindingsBlock = priorFindings.length > 0
+      ? `\n\n  ## Prior Findings In This Review Pass\n\n${priorFindings.map(({ finding, result }) => `- [${result.workflowStepId}] ${finding.id} — [${finding.severity ?? "unclassified"}] ${finding.title}${finding.filePath ? ` (${finding.filePath}${finding.line ? `:${finding.line}` : ""})` : ""}`).join("\n")}`
+      : "";
     const blockingSeverityRule = reviewBlockingSeverity === undefined || reviewBlockingSeverity === "any"
       ? ""
       : reviewBlockingSeverity === "critical"
@@ -347,14 +363,14 @@ export async function executeWorkflowStep(
   When your review is complete, your final line MUST be a single JSON object (no markdown fences):
 
   ${reviewFindingsContract
-    ? "{\"verdict\":\"APPROVE|APPROVE_WITH_NOTES|REVISE\",\"notes\":\"...\",\"findings\":[{\"id\":\"stable-id\",\"title\":\"concise issue\",\"body\":\"actionable detail\",\"filePath\":\"optional/path\",\"line\":1,\"severity\":\"low|medium|high|critical\"}]}"
+    ? "{\"verdict\":\"APPROVE|APPROVE_WITH_NOTES|REVISE\",\"notes\":\"...\",\"findings\":[{\"id\":\"stable-id\",\"title\":\"concise issue\",\"body\":\"actionable detail\",\"filePath\":\"optional/path\",\"line\":1,\"severity\":\"low|medium|high|critical\",\"resolution\":\"open|resolved-in-review|superseded\"}],\"supersededFindingSourceWorkflowStepId\":\"prior-review-step-id\",\"supersededFindingIds\":[\"prior-finding-id\"]}"
     : "{\"verdict\":\"APPROVE|APPROVE_WITH_NOTES|REVISE\",\"notes\":\"...\"}"}
 
   Rules:
   - Output exactly one trailing JSON object and stop.
   - verdict must be exactly APPROVE, APPROVE_WITH_NOTES, or REVISE.
   - notes should be concise and actionable. Use an empty string when there are no notes.
-  - For out-of-scope fast-bail responses, use: {"verdict":"APPROVE","notes":"out of scope: no UI files changed"}${reviewFindingsContract ? "\n  - Every finding MUST carry a `severity`. Put each blocking issue in `findings` — prose in `notes` alone does not block." : ""}${blockingSeverityRule}
+  - For out-of-scope fast-bail responses, use: {"verdict":"APPROVE","notes":"out of scope: no UI files changed"}${reviewFindingsContract ? "\n  - Every finding MUST carry a `severity`. Put each blocking issue in `findings` — prose in `notes` alone does not block.\n  - Omit resolution (or use open) for work still needed; use resolved-in-review only for an issue you fixed in this session.\n  - supersededFindingIds may list only IDs from one named Prior Findings result that you re-verified no longer apply; include that result’s workflow step ID in supersededFindingSourceWorkflowStepId; never list your own findings." : ""}${blockingSeverityRule}
 
   Backward compat fallback: if JSON is unavailable, you may still begin output with REQUEST REVISION to request changes.`
       : `
@@ -375,7 +391,7 @@ export async function executeWorkflowStep(
   - If you find an in-scope issue you can fix safely, edit the relevant files in this same session, run the smallest relevant verification, and then return APPROVE or APPROVE_WITH_NOTES.
   - Return REVISE only when the issue is still present, cannot be safely fixed in this reviewer session, needs broader executor remediation, or needs user input.
   - Plan Review may use fn_task_prompt_write to replace the task's PROMPT.md with the complete revised plan. Do not implement product code from Plan Review.
-  - Code Review and Browser Verification may fix implementation issues inside the assigned task worktree and should mention the fix in notes.`
+  - Code Review and Browser Verification may fix implementation issues inside the assigned task worktree. Report each self-fixed issue as a finding with resolution resolved-in-review; list a fixed prior-lane finding in supersededFindingIds.`
       : "";
 
     const systemPrompt = `You are a workflow step agent executing: ${workflowStep.name}
@@ -385,7 +401,7 @@ export async function executeWorkflowStep(
   - Task Description: ${task.description}
   - Worktree: ${worktreePath}
 
-  ${scopeBlock}${workflowStepUserCommentSection ? `\n\n${workflowStepUserCommentSection}` : ""}
+  ${scopeBlock}${workflowStepUserCommentSection ? `\n\n${workflowStepUserCommentSection}` : ""}${priorFindingsBlock}
 
   Your role:
   - Execute this workflow step exactly as scoped.
@@ -815,6 +831,7 @@ export async function executeWorkflowStep(
             verdict: effectiveVerdict,
             notes: parsed.notes,
             ...(parsed.findings ? { findings: parsed.findings } : {}),
+            ...(parsed.supersededFindingSourceWorkflowStepId && parsed.supersededFindingIds ? { supersededFindingSourceWorkflowStepId: parsed.supersededFindingSourceWorkflowStepId, supersededFindingIds: parsed.supersededFindingIds } : {}),
           };
         }
 

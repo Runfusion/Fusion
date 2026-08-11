@@ -9,7 +9,7 @@ import type {
   TaskDetail,
   WorkflowFieldDefinition,
 } from "@fusion/core";
-import { buildExecutionMemoryInstructions, type WorkspaceConfig } from "@fusion/core";
+import { buildExecutionMemoryInstructions, buildMemoryPreSteeringNudge, type WorkspaceConfig } from "@fusion/core";
 import { executorLog } from "../logger.js";
 import type { PluginRunner } from "../plugins/plugin-runner.js";
 import { parseReviewLevelFromPrompt } from "./prompt-derived-eligibility.js";
@@ -163,8 +163,8 @@ git log --oneline
   let memorySection = "";
   if (memoryEnabled && rootDir && memoryMode !== "off") {
     memorySection = memoryMode === "index"
-      ? "\n## Project Memory (Index Only)\n\nUse fn_memory_search first to find relevant memory, then fn_memory_get for specific excerpts.\n"
-      : "\n" + buildExecutionMemoryInstructions(rootDir, settings);
+      ? `\n## Project Memory (Index Only)\n\n${buildMemoryPreSteeringNudge("index")}\n`
+      : "\n" + buildExecutionMemoryInstructions(rootDir, settings, undefined, memoryMode);
   }
 
   // Build steering comments section (last 10 comments only to avoid context bloat)

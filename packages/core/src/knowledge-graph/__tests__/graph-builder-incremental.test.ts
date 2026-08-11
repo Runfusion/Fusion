@@ -3,6 +3,8 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildKnowledgeGraph } from "../graph-builder.js";
+import { addInferredEdges } from "../inferred-edge-writer.js";
+import { loadArtifacts } from "../graph-store.js";
 import { extractFile as realExtractFile } from "../extract-file.js";
 import { extractTypeScript as realTypeScript } from "../extract-typescript.js";
 const roots:string[]=[];
@@ -35,6 +37,32 @@ describe("incremental graph builder", () => {
     await rm(join(root,"src","b.ts")); const extract=vi.fn(realExtractFile); const result=await buildKnowledgeGraph({projectRoot:root,graphDir:dir,extractFile:extract,discovery});
     expect(extract).not.toHaveBeenCalled(); expect(result.graph.nodes.some(node=>node.id==="file:src/b.ts")).toBe(false); expect(result.graph.edges.some(edge=>edge.kind==="imports")).toBe(false);
   });
+  it("re-anchors retained inferred edges when a source anchor moves", async () => {
+    const root = await fixture(), dir = join(root, ".fusion-knowledge/graph");
+    await mkdir(join(root, "docs"));
+    await writeFile(join(root, "docs", "concepts.md"), "# First concept\n\n# Second concept\n");
+    const documentationDiscovery = { sourceRoots: ["src"], markdownRoots: ["docs"] };
+    await buildKnowledgeGraph({ projectRoot: root, graphDir: dir, discovery: documentationDiscovery });
+    const initial = await loadArtifacts(dir);
+    expect(initial.ok).toBe(true);
+    if (!initial.ok) return;
+    const [from, to] = initial.graph.nodes.filter(node => node.kind === "doc-concept");
+    expect(from).toBeTruthy();
+    expect(to).toBeTruthy();
+    await addInferredEdges(dir, [{ kind: "relates-to", from: from!.id, to: to!.id }]);
+
+    await writeFile(join(root, "docs", "concepts.md"), "\n# First concept\n\n# Second concept\n");
+    await buildKnowledgeGraph({ projectRoot: root, graphDir: dir, discovery: documentationDiscovery });
+
+    const rebuilt = await loadArtifacts(dir);
+    expect(rebuilt.ok).toBe(true);
+    if (!rebuilt.ok) return;
+    const currentAnchor = rebuilt.graph.nodes.find(node => node.id === from.id)!;
+    const inferred = rebuilt.graph.edges.find(edge => edge.provenance === "inferred")!;
+    expect(inferred.source).toEqual(currentAnchor.source);
+    expect(inferred.ownerPath).toBe(currentAnchor.ownerPath);
+  });
+
   it("rebuilds rather than reusing a cache with forged synthetic file provenance", async () => {
     const root = await fixture(), dir = join(root, ".fusion-knowledge/graph");
     await buildKnowledgeGraph({ projectRoot: root, graphDir: dir, discovery });

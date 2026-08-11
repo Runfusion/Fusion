@@ -1050,6 +1050,9 @@ export { RemoteNodeRuntime, type RemoteNodeRuntimeConfig } from "./runtimes/remo
 // promote endpoint can release a manually-held card via the same authority.
 export {
   promoteHeldTask,
+  evaluateTaskReleaseGate,
+  evaluateUnplannedForExecution,
+  isUnplannedForExecution,
   releaseHeldTaskByEvent,
   runHoldReleaseSweep,
   type HoldReleaseDeps,

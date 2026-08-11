@@ -1,5 +1,11 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { Task } from "@fusion/core";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import * as fusionCore from "@fusion/core";
+import { listRecall, type RecallCaptureWriterWithTestDrain, type Task } from "@fusion/core";
+import {
+  createSharedPgTaskStoreTestHarness,
+  pgDescribe,
+  type SharedPgTaskStoreHarness,
+} from "../../../core/src/__test-utils__/pg-test-harness.js";
 import { ProjectEngine, __resetDeterministicMergerModeDeprecationWarned } from "../project-engine.js";
 import { AgentSemaphore, projectAdmissionCoordinator} from "../concurrency/concurrency.js";
 // Resolves to the vi.mock factory above (the mocked merger-ai exports the real-shaped
@@ -410,6 +416,7 @@ beforeEach(() => {
 });
 
 describe("ProjectEngine notification ownership wiring", () => {
+
   beforeEach(() => {
     vi.clearAllMocks();
     const mockStore = createMockStore(baseSettings);
@@ -3990,4 +3997,58 @@ describe("U9 merge safeguards without prior coverage", () => {
     await engine.stop();
   });
 
+});
+
+/*
+FNXC:MemoryRecallCapture 2026-08-11-12:31:
+ProjectEngine owns the long-lived research-orchestrator composition root. This fixture preserves
+its real writer and AsyncDataLayer, then drains the real detached writer before checking recall
+storage; a fake capture callback would not prove finalized production research is persisted.
+*/
+pgDescribe("ProjectEngine research recall composition", () => {
+  const h: SharedPgTaskStoreHarness = createSharedPgTaskStoreTestHarness({
+    prefix: "fusion_project_engine_research_recall",
+    projectId: "project-engine-research-recall",
+  });
+
+  beforeAll(h.beforeAll);
+  beforeEach(async () => {
+    await h.beforeEach();
+    mocks.currentStore = h.store() as unknown as Record<string, unknown>;
+  });
+  afterEach(h.afterEach);
+  afterAll(h.afterAll);
+
+  it("persists finalized research through ProjectEngine's live recall composition", async () => {
+    const store = h.store();
+    const run = await store.getResearchStore().createRun({ query: "ProjectEngine recall composition", tags: ["project-engine"] });
+    const realFactory = fusionCore.createRecallCaptureWriter;
+    const writerFactory = vi.spyOn(fusionCore, "createRecallCaptureWriter");
+    let writer: RecallCaptureWriterWithTestDrain | undefined;
+    writerFactory.mockImplementation((deps) => {
+      writer = realFactory(deps);
+      return writer;
+    });
+    const engine = createEngine();
+
+    try {
+      await engine.start();
+      const orchestrator = engine.getResearchOrchestrator() as unknown as {
+        runFinalizing(runId: string, output: string, citations: string[], confidence: number | undefined, signal: AbortSignal): Promise<void>;
+      };
+      expect(orchestrator).toBeDefined();
+      await orchestrator.runFinalizing(run.id, "ProjectEngine final synthesis", ["https://example.test/project-engine"], 0.9, new AbortController().signal);
+      await writer!.flushPendingCaptures();
+      expect(await listRecall(h.layer(), { limit: 10 })).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          kind: "solution",
+          source: expect.objectContaining({ origin: "deep-research", sessionId: run.id }),
+          tags: expect.arrayContaining([`research-run:${run.id}`]),
+        }),
+      ]));
+    } finally {
+      writerFactory.mockRestore();
+      await engine.stop();
+    }
+  });
 });

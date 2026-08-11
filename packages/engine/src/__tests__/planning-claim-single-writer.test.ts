@@ -101,16 +101,27 @@ const PLANNING_CLAIM_WRITERS = ["packages/engine/src/triage.ts"];
  * route around the write patterns, so a NEW entry deserves a look even when the
  * module turns out, like this one, to be a reader.
  */
-const PLANNING_CLAIM_BINDERS = ["packages/engine/src/replan-target.ts"];
+/* FNXC:PlanningClaimSingleWriter 2026-08-11-17:30: relocated to `execution/` — same stale-path
+   drift as NON_TASK_STATUS_MODULES below, and red on main for the same reason. */
+const PLANNING_CLAIM_BINDERS = ["packages/engine/src/execution/replan-target.ts"];
 
 /**
  * Mission planning is a different entity with its own `status` column. Excluded by
  * path rather than by pattern, because a pattern loose enough to tell them apart is
  * a pattern loose enough to miss a real task write.
  */
+/*
+FNXC:PlanningClaimSingleWriter 2026-08-11-17:30:
+PATHS, so a MOVE breaks them. Both mission stores were relocated into `missions/` and
+`async-stores/` subdirectories, and this list kept naming the old flat paths — so the ratchet
+had been failing on main, accusing two mission modules it was written to exclude. A guard that
+is red for a reason nobody believes is a guard people stop reading; the drift is the cost of
+excluding by path, accepted here because a pattern loose enough to tell mission status from
+task status is loose enough to miss a real second writer (see the note above).
+*/
 const NON_TASK_STATUS_MODULES = [
-  "packages/core/src/mission-store.ts",
-  "packages/core/src/async-mission-store.ts",
+  "packages/core/src/missions/mission-store.ts",
+  "packages/core/src/async-stores/async-mission-store.ts",
 ];
 
 function sourceFiles(root: string, base: string = REPO_ROOT): string[] {

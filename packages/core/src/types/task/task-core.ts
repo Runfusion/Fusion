@@ -596,6 +596,21 @@ export interface TaskWedgeNotificationState {
   lastNotifiedAtByReason?: Record<string, string>;
   /** Monotonic durable-state version used to reject stale whole-object writes. */
   budgetRevision?: number;
+  /*
+  FNXC:TaskWedgeNotifications 2026-08-11-18:28:
+  A parked row may emit no later task update, so a settle hold must survive an engine restart
+  rather than relying solely on an in-memory timer. Supplied self-healing descriptors include
+  stage-derived prose unavailable on the task row, so preserve that operator-facing content here.
+  `since` moves only when the reason changes or stale evidence is deliberately re-stamped.
+  */
+  pending?: {
+    since: string;
+    reasonKey: string;
+    source: "auto" | "supplied";
+    reason: string;
+    action: string;
+    gate?: string;
+  };
   /** Sweep-owned generic terminal-failure recovery state. */
   autoRecovery?: {
     attempts: number;
@@ -626,6 +641,19 @@ export interface TaskRecommendation {
   description: string;
   category: TaskRecommendationCategory;
   createdTaskId?: string;
+}
+
+export interface TaskReleaseGateVerdict {
+  promoteBlocked: boolean;
+  unplannedForExecution: boolean;
+  blockedOnApproval: boolean;
+  reason: "plan-review-pending" | "planning-status" | "needs-replan" | "duplicate-prompt" | "seed-prompt" | "awaiting-approval" | null;
+  readyAtCapacityBoundary: boolean;
+  planReview?: { nodeId: string; column: string; defaultOn: boolean; enabled: boolean; appliesToColumn: boolean; satisfied: boolean };
+  releaseTargetColumn?: string;
+  targetCountsTowardWip?: boolean;
+  evaluatedAt: string;
+  evaluatedForUpdatedAt?: string;
 }
 
 export interface Task {
@@ -1173,6 +1201,13 @@ export interface Task {
    * step-count heuristic when the field is absent.
    */
   awaitingPlanning?: boolean;
+  /**
+   * FNXC:PromoteVisibility 2026-08-11-20:38:
+   * GET /api/tasks attaches this best-effort hold-lane verdict only. It is transient: never store it
+   * in task.json or emit it over SSE; consumers must fall back when absent and must expire carried
+   * values under useTasks' evidence fingerprint, row-clock, and TTL contract.
+   */
+  releaseGate?: TaskReleaseGateVerdict;
   /** Explicitly assigned agent ID for task-agent linking. Distinct from Agent.taskId active execution state. */
   assignedAgentId?: string;
   /** Per-task node override. When set, this task routes to the specified node instead of the project's default node. Undefined means use the project default. Use empty string to explicitly clear. */

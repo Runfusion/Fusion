@@ -82,7 +82,7 @@ Be specific: cite \`file:line\` for every finding and explain the concrete failu
 - REVISE: a correctness bug, regression, or contract break requires changes before merge. Requires at least one \`critical\` finding in \`findings\`; a REVISE without one will be treated as APPROVE_WITH_NOTES.
 - Every blocking issue MUST appear as an entry in \`findings\` with its severity and \`filePath\`/\`line\`. Prose in \`notes\` alone does not block.
 - Final output: output exactly one trailing JSON object on the final line (no markdown fences, no surrounding prose):
-{"verdict":"APPROVE|APPROVE_WITH_NOTES|REVISE","notes":"...","findings":[{"id":"stable-id","title":"concise issue","body":"concrete failure and remediation","filePath":"path/to/file.ts","line":1,"severity":"critical|high|medium|low"}]}`;
+{"verdict":"APPROVE|APPROVE_WITH_NOTES|REVISE","notes":"...","findings":[{"id":"stable-id","title":"concise issue","body":"concrete failure and remediation","filePath":"path/to/file.ts","line":1,"severity":"critical|high|medium|low","resolution":"open|resolved-in-review|superseded"}]}`;
 
 /**
  * Build the `code-review` optional-group node placed on a workflow's pre-merge path.

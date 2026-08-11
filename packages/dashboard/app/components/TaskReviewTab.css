@@ -538,3 +538,25 @@ PR-linked tasks must expose decision-adjacent reviewers/checks/blockers plus ite
     min-height: calc(var(--space-lg) * 2 + var(--space-xs));
   }
 }
+
+.task-review-tab__item--informational {
+  border-color: color-mix(in srgb, var(--color-success) 30%, var(--border));
+}
+
+.task-review-tab__resolution-badge {
+  display: inline-flex;
+  align-items: center;
+  border: var(--btn-border-width) solid color-mix(in srgb, var(--color-success) 28%, transparent);
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--color-success) 14%, transparent);
+  color: var(--color-success);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  padding: 0 var(--space-sm);
+}
+
+@media (max-width: 768px) {
+  .task-review-tab__resolution-badge {
+    align-self: flex-start;
+  }
+}

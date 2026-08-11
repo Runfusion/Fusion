@@ -21,6 +21,7 @@ import { EventEmitter } from "node:events";
 import { and, asc, desc, eq, inArray, lte, sql } from "drizzle-orm";
 import * as schema from "../postgres/schema/index.js";
 import type { AsyncDataLayer, DbTransaction } from "../postgres/data-layer.js";
+import { NOOP_RECALL_CAPTURE_WRITER, type RecallCaptureWriter } from "../memory/recall-capture.js";
 import {
   InsightLifecycleError,
   TERMINAL_RUN_STATUSES,
@@ -565,7 +566,10 @@ export async function listStalePendingRuns(
  * are not ported, so manual run execution/retry remain a sync-mode capability.
  */
 export class AsyncInsightStore extends EventEmitter<InsightStoreEvents> {
-  constructor(private readonly layer: AsyncDataLayer) {
+  constructor(
+    private readonly layer: AsyncDataLayer,
+    private readonly recallCaptureWriter: RecallCaptureWriter = NOOP_RECALL_CAPTURE_WRITER,
+  ) {
     super();
   }
 
@@ -600,6 +604,23 @@ export class AsyncInsightStore extends EventEmitter<InsightStoreEvents> {
       provenance: input.provenance,
     });
     this.emit(result.id === id ? "insight:created" : "insight:updated", result);
+
+    /*
+    FNXC:InsightRecallCapture 2026-08-11-10:56:
+    Every async insight upsert shares this store seam, including dashboard and background origins.
+    The capture writer is deliberately void-only: durable insight persistence remains available when
+    optional recall is slow or unavailable.
+    */
+    if (result.id === id) {
+      this.recallCaptureWriter.capture({
+        origin: "insight",
+        title: result.title,
+        summary: `Insight outcome recorded in ${result.category} with ${result.status} status.`,
+        sessionId: result.lastRunId ?? undefined,
+        insightId: result.id,
+        tags: ["insight", result.category, result.status],
+      });
+    }
     return result;
   }
 

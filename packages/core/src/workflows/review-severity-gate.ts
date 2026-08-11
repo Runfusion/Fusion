@@ -24,6 +24,7 @@ every review that does not opt into the structured contract.
 */
 
 import type { WorkflowReviewFinding, WorkflowReviewFindingSeverity, WorkflowReviewKind } from "../types.js";
+import { isOpenWorkflowReviewFinding } from "./workflow-step-results.js";
 
 /**
  * Blocking threshold for a review gate. A severity value blocks at that level and above;
@@ -108,6 +109,7 @@ export function resolveReviewBlockingSeverity({
  * An UNCLASSIFIED finding always blocks — see the fail-closed contract in the module header.
  */
 export function isBlockingFinding(finding: WorkflowReviewFinding, threshold: ReviewBlockingSeverity): boolean {
+  if (!isOpenWorkflowReviewFinding(finding)) return false;
   if (threshold === "any") return true;
   if (!finding.severity) return true;
   return SEVERITY_RANK[finding.severity] >= SEVERITY_RANK[threshold];
@@ -128,6 +130,8 @@ export interface ReviewSeverityGateResult<V = string | undefined> {
   blocking: WorkflowReviewFinding[];
   /** Findings below the threshold. Still persisted and still handed to the implementer. */
   advisory: WorkflowReviewFinding[];
+  /** Audit-only receipts and superseded findings; never actionable. */
+  resolved: WorkflowReviewFinding[];
 }
 
 /**
@@ -139,15 +143,22 @@ export interface ReviewSeverityGateResult<V = string | undefined> {
  */
 export function applyReviewSeverityGate({ verdict, findings, threshold }: ReviewSeverityGateInput): ReviewSeverityGateResult {
   const all = findings ?? [];
-  const blocking = all.filter((finding) => isBlockingFinding(finding, threshold));
-  const advisory = all.filter((finding) => !isBlockingFinding(finding, threshold));
+  const open = all.filter(isOpenWorkflowReviewFinding);
+  const resolved = all.filter((finding) => !isOpenWorkflowReviewFinding(finding));
+  const blocking = open.filter((finding) => isBlockingFinding(finding, threshold));
+  const advisory = open.filter((finding) => !isBlockingFinding(finding, threshold));
 
-  if (verdict !== "REVISE") return { verdict, downgraded: false, blocking, advisory };
+  if (verdict !== "REVISE") return { verdict, downgraded: false, blocking, advisory, resolved };
   // Fail closed: an unstructured REVISE keeps its blocking power.
-  if (all.length === 0) return { verdict, downgraded: false, blocking, advisory };
-  if (blocking.length > 0) return { verdict, downgraded: false, blocking, advisory };
+  /*
+  FNXC:ReviewSeverityGate 2026-08-11-19:39:
+  Resolution is audit metadata, never authority to rewrite an explicit REVISE. Receipts avoid
+  no-op rework through remediation's do-not-redo block while an all-resolved REVISE stays fail-closed.
+  */
+  if (all.length === 0 || (open.length === 0 && resolved.length > 0)) return { verdict, downgraded: false, blocking, advisory, resolved };
+  if (blocking.length > 0) return { verdict, downgraded: false, blocking, advisory, resolved };
 
-  return { verdict: "APPROVE_WITH_NOTES", downgraded: true, blocking, advisory };
+  return { verdict: "APPROVE_WITH_NOTES", downgraded: true, blocking, advisory, resolved };
 }
 
 /**
@@ -157,6 +168,7 @@ export function applyReviewSeverityGate({ verdict, findings, threshold }: Review
  * consistent shape whether the review blocked or was downgraded.
  */
 export function formatFindingsByPriority(findings: WorkflowReviewFinding[]): string {
+  findings = findings.filter(isOpenWorkflowReviewFinding);
   if (findings.length === 0) return "";
   const groups: Array<{ label: string; obligation: string; severities: WorkflowReviewFindingSeverity[] }> = [
     { label: "P0 — must fix", obligation: "Fix every item in this group before returning.", severities: ["critical"] },
@@ -191,4 +203,15 @@ export function formatFindingsByPriority(findings: WorkflowReviewFinding[]): str
   }
 
   return sections.join("\n\n");
+}
+
+/** Render audit receipts separately so implementers do not redo completed review work. */
+export function formatResolvedFindings(findings: WorkflowReviewFinding[]): string {
+  const resolved = findings.filter((finding) => !isOpenWorkflowReviewFinding(finding));
+  if (resolved.length === 0) return "";
+  const lines = resolved.map((finding) => {
+    const location = finding.filePath ? ` (${finding.filePath}${finding.line ? `:${finding.line}` : ""})` : "";
+    return `- **${finding.title}**${location} [${finding.resolution}]\n  ${finding.body}`;
+  });
+  return `### Already resolved during this review pass — do NOT redo\n\n${lines.join("\n")}`;
 }

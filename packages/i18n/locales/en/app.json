@@ -6491,6 +6491,8 @@
       "enable": " Enable ",
       "failureNotificationDelayMs": "Failure notification delay (ms)",
       "failureNotificationMode": "Failure notification mode",
+      "wedgeNotificationSettleMs": "Terminal-wedge settle window (ms)",
+      "wedgeNotificationSettleMsHelp": "How long a terminal failure must persist before an operator alert. 0 = notify immediately. Default: 300000 (5 minutes).",
       "format": "Format",
       "general": " General: ",
       "generic": "Generic",
@@ -8380,7 +8382,9 @@
     "showRawText": "Show raw text",
     "startedAtSep": " · Started: {{timestamp}}",
     "updateFailed": "Failed to update {{taskId}}: {{error}}",
-    "upToDate": "Up to date"
+    "upToDate": "Up to date",
+    "fixedInReview": "Fixed in review",
+    "superseded": "Superseded"
   },
   "tasks": {
     "addTaskPlaceholder": "Add a task...",

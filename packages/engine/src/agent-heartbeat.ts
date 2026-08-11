@@ -22,6 +22,7 @@ import { AutoClaimSnapshotManager, resolveFreshAutoClaimCandidates, type AutoCla
 import {
   ApprovalRequestStore,
   buildExecutionMemoryInstructions,
+  buildMemoryPreSteeringNudge,
   isEphemeralAgent,
   hasAgentIdentity,
   resolveEffectiveAgentPermissionPolicy,
@@ -135,13 +136,18 @@ import { accumulateSessionTokenUsage, captureSessionTokenBaseline } from "./exec
 
 const promptSizeLog = createLogger("prompt-size");
 
+/*
+FNXC:MemoryPreSteering 2026-08-11-11:13:
+FN-8934 treats the heartbeat primer as an injection surface: off removes both
+memory boundaries and their nudge, while index replaces them with the bounded terse form.
+*/
 function adjustHeartbeatMemoryPrimer(basePrompt: string, mode: AgentMemoryInclusionMode): string {
   if (mode === "full") return basePrompt;
-  const memoryPrimer = /\nYou may receive an Agent Memory section and a Project Memory section\.[\s\S]*?- Project Memory examples:[^\n]*\n/;
+  const memoryPrimer = /\nYou may receive an Agent Memory section and a Project Memory section\.[\s\S]*?- Project Memory examples:[^\n]*\n(?:- Memory-first: query memory before re-reading raw sources; search with fn_memory_search, then open relevant excerpts with fn_memory_get\n)?/;
   if (mode === "off") return basePrompt.replace(memoryPrimer, "\n");
   return basePrompt.replace(
     memoryPrimer,
-    "\nWhen an Agent Memory Index is provided instead of full memory, call fn_memory_search first for task-relevant context. Use fn_memory_get to open only relevant snippets.\n",
+    `\n${buildMemoryPreSteeringNudge("index")}\n`,
   );
 }
 
@@ -2390,7 +2396,7 @@ export class HeartbeatMonitor {
         successful skips; runtime errors remain failed runs so completeRun owns shared recovery.
         */
         if (agent.metadata?.builtInMemoryAgent === true) {
-          const emit = async (type: "memory:consolidation-completed" | "memory:consolidation-skipped" | "memory:consolidation-failed", metadata: Record<string, unknown>) => {
+          const emit = async (type: "memory:consolidation-completed" | "memory:consolidation-skipped" | "memory:consolidation-failed" | "memory:semantics-inferred" | "memory:semantics-skipped", metadata: Record<string, unknown>) => {
             try { await audit.database({ type, target: agentId, metadata }); } catch { /* audit is best effort */ }
           };
           /* FNXC:MemoryAgent 2026-08-11-10:17: Procedure seeding preserves operator edits and is best-effort, so a filesystem failure cannot prevent deterministic upkeep. */
@@ -2413,10 +2419,14 @@ export class HeartbeatMonitor {
           try {
             const outcome = await new MemoryConsolidationService(resolution.ports).runConsolidationTick({ agentId, projectId: resolution.projectId });
             if (outcome.skipped) await emit("memory:consolidation-skipped", { agentId, reason: outcome.skipped });
-            else if (outcome.changed) {
-              // `changed` drives emission but is not part of the published audit metadata contract.
-              const { changed: _changed, skipped: _skipped, ...metadata } = outcome;
-              await emit("memory:consolidation-completed", { agentId, ...metadata });
+            else {
+              if (outcome.semanticsWritten > 0) await emit("memory:semantics-inferred", { agentId, edgesWritten: outcome.semanticsWritten, edgesDeduped: outcome.semanticsDeduped, edgesDroppedUnresolved: outcome.semanticsDroppedUnresolved });
+              if (outcome.semanticsSkipped) await emit("memory:semantics-skipped", { agentId, reason: outcome.semanticsSkipped });
+              if (outcome.changed) {
+                // `changed` drives emission but is not part of the published audit metadata contract.
+                const { changed: _changed, skipped: _skipped, ...metadata } = outcome;
+                await emit("memory:consolidation-completed", { agentId, ...metadata });
+              }
             }
             await this.completeRun(agentId, run.id, { status: "completed", resultJson: { reason: "memory_consolidation", ...outcome }, skipStateTransition: true });
           } catch (error) {
@@ -2840,8 +2850,8 @@ export class HeartbeatMonitor {
         if (resolvedMemoryMode.mode !== "off" && memorySettings?.memoryEnabled !== false) {
           try {
             memoryInstructions = resolvedMemoryMode.mode === "index"
-              ? "## Project Memory (Index Only)\n\nProject memory is available via fn_memory_search and fn_memory_get. Search first, then fetch only relevant excerpts."
-              : buildExecutionMemoryInstructions(rootDir, memorySettings);
+              ? `## Project Memory (Index Only)\n\n${buildMemoryPreSteeringNudge("index")}`
+              : buildExecutionMemoryInstructions(rootDir, memorySettings, undefined, resolvedMemoryMode.mode);
           } catch (memoryInstructionErr) {
             const message = memoryInstructionErr instanceof Error ? memoryInstructionErr.message : String(memoryInstructionErr);
             heartbeatLog.warn(`Failed to resolve project memory instructions for heartbeat ${agentId}: ${message}`);

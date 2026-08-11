@@ -459,6 +459,9 @@ export async function runGraphCustomNode(
     if (declaredReviewKind && typeof outcome.output === "string") {
       const parsedReviewOutput = parseWorkflowStepOutput(outcome.output, { requireVerdict: false });
       if (parsedReviewOutput.findings?.length) outcome = { ...outcome, findings: parsedReviewOutput.findings };
+      if (parsedReviewOutput.supersededFindingIds?.length && parsedReviewOutput.supersededFindingSourceWorkflowStepId && !outcome.supersededFindingIds?.length) {
+        outcome = { ...outcome, supersededFindingSourceWorkflowStepId: parsedReviewOutput.supersededFindingSourceWorkflowStepId, supersededFindingIds: parsedReviewOutput.supersededFindingIds };
+      }
     }
 
     // Skill-emitted await-input (U6): if the skill asked the user a blocking
@@ -500,6 +503,10 @@ export async function runGraphCustomNode(
     if (typeof stepNotes === "string" && stepNotes) contextPatch.notes = stepNotes;
     const stepFindings = outcome.findings;
     if (stepFindings?.length) contextPatch.findings = stepFindings;
+    if (outcome.supersededFindingIds?.length && outcome.supersededFindingSourceWorkflowStepId) {
+      contextPatch.supersededFindingSourceWorkflowStepId = outcome.supersededFindingSourceWorkflowStepId;
+      contextPatch.supersededFindingIds = outcome.supersededFindingIds;
+    }
     if (cfg.summaryTarget === "task" && typeof stepOutput === "string" && stepOutput.trim()) {
       /*
        * FNXC:WorkflowCompletion 2026-06-29-11:09:

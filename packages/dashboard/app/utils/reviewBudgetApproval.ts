@@ -63,3 +63,12 @@ export function isTaskBlockedOnApprovalHold(
   return (task.paused === true && task.pausedReason === "awaiting-approval")
     || task.status === "awaiting-approval";
 }
+
+/*
+FNXC:PromoteVisibility 2026-08-11-20:38:
+useTasks owns freshness. TaskCard consumes a present verdict verbatim for exact server parity; absent
+or expired payloads retain FN-8950's conservative fallback rather than inventing a second authority.
+*/
+export function resolvePromoteSuppressed(task: Pick<Task, "releaseGate">, fallback: boolean): boolean {
+  return task.releaseGate?.promoteBlocked ?? fallback;
+}

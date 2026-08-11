@@ -20,12 +20,15 @@ import {
 } from "../../__test-utils__/pg-test-harness.js";
 import { InsightLifecycleError } from "../../insights/insight-store.js";
 import type { AsyncInsightStore } from "../../async-stores/async-insight-store.js";
+import { listRecall } from "../../memory/recall/recall-store.js";
+import type { RecallCaptureWriterWithTestDrain } from "../../memory/recall-capture.js";
 
 const pgTest = pgDescribe;
 
 pgTest("InsightStore (PostgreSQL backend mode)", () => {
   const h: SharedPgTaskStoreHarness = createSharedPgTaskStoreTestHarness({
     prefix: "fusion_insight_store",
+    projectId: "P-RECALL",
   });
 
   beforeAll(h.beforeAll);
@@ -65,6 +68,28 @@ pgTest("InsightStore (PostgreSQL backend mode)", () => {
     // Only one insight exists for the fingerprint.
     const all = await s.listInsights({ projectId: "P-INS" });
     expect(all).toHaveLength(1);
+  });
+
+  it("composes the live recall writer at the TaskStore insight factory", async () => {
+    const s = insights();
+    const created = await s.upsertInsight("P-RECALL", {
+      title: "Capture this insight",
+      content: "durable outcome",
+      category: "architecture",
+      fingerprint: "recall-composition",
+    });
+
+    // This reaches getInsightStoreImpl's production constructor line, not an injected test hook.
+    const writer = (s as unknown as { recallCaptureWriter: RecallCaptureWriterWithTestDrain }).recallCaptureWriter;
+    await writer.flushPendingCaptures();
+    const records = await listRecall(h.layer(), { limit: 10 });
+    expect(records).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        kind: "decision",
+        source: expect.objectContaining({ origin: "other" }),
+        tags: expect.arrayContaining(["insight", `insight:${created.id}`]),
+      }),
+    ]));
   });
 
   it("countInsights agrees with listInsights for a filtered set", async () => {

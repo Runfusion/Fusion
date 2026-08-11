@@ -47,6 +47,7 @@ import {
   resolveReboundTargetForTask, REVIEW_ELIGIBLE_SENTINEL_COLUMN,
   clearMergeConfirmedTransientStatus,
   classifyGhError,
+  createRecallCaptureWriter,
 } from "@fusion/core";
 import { assemblePlannerOverseerRuntimeSnapshot } from "./overseer/planner-overseer-runtime-snapshot.js";
 import { resolveIntegrationBranch } from "./merge/integration-branch.js";
@@ -1031,10 +1032,12 @@ export class ProjectEngine {
             modelId: settings.researchGlobalDefaults?.synthesisModelId ?? settings.defaultModelId,
           }, signal)
           : undefined;
+        const layer = store.getAsyncLayer();
         this.researchOrchestrator = new ResearchOrchestrator({
           store: researchStore,
           stepRunner: new ResearchStepRunner({ providers, synthesisRunner }),
           maxConcurrentRuns: settings.researchMaxConcurrentRuns ?? 3,
+          ...(layer ? { recallCaptureWriter: createRecallCaptureWriter({ layer, logger: runtimeLog }) } : {}),
         });
         this.researchDispatcher = new ResearchRunDispatcher({
           store: researchStore,

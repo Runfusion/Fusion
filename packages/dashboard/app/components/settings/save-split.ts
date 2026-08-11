@@ -120,6 +120,7 @@ export const GLOBAL_SECTION_KEYS: Record<string, ReadonlySet<string>> = {
     "ntfyEvents",
     "ntfyDashboardHost",
     "failureNotificationDelayMs",
+    "wedgeNotificationSettleMs",
     "failureNotificationMode",
     "webhookEnabled",
     "webhookUrl",

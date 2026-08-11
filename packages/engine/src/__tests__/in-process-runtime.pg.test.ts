@@ -46,7 +46,7 @@ vi.mock("@fusion/core", async (importOriginal) => {
   };
 });
 
-import { CentralCore, type AsyncCentralClaimStore } from "@fusion/core";
+import { CentralCore, listRecall, type AsyncCentralClaimStore, type RecallCaptureWriterWithTestDrain } from "@fusion/core";
 import { InProcessRuntime } from "../runtimes/in-process-runtime.js";
 
 pgDescribe("InProcessRuntime PostgreSQL composition", () => {
@@ -200,6 +200,32 @@ pgDescribe("InProcessRuntime PostgreSQL composition", () => {
         source: "on_demand",
       });
       await assertConsumerMaterializedSecretsEnv(heartbeatTask.id);
+
+      /*
+      FNXC:MemoryRecallCapture 2026-08-11-11:53:
+      FN-8933's runtime root must supply the live recall writer to its reflection service; an
+      injected unit-test writer cannot detect a missing composition line. Drive the runtime-owned
+      service through a completed task and drain only its test seam before reading the real store.
+      */
+      const reflectionAgent = await runtime.getAgentStore()!.createAgent({
+        name: "Runtime recall composition agent",
+        role: "executor",
+      });
+      const reflectedTask = await taskStore.createTask({ description: "runtime recall composition" });
+      await taskStore.updateTask(reflectedTask.id, {
+        column: "done",
+        status: "completed",
+        assignedAgentId: reflectionAgent.id,
+      });
+      const reflectionService = (runtime as unknown as {
+        executor?: { options?: { reflectionService?: { captureTaskPerformance(agentId: string, taskId: string): Promise<unknown>; captureWriter: RecallCaptureWriterWithTestDrain } } };
+      }).executor?.options?.reflectionService;
+      expect(reflectionService).toBeDefined();
+      await reflectionService!.captureTaskPerformance(reflectionAgent.id, reflectedTask.id);
+      await reflectionService!.captureWriter.flushPendingCaptures();
+      expect(await listRecall(layer!, { limit: 10 })).toEqual(expect.arrayContaining([
+        expect.objectContaining({ source: expect.objectContaining({ taskId: reflectedTask.id, agentId: reflectionAgent.id }) }),
+      ]));
 
       const missionStore = taskStore.getMissionStore();
       const mission = await missionStore.createMission({ title: "Runtime composition" });

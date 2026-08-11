@@ -959,6 +959,93 @@ pgTest("MissionStore (PostgreSQL backend mode)", () => {
     await expect(m.startManualValidatorRun(feature.id)).resolves.toMatchObject({ outcome: "started" });
   });
 
+  /*
+  FNXC:MissionValidation 2026-08-11-05:26:
+  A replacement validator owns feature state across every stale-run terminal surface: manual admission after an old engine run, engine fallback after an old manual run, and the stale reaper. Historical runs still become terminal records but cannot overwrite the replacement's validating state.
+  */
+  it("keeps replacement validator ownership when superseded runs complete or are reaped", async () => {
+    const m = missions();
+    const mission = await m.createMission({ title: "Superseded validator ownership" });
+    const milestone = await m.addMilestone(mission.id, { title: "MS" });
+    const slice = await m.addSlice(milestone.id, { title: "SL" });
+    const staleAt = new Date(Date.now() - 7 * 60 * 60 * 1000).toISOString();
+    const ageRun = async (runId: string) => {
+      await h.layer().transactionImmediate(async (tx) => {
+        await tx.update(schema.project.missionValidatorRuns)
+          .set({ startedAt: staleAt })
+          .where(eq(schema.project.missionValidatorRuns.id, runId));
+      });
+    };
+
+    const manualReplacementFeature = await m.addFeature(slice.id, { title: "Manual replacement" });
+    const oldEngineRun = await m.startValidatorRun(manualReplacementFeature.id, "task_completion");
+    await ageRun(oldEngineRun.id);
+    const manualReplacement = await m.startManualValidatorRun(manualReplacementFeature.id);
+    expect(manualReplacement).toMatchObject({ outcome: "started" });
+    await m.completeValidatorRun(oldEngineRun.id, "failed");
+    expect(await m.getValidatorRun(oldEngineRun.id)).toMatchObject({
+      status: "failed",
+      completedAt: expect.any(String),
+    });
+    expect(await m.getFeature(manualReplacementFeature.id)).toMatchObject({
+      lastValidatorRunId: manualReplacement.run.id,
+      loopState: "validating",
+    });
+
+    const fallbackReplacementFeature = await m.addFeature(slice.id, { title: "Fallback replacement" });
+    const oldManual = await m.startManualValidatorRun(fallbackReplacementFeature.id);
+    expect(oldManual).toMatchObject({ outcome: "started" });
+    await ageRun(oldManual.run.id);
+    const fallbackReplacement = await m.startValidatorRun(fallbackReplacementFeature.id, "task_completion");
+    await m.completeValidatorRun(oldManual.run.id, "passed");
+    expect(await m.getValidatorRun(oldManual.run.id)).toMatchObject({
+      status: "passed",
+      completedAt: expect.any(String),
+    });
+    expect(await m.getFeature(fallbackReplacementFeature.id)).toMatchObject({
+      lastValidatorRunId: fallbackReplacement.id,
+      loopState: "validating",
+    });
+
+    const reaperReplacementFeature = await m.addFeature(slice.id, { title: "Reaper replacement" });
+    const oldReapTarget = await m.startValidatorRun(reaperReplacementFeature.id, "task_completion");
+    await ageRun(oldReapTarget.id);
+    const reaperReplacement = await m.startManualValidatorRun(reaperReplacementFeature.id);
+    expect(reaperReplacement).toMatchObject({ outcome: "started" });
+    await m.reapValidatorRun(oldReapTarget.id, "stale owner");
+    expect(await m.getValidatorRun(oldReapTarget.id)).toMatchObject({
+      status: "error",
+      completedAt: expect.any(String),
+    });
+    expect(await m.getFeature(reaperReplacementFeature.id)).toMatchObject({
+      lastValidatorRunId: reaperReplacement.run.id,
+      loopState: "validating",
+    });
+
+    const terminalMissionFeature = await m.addFeature(slice.id, { title: "Terminal mission guard" });
+    const terminalMissionRun = await m.startValidatorRun(terminalMissionFeature.id, "task_completion");
+    const layer = h.layer();
+    const originalTransaction = layer.transactionImmediate.bind(layer);
+    let archiveBeforeReapTransaction = true;
+    const transaction = vi.spyOn(layer, "transactionImmediate").mockImplementation(async (callback) => {
+      if (archiveBeforeReapTransaction) {
+        archiveBeforeReapTransaction = false;
+        await m.updateMission(mission.id, { status: "archived" });
+      }
+      return originalTransaction(callback);
+    });
+    try {
+      await m.reapValidatorRun(terminalMissionRun.id, "mission became terminal");
+    } finally {
+      transaction.mockRestore();
+    }
+    expect(await m.getMission(mission.id)).toMatchObject({ status: "archived" });
+    expect(await m.getFeature(terminalMissionFeature.id)).toMatchObject({
+      lastValidatorRunId: terminalMissionRun.id,
+      loopState: "validating",
+    });
+  });
+
   it("refuses automatic-after-manual admission across the fingerprint-less boundary", async () => {
     /*
     FNXC:MissionValidation 2026-08-11-05:38:

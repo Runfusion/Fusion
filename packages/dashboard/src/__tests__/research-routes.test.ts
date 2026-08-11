@@ -1,8 +1,14 @@
 // @vitest-environment node
-import { describe, it, expect, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import express from "express";
 import { get as performGet, request as performRequest } from "../test-request.js";
-import { ResearchLifecycleError } from "@fusion/core";
+import * as fusionCore from "@fusion/core";
+import { ResearchLifecycleError, listRecall, resolveResearchFindingId, type RecallCaptureWriterWithTestDrain } from "@fusion/core";
+import {
+  createSharedPgTaskStoreTestHarness,
+  pgDescribe,
+  type SharedPgTaskStoreHarness,
+} from "../../../core/src/__test-utils__/pg-test-harness.js";
 import { createResearchRouter } from "../research-routes.js";
 
 function createMockStore(options?: {
@@ -87,6 +93,8 @@ function createMockStore(options?: {
     }),
     appendAgentLog: vi.fn(async () => undefined),
     log: vi.fn(async () => undefined),
+    getMissionStore: () => ({ addResearchFeature: vi.fn(async () => ({ feature: { id: "F-1" }, reused: false })) }),
+    getAsyncLayer: () => undefined,
   };
 }
 
@@ -219,6 +227,7 @@ describe("research-routes", () => {
       "executor",
     );
   });
+
 
   it("enriches existing task from finding and returns revision", async () => {
     const store = createMockStore();
@@ -498,5 +507,72 @@ describe("research-routes", () => {
     const search = await performGet(app, "/search?q=test");
     expect(search.status).toBe(200);
     expect(Array.isArray(search.body.runs)).toBe(true);
+  });
+});
+
+/*
+FNXC:MemoryRecallCapture 2026-08-11-12:31:
+The dashboard route constructs its writer inline, so this production-shaped PG test wraps—not
+replaces—the real factory and drains that real writer before reading recall persistence. A mocked
+capture callback cannot prove the route's AsyncDataLayer reaches FN-8922's appendRecall store.
+*/
+pgDescribe("research-routes recall capture composition", () => {
+  const h: SharedPgTaskStoreHarness = createSharedPgTaskStoreTestHarness({
+    prefix: "fusion_dashboard_research_recall",
+    projectId: "dashboard-research-recall",
+  });
+
+  beforeAll(h.beforeAll);
+  beforeEach(h.beforeEach);
+  afterEach(h.afterEach);
+  afterAll(h.afterAll);
+
+  it("persists a promoted dashboard finding through the live recall writer", async () => {
+    const store = h.store();
+    const researchStore = store.getResearchStore();
+    const run = await researchStore.createRun({ query: "Dashboard recall capture" });
+    await researchStore.updateRun(run.id, { status: "running" });
+    await researchStore.updateRun(run.id, {
+      status: "completed",
+      results: {
+        summary: "Dashboard promotion source",
+        findings: [{ id: "dashboard-recall-finding", heading: "Dashboard finding", content: "Persisted from the route.", sources: [] }],
+      },
+    });
+    const missionStore = store.getMissionStore();
+    const mission = await missionStore.createMission({ title: "Dashboard recall mission" });
+    const milestone = await missionStore.addMilestone(mission.id, { title: "Milestone" });
+    const slice = await missionStore.addSlice(milestone.id, { title: "Slice" });
+    const realFactory = fusionCore.createRecallCaptureWriter;
+    const writerFactory = vi.spyOn(fusionCore, "createRecallCaptureWriter");
+    let writer: RecallCaptureWriterWithTestDrain | undefined;
+    writerFactory.mockImplementation((deps) => {
+      writer = realFactory(deps);
+      return writer;
+    });
+
+    try {
+      const app = express();
+      app.use(express.json());
+      app.use(createResearchRouter(store));
+      const response = await performRequest(
+        app,
+        "POST",
+        `/runs/${run.id}/findings/dashboard-recall-finding/promote`,
+        JSON.stringify({ sliceId: slice.id }),
+        { "content-type": "application/json" },
+      );
+      expect(response.status).toBe(201);
+      await writer!.flushPendingCaptures();
+      expect(await listRecall(h.layer(), { limit: 10 })).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          kind: "solution",
+          source: expect.objectContaining({ origin: "deep-research" }),
+          tags: expect.arrayContaining([`research-run:${run.id}`, "research-finding:dashboard-recall-finding"]),
+        }),
+      ]));
+    } finally {
+      writerFactory.mockRestore();
+    }
   });
 });

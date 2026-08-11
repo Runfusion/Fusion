@@ -164,6 +164,32 @@ describe("useTasks", () => {
     expect(result.current.tasks[0].id).toBe("FN-001");
   });
 
+  it("expires an idle release verdict without waiting for another snapshot", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const evaluatedAt = new Date().toISOString();
+    const task = createMockTask({
+      updatedAt: evaluatedAt,
+      releaseGate: {
+        promoteBlocked: false,
+        unplannedForExecution: false,
+        blockedOnApproval: false,
+        reason: null,
+        readyAtCapacityBoundary: false,
+        evaluatedAt,
+        evaluatedForUpdatedAt: evaluatedAt,
+      },
+    });
+    mockFetchTasks.mockResolvedValue([task]);
+
+    const { result } = renderHook(() => useTasks({ sseEnabled: false }));
+    await waitFor(() => expect(result.current.tasks[0]?.releaseGate).toBeDefined());
+
+    act(() => {
+      vi.advanceTimersByTime(30_001);
+    });
+    expect(result.current.tasks[0]?.releaseGate).toBeUndefined();
+  });
+
   it("hydrates per-project cached tasks synchronously", () => {
     mockReadCache.mockReturnValueOnce([createMockTask({ id: "FN-CACHED" })]);
     const { result } = renderHook(() => useTasks({ projectId: "proj-1" }));

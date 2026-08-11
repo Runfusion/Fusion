@@ -33,12 +33,14 @@ export type WorkflowStepGateMode = "gate" | "advisory";
 
 /** Closed severity vocabulary shared by persisted workflow findings and Review-tab items. */
 export type WorkflowReviewFindingSeverity = "low" | "medium" | "high" | "critical";
+export type WorkflowReviewFindingResolution = "open" | "resolved-in-review" | "superseded";
 
 /**
- * FNXC:WorkflowReviewFindings 2026-08-05-06:29:
- * Review-kind nodes persist independently actionable feedback in the existing JSONB result so
- * Review-tab selection never depends on model prose or client-provided metadata. Finding identity
- * is normalized before persistence; historical prose-only rows intentionally omit this field.
+ * FNXC:WorkflowReviewFindings 2026-08-11-19:39:
+ * Absent resolution means open and is never persisted as `"open"`. An explicit reviewer claim
+ * marks a receipt as resolved-in-review or a prior finding as superseded; Fusion never infers this
+ * from commit timestamps. This lets already-handled findings remain auditable without becoming
+ * actionable Review-tab revision items.
  */
 export interface WorkflowReviewFinding {
   id: string;
@@ -47,6 +49,7 @@ export interface WorkflowReviewFinding {
   filePath?: string;
   line?: number;
   severity?: WorkflowReviewFindingSeverity;
+  resolution?: WorkflowReviewFindingResolution;
 }
 
 /** Lifecycle phase for workflow step execution. */
@@ -277,6 +280,10 @@ export interface WorkflowStepResult {
   output?: string;
   /** Normalized structured advisory findings from an explicitly classified review node. */
   findings?: WorkflowReviewFinding[];
+  /** Prior result containing the finding IDs this review step explicitly declared superseded. */
+  supersededFindingSourceWorkflowStepId?: string;
+  /** Prior-lane finding IDs this review step explicitly declared superseded; audit-only. */
+  supersededFindingIds?: string[];
   /**
    * Machine-readable verdict from prompt-mode structured output.
    * Absent for script-mode steps and legacy prose-only prompt outputs.

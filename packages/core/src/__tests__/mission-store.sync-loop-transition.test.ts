@@ -40,6 +40,32 @@ describe("MissionStore synchronous loop transitions", () => {
     });
     expect(updateFeature).toHaveBeenCalledWith(feature.id, { loopState: "implementing" });
   });
+
+  it("records a superseded validator completion without overwriting the replacement owner", () => {
+    const db = {
+      transaction: (callback: () => void) => callback(),
+      prepare: vi.fn().mockReturnValue({ get: vi.fn().mockReturnValue(undefined), run: vi.fn() }),
+      bumpLastModified: vi.fn(),
+    } as unknown as Database;
+    const store = new MissionStore("/tmp/fusion-mission-store-test", db);
+    const run = {
+      id: "VR-OLD", featureId: "F-RECOVERY", milestoneId: "MS-1", sliceId: "SL-1",
+      status: "running", implementationAttempt: 0, validatorAttempt: 1,
+      startedAt: "2026-08-10T00:00:00.000Z", createdAt: "2026-08-10T00:00:00.000Z", updatedAt: "2026-08-10T00:00:00.000Z",
+    } as const;
+    const completed = { ...run, status: "failed" as const, completedAt: "2026-08-11T00:00:00.000Z" };
+    const feature = {
+      id: run.featureId, sliceId: run.sliceId, title: "Owned by replacement", status: "in-progress",
+      loopState: "validating", lastValidatorRunId: "VR-NEW",
+      createdAt: "2026-08-10T00:00:00.000Z", updatedAt: "2026-08-11T00:00:00.000Z",
+    } as MissionFeature;
+    vi.spyOn(store, "getValidatorRun").mockReturnValueOnce(run).mockReturnValue(completed);
+    vi.spyOn(store, "getFeature").mockReturnValue(feature);
+    const updateFeature = vi.spyOn(store, "updateFeature");
+
+    expect(store.completeValidatorRun(run.id, "failed")).toEqual(completed);
+    expect(updateFeature).not.toHaveBeenCalled();
+  });
 });
 
 describe("MissionStore serial slice admission", () => {

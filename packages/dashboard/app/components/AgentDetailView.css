@@ -2416,3 +2416,44 @@ the tab into endless page scroll.
 .agent-memory-file-editor .cm-scroller {
   overflow: auto;
 }
+
+.memory-consolidation-history {
+  margin-block: var(--space-md);
+  padding: var(--space-md);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.memory-consolidation-history__heading,
+.memory-consolidation-history__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  justify-content: space-between;
+}
+
+.memory-consolidation-history__heading h4 {
+  margin: 0;
+  color: var(--text-primary);
+}
+
+.memory-consolidation-history__list {
+  display: grid;
+  gap: var(--space-sm);
+  margin: var(--space-sm) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.memory-consolidation-history__row {
+  flex-wrap: wrap;
+  padding: var(--space-sm);
+  border-radius: var(--radius-sm);
+  background: var(--surface-muted);
+  color: var(--text-muted);
+}
+
+.memory-consolidation-history__row--completed strong { color: var(--color-success); }
+.memory-consolidation-history__row--skipped strong { color: var(--color-warning); }
+.memory-consolidation-history__row--failed strong { color: var(--color-error); }
