@@ -249,6 +249,30 @@ describe("ChatManager.sendMessage", () => {
     });
   });
 
+  it("forwards the injected fusion-memory built-in through the dashboard chat resolver", async () => {
+    const previousEntry = process.env.FUSION_MEMORY_MCP_ENTRY;
+    process.env.FUSION_MEMORY_MCP_ENTRY = join(process.cwd(), "../..", "package.json");
+    let resolvedOptions: { mcpServers?: Array<{ name: string }> } | undefined;
+    __setCreateResolvedAgentSession(async (options: { mcpServers?: Array<{ name: string }> }) => {
+      resolvedOptions = options;
+      return { session: { prompt: vi.fn().mockResolvedValue(undefined), dispose: vi.fn(), state: { messages: [] } } } as any;
+    });
+    const taskStore = {
+      getSettingsByScope: vi.fn(async () => ({ global: { mcpServers: { enabled: true } }, project: { mcpServers: { enabled: true } } })),
+      getSecretsStore: vi.fn(() => ({ revealSecret: async () => { throw new Error("unexpected secret"); } })),
+      getRootDir: () => "/fixture",
+      getSettings: vi.fn().mockResolvedValue({}),
+      emitUsageEvent: vi.fn(),
+    };
+    try {
+      await new ChatManager(mockChatStore as any, "/tmp/test", mockAgentStore as any, undefined, undefined, undefined, taskStore as any).sendMessage("chat-001", "resolve memory tools");
+      expect(resolvedOptions?.mcpServers).toContainEqual(expect.objectContaining({ name: "fusion-memory" }));
+    } finally {
+      if (previousEntry === undefined) delete process.env.FUSION_MEMORY_MCP_ENTRY;
+      else process.env.FUSION_MEMORY_MCP_ENTRY = previousEntry;
+    }
+  });
+
   it("does not require a TaskStore to persist a human chat turn", async () => {
     __setCreateResolvedAgentSession(async () => ({
       session: { prompt: vi.fn().mockResolvedValue(undefined), dispose: vi.fn(), state: { messages: [] } },

@@ -16,6 +16,8 @@ export default defineConfig({
       */
       "@fusion/core/column-roles": resolve(__dirname, "../core/src/column-roles.ts"),
       "@fusion/core/task-delete-attribution": resolve(__dirname, "../core/src/task-delete-attribution.ts"),
+      // FNXC:MemoryMcp 2026-08-11-00:19: Preserve the Node-only factory subpath without leaking it through the browser-safe core barrel.
+      "@fusion/core/mcp-builtin-servers": resolve(__dirname, "../core/src/config/mcp-builtin-servers.ts"),
       "@fusion/core": resolve(__dirname, "../core/src/index.ts"),
       "@fusion/test-utils": resolve(__dirname, "../core/src/__test-utils__/workspace.ts"),
       "@fusion/engine": resolve(__dirname, "./src/index.ts"),

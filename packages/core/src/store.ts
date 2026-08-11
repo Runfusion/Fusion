@@ -2286,13 +2286,16 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   cached answer only. Explicit metadata wins; runtime and process bridge EventEmitters do not call this
   method and deliberately DROP lanes because absent metadata safely preserves their listener fallback.
   */
-  override emit<E extends string | symbol>(event: E, ...args: any[]): boolean {
+  override emit(event: unknown, ...args: any[]): boolean {
+    // event: unknown keeps the decorator assignable to EventEmitter<TaskStoreEvents>'s
+    // generic `emit<E extends string|symbol>(name: K|E, ...)` signature while still
+    // forwarding arbitrary non-typed keys (agent:log, settings:updated, …).
     if (event === "task:updated" && args.length === 1) {
       const task = args[0] as Task;
       const lanes = this.laneCache.get(task.id);
-      if (lanes !== undefined) return EventEmitter.prototype.emit.call(this, event, task, { lanes });
+      if (lanes !== undefined) return EventEmitter.prototype.emit.call(this, event as string, task, { lanes });
     }
-    return EventEmitter.prototype.emit.call(this, event, ...args);
+    return EventEmitter.prototype.emit.call(this, event as string, ...args);
   }
 
   async updateStep( id: string, stepIndex: number, status: import("./types.js").StepStatus, options?: { source?: "graph" }, ): Promise<Task> {

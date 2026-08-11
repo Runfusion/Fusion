@@ -128,6 +128,7 @@ async function loadCommandHandlers() {
   const { runSettingsExport } = await import("./commands/settings-export.js");
   const { runSettingsImport } = await import("./commands/settings-import.js");
   const { runMcpList, runMcpAdd, runMcpEdit, runMcpRemove, runMcpEnable, runMcpDisable, runMcpImport, runMcpExport, runMcpValidate } = await import("./commands/mcp.js");
+  const { runMcpMemoryServer } = await import("./commands/mcp-memory-server.js");
   const { runWorkflowValidate } = await import("./commands/workflow.js");
   const { runGitStatus, runGitFetch, runGitPull, runGitPush } = await import("./commands/git.js");
   const { runBranchGroupList, runBranchGroupShow, runBranchGroupPromote, runBranchGroupAbandon } = await import("./commands/branch-group.js");
@@ -211,6 +212,7 @@ async function loadCommandHandlers() {
     runMcpImport,
     runMcpExport,
     runMcpValidate,
+    runMcpMemoryServer,
     runWorkflowValidate,
     runGitStatus,
     runGitFetch,
@@ -765,6 +767,7 @@ async function main() {
     runMcpImport,
     runMcpExport,
     runMcpValidate,
+    runMcpMemoryServer,
     runWorkflowValidate,
     runGitStatus,
     runGitFetch,
@@ -1797,6 +1800,9 @@ async function main() {
           secretScope,
         };
         switch (subcommand) {
+          case "serve-memory":
+            await runMcpMemoryServer(getFlagValue(args, "--project-root") ?? process.cwd());
+            break;
           case "list":
           case "ls":
             await runMcpList({ projectName, json: args.includes("--json") });
