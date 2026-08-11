@@ -19,7 +19,7 @@ a mocked cache is what let the missing `savedAt` plumbing hide.
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act, renderHook } from "@testing-library/react";
 import type { Task } from "@fusion/core";
-import { mergeTaskSnapshot, useTasks } from "../useTasks";
+import { applyLocalTaskPatch, mergeTaskSnapshot, useTasks } from "../useTasks";
 import * as api from "../../api";
 import { SWR_CACHE_KEYS } from "../../utils/swrCache";
 import { isTaskStuck, countStuckTasks } from "../../utils/taskStuck";
@@ -467,6 +467,65 @@ The rule under test: a single-row live update may advance the clock only AFTER a
 every row. It must still advance after that, or stuck detection would silently stop firing for the rest
 of a long SSE session (this hook has no periodic poll).
 */
+describe("applyLocalTaskPatch", () => {
+  const current = {
+    ...createInProgressTask("FN-LOCAL", Date.parse("2026-08-09T10:00:00.000Z")),
+    columnMovedAt: "2026-08-09T10:00:00.000Z",
+    prompt: "# Full detail",
+    log: [{ timestamp: "2026-08-09T10:00:00.000Z", action: "loaded" }],
+  } as Task;
+
+  it("accepts an absent id but rejects an explicit foreign id", () => {
+    expect(applyLocalTaskPatch(current, { title: "Local rename" }).title).toBe("Local rename");
+    expect(applyLocalTaskPatch(current, { id: "FN-OTHER", title: "Foreign" })).toBe(current);
+  });
+
+  it("applies clock-less lifecycle patches and equal-clock derived patches", () => {
+    const clockless = applyLocalTaskPatch(current, { column: "done", status: "completed" });
+    const equalClock = applyLocalTaskPatch(current, { ...current, prInfo: { number: 12 } } as Partial<Task>);
+
+    expect(clockless).toMatchObject({ column: "done", status: "completed" });
+    expect(equalClock.prInfo).toMatchObject({ number: 12 });
+  });
+
+  it("preserves lifecycle state only for present strictly older clocks", () => {
+    const stale = applyLocalTaskPatch(current, {
+      title: "Fresh metadata",
+      column: "done",
+      columnMovedAt: "2026-08-09T09:00:00.000Z",
+      status: "completed",
+      updatedAt: "2026-08-09T09:00:00.000Z",
+    });
+
+    expect(stale).toMatchObject({
+      title: "Fresh metadata",
+      column: current.column,
+      columnMovedAt: current.columnMovedAt,
+      status: current.status,
+      updatedAt: current.updatedAt,
+    });
+  });
+
+  it("applies a patch clock when the current row has no clock", () => {
+    const clocklessCurrent = { ...current, updatedAt: undefined, columnMovedAt: undefined } as Task;
+    expect(applyLocalTaskPatch(clocklessCurrent, {
+      column: "done",
+      columnMovedAt: "2026-08-09T11:00:00.000Z",
+      status: "completed",
+      updatedAt: "2026-08-09T11:00:00.000Z",
+    })).toMatchObject({ column: "done", status: "completed" });
+  });
+
+  it("does not erase defined detail fields with undefined or omitted patch fields", () => {
+    const patched = applyLocalTaskPatch(current, { title: undefined, description: "Updated" });
+    expect(patched).toMatchObject({ title: current.title, prompt: current.prompt, log: current.log, description: "Updated" });
+  });
+
+  it("preserves reference identity for a no-op patch", () => {
+    expect(applyLocalTaskPatch(current, { title: current.title })).toBe(current);
+  });
+});
+
 describe("useTasks freshness clock vs single-row live updates", () => {
   const eventCases: [string, (task: Task) => unknown][] = [
     ["task:created", (task) => task],

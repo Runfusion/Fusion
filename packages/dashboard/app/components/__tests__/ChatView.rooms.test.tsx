@@ -386,7 +386,7 @@ describe("ChatView — rooms (FN-3805..FN-3811 contract)", () => {
     await userEvent.type(textarea, "Hello room{enter}");
 
     await waitFor(() => {
-      expect(sendRoomMessage).toHaveBeenCalledWith("Hello room", { files: [] });
+      expect(sendRoomMessage).toHaveBeenCalledWith("Hello room", expect.objectContaining({ files: [] }));
     });
     await waitFor(() => {
       expect((textarea as HTMLTextAreaElement).value).toBe("");
@@ -481,7 +481,7 @@ describe("ChatView — rooms (FN-3805..FN-3811 contract)", () => {
     await userEvent.type(textarea, "Room upload{enter}");
 
     await waitFor(() => {
-      expect(sendRoomMessage).toHaveBeenCalledWith("Room upload", { files: [] });
+      expect(sendRoomMessage).toHaveBeenCalledWith("Room upload", expect.objectContaining({ files: [] }));
     });
     expect(addToast).not.toHaveBeenCalledWith(expect.stringMatching(/attach/i), "warning");
   });
@@ -504,7 +504,7 @@ describe("ChatView — rooms (FN-3805..FN-3811 contract)", () => {
 
     await waitFor(() => {
       expect(sendRoomMessage).toHaveBeenCalledTimes(1);
-      expect(sendRoomMessage).toHaveBeenCalledWith("single send", { files: [] });
+      expect(sendRoomMessage).toHaveBeenCalledWith("single send", expect.objectContaining({ files: [] }));
     });
 
     resolveSend!();
@@ -526,7 +526,7 @@ describe("ChatView — rooms (FN-3805..FN-3811 contract)", () => {
     await userEvent.type(textarea, "Will retry{enter}");
 
     await waitFor(() => {
-      expect(sendRoomMessage).toHaveBeenCalledWith("Will retry", { files: [] });
+      expect(sendRoomMessage).toHaveBeenCalledWith("Will retry", expect.objectContaining({ files: [] }));
     });
     await waitFor(() => {
       expect(textarea.value).toBe("");
@@ -545,7 +545,7 @@ describe("ChatView — rooms (FN-3805..FN-3811 contract)", () => {
     await userEvent.type(textarea, "Will retry{enter}");
 
     await waitFor(() => {
-      expect(sendRoomMessage).toHaveBeenCalledWith("Will retry", { files: [] });
+      expect(sendRoomMessage).toHaveBeenCalledWith("Will retry", expect.objectContaining({ files: [] }));
     });
     await waitFor(() => {
       expect(textarea.value).toBe("Will retry");
@@ -565,9 +565,27 @@ describe("ChatView — rooms (FN-3805..FN-3811 contract)", () => {
     const textarea = screen.getByTestId("chat-input") as HTMLTextAreaElement;
     await userEvent.type(textarea, "Retry attachment{enter}");
 
-    await waitFor(() => expect(sendRoomMessage).toHaveBeenCalledWith("Retry attachment", { files: [file] }));
+    await waitFor(() => expect(sendRoomMessage).toHaveBeenCalledWith("Retry attachment", expect.objectContaining({ files: [file] })));
     await waitFor(() => expect(textarea.value).toBe("Retry attachment"));
     expect(screen.getByText("retry.txt")).toBeInTheDocument();
+  });
+
+  it("dismisses room previews on delivery before the room send settles", async () => {
+    const sendRoomMessage = vi.fn((_content: string, opts?: { onDelivered?: () => void }) => {
+      opts?.onDelivered?.();
+      return new Promise<void>(() => {});
+    });
+    setup({}, { sendRoomMessage, activeRoom: roomA });
+
+    await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} experimentalFeatures={{ chatRooms: true }} />);
+
+    const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(fileInput, { target: { files: [new File(["note"], "delivered.txt", { type: "text/plain" })] } });
+    fireEvent.click(screen.getByTestId("chat-send-btn"));
+
+    await waitFor(() => expect(sendRoomMessage).toHaveBeenCalled());
+    await waitFor(() => expect(screen.queryByTestId("chat-attachment-previews")).not.toBeInTheDocument());
+    expect(screen.queryByTestId("chat-attachment-preview-0")).not.toBeInTheDocument();
   });
 
   it("clears room composer on Enter when room send succeeds", async () => {
@@ -580,7 +598,7 @@ describe("ChatView — rooms (FN-3805..FN-3811 contract)", () => {
     await userEvent.type(textarea, "Delivered{enter}");
 
     await waitFor(() => {
-      expect(sendRoomMessage).toHaveBeenCalledWith("Delivered", { files: [] });
+      expect(sendRoomMessage).toHaveBeenCalledWith("Delivered", expect.objectContaining({ files: [] }));
     });
     await waitFor(() => {
       expect(textarea.value).toBe("");
@@ -601,7 +619,7 @@ describe("ChatView — rooms (FN-3805..FN-3811 contract)", () => {
     await userEvent.type(textarea, "Optimistic clear{enter}");
 
     await waitFor(() => {
-      expect(sendRoomMessage).toHaveBeenCalledWith("Optimistic clear", { files: [] });
+      expect(sendRoomMessage).toHaveBeenCalledWith("Optimistic clear", expect.objectContaining({ files: [] }));
     });
     expect(textarea.value).toBe("");
 
@@ -644,6 +662,24 @@ describe("ChatView — rooms (FN-3805..FN-3811 contract)", () => {
     expect(sendRoomMessage).not.toHaveBeenCalled();
   });
 
+  it.each(["/clear", "/new"])("refuses %s with staged room attachments", async (command) => {
+    const addToast = vi.fn();
+    const clearRoom = vi.fn().mockResolvedValue(undefined);
+    const sendRoomMessage = vi.fn().mockResolvedValue(undefined);
+    setup({}, { clearRoom, sendRoomMessage, activeRoom: roomA });
+
+    await renderWithAct(<ChatView projectId="proj-123" addToast={addToast} experimentalFeatures={{ chatRooms: true }} />);
+
+    const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(fileInput, { target: { files: [new File(["file"], "guarded.txt", { type: "text/plain" })] } });
+    await userEvent.type(screen.getByTestId("chat-input"), `${command}{enter}`);
+
+    expect(screen.getByTestId("chat-attachment-previews")).toBeInTheDocument();
+    expect(clearRoom).not.toHaveBeenCalled();
+    expect(sendRoomMessage).not.toHaveBeenCalled();
+    expect(addToast).toHaveBeenCalledWith(expect.stringContaining("Remove the attachments"), "warning");
+  });
+
   it("does not intercept /clear substring commands in rooms scope", async () => {
     const clearRoom = vi.fn().mockResolvedValue(undefined);
     const sendRoomMessage = vi.fn().mockResolvedValue(undefined);
@@ -655,7 +691,7 @@ describe("ChatView — rooms (FN-3805..FN-3811 contract)", () => {
     await userEvent.type(textarea, "/clear now{enter}");
 
     await waitFor(() => {
-      expect(sendRoomMessage).toHaveBeenCalledWith("/clear now", { files: [] });
+      expect(sendRoomMessage).toHaveBeenCalledWith("/clear now", expect.objectContaining({ files: [] }));
     });
     expect(clearRoom).not.toHaveBeenCalled();
   });
@@ -773,7 +809,7 @@ describe("ChatView — rooms (FN-3805..FN-3811 contract)", () => {
     });
 
     await waitFor(() => expect(sendRoomMessage).toHaveBeenCalledTimes(1));
-    expect(sendRoomMessage).toHaveBeenCalledWith("Room iOS tap", { files: [] });
+    expect(sendRoomMessage).toHaveBeenCalledWith("Room iOS tap", expect.objectContaining({ files: [] }));
     mediaSpy.mockRestore();
   });
 
@@ -791,7 +827,7 @@ describe("ChatView — rooms (FN-3805..FN-3811 contract)", () => {
       firstSendButton.dispatchEvent(Object.assign(new Event("pointerdown", { bubbles: true, cancelable: true }), { pointerType: "touch" }));
     });
     await waitFor(() => expect(sendRoomMessage).toHaveBeenCalledTimes(1));
-    expect(sendRoomMessage).toHaveBeenLastCalledWith("Room first", { files: [] });
+    expect(sendRoomMessage).toHaveBeenLastCalledWith("Room first", expect.objectContaining({ files: [] }));
     await act(async () => {
       await new Promise((resolve) => window.setTimeout(resolve, 0));
     });
@@ -803,7 +839,7 @@ describe("ChatView — rooms (FN-3805..FN-3811 contract)", () => {
     });
 
     await waitFor(() => expect(sendRoomMessage).toHaveBeenCalledTimes(2));
-    expect(sendRoomMessage).toHaveBeenLastCalledWith("Room second", { files: [] });
+    expect(sendRoomMessage).toHaveBeenLastCalledWith("Room second", expect.objectContaining({ files: [] }));
     mediaSpy.mockRestore();
   });
 
@@ -823,7 +859,7 @@ describe("ChatView — rooms (FN-3805..FN-3811 contract)", () => {
     });
 
     await waitFor(() => expect(sendRoomMessage).toHaveBeenCalledTimes(1));
-    expect(sendRoomMessage).toHaveBeenCalledWith("Room Android tap", { files: [] });
+    expect(sendRoomMessage).toHaveBeenCalledWith("Room Android tap", expect.objectContaining({ files: [] }));
     mediaSpy.mockRestore();
   });
 
@@ -843,7 +879,7 @@ describe("ChatView — rooms (FN-3805..FN-3811 contract)", () => {
     });
 
     await waitFor(() => expect(sendRoomMessage).toHaveBeenCalledTimes(1));
-    expect(sendRoomMessage).toHaveBeenCalledWith("Room desktop tap", { files: [] });
+    expect(sendRoomMessage).toHaveBeenCalledWith("Room desktop tap", expect.objectContaining({ files: [] }));
     mediaSpy.mockRestore();
   });
 

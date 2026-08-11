@@ -126,6 +126,22 @@ export function hasUserAutoMergeHold(
 }
 
 /**
+ * FNXC:SharedBranchMemberHold 2026-08-09-21:41:
+ * FN-8910 narrows the FN-8823 project-Off consent arm after FN-8863 exposed
+ * that it also reached remediation. Remediation reopens implementation; it
+ * never merges. The broad shared-member hold remains the merge-admission
+ * contract in merge-runner, project-engine, and self-healing, so only an
+ * operator-authored task-level Off may fence shared and standalone remediation.
+ * This preserves the merge checkpoint while allowing review findings to be fixed.
+ */
+export function hasPreMergeRemediationAutoMergeHold(
+  task: Pick<Task, "autoMerge" | "autoMergeProvenance" | "branchContext">,
+  _settings: Pick<Settings, "autoMerge">,
+): boolean {
+  return hasUserAutoMergeHold(task);
+}
+
+/**
  * Gate for auto-merge *processing* (engine enqueue + self-healing sweeps).
  * Additive relative to the global setting: when `settings.autoMerge` is on,
  * every task flows through — tasks with an explicit `autoMerge: false` are

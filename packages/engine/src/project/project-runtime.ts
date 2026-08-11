@@ -71,6 +71,12 @@ export interface ProjectRuntimeConfig {
    */
   prNodeGithubOps?: import("../merge/pr-nodes.js").PrNodeGithubOps;
   /**
+   * Builds PR-node GitHub callbacks after this runtime has selected its own
+   * TaskStore. This binds project settings to the executing engine rather than
+   * asking process-wide CLI wiring to rediscover task ownership.
+   */
+  createPrNodeGithubOps?: (store: TaskStore) => import("../merge/pr-nodes.js").PrNodeGithubOps;
+  /**
    * Absolute URL of the dashboard's CLI-agent hook ingestion endpoint that
    * generated hook scripts POST to (e.g. `http://127.0.0.1:4040/api/cli-agent/hooks`).
    * Threaded from the dashboard boot once the listening port is known. When

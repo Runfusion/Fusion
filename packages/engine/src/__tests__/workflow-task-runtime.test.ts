@@ -716,7 +716,7 @@ describe("WorkflowTaskRuntime", () => {
     ]);
   });
 
-  it("routes merge-gate work items off when task auto-merge is disabled", async () => {
+  it("FN-8910 routes a project-Off shared member to manual merge hold", async () => {
     const transitions: Array<{ id: string; state: WorkflowWorkItemState; patch?: Record<string, unknown> }> = [];
     const workItem = {
       id: "work-merge-gate",
@@ -736,7 +736,11 @@ describe("WorkflowTaskRuntime", () => {
     } satisfies WorkflowWorkItem;
     const runtime = new WorkflowTaskRuntime({
       store: {
-        getTask: async () => ({ ...task, autoMerge: false } as TaskDetail),
+        getTask: async () => ({
+          ...task,
+          autoMerge: undefined,
+          branchContext: { assignmentMode: "shared", groupId: "BG-8910" },
+        } as TaskDetail),
         getTaskWorkflowSelection: () => undefined,
         getWorkflowDefinition: async () => undefined,
         transitionWorkflowWorkItem: (id, state, patch) => {
@@ -748,7 +752,7 @@ describe("WorkflowTaskRuntime", () => {
       runCustomNode: async () => ({ outcome: "success" }),
     });
 
-    const result = await runtime.runWorkItem(workItem, { ...flagOff, autoMerge: true } as Settings);
+    const result = await runtime.runWorkItem(workItem, { ...flagOff, autoMerge: false } as Settings);
 
     expect(result.disposition).toBe("completed");
     expect(result.context["node:merge-gate:value"]).toBe("auto-off");

@@ -126,6 +126,7 @@ import type { GraphWorkflowSelection } from "./components/GraphWorkflowSwitcherS
 // link asynchronously, producing a brief flash of unstyled chat UI on
 // first render.
 import "./components/ChatView.css";
+import { useChatMailReportRouting } from "./components/chatReportHandoff";
 
 const IS_TEST_ENV = import.meta.env.MODE === "test";
 export const TASK_DETAIL_FLOATING_GEOMETRY_KEY = "floating-window:task-detail";
@@ -802,6 +803,11 @@ function AppInner() {
   const [missionResumeSessionId, setMissionResumeSessionId] = useState<string | undefined>(undefined);
   const [missionTargetId, setMissionTargetId] = useState<string | undefined>(undefined);
   const [goalAnchorId, setGoalAnchorId] = useState<string | undefined>(undefined);
+  /*
+  FNXC:CommandCenterAgentActivity 2026-08-10-01:54:
+  Agent activity raises a focused-agent anchor through App's existing view router rather than changing routing itself. The request id mirrors goalAnchorId but preserves repeated activation of one agent.
+  */
+  const [agentAnchor, setAgentAnchor] = useState<{ agentId: string; requestId: number } | undefined>(undefined);
   const [selectedPrId, setSelectedPrId] = useState<string | undefined>(() => {
     if (typeof window === "undefined") return undefined;
     const v = new URL(window.location.href).searchParams.get("pr");
@@ -814,6 +820,11 @@ function AppInner() {
       setGoalAnchorId(undefined);
     }
   }, [goalAnchorId, taskView]);
+  useEffect(() => {
+    if (taskView !== "agents" && agentAnchor !== undefined) {
+      setAgentAnchor(undefined);
+    }
+  }, [agentAnchor, taskView]);
   useEffect(() => {
     if (taskView !== "pull-requests" && selectedPrId !== undefined) {
       setSelectedPrId(undefined);
@@ -1261,8 +1272,8 @@ function AppInner() {
     handleTaskViewChange("planning");
   }, [handleTaskViewChange, modalManager]);
 
-  const openPlanningWithInitialPlanWithNav = useCallback((initialPlan: string, workflowId?: string | null) => {
-    modalManager.openPlanningWithInitialPlan(initialPlan, workflowId);
+  const openPlanningWithInitialPlanWithNav = useCallback((initialPlan: string, workflowId?: string | null, sourceIssue?: { provider: "github"; repository: string; issueNumber: number; url: string; title?: string }) => {
+    modalManager.openPlanningWithInitialPlan(initialPlan, workflowId, sourceIssue);
     handleTaskViewChange("planning");
   }, [handleTaskViewChange, modalManager]);
 
@@ -1622,6 +1633,11 @@ function AppInner() {
     setQuickChatOpen(false);
   };
 
+  const { mailComposerPrefill, onSendAsReport: handleSendChatMessageAsReport } = useChatMailReportRouting(
+    () => handleChangeTaskView("mailbox"),
+    () => setQuickChatOpen(false),
+  );
+
   const mainContentProps: MainContentProps = {
     showBackendConnectionErrorPage,
     projectsError,
@@ -1678,6 +1694,8 @@ function AppInner() {
     experimentalFeatures,
     setQuickChatOpen,
     chatComposerPrefill,
+    mailComposerPrefill,
+    onSendAsReport: handleSendChatMessageAsReport,
     onOpenChatWithPrefill: openChatWithPrefill,
     setMailboxUnreadCount,
     setMissionTargetId,
@@ -1688,6 +1706,8 @@ function AppInner() {
     milestoneSliceResumeSessionId,
     setGoalAnchorId,
     goalAnchorId,
+    agentAnchor,
+    setAgentAnchor,
     agentsEnabled,
     agentOnboardingEnabled,
     handleOpenTaskLogs,
@@ -2136,6 +2156,7 @@ function AppInner() {
               floating
               initialComposerDraft={chatComposerPrefill?.text}
               initialComposerDraftNonce={chatComposerPrefill?.nonce}
+              onSendAsReport={handleSendChatMessageAsReport}
               onMaximize={() => {
                 handleTaskViewChange("chat");
                 setQuickChatOpen(false);

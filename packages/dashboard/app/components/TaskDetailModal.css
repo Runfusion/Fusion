@@ -3893,3 +3893,29 @@ Mobile Task Detail needs a shorter embedded terminal than the desktop/tablet she
     min-height: min(50dvh, calc(var(--space-2xl) * 11));
   }
 }
+
+/*
+FNXC:SpecLockTaskDetail 2026-08-09-07:36:
+The retained alignment report belongs in the existing Task Detail section hierarchy. These styles
+reuse source-grid spacing so long structural finding labels and immutable provenance wrap on narrow right-dock and mobile hosts.
+*/
+.spec-lock-provenance {
+  margin: var(--space-sm) 0 0;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+.spec-lock-findings {
+  display: grid;
+  gap: var(--space-xs);
+  margin: var(--space-sm) 0 0;
+  padding-inline-start: var(--space-lg);
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 768px) {
+  .spec-lock-report .detail-source-grid {
+    grid-template-columns: 1fr;
+  }
+}

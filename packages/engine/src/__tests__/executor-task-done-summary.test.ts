@@ -4,10 +4,22 @@ import { TaskExecutor } from "../executor.js";
 import {
   captureNamedTool,
   createMockStore,
+  createWorkflowRoutingAgentStore,
   mockedCreateFnAgent,
   mockedExistsSync,
   resetExecutorMocks,
 } from "./executor-test-helpers.js";
+
+/*
+FNXC:EngineTests 2026-08-09-11:30:
+The graph resolves an executor principal before reaching tool or step-numbering behavior. Route
+these focused fixtures through the shared durable agent so their assertions reach the owned seam.
+*/
+function createRoutingExecutor(store: any) {
+  return new TaskExecutor(store, "/tmp/test", {
+    agentStore: createWorkflowRoutingAgentStore(store).agentStore,
+  });
+}
 
 function createBaseTask() {
   return {
@@ -57,7 +69,7 @@ async function setupTaskDoneTool(currentTaskOverrides: Record<string, unknown> =
     } as any;
   });
 
-  const executor = new TaskExecutor(store, "/tmp/test");
+  const executor = createRoutingExecutor(store);
   await executor.execute(createBaseTask() as any);
 
   return {

@@ -39,7 +39,7 @@ function task(overrides: Partial<Task> = {}): Task {
   } as Task;
 }
 
-function storeWith(ready: Task, ephemeralAgentsEnabled: boolean | undefined): TaskStore {
+function storeWith(ready: Task): TaskStore {
   const updateTask = vi.fn(async (_id: string, patch: Partial<Task>) => Object.assign(ready, patch));
   return {
     listTasks: vi.fn(async () => [ready]),
@@ -47,7 +47,6 @@ function storeWith(ready: Task, ephemeralAgentsEnabled: boolean | undefined): Ta
     getSettings: vi.fn(async () => ({
       maxConcurrent: 2,
       maxWorktrees: 4,
-      ephemeralAgentsEnabled,
     })),
     updateSettings: vi.fn(async () => undefined),
     updateTask,
@@ -74,23 +73,20 @@ function storeWith(ready: Task, ephemeralAgentsEnabled: boolean | undefined): Ta
 }
 
 /*
-FNXC:WorkflowScheduling 2026-08-07-09:01:
-`ephemeralAgentsEnabled` remains an accepted persisted compatibility input, but scheduler release
-must not inspect it to assign, queue, or reject workflow work. Principal selection and capacity
-belong to graph admission after this production scheduler handoff.
+FNXC:WorkflowScheduling 2026-08-09-01:04:
+FN-8847 removes the retired compatibility toggle. Scheduler release must hand workflow tasks to
+graph admission without legacy assignment or queueing; durable principals resolve that authority later.
 */
-describe("scheduler compatibility setting is routing-inert", () => {
+describe("scheduler releases workflow tasks for durable principal routing", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(existsSync).mockReturnValue(true);
     vi.mocked(readFile).mockResolvedValue("# Task\nBody");
   });
 
-  it.each([undefined, true, false])(
-    "releases an unassigned workflow task with compatibility input %s without legacy assignment or queueing",
-    async (ephemeralAgentsEnabled) => {
+  it("releases an unassigned workflow task without legacy assignment or queueing", async () => {
       const ready = task();
-      const store = storeWith(ready, ephemeralAgentsEnabled);
+      const store = storeWith(ready);
       const onSchedule = vi.fn();
       const scheduler = new Scheduler(store, { onSchedule });
       (scheduler as unknown as { running: boolean }).running = true;
@@ -102,14 +98,11 @@ describe("scheduler compatibility setting is routing-inert", () => {
       expect(store.updateTask).not.toHaveBeenCalledWith(ready.id, expect.objectContaining({ assignedAgentId: expect.any(String) }));
       expect(store.updateTask).not.toHaveBeenCalledWith(ready.id, expect.objectContaining({ status: "queued" }));
       expect(store.transitionQueuedEpisode).not.toHaveBeenCalled();
-    },
-  );
+  });
 
-  it.each([undefined, true, false])(
-    "preserves an assigned task's normal release for compatibility input %s",
-    async (ephemeralAgentsEnabled) => {
+  it("preserves an assigned task's normal release", async () => {
       const ready = task({ id: "FN-8821-SCHEDULER-ASSIGNED", assignedAgentId: "durable-owner" });
-      const store = storeWith(ready, ephemeralAgentsEnabled);
+      const store = storeWith(ready);
       const onSchedule = vi.fn();
       const scheduler = new Scheduler(store, { onSchedule });
       (scheduler as unknown as { running: boolean }).running = true;
@@ -120,6 +113,5 @@ describe("scheduler compatibility setting is routing-inert", () => {
       expect(ready.assignedAgentId).toBe("durable-owner");
       expect(onSchedule).toHaveBeenCalledWith(expect.objectContaining({ id: ready.id, column: "in-progress" }));
       expect(store.transitionQueuedEpisode).not.toHaveBeenCalled();
-    },
-  );
+  });
 });

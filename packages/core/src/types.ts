@@ -41,6 +41,14 @@ export type { GitlabConfigSettingsSource, ResolvedGitlabConfig, ResolveGitlabCon
 export { validateMcpServerDefinitionDetailed, validateMcpServerDefinitionsDetailed } from "./config/settings-validation.js";
 
 /*
+FNXC:PrMergeRequiredChecks 2026-08-09-07:48:
+The dashboard aliases @fusion/core to this browser-safe barrel. Re-export the pure shared normalizer here so Settings cannot fork name-trimming semantics from the CLI and server merge gates.
+*/
+export { resolveRequiredCheckNames } from "./config/required-checks.js";
+export { mergeIngestedCheckStates } from "./config/ingested-checks.js";
+export type { IngestedCheckState, IngestedCheckStateValue, MergeablePrCheck } from "./config/ingested-checks.js";
+
+/*
  * FNXC:WorkflowDeprecation 2026-07-15-16:35:
  * Keep deprecated IDs browser-safe because Settings loads the management list
  * (including disabled built-ins) but must not re-offer retired workflows for new
@@ -689,6 +697,9 @@ import {
   DEFAULT_SETTINGS,
   GLOBAL_SETTINGS_KEYS,
   PROJECT_SETTINGS_KEYS,
+  NON_VERSIONED_SETTINGS_KEYS,
+  isNonVersionedSettingsKey,
+  mergeRestoredProjectSettings,
   isGlobalOnlySettingsKey,
   isGlobalSettingsKey,
   isProjectSettingsKey,
@@ -707,6 +718,9 @@ export {
   DEFAULT_SETTINGS,
   GLOBAL_SETTINGS_KEYS,
   PROJECT_SETTINGS_KEYS,
+  NON_VERSIONED_SETTINGS_KEYS,
+  isNonVersionedSettingsKey,
+  mergeRestoredProjectSettings,
   isGlobalOnlySettingsKey,
   isGlobalSettingsKey,
   isProjectSettingsKey,
@@ -1398,6 +1412,9 @@ import type {
   EphemeralTaskCreationPolicy,
   ProposedTaskMetadata,
   NativeStructureEmbed,
+  MailKind,
+  MailReportSection,
+  MailReport,
   MessageMetadata,
   Message,
   MessageCreateInput,
@@ -1410,6 +1427,9 @@ export type {
   EphemeralTaskCreationPolicy,
   ProposedTaskMetadata,
   NativeStructureEmbed,
+  MailKind,
+  MailReportSection,
+  MailReport,
   MessageMetadata,
   Message,
   MessageCreateInput,
@@ -1442,6 +1462,30 @@ export function validateMessageMetadata(metadata: MessageMetadata | undefined): 
   plugin-owned read adapter at render time, so attachment metadata remains a ref rather than a
   duplicated persistence snapshot; labels are optional attach-time fallbacks.
   */
+  /*
+  FNXC:StructuralMail 2026-08-09-07:16:
+  Report sections are required: an empty report is a quick message wearing a report label and
+  would render as an empty shell for the structural-mail consumer.
+  */
+  if (metadata.mailKind !== undefined && !["message", "report", "approval"].includes(metadata.mailKind)) {
+    throw new Error("metadata.mailKind is invalid");
+  }
+  if (metadata.report !== undefined) {
+    const report = metadata.report;
+    if (typeof report !== "object" || report === null || Array.isArray(report)) throw new Error("metadata.report must be an object");
+    if (typeof report.title !== "string" || !report.title.trim()) throw new Error("metadata.report.title must be a non-empty string");
+    if (!Array.isArray(report.sections)) throw new Error("metadata.report.sections must be an array");
+    if (report.sections.length === 0) throw new Error("metadata.report.sections must not be empty");
+    for (const section of report.sections) {
+      if (typeof section !== "object" || section === null || Array.isArray(section)) throw new Error("metadata.report.sections entries must be objects");
+      if (typeof section.heading !== "string" || !section.heading.trim()) throw new Error("metadata.report.sections[].heading must be a non-empty string");
+      if (typeof section.body !== "string" || !section.body.trim()) throw new Error("metadata.report.sections[].body must be a non-empty string");
+    }
+  }
+  if (metadata.approvalRequestId !== undefined && (typeof metadata.approvalRequestId !== "string" || !metadata.approvalRequestId.trim())) {
+    throw new Error("metadata.approvalRequestId must be a non-empty string");
+  }
+
   if (metadata.nativeStructures !== undefined) {
     if (!Array.isArray(metadata.nativeStructures)) {
       throw new Error("metadata.nativeStructures must be an array");
@@ -1539,3 +1583,14 @@ The sorter and its transitive role/merge/priority helpers are browser-safe.
 */
 export { sortTasksForDisplayColumn } from "./tasks/task-priority.js";
 export type { DoneColumnSortMode, DisplayColumnSortOptions } from "./tasks/task-priority.js";
+
+export { CONFIG_CHANGED_BY_SYSTEM, CONFIG_CHANGED_BY_API_VERIFIED_TOKEN, CONFIG_CHANGED_BY_API_UNVERIFIED, CONFIG_CHANGED_BY_API_VERIFIED_NODE_KEY } from "./types/agents/agents.js";
+export type { AgentActivityEventType, AgentActivityAttribution, AgentActivityIdProvenance, AgentActivityIdCandidate, AgentActivityAttributionClaim, AgentActivityMetadataValueSpec, AgentActivityEvent, AgentActivityEventInput, AgentActivityQuery } from "./types/agents/agents.js";
+
+/* FNXC:AgentModelInheritance 2026-08-09-22:38: The dashboard aliases @fusion/core to this browser-safe leaf, so expose pure agent identity model resolution here rather than importing the Node-heavy barrel. */
+export {
+  getPrimaryWorkflowRole,
+  resolvePermanentAgentEffectiveModel,
+  resolvePermanentAgentEffectiveThinkingLevel,
+} from "./ai/agent-effective-model.js";
+export { AGENT_ACTIVITY_EVENT_TYPES, AGENT_ACTIVITY_ATTRIBUTIONS, AGENT_ACTIVITY_LANE_SENTINELS, AGENT_ACTIVITY_GENERATED_ID_PATTERNS, AGENT_ACTIVITY_HANDOFF_REASONS, AGENT_ACTIVITY_TOOL_NAMES, AGENT_ACTIVITY_WORKFLOW_STEP_IDS, AGENT_ACTIVITY_METADATA_SCHEMA, AGENT_ACTIVITY_METADATA_KEYS, isAgentActivityEventType } from "./types/agents/agents.js";

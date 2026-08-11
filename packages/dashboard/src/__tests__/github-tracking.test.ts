@@ -14,7 +14,8 @@ vi.mock("@fusion/core", async () => {
   };
 });
 
-vi.mock("../github.js", () => ({
+vi.mock("../github.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../github.js")>()),
   GitHubClient: vi.fn().mockImplementation(function () { return {
     createIssue: createIssueMock,
     searchIssues: searchIssuesMock,
@@ -30,7 +31,9 @@ import {
   deriveTitleFromDescription,
   formatTrackingIssueBody,
   formatTrackingIssueTitle,
+  adoptGithubSourceIssueExclusively,
   maybeCreateTrackingIssue,
+  resolvePlanningGithubTrackingDecision,
 } from "../github-tracking.js";
 
 function buildTask(overrides: Partial<Task> = {}): Task {
@@ -442,6 +445,126 @@ describe("maybeCreateTrackingIssue", () => {
 
     expect(searchIssuesMock).not.toHaveBeenCalled();
     expect(createIssueMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("suppresses planning tracking when a live task already owns the source issue", async () => {
+    const decision = await resolvePlanningGithubTrackingDecision({
+      projectId: "project-1",
+      listTasks: vi.fn().mockResolvedValue([buildTask({
+        id: "FN-existing",
+        sourceIssue: {
+          provider: "github",
+          repository: "owner/repo",
+          externalIssueId: "42",
+          issueNumber: 42,
+          url: "https://github.com/owner/repo/issues/42",
+        },
+      })]),
+    } as any, { githubLinkImportedIssuesToTracking: true } as any, {
+      owner: "owner", repo: "repo", issueNumber: 42, url: "https://github.com/owner/repo/issues/42",
+    });
+
+    expect(decision).toEqual({ suppressedByTaskId: "FN-existing" });
+  });
+
+  it("uses imported-tracking settings only when no live source issue holder exists", async () => {
+    const store = {
+      projectId: "project-1",
+      listTasks: vi.fn().mockResolvedValue([]),
+      getGlobalSettingsStore: vi.fn(() => ({ getSettings: vi.fn().mockResolvedValue({}) })),
+    };
+    const issue = { owner: "owner", repo: "repo", issueNumber: 42, url: "https://github.com/owner/repo/issues/42" };
+
+    await expect(resolvePlanningGithubTrackingDecision(store as any, {
+      githubLinkImportedIssuesToTracking: true,
+    } as any, issue)).resolves.toEqual({ githubTracking: { enabled: true } });
+    await expect(resolvePlanningGithubTrackingDecision(store as any, {} as any, issue)).resolves.toEqual({});
+  });
+
+  it("concurrently adopts a source issue for one deterministic tracking owner", async () => {
+    const issue = { owner: "owner", repo: "repo", number: 42, url: "https://github.com/owner/repo/issues/42" };
+    const tasks = [
+      buildTask({
+        id: "FN-earlier",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        sourceIssue: { provider: "github", repository: "owner/repo", externalIssueId: "42", issueNumber: 42, url: issue.url },
+        // A previous import can hold truthful provenance while tracking was disabled.
+        // A later plan must not let project defaults start a second issue stream.
+        githubTracking: { enabled: false },
+      }),
+      buildTask({
+        id: "FN-later",
+        createdAt: "2026-01-02T00:00:00.000Z",
+        sourceIssue: { provider: "github", repository: "owner/repo", externalIssueId: "42", issueNumber: 42, url: issue.url },
+        githubTracking: { enabled: true },
+      }),
+    ];
+    const store = {
+      projectId: "project-1",
+      listTasks: vi.fn(async () => tasks),
+      linkGithubIssue: vi.fn(async (taskId: string, linkedIssue: NonNullable<Task["githubTracking"]>["issue"]) => {
+        const task = tasks.find((candidate) => candidate.id === taskId)!;
+        task.githubTracking = { ...task.githubTracking, enabled: true, issue: linkedIssue };
+      }),
+      unlinkGithubIssue: vi.fn(async (taskId: string) => {
+        const task = tasks.find((candidate) => candidate.id === taskId)!;
+        task.githubTracking = { ...task.githubTracking, issue: undefined };
+      }),
+      updateGithubTracking: vi.fn(async (taskId: string, tracking: Partial<NonNullable<Task["githubTracking"]>>) => {
+        const task = tasks.find((candidate) => candidate.id === taskId)!;
+        task.githubTracking = { ...task.githubTracking, ...tracking };
+        return task;
+      }),
+    };
+
+    const [, later] = await Promise.all([
+      adoptGithubSourceIssueExclusively(store as any, "FN-earlier", issue),
+      adoptGithubSourceIssueExclusively(store as any, "FN-later", issue),
+    ]);
+
+    expect(tasks.filter((task) => task.githubTracking?.issue).map((task) => task.id)).toEqual(["FN-earlier"]);
+    expect(later).toEqual({ adopted: false, holderTaskId: "FN-earlier" });
+    expect(tasks.find((task) => task.id === "FN-later")?.githubTracking?.enabled).toBe(false);
+  });
+
+  it("repairs a cross-process source-link race after post-link verification", async () => {
+    const issue = { owner: "owner", repo: "repo", number: 42, url: "https://github.com/owner/repo/issues/42" };
+    const self = buildTask({
+      id: "FN-later",
+      createdAt: "2026-01-02T00:00:00.000Z",
+      sourceIssue: { provider: "github", repository: "owner/repo", externalIssueId: "42", issueNumber: 42, url: issue.url },
+      githubTracking: { enabled: true },
+    });
+    const peer = buildTask({
+      id: "FN-earlier",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      sourceIssue: { provider: "github", repository: "owner/repo", externalIssueId: "42", issueNumber: 42, url: issue.url },
+      githubTracking: { enabled: true },
+    });
+    const tasks = [self, peer];
+    let reads = 0;
+    const store = {
+      projectId: "project-1",
+      // The peer is not visible until another node links it between this node's writes.
+      listTasks: vi.fn(async () => ++reads === 1 ? [self] : tasks),
+      linkGithubIssue: vi.fn(async (taskId: string, linkedIssue: NonNullable<Task["githubTracking"]>["issue"]) => {
+        self.githubTracking = { enabled: true, issue: linkedIssue };
+        peer.githubTracking = { enabled: true, issue: { ...linkedIssue!, createdAt: "2026-01-01T00:00:00.000Z" } };
+        expect(taskId).toBe(self.id);
+      }),
+      unlinkGithubIssue: vi.fn(async () => { self.githubTracking = { enabled: true }; }),
+      updateGithubTracking: vi.fn(async (_taskId: string, tracking: Partial<NonNullable<Task["githubTracking"]>>) => {
+        self.githubTracking = { ...self.githubTracking, ...tracking };
+        return self;
+      }),
+    };
+
+    await expect(adoptGithubSourceIssueExclusively(store as any, self.id, issue)).resolves.toEqual({
+      adopted: false,
+      holderTaskId: peer.id,
+    });
+    expect(store.unlinkGithubIssue).toHaveBeenCalledWith(self.id);
+    expect(self.githubTracking).toEqual({ enabled: false });
   });
 
   it("links GitHub sourceIssue instead of creating a duplicate", async () => {

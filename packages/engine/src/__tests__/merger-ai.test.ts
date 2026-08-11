@@ -101,6 +101,7 @@ function makeStore(
     emit: vi.fn((event: string, payload: unknown) => { emitted.push({ event, payload }); }),
     logEntry: vi.fn(async (_id: string, m: string) => { logs.push(m); }),
     appendAgentLog: vi.fn(async (_id: string, m: string) => { logs.push(m); }),
+    emitUsageEvent: vi.fn().mockResolvedValue(undefined),
     getBranchGroup: vi.fn((id: string) => (group && id === group.id ? group : null)),
     recordBranchGroupMemberLanded: vi.fn(async (id: string, patch: Record<string, unknown>) => {
       if (group && id === group.id) Object.assign(group, patch);
@@ -544,6 +545,16 @@ describe("runAiMerge", () => {
     expect(mergerLogCalls.some(([, text, type]: [string, string, string]) => type === "tool_result" && text === "read")).toBe(true);
     expect(mergerLogCalls.some(([, _text, type]: [string, string, string]) => type === "thinking")).toBe(true);
     expect(mergerLogCalls.some(([, _text, type]: [string, string, string]) => type === "text")).toBe(true);
+
+    /*
+    FNXC:CommandCenterActivity 2026-08-09-15:35:
+    Exercise the live merger-ai factories, not just the shared helper, so each constructed merge and
+    review session retains its own usage lifecycle boundary and tool callbacks after future refactors.
+    */
+    const usageEvents = store.emitUsageEvent.mock.calls.map(([event]: [{ kind: string; category?: string; agentId?: string | null; taskId?: string | null; toolName?: string }]) => event);
+    expect(usageEvents.filter((event) => event.kind === "session_start" && event.category === "agent-session")).toHaveLength(2);
+    expect(usageEvents.filter((event) => event.kind === "tool_call" && event.toolName === "read")).toHaveLength(2);
+    expect(usageEvents.every((event) => event.agentId === null && event.taskId === "FN-1")).toBe(true);
     createResolvedAgentSessionMock.mockReset();
   });
 

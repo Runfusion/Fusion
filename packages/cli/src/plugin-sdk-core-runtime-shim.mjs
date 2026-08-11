@@ -10,12 +10,15 @@ import { spawn } from "node:child_process";
  * without a private @fusion/core dependency.
  */
 import * as postgresSchema from "../../core/src/postgres/schema/index.js";
-import { AgentStore } from "../../core/src/agents/agent-store.js";
-
 /*
  * FNXC:BundledPlugins 2026-08-03-17:18:
  * The bundled Todo plugin lists project agents through AgentStore. Re-export the source implementation from the runtime shim so clean CLI packaging does not leave a private @fusion/core runtime import unresolved.
+ *
+ * FNXC:BundledPlugins 2026-08-03-12:25:
+ * FN-8762 also needs AgentStore for create-task-from-item routes. A second import/export of the same binding broke lint (no-redeclare) and esbuild ("already been declared") after main merged two parallel shim fixes — keep a single AgentStore re-export.
  */
+import { AgentStore } from "../../core/src/agents/agent-store.js";
+
 export { AgentStore, postgresSchema };
 
 /*

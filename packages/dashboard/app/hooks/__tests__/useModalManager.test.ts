@@ -165,12 +165,27 @@ describe("useModalManager", () => {
       useModalManager({ projectId, planningSessions: [{ id: "plan-1" }] }),
     );
 
+    const sourceIssue = {
+      provider: "github" as const,
+      repository: "owner/repo",
+      issueNumber: 42,
+      url: "https://github.com/owner/repo/issues/42",
+      title: "Seeded issue",
+    };
     act(() => {
-      result.current.openPlanningWithInitialPlan("Build dashboard");
+      result.current.openPlanningWithInitialPlan("Build dashboard", undefined, sourceIssue);
     });
 
     expect(result.current.isPlanningOpen).toBe(true);
     expect(result.current.planningInitialPlan).toBe("Build dashboard");
+    expect(result.current.planningSourceIssue).toEqual(sourceIssue);
+
+    act(() => {
+      result.current.clearPlanningInitialPlan();
+    });
+
+    expect(result.current.planningInitialPlan).toBeNull();
+    expect(result.current.planningSourceIssue).toBeUndefined();
 
     act(() => {
       result.current.closePlanning();
@@ -179,6 +194,7 @@ describe("useModalManager", () => {
     expect(result.current.isPlanningOpen).toBe(false);
     expect(result.current.planningInitialPlan).toBeNull();
     expect(result.current.planningResumeSessionId).toBeUndefined();
+    expect(result.current.planningSourceIssue).toBeUndefined();
     expect(localStorage.getItem(quickEntryKey)).toBe("quick draft");
     expect(localStorage.getItem(inlineCreateKey)).toBe("inline draft");
 
@@ -188,6 +204,14 @@ describe("useModalManager", () => {
 
     expect(result.current.isPlanningOpen).toBe(true);
     expect(result.current.planningResumeSessionId).toBe("plan-1");
+    expect(result.current.planningSourceIssue).toBeUndefined();
+
+    act(() => {
+      result.current.openPlanningWithInitialPlan("Seed another issue", undefined, sourceIssue);
+      result.current.openPlanning();
+    });
+
+    expect(result.current.planningSourceIssue).toBeUndefined();
   });
 
   it("clears scoped quick-add drafts after single-task planning completion", () => {
@@ -467,6 +491,48 @@ describe("useModalManager", () => {
 
     expect(result.current.detailTask?.id).toBe("FN-B");
     expect(result.current.detailTask?.title).toBe("renamed");
+  });
+
+  it("applies equal-clock derived and clock-less lifecycle detail patches", () => {
+    const task = createTaskDetail("FN-LOCAL");
+    const { result } = renderHook(() => useModalManager({ projectId: "proj_1", planningSessions: [] }));
+    act(() => { result.current.openDetailTask(task); });
+
+    act(() => {
+      result.current.updateDetailTask({ ...task, prInfo: { number: 42 } } as Partial<TaskDetail>);
+      result.current.updateDetailTask({ column: "done", status: "completed" });
+    });
+
+    expect(result.current.detailTask).toMatchObject({ column: "done", status: "completed", prInfo: { number: 42 } });
+  });
+
+  it("keeps lifecycle state for a present strictly older local patch", () => {
+    const task = { ...createTaskDetail("FN-STALE"), updatedAt: "2026-08-09T10:00:00.000Z", columnMovedAt: "2026-08-09T10:00:00.000Z", status: "executing" };
+    const { result } = renderHook(() => useModalManager({ projectId: "proj_1", planningSessions: [] }));
+    act(() => { result.current.openDetailTask(task); });
+    act(() => {
+      result.current.updateDetailTask({
+        title: "Fresh local metadata",
+        column: "done",
+        columnMovedAt: "2026-08-09T09:00:00.000Z",
+        status: "completed",
+        updatedAt: "2026-08-09T09:00:00.000Z",
+      });
+    });
+
+    expect(result.current.detailTask).toMatchObject({
+      title: "Fresh local metadata",
+      column: "todo",
+      columnMovedAt: task.columnMovedAt,
+      status: "executing",
+      updatedAt: task.updatedAt,
+    });
+  });
+
+  it("ignores a detail patch safely before a task is open", () => {
+    const { result } = renderHook(() => useModalManager({ projectId: "proj_1", planningSessions: [] }));
+    act(() => { result.current.updateDetailTask({ title: "No detail" }); });
+    expect(result.current.detailTask).toBeNull();
   });
 
   it("tracks a target workflow id for normal workflow editor opens and resets it on close", () => {

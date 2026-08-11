@@ -866,7 +866,13 @@ export function registerAgentRuntimeRoutes(ctx: ApiRoutesContext, deps: AgentRun
 
   /**
    * GET /api/agents/:id/tasks
-   * List tasks explicitly assigned to the given agent.
+   * List explicitly assigned tasks and the agent's active workflow task.
+   *
+   * FNXC:AgentTasks 2026-08-09-01:03:
+   * Durable assignment uses `task.assignedAgentId`, while workflow roles carry
+   * their active execution link in `agent.taskId`. Return their deduplicated
+   * union from the already project-scoped non-archived task list so every role
+   * sees its current work without changing ownership semantics.
    */
   router.get("/agents/:id/tasks", async (req, res) => {
     try {
@@ -881,7 +887,14 @@ export function registerAgentRuntimeRoutes(ctx: ApiRoutesContext, deps: AgentRun
       }
 
       const tasks = await scopedStore.listTasks({ slim: true, includeArchived: false });
-      res.json(tasks.filter((task) => task.assignedAgentId === req.params.id));
+      const visibleTaskIds = new Set<string>();
+      const visibleTasks = tasks.filter((task) => {
+        if (task.assignedAgentId !== agent.id && task.id !== agent.taskId) return false;
+        if (visibleTaskIds.has(task.id)) return false;
+        visibleTaskIds.add(task.id);
+        return true;
+      });
+      res.json(visibleTasks);
     } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;

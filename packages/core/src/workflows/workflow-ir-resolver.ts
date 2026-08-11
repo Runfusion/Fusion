@@ -98,9 +98,15 @@ function defaultCodingWorkflowIr(): WorkflowIr {
 }
 
 /** Minimal store surface the resolver needs (public APIs only). */
+export type WorkflowSelection = { workflowId: string; stepIds: string[] };
+
+/** A caller-owned cache that is valid only for one resolver pass. */
+export type WorkflowSelectionCache = Map<string, WorkflowSelection | undefined>;
+
 export interface WorkflowIrResolverStore {
-  getTaskWorkflowSelection(taskId: string): { workflowId: string; stepIds: string[] } | undefined;
-  getTaskWorkflowSelectionAsync?(taskId: string): Promise<{ workflowId: string; stepIds: string[] } | undefined>;
+  getTaskWorkflowSelection(taskId: string): WorkflowSelection | undefined;
+  getTaskWorkflowSelectionAsync?(taskId: string): Promise<WorkflowSelection | undefined>;
+  getTaskWorkflowSelectionsAsync?(taskIds: string[]): Promise<Map<string, WorkflowSelection>>;
   getWorkflowDefinition(id: string): Promise<{ ir: string | WorkflowIr } | undefined>;
   getWorkflowSettingsProjectId?(): string;
   getWorkflowPromptOverrides?(workflowId: string, projectId: string): Record<string, string>;
@@ -312,12 +318,20 @@ export async function resolveWorkflowIrForTaskWithProvenance(
   store: WorkflowIrResolverStore,
   taskId: string,
   irCache?: Map<string, WorkflowIr>,
+  selectionCache?: WorkflowSelectionCache,
 ): Promise<ResolvedWorkflowIr> {
   let workflowId: string | undefined;
   try {
-    const selection = store.getTaskWorkflowSelectionAsync
-      ? await store.getTaskWorkflowSelectionAsync(taskId)
-      : store.getTaskWorkflowSelection(taskId);
+    /*
+    FNXC:WorkflowScheduling 2026-08-09-06:07:
+    Selection caches are per-call/per-scheduler-pass only: selection writes invalidate lane state and the next pass must observe them. A throwing read is deliberately not cached so transient PostgreSQL failures are retried; therefore instrumentation must count calls rather than infer them from cache keys.
+    */
+    const selection = selectionCache?.has(taskId)
+      ? selectionCache.get(taskId)
+      : store.getTaskWorkflowSelectionAsync
+        ? await store.getTaskWorkflowSelectionAsync(taskId)
+        : store.getTaskWorkflowSelection(taskId);
+    if (!selectionCache?.has(taskId)) selectionCache?.set(taskId, selection);
     workflowId = selection?.workflowId;
   } catch {
     return { ir: defaultCodingWorkflowIr(), source: "default" };
@@ -379,6 +393,7 @@ export async function resolveWorkflowIrForTask(
   store: WorkflowIrResolverStore,
   taskId: string,
   irCache?: Map<string, WorkflowIr>,
+  selectionCache?: WorkflowSelectionCache,
 ): Promise<WorkflowIr> {
   /*
    * FNXC:WorkflowModelLanes 2026-07-14-16:26:
@@ -387,7 +402,7 @@ export async function resolveWorkflowIrForTask(
    * FNXC:WorkflowLifecycleColumns 2026-07-30-12:15: delegates to the provenance form and drops
    * the provenance, so the two answers cannot drift apart.
    */
-  return (await resolveWorkflowIrForTaskWithProvenance(store, taskId, irCache)).ir;
+  return (await resolveWorkflowIrForTaskWithProvenance(store, taskId, irCache, selectionCache)).ir;
 }
 
 /*

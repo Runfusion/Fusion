@@ -7,6 +7,7 @@ import { render, screen, fireEvent, within, waitFor, act } from "@testing-librar
 import { CommandCenter } from "../CommandCenter";
 
 const apiMock = vi.fn();
+const { getAgentActivityMock } = vi.hoisted(() => ({ getAgentActivityMock: vi.fn() }));
 const subscribeSseMock = vi.fn(() => () => undefined);
 vi.mock("../../../sse-bus", () => ({
   subscribeSse: (...args: unknown[]) => subscribeSseMock(...args),
@@ -39,6 +40,7 @@ vi.mock("../../../api", () => ({
   fetchGlobalSettings: () => Promise.resolve({ vitestAutoKillEnabled: true, vitestKillThresholdPct: 90 }),
   killVitestProcesses: () => Promise.resolve({ killed: 0, pids: [] }),
   updateGlobalSettings: () => Promise.resolve({}),
+  getAgentActivity: (...args: unknown[]) => getAgentActivityMock(...args),
 }));
 
 vi.mock("../../NodesView", () => ({
@@ -466,6 +468,7 @@ beforeEach(() => {
   // FNXC:CommandCenter 2026-07-22-13:45: persisted tab/range state (R12) must not leak between tests.
   localStorage.clear();
   apiMock.mockReset();
+  getAgentActivityMock.mockReset().mockResolvedValue({ events: [], nextCursor: null });
   subscribeSseMock.mockReset();
   subscribeSseMock.mockImplementation(() => () => undefined);
   mockEmptyOverviewApi();
@@ -1140,8 +1143,8 @@ describe("CommandCenter shell", () => {
     render(<CommandCenter />);
     const tablist = screen.getByRole("tablist");
     const tabs = within(tablist).getAllByRole("tab");
-    // Overview, Tokens, Tools, Activity, Productivity, Team, Workflows, Ecosystem, GitHub, GitLab, Signals, System, Plugins, Reliability, Mission Control.
-    expect(tabs.length).toBe(16);
+    // Overview, Tokens, Tools, Activity, Agent Activity, Productivity, Team, Workflows, Ecosystem, GitHub, GitLab, Signals, System, Plugins, Reliability, Mission Control.
+    expect(tabs.length).toBe(17);
     expect(screen.queryByTestId("command-center-tab-ideation")).toBeNull();
     expect(screen.queryByTestId("command-center-tab-nodes")).toBeNull();
     // roving tabindex: exactly one tab is focusable.
@@ -1156,6 +1159,26 @@ describe("CommandCenter shell", () => {
     expect(screen.getByTestId("command-center-tab-tokens").getAttribute("aria-selected")).toBe("true");
     expect(screen.getByTestId("command-center-tab-overview").getAttribute("aria-selected")).toBe("false");
     expect(screen.getByTestId("command-center-panel-tokens")).toBeTruthy();
+  });
+
+  it("mounts the real Agent Activity panel and threads its task target callback", async () => {
+    const onOpenTask = vi.fn();
+    getAgentActivityMock.mockResolvedValueOnce({
+      events: [{
+        seq: "2", eventId: "event-2", projectId: "project-a", agentId: "agent-2", agentAttribution: "agent",
+        taskId: "FN-2", type: "task:completed", fromAgentId: null, toAgentId: null,
+        summary: "Command Center activity", occurredAt: "2026-08-10T00:00:00.000Z", metadata: null,
+      }],
+      nextCursor: null,
+    });
+    render(<CommandCenter projectId="project-a" onOpenTask={onOpenTask} />);
+
+    fireEvent.click(screen.getByTestId("command-center-tab-agent-activity"));
+    await screen.findByText("Command Center activity");
+    fireEvent.click(screen.getByRole("button", { name: "Open task FN-2" }));
+
+    expect(getAgentActivityMock).toHaveBeenCalledWith(expect.objectContaining({ projectId: "project-a" }));
+    expect(onOpenTask).toHaveBeenCalledWith("FN-2");
   });
 
   it("renders run-only task-worker activity in the Activity tab graphs", async () => {

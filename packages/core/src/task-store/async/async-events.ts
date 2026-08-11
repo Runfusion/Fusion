@@ -174,11 +174,22 @@ export async function listGoalCitations(
 /**
  * The set of valid usage-event kinds. Mirrors `USAGE_EVENT_KINDS`.
  */
+/*
+FNXC:CommandCenterActivity 2026-08-09-17:00:
+The PostgreSQL writer is the production usage-event seam. It must accept every normalized
+session, tool completion, and human-message kind that durable agent lanes emit; otherwise
+fail-soft rejection silently recreates the Activity area's permanent-agent zero telemetry.
+*/
 const USAGE_EVENT_KINDS: ReadonlySet<string> = new Set([
   "agent_run_started",
   "agent_run_completed",
   "token_usage",
   "tool_call",
+  "tool_result",
+  "tool_error",
+  "user_message",
+  "session_start",
+  "session_stop",
   "task_created",
   "task_updated",
   "task_moved",

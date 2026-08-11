@@ -427,4 +427,32 @@ describe("EngineControlMenu", () => {
 
     expect(await screen.findByRole("alert")).toHaveTextContent("settings unavailable");
   });
+
+  // FNXC:EngineControls 2026-08-08-15:40 (FN-8802 width-collapse regression, RUFU-042):
+  // The open popover carries the shared `.card` class, whose base now sets `min-width: 0` and
+  // `max-width: 100%` (TaskCard.css). Its containing block is `.engine-control-menu` which sizes
+  // to the narrow trigger button, so `.card`'s `max-width: 100%` clamped the popover's intended
+  // grid width down to ~the trigger's width (~5mm). The footer-scoped rule (0,3,0) must re-assert
+  // a VIEWPORT-clamped min/max width that beats `.card` (0,1,0), so the menu can never collapse
+  // to a sliver. Keep this guard asserted so the fix cannot silently regress.
+  it("keeps the footer-scoped popover width immune to the shared `.card` clamp on desktop", () => {
+    const footerPopover = cssRule(engineControlMenuCss, ".executor-status-bar__segment--engine-controls .engine-control-menu > .engine-control-menu__popover.card");
+    expect(footerPopover).toContain("position: absolute;");
+    expect(footerPopover).toContain("min-width: min(24rem, calc(100vw - (var(--space-lg) * 2)));");
+    expect(footerPopover).toContain("max-width: calc(100vw - (var(--space-lg) * 2));");
+  });
+
+  // FNXC:EngineControls 2026-08-08-15:40 (FN-8802 width-collapse regression, RUFU-042):
+  // On narrow/tablet widths the popover becomes a full-width gutter panel (`left/right: var(--space-sm)`).
+  // It must reset the desktop min/max floor and defeat `.card`'s `max-width: 100%` so the phone panel
+  // stays full-width without overflowing. Assert the media-query rules only (cssRule grabs the first
+  // selector match, which is the desktop base rule, so match the @media block explicitly).
+  it("keeps the mobile popover full-width and never overflowed by the desktop min-width floor", () => {
+    const mobileBlock = engineControlMenuCss.match(/@media \(max-width: 1024px\) \{([\s\S]*?)\}/)?.[1] ?? "";
+    expect(mobileBlock).toContain("left: var(--space-sm);");
+    expect(mobileBlock).toContain("right: var(--space-sm);");
+    expect(mobileBlock).toContain("max-width: none;");
+    expect(mobileBlock).toContain("min-width: 0;");
+    expect(mobileBlock).toContain("width: auto;");
+  });
 });

@@ -122,6 +122,30 @@ describe("built-in workflows", () => {
     expect(quickFixPlanReview.requireExternalIntegrationEvidence).toBeUndefined();
   });
 
+  it("routes Plan Review CLOSE_NO_OP to the terminal no-op action in every executable consumer", () => {
+    const workflows = [
+      BUILTIN_CODING_WORKFLOW_IR,
+      BUILTIN_STEPWISE_CODING_WORKFLOW_IR,
+      BUILTIN_STEPWISE_FINAL_REVIEW_CODING_WORKFLOW_IR,
+    ];
+    for (const ir of workflows) {
+      expect(ir.nodes.find((node) => node.id === "plan-review-no-op"), ir.name).toMatchObject({
+        kind: "gate",
+        config: { workflowAction: "plan-review-no-op" },
+      });
+      expect(ir.edges, ir.name).toContainEqual({
+        from: PLAN_REVIEW_GROUP_ID,
+        to: "plan-review-no-op",
+        condition: "outcome:close-no-op",
+      });
+      expect(ir.edges, ir.name).toContainEqual({
+        from: "plan-review-no-op",
+        to: "end",
+        condition: "success",
+      });
+    }
+  });
+
   it("all built-in Code Review optional groups are blocking gates", () => {
     for (const workflow of BUILTIN_WORKFLOWS) {
       const codeReview = workflow.ir.nodes.find((node) => node.id === "code-review");
@@ -662,9 +686,21 @@ describe("built-in workflows", () => {
     const planReviewPrompt = String(planReviewInnerConfig(ir).prompt);
     expect(planReviewPrompt).toContain("## Mandatory Plan Review Procedure");
     expect(planReviewPrompt).toContain("all independently discoverable blocking findings");
-    expect(planReviewPrompt).toContain("prior-review ledger as a decision primer");
-    expect(planReviewPrompt).toContain("never demote a critical defect merely because it was missed before");
     expect(planReviewPrompt).toContain("verdict notes must contain the complete blocking checklist");
+    /*
+    FNXC:ReviewSeverityGate 2026-08-10-17:33:
+    The re-review contract moved out of the completeness policy into REVIEW_REREVIEW_POLICY, which
+    replaces the former "distrust the edit / fresh holistic pass" instruction with an incremental one.
+    Assert the interpolated severity + re-review policies rather than the retired wording: the prompt
+    must still forbid reopening settled findings and still refuse to demote a genuinely-missed P0.
+    */
+    expect(planReviewPrompt).toContain("## Finding Priority");
+    expect(planReviewPrompt).toContain("## Do Not Report Nits");
+    expect(planReviewPrompt).toContain("## Re-Review (round 2 and later)");
+    expect(planReviewPrompt).toContain("Resolved items are settled");
+    expect(planReviewPrompt).toContain("say so plainly rather than demoting it");
+    expect(planReviewPrompt).toContain("Never introduce a new P1 or P2 finding as grounds for another revision round");
+    expect(planReviewPrompt).not.toContain("distrust the edit");
     expect(byId.get("parse")?.column).toBe("in-progress");
     expect(byId.get("steps")?.column).toBe("in-progress");
     /*

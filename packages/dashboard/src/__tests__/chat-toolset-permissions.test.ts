@@ -73,6 +73,30 @@ describe("createChatFusionToolset — permission-parity regression", () => {
     }
   });
 
+  it("keeps mission status mutations behind missionMutationGated", async () => {
+    const taskStore = baseTaskStore();
+    const ungated = await createChatFusionToolset({
+      taskStore,
+      agentStore: baseAgentStore,
+      rootDir: "/project",
+      agentId: "agent-abc",
+      missionMutationGated: false,
+    });
+    const gated = await createChatFusionToolset({
+      taskStore,
+      agentStore: baseAgentStore,
+      rootDir: "/project",
+      agentId: "agent-abc",
+      missionMutationGated: true,
+    });
+    const ungatedNames = new Set(ungated.map((tool) => tool.name));
+    const gatedNames = new Set(gated.map((tool) => tool.name));
+    for (const name of ["fn_feature_set_status", "fn_mission_set_status"]) {
+      expect(ungatedNames.has(name), `mission mutation leaked without gate: ${name}`).toBe(false);
+      expect(gatedNames.has(name), `missing gated mission mutation: ${name}`).toBe(true);
+    }
+  });
+
   it("never binds ambient-task tools in project-scoped chat (no ambient task id)", async () => {
     const taskStore = baseTaskStore();
     for (const gate of [undefined, {} as any]) {

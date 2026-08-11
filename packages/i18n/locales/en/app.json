@@ -1832,7 +1832,8 @@
       "team": "Team",
       "workflows": "Workflows",
       "tokens": "Tokens",
-      "tools": "Tools"
+      "tools": "Tools",
+      "agentActivity": "Agent Activity"
     },
     "team": {
       "agent": "Agent",
@@ -1910,6 +1911,33 @@
       "sessions": "Sessions",
       "summaryTitle": "Summary",
       "toolCalls": "Tool calls"
+    },
+    "agentActivity": {
+      "live": "Live",
+      "timeline": "Timeline",
+      "mode": "Activity mode",
+      "empty": "No agent activity yet.",
+      "loadingOlder": "Loading…",
+      "loadOlder": "Load older",
+      "showMore": "Show more loaded activity",
+      "end": "End of activity history",
+      "agentFilter": "Filter by agent",
+      "allAgents": "All agents",
+      "taskFilter": "Filter by task",
+      "typeFilter": "Filter by event type",
+      "allTypes": "All event types",
+      "rangeNote": "Time range filters loaded events; it is not sent to the server.",
+      "openTask": "Open task {{taskId}}",
+      "openAgent": "Open agent {{agentId}}",
+      "eventTypes": {
+        "task:started": "Task started",
+        "task:handed-off": "Task handed off",
+        "task:completed": "Task completed",
+        "agent:state-changed": "Agent state changed",
+        "workflow:gate-passed": "Workflow gate passed",
+        "workflow:gate-failed": "Workflow gate failed",
+        "approval:requested": "Approval requested"
+      }
     }
   },
   "comments": {
@@ -5967,8 +5995,6 @@
       "updating": "Updating…",
       "upperBoundOnMessagesFetchedFromTheRoom": "Upper bound on messages fetched from the room store for compaction consideration. Default: 200.",
       "upToDate": "You're up to date ✓",
-      "useEphemeralTaskWorkerAgents": " Use ephemeral task-worker agents ",
-      "ephemeralAgentsCompatibilityHint": "Retained for configuration compatibility. Default: enabled. This setting does not affect scheduler assignment or admission, executor workflow dispatch or re-entry, mission start, or workflow-stage principal routing.",
       "warnOnTheBoardWhenTodoWorkExceeds": "Warn on the board when todo work exceeds the threshold and no idle agents are available. Default: disabled.",
       "whenEnabledDefaultFusionSpawnsShortLived": " When enabled (default), Fusion spawns short-lived ",
       "whenEnabledFusionChecksOpenAndClosedIssues": " When enabled, Fusion checks open and closed issues in the target repo for likely duplicates (using File Scope paths and key symptoms) before creating a new tracking issue. Uncheck to always create a new issue. Default: enabled. ",
@@ -6377,7 +6403,11 @@
       "gitRemoteThatMergedResultsArePushedTo": "Git remote that merged results are pushed to. Default: \"origin\".",
       "pushTargetBranch": "Push target branch",
       "sameAsIntegrationBranchDefault": "(same as integration branch — default)",
-      "pushTargetBranchHelp": "Branch on the remote that merged results are pushed to. Leave on the default to push the integration branch to its same-named remote branch; pick a listed remote branch or choose Custom… to type one that doesn't exist on the remote yet (the push creates it)."
+      "pushTargetBranchHelp": "Branch on the remote that merged results are pushed to. Leave on the default to push the integration branch to its same-named remote branch; pick a listed remote branch or choose Custom… to type one that doesn't exist on the remote yet (the push creates it).",
+      "requiredChecks": "Required pull-request checks",
+      "requiredChecksHelp": "No default — unset. Comma-separated check names match GitHub exactly (case-sensitive). Leaving this empty uses GitHub required-status checks only; a named check that never reports blocks the merge.",
+      "githubNativeAutoMerge": "Use GitHub native auto-merge",
+      "githubNativeAutoMergeHelp": "GitHub waits for its full ruleset before merging. The repository must allow auto-merge; Fusion fails closed if it is unavailable. Default: disabled."
     },
     "mergeManually": "Merge Manually",
     "mobileNav": {
@@ -8140,6 +8170,7 @@
     },
     "recommendations": {
       "title": "Recommendations",
+      "empty": "No recommendations were produced for this task.",
       "created": "Created {{taskId}}",
       "creating": "Creating…",
       "retry": "Retry creating task",

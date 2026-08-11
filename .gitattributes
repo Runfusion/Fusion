@@ -16,3 +16,6 @@ demo/assets/*.gif filter=lfs diff=lfs merge=lfs -text
 demo/**/*.png filter=lfs diff=lfs merge=lfs -text
 docs/screenshots/**/*.png filter=lfs diff=lfs merge=lfs -text
 screenshots/**/*.png filter=lfs diff=lfs merge=lfs -text
+
+# FNXC:RepoAssets 2026-08-10-10:00: Graph JSON is byte-stable across platforms only when Git retains LF endings.
+.fusion-knowledge/**/*.json text eol=lf

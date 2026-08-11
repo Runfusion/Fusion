@@ -30,7 +30,7 @@ vi.mock("@fusion/core", () => ({
   runGhAsync: vi.fn(async () => ""),
 }));
 
-const { extractIssueImageUrls, importIssueImageAttachments, githubImagePolicy, gitlabImagePolicy } =
+const { containsIssueImageMarkup, extractIssueImageUrls, importIssueImageAttachments, importIssueImagesFromUrls, githubImagePolicy, gitlabImagePolicy } =
   await import("../issue-image-attachments.js");
 
 const PNG = Buffer.from("89504e470d0a1a0a", "hex");
@@ -347,5 +347,36 @@ describe("importIssueImageAttachments", () => {
     const result = await importIssueImageAttachments(store as never, "FN-1", "plain text issue", GH);
     expect(result).toEqual({ attached: 0, failed: 0 });
     expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
+  it("re-resolves persisted URLs before downloading them", async () => {
+    const result = await importIssueImagesFromUrls(
+      store as never,
+      "FN-1",
+      ["https://169.254.169.254/x.png"],
+      GH,
+    );
+    expect(result).toEqual({ attached: 0, failed: 1 });
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
+  it("downloads a policy-allowed persisted URL", async () => {
+    await expect(importIssueImagesFromUrls(
+      store as never,
+      "FN-1",
+      ["https://github.com/user-attachments/assets/abc-123"],
+      GH,
+    )).resolves.toEqual({ attached: 1, failed: 0 });
+    expect(store.addAttachment).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses a containment-only image-bearing predicate", () => {
+    const markdown = "![shot](https://github.com/user-attachments/assets/abc-123)";
+    const html = '<img src="https://github.com/user-attachments/assets/abc-123">';
+    expect(containsIssueImageMarkup(markdown)).toBe(true);
+    expect(containsIssueImageMarkup(html)).toBe(true);
+    expect(containsIssueImageMarkup("prose only")).toBe(false);
+    expect(containsIssueImageMarkup("![foreign](https://example.com/a.png)")).toBe(true);
+    expect(extractIssueImageUrls([markdown, html], GH)).toHaveLength(1);
   });
 });

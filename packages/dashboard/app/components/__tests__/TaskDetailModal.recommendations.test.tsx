@@ -25,6 +25,19 @@ const task: Task = {
 };
 
 describe("TaskRecommendationsTab", () => {
+  it("renders one accessible empty message with no action for undefined or empty recommendations", () => {
+    const view = render(<TaskRecommendationsTab task={{ ...task, recommendations: undefined }} projectId="project-a" />);
+
+    expect(screen.getByText("No recommendations were produced for this task.")).toBeInTheDocument();
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+    expect(createTaskFromRecommendation).not.toHaveBeenCalled();
+
+    view.rerender(<TaskRecommendationsTab task={{ ...task, recommendations: [] }} projectId="project-a" />);
+    expect(screen.getByText("No recommendations were produced for this task.")).toBeInTheDocument();
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+    expect(createTaskFromRecommendation).not.toHaveBeenCalled();
+  });
+
   it("renders exactly one create action and converges to Created after success", async () => {
     const parent = {
       ...task,
@@ -42,6 +55,14 @@ describe("TaskRecommendationsTab", () => {
     expect(screen.queryByRole("button", { name: /Create|Retry/ })).not.toBeInTheDocument();
     expect(createTaskFromRecommendation).toHaveBeenCalledWith("FN-8829", "rec-1", "project-a");
     expect(onTaskReconciled).toHaveBeenCalledWith(parent);
+  });
+
+  it("does not render an action for an already-created recommendation", () => {
+    render(<TaskRecommendationsTab task={{ ...task, recommendations: [{ ...task.recommendations![0], createdTaskId: "FN-8830" }] }} projectId="project-a" />);
+
+    expect(screen.getByText("Created FN-8830")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Create|Retry/ })).not.toBeInTheDocument();
+    expect(screen.queryByText("No recommendations were produced for this task.")).not.toBeInTheDocument();
   });
 
   it("clears recommendation action state when retained detail switches tasks", async () => {

@@ -5,8 +5,6 @@ import type { TaskStore } from "@fusion/core";
 import { createMissionRouter } from "../mission-routes.js";
 import { request } from "../test-request.js";
 
-type CompatibilitySetting = boolean | undefined;
-
 type Mission = {
   id: string;
   status: "planning" | "active" | "blocked";
@@ -20,7 +18,7 @@ type Slice = {
   status: "pending" | "active";
 };
 
-function createFixture(ephemeralAgentsEnabled: CompatibilitySetting) {
+function createFixture() {
   const mission: Mission = {
     id: "M-START-1",
     status: "planning",
@@ -28,7 +26,7 @@ function createFixture(ephemeralAgentsEnabled: CompatibilitySetting) {
     autopilotEnabled: false,
   };
   const slice: Slice = { id: "SL-START-1", missionId: mission.id, status: "pending" };
-  const getSettings = vi.fn(async () => ({ ephemeralAgentsEnabled }));
+  const getSettings = vi.fn(async () => ({}));
   const missionStore = {
     getMission: vi.fn(async (id: string) => id === mission.id ? mission : undefined),
     findNextPendingSlice: vi.fn(async (id: string) => id === mission.id && slice.status === "pending" ? slice : undefined),
@@ -36,8 +34,8 @@ function createFixture(ephemeralAgentsEnabled: CompatibilitySetting) {
       Object.assign(mission, patch);
       return mission;
     }),
-    activateSlice: vi.fn(async (id: string) => {
-      if (id === slice.id) slice.status = "active";
+    tryActivateNextPendingSlice: vi.fn(async (id: string) => {
+      if (id === mission.id && slice.status === "pending") slice.status = "active";
       return slice;
     }),
     getMissionWithHierarchy: vi.fn(async (id: string) => id === mission.id ? { ...mission, milestones: [{ slices: [{ ...slice, features: [] }] }] } : undefined),
@@ -56,16 +54,13 @@ function createFixture(ephemeralAgentsEnabled: CompatibilitySetting) {
 }
 
 /*
-FNXC:MissionRouting 2026-08-07-08:36:
-`ephemeralAgentsEnabled` is a retired client-compatibility input, not mission admission policy.
-Mission start must activate a valid planning mission and its pending slice without reading settings or
-preflighting legacy executor inventory; durable workflow principals are resolved only at workflow execution.
+FNXC:MissionRouting 2026-08-09-01:04:
+FN-8847 removes the retired compatibility input. Mission start activates a valid planning mission
+and pending slice without settings reads; durable principals resolve only at workflow execution.
 */
 describe("mission start routing", () => {
-  it.each<CompatibilitySetting>([undefined, true, false])(
-    "activates a planning mission independently of compatibility input %s",
-    async (ephemeralAgentsEnabled) => {
-      const { app, getSettings, mission, missionStore, slice } = createFixture(ephemeralAgentsEnabled);
+  it("activates a planning mission without reading project settings", async () => {
+      const { app, getSettings, mission, missionStore, slice } = createFixture();
 
       const response = await request(app, "POST", `/api/missions/${mission.id}/start`);
 
@@ -75,24 +70,23 @@ describe("mission start routing", () => {
       expect(mission.autopilotEnabled).toBe(true);
       expect(slice.status).toBe("active");
       expect(missionStore.updateMission).toHaveBeenCalledOnce();
-      expect(missionStore.activateSlice).toHaveBeenCalledWith(slice.id);
+      expect(missionStore.tryActivateNextPendingSlice).toHaveBeenCalledWith(mission.id);
       expect(getSettings).not.toHaveBeenCalled();
-    },
-  );
+  });
 
   it("rejects a non-planning mission without activating its slice", async () => {
-    const { app, mission, missionStore, slice } = createFixture(false);
+    const { app, mission, missionStore, slice } = createFixture();
     mission.status = "active";
 
     const response = await request(app, "POST", `/api/missions/${mission.id}/start`);
 
     expect(response.status).toBe(409);
     expect(slice.status).toBe("pending");
-    expect(missionStore.activateSlice).not.toHaveBeenCalled();
+    expect(missionStore.tryActivateNextPendingSlice).not.toHaveBeenCalled();
   });
 
   it("rejects a planning mission with no pending slice", async () => {
-    const { app, mission, missionStore, slice } = createFixture(false);
+    const { app, mission, missionStore, slice } = createFixture();
     slice.status = "active";
 
     const response = await request(app, "POST", `/api/missions/${mission.id}/start`);

@@ -41,8 +41,15 @@ function createExecutor(rootDir: string): TaskExecutor {
   return new TaskExecutor(store as any, rootDir);
 }
 
+/*
+FNXC:CodeOrganization 2026-08-03-15:20:
+U4 Slice B peels createWorktree into worktree-create-outer.ts / worktree-create-conflict.ts;
+worktree-acquisition lives under worktree/. Source-scan surfaces must follow the peels.
+*/
 const executorSource = readFileSync(fileURLToPath(new URL("../executor.ts", import.meta.url)), "utf8");
-const acquisitionSource = readFileSync(fileURLToPath(new URL("../worktree-acquisition.ts", import.meta.url)), "utf8");
+const createOuterSource = readFileSync(fileURLToPath(new URL("../executor/worktree-create-outer.ts", import.meta.url)), "utf8");
+const createConflictSource = readFileSync(fileURLToPath(new URL("../executor/worktree-create-conflict.ts", import.meta.url)), "utf8");
+const acquisitionSource = readFileSync(fileURLToPath(new URL("../worktree/worktree-acquisition.ts", import.meta.url)), "utf8");
 const mergerSource = readFileSync(fileURLToPath(new URL("../merger.ts", import.meta.url)), "utf8");
 
 function sourceRegion(source: string, start: string, end: string): string {
@@ -112,18 +119,38 @@ describe("TaskExecutor primary-checkout worktree invariant", () => {
     This source guard complements the real-git test above. It must fail if a task-worktree creation or
     acquisition surface reintroduces `git checkout`/`git switch` against the project root to select a
     task branch. Merger's later integration-target checkout is deliberately outside the reacquire slice.
+
+    FNXC:CodeOrganization 2026-08-03-15:20:
+    createWorktree implementation now lives in executor/worktree-create-outer.ts +
+    worktree-create-conflict.ts; the executor.ts facade is a thin deps-wiring wrapper only.
     */
-    const executorCreation = sourceRegion(executorSource, "private async createWorktree(", "private async cleanupConflictingWorktree(");
+    /*
+    FNXC:CodeOrganization 2026-08-03-15:45:
+    sourceRegion is exclusive of the end marker — end after the facade body so
+    `createWorktreeImpl` remains in the scanned slice (not used as the end itself).
+    */
+    const executorFacade = sourceRegion(
+      executorSource,
+      "private async createWorktree(",
+      "private async removeOwnWorktreeWithReconcile(",
+    );
+    // Full peeled modules: createWorktree is not first in worktree-create-outer.ts.
+    const outerImpl = createOuterSource;
+    const conflictImpl = createConflictSource;
     const acquisition = sourceRegion(acquisitionSource, "const createWorktreeImpl = createWorktree", "const logConfiguredCopyFileResults");
     const mergerReacquire = sourceRegion(mergerSource, "const reacquireReuseIntegrationWorktree = async", "// 3b. Ensure rootDir is based on the resolved integration target before merging.");
 
-    expect(executorCreation).toContain("git worktree add");
+    expect(executorFacade).toContain("createWorktreeImpl");
+    expect(outerImpl).toContain("export async function createWorktree");
+    expect(conflictImpl).toContain("git worktree add");
     expect(acquisition).toContain("backend.create(");
     expect(mergerReacquire).toContain("git worktree add -f");
 
     const rootCheckoutSwitch = /execAsync\(\s*`git\s+(?:checkout|switch)(?:\s+(?:-b|-c))?\b/;
     for (const [surface, source] of [
-      ["TaskExecutor.createWorktree", executorCreation],
+      ["TaskExecutor.createWorktree facade", executorFacade],
+      ["worktree-create-outer createWorktree", outerImpl],
+      ["worktree-create-conflict tryCreateWorktree", conflictImpl],
       ["acquireTaskWorktree createWorktreeImpl", acquisition],
       ["merger reacquire callback", mergerReacquire],
     ] as const) {

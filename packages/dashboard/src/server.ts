@@ -995,21 +995,30 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
   Voice chunks have a route-only 2 MiB parser. The global 100 KiB parser must skip only this
   endpoint (with or without Express's optional trailing slash) or it rejects before the voice
   error mapper; rawBody/HMAC behavior remains unchanged elsewhere.
+
+  FNXC:GitHubPlanningSourceIssue 2026-08-09-15:18:
+  Planning's GitHub image capture legitimately transports up to 1,000,000 characters of
+  image-bearing issue/comment bodies before the route applies its server-side SSRF policy and
+  drops the bodies. Give only its start-streaming endpoint a 5 MiB JSON parser, which covers the
+  worst-case UTF-8 transport plus JSON framing without weakening the global 100 KiB budget.
   */
-  const jsonParser = express.json({
-    verify: (req, _res, buf) => {
-      if (buf.length > 0) {
-        (req as express.Request & { rawBody?: Buffer }).rawBody = Buffer.from(buf);
-      }
-    },
-  });
+  const preserveRawBody = (req: express.Request, _res: express.Response, buf: Buffer) => {
+    if (buf.length > 0) {
+      (req as express.Request & { rawBody?: Buffer }).rawBody = Buffer.from(buf);
+    }
+  };
+  const jsonParser = express.json({ verify: preserveRawBody });
+  const planningImageCaptureParser = express.json({ limit: "5mb", verify: preserveRawBody });
   app.use((req, res, next) => {
-    // Express treats the trailing-slash spelling as the same route, so its parser boundary must,
-    // too; no broader prefix is exempted from the global rawBody-preserving parser.
+    // Express treats trailing slashes as equivalent, so parser boundaries must do the same;
+    // no broader prefix is exempted from the global rawBody-preserving parser.
     if (req.path === "/api/voice/transcribe" || req.path === "/api/voice/transcribe/") return next();
-    return jsonParser(req, res, (error) => {
-      // Keep the established global 100 KiB rejection observable as 413 instead of allowing
-      // Express's parser error to fall through to the generic 500 handler.
+    const parser = req.path === "/api/planning/start-streaming" || req.path === "/api/planning/start-streaming/"
+      ? planningImageCaptureParser
+      : jsonParser;
+    return parser(req, res, (error) => {
+      // Keep the established global and route-specific size rejections observable as 413 instead
+      // of allowing Express's parser error to fall through to the generic 500 handler.
       if ((error as { type?: string } | undefined)?.type === "entity.too.large") return res.status(413).json({ error: "payload-too-large" });
       return next(error);
     });

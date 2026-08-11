@@ -2,7 +2,12 @@
  * FNXC:CodeOrganization 2026-07-16-14:00:
  * Pure path/error/scope helpers peeled from self-healing.ts.
  */
-import type { Task } from "@fusion/core";
+import {
+  isTaskNotFoundError as isCoreTaskNotFoundError,
+  TaskDeletedError,
+  type Task,
+  type TaskStore,
+} from "@fusion/core";
 
 export function extractTaskIdFromTempMergeDir(dirname: string): string | null {
   const match = /^fusion-ai-merge-(fn-\d+)-[a-z0-9]+$/i.exec(dirname);
@@ -15,6 +20,33 @@ export function getErrorMessage(err: unknown): string {
 
 export function isTaskNotFoundError(err: unknown): boolean {
   return /\btask\s+fn-\d+\s+not found\b/i.test(getErrorMessage(err));
+}
+
+/*
+FNXC:SelfHealing 2026-08-10-09:51:
+Runfusion/Fusion#3397 requires durable-agent link recovery to treat PostgreSQL
+`getTask` misses as ordinary stale-link input. The older FN-only regex above
+must remain unchanged for temp-merge paths, because production ids also include
+`ERR-024` and other prefixes. Archive snapshots are resolved tasks in a
+terminal column, never misses, so this guard only normalizes thrown lookup
+errors and not successful task reads.
+*/
+export function isMissingTaskLookupError(err: unknown): boolean {
+  if (isCoreTaskNotFoundError(err) || err instanceof TaskDeletedError) return true;
+  if (err && typeof err === "object" && (err as { name?: unknown }).name === "TaskDeletedError") return true;
+  return err instanceof Error && /\btask\s+\S+\s+not found\b/i.test(err.message);
+}
+
+export async function readLinkedTaskOrUndefined(
+  store: Pick<TaskStore, "getTask">,
+  taskId: string,
+): Promise<Task | undefined> {
+  try {
+    return (await store.getTask(taskId)) ?? undefined;
+  } catch (err) {
+    if (isMissingTaskLookupError(err)) return undefined;
+    throw err;
+  }
 }
 
 export function buildResumeLimboStepSignature(task: Task): string {

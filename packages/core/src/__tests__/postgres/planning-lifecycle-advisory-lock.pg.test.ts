@@ -7,8 +7,11 @@ import {
 } from "../../__test-utils__/pg-test-harness.js";
 import {
   PlanningLifecycleLockTransportError,
+  planningLifecycleLockTransportAvailability,
   withPlanningLifecycleAdvisoryLock,
+  withPlanningLifecycleAdvisoryLocks,
 } from "../../postgres/advisory-locks.js";
+import { resolveBackendWithOptions } from "../../postgres/backend-resolver.js";
 
 const h: SharedPgTaskStoreHarness = createSharedPgTaskStoreTestHarness({
   prefix: "fusion_planning_lock",
@@ -68,6 +71,62 @@ pgDescribe("planning lifecycle advisory lock", () => {
     expect(order).toEqual(["first-enter", "first-exit", "second-enter"]);
   });
 
+  it("shares key space with a single-key holder across a sorted multi-key session", async () => {
+    let releaseMulti!: () => void;
+    const multiCanFinish = new Promise<void>((resolve) => { releaseMulti = resolve; });
+    let multiEntered!: () => void;
+    const multiIsHolding = new Promise<void>((resolve) => { multiEntered = resolve; });
+    const multi = withPlanningLifecycleAdvisoryLocks({
+      projectId: "project-a",
+      taskIds: ["FN-2", "FN-1", "FN-2"],
+      directSessionUrl: h.testUrl(),
+      provenance: "migration-override",
+      runtimeUrl: h.testUrl(),
+      migrationUrl: h.testUrl(),
+      timeoutMs: 1_000,
+    }, async () => {
+      multiEntered();
+      await multiCanFinish;
+    });
+    await multiIsHolding;
+
+    let singleAttempted!: () => void;
+    const singleDispatched = new Promise<void>((resolve) => { singleAttempted = resolve; });
+    const single = lock("project-a", "FN-1", async () => {}, 1_000, singleAttempted);
+    await singleDispatched;
+    releaseMulti();
+    await Promise.all([multi, single]);
+  });
+
+  it("releases every multi-key lock when its callback fails", async () => {
+    await expect(withPlanningLifecycleAdvisoryLocks({
+      projectId: "project-a",
+      taskIds: ["FN-1", "FN-2"],
+      directSessionUrl: h.testUrl(),
+      provenance: "migration-override",
+      runtimeUrl: h.testUrl(),
+      migrationUrl: h.testUrl(),
+    }, async () => { throw new Error("callback failed"); })).rejects.toThrow("callback failed");
+
+    await Promise.all([
+      lock("project-a", "FN-1", async () => {}),
+      lock("project-a", "FN-2", async () => {}),
+    ]);
+  });
+
+  it("shares the structural availability predicate used by acquisition", () => {
+    expect(planningLifecycleLockTransportAvailability({
+      directSessionUrl: null,
+      provenance: null,
+    })).toEqual({ available: false, reason: "direct-session-unavailable" });
+    expect(planningLifecycleLockTransportAvailability({
+      directSessionUrl: h.testUrl(),
+      provenance: "migration-override",
+      runtimeUrl: h.testUrl(),
+      migrationUrl: h.testUrl(),
+    })).toEqual({ available: true });
+  });
+
   it("does not contend across project or task keys", async () => {
     let releaseFirst!: () => void;
     const firstCanFinish = new Promise<void>((resolve) => { releaseFirst = resolve; });
@@ -111,6 +170,28 @@ pgDescribe("planning lifecycle advisory lock", () => {
     },
   );
 
+  it("uses a direct-only runtime URL to acquire and release the lock", async () => {
+    const backend = resolveBackendWithOptions({ databaseUrl: h.testUrl() });
+    let callbackRan = false;
+    await withPlanningLifecycleAdvisoryLock({
+      projectId: "project-a",
+      taskId: "FN-runtime-direct",
+      directSessionUrl: backend.directSessionUrl ?? null,
+      provenance: backend.directSessionProvenance ?? null,
+      runtimeUrl: backend.runtimeUrl,
+      migrationUrl: backend.migrationUrl,
+    }, async () => { callbackRan = true; });
+    expect(callbackRan).toBe(true);
+    await expect(withPlanningLifecycleAdvisoryLock({
+      projectId: "project-a",
+      taskId: "FN-runtime-direct",
+      directSessionUrl: backend.directSessionUrl ?? null,
+      provenance: backend.directSessionProvenance ?? null,
+      runtimeUrl: backend.runtimeUrl,
+      migrationUrl: backend.migrationUrl,
+    }, async () => {})).resolves.toBeUndefined();
+  });
+
   it("bounds lock contention with a typed transport error", async () => {
     let releaseFirst!: () => void;
     const firstCanFinish = new Promise<void>((resolve) => { releaseFirst = resolve; });
@@ -151,9 +232,10 @@ pgDescribe("planning lifecycle advisory lock", () => {
     }, callback)).rejects.toBeInstanceOf(PlanningLifecycleLockTransportError);
     await expect(withPlanningLifecycleAdvisoryLock({
       ...base,
-      directSessionUrl: h.testUrl(),
+      directSessionUrl: `${h.testUrl()}_other`,
+      provenance: "runtime-direct",
       runtimeUrl: h.testUrl(),
-      migrationUrl: `${h.testUrl()}_other`,
+      migrationUrl: h.testUrl(),
     }, callback)).rejects.toBeInstanceOf(PlanningLifecycleLockTransportError);
     await expect(withPlanningLifecycleAdvisoryLock({
       ...base,

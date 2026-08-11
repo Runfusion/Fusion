@@ -16,6 +16,11 @@
   min-width: 0;
 }
 
+.task-recommendations__empty {
+  color: var(--text-muted);
+  margin: 0;
+}
+
 .task-recommendations__heading {
   display: flex;
   align-items: center;

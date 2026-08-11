@@ -89,6 +89,13 @@ import {
   QUEUED_EPISODE_SIGNATURE_VERSION,
   MULTI_ROLE_WORKFLOW_AGENTS_VERSION,
   WORKFLOW_PRINCIPAL_FENCE_VERSION,
+  TASK_RECOMMENDATIONS_VERSION,
+  GITHUB_CHECK_STATES_VERSION,
+  AGENT_ACTIVITY_EVENTS_VERSION,
+  SPEC_LOCK_DRIFT_REPORT_VERSION,
+  SPEC_LOCK_SOURCE_REVISION_BIGINT_VERSION,
+  MEMORY_RECALL_RECORDS_VERSION,
+  MISSION_FEATURE_SPEC_ALIGNMENT_VERSION,
 } from "../../postgres/schema-applier.js";
 import { ProjectPartitionRekeyError, rekeyFallbackProjectPartition } from "../../postgres/migration-stamping.js";
 import type { PluginSchemaInitHook } from "../../postgres/plugin-schema-hook.js";
@@ -111,7 +118,14 @@ describe("schema-applier: immutable migration identities", () => {
     expect(QUEUED_EPISODE_SIGNATURE_VERSION).toBe("0044");
     expect(MULTI_ROLE_WORKFLOW_AGENTS_VERSION).toBe("0045");
     expect(WORKFLOW_PRINCIPAL_FENCE_VERSION).toBe("0046");
-    expect(SCHEMA_BASELINE_VERSION).toBe("0046");
+    expect(TASK_RECOMMENDATIONS_VERSION).toBe("0047");
+    expect(GITHUB_CHECK_STATES_VERSION).toBe("0048");
+    expect(AGENT_ACTIVITY_EVENTS_VERSION).toBe("0049");
+    expect(SPEC_LOCK_DRIFT_REPORT_VERSION).toBe("0050");
+    expect(SPEC_LOCK_SOURCE_REVISION_BIGINT_VERSION).toBe("0051");
+    expect(MEMORY_RECALL_RECORDS_VERSION).toBe("0052");
+    expect(MISSION_FEATURE_SPEC_ALIGNMENT_VERSION).toBe("0053");
+    expect(SCHEMA_BASELINE_VERSION).toBe("0053");
   });
 
   it("keeps monitor and approval isolation assigned to version 0003", () => {
@@ -726,7 +740,7 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 final-schema parity (table counts)", 
     ctx = null;
   });
 
-  it("creates all 105 project tables, 17 central tables, 1 archive table", async () => {
+  it("creates all 113 project tables, 17 central tables, 1 archive table", async () => {
     ctx = await setupFreshDb();
     // FNXC:PostgresCutover 2026-07-05-15:55: apply the BASELINE only.
     // applySchemaBaseline now runs the plugin schema-init hooks by default,
@@ -745,9 +759,12 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 final-schema parity (table counts)", 
     FNXC:PgSchemaApplier 2026-08-03-02:16:
     Project table count = historical core baseline plus later migrations. 0040 adds 2 lifecycle
     outbox tables; 0041 adds 4 lifecycle consumer tables; 0043 adds the durable unplanned-dispatch
-    refusal marker (100 → 105). Plugin tables are added separately by the schema-init hook and are excluded here.
+    refusal marker (100 → 105); later baseline additions bring the count to 106; and 0048 adds
+    GitHub check state (106 → 107); 0049 adds the agent-activity outbox and counter (→ 109);
+    0050 adds immutable lock, evidence, and report history (109 → 112); 0052 adds recall records (→ 113). Plugin tables are added separately
+    by the schema-init hook and are excluded here.
     */
-    expect(bySchema.project).toBe(105);
+    expect(bySchema.project).toBe(113);
     /*
     FNXC:CapacityModel 2026-07-29-08:10 (drop the cross-project cap — table half):
     17, not 18: `central.global_concurrency` is dropped by migration 0037. A fresh
@@ -1770,6 +1787,13 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       QUEUED_EPISODE_SIGNATURE_VERSION,
       MULTI_ROLE_WORKFLOW_AGENTS_VERSION,
       WORKFLOW_PRINCIPAL_FENCE_VERSION,
+      TASK_RECOMMENDATIONS_VERSION,
+      GITHUB_CHECK_STATES_VERSION,
+      AGENT_ACTIVITY_EVENTS_VERSION,
+      SPEC_LOCK_DRIFT_REPORT_VERSION,
+      SPEC_LOCK_SOURCE_REVISION_BIGINT_VERSION,
+      MEMORY_RECALL_RECORDS_VERSION,
+      MISSION_FEATURE_SPEC_ALIGNMENT_VERSION,
     ]);
     expect((await applySchemaBaseline(ctx.db, { pluginHooks: [] })).applied).toBe(false);
   });
@@ -1842,6 +1866,13 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       QUEUED_EPISODE_SIGNATURE_VERSION,
       MULTI_ROLE_WORKFLOW_AGENTS_VERSION,
       WORKFLOW_PRINCIPAL_FENCE_VERSION,
+      TASK_RECOMMENDATIONS_VERSION,
+      GITHUB_CHECK_STATES_VERSION,
+      AGENT_ACTIVITY_EVENTS_VERSION,
+      SPEC_LOCK_DRIFT_REPORT_VERSION,
+      SPEC_LOCK_SOURCE_REVISION_BIGINT_VERSION,
+      MEMORY_RECALL_RECORDS_VERSION,
+      MISSION_FEATURE_SPEC_ALIGNMENT_VERSION,
     ]);
   });
 
@@ -2047,6 +2078,13 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       QUEUED_EPISODE_SIGNATURE_VERSION,
       MULTI_ROLE_WORKFLOW_AGENTS_VERSION,
       WORKFLOW_PRINCIPAL_FENCE_VERSION,
+      TASK_RECOMMENDATIONS_VERSION,
+      GITHUB_CHECK_STATES_VERSION,
+      AGENT_ACTIVITY_EVENTS_VERSION,
+      SPEC_LOCK_DRIFT_REPORT_VERSION,
+      SPEC_LOCK_SOURCE_REVISION_BIGINT_VERSION,
+      MEMORY_RECALL_RECORDS_VERSION,
+      MISSION_FEATURE_SPEC_ALIGNMENT_VERSION,
     ]);
   });
 
@@ -2133,6 +2171,13 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       QUEUED_EPISODE_SIGNATURE_VERSION,
       MULTI_ROLE_WORKFLOW_AGENTS_VERSION,
       WORKFLOW_PRINCIPAL_FENCE_VERSION,
+      TASK_RECOMMENDATIONS_VERSION,
+      GITHUB_CHECK_STATES_VERSION,
+      AGENT_ACTIVITY_EVENTS_VERSION,
+      SPEC_LOCK_DRIFT_REPORT_VERSION,
+      SPEC_LOCK_SOURCE_REVISION_BIGINT_VERSION,
+      MEMORY_RECALL_RECORDS_VERSION,
+      MISSION_FEATURE_SPEC_ALIGNMENT_VERSION,
     ]);
   });
 
@@ -2219,6 +2264,13 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       QUEUED_EPISODE_SIGNATURE_VERSION,
       MULTI_ROLE_WORKFLOW_AGENTS_VERSION,
       WORKFLOW_PRINCIPAL_FENCE_VERSION,
+      TASK_RECOMMENDATIONS_VERSION,
+      GITHUB_CHECK_STATES_VERSION,
+      AGENT_ACTIVITY_EVENTS_VERSION,
+      SPEC_LOCK_DRIFT_REPORT_VERSION,
+      SPEC_LOCK_SOURCE_REVISION_BIGINT_VERSION,
+      MEMORY_RECALL_RECORDS_VERSION,
+      MISSION_FEATURE_SPEC_ALIGNMENT_VERSION,
     ]);
   });
 });
@@ -2243,7 +2295,7 @@ pgDescribe("schema-applier: VAL-SCHEMA-006 AUTOINCREMENT → identity with seque
       WHERE n.nspname = 'project' AND a.attidentity = 'a'
       ORDER BY c.relname
     `)) as unknown as Array<{ table_name: string; column_name: string }>;
-    // The 8 AUTOINCREMENT columns from the SQLite schema.
+    // The 9 identity columns include immutable spec-drift report history.
     const identityTables = rows.map((r) => r.table_name);
     expect(identityTables).toEqual(
       expect.arrayContaining([
@@ -2257,7 +2309,7 @@ pgDescribe("schema-applier: VAL-SCHEMA-006 AUTOINCREMENT → identity with seque
         "incidents",
       ]),
     );
-    expect(rows.length).toBe(9);
+    expect(rows.length).toBe(10);
   });
 
   it("sequence continuity: consecutive inserts produce increasing IDs without collision", async () => {

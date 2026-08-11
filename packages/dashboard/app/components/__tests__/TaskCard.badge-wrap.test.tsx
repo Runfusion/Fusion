@@ -29,6 +29,7 @@ vi.mock("lucide-react", () => ({
   TriangleAlert: ({ style }: { style?: React.CSSProperties }) => <svg className="lucide-triangle-alert" style={style} />,
   Eye: () => null,
   MoreHorizontal: () => null,
+  Sparkles: () => null,
 }));
 
 vi.mock("../ProviderIcon", () => ({
@@ -758,7 +759,7 @@ describe("TaskCard badge wrapping (FN-5162)", () => {
     expect(agentBadge.getAttribute("title")).toBe("Created by agent: agent-badge-wrap");
     expect(agentBadge.getAttribute("aria-label")).toBe("Created by agent: agent-badge-wrap");
     expect(agentBadge.querySelector(".visually-hidden")?.textContent).toBe("Created by agent: agent-badge-wrap");
-    expect(agentBadge.querySelector("span[aria-hidden='true']")?.textContent).toBe("agent-badge-...");
+    expect(agentBadge.querySelector("span[aria-hidden='true']")?.textContent).toBe("by agent-badge-...");
 
     const styles = getComputedStyle(agentRow);
     expect(styles.display).toBe("flex");

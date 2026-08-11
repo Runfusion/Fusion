@@ -11,6 +11,7 @@ import { TaskVerificationStatus } from "../TaskVerificationStatus";
 import { TokensArea } from "./areas/TokensArea";
 import { ToolsArea } from "./areas/ToolsArea";
 import { ActivityArea } from "./areas/ActivityArea";
+import { AgentActivityPanel } from "./AgentActivityPanel";
 import { ProductivityArea } from "./areas/ProductivityArea";
 import { ReviewArtifactsArea } from "./areas/ReviewArtifactsArea";
 import { TeamArea } from "./areas/TeamArea";
@@ -44,6 +45,7 @@ type SubViewId =
   | "tokens"
   | "tools"
   | "activity"
+  | "agent-activity"
   | "productivity"
   | "review-artifacts"
   | "team"
@@ -89,6 +91,7 @@ function useSubViews(nodesEnabled: boolean): SubView[] {
     { id: "tokens", label: t("commandCenter.tabs.tokens", "Tokens") },
     { id: "tools", label: t("commandCenter.tabs.tools", "Tools") },
     { id: "activity", label: t("commandCenter.tabs.activity", "Activity") },
+    { id: "agent-activity", label: t("commandCenter.tabs.agentActivity", "Agent Activity") },
     { id: "productivity", label: t("commandCenter.tabs.productivity", "Productivity") },
     { id: "review-artifacts", label: t("commandCenter.tabs.reviewArtifacts", "Review artifacts") },
     { id: "team", label: t("commandCenter.tabs.team", "Team") },
@@ -150,6 +153,8 @@ interface CommandCenterProps {
   The Overview (Command Center landing) surfaces "View Board"/"View Agents" shortcuts directly under the Live activity snapshot (the engine-activity strip, the closest "AI engine" element on Overview). Navigation is owned by App's view router, so thread an optional onChangeView down to OverviewTab rather than letting the Command Center mutate routing state itself. Moved here from the Team-tab Heartbeat card (FN earlier).
   */
   onChangeView?: (view: TaskView) => void;
+  onOpenAgent?: (agentId: string) => void;
+  onOpenTask?: (taskId: string) => void;
 }
 
 function OverviewTab({
@@ -583,6 +588,8 @@ export function CommandCenter({
   addToast = () => {},
   nodesEnabled = false,
   onChangeView,
+  onOpenAgent,
+  onOpenTask,
 }: CommandCenterProps = {}) {
   const { t } = useTranslation("app");
   const subViews = useSubViews(nodesEnabled);
@@ -677,6 +684,8 @@ export function CommandCenter({
         return <ToolsArea range={range} projectId={projectId} />;
       case "activity":
         return <ActivityArea range={range} projectId={projectId} />;
+      case "agent-activity":
+        return <AgentActivityPanel projectId={projectId} range={range} onOpenAgent={onOpenAgent} onOpenTask={onOpenTask} />;
       case "productivity":
         return <ProductivityArea range={range} projectId={projectId} />;
       case "review-artifacts":

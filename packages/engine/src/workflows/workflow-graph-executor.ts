@@ -9,7 +9,7 @@ import type {
   WorkflowNodeExtensionResult,
   WorkflowStepResult,
 } from "@fusion/core";
-import { BUILTIN_CODING_WORKFLOW_IR, PLAN_REVIEW_GROUP_ID, WorkflowIrError, getWorkflowExtensionRegistry, instanceNodeId, resolveMaxReworkCycles, isExperimentalFeatureEnabled, GRAPH_NATIVE_POST_MERGE_FLAG, isCompletionSummaryNode, classifyReviewLease, isWorkflowOptionalGroupEnabled, isPlanReviewSatisfied } from "@fusion/core";
+import { BUILTIN_CODING_WORKFLOW_IR, PLAN_REVIEW_GROUP_ID, WorkflowIrError, computeWorkflowIrPin, getWorkflowExtensionRegistry, instanceNodeId, resolveMaxReworkCycles, isExperimentalFeatureEnabled, GRAPH_NATIVE_POST_MERGE_FLAG, isCompletionSummaryNode, classifyReviewLease, isWorkflowOptionalGroupEnabled, isPlanReviewSatisfied, parseNoOpCompletionMarker } from "@fusion/core";
 import { isNonPlanDefectPlanReviewFailure } from "../errors/transient-error-detector.js";
 import { isSessionContentionError } from "../errors/transient-error-patterns.js";
 import { isRequiredArtifactReadFailedValue, parseRequiredArtifactMissingValue } from "../execution/required-workflow-artifacts.js";
@@ -75,10 +75,40 @@ export const PLAN_REVIEW_LEASE_HELD_VALUE = "plan-review-lease-held";
  * template ID. This keeps reviewer overrides and durable principal fences scoped
  * to the exact foreach iteration, loop iteration, or optional-group invocation.
  */
-function materializedTemplateNodeId(node: WorkflowIrNode, context: Record<string, unknown>): string {
-  const parent = typeof context["workflow:node-instance-id"] === "string"
-    ? context["workflow:node-instance-id"]
-    : undefined;
+/**
+ * FNXC:WorkflowAgentRouting 2026-08-10-08:20:
+ * Materialization must be IDEMPOTENT, because a resume seeds `workflow:node-instance-id` from the persisted
+ * continuation — which holds this node's OWN materialized id, not its enclosing container's.
+ *
+ * Read raw, that self-instance was treated as the parent container and re-wrapped on every dispatch:
+ * `steps#4:step-execute` -> `steps#4:step-execute#4:step-execute` -> ... FN-8869 accumulated ~30 repetitions
+ * (a ~1.8 KB run_id on a hot indexed column) because it re-dispatched every ~15 minutes for hours, and each
+ * retry looked like a distinct run to anything grouping by run id.
+ *
+ * Peeling the self-instance suffix recovers the ENCLOSING container, so re-materializing iteration 4 yields
+ * `steps#4:step-execute` again while advancing to iteration 5 correctly yields `steps#5:step-execute`. Simply
+ * returning the seeded id unchanged would be idempotent but would freeze the card on a stale iteration.
+ */
+function enclosingContainerInstanceId(parent: string | undefined, nodeId: string): string | undefined {
+  if (!parent || parent === nodeId) return undefined;
+  if (parent.endsWith(`::${nodeId}`)) {
+    const container = parent.slice(0, -(nodeId.length + 2));
+    return container.length > 0 ? container : undefined;
+  }
+  // `<container>#<iteration>:<nodeId>` — peel the iteration marker together with the node id it wraps.
+  if (!parent.endsWith(`:${nodeId}`)) return parent;
+  const head = parent.slice(0, -(nodeId.length + 1));
+  const marker = head.lastIndexOf("#");
+  if (marker < 0 || !/^\d+$/.test(head.slice(marker + 1))) return parent;
+  const container = head.slice(0, marker);
+  return container.length > 0 ? container : undefined;
+}
+
+export function materializedTemplateNodeId(node: WorkflowIrNode, context: Record<string, unknown>): string {
+  const parent = enclosingContainerInstanceId(
+    typeof context["workflow:node-instance-id"] === "string" ? context["workflow:node-instance-id"] : undefined,
+    node.id,
+  );
   const foreach = context["foreach:active"] as { foreachNodeId?: unknown; stepIndex?: unknown } | undefined;
   if (typeof foreach?.foreachNodeId === "string" && typeof foreach.stepIndex === "number") {
     const containerId = parent && parent !== foreach.foreachNodeId ? parent : foreach.foreachNodeId;
@@ -89,8 +119,18 @@ function materializedTemplateNodeId(node: WorkflowIrNode, context: Record<string
     const containerId = parent && parent !== loop.loopNodeId ? parent : loop.loopNodeId;
     return `${containerId}#${loop.iteration}:${node.id}`;
   }
+  /*
+   * FNXC:WorkflowAgentRouting 2026-08-10-08:35:
+   * `optional-group:active` needs the SAME peel as `parent`, because it is seeded from the same accreting
+   * value: workflow-graph-loop.ts copies `workflow:node-instance-id` into it verbatim, and on resume that key
+   * already holds the CHILD's materialized id. Peeling only `parent` left optional groups still growing one
+   * `::<node>` segment per dispatch — the exact accretion this fix exists to stop, on the branch the first
+   * round of tests happened to pin with a hand-written container id instead of a resume-shaped one.
+   */
   const optionalGroup = context["optional-group:active"];
-  if (typeof optionalGroup === "string") return `${optionalGroup}::${node.id}`;
+  if (typeof optionalGroup === "string") {
+    return `${enclosingContainerInstanceId(optionalGroup, node.id) ?? optionalGroup}::${node.id}`;
+  }
   return node.id;
 }
 
@@ -300,6 +340,16 @@ export interface WorkflowGraphExecutorDeps {
    * FNXC:WorkflowRevisionBudget 2026-06-30-20:46:
    * Forward the optional-group id for every failure context because Plan Review/spec and Code Review budget resolution is keyed by that id. The graph does not read workflow setting values directly; live execution and self-healing share the core resolver at the remediation boundary.
    */
+  /** Completes an accepted Plan Review close through the authoritative task lifecycle. */
+  completePlanReviewNoOp?: (task: TaskDetail, marker: { kind: string; reason: string; canonicalId?: string }) => Promise<boolean> | boolean;
+  /** Persists a resumable Plan Review hold before an invalid or unroutable close returns control. */
+  holdPlanReviewNoOp?: (task: TaskDetail, suspension: {
+    nodeId: string;
+    fromColumn: string;
+    toColumn: string;
+    irHash: string;
+    reason: "invalid" | "terminal-route-unavailable" | "terminalization-failed";
+  }) => Promise<void> | void;
   requestPreMergeOptionalStepFix?: (taskId: string, info: {
     stepName: string;
     feedback: string;
@@ -339,7 +389,7 @@ export interface WorkflowGraphExecutorResult {
   context: Record<string, unknown>;
   visitedNodeIds: string[];
   suspended?: {
-    reason: "capacity" | "pause";
+    reason: "capacity" | "pause" | "hold";
     nodeId: string;
     fromColumn: string;
     toColumn: string;
@@ -1003,6 +1053,7 @@ export class WorkflowGraphExecutor {
             : undefined;
           const verdict =
             verdictRaw === "APPROVE" || verdictRaw === "APPROVE_WITH_NOTES" || verdictRaw === "REVISE"
+              || (node.id === PLAN_REVIEW_GROUP_ID && verdictRaw === "CLOSE_NO_OP")
               ? verdictRaw
               : undefined;
           let stepStatus: WorkflowStepResult["status"];
@@ -1013,6 +1064,11 @@ export class WorkflowGraphExecutor {
           const exitContextPatch = exitResult?.contextPatch;
           let stepOutput = typeof exitContextPatch?.output === "string" ? exitContextPatch.output : undefined;
           const stepNotes = typeof exitContextPatch?.notes === "string" ? exitContextPatch.notes : undefined;
+          const closeMarker = verdict === "CLOSE_NO_OP" ? parseNoOpCompletionMarker(stepNotes) : null;
+          if (verdict === "CLOSE_NO_OP" && !closeMarker) {
+            stepStatus = "failed";
+            stepOutput = "Plan Review CLOSE_NO_OP requires notes beginning with a no-op completion sentinel.";
+          }
           const stepFindings = this.workflowReviewKind(node) && Array.isArray(exitContextPatch?.findings)
             ? exitContextPatch.findings as WorkflowStepResult["findings"]
             : undefined;
@@ -1093,6 +1149,47 @@ export class WorkflowGraphExecutor {
            * edge to plan-replan (nothing about the plan is wrong) nor be labeled a provider failure
            * (nothing about the provider is wrong). It becomes a contention hold the executor waits out.
            */
+          /*
+           * FNXC:PlanReviewNoOp 2026-08-09-01:17:
+           * A close is valid only with the shared leading sentinel. Invalid requests retain
+           * auditable failed evidence and suspend; they never enter remediation or execution.
+           */
+          if (verdict === "CLOSE_NO_OP") {
+            const holdClose = async (reason: "invalid" | "terminal-route-unavailable" | "terminalization-failed"): Promise<never> => {
+              const column = this.deps.columnBoundary?.currentColumn() ?? task.column;
+              const suspension = {
+                reason: "hold" as const,
+                nodeId: node.id,
+                fromColumn: column,
+                toColumn: column,
+                irHash: computeWorkflowIrPin(ir, node.id).irHash,
+              };
+              await this.deps.holdPlanReviewNoOp?.(task, { ...suspension, reason });
+              throw new WorkflowGraphSuspended(suspension);
+            };
+            if (!closeMarker) {
+              context[`node:${node.id}:outcome`] = "failure";
+              context[`node:${node.id}:value`] = "plan-review-close-invalid";
+              return await holdClose("invalid");
+            }
+            const hasTerminalRoute = (outgoingMap.get(node.id) ?? []).some((edge) =>
+              edge.condition === "outcome:close-no-op"
+              && nodeMap.get(edge.to)?.config?.workflowAction === "plan-review-no-op",
+            );
+            if (!hasTerminalRoute) {
+              await this.recordOptionalGroupStepResult(task.id, {
+                workflowStepId: node.id, workflowStepName: groupName, phase: stepPhase, source: "optional-group",
+                status: "failed", reviewKind: "plan", verdict, notes: stepNotes,
+                output: "Plan Review CLOSE_NO_OP terminal route unavailable.", startedAt: stepStartedAt, completedAt: new Date().toISOString(),
+              });
+              context[`node:${node.id}:outcome`] = "failure";
+              context[`node:${node.id}:value`] = "plan-review-close-route-unavailable";
+              return await holdClose("terminal-route-unavailable");
+            }
+            context.noOpMarker = closeMarker;
+            context.noOpCloseNotes = stepNotes;
+            return await traverseChildren(node, { outcome: "success", value: "close-no-op" });
+          }
           const sessionContentionFailure =
             stepStatus === "failed"
             && (
@@ -1160,6 +1257,13 @@ export class WorkflowGraphExecutor {
               ...(parseRequiredArtifactMissingValue(verdictRaw) ? { failureValue: verdictRaw } : {}),
               nodeId: node.id,
               maxRevisions: node.config?.maxRevisions,
+              /*
+               * FNXC:ReviewSeverityGate 2026-08-10-17:33:
+               * Carry the structured findings into remediation so PROMPT.md can present them grouped by
+               * priority. Without this the implementer only ever saw `feedback` prose and could not tell
+               * a blocking defect from an optional note.
+               */
+              ...(stepFindings?.length ? { findings: stepFindings } : {}),
             };
             context[optionalStepFailureContextKey(node.id)] = failureContext;
             /*
@@ -1215,6 +1319,48 @@ export class WorkflowGraphExecutor {
           context[`node:${node.id}:outcome`] = "success";
           context[`node:${node.id}:value`] = "remediation-scheduled";
           return { outcome: "success", value: "remediation-scheduled" };
+        }
+
+        if (workflowAction === "plan-review-no-op") {
+          const marker = context.noOpMarker as { kind?: unknown; reason?: unknown; canonicalId?: unknown } | undefined;
+          if (!marker || typeof marker.kind !== "string" || typeof marker.reason !== "string") {
+            return { outcome: "failure", value: "plan-review-close-marker-missing" };
+          }
+          const completed = await this.deps.completePlanReviewNoOp?.(task, {
+            kind: marker.kind,
+            reason: marker.reason,
+            ...(typeof marker.canonicalId === "string" ? { canonicalId: marker.canonicalId } : {}),
+          });
+          if (completed) return await traverseChildren(node, { outcome: "success", value: "close-no-op-completed" });
+          /*
+           * FNXC:PlanReviewNoOp 2026-08-09-02:24:
+           * A lifecycle handoff failure must replace the optimistic passed close evidence.
+           * Leaving that result passed would let a held, non-terminal task look completed even
+           * though its accepted no-op mutation never committed.
+           */
+          await this.recordOptionalGroupStepResult(task.id, {
+            workflowStepId: PLAN_REVIEW_GROUP_ID,
+            workflowStepName: "Plan Review",
+            phase: "pre-merge",
+            source: "optional-group",
+            status: "failed",
+            reviewKind: "plan",
+            verdict: "CLOSE_NO_OP",
+            notes: typeof context.noOpCloseNotes === "string" ? context.noOpCloseNotes : marker.reason,
+            output: "Plan Review CLOSE_NO_OP terminalization failed.",
+            startedAt: new Date().toISOString(),
+            completedAt: new Date().toISOString(),
+          });
+          const column = this.deps.columnBoundary?.currentColumn() ?? task.column;
+          const suspension = {
+            reason: "hold" as const,
+            nodeId: PLAN_REVIEW_GROUP_ID,
+            fromColumn: column,
+            toColumn: column,
+            irHash: computeWorkflowIrPin(ir, PLAN_REVIEW_GROUP_ID).irHash,
+          };
+          await this.deps.holdPlanReviewNoOp?.(task, { ...suspension, reason: "terminalization-failed" });
+          throw new WorkflowGraphSuspended(suspension);
         }
 
         const result = await this.executeNodeWithRetries(node, task, settings, context, ir, this.deps.signal);

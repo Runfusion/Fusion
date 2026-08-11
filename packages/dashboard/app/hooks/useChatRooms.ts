@@ -49,7 +49,7 @@ export interface UseChatRoomsResult {
   createRoom: (input: { name: string; memberAgentIds: string[] }) => Promise<ChatRoom>;
   updateRoomSettings: (roomId: string, updates: { thinkingLevel?: string | null }) => Promise<ChatRoom>;
   deleteRoom: (roomId: string) => Promise<void>;
-  sendRoomMessage: (content: string, opts?: { attachments?: ChatAttachment[]; files?: File[] }) => Promise<void>;
+  sendRoomMessage: (content: string, opts?: { attachments?: ChatAttachment[]; files?: File[]; onDelivered?: () => void }) => Promise<void>;
   clearRoom: (roomId: string) => Promise<void>;
   refreshRooms: () => Promise<void>;
 }
@@ -340,7 +340,7 @@ export function useChatRooms(
    * FNXC:RoomChatReliability 2026-07-01-00:00:
    * Responder/provider failures can occur after the room user message is persisted. Keep the optimistic or recovered user row visible for delivered sends even when the reply-generation or refresh step fails, because that turn is already part of the room transcript context.
    */
-  const sendRoomMessage = useCallback(async (content: string, opts?: { attachments?: ChatAttachment[]; files?: File[] }) => {
+  const sendRoomMessage = useCallback(async (content: string, opts?: { attachments?: ChatAttachment[]; files?: File[]; onDelivered?: () => void }) => {
     const activeRoomSnapshot = activeRoomRef.current;
     const roomId = activeRoomSnapshot?.id;
     if (!roomId) {
@@ -389,6 +389,15 @@ export function useChatRooms(
         ...(mergedAttachments.length ? { attachments: mergedAttachments } : {}),
       }, projectId);
       userMessageDelivered = true;
+      /*
+      FNXC:ChatRooms 2026-08-10-05:53:
+      Delivery is signalled immediately after the post accepts every uploaded file, before reconciliation and refetch, so composer previews dismiss promptly. Isolate consumers so their callback cannot corrupt the delivered-versus-undelivered error contract.
+      */
+      try {
+        opts?.onDelivered?.();
+      } catch {
+        // Consumer callbacks must not turn an accepted room turn into a delivery failure.
+      }
 
       if (postResult.message?.createdAt && activeRoomSnapshot) {
         setRooms((previous) => upsertRoom(previous, { ...activeRoomSnapshot, updatedAt: postResult.message.createdAt }));

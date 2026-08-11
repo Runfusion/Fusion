@@ -88,6 +88,14 @@ const DEFAULT_TEST_SUBPROCESS_TIMEOUT_MS = Math.max(
   1_000,
   Number.parseInt(process.env.FUSION_TEST_SUBPROCESS_TIMEOUT_MS ?? "30000", 10) || 30_000,
 );
+let currentSubprocessTimeoutMs = DEFAULT_TEST_SUBPROCESS_TIMEOUT_MS;
+/*
+FNXC:TestSubprocessGuard 2026-08-10-09:35:
+FN-8937 requires watchdogs to measure real elapsed time even when a test advances
+Vitest's virtual clock. Capture timer APIs before tests can install fake timers.
+*/
+const realSetTimeout = globalThis.setTimeout.bind(globalThis);
+const realClearTimeout = globalThis.clearTimeout.bind(globalThis);
 const BLOCKED_TEST_CLI_PATTERN =
   /(^|[\s"'\\/])(?:claude|droid|paperclipai|hermes|openclaw)(?:\.(?:cmd|bat|ps1|exe))?(?=$|[\s"'\\/])/i;
 
@@ -885,7 +893,7 @@ function withDefaultTimeout<T extends { timeout?: number | undefined }>(options:
   }
   return {
     ...(options ?? {}),
-    timeout: DEFAULT_TEST_SUBPROCESS_TIMEOUT_MS,
+    timeout: currentSubprocessTimeoutMs,
   } as T;
 }
 
@@ -893,13 +901,19 @@ function cleanupTrackedSubprocess(proc: ChildProcess): void {
   const tracked = trackedSubprocesses.get(proc);
   if (!tracked) return;
   if (tracked.timeoutTimer) {
-    clearTimeout(tracked.timeoutTimer);
+    realClearTimeout(tracked.timeoutTimer);
     tracked.timeoutTimer = null;
   }
   trackedSubprocesses.delete(proc);
 }
 
 function registerTrackedSubprocess(proc: ChildProcess, commandLine: string): void {
+  /*
+  FNXC:TestSubprocessGuard 2026-08-10-09:35:
+  FN-8937 requires duplicate registration to cancel its prior watchdog; map size
+  alone cannot expose the otherwise orphaned timer that later fabricates a timeout.
+  */
+  cleanupTrackedSubprocess(proc);
   const tracked: TrackedSubprocess = {
     commandLine,
     startedAt: Date.now(),
@@ -909,18 +923,19 @@ function registerTrackedSubprocess(proc: ChildProcess, commandLine: string): voi
   };
   trackedSubprocesses.set(proc, tracked);
 
-  tracked.timeoutTimer = setTimeout(() => {
+  tracked.timeoutTimer = realSetTimeout(() => {
     tracked.timedOut = true;
     completedSubprocessFailures.push({
       ownerTestName: tracked.testName,
-      message: `Timed out after ${DEFAULT_TEST_SUBPROCESS_TIMEOUT_MS}ms: ${tracked.commandLine}${tracked.testName ? ` (${tracked.testName})` : ""}`,
+      message: `Timed out after ${currentSubprocessTimeoutMs}ms: ${tracked.commandLine}${tracked.testName ? ` (${tracked.testName})` : ""}`,
     });
     try {
       proc.kill("SIGKILL");
     } catch {
       // Ignore — the process may have already exited.
     }
-  }, DEFAULT_TEST_SUBPROCESS_TIMEOUT_MS);
+  }, currentSubprocessTimeoutMs);
+  tracked.timeoutTimer.unref?.();
 
   const finish = () => cleanupTrackedSubprocess(proc);
   proc.once("close", finish);
@@ -1194,6 +1209,55 @@ function removeSelfMintedWorkerRootWithRetry(
     }
   }
 }
+
+/*
+FNXC:TestSubprocessGuard 2026-08-10-09:35:
+FN-8937 exposes a deliberately narrow owner-scoped harness: fake timers must not
+fabricate timeouts, real hangs must still report, and sibling failures stay queued
+for their own afterEach. Never add a blanket drain or suppression path here.
+*/
+export const __fusionSubprocessGuardTestHooks = {
+  getSubprocessTimeoutMs: (): number => currentSubprocessTimeoutMs,
+  setSubprocessTimeoutMsForTests: (ms: number | null): void => {
+    currentSubprocessTimeoutMs = ms ?? DEFAULT_TEST_SUBPROCESS_TIMEOUT_MS;
+  },
+  takeOwnedSubprocessFailures: (): string[] => {
+    const ownerTestName = currentTestName();
+    const owned: string[] = [];
+    const remaining: CompletedSubprocessFailure[] = [];
+    for (const failure of completedSubprocessFailures) {
+      if (failure.ownerTestName === ownerTestName) owned.push(failure.message);
+      else remaining.push(failure);
+    }
+    completedSubprocessFailures.length = 0;
+    completedSubprocessFailures.push(...remaining);
+    return owned;
+  },
+  peekForeignSubprocessFailureCount: (): number =>
+    completedSubprocessFailures.filter((failure) => failure.ownerTestName !== currentTestName()).length,
+  listForeignSubprocessFailureMessages: (): readonly string[] =>
+    completedSubprocessFailures
+      .filter((failure) => failure.ownerTestName !== currentTestName())
+      .map((failure) => failure.message),
+  recordSubprocessFailureForTests: (ownerTestName: string | null, message: string): void => {
+    completedSubprocessFailures.push({ ownerTestName, message });
+  },
+  /*
+  FNXC:TestSubprocessGuard 2026-08-10-09:35:
+  This removes only synthetic entries staged by the calling test so cleanup never
+  discards a real recorded guard failure or leaks a foreign entry to another test.
+  */
+  removeStagedFailureForTests: (message: string): boolean => {
+    const index = completedSubprocessFailures.findIndex((failure) => failure.message === message);
+    if (index < 0) return false;
+    completedSubprocessFailures.splice(index, 1);
+    return true;
+  },
+  registerTrackedSubprocessForTests: (proc: ChildProcess, commandLine: string): void => {
+    registerTrackedSubprocess(proc, commandLine);
+  },
+  getTrackedSubprocessCount: (): number => trackedSubprocesses.size,
+};
 
 export const __fusionWorkerRootCleanupTestHooks = {
   removeSelfMintedWorkerRootWithRetry,

@@ -218,6 +218,27 @@ describe("FN-5997 mobile chat message pane rendering", () => {
     }
   });
 
+  it("dismisses mobile attachment previews at stream acceptance", async () => {
+    const restoreMatchMedia = mockViewportMode("mobile");
+    try {
+      const sendMessage = vi.fn((_content: string, _files?: File[], callbacks?: { onAccepted?: () => void }) => callbacks?.onAccepted?.());
+      setupChat({ sessions: [activeSession], filteredSessions: [activeSession], activeSession, sendMessage });
+      await renderWithCss(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+      const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+      fireEvent.change(fileInput, { target: { files: [new File(["note"], "mobile.txt", { type: "text/plain" })] } });
+      expect(await screen.findByTestId("chat-attachment-previews")).toBeInTheDocument();
+
+      fireEvent.click(screen.getByTestId("chat-send-btn"));
+      await waitFor(() => expect(screen.queryByTestId("chat-attachment-previews")).not.toBeInTheDocument());
+      expect(screen.queryByTestId("chat-attachment-remove-0")).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Remove mobile.txt" })).not.toBeInTheDocument();
+      expect(screen.getByTestId("chat-attach-btn")).toBeInTheDocument();
+    } finally {
+      restoreMatchMedia.mockRestore();
+    }
+  });
+
   it("lets the direct-thread mobile empty states span the message pane without mobile card chrome while preserving other states", async () => {
     const restoreMatchMedia = mockViewportMode("mobile");
     try {

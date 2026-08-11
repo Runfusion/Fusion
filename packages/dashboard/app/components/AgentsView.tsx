@@ -26,7 +26,7 @@ import {
   MIN_HEARTBEAT_INTERVAL_MS,
   HEARTBEAT_INTERVAL_PRESETS,
 } from "../utils/heartbeatIntervals";
-import { isEphemeralAgent, getErrorMessage } from "@fusion/core";
+import { isEphemeralAgent, getErrorMessage, resolvePermanentAgentEffectiveModel, type Settings } from "@fusion/core";
 import { formatAgentSkillBadgeLabel } from "../utils/agentSkills";
 import {
   ORG_CHART_LAYOUT_STORAGE_KEY,
@@ -39,12 +39,17 @@ import { AgentAvatar } from "./AgentAvatar";
 import { AgentErrorIndicator } from "./AgentErrorDetailsModal";
 import { AgentTaskBadge } from "./AgentTaskBadge";
 import { RuntimeFallbackBadge } from "./RuntimeFallbackBadge";
+import { useAgentActivity } from "../hooks/useAgentActivity";
+import { useReducedMotion } from "../hooks/useReducedMotion";
+import { orgChartEdgeKey, resolveFlowEdges, resolveNodeActivityState } from "./agentsOrgChartActivity";
+import type { AgentActivityEvent } from "../api";
 
 export interface AgentsViewProps {
   addToast: (message: string, type?: "success" | "error") => void;
   projectId?: string;
   onOpenTaskLogs?: (taskId: string) => void;
   agentOnboardingEnabled?: boolean;
+  focusAgent?: { agentId: string; requestId: number };
 }
 
 function getAgentRoles(t: TFunction<"app">): { value: AgentCapability; label: string; icon: string }[] {
@@ -134,7 +139,7 @@ FNXC:AgentsView 2026-06-23-04:00:
 Agent list cards must expose the configured model or plugin runtime without requiring a detail-view open.
 Use the same runtimeHint/modelProvider+modelId/legacy model fallback order as the detail view and leave no-override agents as Auto at render time.
 */
-function getAgentModelLabel(agent: Agent): AgentModelLabel {
+function getAgentModelLabel(agent: Agent, settings?: Partial<Settings>): AgentModelLabel {
   const runtimeConfig = agent.runtimeConfig ?? {};
   const runtimeHint = typeof runtimeConfig.runtimeHint === "string" ? runtimeConfig.runtimeHint : "";
   if (runtimeHint) {
@@ -153,7 +158,8 @@ function getAgentModelLabel(agent: Agent): AgentModelLabel {
     return { label: legacyModel.slice(slashIdx + 1), isRuntime: false };
   }
 
-  return { label: null, isRuntime: false };
+  const effective = resolvePermanentAgentEffectiveModel(agent, settings);
+  return { label: effective.provider && effective.modelId ? `${effective.provider}/${effective.modelId}` : null, isRuntime: false };
 }
 
 function getOrgChartLeafCount(node: OrgTreeNode): number {
@@ -162,6 +168,19 @@ function getOrgChartLeafCount(node: OrgTreeNode): number {
   }
 
   return node.children.reduce((sum, child) => sum + getOrgChartLeafCount(child), 0);
+}
+
+/**
+ * FNXC:OrgChartNavigation 2026-08-09-22:00: Node chat navigation must use the
+ * rendered org-tree task binding when the independently refreshed roster lags.
+ */
+function findOrgTreeAgent(nodes: readonly OrgTreeNode[], agentId: string): Agent | undefined {
+  for (const node of nodes) {
+    if (node.agent.id === agentId) return node.agent;
+    const child = findOrgTreeAgent(node.children, agentId);
+    if (child) return child;
+  }
+  return undefined;
 }
 
 function getHealthSummary(agent: Agent, health: AgentHealthStatus, t: TFunction<"app">): { title: string | undefined; label: string | null } {
@@ -217,9 +236,11 @@ type OrgChartNodeProps = {
   selectedAgentId: string | null;
   registerNodeElement: (id: string, element: HTMLDivElement | null) => void;
   linksRef: MutableRefObject<OrgChartLink[]>;
+  activityByAgentId: ReadonlyMap<string, AgentActivityEvent>;
+  nowTick: number;
 };
 
-function OrgChartNode({ node, onSelect, getHealthStatus, selectedAgentId, registerNodeElement, linksRef }: OrgChartNodeProps) {
+function OrgChartNode({ node, onSelect, getHealthStatus, selectedAgentId, registerNodeElement, linksRef, activityByAgentId, nowTick }: OrgChartNodeProps) {
   const { t } = useTranslation("app");
   const { agent, children } = node;
   const health = getHealthStatus(agent);
@@ -227,6 +248,8 @@ function OrgChartNode({ node, onSelect, getHealthStatus, selectedAgentId, regist
   const stateBadgeClass = getStateBadgeClass(agent.state);
   const stateNodeClass = getStateCardClass("org-chart-node-card", agent.state);
   const subtreeLeafCount = getOrgChartLeafCount(node);
+  const activityState = resolveNodeActivityState(agent, activityByAgentId.get(agent.id), nowTick, health);
+  const activityClass = activityState === "unknown" ? "" : ` org-chart-node-card--activity-${activityState}`;
   const nodeStyle = { "--org-chart-subtree-leaves": String(subtreeLeafCount) } as CSSProperties;
 
   return (
@@ -234,7 +257,8 @@ function OrgChartNode({ node, onSelect, getHealthStatus, selectedAgentId, regist
       <div
         ref={(element) => registerNodeElement(agent.id, element)}
         data-agent-id={agent.id}
-        className={`org-chart-node-card ${stateNodeClass}${selectedAgentId === agent.id ? " agent-card--selected" : ""}`}
+        className={`org-chart-node-card ${stateNodeClass}${activityClass}${selectedAgentId === agent.id ? " agent-card--selected" : ""}`}
+        {...(activityState === "unknown" ? {} : { "data-activity-state": activityState, "aria-label": `${agent.name}: ${activityState}` })}
         onClick={() => onSelect(agent.id)}
         role="button"
         tabIndex={0}
@@ -272,6 +296,8 @@ function OrgChartNode({ node, onSelect, getHealthStatus, selectedAgentId, regist
                 selectedAgentId={selectedAgentId}
                 registerNodeElement={registerNodeElement}
                 linksRef={linksRef}
+                activityByAgentId={activityByAgentId}
+                nowTick={nowTick}
               />
             );
           })}
@@ -288,6 +314,8 @@ function OrgChartConnectors({
   viewportRef,
   layoutMode,
   transform,
+  activityEvents,
+  nowTick,
 }: {
   links: OrgChartLink[];
   nodeElements: Map<string, HTMLDivElement>;
@@ -295,8 +323,16 @@ function OrgChartConnectors({
   viewportRef: RefObject<HTMLDivElement | null>;
   layoutMode: OrgChartLayoutMode;
   transform: OrgChartTransform;
+  activityEvents: readonly AgentActivityEvent[];
+  nowTick: number;
 }) {
-  const [paths, setPaths] = useState<string[]>([]);
+  const [paths, setPaths] = useState<Array<{ d: string; link: OrgChartLink }>>([]);
+  const reducedMotion = useReducedMotion();
+  /*
+  FNXC:OrgChartConnectorFlow 2026-08-09-21:45:
+  Delegation flow uses the existing measured paths in either layout. Reduced-motion users retain a static directional stroke rather than an animated dash, so direction is not hidden with the animation.
+  */
+  const flowEdges = useMemo(() => resolveFlowEdges(links, activityEvents, nowTick), [activityEvents, links, nowTick]);
 
   useLayoutEffect(() => {
     const canvas = canvasRef.current;
@@ -325,7 +361,7 @@ function OrgChartConnectors({
           const endX = cLeft;
           const endY = cTop + childRect.height / transform.scale / 2;
           const midX = startX - (startX - endX) / 2;
-          return [`M ${startX} ${startY} L ${midX} ${startY} L ${midX} ${endY} L ${endX} ${endY}`];
+          return [{ d: `M ${startX} ${startY} L ${midX} ${startY} L ${midX} ${endY} L ${endX} ${endY}`, link: { parentId, childId } }];
         }
 
         const startX = pLeft + parentRect.width / transform.scale / 2;
@@ -333,7 +369,7 @@ function OrgChartConnectors({
         const endX = cLeft + childRect.width / transform.scale / 2;
         const endY = cTop;
         const midY = startY + (endY - startY) / 2;
-        return [`M ${startX} ${startY} L ${startX} ${midY} L ${endX} ${midY} L ${endX} ${endY}`];
+        return [{ d: `M ${startX} ${startY} L ${startX} ${midY} L ${endX} ${midY} L ${endX} ${endY}`, link: { parentId, childId } }];
       });
       setPaths(next);
     };
@@ -348,15 +384,18 @@ function OrgChartConnectors({
 
   return (
     <svg className="agent-org-chart-connectors" aria-hidden="true">
-      {paths.map((d, index) => (
-        <path key={`${index}-${d}`} d={d} />
-      ))}
+      {paths.map(({ d, link }) => {
+        const direction = flowEdges.get(orgChartEdgeKey(link.parentId, link.childId));
+        const flowClass = direction ? ` agent-org-chart-connectors__flow--${reducedMotion ? "static " : ""}${direction}` : "";
+        return <path key={`${link.parentId}-${link.childId}-${d}`} d={d} className={flowClass || undefined} {...(direction ? { "data-flow-direction": direction } : {})} />;
+      })}
     </svg>
   );
 }
 
-export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardingEnabled = false }: AgentsViewProps) {
+export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardingEnabled = false, focusAgent }: AgentsViewProps) {
   const { t } = useTranslation("app");
+  const activitySnapshot = useAgentActivity(projectId);
   const agentRoles = getAgentRoles(t);
   const [showSystemAgents, setShowSystemAgents] = useState(false);
 
@@ -602,6 +641,7 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
   const [customHeartbeatMinutes, setCustomHeartbeatMinutes] = useState<Record<string, string>>({});
   /** Global heartbeat multiplier loaded from project settings */
   const [heartbeatMultiplier, setHeartbeatMultiplier] = useState<number>(1);
+  const [agentModelSettings, setAgentModelSettings] = useState<Partial<Settings>>({});
   /** Whether the heartbeat multiplier is currently being saved */
   const [isSavingMultiplier, setIsSavingMultiplier] = useState(false);
   /** Agent IDs with an in-flight state transition (for optimistic update guard) */
@@ -623,6 +663,7 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
       .then((settings) => {
         if (!isMountedRef.current) return;
         setHeartbeatMultiplier(settings.heartbeatMultiplier ?? 1);
+        setAgentModelSettings(settings);
       })
       .catch(() => {
         // Use default on error
@@ -1173,7 +1214,10 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
   const handleOrgChartNodeSelect = useCallback((agentId: string) => {
     setSelectedOrgChartAgentId(agentId);
     openAgentDetail(agentId);
-  }, [openAgentDetail]);
+    const taskId = agents.find((agent) => agent.id === agentId)?.taskId
+      ?? findOrgTreeAgent(orgTree, agentId)?.taskId;
+    if (taskId && onOpenTaskLogs) onOpenTaskLogs(taskId);
+  }, [agents, onOpenTaskLogs, openAgentDetail, orgTree]);
 
   const handleDetailMutationSuccess = useCallback(async ({ agentId, deleted }: { agentId: string; deleted?: boolean }) => {
     await refreshAgents();
@@ -1188,6 +1232,16 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
       setIsOverviewOpen(false);
     }
   }, [isMobileViewport, openAgentDetail]);
+  const handledFocusRequestRef = useRef<number | undefined>(undefined);
+  /*
+  FNXC:CommandCenterAgentActivity 2026-08-10-01:30:
+  Command Center supplies a monotonic request id, not merely an agent id, so repeat activity-row clicks reopen the same detail while unrelated renders remain inert.
+  */
+  useEffect(() => {
+    if (!focusAgent || handledFocusRequestRef.current === focusAgent.requestId) return;
+    handledFocusRequestRef.current = focusAgent.requestId;
+    handleOverviewAgentSelect(focusAgent.agentId);
+  }, [focusAgent, handleOverviewAgentSelect]);
 
   const handleRunHeartbeat = async (agentId: string, agentName: string) => {
     // Optimistic state flip: the API call can take several seconds before the
@@ -1876,6 +1930,8 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
                               selectedAgentId={selectedOrgChartAgentId}
                               registerNodeElement={registerOrgChartNodeElement}
                               linksRef={orgChartLinksRef}
+                              activityByAgentId={activitySnapshot.activityByAgentId}
+                              nowTick={activitySnapshot.nowTick}
                             />
                           ));
                         })()
@@ -1888,6 +1944,8 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
                       viewportRef={orgChartViewportRef}
                       layoutMode={orgChartLayoutMode}
                       transform={orgChartTransform}
+                      activityEvents={activitySnapshot.events}
+                      nowTick={activitySnapshot.nowTick}
                     />
                   </div>
                 </div>
@@ -1994,7 +2052,7 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
               const isHeartbeatDisabled = !isAgentHeartbeatEnabled(agent);
               const heartbeatSelectValue = isHeartbeatDisabled ? HEARTBEAT_DISABLED_OPTION_VALUE : String(configuredIntervalMs);
               const isUpdatingHeartbeat = isBulkHeartbeatMutationRunning || updatingHeartbeatAgentId === agent.id || heartbeatMutationAgentIds.has(agent.id);
-              const modelLabel = getAgentModelLabel(agent);
+              const modelLabel = getAgentModelLabel(agent, agentModelSettings);
               return (
                 <div
                   key={agent.id}

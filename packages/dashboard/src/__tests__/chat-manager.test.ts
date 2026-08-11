@@ -210,6 +210,94 @@ describe("ChatManager.sendMessage", () => {
     vi.restoreAllMocks();
   });
 
+  it("emits one content-free usage event after persisting a human chat turn", async () => {
+    const taskStore = { emitUsageEvent: vi.fn(), getSettings: vi.fn().mockResolvedValue({}) };
+    __setCreateResolvedAgentSession(async () => ({
+      session: {
+        prompt: vi.fn().mockResolvedValue(undefined), dispose: vi.fn(),
+        model: { provider: "anthropic", id: "claude-test" },
+        state: { messages: [{ role: "assistant", content: "done" }] },
+      },
+    }) as any);
+    mockChatStore.addMessage.mockImplementation((_sessionId, input) => ({
+      id: input.role === "user" ? "user-msg" : "assistant-msg", role: input.role,
+      sessionId: "chat-001", content: input.content, createdAt: "2026-08-09T00:00:00.000Z",
+    }));
+
+    const manager = new ChatManager(mockChatStore as any, "/tmp/test", mockAgentStore as any, undefined, undefined, undefined, taskStore as any);
+    await manager.sendMessage("chat-001", "private chat text");
+
+    expect(taskStore.emitUsageEvent).toHaveBeenCalledTimes(1);
+    expect(taskStore.emitUsageEvent).toHaveBeenCalledWith({
+      kind: "user_message", agentId: "agent-001", taskId: null, category: "chat",
+    });
+    expect(JSON.stringify(taskStore.emitUsageEvent.mock.calls[0])).not.toContain("private chat text");
+  });
+
+  it("records task-planner chat against its task without inventing an agent id", async () => {
+    const taskStore = { emitUsageEvent: vi.fn(), getSettings: vi.fn().mockResolvedValue({}) };
+    mockChatStore.getSession.mockReturnValue({ id: "chat-001", agentId: "task-planner:FN-8868", status: "active" });
+    __setCreateResolvedAgentSession(async () => ({
+      session: { prompt: vi.fn().mockResolvedValue(undefined), dispose: vi.fn(), state: { messages: [] } },
+    }) as any);
+
+    const manager = new ChatManager(mockChatStore as any, "/tmp/test", mockAgentStore as any, undefined, undefined, undefined, taskStore as any);
+    await manager.sendMessage("chat-001", "private task chat text");
+
+    expect(taskStore.emitUsageEvent).toHaveBeenCalledWith({
+      kind: "user_message", agentId: null, taskId: "FN-8868", category: "chat",
+    });
+  });
+
+  it("does not require a TaskStore to persist a human chat turn", async () => {
+    __setCreateResolvedAgentSession(async () => ({
+      session: { prompt: vi.fn().mockResolvedValue(undefined), dispose: vi.fn(), state: { messages: [] } },
+    }) as any);
+
+    await expect(createChatManager().sendMessage("chat-001", "task-store-less turn")).resolves.toBeUndefined();
+  });
+
+  it("keeps a rejected telemetry event out of the chat save-error path", async () => {
+    const taskStore = { emitUsageEvent: vi.fn().mockRejectedValue(new Error("telemetry unavailable")), getSettings: vi.fn().mockResolvedValue({}) };
+    const broadcast = vi.spyOn(chatStreamManager, "broadcast");
+    __setCreateResolvedAgentSession(async () => ({
+      session: { prompt: vi.fn().mockResolvedValue(undefined), dispose: vi.fn(), state: { messages: [] } },
+    }) as any);
+
+    await expect(new ChatManager(mockChatStore as any, "/tmp/test", mockAgentStore as any, undefined, undefined, undefined, taskStore as any)
+      .sendMessage("chat-001", "telemetry-failure turn")).resolves.toBeUndefined();
+    await Promise.resolve();
+
+    expect(taskStore.emitUsageEvent).toHaveBeenCalledTimes(1);
+    expect(broadcast).not.toHaveBeenCalledWith("chat-001", expect.objectContaining({ data: expect.stringContaining("Failed to save message") }), expect.anything());
+  });
+
+  it("emits no telemetry when the user-turn persistence fails", async () => {
+    const taskStore = { emitUsageEvent: vi.fn(), getSettings: vi.fn().mockResolvedValue({}) };
+    mockChatStore.addMessage.mockRejectedValueOnce(new Error("database unavailable"));
+
+    await expect(new ChatManager(mockChatStore as any, "/tmp/test", mockAgentStore as any, undefined, undefined, undefined, taskStore as any)
+      .sendMessage("chat-001", "failed user turn")).resolves.toBeUndefined();
+
+    expect(taskStore.emitUsageEvent).not.toHaveBeenCalled();
+  });
+
+  it("emits only the persisted user turn, never generated assistant output", async () => {
+    const taskStore = { emitUsageEvent: vi.fn(), getSettings: vi.fn().mockResolvedValue({}) };
+    __setCreateResolvedAgentSession(async () => ({
+      session: {
+        prompt: vi.fn().mockResolvedValue(undefined), dispose: vi.fn(),
+        state: { messages: [{ role: "assistant", content: "generated response" }] },
+      },
+    }) as any);
+
+    await new ChatManager(mockChatStore as any, "/tmp/test", mockAgentStore as any, undefined, undefined, undefined, taskStore as any)
+      .sendMessage("chat-001", "human turn");
+
+    expect(taskStore.emitUsageEvent).toHaveBeenCalledTimes(1);
+    expect(taskStore.emitUsageEvent).toHaveBeenCalledWith(expect.objectContaining({ kind: "user_message", category: "chat" }));
+  });
+
   it("routes model-less QuickChat through configured default grok-cli provider", async () => {
     let createOptions: any;
     __setCreateResolvedAgentSession(async (options: any) => {
@@ -4032,6 +4120,51 @@ describe("ChatManager generation isolation", () => {
       senderAgentId: "agent-001",
       content: "Recovered room answer",
     });
+  });
+
+  it("forwards inherited project model and thinking for direct role-agent chat", async () => {
+    mockAgentStore.getAgent.mockResolvedValue({
+      id: "agent-001", name: "Workflow Merger", role: "merger", roles: ["merger"],
+      metadata: { builtInWorkflowRole: true, workflowRole: "merger" }, runtimeConfig: { enabled: false },
+    });
+    const createResolvedSession = vi.fn(async () => ({
+      session: { prompt: vi.fn().mockResolvedValue(undefined), dispose: vi.fn(), state: { messages: [{ role: "assistant", content: "Done" }] } },
+    }));
+    __setCreateResolvedAgentSession(createResolvedSession as any);
+    const chatManager = createChatManagerWithSettings({
+      defaultProviderOverride: "anthropic", defaultModelIdOverride: "claude-project", defaultThinkingLevelOverride: "high",
+    } as any);
+
+    await chatManager.sendMessage("chat-001", "Hello");
+
+    expect(createResolvedSession).toHaveBeenCalledWith(expect.objectContaining({
+      defaultProvider: "anthropic", defaultModelId: "claude-project", defaultThinkingLevel: "high",
+    }));
+  });
+
+  it("forwards inherited role settings for room responders while room thinking wins", async () => {
+    (mockChatStore as any).getRoom = vi.fn().mockReturnValue({ id: "room-1", name: "team", thinkingLevel: "off" });
+    (mockChatStore as any).listRoomMembers = vi.fn().mockReturnValue([{ roomId: "room-1", agentId: "agent-001", role: "member" }]);
+    (mockChatStore as any).addRoomMessage = vi.fn().mockImplementation((_roomId: string, input: any) => ({ id: "room-message", ...input }));
+    const merger = {
+      id: "agent-001", name: "Workflow Merger", role: "merger", roles: ["merger"], state: "active",
+      metadata: { builtInWorkflowRole: true, workflowRole: "merger" }, runtimeConfig: { enabled: false },
+    };
+    mockAgentStore.listAgents.mockResolvedValue([merger]);
+    mockAgentStore.getAgent.mockResolvedValue(merger);
+    const createResolvedSession = vi.fn(async () => ({
+      session: { prompt: vi.fn().mockResolvedValue(undefined), dispose: vi.fn(), state: { messages: [{ role: "assistant", content: "Done" }] } },
+    }));
+    __setCreateResolvedAgentSession(createResolvedSession as any);
+    const chatManager = createChatManagerWithSettings({
+      defaultProviderOverride: "anthropic", defaultModelIdOverride: "claude-project", mergerThinkingLevel: "high",
+    } as any);
+
+    await chatManager.sendRoomMessage("room-1", "Hello @Workflow_Merger");
+
+    expect(createResolvedSession).toHaveBeenCalledWith(expect.objectContaining({
+      defaultProvider: "anthropic", defaultModelId: "claude-project", defaultThinkingLevel: "off",
+    }));
   });
 
 });

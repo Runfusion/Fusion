@@ -41,6 +41,7 @@ import { MailboxArtifactAttachment } from "./MailboxArtifactAttachment";
 import { MailboxRelatedWorkLink, hasRelatedTaskLink } from "./MailboxRelatedWorkLink";
 import { MailboxNativeStructureEmbeds } from "./MailboxNativeStructureEmbeds";
 import { MailboxTaskProposal } from "./MailboxTaskProposal";
+import { MailboxKindBadge, MailboxStructuralItem, isStructuralMail } from "./MailboxStructuralItem";
 import type { Agent } from "../api";
 import { useMobileScrollLock } from "../hooks/useMobileScrollLock";
 import { useMobileKeyboard } from "../hooks/useMobileKeyboard";
@@ -299,6 +300,7 @@ export function MailboxModal({
   useMobileScrollLock(isOpen);
   const [activeTab, setActiveTab] = useState<MailboxTab>("inbox");
   const [inbox, setInbox] = useState<InboxResponse | null>(() => initialInbox ?? null);
+  const [structuralFilter, setStructuralFilter] = useState<"all" | "structural">("all");
   const [outbox, setOutbox] = useState<OutboxResponse | null>(() => initialOutbox ?? null);
   const [unreadCount, setUnreadCount] = useState(initialUnreadCount ?? 0);
   const [isLoading, setIsLoading] = useState(false);
@@ -528,6 +530,14 @@ export function MailboxModal({
   const handleOpenMessage = useCallback(async (message: Message, source: "deep-link" | "user" = "user") => {
     if (source === "user") {
       consumeCurrentDeepLink();
+    }
+    /*
+    FNXC:StructuralMail 2026-08-09-09:57:
+    Deep links read the full inbox, so an ordinary target clears the structural segment rather than
+    leaving the selected detail disconnected from an empty filtered list.
+    */
+    if (source === "deep-link" && activeTab === "inbox" && !isStructuralMail(message.metadata)) {
+      setStructuralFilter("all");
     }
     setSelectedMessage(message);
     setReplyContextExpanded({});
@@ -765,6 +775,8 @@ export function MailboxModal({
     t,
   };
 
+  const filteredInboxMessages = useMemo(() => structuralFilter === "structural" ? (inbox?.messages.filter((message) => isStructuralMail(message.metadata)) ?? []) : (inbox?.messages ?? []), [inbox, structuralFilter]);
+
   // ── Render ────────────────────────────────────────────────────────────
 
   return (
@@ -873,6 +885,7 @@ export function MailboxModal({
                 </button>
                 <div className="mailbox-message-detail-meta">
                   <span className="mailbox-message-type">{messageTypeLabel(selectedMessage.type, t)}</span>
+                <MailboxKindBadge metadata={selectedMessage.metadata} />
                   <span className="mailbox-message-time">{formatTimestamp(selectedMessage.createdAt, t)}</span>
                 </div>
                 <div className="mailbox-message-detail-actions">
@@ -948,6 +961,7 @@ export function MailboxModal({
                           className="mailbox-conversation-msg-body"
                           onOpenTask={onOpenTask}
                         />
+                        <MailboxStructuralItem metadata={msg.metadata} projectId={projectId} onOpenTask={onOpenTask} addToast={addToast} onDecided={() => { void loadInbox(); }} />
                         <MailboxRelatedWorkLink
                           metadata={msg.metadata}
                           onOpenTask={onOpenTask}
@@ -989,6 +1003,7 @@ export function MailboxModal({
                     testId="mailbox-message-body"
                     onOpenTask={onOpenTask}
                   />
+                  <MailboxStructuralItem metadata={selectedMessage.metadata} projectId={projectId} onOpenTask={onOpenTask} addToast={addToast} onDecided={() => { void loadInbox(); }} />
                   <MailboxRelatedWorkLink
                     metadata={selectedMessage.metadata}
                     onOpenTask={onOpenTask}
@@ -1031,6 +1046,10 @@ export function MailboxModal({
               {/* Inbox Tab */}
               {activeTab === "inbox" && (
                 <div className="mailbox-list" data-testid="mailbox-inbox-list">
+          <div className="mailbox-structural-filter" role="group" aria-label="Inbox filter">
+            <button type="button" className="btn btn-sm btn-secondary" aria-pressed={structuralFilter === "all"} data-testid="mailbox-structural-filter-all" onClick={() => setStructuralFilter("all")}>All</button>
+            <button type="button" className="btn btn-sm btn-secondary" aria-pressed={structuralFilter === "structural"} data-testid="mailbox-structural-filter-structural" onClick={() => setStructuralFilter("structural")}>Reports & approvals</button>
+          </div>
                   {isLoading && !inbox && <MailboxSkeleton />}
                   {inbox && inbox.messages.length === 0 && (
                     <div className="mailbox-empty" data-testid="mailbox-inbox-empty">
@@ -1038,7 +1057,13 @@ export function MailboxModal({
                       <p>{t("mailbox.noInbox", "No messages in your inbox")}</p>
                     </div>
                   )}
-                  {inbox?.messages.map((msg) => (
+                  {inbox && inbox.messages.length > 0 && filteredInboxMessages.length === 0 && (
+                    <div className="mailbox-empty" data-testid="mailbox-structural-filter-empty">
+                      <InboxIcon size={32} />
+                      <p>{t("mailbox.noStructuralMessages", "No reports or approvals in your inbox")}</p>
+                    </div>
+                  )}
+                  {filteredInboxMessages.map((msg) => (
                     <div
                       key={msg.id}
                       id={`message-${msg.id}`}
@@ -1054,6 +1079,7 @@ export function MailboxModal({
                           <span className="mailbox-item-from">
                             {participantLabel(msg.fromId, msg.fromType, agentNamesById, t)}
                           </span>
+                          <MailboxKindBadge metadata={msg.metadata} />
                           <span className="mailbox-item-time">{formatTimestamp(msg.createdAt, t)}</span>
                         </div>
                         <div className="mailbox-item-preview">{msg.content.slice(0, 80)}{msg.content.length > 80 ? "…" : ""}</div>

@@ -80,6 +80,7 @@ describe("SelfHealingManager stale merge fanout recovery (FN-4241)", () => {
       rootDir: "/tmp/test-project",
       staleMergingStatusMinAgeMs: 5 * 60_000,
       staleMergingFanoutMinAgeMs: 15 * 60_000,
+      getActiveMergeTaskId: () => null,
     });
 
     const recoveredMerging = await manager.recoverStaleMergingStatus();

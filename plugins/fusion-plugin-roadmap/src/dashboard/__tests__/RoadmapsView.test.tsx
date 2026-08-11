@@ -134,6 +134,22 @@ const mockRoadmapHierarchy: RoadmapWithHierarchy = {
 };
 
 const mockAddToast = vi.fn();
+const NATIVE_STRUCTURE_MIME = "application/x-fusion-native-structure";
+
+function nativeDragTransfer(): DataTransfer {
+  const data = new Map<string, string>();
+  return {
+    types: [] as unknown as DOMStringList,
+    effectAllowed: "none",
+    setData(type: string, value: string) {
+      data.set(type, value);
+      (this.types as unknown as string[]) = [...data.keys()];
+    },
+    getData(type: string) {
+      return data.get(type) ?? "";
+    },
+  } as unknown as DataTransfer;
+}
 
 describe("RoadmapsView", () => {
   it.each(["dark", "light"])("renders roadmap host content without console errors in %s theme", async (theme) => {
@@ -208,6 +224,41 @@ describe("RoadmapsView", () => {
     // Should show milestones
     expect(screen.getByText("Milestone 1")).toBeInTheDocument();
     expect(screen.getByText("Milestone 2")).toBeInTheDocument();
+  });
+
+  it("keeps feature reordering while adding a host-owned native structure drag payload", async () => {
+    const beginNativeStructureDrag = vi.fn((dataTransfer: DataTransfer, ref: { kind: string; id: string; projectId?: string }) => {
+      dataTransfer.setData(NATIVE_STRUCTURE_MIME, JSON.stringify(ref));
+      return true;
+    });
+    render(<RoadmapsView projectId="project-1" addToast={mockAddToast} beginNativeStructureDrag={beginNativeStructureDrag} />);
+    await waitFor(() => expect(screen.getByText("Q2 Roadmap")).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("roadmap-item-RM-001"));
+    const feature = await screen.findByTestId("feature-item-RF-001");
+    const dataTransfer = nativeDragTransfer();
+
+    fireEvent.dragStart(feature, { dataTransfer });
+
+    expect(dataTransfer.getData("text/plain")).toBe("feature:RF-001");
+    expect(dataTransfer.getData(NATIVE_STRUCTURE_MIME)).toBe(JSON.stringify({ kind: "roadmap-item", id: "RF-001", projectId: "project-1" }));
+    expect(dataTransfer.effectAllowed).toBe("copyMove");
+    expect(beginNativeStructureDrag).toHaveBeenCalledWith(dataTransfer, { kind: "roadmap-item", id: "RF-001", projectId: "project-1" });
+  });
+
+  it("preserves the reorder-only feature drag contract when native payload attachment is unavailable", async () => {
+    const beginNativeStructureDrag = vi.fn(() => false);
+    render(<RoadmapsView addToast={mockAddToast} beginNativeStructureDrag={beginNativeStructureDrag} />);
+    await waitFor(() => expect(screen.getByText("Q2 Roadmap")).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("roadmap-item-RM-001"));
+    const feature = await screen.findByTestId("feature-item-RF-001");
+    const dataTransfer = nativeDragTransfer();
+
+    fireEvent.dragStart(feature, { dataTransfer });
+
+    expect(feature).toHaveAttribute("draggable", "true");
+    expect(dataTransfer.getData("text/plain")).toBe("feature:RF-001");
+    expect(dataTransfer.getData(NATIVE_STRUCTURE_MIME)).toBe("");
+    expect(dataTransfer.effectAllowed).toBe("move");
   });
 
   it("creates a new roadmap", async () => {

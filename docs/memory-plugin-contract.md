@@ -341,3 +341,13 @@ If backend contract behavior changes in source, update these docs in the same ch
 ---
 
 *Last updated: 2026-04-19*
+
+## Recall layer
+
+The project-scoped recall store records durable `decision`, `preference`, and `solution` entries with content, tags, source provenance (`taskId`, `agentId`, `sessionId`, and origin), timestamps, and optional knowledge-graph node ids. `appendRecall` normalizes content (trim/lowercase/whitespace collapse/trailing punctuation removal) and rejects an exact normalized hash or Jaccard token similarity of at least `0.9` among the 200 most-recent same-kind records. That candidate window is intentionally bounded: an older exact twin is not visible to the in-memory classifier.
+
+Writes hold a transaction advisory lock keyed by `(project, kind)` across candidate lookup and insert, which serializes the read-then-write near-duplicate decision without contending unrelated kinds or projects. The named `(project_id, kind, content_hash)` constraint is only an exact-hash backstop: `ON CONFLICT DO NOTHING` keeps the transaction usable for its in-transaction re-read when an exact twin is outside the bounded window (or a bypassing importer races the write). A raising unique insert would abort the transaction, and the constraint cannot catch near duplicates.
+
+`searchRecall` uses deterministic keyword scoring and one shared `clampRecallSearchLimit` (default 10, maximum 50) for keyword, vector, degradation, and list paths. A caller may supply a per-call `RecallVectorSearchProvider` to rank—never fetch, write, or filter—the already project-scoped, kind/tag-filtered candidate set. There is no provider registry, setting, default implementation, or embedding dependency. `mode: "vector"` is returned only for a successful provider result containing a resolvable candidate; missing, throwing, empty, or unknown-only providers degrade to keyword mode while `capabilities.vector` remains true when a provider was supplied. Provider limits are advisory: the store discards unknown ids, keeps each duplicate id's highest score, ranks, then applies the same clamped limit after ranking.
+
+Prompt builders may append a `### Recalled Context` section capped at 800 UTF-8 bytes; the budget includes its separator, heading, lines, and trailing newline, and never truncates pre-existing instructions. This task adds no MCP/tool surface, automatic capture, consolidation, agent pre-steering, or knowledge-graph integration; those remain later work.

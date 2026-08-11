@@ -1,3 +1,6 @@
+import { randomUUID } from "node:crypto";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import "./executor-test-helpers.js";
 import { TaskExecutor } from "../executor.js";
@@ -28,6 +31,8 @@ describe("FN-009: verifyWorktreeInvariants with missing worktree directory", () 
       updatedAt: new Date().toISOString(),
     };
 
+    store.getTask.mockResolvedValue(task as any);
+
     // Mock existsSync to return false for the worktree path
     mockedExistsSync.mockImplementation((path: any) => {
       if (path === "/repo/.worktrees/missing") {
@@ -57,8 +62,13 @@ describe("FN-009: verifyWorktreeInvariants with missing worktree directory", () 
       updatedAt: new Date().toISOString(),
     };
 
+    store.getTask.mockResolvedValue(task as any);
     // Mock existsSync to return true for the worktree path
     mockedExistsSync.mockReturnValue(true);
+    mockedExecSync.mockImplementation((cmd: string) => {
+      if (cmd.includes("rev-parse --show-toplevel")) return Buffer.from("/repo\n");
+      return Buffer.from("");
+    });
 
     const result = await (executor as any).verifyWorktreeInvariants(task);
 
@@ -67,7 +77,9 @@ describe("FN-009: verifyWorktreeInvariants with missing worktree directory", () 
     // that the function doesn't return early with { ok: true } due to missing directory.
     // We verify that existsSync was called by checking it was configured.
     expect(mockedExistsSync).toHaveBeenCalled();
-    expect(result).toBeDefined();
+    expect(mockedExecSync).toHaveBeenCalled();
+    expect(result).not.toEqual({ ok: true });
+    expect(result).toMatchObject({ ok: false, reason: "wrong_toplevel" });
   });
 
   it("re-anchors nested task worktree to registered root and passes invariants", async () => {
@@ -85,6 +97,7 @@ describe("FN-009: verifyWorktreeInvariants with missing worktree directory", () 
       updatedAt: new Date().toISOString(),
     };
 
+    store.getTask.mockResolvedValue(task as any);
     mockedExistsSync.mockReturnValue(true);
     mockedExecSync.mockImplementation((cmd: string) => {
       if (cmd.includes("rev-parse --show-toplevel")) return Buffer.from("/repo/.worktrees/gentle-flame\n");
@@ -117,6 +130,7 @@ describe("FN-009: verifyWorktreeInvariants with missing worktree directory", () 
       updatedAt: new Date().toISOString(),
     };
 
+    store.getTask.mockResolvedValue(task as any);
     mockedExistsSync.mockReturnValue(true);
     mockedExecSync.mockImplementation((cmd: string) => {
       if (cmd.includes("rev-parse --show-toplevel")) return Buffer.from("/repo\n");
@@ -128,6 +142,45 @@ describe("FN-009: verifyWorktreeInvariants with missing worktree directory", () 
     expect(result.ok).toBe(false);
     expect(result.reason).toBe("wrong_toplevel");
     expect(store.updateTask).not.toHaveBeenCalledWith("FN-9005", expect.objectContaining({ worktree: expect.any(String) }));
+  });
+
+  /*
+  FNXC:ExternalExecutionCheckout 2026-08-10-01:06:
+  Verification must re-read persisted routing, fail closed when the live operator checkout is missing,
+  and report that live path rather than a stale managed-worktree snapshot.
+  */
+  it("fails closed from the live external route when the verification snapshot is stale", async () => {
+    const missingExternalCheckout = join(tmpdir(), `fusion-missing-operator-checkout-${randomUUID()}`);
+    const staleTask = {
+      id: "FN-9006",
+      title: "Test",
+      description: "Test",
+      column: "in-progress",
+      worktree: "/repo/.worktrees/stale",
+      branch: "fusion/fn-9006",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    store.getTask.mockResolvedValue({
+      ...staleTask,
+      sourceMetadata: {
+        externalExecutionCheckout: missingExternalCheckout,
+        externalExecutionBranch: "operator/runtime-fixes",
+      },
+    });
+    mockedExistsSync.mockImplementation((path: any) => path !== missingExternalCheckout);
+
+    const result = await (executor as any).verifyWorktreeInvariants(staleTask);
+
+    expect(result).toMatchObject({
+      ok: false,
+      reason: "wrong_toplevel",
+      observed: `checkoutPath is not a directory: ${missingExternalCheckout}`,
+      expected: "valid persisted external execution checkout",
+    });
   });
 
   it("preserves validation failure when worktree path is null", async () => {
@@ -145,6 +198,7 @@ describe("FN-009: verifyWorktreeInvariants with missing worktree directory", () 
       updatedAt: new Date().toISOString(),
     };
 
+    store.getTask.mockResolvedValue(task as any);
     const result = await (executor as any).verifyWorktreeInvariants(task);
 
     expect(result.ok).toBe(false);

@@ -22,6 +22,7 @@ import type {
 export interface RoadmapsViewProps {
   projectId?: string;
   addToast: (message: string, type?: ToastType) => void;
+  beginNativeStructureDrag?: (dataTransfer: DataTransfer, ref: import("@fusion/core").NativeStructureRef) => boolean;
 }
 
 // ── Drag State Types ────────────────────────────────────────────────
@@ -470,8 +471,9 @@ function MilestoneCard({
   onStartFeatureEdit: _onStartFeatureEdit,
   onCancelFeatureEdit,
   onSaveFeatureEdit,
-  projectId: _projectId,
+  projectId,
   addToast: _addToast,
+  beginNativeStructureDrag,
   // Milestone drag-and-drop props
   isMilestoneDragging,
   isMilestoneDropTarget,
@@ -519,6 +521,7 @@ function MilestoneCard({
   onSaveFeatureEdit: (updates: RoadmapFeatureUpdateInput) => void;
   projectId?: string;
   addToast: (message: string, type?: ToastType) => void;
+  beginNativeStructureDrag?: (dataTransfer: DataTransfer, ref: import("@fusion/core").NativeStructureRef) => boolean;
   // Milestone drag-and-drop props
   isMilestoneDragging: boolean;
   isMilestoneDropTarget: boolean;
@@ -794,9 +797,23 @@ function MilestoneCard({
                 draggable={!isEditingFeature}
                 onDragStart={(e) => {
                   if (!isEditingFeature) {
+                    /*
+                    FNXC:RoadmapNativeStructureDrag 2026-08-09-05:36:
+                    Feature drag starts must not bubble into the milestone reorder owner, which would
+                    overwrite feature:<id> with milestone:<id> and make both reorder and mail attach fail.
+                    */
+                    e.stopPropagation();
                     onFeatureDragStart(feature.id, milestone.id);
                     e.dataTransfer.setData("text/plain", `feature:${feature.id}`);
                     e.dataTransfer.effectAllowed = "move";
+                    /*
+                    FNXC:RoadmapNativeStructureDrag 2026-08-09-05:13:
+                    The composer requests copy, while roadmap reorder requires move. On fine pointers
+                    the host attaches its MIME and permits copyMove; on touch it returns false, leaving
+                    this row draggable for reorder only with no structure payload.
+                    */
+                    const attached = beginNativeStructureDrag?.(e.dataTransfer, { kind: "roadmap-item", id: feature.id, ...(projectId ? { projectId } : {}) }) === true;
+                    if (attached) e.dataTransfer.effectAllowed = "copyMove";
                   }
                 }}
                 onDragEnd={onFeatureDragEnd}
@@ -1408,7 +1425,7 @@ function CreateFeatureForm({
 
 // ── Main Component ────────────────────────────────────────────────────
 
-export function RoadmapsView({ projectId, addToast }: RoadmapsViewProps) {
+export function RoadmapsView({ projectId, addToast, beginNativeStructureDrag }: RoadmapsViewProps) {
   const { confirm } = useConfirm();
   const isMobile = useViewportMode() === "mobile";
 
@@ -2519,6 +2536,7 @@ export function RoadmapsView({ projectId, addToast }: RoadmapsViewProps) {
                       onSaveFeatureEdit={handleSaveFeatureEdit}
                       projectId={projectId}
                       addToast={addToast}
+                      beginNativeStructureDrag={beginNativeStructureDrag}
                       // Milestone drag-and-drop props
                       isMilestoneDragging={milestoneDrag.draggingId === milestone.id}
                       isMilestoneDropTarget={milestoneDrag.dropTargetId === milestone.id}

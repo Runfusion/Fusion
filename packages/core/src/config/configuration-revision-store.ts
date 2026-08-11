@@ -5,6 +5,7 @@ import {
   createConfigurationRevision,
   getConfigurationRevision,
   listConfigurationRevisions,
+  listConfigurationRevisionsPage,
 } from "../async-stores/async-configuration-revision-store.js";
 
 /**
@@ -21,8 +22,12 @@ export class ConfigurationRevisionStore {
     return revision;
   }
 
-  list(configKind: ConfigKind, configTarget: ConfigurationTarget, limit?: number): Promise<ConfigurationRevision[]> {
-    return listConfigurationRevisions(this.layer.db, { projectId: this.ownerProjectId, configKind, configTarget, limit });
+  list(configKind: ConfigKind, configTarget: ConfigurationTarget, paging?: number | { limit?: number; offset?: number }): Promise<ConfigurationRevision[]> {
+    return listConfigurationRevisions(this.layer.db, { projectId: this.ownerProjectId, configKind, configTarget, ...(typeof paging === "number" ? { limit: paging } : paging) });
+  }
+
+  listPage(configKind: ConfigKind, configTarget: ConfigurationTarget, paging?: number | { limit?: number; offset?: number }): Promise<{ revisions: ConfigurationRevision[]; hasMore: boolean }> {
+    return listConfigurationRevisionsPage(this.layer.db, { projectId: this.ownerProjectId, configKind, configTarget, ...(typeof paging === "number" ? { limit: paging } : paging) });
   }
 
   get(id: string): Promise<ConfigurationRevision | null> {

@@ -39,7 +39,7 @@ describe("classifyGhError", () => {
     { label: "not found", error: new Error("404 not found"), expectedCode: "not-found", retryable: false },
     { label: "network", error: new Error("getaddrinfo ENOTFOUND api.github.com"), expectedCode: "network", retryable: true, actionKind: "retry" },
     { label: "permission", error: new Error("403 permission denied"), expectedCode: "permission", retryable: false },
-    { label: "merge conflict", error: new Error("pull request is not mergeable due to merge conflict"), expectedCode: "merge-conflict", retryable: false },
+    { label: "explicit merge conflict", error: new Error("pull request is not mergeable due to merge conflict"), expectedCode: "merge-conflict", retryable: false },
     { label: "validation", error: new Error("422 validation failed"), expectedCode: "validation", retryable: false },
     { label: "timeout", error: new Error("gh command timed out after 30000ms"), expectedCode: "timeout", retryable: true, actionKind: "retry" },
     { label: "unknown", error: new Error("something novel happened"), expectedCode: "unknown", retryable: true, actionKind: "retry" },
@@ -55,6 +55,43 @@ describe("classifyGhError", () => {
     const result = classifyGhError({ message: "rate limit exceeded", stderr: "Retry-After: 3" });
     expect(result.code).toBe("rate-limited");
     expect(result.retryAfterMs).toBe(3000);
+  });
+
+  it("uses refreshed BLOCKED state to name a required review", () => {
+    const result = classifyGhError(new Error("pull request is not mergeable"), {
+      mergeable: "blocked",
+      reviewDecision: "REVIEW_REQUIRED",
+    });
+    expect(result).toMatchObject({ code: "merge-blocked-by-policy", retryable: false });
+    expect(result.message).toContain("review approval is required");
+    expect(result.message).not.toMatch(/conflict/i);
+  });
+
+  it("uses deterministic unique check blockers when policy blocks a merge", () => {
+    const result = classifyGhError(new Error("pull request is not mergeable"), {
+      mergeable: "BLOCKED",
+      blockingReasons: ["required checks not successful: ci (pending)", "required checks not successful: ci (pending)"],
+    });
+    expect(result).toMatchObject({ code: "merge-blocked-by-policy", retryable: false });
+    expect(result.message).toBe("Pull request is blocked by branch protection: required checks not successful: ci (pending).");
+  });
+
+  it("keeps all normalized policy blockers in deterministic order", () => {
+    const result = classifyGhError(new Error("pull request is not mergeable"), {
+      mergeable: "BLOCKED",
+      reviewDecision: "review_required",
+      blockingReasons: ["zebra check (failed)", "  alpha check (pending) ", "ZEBRA check (failed)"],
+    });
+    expect(result.message).toBe(
+      "Pull request is blocked by branch protection: review approval is required; alpha check (pending); zebra check (failed).",
+    );
+  });
+
+  it("uses refreshed conflict state but preserves context-free not mergeable errors", () => {
+    expect(classifyGhError(new Error("pull request is not mergeable"), { mergeable: "DIRTY" }).code).toBe("merge-conflict");
+    const unknown = classifyGhError(new Error("pull request is not mergeable"));
+    expect(unknown.code).toBe("unknown");
+    expect(unknown.message).toBe("pull request is not mergeable");
   });
 });
 

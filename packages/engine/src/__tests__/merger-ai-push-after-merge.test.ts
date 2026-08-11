@@ -113,6 +113,7 @@ function makeStore(settingsOverrides: Record<string, unknown> = {}) {
     emit: vi.fn(),
     logEntry: vi.fn(async (_id: string, message: string, action?: string) => { logs.push({ message, action }); }),
     appendAgentLog: vi.fn(async (_id: string, message: string) => { logs.push({ message }); }),
+    emitUsageEvent: vi.fn(async () => true),
     getBranchGroup: vi.fn(() => null),
     recordRunAuditEvent: vi.fn(),
   };

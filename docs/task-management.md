@@ -110,7 +110,13 @@ This layer complements, rather than replaces, FN-4829 similarity detection, FN-4
 
 Archiving a workspace (multi-repository) task now synchronously removes every recorded per-sub-repository worktree, including archives initiated by `fn_task_archive` and CLI paths that do not construct an executor. Each path is protected by a per-repository cross-process reservation until backend removal and branch cleanup finish. If one removal fails, its reservation is quarantined and the next acquisition reconciles that orphan; successful sibling repositories are still released. `archiveTask(..., { cleanup: false })` intentionally retains worktrees, and the self-healing workspace sweep remains an idempotent backstop.
 
-#### Explicit duplicate-marker guard (FN-5220)
+### Task-pinned orphan recovery
+
+When `worktreeNaming: "task-id"` finds an inactive pinned directory whose Git metadata is incomplete or unregistered, Fusion preserves the whole directory before recreating the task worktree at the same path. The normal preservation root is `<project>/.fusion/recovery/worktrees`. If the configured worktree directory is on another filesystem, Fusion retries the atomic rename under `<worktreesDir>/.fusion-recovery/worktrees` instead of using copy-and-delete.
+
+Each preservation root retains the newest 10 Fusion-generated orphan directories. Pruning is best-effort and skips unknown names, symlinks, unreadable entries, and paths with active sessions. Copy artifacts elsewhere if they need indefinite retention. Worktree discovery, cleanup, and capacity scans treat `.fusion-recovery` as an internal container rather than a task worktree.
+
+### Explicit duplicate-marker guard (FN-5220)
 
 Fusion also recognizes the canonical one-line redirect marker:
 
@@ -292,7 +298,7 @@ This is a forward-safety guard for stranded completed tasks. See FN-4055/FN-4079
 Fusion now derives `task.inReviewStall` for non-paused `in-review` tasks when a known stuck-state shape is detected. This signal is state-based (not log-heuristic) and is computed server-side on task hydration.
 
 `InReviewStallCode` values:
-- `transient-merge-status-no-owner` — task is still in `merging`/`merging-pr`/`merging-fix` after the stale-merging age threshold, but no active merger owns it.
+- `transient-merge-status-no-owner` — task is still in `merging`/`merging-pr`/`merging-fix` after the stale-merging age threshold, but no active merger owns it. `recoverStaleMergingStatus()` clears this stamp and re-enqueues auto-merge-eligible, non-workspace, non-`mergeConfirmed` **unpaused** tasks. Paused tasks never re-enqueue; the sole clear-only exception is the engine-owned `merge-deadlock-detected` hold, whose status-preserving park can otherwise retain an orphan stamp indefinitely. Explicit human, approval, and unknown pauses remain intentionally suppressed. The signal itself remains diagnostic-only.
 - `merge-retries-exhausted` — `mergeRetries` reached the auto-merge retry cap without `mergeDetails.mergeConfirmed === true`.
 - `no-worktree-no-merge-confirmed` — task has no worktree path and merge is not confirmed (excluding explicit no-op merges).
 - `merge-blocker` — `getTaskMergeBlocker()` reports a merge/finalization blocker.
@@ -354,7 +360,7 @@ Scheduler-side reporting emits structured, rate-limited task-log and engine-log 
 Success metric: maintainers can find all stale cards from the board UI in under 30 seconds.
 
 Auto-completion/finalization remains owned by existing recovery passes:
-- `recoverStaleMergingStatus`
+- `recoverStaleMergingStatus` — reconciles unowned aged merge stamps. It may clear the stamp on an engine-owned `merge-deadlock-detected` pause but never resumes, unpauses, moves, finalizes, or enqueues a paused card.
 - `finalizeNoOpReviewTasks`
 - `recoverMergeableReviewTasks`
 - `recoverAlreadyMergedReviewTasks`
@@ -828,9 +834,11 @@ Tasks execute on an effective node selected by routing precedence:
 2. **Project default node** (`defaultNodeId` in project settings)
 3. **Local execution** (no node configured)
 
-At dispatch time, scheduler routing is persisted on the task as:
+At dispatch time, scheduler routing is persisted on the task as the snapshot pair:
 - `effectiveNodeId`
 - `effectiveNodeSource` (`task-override`, `project-default`, or `local`)
+
+When a non-checked-out task's `nodeId` override changes, this persisted pair is invalidated unless the update explicitly replaces its fields. The next dispatch resolves routing again and writes a fresh snapshot pair.
 
 ### Create-time routing semantics
 

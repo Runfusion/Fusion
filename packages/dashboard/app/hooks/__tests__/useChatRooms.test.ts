@@ -445,6 +445,31 @@ describe("useChatRooms", () => {
     }, "proj-1");
   });
 
+  it("signals delivery before the trailing refetch and isolates throwing consumers", async () => {
+    const active = room("room-1", "one", "2026-05-09T01:00:00.000Z");
+    mockFetchChatRooms.mockResolvedValueOnce({ rooms: [active] });
+    const { result } = renderHook(() => useChatRooms("proj-1"));
+    await waitFor(() => expect(result.current.rooms.length).toBe(1));
+
+    mockFetchChatRoomMembers.mockResolvedValueOnce({ members: [] });
+    mockFetchChatRoomMessages.mockResolvedValueOnce({ messages: [] });
+    act(() => result.current.selectRoom("room-1"));
+    await waitFor(() => expect(result.current.activeRoom?.id).toBe("room-1"));
+
+    let resolveRefetch: ((value: { messages: ChatRoomMessage[] }) => void) | undefined;
+    mockFetchChatRoomMessages.mockReturnValueOnce(new Promise((resolve) => { resolveRefetch = resolve; }));
+    const onDelivered = vi.fn(() => { throw new Error("consumer failure"); });
+    let sendPromise!: Promise<void>;
+    await act(async () => {
+      sendPromise = result.current.sendRoomMessage("hello", { onDelivered });
+    });
+
+    await waitFor(() => expect(onDelivered).toHaveBeenCalledTimes(1));
+    expect(mockPostChatRoomMessage).toHaveBeenCalledTimes(1);
+    resolveRefetch?.({ messages: [roomMessage("msg-user", "room-1", "hello")] });
+    await expect(sendPromise).resolves.toBeUndefined();
+  });
+
   it("throws on upload failure and does not post", async () => {
     const active = room("room-1", "one", "2026-05-09T01:00:00.000Z");
     mockFetchChatRooms.mockResolvedValueOnce({ rooms: [active] });
@@ -457,13 +482,14 @@ describe("useChatRooms", () => {
     await waitFor(() => expect(result.current.activeRoom?.id).toBe("room-1"));
 
     const file = new File(["x"], "bad.txt", { type: "text/plain" });
+    const onDelivered = vi.fn();
     mockUploadChatRoomAttachment.mockRejectedValueOnce(new Error("Upload failed"));
     mockFetchChatRoomMessages.mockResolvedValueOnce({ messages: [] });
 
     let uploadError: unknown;
     await act(async () => {
       try {
-        await result.current.sendRoomMessage("hello", { files: [file] });
+        await result.current.sendRoomMessage("hello", { files: [file], onDelivered });
       } catch (error) {
         uploadError = error;
       }
@@ -472,6 +498,7 @@ describe("useChatRooms", () => {
     expect(uploadError).toBeInstanceOf(Error);
     expect((uploadError as Error).message).toBe("Failed to upload attachment: bad.txt");
     expect(uploadError).not.toBeInstanceOf(RoomMessageDeliveredButReplyFailedError);
+    expect(onDelivered).not.toHaveBeenCalled();
 
     expect(mockPostChatRoomMessage).not.toHaveBeenCalledWith("room-1", expect.objectContaining({ content: "hello" }), "proj-1");
   });
@@ -492,6 +519,7 @@ describe("useChatRooms", () => {
       role: "assistant" as const,
       senderAgentId: "agent-1",
     };
+    const onDelivered = vi.fn();
     mockPostChatRoomMessage.mockRejectedValueOnce(new Error("POST failed"));
     mockFetchChatRoomMessages.mockResolvedValueOnce({
       messages: [recoveredAssistantReply],
@@ -500,7 +528,7 @@ describe("useChatRooms", () => {
     let postError: unknown;
     await act(async () => {
       try {
-        await result.current.sendRoomMessage("hello");
+        await result.current.sendRoomMessage("hello", { onDelivered });
       } catch (error) {
         postError = error;
       }
@@ -509,6 +537,7 @@ describe("useChatRooms", () => {
     expect(postError).toBeInstanceOf(Error);
     expect((postError as Error).message).toBe("POST failed");
     expect(postError).not.toBeInstanceOf(RoomMessageDeliveredButReplyFailedError);
+    expect(onDelivered).not.toHaveBeenCalled();
 
     expect(result.current.messages).toEqual([recoveredAssistantReply]);
   });

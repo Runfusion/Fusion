@@ -28,6 +28,11 @@ export {
 } from "./backend-resolver.js";
 
 export {
+  PlanningLifecycleLockTransportError,
+  withPlanningLifecycleAdvisoryLock,
+} from "./advisory-locks.js";
+
+export {
   createConnectionSet,
   createConnectionSetFromUrl,
   verifyConnection,

@@ -1,4 +1,14 @@
-// Branch-name resolution: callers must pass the resolved integration branch via Step 3 plumbing; never hardcode "main". See FN-5349.
+/**
+ * FNXC:MergerUnification 2026-08-09-12:04:
+ * Master-plan U0 leaves this module unreachable from production: its sole caller
+ * is soft-deprecated aiMergeTask in merger.ts. Keep it for direct unit tests and
+ * a later deletion pass. scripts/check-prerebase-inert.mjs rejects a new caller
+ * or relative/@fusion/engine module-path importer anywhere in tracked source,
+ * including the plugin tree.
+ *
+ * Branch-name resolution: callers must pass the resolved integration branch via
+ * Step 3 plumbing; never hardcode "main". See FN-5349.
+ */
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
 import type { ProjectSettings } from "@fusion/core";

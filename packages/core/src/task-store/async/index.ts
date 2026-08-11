@@ -7,6 +7,7 @@ export * from "./async-archive-lineage.js";
 export * from "./async-audit.js";
 export * from "./async-branch-groups.js";
 export * from "./async-comments-attachments.js";
+export * from "./async-ci-checks.js";
 export * from "./async-events.js";
 export * from "./async-lifecycle.js";
 export * from "./async-maintenance.js";

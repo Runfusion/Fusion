@@ -269,6 +269,7 @@ pgDescribe("runtime-lifecycle-async: deleteTask lineage gate (PostgreSQL)", () =
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
         sourceParentTaskId: "FN-PARENT2",
+        approvedPlanFingerprint: "approved-lineage-scope",
         status: null,
       } as never,
       { lineageId: "test" },
@@ -284,5 +285,8 @@ pgDescribe("runtime-lifecycle-async: deleteTask lineage gate (PostgreSQL)", () =
       .where(eq(schema.project.tasks.id, "FN-PARENT2"));
     expect(rows.length).toBe(1);
     expect(rows[0].deletedAt).not.toBeNull();
+    const child = await h.store.getTask("FN-CHILD2");
+    expect(child.sourceParentTaskId).toBeUndefined();
+    expect(child.approvedPlanFingerprint).toBeUndefined();
   });
 });

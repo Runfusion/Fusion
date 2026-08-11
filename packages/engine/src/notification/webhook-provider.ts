@@ -166,12 +166,15 @@ export class WebhookNotificationProvider implements NotificationProvider {
         return `Task "${identifier}" has failed and needs attention`;
       case "awaiting-approval":
         /*
-        FNXC:PlanReviewReplan 2026-07-15-11:09:
-        Mirror ntfy: replan-cap holds must state that Plan Review did not converge.
+        FNXC:PullRequestMerge 2026-08-09-05:07:
+        Mirror the mailbox and ntfy wording: a PR policy hold is actionable by
+        resolving repository policy and retrying merge, not approving a plan.
         */
         return payload.metadata?.awaitingApprovalReason === "plan-review-replan-cap"
           ? `Task "${identifier}" needs approval because Plan Review requested revisions repeatedly without converging. Approve the current plan or reject to regenerate.`
-          : `Task "${identifier}" needs your approval before implementation can start`;
+          : payload.metadata?.awaitingApprovalReason === "merge-blocked-by-policy"
+            ? `Task "${identifier}" has a pull request blocked by repository policy. Resolve the policy requirement, then retry the merge.`
+            : `Task "${identifier}" needs your approval before implementation can start`;
       case "awaiting-user-review":
         return `Task "${identifier}" needs human review before it can proceed`;
       case "planning-awaiting-input":

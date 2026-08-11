@@ -99,6 +99,20 @@ describe("NtfyNotificationProvider", () => {
     );
   });
 
+  it("describes a pull-request policy hold without calling it plan approval", async () => {
+    await provider.sendNotification("awaiting-approval", {
+      taskId: "FN-1",
+      taskTitle: "T",
+      event: "awaiting-approval",
+      metadata: { awaitingApprovalReason: "merge-blocked-by-policy" },
+    });
+
+    expect(mocks.sendNtfyNotificationWithResult).toHaveBeenCalledWith(expect.objectContaining({
+      title: "Pull-request policy block for FN-1",
+      message: expect.stringContaining("Resolve the policy requirement, then retry the merge."),
+    }));
+  });
+
   it("resolveParticipantLabel prefers names and falls back to ids", () => {
     expect(resolveParticipantLabel({ fromName: "Triage Bot", fromId: "agent-1" }, "from")).toBe("Triage Bot");
     expect(resolveParticipantLabel({ toId: "agent-2" }, "to")).toBe("agent-2");

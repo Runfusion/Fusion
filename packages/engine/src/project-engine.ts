@@ -46,12 +46,15 @@ import {
   resolveWipTargetForTask,
   resolveReboundTargetForTask, REVIEW_ELIGIBLE_SENTINEL_COLUMN,
   clearMergeConfirmedTransientStatus,
+  classifyGhError,
 } from "@fusion/core";
 import { assemblePlannerOverseerRuntimeSnapshot } from "./overseer/planner-overseer-runtime-snapshot.js";
 import { resolveIntegrationBranch } from "./merge/integration-branch.js";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { InProcessRuntime } from "./runtimes/in-process-runtime.js";
+import { createStoreSpecDriftRepository, SpecDriftReconciler } from "./spec-drift-reconciler.js";
+import { publishPersistedMissionFeatureAlignment } from "./missions/mission-feature-sync.js";
 import type { WorktreePool } from "./worktree/worktree-pool.js";
 import type { ProjectRuntimeConfig } from "./project/project-runtime.js";
 import { PrMonitor } from "./merge/pr-monitor.js";
@@ -84,6 +87,7 @@ import {
   resolveActiveTaskCapacityLimit,
 } from "./concurrency/concurrency.js";
 import { canStartNextMergeBody } from "./merge/merge-reclaim-policy.js";
+import { shouldClearOrphanedMergeStamp } from "./merge/merge-active-status.js";
 import {
   registerProjectVerificationLimit,
   unregisterProjectVerificationLimit,
@@ -121,6 +125,8 @@ export type ProcessPullRequestMergeFn = (
   cwd: string,
   taskId: string,
   pool?: WorktreePool,
+  /** Propagates merge-queue cancellation into refresh git mutations. */
+  signal?: AbortSignal,
 ) => Promise<"merged" | "waiting" | "skipped">;
 
 const execFileAsync = promisify(execFile);
@@ -133,6 +139,32 @@ const execFileAsync = promisify(execFile);
  * FN-2910 for the observed overlap symptom.
  */
 const MERGE_HANDOFF_GRACE_MS = 300;
+
+const PR_MERGE_RETRY_BACKOFF_BASE_MS = 5_000;
+
+/**
+ * Derive the PR retry not-before instant from the atomic task update timestamp.
+ * `customFields` is user/workflow-owned and validates unknown keys, so it cannot
+ * safely carry engine lifecycle metadata.
+ */
+function getPrMergeRetryNotBefore(task: { mergeRetries?: number | null; updatedAt?: string | null }): number | null {
+  const retries = task.mergeRetries ?? 0;
+  const updatedAt = task.updatedAt ? Date.parse(task.updatedAt) : NaN;
+  if (!Number.isInteger(retries) || retries <= 0 || !Number.isFinite(updatedAt)) return null;
+  const delayMs = PR_MERGE_RETRY_BACKOFF_BASE_MS * Math.pow(2, retries - 1);
+  const notBefore = updatedAt + delayMs;
+  return Number.isFinite(notBefore) ? notBefore : null;
+}
+
+/**
+ * FNXC:PullRequestMerge 2026-08-09-05:07:
+ * GitHub's structured network, timeout, and rate-limit outcomes are transport
+ * failures even when their human-readable message has no legacy transient token.
+ * They must use the fenced transient budget, not the PR retry budget.
+ */
+function isStructuredTransientGhOutcome(code: unknown): boolean {
+  return code === "network" || code === "timeout" || code === "rate-limited";
+}
 
 /*
 FNXC:MergerUnification 2026-06-21-19:05:
@@ -320,6 +352,11 @@ export interface ProjectEngineOptions {
    */
   prNodeGithubOps?: PrNodeGithubOps;
   /**
+   * Factory evaluated by the runtime after it owns its project TaskStore.
+   * Use this for callbacks that need project-scoped settings.
+   */
+  createPrNodeGithubOps?: (store: TaskStore) => PrNodeGithubOps;
+  /**
    * Node-agnostic GitHub reconcile ops (U4): the injected ETag-probe +
    * deep-fetch callbacks backing {@link PrReconciler}. Injected from the CLI
    * layer for the same FN-3049 reason as {@link prNodeGithubOps}. When present,
@@ -364,6 +401,7 @@ type MergeResolver = { resolve: (result: MergeResult) => void; reject: (err: Err
 export class ProjectEngine {
   private runtime: InProcessRuntime;
   private started = false;
+  private specDriftReconciler?: SpecDriftReconciler;
   private prMonitor?: PrMonitor;
   /**
    * FNXC:PlannerOversight 2026-07-04-00:00:
@@ -487,6 +525,8 @@ export class ProjectEngine {
   private mergeBodyInFlight: Promise<unknown> | null = null;
   private mergeAbortController: AbortController | null = null;
   private mergeRetryTimer: ReturnType<typeof setTimeout> | null = null;
+  /** One durable PR-retry wake per task; admission can safely re-request it after restart/races. */
+  private readonly prMergeRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private autostashSweepTimer: ReturnType<typeof setTimeout> | null = null;
   private mergeActiveReconcileTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -572,6 +612,44 @@ export class ProjectEngine {
     for (const r of this.takeMergeResolvers(taskId)) r.reject(err);
   }
 
+  /*
+  FNXC:MergeQueue 2026-08-09-22:35:
+  An aborted merge owns its transient stamp and must clear it before its resolver rejection starts
+  issue #3395's bounded retry. The abort-signal fence in runAiMerge makes this clear durable even
+  when the body outlives the settle latch. Keep lane release in the drain finally: it is already
+  synchronous before resolver continuations, and moving task-id keyed cleanup would tear down a
+  successor attempt.
+  */
+  private async clearAbortedMergeStamp(taskId: string): Promise<void> {
+    const store = this.runtime.getTaskStore();
+    const task = await store.getTask(taskId).catch(() => null);
+    if (!task || !shouldClearOrphanedMergeStamp(task)) return;
+    const clearedStatus = task.status;
+    await store.updateTask(taskId, { status: null }).catch(() => undefined);
+    await store
+      .logEntry(taskId, `Auto-recovered: cleared stale '${clearedStatus}' status`, "MergeAborted")
+      .catch(() => undefined);
+  }
+
+  /*
+  FNXC:MergeQueue 2026-08-09-22:35:
+  Reconcile only after the serialized pump has claimed its generation, never at enqueue entry
+  points. The closed writer set is the current drain holder plus stale self-healing: `mergeRunning`
+  excludes sibling iterations and the abort-signal fence excludes bodies that outlived the bounded
+  settle latch. A claim alone is not enough. This choke point covers onMerge/requestInterpreterMerge
+  and synchronous internalEnqueueMerge callers; pre-enqueue blockers remain self-healing's job.
+  */
+  private async reconcileClaimedMergeStamp(taskId: string): Promise<void> {
+    const store = this.runtime.getTaskStore();
+    const task = await store.getTask(taskId).catch(() => null);
+    if (!task || !shouldClearOrphanedMergeStamp(task)) return;
+    const clearedStatus = task.status;
+    await store.updateTask(taskId, { status: null }).catch(() => undefined);
+    await store
+      .logEntry(taskId, `Auto-recovered: reconciled orphaned '${clearedStatus}' merge status`, "MergeQueue")
+      .catch(() => undefined);
+  }
+
   /** FN-5697/FN-5674: cap transient provider/network abort retries in auto-merge.
    *  Examples: "This operation was aborted", "socket hang up", `server_error`,
    *  and (FN-8004) ACP provider turn failures such as `acp rpc code -32603`.
@@ -607,6 +685,7 @@ export class ProjectEngine {
   private taskMovedHandler?: (...args: any[]) => void;
   private taskUpdatedHandler?: (...args: any[]) => void;
   private taskDeletedHandler?: (...args: any[]) => void;
+  private specDriftTaskMutationHandler?: (...args: any[]) => void;
   private autostashOrphansHandler?: (...args: any[]) => void;
   private legacyAutoMergeStampAdvisoryEmitted = false;
 
@@ -622,6 +701,7 @@ export class ProjectEngine {
       ...config,
       ...(options.externalTaskStore ? { externalTaskStore: options.externalTaskStore } : {}),
       ...(options.prNodeGithubOps ? { prNodeGithubOps: options.prNodeGithubOps } : {}),
+      ...(options.createPrNodeGithubOps ? { createPrNodeGithubOps: options.createPrNodeGithubOps } : {}),
     };
     this.runtime = new InProcessRuntime(runtimeConfig, centralCore);
     // Let the runtime's SelfHealingManager re-enqueue tasks directly into our
@@ -813,6 +893,11 @@ export class ProjectEngine {
    * generation cannot start until the orphan work settles.
    */
   private runAbortableMergeBody<T>(bodyFactory: () => Promise<T>, signal: AbortSignal, taskId: string): Promise<T> {
+    // FNXC:MergeQueue 2026-08-09-23:45: Pump-side stamp reconciliation awaits store I/O after
+    // claiming the generation. If cancellation arrives in that window, do not instantiate a body:
+    // `raceMergeWithAbort` checks too late (after bodyFactory), and an aborted runAiMerge can still
+    // reach unrelated finalization paths before its later cooperative abort check.
+    if (signal.aborted) return Promise.reject(this.createMergeAbortedError(taskId));
     const body = this.trackMergeBody(bodyFactory());
     return this.raceMergeWithAbort(body, signal, taskId);
   }
@@ -865,6 +950,29 @@ export class ProjectEngine {
     });
 
     const store = this.runtime.getTaskStore();
+    /*
+    FNXC:SpecDrift 2026-08-10-09:36:
+    The startup and live-event reconciler must receive the shared store repository rather than an
+    inline latest-report snapshot. Full append-only history preserves re-locked divergence, while
+    the report identity fence intentionally cannot detect an incorrect alignment value.
+    */
+    this.specDriftReconciler = new SpecDriftReconciler(createStoreSpecDriftRepository(store, async (taskId, report) => { await publishPersistedMissionFeatureAlignment(store, taskId, report); }));
+    /*
+    FNXC:SpecDrift 2026-08-09-18:32:
+    Startup repair alone leaves a long-running engine blind to direct task mutations and workflow
+    moves. Subscribe once at the runtime boundary; the reconciler coalesces bursts and its report
+    insert fence prevents this listener from turning task:updated into a feedback loop.
+    */
+    this.specDriftTaskMutationHandler = (event: Task | { task?: Task }) => {
+      const task = "id" in event ? event : event.task;
+      if (task?.id) this.specDriftReconciler?.enqueue(task.id);
+    };
+    store.on("task:created", this.specDriftTaskMutationHandler);
+    store.on("task:updated", this.specDriftTaskMutationHandler);
+    store.on("task:moved", this.specDriftTaskMutationHandler);
+    for (const task of await store.listTasks({ includeArchived: true, slim: true })) {
+      this.specDriftReconciler.enqueue(task.id);
+    }
     const cwd = this.config.workingDirectory;
     const settings = await store.getSettings();
     const migrationNotice = settings.sqliteMigrationNotice;
@@ -1329,6 +1437,8 @@ export class ProjectEngine {
     */
     this.shuttingDown = true;
     this.startupGeneration += 1;
+    this.specDriftReconciler?.stop();
+    this.specDriftReconciler = undefined;
 
     // FNXC:VerificationConcurrency 2026-07-15-09:05: Drop this project's cap so it no longer pins process min.
     unregisterProjectVerificationLimit(this.config.projectId);
@@ -1339,6 +1449,8 @@ export class ProjectEngine {
       clearTimeout(this.mergeRetryTimer);
       this.mergeRetryTimer = null;
     }
+    for (const timer of this.prMergeRetryTimers.values()) clearTimeout(timer);
+    this.prMergeRetryTimers.clear();
     if (this.autostashSweepTimer) {
       clearTimeout(this.autostashSweepTimer);
       this.autostashSweepTimer = null;
@@ -1426,6 +1538,11 @@ export class ProjectEngine {
       }
       if (this.taskDeletedHandler) {
         store.off("task:deleted", this.taskDeletedHandler);
+      }
+      if (this.specDriftTaskMutationHandler) {
+        store.off("task:created", this.specDriftTaskMutationHandler);
+        store.off("task:updated", this.specDriftTaskMutationHandler);
+        store.off("task:moved", this.specDriftTaskMutationHandler);
       }
       if (this.autostashOrphansHandler) {
         store.off("merger:autostashOrphans", this.autostashOrphansHandler as any);
@@ -2308,6 +2425,7 @@ export class ProjectEngine {
       mergeStrategy: settings.mergeStrategy,
       integrationBranch: settings.integrationBranch,
       baseBranch: settings.baseBranch,
+      worktreeRebaseRemote: settings.worktreeRebaseRemote,
     };
     return await promoteBranchGroup({
       store,
@@ -2337,6 +2455,26 @@ export class ProjectEngine {
     const signal = options.signal;
     if (signal?.aborted) {
       throw new Error(`Merge request for ${taskId} aborted`);
+    }
+
+    const store = this.runtime.getTaskStore();
+    // FNXC:PullRequestMerge 2026-08-09-04:18: A manual merge supersedes a pending
+    // PR backoff wakeup. Cancel it before admitting the manual attempt so a later
+    // stale callback cannot repeat a merge that the operator already completed.
+    this.clearPrMergeRetryTimer(taskId);
+    const existing = await store.getTask(taskId);
+    if (existing?.status === "awaiting-approval") {
+      /*
+      FNXC:PullRequestMerge 2026-08-09-02:39:
+      A branch-policy hold is operator-resumable only through this manual merge
+      entry point. Clear its durable wait marker before enqueueing so the normal
+      single-flight pump performs one fresh PR merge without consuming either retry budget.
+      */
+      await store.updateTask(taskId, {
+        status: null,
+        error: null,
+        awaitingApprovalReason: null,
+      });
     }
 
     return new Promise<MergeResult>((resolve, reject) => {
@@ -2751,7 +2889,7 @@ export class ProjectEngine {
     log?: Array<{ action?: string }>;
     updatedAt?: string | null;
     mergeDetails?: { mergeConfirmed?: boolean } | null;
-  }, maxAutoMergeRetries: number, isReviewColumn?: boolean): boolean {
+  }, maxAutoMergeRetries: number, isReviewColumn?: boolean, enforcePrRetryBackoff = false): boolean {
     // Merge-confirmed tasks use the fast-path finalizer, which applies blocker
     // checks after clearing transient status/error state. Once that path parks
     // a blocked task as failed, skip future auto-merge retries.
@@ -2762,7 +2900,18 @@ export class ProjectEngine {
     // Terminal failure: don't let the cooldown sweep re-attempt a merge that
     // already gave up (verification cap, conflict-bounce cap, or non-conflict
     // error). The task is parked for human/follow-up intervention.
-    if (task.status === "failed") return false;
+    if (task.status === "failed" || task.status === "awaiting-approval" || task.status === "awaiting-user-review") return false;
+    /*
+    FNXC:AutoMergeRetries 2026-08-09-03:02:
+    Retry backoff must be enforced at this shared admission point, not only by
+    its timer: periodic sweeps, duplicate enqueue calls, and a restarted engine
+    all reach canMergeTask. The retry update's timestamp is the durable anchor;
+    absent, invalid, or elapsed timestamps fail open for legacy rows.
+    */
+    if (enforcePrRetryBackoff) {
+      const notBefore = getPrMergeRetryNotBefore(task);
+      if (notBefore !== null && notBefore > Date.now()) return false;
+    }
     return (
       (task.mergeRetries ?? 0) < maxAutoMergeRetries ||
       this.hasAutoHealableVerificationBufferFailure(task, maxAutoMergeRetries, isReviewColumn) ||
@@ -2868,6 +3017,31 @@ export class ProjectEngine {
         agree,
       },
     });
+  }
+
+  /*
+  FNXC:PullRequestMerge 2026-08-09-04:05:
+  PR retry backoff is persisted through the retry update timestamp, but its wakeup
+  is process-local. Keep one shutdown-safe timer per task and allow an admission
+  rejection to restore that wakeup, so a restart or duplicate enqueue cannot drop
+  a real retry until the cooldown sweep happens to notice it.
+  */
+  private clearPrMergeRetryTimer(taskId: string): void {
+    const timer = this.prMergeRetryTimers.get(taskId);
+    if (!timer) return;
+    clearTimeout(timer);
+    this.prMergeRetryTimers.delete(taskId);
+  }
+
+  private schedulePrMergeRetry(taskId: string, notBefore: number): void {
+    if (this.shuttingDown || this.prMergeRetryTimers.has(taskId)) return;
+    const delayMs = Math.max(0, notBefore - Date.now());
+    const timer = setTimeout(() => {
+      this.prMergeRetryTimers.delete(taskId);
+      if (!this.shuttingDown) this.internalEnqueueMerge(taskId);
+    }, delayMs);
+    timer.unref?.();
+    this.prMergeRetryTimers.set(taskId, timer);
   }
 
   private internalEnqueueMerge(taskId: string): boolean {
@@ -3001,6 +3175,7 @@ export class ProjectEngine {
 
   private async enqueueEligibleInReviewTasks(tasks: readonly Task[], settings: Pick<Settings, "autoMerge" | "maxAutoMergeRetries">): Promise<number> {
     const maxAutoMergeRetries = resolveMaxAutoMergeRetries(settings);
+    const enforcePrRetryBackoff = (this.options.getMergeStrategy?.(settings as Settings) ?? "direct") === "pull-request";
     // FNXC:PostgresCutover 2026-07-10: allowInReviewMergeProcessing awaits the
     // async getBranchGroup read on the PG branch, so eligibility resolves per
     // task before the sync priority sort.
@@ -3028,6 +3203,7 @@ export class ProjectEngine {
         t as any,
         maxAutoMergeRetries,
         reviewLane === undefined ? undefined : t.column === reviewLane,
+        enforcePrRetryBackoff,
       );
     }) as Task[];
     const allowFlags = await Promise.all(candidates.map((t) => this.allowInReviewMergeProcessing(t, settings, this.runtime.getTaskStore())));
@@ -3467,11 +3643,21 @@ export class ProjectEngine {
             "not in review", which would disable auto-heal outright.
             */
             const mergeLoopReviewLane = (await resolveTaskLifecycleColumns(store, taskId).catch(() => undefined))?.review;
+            const pullRequestMerge = (this.options.getMergeStrategy?.(settings) ?? "direct") === "pull-request";
             if (!this.canMergeTask(
               task as any,
               maxAutoMergeRetries,
               mergeLoopReviewLane === undefined ? undefined : task.column === mergeLoopReviewLane,
+              pullRequestMerge,
             )) {
+              // A queued retry can be rejected after an engine restart or a racing
+              // task update. Reinstall the single-flight wake instead of dropping it.
+              if (pullRequestMerge) {
+                const notBefore = getPrMergeRetryNotBefore(task);
+                if (notBefore !== null && notBefore > Date.now()) {
+                  this.schedulePrMergeRetry(taskId, notBefore);
+                }
+              }
               continue;
             }
 
@@ -3858,8 +4044,15 @@ export class ProjectEngine {
             mergeStrategy: settings.mergeStrategy,
             integrationBranch: settings.integrationBranch,
             baseBranch: settings.baseBranch,
+            worktreeRebaseRemote: settings.worktreeRebaseRemote,
           };
-          const attemptBranchGroupPromotion = async (taskForPromotion: Task | null): Promise<void> => {
+          /*
+          FNXC:PullRequestFreshness 2026-08-09-03:02:
+          Branch-group promotion is an automated PR producer after a member merge.
+          Preserve the merge claim's cancellation signal through the coordinator so
+          a cancelled refresh cannot proceed to GitHub PR creation.
+          */
+          const attemptBranchGroupPromotion = async (taskForPromotion: Task | null, signal?: AbortSignal): Promise<void> => {
             // groupId is optional on TaskBranchContext (non-shared members carry none);
             // isSharedBranchGroupMemberIntegration guarantees it semantically, but capture
             // it explicitly so TypeScript narrows.
@@ -3874,6 +4067,7 @@ export class ProjectEngine {
                 groupId: promotionGroupId,
                 settings: promotionSettings,
                 createGroupPr: this.options.createGroupPr,
+                signal,
                 recordAudit: async (event) => {
                   await store.recordRunAuditEvent({
                     domain: event.domain as any,
@@ -4085,6 +4279,7 @@ export class ProjectEngine {
             */
             const result = await runWithMergeAdmission(async () => {
               const abortSignal = this.claimActiveMerge(taskId);
+              await this.reconcileClaimedMergeStamp(taskId);
               runtimeLog.log(`${hasManualResolver ? "Manual" : "Auto"}-merge processing PR flow for ${taskId}...`);
               return await this.runAbortableMergeBody(
                 () =>
@@ -4093,6 +4288,7 @@ export class ProjectEngine {
                     cwd,
                     taskId,
                     (this.runtime as any).worktreePool,
+                    abortSignal,
                   ),
                 abortSignal,
                 taskId,
@@ -4121,7 +4317,20 @@ export class ProjectEngine {
                   mergeTargetBranch: mergedTask.mergeDetails?.mergeTargetBranch,
                 } as MergeResult);
               }
-              await attemptBranchGroupPromotion(mergedTask);
+              /*
+              FNXC:PullRequestMerge 2026-08-09-03:32:
+              A successful PR merge ends the retry episode. Reset both independent
+              counters so persisted completed work never carries stale retry exhaustion
+              or a derived backoff anchor into a later recovery/finalization read.
+              */
+              this.clearPrMergeRetryTimer(taskId);
+              if (mergedTask && ((mergedTask.mergeRetries ?? 0) > 0 || (mergedTask.mergeTransientRetryCount ?? 0) > 0)) {
+                await store.updateTask(taskId, {
+                  mergeRetries: 0,
+                  mergeTransientRetryCount: 0,
+                });
+              }
+              await attemptBranchGroupPromotion(mergedTask, this.mergeAbortController?.signal);
             } else if (result === "waiting") {
               runtimeLog.log(`${hasManualResolver ? "Manual" : "Auto"}-merge PR waiting: ${taskId}`);
             }
@@ -4153,6 +4362,7 @@ export class ProjectEngine {
 
             const rawMerge = async () => {
               const abortSignal = this.claimActiveMerge(taskId);
+              await this.reconcileClaimedMergeStamp(taskId);
               /*
               FNXC:GrokCliRouting 2026-07-15-09:45:
               AI merge creates sessions via createResolvedAgentSession with the same Grok CLI no-visible-key auto-derive seam as chat/executor. Without pluginRunner, getRuntimeById("grok") is unavailable and grok-cli merger/fallback selections throw "Grok CLI models require the bundled Grok CLI runtime" even when chat works (ChatManager already receives engine.getPluginRunner()). Forward the engine PluginRunner so merge can route to the logged-in grok CLI like every other lane.
@@ -4282,7 +4492,7 @@ export class ProjectEngine {
 
             // Reset retries on success
             const latestTask = await store.getTask(taskId).catch(() => null);
-            if (latestTask?.mergeRetries && latestTask.mergeRetries > 0) {
+            if (latestTask && (latestTask.mergeRetries ?? 0) > 0) {
               await store.updateTask(taskId, { mergeRetries: 0 });
             }
             // FNXC:Workspace 2026-06-22-05:10 (Phase C review B4): clear the in-memory busy
@@ -4299,10 +4509,9 @@ export class ProjectEngine {
           if (mergeWasAborted) {
             runtimeLog.log(`${hasManualResolver ? "Manual" : "Auto"}-merge aborted for ${taskId}: ${errorMsg}`);
             this.mergeAbortController = null;
+            await this.clearAbortedMergeStamp(taskId);
             if (hasManualResolver) {
               this.rejectMergeResolvers(taskId, err instanceof Error ? err : new Error(errorMsg));
-            } else {
-              await store.updateTask(taskId, { status: null }).catch(() => undefined);
             }
             continue;
           }
@@ -4515,8 +4724,10 @@ export class ProjectEngine {
               );
             });
 
-          // If this was a manual merge, reject the promise and skip auto-retry logic
-          if (hasManualResolver) {
+          // A manual policy-resume attempt must re-park through the same durable
+          // handoff path; other manual merge failures still reject their caller.
+          const isPolicyBlock = (err as { code?: unknown })?.code === "merge-blocked-by-policy";
+          if (hasManualResolver && !isPolicyBlock) {
             this.rejectMergeResolvers(taskId, err instanceof Error ? err : new Error(errorMsg));
             continue;
           }
@@ -4930,16 +5141,55 @@ export class ProjectEngine {
               }
             }
           } else {
-            // Non-direct merge strategy (e.g. pull-request) errored — park as
-            // failed so the cooldown sweep stops re-attempting silently.
+            /*
+            FNXC:AutoMergeRetries 2026-08-09-03:02:
+            PR failures have four mutually-exclusive dispositions: policy holds wait for
+            an operator, transient ownership uses its separate counter, non-retryable gh
+            outcomes park honestly, and only retryable failures consume mergeRetries.
+            The atomic retry update timestamp is the durable backoff anchor because sweeps
+            and restarts can outrun a timer; workflow custom fields reject engine metadata.
+            */
             try {
-              if (await this.maybeRetryTransientMerge(store, taskId, taskOnErr, errorMsg)) {
+              const classified = classifyGhError(err);
+              const structuredCode = (err as { code?: unknown })?.code;
+              const isStructuredNonRetryable = structuredCode === "merge-conflict"
+                || structuredCode === "validation"
+                || structuredCode === "permission"
+                || structuredCode === "not-found"
+                || structuredCode === "not-installed";
+              const diagnosis = isPolicyBlock
+                ? { ...classified, code: "merge-blocked-by-policy" as const, retryable: false }
+                : isStructuredNonRetryable
+                  ? { ...classified, code: structuredCode, retryable: false }
+                  : classified;
+              if (diagnosis.code === "merge-blocked-by-policy") {
+                this.clearPrMergeRetryTimer(taskId);
+                await store.updateTask(taskId, {
+                  status: "awaiting-approval",
+                  error: diagnosis.message,
+                  awaitingApprovalReason: "merge-blocked-by-policy",
+                });
+                await store.logEntry(taskId, `Pull-request merge blocked by policy; awaiting operator resume: ${diagnosis.message}`, "MergePolicyBlocked");
                 continue;
               }
-              if (this.isTransientMergeRetryExhausted(taskOnErr, errorMsg)) {
+              const structuredTransient = isStructuredTransientGhOutcome(diagnosis.code);
+              if (await this.maybeRetryTransientMerge(store, taskId, taskOnErr, errorMsg, structuredTransient)) {
+                continue;
+              }
+              /*
+              FNXC:PullRequestMerge 2026-08-09-05:07:
+              A transient failure has a separately owned retry budget. Structured
+              GitHub transport results join the legacy text classifier here, so
+              neither form can fall through and consume mergeRetries.
+              */
+              if (this.isTransientMergeRetryExhausted(taskOnErr, errorMsg, structuredTransient)) {
+                this.clearPrMergeRetryTimer(taskId);
+                // FNXC:PullRequestMerge 2026-08-09-04:18: The shadow merge-request
+                // contract owns transient exhaustion independently of task status.
+                // Keep its retrying -> exhausted transition intact; only non-shadow
+                // tasks park failed, and neither path spends mergeRetries.
                 const settings = await store.getSettings().catch(() => null);
-                const useMergeRequestContract = settings?.mergeRequestContractShadowEnabled === true;
-                if (useMergeRequestContract) {
+                if (settings?.mergeRequestContractShadowEnabled === true) {
                   const record = await store.getMergeRequestRecordAsync(taskId);
                   if (record && record.state !== "exhausted" && record.state !== "cancelled" && record.state !== "succeeded") {
                     if (record.state === "running") {
@@ -4956,24 +5206,52 @@ export class ProjectEngine {
                       });
                     }
                   }
-                  await store.logEntry(
-                    taskId,
-                    `Auto-merge transient retries exhausted (${ProjectEngine.MAX_AUTO_MERGE_TRANSIENT_RETRIES}/${ProjectEngine.MAX_AUTO_MERGE_TRANSIENT_RETRIES}); marked merge request exhausted without column rebound: ${errorMsg}`,
-                    "MergeTransientRetryExhausted",
-                  );
+                  await store.logEntry(taskId, `Pull-request transient retries exhausted (${ProjectEngine.MAX_AUTO_MERGE_TRANSIENT_RETRIES}/${ProjectEngine.MAX_AUTO_MERGE_TRANSIENT_RETRIES}); marked merge request exhausted without consuming merge retries: ${errorMsg}`, "MergeTransientRetryExhausted");
                   continue;
                 }
-                await store.logEntry(
-                  taskId,
-                  `Auto-merge transient retries exhausted (${ProjectEngine.MAX_AUTO_MERGE_TRANSIENT_RETRIES}/${ProjectEngine.MAX_AUTO_MERGE_TRANSIENT_RETRIES}); parking task as failed: ${errorMsg}`,
-                  "MergeTransientRetryExhausted",
-                );
+                await store.updateTask(taskId, {
+                  status: "failed",
+                  error: errorMsg,
+                });
+                await store.logEntry(taskId, `Pull-request transient retries exhausted (${ProjectEngine.MAX_AUTO_MERGE_TRANSIENT_RETRIES}/${ProjectEngine.MAX_AUTO_MERGE_TRANSIENT_RETRIES}); task parked without consuming merge retries: ${errorMsg}`, "MergeTransientRetryExhausted");
+                continue;
               }
+              if (!diagnosis.retryable) {
+                this.clearPrMergeRetryTimer(taskId);
+                await store.updateTask(taskId, {
+                  status: "failed",
+                  error: diagnosis.message,
+                });
+                await store.logEntry(taskId, `Pull-request merge failed without retry (${diagnosis.code}): ${diagnosis.message}`, "MergeNonRetryableFailure");
+                continue;
+              }
+              const currentRetries = taskOnErr?.mergeRetries ?? 0;
+              const nextRetries = currentRetries + 1;
+              if (nextRetries >= maxAutoMergeRetriesOnErr) {
+                this.clearPrMergeRetryTimer(taskId);
+                await store.updateTask(taskId, {
+                  status: "failed",
+                  mergeRetries: nextRetries,
+                  error: errorMsg,
+                });
+                await store.logEntry(taskId, `Pull-request merge retries exhausted after ${nextRetries}/${maxAutoMergeRetriesOnErr} actual failures: ${errorMsg}`, "MergeRetriesExhausted");
+                continue;
+              }
+              const delayMs = PR_MERGE_RETRY_BACKOFF_BASE_MS * Math.pow(2, currentRetries);
+              /*
+              FNXC:AutoMergeRetries 2026-08-09-03:11:
+              The retry log must precede the atomic retry patch. `updatedAt` on
+              that patch is the durable not-before anchor; logging afterwards can
+              advance it past the timer deadline and make the queue reject its own
+              scheduled retry as still early.
+              */
+              await store.logEntry(taskId, `Pull-request merge retry ${nextRetries}/${maxAutoMergeRetriesOnErr} scheduled in ${delayMs / 1000}s: ${errorMsg}`, "MergeRetry");
               await store.updateTask(taskId, {
-                status: "failed",
-                mergeRetries: maxAutoMergeRetriesOnErr,
-                error: errorMsg,
+                mergeRetries: nextRetries,
+                status: null,
+                error: null,
               });
+              this.schedulePrMergeRetry(taskId, Date.now() + delayMs);
             } catch (recoveryErr) {
               runtimeLog.error(
                 `Auto-merge: failed to update ${taskId} after merge strategy error: ${recoveryErr instanceof Error ? recoveryErr.message : String(recoveryErr)}`,
@@ -5020,8 +5298,12 @@ export class ProjectEngine {
     }
   }
 
-  private isTransientMergeRetryExhausted(task: Task | null, errorMsg: string): boolean {
-    if (!task || (!isTransientError(errorMsg) && classifyTransientMergeError(errorMsg) === null)) {
+  private isTransientMergeRetryExhausted(
+    task: Task | null,
+    errorMsg: string,
+    structuredTransient = false,
+  ): boolean {
+    if (!task || (!structuredTransient && !isTransientError(errorMsg) && classifyTransientMergeError(errorMsg) === null)) {
       return false;
     }
     const current = task.mergeTransientRetryCount ?? 0;
@@ -5033,8 +5315,9 @@ export class ProjectEngine {
     taskId: string,
     taskOnErr: Task | null,
     errorMsg: string,
+    structuredTransient = false,
   ): Promise<boolean> {
-    if (!taskOnErr || (!isTransientError(errorMsg) && classifyTransientMergeError(errorMsg) === null)) {
+    if (!taskOnErr || (!structuredTransient && !isTransientError(errorMsg) && classifyTransientMergeError(errorMsg) === null)) {
       return false;
     }
 

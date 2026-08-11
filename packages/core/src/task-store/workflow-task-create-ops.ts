@@ -34,7 +34,7 @@ import {normalizeTaskCommitAssociation} from "../tasks/task-lineage.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 import {withTaskBranchContextInSourceMetadata} from "../task-store/branch-context.js";
 import {upsertTaskRowInTransaction, readTaskRowInTransaction, buildTaskInsertValues} from "../task-store/async/async-persistence.js";
-import {preserveResolvedTaskWedgeEpisode} from "../task-store/persistence.js";
+import {preserveDurableTaskWedgeInvariants} from "../task-store/persistence.js";
 import {isPlanReviewSatisfied} from "../planner/plan-approval.js";
 import {listDueWorkflowWorkItems as listDueWorkflowWorkItemsAsync, withTaskWorkflowSerialization} from "../task-store/async/async-workflow-workitems.js";
 import {getTaskMovedCountsByDay as getTaskMovedCountsByDayAsync} from "../task-store/async/async-audit.js";
@@ -106,7 +106,7 @@ export async function atomicWriteTaskJsonImpl2(store: TaskStore, dir: string, ta
         return;
       }
       const existingRow = store.pgRowToTaskRow(pgRow);
-      preserveResolvedTaskWedgeEpisode(existingRow, task);
+      preserveDurableTaskWedgeInvariants(existingRow, task);
       const deletedAt = store.getSoftDeletedWriteConflict(id, task, existingRow);
       if (deletedAt) {
         store.throwSoftDeletedWriteBlocked(id, deletedAt, "atomicWriteTaskJson");

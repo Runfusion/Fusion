@@ -49,7 +49,7 @@ import type {
  */
 type AutopilotMissionStore = MissionStore | AsyncMissionStore;
 import { autopilotLog } from "../logger.js";
-import { reconcileMissionFeatureState } from "./mission-feature-sync.js";
+import { persistMissionFeatureReconciliation, reconcileMissionFeatureState } from "./mission-feature-sync.js";
 import { isOperatorActionableAgentError } from "../errors/transient-error-detector.js";
 import { resolvePlannerLanesForTask } from "../planner-lane-resolution.js";
 
@@ -975,6 +975,16 @@ export class MissionAutopilot {
           plannerColumns: await resolvePlannerLanesForTask(this.taskStore as never, task.id),
         });
 
+        /*
+        FNXC:SpecLockMissionAlignment 2026-08-10-16:17:
+        Persist the evaluator's orthogonal projection on every reconciliation outcome. Previously
+        this loop calculated alignment only to discard it, leaving the mission roadmap stale when
+        delivery status did not also need a transition.
+        */
+        if (await persistMissionFeatureReconciliation(this.missionStore, feature, reconciliation)) {
+          fixedCount++;
+        }
+
         if (reconciliation.kind === "failure") {
           await this.handleTaskFailure(feature.taskId);
           fixedCount++;
@@ -984,11 +994,6 @@ export class MissionAutopilot {
         if (reconciliation.kind === "blocked") {
           autopilotLog.warn(`Skipping feature ${feature.id} reconciliation — ${reconciliation.reason}`);
           continue;
-        }
-
-        if (reconciliation.kind === "update") {
-          await this.missionStore.updateFeatureStatus(feature.id, reconciliation.status);
-          fixedCount++;
         }
       }
     }

@@ -21,6 +21,8 @@ import { BUILTIN_CODING_WORKFLOW_IR } from "../../workflows/builtin-coding-workf
 
 const pgTest = pgDescribe;
 
+const SPEC_LOCK_PROMPT = `# Task\n\n## Mission\n\nKeep dependency scope observable.\n\n## File Scope\n\n- packages/core/src/store.ts\n\n## Steps\n\n1. Preserve evidence\n\n## Completion Criteria\n\n- [ ] Evidence is retained\n\n## Do NOT\n\n- Hide dependency changes\n\n## Dependencies\n\n- None\n`;
+
 pgTest("TaskStore dependency mutations (PostgreSQL)", () => {
   const h: SharedPgTaskStoreHarness = createSharedPgTaskStoreTestHarness({
     prefix: "fusion_dep_mut",
@@ -36,6 +38,47 @@ pgTest("TaskStore dependency mutations (PostgreSQL)", () => {
   });
 
   afterEach(h.afterEach);
+
+  it("captures a comparable drift revision after a live dependency mutation", async () => {
+    const prerequisite = await store.createTask({ description: "locked prerequisite", column: "done" });
+    const dependent = await store.createTask({ description: "locked dependent", column: "todo" });
+    await store.updateTask(dependent.id, { prompt: SPEC_LOCK_PROMPT });
+    await store.lockCurrentPlan(dependent.id, "approved-dependency-scope", SPEC_LOCK_PROMPT);
+    await store.updateTask(dependent.id, { approvedPlanFingerprint: "approved-dependency-scope" });
+
+    await store.updateTaskDependencies(dependent.id, { operation: "add", dependency: prerequisite.id });
+
+    const [current, report] = await Promise.all([
+      store.getLatestCurrentPlanEvidence(dependent.id),
+      store.getLatestSpecDriftReport(dependent.id),
+    ]);
+    expect(current?.version).toBe(2);
+    expect(current?.plan.sections.dependencies.canonical).toContain(`task-dependency:${prerequisite.id}`);
+    expect(report).toEqual(expect.objectContaining({
+      alignment: "diverged-needs-review",
+      findings: expect.arrayContaining([expect.objectContaining({ kind: "silent-expansion", category: "dependencies" })]),
+    }));
+  });
+
+  it("captures a comparable drift revision after a live lineage mutation", async () => {
+    const task = await store.createTask({ description: "locked lineage", column: "todo" });
+    await store.updateTask(task.id, { prompt: SPEC_LOCK_PROMPT });
+    await store.lockCurrentPlan(task.id, "approved-lineage-scope", SPEC_LOCK_PROMPT);
+    await store.updateTask(task.id, { approvedPlanFingerprint: "approved-lineage-scope" });
+
+    await store.updateTask(task.id, { missionId: "M-re-scoped", sliceId: "S-re-scoped" });
+
+    const [current, report] = await Promise.all([
+      store.getLatestCurrentPlanEvidence(task.id),
+      store.getLatestSpecDriftReport(task.id),
+    ]);
+    expect(current?.version).toBe(2);
+    expect(current?.plan.sections.lineage.canonical).toContain("mission:M-re-scoped");
+    expect(report).toEqual(expect.objectContaining({
+      alignment: "diverged-needs-review",
+      findings: expect.arrayContaining([expect.objectContaining({ kind: "silent-expansion", category: "lineage" })]),
+    }));
+  });
 
   it("replaces an obsolete dependency and clears stale blockers when the replacement is done", async () => {
     const obsolete = await store.createTask({ description: "obsolete prerequisite" });
@@ -125,6 +168,37 @@ pgTest("TaskStore dependency mutations (PostgreSQL)", () => {
 
     expect((await store.getTask(dependent.id)).status).toBe("needs-replan");
     expect((await store.getWorkflowWorkItem(pending.id))?.state).toBe("cancelled");
+  });
+
+  /*
+  FNXC:SpecLock 2026-08-09-20:34:
+  A mission/slice link is planning lineage. It must retire the same acceptance projection as a
+  dependency mutation even though no dependency is added and the task remains in its current lane.
+  */
+  it("invalidates accepted plan evidence when mission lineage changes", async () => {
+    const task = await store.createTask({ description: "lineage mutation" });
+    await store.updateTask(task.id, {
+      approvedPlanFingerprint: "sha256:accepted",
+      workflowStepResults: [{
+        workflowStepId: "plan-review",
+        workflowStepName: "Plan Review",
+        status: "passed",
+        completedAt: "2026-08-09T20:34:00.000Z",
+      }],
+    });
+
+    const updated = await store.updateTask(task.id, { missionId: "M-locked", sliceId: "S-locked" });
+
+    expect(updated.missionId).toBe("M-locked");
+    expect(updated.sliceId).toBe("S-locked");
+    expect(updated.status).toBe("needs-replan");
+    expect(updated.approvedPlanFingerprint).toBeUndefined();
+    expect(updated.workflowStepResults).toEqual([expect.objectContaining({
+      workflowStepId: "plan-review",
+      status: "passed",
+      supersededAt: expect.any(String),
+      supersededReason: "dependency-change",
+    })]);
   });
 
   it("keeps invalidation and continuation cancellation authoritative in a combined updateTask patch", async () => {

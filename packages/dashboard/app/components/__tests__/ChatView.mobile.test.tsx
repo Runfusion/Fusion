@@ -1009,7 +1009,7 @@ describe("ChatView mobile behavior", () => {
 
       await waitFor(() => {
         expect(sendRoomMessage).toHaveBeenCalledTimes(1);
-        expect(sendRoomMessage).toHaveBeenCalledWith("Hello mobile room", { files: [] });
+        expect(sendRoomMessage).toHaveBeenCalledWith("Hello mobile room", expect.objectContaining({ files: [] }));
       });
       expect(sendMessage).not.toHaveBeenCalled();
       expect(document.activeElement).toBe(input);

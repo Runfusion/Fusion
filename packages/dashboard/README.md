@@ -769,7 +769,7 @@ For real-time PR/issue badge updates, configure a GitHub App instead of relying 
 **Fallback Behavior:**
 When webhook delivery is unavailable, the 5-minute refresh endpoints (`/api/tasks/:id/pr/status`, `/api/tasks/:id/issue/status`) continue to work as the fallback path. Staleness is computed from persisted `lastCheckedAt` timestamps only (no in-memory poller state).
 
-### External Signal Ingestion (Sentry / Datadog / PagerDuty / generic webhook)
+### External Signal Ingestion (GitHub / Sentry / Datadog / PagerDuty / generic webhook)
 
 Inbound signals from error trackers and alerting tools are ingested into triage
 tasks via `POST /api/signals/:provider`. Every endpoint requires a valid HMAC
@@ -788,6 +788,9 @@ source-controlled:
   verifies `X-Datadog-Signature`; `groupingKey` = monitor `aggreg_key`/`alert_id`.
 - `FUSION_SIGNAL_PAGERDUTY_SECRET` — PagerDuty (`POST /api/signals/pagerduty`),
   verifies `X-PagerDuty-Signature` (`v1=<hex>`); `groupingKey` = `incident.id`.
+- `FUSION_SIGNAL_GITHUB_SECRET` — GitHub (`POST /api/signals/github`), verifies
+  `X-Hub-Signature-256` for `check_suite`, `workflow_run`, and `status`. Terminal
+  success/neutral/skipped deliveries atomically resolve an existing incident without a triage task.
 
 **Security:** mandatory HMAC (401 on missing/invalid secret or signature),
 replay window (±5 min) + delivery-id nonce dedup, persistent external-id dedup,

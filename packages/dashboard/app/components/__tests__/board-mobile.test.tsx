@@ -101,7 +101,7 @@ describe("mobile board magnetic column snap wiring (FN-8235)", () => {
   it("shares the mobile scroll-end hook across the selected and aggregate live board renders", () => {
     const boardSource = readAppFile("components/Board.tsx");
 
-    expect(boardSource).toContain('import { useColumnScrollSnap } from "../../hooks/useColumnScrollSnap";');
+    expect(boardSource).toContain('import { useColumnScrollSnap } from "../hooks/useColumnScrollSnap";');
     expect(boardSource).toContain("useColumnScrollSnap(boardElement, { mobileOnly: true });");
     expect(boardSource.match(/ref=\{setBoardRef\}/g)).toHaveLength(2);
     expect(boardSource.match(/className="board board-workflow-columns"/g)).toHaveLength(2);

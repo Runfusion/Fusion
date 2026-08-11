@@ -17,6 +17,7 @@ import {
   isSharedBranchGroupMemberIntegration,
   isLiveSharedBranchGroupMemberIntegration,
   hasSharedBranchMemberAutoMergeHold,
+  hasPreMergeRemediationAutoMergeHold,
   hasUserAutoMergeHold,
   resolveEffectiveAutoMerge,
   resolveEffectiveGroupAutoMerge,
@@ -96,6 +97,37 @@ describe("hasSharedBranchMemberAutoMergeHold", () => {
     [{ autoMerge: false }, true, false],
   ] as const)("holds task %o with project autoMerge %s: %s", (task, projectAutoMerge, expected) => {
     expect(hasSharedBranchMemberAutoMergeHold(task, { autoMerge: projectAutoMerge })).toBe(expected);
+  });
+});
+
+describe("hasPreMergeRemediationAutoMergeHold", () => {
+  const taskValues = [undefined, true, false] as const;
+  const provenances = [undefined, "user", "mission", "legacy-stamp"] as const;
+  const branchContexts = [
+    undefined,
+    { assignmentMode: "shared" as const, groupId: "BG-1" },
+    { assignmentMode: "shared" as const, groupId: "" },
+    { assignmentMode: "shared" as const, groupId: "   " },
+    { assignmentMode: "per-task-derived" as const },
+  ];
+
+  it.each([false, true] as const)("uses only the user task hold across branch contexts when project autoMerge is %s", (projectAutoMerge) => {
+    for (const autoMerge of taskValues) {
+      for (const autoMergeProvenance of provenances) {
+        for (const branchContext of branchContexts) {
+          expect(hasPreMergeRemediationAutoMergeHold(
+            { autoMerge, autoMergeProvenance, branchContext },
+            { autoMerge: projectAutoMerge },
+          )).toBe(autoMerge === false && autoMergeProvenance === "user");
+        }
+      }
+    }
+  });
+
+  it("diverges from merge admission for a project-Off shared member", () => {
+    const task = { autoMerge: undefined, branchContext: { assignmentMode: "shared" as const, groupId: "BG-1" } };
+    expect(hasPreMergeRemediationAutoMergeHold(task, { autoMerge: false })).toBe(false);
+    expect(hasSharedBranchMemberAutoMergeHold(task, { autoMerge: false })).toBe(true);
   });
 });
 

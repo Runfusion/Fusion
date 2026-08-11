@@ -42,6 +42,7 @@ import type { SectionId } from "../SettingsModal";
 import type { CliActionId } from "../SessionNotificationBanner";
 import type { ApprovalBannerCandidate } from "../../utils/appLifecycle";
 import type { GraphWorkflowSelection } from "../GraphWorkflowSwitcherSlot";
+import type { ChatReportHandoff } from "../chatReportHandoff";
 // The lazy view components are value exports; importing them as values lets us
 // spell their types via `typeof` so MainContent's JSX gets full prop checking.
 import { SettingsView } from "../SettingsModal";
@@ -139,6 +140,8 @@ export interface MainContentProps {
   setQuickChatOpen: Dispatch<SetStateAction<boolean>>;
   /** Optional so existing MainContent callers preserve their unseeded Chat behavior. */
   chatComposerPrefill?: { text: string; nonce: number } | null;
+  mailComposerPrefill?: (ChatReportHandoff & { nonce: number }) | null;
+  onSendAsReport?: (handoff: ChatReportHandoff) => void;
   onOpenChatWithPrefill?: (prefillText: string) => void;
   setMailboxUnreadCount: (count: number) => void;
   setMissionTargetId: Dispatch<SetStateAction<string | undefined>>;
@@ -149,6 +152,9 @@ export interface MainContentProps {
   milestoneSliceResumeSessionId: string | undefined;
   setGoalAnchorId: Dispatch<SetStateAction<string | undefined>>;
   goalAnchorId: string | undefined;
+  /** Command Center agent-detail request; optional for existing dashboard prop factories. */
+  agentAnchor?: { agentId: string; requestId: number };
+  setAgentAnchor?: (anchor: { agentId: string; requestId: number } | undefined) => void;
   agentsEnabled: boolean;
   agentOnboardingEnabled: boolean;
   handleOpenTaskLogs: (taskId: string) => Promise<void>;
@@ -164,7 +170,7 @@ export interface MainContentProps {
   memoryEnabled: boolean;
   goalsEnabled: boolean;
   handleOpenMission: (missionId: string) => void;
-  openPlanningWithInitialPlanWithNav: (initialPlan: string, workflowId?: string | null) => void;
+  openPlanningWithInitialPlanWithNav: (initialPlan: string, workflowId?: string | null, sourceIssue?: { provider: "github"; repository: string; issueNumber: number; url: string; title?: string }) => void;
   ingestCreatedTasks: (tasks: Task[]) => void;
   nodesEnabled: boolean;
   openWorkflowEditorWithNav: (workflowId?: string) => void;

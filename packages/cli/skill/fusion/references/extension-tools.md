@@ -420,6 +420,16 @@ Delete a mission and all its milestones, slices, and features. Cannot be undone.
 |-----------|------|----------|-------------|
 | `id` | string | ✓ | Mission ID to delete (e.g., M-001) |
 
+### fn_mission_set_status
+
+Set a mission lifecycle status.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `id` | string | ✓ |  |
+| `status` | union | ✓ |  |
+| `reason` | string | — |  |
+
 ### fn_mission_update
 
 Update an existing mission's title or description. Partial patches leave untouched fields intact.
@@ -504,6 +514,16 @@ Link a feature to a fn task for implementation. Updates the feature status to 't
 |-----------|------|----------|-------------|
 | `featureId` | string | ✓ | Feature ID to link (e.g., F-001) |
 | `taskId` | string | ✓ | Task ID to link to (e.g., FN-001) |
+
+### fn_feature_set_status
+
+Set a feature lifecycle status.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `id` | string | ✓ |  |
+| `status` | union | ✓ |  |
+| `reason` | string | — |  |
 
 ### fn_feature_update
 

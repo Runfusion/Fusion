@@ -351,6 +351,19 @@ export const tasks = projectSchema.table("tasks", {
   index("idxTasksSearchVector").using("gin", t.searchVector),
 ]);
 
+/* FNXC:SpecLock 2026-08-09-07:06: plan locks, evidence, and reports omit task FKs so immutable history survives archive cleanup and task tombstones. */
+export const specLocks = projectSchema.table("spec_locks", {
+  projectId: text("project_id").notNull(), taskId: text("task_id").notNull(), version: integer("version").notNull(),
+  acceptedAt: text("accepted_at").notNull(), approvalFingerprint: text("approval_fingerprint").notNull(), currentPlanVersion: integer("current_plan_version").notNull(), currentPlanHash: text("current_plan_hash").notNull(),
+  snapshot: jsonb("snapshot").notNull(), priorVersion: integer("prior_version"), diff: jsonb("diff"),
+}, (t) => [primaryKey({ columns: [t.projectId, t.taskId, t.version] })]);
+export const currentPlanEvidence = projectSchema.table("current_plan_evidence", {
+  projectId: text("project_id").notNull(), taskId: text("task_id").notNull(), version: integer("version").notNull(), sourceRevision: bigint("source_revision", { mode: "number" }).notNull(), sourceHash: text("source_hash").notNull(), capturedAt: text("captured_at").notNull(), snapshot: jsonb("snapshot").notNull(),
+}, (t) => [primaryKey({ columns: [t.projectId, t.taskId, t.version] }), unique("current_plan_evidence_source").on(t.projectId, t.taskId, t.sourceHash)]);
+export const specDriftReports = projectSchema.table("spec_drift_reports", {
+  projectId: text("project_id").notNull(), taskId: text("task_id").notNull(), reportHash: text("report_hash").notNull(), lockVersion: integer("lock_version"), currentPlanVersion: integer("current_plan_version"), currentPlanHash: text("current_plan_hash"), executionHash: text("execution_hash").notNull(), report: jsonb("report").notNull(), createdAt: text("created_at").notNull(),
+}, (t) => [primaryKey({ columns: [t.projectId, t.taskId, t.reportHash] })]);
+
 // ── Config ───────────────────────────────────────────────────────────
 export const config = projectSchema.table("config", {
   // FNXC:MultiProjectIsolation 2026-07-11:
@@ -592,6 +605,31 @@ export const taskLifecycleEvents = projectSchema.table("task_lifecycle_events", 
 export const taskLifecycleEventSeq = projectSchema.table("task_lifecycle_event_seq", {
   projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
   lastSeq: bigint("last_seq", { mode: "bigint" }).notNull().default(sql`0`),
+}, (t) => [primaryKey({ columns: [t.projectId] })]);
+
+
+/* FNXC:AgentActivityStream 2026-08-09-09:09: durable project-scoped agent activity uses a transactional counter so commit order is the cursor order. */
+export const agentActivityEvents = projectSchema.table("agent_activity_events", {
+  projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
+  seq: bigint("seq", { mode: "bigint" }).notNull(), eventId: text("event_id").notNull(),
+  agentId: text("agent_id").notNull(), agentAttribution: text("agent_attribution").notNull(),
+  taskId: text("task_id"), type: text("type").notNull(), fromAgentId: text("from_agent_id"), toAgentId: text("to_agent_id"),
+  summary: text("summary").notNull(), occurredAt: text("occurred_at").notNull(), createdAt: text("created_at").notNull(), metadata: jsonb("metadata"),
+}, (t) => [
+  primaryKey({ columns: [t.projectId, t.seq] }), unique("agent_activity_events_project_event_unique").on(t.projectId, t.eventId),
+  index("idxAgentActivityEventsSeq").on(t.projectId, t.seq), index("idxAgentActivityEventsAgentSeq").on(t.projectId, t.agentId, t.seq),
+  index("idxAgentActivityEventsTaskSeq").on(t.projectId, t.taskId, t.seq), index("idxAgentActivityEventsTypeSeq").on(t.projectId, t.type, t.seq),
+]);
+/* FNXC:MemoryRecall 2026-08-10-11:03: Project-scoped recall keeps structured durable context isolated by the same composite key and RLS contract as other project rows. */
+export const memoryRecallRecords = projectSchema.table("memory_recall_records", {
+  projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
+  id: text("id").notNull(), kind: text("kind").notNull(), content: text("content").notNull(), contentHash: text("content_hash").notNull(),
+  source: jsonb("source").notNull(), tags: jsonb("tags").notNull().default(sql`'[]'::jsonb`), graphNodeIds: jsonb("graph_node_ids").notNull().default(sql`'[]'::jsonb`),
+  createdAt: text("created_at").notNull(), updatedAt: text("updated_at").notNull(),
+}, (t) => [primaryKey({ columns: [t.projectId, t.id] }), unique("memory_recall_records_project_kind_hash_key").on(t.projectId, t.kind, t.contentHash), index("idxMemoryRecallRecordsKindCreated").on(t.projectId, t.kind, t.createdAt), index("idxMemoryRecallRecordsCreated").on(t.projectId, t.createdAt)]);
+
+export const agentActivityEventSeq = projectSchema.table("agent_activity_event_seq", {
+  projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`), lastSeq: bigint("last_seq", { mode: "bigint" }).notNull().default(sql`0`),
 }, (t) => [primaryKey({ columns: [t.projectId] })]);
 
 /*
@@ -1576,6 +1614,8 @@ export const missionFeatures = projectSchema.table("mission_features", {
   // fixed to text to match the SQLite TEXT column and MissionStore semantics.
   acceptanceCriteria: text("acceptance_criteria"),
   status: text("status").notNull(),
+  // FNXC:SpecLockMissionAlignment 2026-08-10-16:17: retain task drift projection independently of feature delivery status so roadmap readers share reconciliation's durable result.
+  specAlignment: text("spec_alignment"),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
   // FNXC:MissionStore 2026-06-24-08:20:
@@ -1888,6 +1928,33 @@ export const deployments = projectSchema.table("deployments", {
   index("idxDeploymentsProjectDeployedAt").on(t.projectId, t.deployedAt),
   index("idxDeploymentsDeployedAt").on(t.deployedAt),
   index("idxDeploymentsService").on(t.service),
+]);
+
+/*
+FNXC:PrMergeEventDrivenChecks 2026-08-09-14:35:
+Persist terminal GitHub CI by mandatory project, repository, and commit identity so event-driven
+required checks cannot admit stale or cross-project results; received_at supports scheduled retention.
+*/
+export const githubCheckStates = projectSchema.table("github_check_states", {
+  id: integer("id").generatedAlwaysAsIdentity().notNull(),
+  projectId: text("project_id").notNull().default(""),
+  repo: text("repo").notNull(),
+  headSha: text("head_sha").notNull(),
+  checkName: text("check_name").notNull(),
+  state: text("state").notNull(),
+  eventKind: text("event_kind"),
+  externalId: text("external_id"),
+  detailsUrl: text("details_url"),
+  reportedAt: text("reported_at").notNull(),
+  receivedAt: text("received_at").notNull(),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+  meta: jsonb("meta"),
+}, (t) => [
+  primaryKey({ columns: [t.projectId, t.id], name: "github_check_states_pkey" }),
+  uniqueIndex("idxGithubCheckStatesIdentity").on(t.projectId, t.repo, t.headSha, t.checkName),
+  index("idxGithubCheckStatesProjectCommit").on(t.projectId, t.repo, t.headSha),
+  index("idxGithubCheckStatesProjectReceived").on(t.projectId, t.receivedAt),
 ]);
 
 export const incidents = projectSchema.table("incidents", {
@@ -2398,12 +2465,12 @@ export const projectTableNames = [
   "milestones", "slices", "mission_features", "ideation_sessions", "ideation_candidates", "mission_events", "plugins",
   "routines", "project_insights", "project_insight_runs", "project_insight_run_events",
   "todo_lists", "todo_items", "usage_events", "plugin_activations",
-  "knowledge_pages", "deployments", "incidents", "ai_sessions", "messages",
+  "knowledge_pages", "deployments", "github_check_states", "incidents", "ai_sessions", "messages",
   "agent_ratings", "chat_sessions", "cli_sessions", "chat_messages",
   "run_audit_events", "mission_contract_assertions", "mission_feature_assertions",
   "mission_validator_runs", "mission_validator_failures",
   "mission_fix_feature_lineage", "verification_cache", "import_translation_cache",
   "approval_requests",
-  "approval_request_audit_events", "chat_rooms", "chat_room_members",
+  "approval_request_audit_events", "agent_activity_events", "agent_activity_event_seq", "memory_recall_records", "chat_rooms", "chat_room_members",
   "chat_room_messages", "chat_token_usage",
 ] as const;

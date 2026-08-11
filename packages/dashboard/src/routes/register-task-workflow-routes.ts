@@ -1,4 +1,4 @@
-import { createLogger } from "@fusion/core";
+import { createIngestedCheckResolver, createLogger, isCurrentSpecDriftReport, resolveRequiredCheckNames } from "@fusion/core";
 import type { Request, Response } from "express";
 
 const severityAuditLog = createLogger("dashboard-register-task-workflow-routes");
@@ -60,6 +60,7 @@ import {
   resolveNearDuplicateCanonicalFlags,
   isEphemeralAgent,
   parseExplicitDuplicateMarker,
+  resolveExplicitDuplicateMarker,
   resolveWorkflowIrForTask,
   resolveWorkflowIrForTaskWithProvenance,
   resolveReviewColumns,
@@ -85,6 +86,7 @@ import {
 } from "@fusion/core";
 import { GitHubClient } from "../github.js";
 import { resolveArtifactMediaPath } from "../artifact-media.js";
+import { archivedColumnsForTask } from "../task-lifecycle-lanes.js";
 import { githubRateLimiter } from "../github-poll.js";
 import { createTrackingIssueForTask } from "../github-tracking-hook.js";
 import { parseGitHubBadgeUrl } from "./register-git-github.js";
@@ -100,6 +102,7 @@ import {
   prepareRevertPrBranch,
   prepareWorkspaceRevertPrBranches,
   isInReviewMissingWorktreeSessionStartFailure,
+  inspectExternalGitCheckout,
   // FN-8004 follow-up: shared with SelfHealingManager.recoverStaleMergingStatus so the manual
   // Retry gate and the automatic sweep agree on when a merge-active stamp is orphaned.
   isStaleMergeActiveStatus,
@@ -355,7 +358,6 @@ async function resolveTerminalColumnsForTask(store: TaskStore, taskId: string): 
     return new Set(["done", "archived"]);
   }
 }
-
 
 function isArtifactType(value: string): value is ArtifactType {
   return ARTIFACT_TYPES.has(value as ArtifactType);
@@ -1629,6 +1631,8 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         breakIntoSubtasks,
         enabledWorkflowSteps,
         workflowId,
+        agentId,
+        assignedAgentId,
         modelPresetId,
         modelProvider,
         modelId,
@@ -1740,6 +1744,12 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       // the store below (mapped to 4xx in the catch handler).
       if (workflowId !== undefined && workflowId !== null && typeof workflowId !== "string") {
         throw badRequest("workflowId must be a string or null");
+      }
+
+      // The public aliases normalize once; owner eligibility is enforced by the shared store boundary.
+      const requestedOwnerId = assignedAgentId ?? agentId;
+      if (requestedOwnerId !== undefined && (typeof requestedOwnerId !== "string" || requestedOwnerId.trim() === "")) {
+        throw badRequest("agentId must be a non-empty string");
       }
 
       // Check for summarize flag in request
@@ -2075,6 +2085,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         // U6/R3: forward only when the client set it (string | null). Leaving it
         // absent preserves the project-default inheritance behavior.
         ...(workflowId !== undefined ? { workflowId: workflowId as string | null } : {}),
+        ...(typeof requestedOwnerId === "string" ? { assignedAgentId: requestedOwnerId.trim() } : {}),
         modelPresetId: validateOptionalModelField(modelPresetId, "modelPresetId"),
         modelProvider: executorModel.provider ?? undefined,
         modelId: executorModel.modelId ?? undefined,
@@ -2126,18 +2137,23 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       canonical lets the original claimed child return to its workflow-resolved intake lane.
       */
       if (trusted?.recoverArchivedProposalTask) {
-        const restoredTask = await scopedStore.unarchiveTask(trusted.recoverArchivedProposalTask.id);
         /*
         FNXC:TaskRecommendations 2026-08-08-08:44:
         A deterministic-duplicate archive is a lane move, not an operator archive, so it has no
         pre-archive history for generic restore to replay. Re-home its recovered child to that
         child's workflow intake explicitly; otherwise custom workflows can restore it to a legacy
         fallback or complete lane instead of the normal guarded-intake destination.
+
+        FNXC:TaskRecommendations 2026-08-09-06:06:
+        Never call the cold-storage unarchive path here. Deterministic reconciliation keeps the row in
+        active storage and may move it to a custom archived-trait lane; re-home that live row directly
+        through the explicit recovery bypass because archive-to-intake is intentionally non-adjacent.
         */
-        const intakeColumn = await resolveIntakeColumnForTask(scopedStore, restoredTask.id);
-        const recoveredTask = restoredTask.column === intakeColumn
-          ? restoredTask
-          : await scopedStore.moveTask(restoredTask.id, intakeColumn);
+        const archivedTask = trusted.recoverArchivedProposalTask;
+        const intakeColumn = await resolveIntakeColumnForTask(scopedStore, archivedTask.id);
+        const recoveredTask = archivedTask.column === intakeColumn
+          ? archivedTask
+          : await scopedStore.moveTask(archivedTask.id, intakeColumn, { recoveryRehome: true });
         const trustedCreateResult = await trusted.onCreated?.(recoveredTask);
         res.status(200).json(trusted.responseForCreated?.(recoveredTask, trustedCreateResult) ?? recoveredTask);
         return;
@@ -2240,7 +2256,8 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         message.includes("must be a string")
         || message.includes("must be an array of strings")
         || /^Workflow '.*' not found$/.test(message)
-        || /is a fragment and cannot be selected/.test(message);
+        || /is a fragment and cannot be selected/.test(message)
+        || message.startsWith("Task intake owner resolution failed:");
       const status = isClientError ? 400 : 500;
       throw new ApiError(status, message);
     }
@@ -2338,13 +2355,20 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
           throw conflict("Recommendation link is malformed");
         }
         const linked = await scopedStore.getTask(recommendation.createdTaskId).catch(() => null);
+        const linkedArchiveColumns = linked
+          ? await archivedColumnsForTask(scopedStore, linked.id)
+          : new Set<string>();
         /*
         FNXC:TaskRecommendations 2026-08-08-06:34:
         A prior link is reusable only while its child remains in a live task lane. Archived and
         soft-deleted children are historical records, not an actionable Created result; conflict
         rather than silently resurrecting or linking a second child.
+
+        FNXC:TaskRecommendations 2026-08-09-03:30:
+        Archive unavailability uses archivedColumnsForTask (workflow archived trait), not a
+        legacy `"archived"` column literal — custom archive-lane boards keep the same rule.
         */
-        if (!linked || linked.deletedAt || linked.column === "archived") {
+        if (!linked || linked.deletedAt || linkedArchiveColumns.has(linked.column)) {
           throw conflict("Recommendation link points to an unavailable task");
         }
         return res.status(200).json({ task: linked, parent });
@@ -2359,16 +2383,9 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       */
       const existing = (await scopedStore.listTasks({ slim: false, includeArchived: true, includeDeleted: true }))
         .find((task) => task.proposalClaimId === proposalClaimId);
-      const existingArchiveColumns = await (async () => {
-        if (!existing) return new Set<string>();
-        try {
-          const ir = await resolveWorkflowIrForTask(scopedStore, existing.id);
-          const columns = columnsWithFlag(ir, "archived");
-          return new Set(columns.length > 0 ? columns : ["archived"]);
-        } catch {
-          return new Set(["archived"]);
-        }
-      })();
+      const existingArchiveColumns = existing
+        ? await archivedColumnsForTask(scopedStore, existing.id)
+        : new Set<string>();
       /*
       FNXC:TaskRecommendations 2026-08-08-08:44:
       Deterministic reconciliation moves a child to its workflow's archived trait, which may be
@@ -3404,6 +3421,8 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       const autoPauseClearPatch = buildAutoPauseClearPatch(task);
       const clearedDeadlockAutoPause = Object.keys(autoPauseClearPatch).length > 0;
       const retryLogSuffix = clearedDeadlockAutoPause ? ", cleared deadlock auto-pause" : "";
+      // FNXC:TaskWedgeNotifications 2026-08-10-20:15: dashboard Retry is explicit operator intervention, so it clears the spent generic-terminal budget.
+      await scopedStore.resetTerminalFailureAutoRecoveryBudget(req.params.id);
 
       if (isMissingWorktreeSessionRetry) {
         /*
@@ -4295,6 +4314,38 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
     }
   });
 
+  /*
+  FNXC:SpecLock 2026-08-09-12:34:
+  Task Detail reads retained structural evidence from the store rather than recomputing it in the
+  browser, keeping displayed alignment identical to the execution-time evaluator.
+  */
+  router.get("/tasks/:id/spec-lock", async (req, res) => {
+    try {
+      const { store: scopedStore } = await getProjectContext(req);
+      const task = await scopedStore.getTask(req.params.id);
+      const [latestLock, activeLock, currentPlan, latestReport, locks, currentPlans, reports] = await Promise.all([
+        scopedStore.getLatestSpecLock(req.params.id),
+        scopedStore.getActiveSpecLock(req.params.id),
+        scopedStore.getLatestCurrentPlanEvidence(req.params.id),
+        scopedStore.getLatestSpecDriftReport(req.params.id),
+        scopedStore.listSpecLocks(req.params.id),
+        scopedStore.listCurrentPlanEvidence(req.params.id),
+        scopedStore.listSpecDriftReports(req.params.id),
+      ]);
+      /*
+      FNXC:SpecDrift 2026-08-09-19:19:
+      Route readers expose the active lock separately and never promote a historical clean report
+      after a prompt rewrite or re-lock. The stale row remains in immutable history for audit.
+      */
+      const report = isCurrentSpecDriftReport(latestReport, latestLock, currentPlan, task.approvedPlanFingerprint) ? latestReport : undefined;
+      res.json({ latestLock: latestLock ?? null, activeLock: activeLock ?? null, currentPlan: currentPlan ?? null, report: report ?? null, latestReport: latestReport ?? null, history: { locks, currentPlans, reports } });
+    } catch (err: unknown) {
+      if (err instanceof ApiError) throw err;
+      if (isTaskLookupMiss(err)) throw notFound(`Task ${req.params.id} not found`);
+      rethrowAsApiError(err, "Internal server error");
+    }
+  });
+
   // Get single task with prompt content
   router.get("/tasks/:id", async (req, res) => {
     try {
@@ -4572,14 +4623,22 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
          * manual gate falls back to today's always-re-park behavior for this task.
          */
         let approvedPlanFingerprint: string | undefined;
+        let approvedPrompt: string | undefined;
         try {
           const { readFile } = await import("node:fs/promises");
           const { join } = await import("node:path");
           const promptPath = join(scopedStore.getRootDir(), ".fusion", "tasks", task.id, "PROMPT.md");
           const promptText = await readFile(promptPath, "utf8");
+          approvedPrompt = promptText;
           approvedPlanFingerprint = computePlanApprovalFingerprint(promptText);
         } catch {
-          // No PROMPT.md to fingerprint (unusual for an awaiting-approval task) — leave unset.
+          /*
+          FNXC:SpecLockApproval 2026-08-09-20:04:
+          Manual approval is a release boundary, so an unreadable PROMPT.md cannot fall back to
+          clearing a stale fingerprint and releasing un-lockable work. Keep the existing hold until
+          the operator restores a readable, structurally comparable plan that can be locked.
+          */
+          throw conflict("Cannot approve plan: PROMPT.md must be readable to create the immutable spec lock");
         }
 
         /*
@@ -4630,6 +4689,15 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
           approvedWorkflowStepResults = results;
         }
 
+        /*
+        FNXC:SpecLock 2026-08-09-17:37:
+        Validate an exhausted Plan Review before attempting persistence. A malformed cap state must
+        retain its established conflict response, while every valid release still locks under this fence.
+        */
+        if (approvedPlanFingerprint && approvedPrompt) {
+          await scopedStore.lockCurrentPlanWhilePlanningLocked(task.id, approvedPlanFingerprint, approvedPrompt);
+        }
+
         const approvalPatch = {
           status: null,
           approvedPlanFingerprint: approvedPlanFingerprint ?? null,
@@ -4664,6 +4732,12 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
          * so a stale plan can never bypass a later manual approval gate.
          */
         const approved = await scopedStore.updateTask(task.id, approvalPatch);
+        /*
+        FNXC:SpecDrift 2026-08-09-07:36:
+        Publish the deterministic report before the approval handoff seeds graph execution. A
+        missing/unreadable PROMPT.md yields an unavailable report rather than an unexamined release.
+        */
+        await scopedStore.reconcileSpecDriftWhilePlanningLocked(approved);
         /*
          * FNXC:PlanApprovalDispatch 2026-08-05-01:57:
          * Clearing awaiting-approval is only the first half of the operator decision. Resume the
@@ -6193,9 +6267,28 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       const existingTaskForDuplicateDismissal = dismissNearDuplicate === true
         ? await scopedStore.getTask(req.params.id)
         : null;
+      let duplicateDismissalResolution: ReturnType<typeof resolveExplicitDuplicateMarker> | null = null;
       if (dismissNearDuplicate === true) {
         const isTriageMarkerDecision = existingTaskForDuplicateDismissal?.sourceMetadata?.duplicateSource === "triage-marker"
           && existingTaskForDuplicateDismissal.pausedReason === "duplicate-decision-required";
+        const existingPrompt = existingTaskForDuplicateDismissal
+          ? await readFile(join(scopedStore.getRootDir(), ".fusion", "tasks", existingTaskForDuplicateDismissal.id, "PROMPT.md"), "utf-8").catch(() => null)
+          : null;
+        duplicateDismissalResolution = resolveExplicitDuplicateMarker(existingPrompt, existingTaskForDuplicateDismissal?.title);
+        /*
+         * FNXC:DuplicateIntake 2026-08-09-02:29:
+         * FN-8840 extends an explicit redirect to task titles. Keep must retire the source that
+         * created the duplicate-decision hold before releasing it: otherwise a title marker is
+         * immediately re-ingested, while deleting PROMPT.md for a title-only redirect loses an
+         * operator-authored plan. Same-ID prompt/title markers remain one cleanup operation;
+         * conflicts deliberately retain both sources for explicit operator correction.
+         */
+        if (!duplicateDismissalResolution.conflict && duplicateDismissalResolution.marker) {
+          const titleMarker = parseExplicitDuplicateMarker(existingTaskForDuplicateDismissal?.title ?? "");
+          if (title === undefined && titleMarker?.canonicalId === duplicateDismissalResolution.marker.canonicalId) {
+            updates.title = `Duplicate redirect cleared: ${titleMarker.canonicalId}`;
+          }
+        }
         /*
          * FNXC:DuplicateIntake 2026-07-16-13:00:
          * Keep resolves Issue #2225's default triage-marker hold by acknowledging the link,
@@ -6231,7 +6324,11 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       }
 
       const task = await scopedStore.updateTask(req.params.id, updates);
-      if (dismissNearDuplicate === true && task.sourceMetadata?.duplicateSource === "triage-marker") {
+      if (
+        dismissNearDuplicate === true
+        && task.sourceMetadata?.duplicateSource === "triage-marker"
+        && duplicateDismissalResolution?.source === "prompt"
+      ) {
         const { rm } = await import("node:fs/promises");
         await rm(join(scopedStore.getRootDir(), ".fusion", "tasks", task.id, "PROMPT.md"), { force: true });
       }
@@ -6376,6 +6473,55 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
     }
   });
 
+  /**
+   * FNXC:ExternalTaskCheckoutRouting 2026-08-09-22:43:
+   * Persist one operator-validated external checkout for both implementation and enforced review. The execution/review route belongs in task source metadata, not the user-defined workflow custom-field schema, and clearing the route must null every persisted routing key.
+   */
+  router.patch("/tasks/:id/external-checkout", async (req, res) => {
+    try {
+      const { store: scopedStore } = await getProjectContext(req);
+      const checkoutPath = (req.body as { checkoutPath?: unknown } | undefined)?.checkoutPath;
+      await scopedStore.getTask(req.params.id);
+
+      if (checkoutPath === null) {
+        const task = await scopedStore.updateTask(req.params.id, {
+          sourceMetadataPatch: {
+            externalExecutionCheckout: null,
+            externalExecutionBranch: null,
+            externalReviewCheckout: null,
+          },
+        });
+        await scopedStore.logEntry(req.params.id, "External execution/review checkout routing cleared by operator");
+        res.json(task);
+        return;
+      }
+
+      const inspection = await inspectExternalGitCheckout(checkoutPath, { requireClean: true });
+      if (!inspection.valid || !inspection.checkoutPath || !inspection.branch) {
+        throw badRequest(`Invalid external checkout: ${inspection.reason ?? "unknown error"}`);
+      }
+
+      const task = await scopedStore.updateTask(req.params.id, {
+        sourceMetadataPatch: {
+          externalExecutionCheckout: inspection.checkoutPath,
+          externalExecutionBranch: inspection.branch,
+          externalReviewCheckout: inspection.checkoutPath,
+        },
+      });
+      await scopedStore.logEntry(
+        req.params.id,
+        `External execution/review checkout routed to ${inspection.checkoutPath} (${inspection.branch}) by operator`,
+      );
+      res.json(task);
+    } catch (err: unknown) {
+      if (err instanceof ApiError) throw err;
+      if (isTaskLookupMiss(err) || (err instanceof Error ? err.message : String(err)).includes("not found")) {
+        throw notFound(err instanceof Error ? err.message : String(err));
+      }
+      rethrowAsApiError(err);
+    }
+  });
+
   // Patch a task's custom field values (U13/KTD-14). Delegates to the single
   // store write authority (`updateTaskCustomFields`), which validates the patch
   // against the task's workflow field schema. A typed rejection surfaces as a
@@ -6460,7 +6606,9 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         if (!owner || !repo) {
           throw badRequest("Could not determine GitHub repository for PR review fetch");
         }
-        reviewData = await new GitHubClient(options?.githubToken ?? process.env.GITHUB_TOKEN).getPrReviewDetails(owner, repo, task.prInfo.number);
+        const requiredCheckNames = resolveRequiredCheckNames(await scopedStore.getSettings());
+        const resolveIngestedChecks = createIngestedCheckResolver(scopedStore.getAsyncLayer?.());
+        reviewData = await new GitHubClient(options?.githubToken ?? process.env.GITHUB_TOKEN).getPrReviewDetails(owner, repo, task.prInfo.number, { requiredCheckNames, ...(resolveIngestedChecks ? { resolveIngestedChecks } : {}) });
       } else {
         reviewData = await buildDirectTaskReviewData(task, scopedStore);
       }
@@ -6488,7 +6636,9 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         if (!owner || !repo) {
           throw badRequest("Could not determine GitHub repository for PR review refresh");
         }
-        reviewData = await new GitHubClient(options?.githubToken ?? process.env.GITHUB_TOKEN).getPrReviewDetails(owner, repo, task.prInfo.number);
+        const requiredCheckNames = resolveRequiredCheckNames(await scopedStore.getSettings());
+        const resolveIngestedChecks = createIngestedCheckResolver(scopedStore.getAsyncLayer?.());
+        reviewData = await new GitHubClient(options?.githubToken ?? process.env.GITHUB_TOKEN).getPrReviewDetails(owner, repo, task.prInfo.number, { requiredCheckNames, ...(resolveIngestedChecks ? { resolveIngestedChecks } : {}) });
       } else {
         reviewData = await buildDirectTaskReviewData(task, scopedStore);
       }
@@ -6537,7 +6687,9 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         if (!owner || !repo) {
           throw badRequest("Could not determine GitHub repository for PR review fetch");
         }
-        canonicalReviewData = await new GitHubClient(options?.githubToken ?? process.env.GITHUB_TOKEN).getPrReviewDetails(owner, repo, task.prInfo.number);
+        const requiredCheckNames = resolveRequiredCheckNames(await scopedStore.getSettings());
+        const resolveIngestedChecks = createIngestedCheckResolver(scopedStore.getAsyncLayer?.());
+        canonicalReviewData = await new GitHubClient(options?.githubToken ?? process.env.GITHUB_TOKEN).getPrReviewDetails(owner, repo, task.prInfo.number, { requiredCheckNames, ...(resolveIngestedChecks ? { resolveIngestedChecks } : {}) });
       } else {
         canonicalReviewData = await buildDirectTaskReviewData(task, scopedStore);
       }

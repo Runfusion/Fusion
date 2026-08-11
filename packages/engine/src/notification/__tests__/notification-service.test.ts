@@ -75,6 +75,80 @@ function task(overrides: Partial<Task> = {}): Task {
 }
 
 describe("NotificationService deferred failure notifications", () => {
+  it("does not dispatch a stale source-tagged terminal escalation after the live budget advances", async () => {
+    const store = createStore();
+    const episode = vi.fn(async () => ({ claimed: true, episodeId: "should-not-claim" }));
+    Object.assign(store, { claimTaskWedgeNotificationEpisode: episode });
+    const service = new NotificationService(store as any);
+    await service.start();
+    const stale = task({
+      id: "FN-stale-escalation",
+      status: "failed",
+      error: "opaque terminal failure",
+      wedgeNotification: {
+        reasonKey: "terminal-failed",
+        episodeId: "stale-escalation",
+        status: "active",
+        transitionedAt: "2026-08-10T20:00:00.000Z",
+        autoRecovery: { attempts: 1, lastAttemptAt: "2026-08-10T20:00:00.000Z" },
+      },
+    });
+    store.setTask(stale);
+
+    await expect(service.notifyTaskWedge(stale, {
+      reasonKey: "terminal-failed",
+      reason: "The task entered a terminal failed state and needs operator intervention.",
+      action: "Retry the task.",
+    }, { source: "auto-recovery-escalation" })).resolves.toBe("unavailable");
+
+    expect(episode).not.toHaveBeenCalled();
+  });
+
+  it("stamps a durable suppressed exhaustion at the shared service seam", async () => {
+    const store = createStore();
+    const marker = vi.fn(async () => "already-stamped" as const);
+    const stamp = vi.fn(async () => "stamped" as const);
+    const episode = vi.fn(async () => ({ claimed: false }));
+    Object.assign(store, {
+      claimTaskWedgeNotificationEpisode: episode,
+      markTerminalFailureAutoRecoveryBudgetExhausted: marker,
+      markTerminalFailureAutoRecoveryEscalationDelivered: stamp,
+    });
+    const service = new NotificationService(store as any);
+    await service.start();
+    const exhausted = task({
+      id: "FN-suppressed-exhaustion",
+      status: "failed",
+      error: "opaque terminal failure",
+      wedgeNotification: {
+        reasonKey: "terminal-failed",
+        episodeId: "active",
+        status: "active",
+        transitionedAt: "2026-08-10T20:00:00.000Z",
+        lastNotifiedAtByReason: { "terminal-failed": "2026-08-10T20:01:00.000Z" },
+        autoRecovery: {
+          attempts: 3,
+          lastAttemptAt: "2026-08-10T20:00:00.000Z",
+          budgetStartedAt: "2026-08-10T20:00:00.000Z",
+          exhaustedAt: "2026-08-10T20:01:00.000Z",
+          lastBudgetWriteAt: "2026-08-10T20:01:00.000Z",
+        },
+      },
+    });
+    store.setTask(exhausted);
+    store.emit("task:updated", exhausted);
+    await flushAsyncHandlers();
+
+    expect(marker).toHaveBeenCalledWith(exhausted.id, { maxAttempts: 3 });
+    expect(episode).toHaveBeenCalledWith(exhausted.id, "terminal-failed");
+    expect(stamp).toHaveBeenCalledWith(exhausted.id, {
+      dispatchOutcome: "suppressed",
+      escalationReason: "budget-exhausted",
+    });
+    expect(marker.mock.invocationCallOrder[0]).toBeLessThan(episode.mock.invocationCallOrder[0]);
+    expect(episode.mock.invocationCallOrder[0]).toBeLessThan(stamp.mock.invocationCallOrder[0]);
+  });
+
   beforeEach(() => {
     vi.useFakeTimers();
   });
@@ -147,6 +221,10 @@ describe("NotificationService deferred failure notifications", () => {
       recoveryRetryCount: undefined,
       nextRecoveryAt: undefined,
       updatedAt: "2026-08-05T05:01:00.000Z",
+      wedgeNotification: {
+        reasonKey: "terminal-failed", episodeId: "budget", status: "active", transitionedAt: "2026-08-05T05:00:00.000Z",
+        autoRecovery: { attempts: 3, lastAttemptAt: "2026-08-05T05:00:00.000Z" },
+      },
     });
     store.setTask(exhausted);
     store.emit("task:updated", exhausted);
@@ -170,6 +248,54 @@ describe("NotificationService deferred failure notifications", () => {
     await restarted.stop();
   });
 
+  it("deduplicates durable awaiting-approval messages across policy re-parks and restart", async () => {
+    const store = createStore();
+    const messageKeys = new Set<string>();
+    let insertedCount = 0;
+    const sendMessageOnce = vi.fn(async (_input: unknown, idempotencyKey: string) => {
+      const inserted = !messageKeys.has(idempotencyKey);
+      messageKeys.add(idempotencyKey);
+      if (inserted) insertedCount += 1;
+      return { message: {} as any, inserted };
+    });
+    const service = new NotificationService(store as any, {
+      messageStore: { on: () => undefined, sendMessageOnce } as any,
+    });
+    await service.start();
+    const policyHold = task({
+      id: "FN-policy-hold",
+      column: "in-review",
+      status: "awaiting-approval",
+      error: "Pull request is blocked by branch protection.",
+      awaitingApprovalReason: "merge-blocked-by-policy",
+    });
+
+    store.emit("task:updated", policyHold);
+    store.emit("task:updated", policyHold);
+    await vi.waitFor(() => expect(sendMessageOnce).toHaveBeenCalledTimes(2));
+    expect(insertedCount).toBe(1);
+    expect(sendMessageOnce).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        content: expect.stringContaining("pull-request merge is blocked"),
+        metadata: expect.objectContaining({
+          taskId: "FN-policy-hold",
+          awaitingApprovalReason: "merge-blocked-by-policy",
+        }),
+      }),
+      "merge-policy-block:FN-policy-hold",
+    );
+
+    await service.stop();
+    const restarted = new NotificationService(store as any, {
+      messageStore: { on: () => undefined, sendMessageOnce } as any,
+    });
+    await restarted.start();
+    store.emit("task:updated", policyHold);
+    await vi.waitFor(() => expect(sendMessageOnce).toHaveBeenCalledTimes(3));
+    expect(insertedCount).toBe(1);
+    await restarted.stop();
+  });
+
   it("Failure that persists past grace dispatches exactly once", async () => {
     const { store, service, sendNotification } = await setup();
     store.setTask(task({ id: "FN-1", status: "failed" }));
@@ -182,7 +308,7 @@ describe("NotificationService deferred failure notifications", () => {
     await service.stop();
   });
 
-  it("delivers a new wedge episode when an opaque terminal failure gains a specific cause", async () => {
+  it("delivers only the live wedge cause when a snapshot is superseded", async () => {
     const { store, service, sendNotification } = await setup();
     const genericFailure = task({ id: "FN-wedge", status: "failed", error: "unexpected failure" });
     store.setTask(genericFailure);
@@ -198,11 +324,8 @@ describe("NotificationService deferred failure notifications", () => {
     store.emit("task:updated", wedge);
     await vi.advanceTimersByTimeAsync(100);
 
-    expect(sendNotification).toHaveBeenCalledTimes(2);
-    expect(sendNotification).toHaveBeenCalledWith("task-wedged", expect.objectContaining({
-      taskId: "FN-wedge",
-      metadata: expect.objectContaining({ wedgeReason: "terminal-failed" }),
-    }));
+    // FNXC:TaskWedgeNotifications 2026-08-09-06:30: A superseded snapshot must not claim an obsolete episode.
+    expect(sendNotification).toHaveBeenCalledTimes(1);
     expect(sendNotification).toHaveBeenCalledWith("task-wedged", expect.objectContaining({
       taskId: "FN-wedge",
       metadata: expect.objectContaining({ wedgeReason: "merge-blocked:changeset-format" }),
@@ -246,7 +369,7 @@ describe("NotificationService deferred failure notifications", () => {
     await service.stop();
   });
 
-  it("FN-5627: still dispatches notification for genuine concurrent-advance failures (different SHAs)", async () => {
+  it("FN-5627: generic concurrent-advance failures are withheld for terminal auto-recovery", async () => {
     const { store, service, sendNotification } = await setup();
     const genuineError = "Integration branch main advanced concurrently (expected aaa1111aaa1111aaa1111aaa1111aaa1111aaaa, observed bbb2222bbb2222bbb2222bbb2222bbb2222bbbb) while applying ccc3333ccc3333ccc3333ccc3333ccc3333cccc for FN-genuine";
     store.setTask(task({ id: "FN-genuine", status: "failed", error: genuineError }));
@@ -254,11 +377,7 @@ describe("NotificationService deferred failure notifications", () => {
 
     await vi.advanceTimersByTimeAsync(500);
 
-    expect(sendNotification).toHaveBeenCalledTimes(1);
-    expect(sendNotification).toHaveBeenCalledWith("task-wedged", expect.objectContaining({
-      taskId: "FN-genuine",
-      metadata: expect.objectContaining({ wedgeReason: "terminal-failed" }),
-    }));
+    expect(sendNotification).not.toHaveBeenCalled();
     await service.stop();
   });
 

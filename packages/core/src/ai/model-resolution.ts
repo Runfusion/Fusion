@@ -162,6 +162,20 @@ export function resolvePhaseThinkingLevel(
   );
 }
 
+/*
+FNXC:AgentModelInheritance 2026-08-09-22:38:
+Permanent role-agent identity sessions need the merger thinking chain in core because dashboard
+and engine share it; keep it aligned with the established merger lane precedence.
+*/
+export function resolveMergerPhaseThinkingLevel(settings?: Partial<Settings>): string | undefined {
+  return firstThinkingLevel(
+    settings?.mergerThinkingLevel,
+    settings?.mergerGlobalThinkingLevel,
+    settings?.defaultThinkingLevelOverride,
+    settings?.defaultThinkingLevel,
+  );
+}
+
 export function resolveProjectDefaultModel(settings?: Partial<Settings>): ResolvedModelSelection {
   return applyTestModeOverrides(
     pickFirstModelPair(

@@ -17,6 +17,7 @@ import {
   isTestModeActive,
   resolveAgentToolOutputMaxChars,
   resolveExecutionSettingsModel,
+  resolvePermanentAgentEffectiveModel,
   resolveExecutorFallbackModel,
   resolveMergerSettingsModel,
   resolvePhaseThinkingLevel,
@@ -799,6 +800,7 @@ export function resolveValidatorSessionModel(
 export function resolveHeartbeatSessionModels(
   settings: Partial<Settings> | undefined,
   assignedAgentRuntimeConfig?: Record<string, unknown>,
+  agent?: { roles?: string[]; role?: string; metadata?: Record<string, unknown> | null },
 ): {
   defaultProvider: string | undefined;
   defaultModelId: string | undefined;
@@ -815,7 +817,9 @@ export function resolveHeartbeatSessionModels(
     };
   }
 
-  const executionSettingsModel = resolveExecutionSettingsModel(settings);
+  const executionSettingsModel = agent
+    ? resolvePermanentAgentEffectiveModel(agent, settings)
+    : resolveExecutionSettingsModel(settings);
   const executorFallbackModel = resolveExecutorFallbackModel(settings);
   const assignedRuntimeModel = extractRuntimeModel(assignedAgentRuntimeConfig);
   /*

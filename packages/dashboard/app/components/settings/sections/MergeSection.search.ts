@@ -12,6 +12,9 @@ import type { SettingsSearchEntry } from "../search/types";
 
 export const mergeSearchEntries: SettingsSearchEntry[] = [
   {
+    sectionId: "merge", key: "requiredChecks", labelKey: "settings.merge.requiredChecks", labelFallback: "Required pull-request checks", helpKey: "settings.merge.requiredChecksHelp", helpFallback: "No default — unset. Comma-separated check names match GitHub exactly (case-sensitive). Leaving this empty uses GitHub required-status checks only; a named check that never reports blocks the merge.", keywords: ["CI", "status", "GitHub"],
+  },
+  {
     sectionId: "merge",
     key: "maxAutoMergeRetries",
     labelKey: "settings.merge.autoMergeConflictRetries",

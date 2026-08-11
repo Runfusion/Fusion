@@ -141,6 +141,10 @@ export interface WorkflowGraphTaskRunnerDeps {
    *  node's outcome into `task.workflowStepResults` keyed by node id. Additive;
    *  absent → graph records nothing (disabled groups + unwired stores byte-inert). */
   recordWorkflowStepResult?: (taskId: string, result: WorkflowStepResult) => void | Promise<void>;
+  /** Completes an accepted Plan Review close through the authoritative task lifecycle. */
+  completePlanReviewNoOp?: WorkflowGraphExecutorDeps["completePlanReviewNoOp"];
+  /** Persists the resumable Plan Review hold for a rejected close request. */
+  holdPlanReviewNoOp?: WorkflowGraphExecutorDeps["holdPlanReviewNoOp"];
   /** Enabled pre-merge optional-step REVISE remediation seam. Additive; absent preserves prior graph traversal. */
   requestPreMergeOptionalStepFix?: WorkflowGraphExecutorDeps["requestPreMergeOptionalStepFix"];
   /** Project node-published task metadata onto the task row for dispatcher/UI. */
@@ -411,6 +415,8 @@ export class WorkflowGraphTaskRunner {
         resumeReconcile: this.deps.resumeReconcile,
         logTaskEntry: this.deps.logTaskEntry,
         recordWorkflowStepResult: this.deps.recordWorkflowStepResult,
+        completePlanReviewNoOp: this.deps.completePlanReviewNoOp,
+        holdPlanReviewNoOp: this.deps.holdPlanReviewNoOp,
         requestPreMergeOptionalStepFix: this.deps.requestPreMergeOptionalStepFix,
         publishTaskProjection: this.deps.publishTaskProjection,
         signal: this.deps.signal,

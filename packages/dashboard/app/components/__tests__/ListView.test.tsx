@@ -179,14 +179,19 @@ vi.mock("../TaskDetailModal", () => ({
     task,
     onOpenDetail,
     onRequestClose,
+    onTaskUpdated,
   }: {
     task: Task | TaskDetail;
     onOpenDetail?: (task: Task | TaskDetail) => void;
     onRequestClose?: () => void;
+    onTaskUpdated?: (patch: Partial<TaskDetail>) => void;
   }) => (
     <div data-testid="task-detail-content">
       <span>{task.id}</span>
+      <output data-testid="split-detail-title">{task.title}</output>
       <button type="button" onClick={() => onRequestClose?.()}>Close detail</button>
+      <button type="button" onClick={() => onTaskUpdated?.({ title: "renamed" })}>Patch split without id</button>
+      <button type="button" onClick={() => onTaskUpdated?.({ id: "FN-FOREIGN", title: "foreign" })}>Patch split foreign id</button>
       {(task.dependencies ?? []).map((dependencyId) => (
         <button
           key={dependencyId}
@@ -2209,6 +2214,22 @@ describe("ListView", () => {
     expect(screen.getByTestId("list-split-resize-handle")).toBeInTheDocument();
     expect(screen.getByTestId("list-split-detail")).toBeInTheDocument();
     expect(screen.getByText("Select a task to view details")).toBeInTheDocument();
+    viewportSpy.mockRestore();
+  });
+
+  it("applies id-less local split-detail patches and ignores foreign ids", async () => {
+    const viewportSpy = mockDesktopViewport();
+    const tasks = [createMockTask({ id: "FN-001", title: "Original split title" })];
+    renderListView({ tasks });
+
+    fireEvent.click(screen.getByText("FN-001").closest("tr")!);
+    expect(await screen.findByTestId("task-detail-content")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Patch split without id" }));
+    expect(screen.getByTestId("split-detail-title")).toHaveTextContent("renamed");
+
+    fireEvent.click(screen.getByRole("button", { name: "Patch split foreign id" }));
+    expect(screen.getByTestId("split-detail-title")).toHaveTextContent("renamed");
     viewportSpy.mockRestore();
   });
 

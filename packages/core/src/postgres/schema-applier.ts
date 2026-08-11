@@ -56,7 +56,12 @@ capacity-model table drop that landed while this PR was open.
 */
 /* FNXC:CrossProcessDeleteObservation 2026-08-01-11:39: advance the schema ceiling so durable consumer state exists before observers begin polling FN-8684's outbox. */
 /* FNXC:MissionValidation 2026-08-01-16:21: advance the schema ceiling before validator admission reads durable content fingerprints. */
-export const SCHEMA_BASELINE_VERSION = "0047";
+/* FNXC:PrMergeEventDrivenChecks 2026-08-09-14:35: 0048 registers project-scoped GitHub CI check state. */
+/** FNXC:AgentActivityStream 2026-08-09-21:32: 0049 follows the landed 0048 GitHub check-state migration so upgraded projects receive the durable activity outbox. */
+/* FNXC:SpecLock 2026-08-09-18:17: 0050 stores immutable plan history and 0051 widens source revisions before Date.now()-based writes. */
+/* FNXC:MemoryRecall 2026-08-10-11:03: Explicit baseline registration prevents the recall migration from being silently skipped. */
+/* FNXC:SpecLockMissionAlignment 2026-08-10-16:17: advance the schema ceiling so SQLite and PostgreSQL feature projections retain reconciled drift alignment. */
+export const SCHEMA_BASELINE_VERSION = "0053";
 /** FNXC:SymbolLock 2026-07-20-10:00: upgrades need durable task declarations before admission resolves symbols. */
 export const TASK_DECLARED_SYMBOLS_VERSION = "0028";
 const INITIAL_SCHEMA_VERSION = "0000";
@@ -193,6 +198,18 @@ export const MULTI_ROLE_WORKFLOW_AGENTS_VERSION = "0045";
 export const WORKFLOW_PRINCIPAL_FENCE_VERSION = "0046";
 /** FNXC:TaskRecommendations 2026-08-08-05:02: explicit registration prevents recommendation JSONB upgrades being skipped. */
 export const TASK_RECOMMENDATIONS_VERSION = "0047";
+/** FNXC:PrMergeEventDrivenChecks 2026-08-09-14:35: explicit registration prevents event-driven merge state migration from being skipped. */
+export const GITHUB_CHECK_STATES_VERSION = "0048";
+/** FNXC:AgentActivityStream 2026-08-09-21:32: Migration 0049 avoids the already-landed 0048 bookkeeping identity. */
+export const AGENT_ACTIVITY_EVENTS_VERSION = "0049";
+/** FNXC:SpecLock 2026-08-09-18:17: immutable lock/report storage follows the already-landed activity migration. */
+export const SPEC_LOCK_DRIFT_REPORT_VERSION = "0050";
+/** FNXC:SpecLock 2026-08-09-18:17: widen source revisions before Date.now()-based current-plan writes overflow integer storage. */
+export const SPEC_LOCK_SOURCE_REVISION_BIGINT_VERSION = "0051";
+/** FNXC:MemoryRecall 2026-08-10-11:03: explicit migration bookkeeping for project recall rows. */
+export const MEMORY_RECALL_RECORDS_VERSION = "0052";
+/** FNXC:SpecLockMissionAlignment 2026-08-10-16:17: durable feature alignment is registered after all existing migration identities. */
+export const MISSION_FEATURE_SPEC_ALIGNMENT_VERSION = "0053";
 
 /** SECURITY DEFINER helper that only inserts LEGACY_ADOPTION_DRAINED_MARKER. */
 export const LEGACY_ADOPTION_DRAINED_MARKER_FUNCTION = "fusion_mark_legacy_adoption_drained";
@@ -414,6 +431,12 @@ const QUEUED_EPISODE_SIGNATURE_MIGRATION_PATH = join(MIGRATIONS_DIR, "0044_fn_87
 const MULTI_ROLE_WORKFLOW_AGENTS_MIGRATION_PATH = join(MIGRATIONS_DIR, "0045_fn_8764_multi_role_workflow_agents.sql");
 const WORKFLOW_PRINCIPAL_FENCE_MIGRATION_PATH = join(MIGRATIONS_DIR, "0046_fn_8764_workflow_principal_fence.sql");
 const TASK_RECOMMENDATIONS_MIGRATION_PATH = join(MIGRATIONS_DIR, "0047_fn_8829_task_recommendations.sql");
+const GITHUB_CHECK_STATES_MIGRATION_PATH = join(MIGRATIONS_DIR, "0048_fn_8903_github_check_states.sql");
+const AGENT_ACTIVITY_EVENTS_MIGRATION_PATH = join(MIGRATIONS_DIR, "0049_fn_8864_agent_activity_events.sql");
+const SPEC_LOCK_DRIFT_REPORT_MIGRATION_PATH = join(MIGRATIONS_DIR, "0050_spec_lock_drift_report.sql");
+const SPEC_LOCK_SOURCE_REVISION_BIGINT_MIGRATION_PATH = join(MIGRATIONS_DIR, "0051_spec_lock_source_revision_bigint.sql");
+const MEMORY_RECALL_RECORDS_MIGRATION_PATH = join(MIGRATIONS_DIR, "0052_fn_8922_memory_recall_records.sql");
+const MISSION_FEATURE_SPEC_ALIGNMENT_MIGRATION_PATH = join(MIGRATIONS_DIR, "0053_mission_feature_spec_alignment.sql");
 
 /**
  * Ensure the migration bookkeeping table exists. Lives in the public schema so
@@ -531,6 +554,12 @@ export async function applySchemaBaseline(
     const multiRoleWorkflowAgentsAlreadyApplied = applied.includes(MULTI_ROLE_WORKFLOW_AGENTS_VERSION);
     const workflowPrincipalFenceAlreadyApplied = applied.includes(WORKFLOW_PRINCIPAL_FENCE_VERSION);
     const taskRecommendationsAlreadyApplied = applied.includes(TASK_RECOMMENDATIONS_VERSION);
+    const githubCheckStatesAlreadyApplied = applied.includes(GITHUB_CHECK_STATES_VERSION);
+    const agentActivityEventsAlreadyApplied = applied.includes(AGENT_ACTIVITY_EVENTS_VERSION);
+    const specLockDriftReportAlreadyApplied = applied.includes(SPEC_LOCK_DRIFT_REPORT_VERSION);
+    const specLockSourceRevisionBigintAlreadyApplied = applied.includes(SPEC_LOCK_SOURCE_REVISION_BIGINT_VERSION);
+    const memoryRecallRecordsAlreadyApplied = applied.includes(MEMORY_RECALL_RECORDS_VERSION);
+    const missionFeatureSpecAlignmentAlreadyApplied = applied.includes(MISSION_FEATURE_SPEC_ALIGNMENT_VERSION);
     assertBinaryNotOlderThanDatabase(applied);
     let schemaChanged = false;
 
@@ -1161,6 +1190,46 @@ export async function applySchemaBaseline(
       schemaChanged = true;
     }
 
+    /* FNXC:PrMergeEventDrivenChecks 2026-08-09-14:35: run after historical baseline for both new and upgraded databases; idempotent SQL converges interrupted upgrades. */
+    if (!githubCheckStatesAlreadyApplied) {
+      const migrationSql = await readFile(GITHUB_CHECK_STATES_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${GITHUB_CHECK_STATES_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+
+    if (!agentActivityEventsAlreadyApplied) {
+      const migrationSql = await readFile(AGENT_ACTIVITY_EVENTS_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${AGENT_ACTIVITY_EVENTS_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+
+    if (!specLockDriftReportAlreadyApplied) {
+      const migrationSql = await readFile(SPEC_LOCK_DRIFT_REPORT_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${SPEC_LOCK_DRIFT_REPORT_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+
+    if (!specLockSourceRevisionBigintAlreadyApplied) {
+      const migrationSql = await readFile(SPEC_LOCK_SOURCE_REVISION_BIGINT_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${SPEC_LOCK_SOURCE_REVISION_BIGINT_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+    if (!memoryRecallRecordsAlreadyApplied) {
+      const migrationSql = await readFile(MEMORY_RECALL_RECORDS_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${MEMORY_RECALL_RECORDS_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+    if (!missionFeatureSpecAlignmentAlreadyApplied) {
+      const migrationSql = await readFile(MISSION_FEATURE_SPEC_ALIGNMENT_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${MISSION_FEATURE_SPEC_ALIGNMENT_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
     return { applied: schemaChanged, pluginHooksRun: pluginHooks.length };
   });
 }

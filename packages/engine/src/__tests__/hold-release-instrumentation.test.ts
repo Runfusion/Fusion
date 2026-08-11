@@ -153,6 +153,40 @@ describe("hold/release sweep instrumentation", () => {
     expect(warnLine).toMatch(/sweep exceeded/);
     // The prefetch cost is broken out so an O(board-size) prefetch is attributable.
     expect(warnLine).toContain("prefetch");
+    expect(warnLine).toContain("ir-resolve");
+    expect(warnLine).toContain("reads(settings=");
+    expect(warnLine).toContain("definitions=1");
+  });
+
+  it("warns with the truncation outcome and measured unevaluated count", async () => {
+    const warn = vi.spyOn(schedulerLog, "warn").mockImplementation(() => {});
+    const store = storeWith([task({ id: "H", column: "todo" })], singleWipIr(), { maxConcurrent: 5 });
+    let now = 0;
+    (store.listTasks as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      now = 11;
+      return [task({ id: "H", column: "todo" })];
+    });
+
+    const result = await runHoldReleaseSweep(store, { now: () => now, budgetMs: 10 });
+
+    expect(result).toMatchObject({ budgetTruncated: true, unevaluatedCount: 1 });
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("budget-truncated unevaluated=1"));
+  });
+
+  it("counts throwing selection and missing-definition reads by invocation, not cache growth", async () => {
+    const debug = vi.spyOn(schedulerLog, "debug").mockImplementation(() => {});
+    const throwingSelectionStore = storeWith([task({ id: "THROW", column: "todo" })], singleWipIr(), { maxConcurrent: 1 });
+    (throwingSelectionStore.getTaskWorkflowSelectionAsync as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("transient"));
+    await runHoldReleaseSweep(throwingSelectionStore, { now: () => 1_000_000 });
+
+    const missingDefinitionStore = storeWith([task({ id: "MISSING", column: "todo" })], singleWipIr(), { maxConcurrent: 1 });
+    (missingDefinitionStore.getTaskWorkflowSelectionAsync as ReturnType<typeof vi.fn>).mockResolvedValue({ workflowId: "custom:missing", stepIds: [] });
+    (missingDefinitionStore.getWorkflowDefinition as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+    await runHoldReleaseSweep(missingDefinitionStore, { now: () => 1_000_000 });
+
+    const lines = debug.mock.calls.map((call) => String(call[0]));
+    expect(lines.some((line) => line.includes("selections=2") && line.includes("definitions=0"))).toBe(true);
+    expect(lines.some((line) => line.includes("selections=1") && line.includes("definitions=1"))).toBe(true);
   });
 
   it("keeps a quiet sweep at debug so a full board does not bury real scheduler events", async () => {

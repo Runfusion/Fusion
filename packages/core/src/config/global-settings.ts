@@ -18,6 +18,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { mkdir, readFile, writeFile, rename, chmod, unlink } from "node:fs/promises";
 import { existsSync, mkdirSync, realpathSync, renameSync } from "node:fs";
 import type { ConfigChangedBy, ConfigKind, ConfigurationRevision, ConfigurationTarget, GlobalSettings } from "../types.js";
+import { CONFIG_CHANGED_BY_SYSTEM } from "../types.js";
 import { DEFAULT_GLOBAL_SETTINGS } from "../types.js";
 import { sanitizeCliAgentsSettings } from "./settings-schema.js";
 import type { AsyncDataLayer } from "../postgres/data-layer.js";
@@ -273,7 +274,7 @@ export class GlobalSettingsStore {
    */
   async updateSettings(
     patch: Partial<GlobalSettings> & Record<string, unknown>,
-    changedBy: ConfigChangedBy = { kind: "human", id: "local-user" },
+    changedBy: ConfigChangedBy = CONFIG_CHANGED_BY_SYSTEM,
   ): Promise<GlobalSettings> {
     return this.withLock(async () => {
       // Obtain history before changing the file: a failed central bootstrap is
@@ -338,7 +339,7 @@ export class GlobalSettingsStore {
   async listConfigurationRevisions(
     configKind: ConfigKind = "global-settings",
     configTarget: ConfigurationTarget = { scope: "user-global" },
-    limit?: number,
+    limit?: number | { limit?: number; offset?: number },
   ): Promise<ConfigurationRevision[]> {
     const layer = await this.getRevisionLayer();
     if (!layer) throw new Error("Configuration history requires the PostgreSQL revision store");
@@ -349,7 +350,7 @@ export class GlobalSettingsStore {
    * Exactly restore a recorded user-global snapshot and record one forward
    * rollback revision. The filesystem compensation mirrors updateSettings().
    */
-  async rollbackConfiguration(revisionId: string, changedBy: ConfigChangedBy = { kind: "human", id: "local-user" }): Promise<ConfigurationRevision> {
+  async rollbackConfiguration(revisionId: string, changedBy: ConfigChangedBy = CONFIG_CHANGED_BY_SYSTEM): Promise<ConfigurationRevision> {
     const layer = await this.getRevisionLayer();
     if (!layer) throw new Error("Configuration rollback requires the PostgreSQL revision store");
     return this.withLock(async () => {

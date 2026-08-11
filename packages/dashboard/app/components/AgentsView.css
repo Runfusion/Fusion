@@ -1113,6 +1113,26 @@ AgentsView uses the measured SVG overlay as the single connector system so paren
   shape-rendering: crispEdges;
 }
 
+.agent-org-chart-connectors__flow--down,
+.agent-org-chart-connectors__flow--up {
+  stroke: var(--color-info);
+  stroke-dasharray: var(--space-sm) var(--space-sm);
+  animation: agent-org-chart-flow var(--duration-slow) linear infinite;
+}
+
+.agent-org-chart-connectors__flow--up {
+  animation-direction: reverse;
+}
+
+.agent-org-chart-connectors__flow--static {
+  stroke: var(--color-info);
+  stroke-dasharray: var(--space-sm) var(--space-sm);
+}
+
+@keyframes agent-org-chart-flow {
+  to { stroke-dashoffset: calc(var(--space-xl) * -1); }
+}
+
 .agent-org-chart {
   --org-chart-node-width: calc(var(--space-xl) * 9 + var(--space-xs));
   --org-chart-sibling-gap: var(--space-xl);
@@ -1187,6 +1207,25 @@ AgentsView uses the measured SVG overlay as the single connector system so paren
 .org-chart-node-card--running {
   background: var(--state-active-bg);
   border-color: color-mix(in srgb, var(--color-success) 40%, var(--border));
+}
+
+.org-chart-node-card--activity-active {
+  box-shadow: var(--shadow-sm), 0 0 0 var(--space-xs) color-mix(in srgb, var(--color-success) 35%, transparent);
+}
+
+.org-chart-node-card--activity-idle {
+  border-color: color-mix(in srgb, var(--text-muted) 45%, var(--border));
+}
+
+.org-chart-node-card--activity-error {
+  border-color: var(--color-error);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-org-chart-connectors__flow--down,
+  .agent-org-chart-connectors__flow--up {
+    animation: none;
+  }
 }
 
 .org-chart-node__header {

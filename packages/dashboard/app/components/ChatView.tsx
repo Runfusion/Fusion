@@ -22,6 +22,7 @@ import {
   PinOff,
   MoreHorizontal,
   Tag,
+  FileText,
 } from "lucide-react";
 import { FN_AGENT_ID, TASK_PLANNER_CHAT_AGENT_ID_PREFIX, useChat, type ChatMessageInfo } from "../hooks/useChat";
 import { RoomMessageDeliveredButReplyFailedError, useChatRooms } from "../hooks/useChatRooms";
@@ -59,6 +60,7 @@ import {
   StandardStreamingMessage,
   formatModelTag,
 } from "./StandardChatSurface";
+import { buildChatReportHandoff, type ChatReportHandoff } from "./chatReportHandoff";
 import { CHAT_COMMANDS, matchChatCommand, filterChatCommands, getSlashTriggerMatch, type ChatCommand } from "./chat-commands";
 
 /**
@@ -105,6 +107,7 @@ export interface ChatViewProps {
   /** Optional external composer seed; paired with a nonce so repeated opens reseed intentionally. */
   initialComposerDraft?: string;
   initialComposerDraftNonce?: number;
+  onSendAsReport?: (handoff: ChatReportHandoff) => void;
 }
 
 // Keep a generous cap so pasted multi-paragraph text stays visible while
@@ -542,7 +545,7 @@ interface RoomContext {
   memberIds: ReadonlySet<string>;
 }
 
-export function ChatView({ projectId, addToast, floating = false, compactLayout = false, onPopOut, onMaximize, onMinimize, onClose, chatCommandContext, initialComposerDraft, initialComposerDraftNonce }: ChatViewProps) {
+export function ChatView({ projectId, addToast, floating = false, compactLayout = false, onPopOut, onMaximize, onMinimize, onClose, chatCommandContext, initialComposerDraft, initialComposerDraftNonce, onSendAsReport }: ChatViewProps) {
   const { t } = useTranslation("app");
   useEffect(() => {
     recordResumeEvent({
@@ -1840,6 +1843,22 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
     });
   }, [activeDraftKey]);
 
+  /*
+  FNXC:ChatAttachments 2026-08-10-05:53:
+  Composer previews leave only after the server accepts their File set, not after stream or refetch completion. Filtering inside the state updater makes repeated terminal backstops idempotent and preserves files staged after acceptance.
+  */
+  const releaseSentAttachments = useCallback((sentFiles: Set<File>) => {
+    setPendingAttachments((prev) => {
+      const released = prev.filter((attachment) => sentFiles.has(attachment.file));
+      for (const attachment of released) {
+        if (attachment.previewUrl) {
+          URL.revokeObjectURL(attachment.previewUrl);
+        }
+      }
+      return prev.filter((attachment) => !sentFiles.has(attachment.file));
+    });
+  }, []);
+
   // Handle send message including pending attachment uploads.
   const handleSend = useCallback(() => {
     const trimmed = messageInput.trim();
@@ -1894,6 +1913,15 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
 
     if (trimmed === "/clear" || trimmed === "/new") {
       /*
+      FNXC:ChatSlashCommands 2026-08-10-05:57:
+      Exact /clear and /new route through clearComposerState(), which revokes staged preview URLs and discards unsent Files. Refuse with feedback, matching command attachment handling, instead of silently destroying them.
+      */
+      if (files.length > 0) {
+        addToast(t("chat.clearNoAttachments", "Remove the attachments before running /clear or /new — they would be discarded unsent"), "warning");
+        return;
+      }
+
+      /*
       FNXC:ChatSlashCommands 2026-07-23-12:00:
       `/new`//`/clear` must never wipe a task-bound planner chat. With `showTaskChatsInCommonFeed`
       enabled, task-planner sessions appear in the common Direct feed, so a user can run `/new`
@@ -1919,26 +1947,22 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
       return;
     }
 
+    if (isStreaming && files.length > 0) {
+      /*
+      FNXC:ChatAttachments 2026-08-10-05:53:
+      Queued direct turns carry text only, so refuse staged attachments during a live reply rather than orphaning previews for files the queue cannot send.
+      */
+      addToast(t("chat.attachmentsNotQueued", "Attachments can't be queued while a reply is streaming — wait for it to finish"), "warning");
+      return;
+    }
+
     const sentFiles = new Set(files);
-    /*
-    FNXC:QuickAddAttachments 2026-07-23-00:00:
-    Keep direct-chat previews alive until useChat confirms multipart delivery. A direct-session
-    upload fails asynchronously, so clearComposerState() here would revoke the only retryable File
-    references before its stream error handler can report the rejection.
-    */
     setMessageInput("");
     try {
       sendMessage(trimmed, files, {
-        onDelivered: () => {
-          setPendingAttachments((prev) => {
-            for (const attachment of prev) {
-              if (sentFiles.has(attachment.file) && attachment.previewUrl) {
-                URL.revokeObjectURL(attachment.previewUrl);
-              }
-            }
-            return prev.filter((attachment) => !sentFiles.has(attachment.file));
-          });
-        },
+        onAccepted: () => releaseSentAttachments(sentFiles),
+        // Completion remains an idempotent backstop for accepted provider-error and legacy paths.
+        onDelivered: () => releaseSentAttachments(sentFiles),
         onFailed: () => {
           // Do not overwrite text the user entered while the failed request was in flight.
           setMessageInput((current) => current || trimmed);
@@ -1958,6 +1982,8 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
     addToast,
     sendMessage,
     chatCommandContext,
+    isStreaming,
+    releaseSentAttachments,
     t,
   ]);
 
@@ -1979,6 +2005,14 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
       }
 
       if (trimmed === "/clear" || trimmed === "/new") {
+        /*
+        FNXC:ChatSlashCommands 2026-08-10-05:57:
+        Room clear/new also revokes and discards pending previews, so reject only exact commands with staged files before touching room state.
+        */
+        if (files.length > 0) {
+          addToast(t("chat.clearNoAttachments", "Remove the attachments before running /clear or /new — they would be discarded unsent"), "warning");
+          return;
+        }
         clearComposerState();
         try {
           await rooms.clearRoom(rooms.activeRoom.id);
@@ -2000,26 +2034,13 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
       setMessageInput("");
 
       try {
-        await rooms.sendRoomMessage(trimmed, { files });
-        setPendingAttachments((prev) => {
-          for (const attachment of prev) {
-            if (sentFiles.has(attachment.file) && attachment.previewUrl) {
-              URL.revokeObjectURL(attachment.previewUrl);
-            }
-          }
-          return prev.filter((attachment) => !sentFiles.has(attachment.file));
-        });
+        await rooms.sendRoomMessage(trimmed, { files, onDelivered: () => releaseSentAttachments(sentFiles) });
+        // Refetch completion is an idempotent backstop after delivery acceptance.
+        releaseSentAttachments(sentFiles);
       } catch (error) {
         if (error instanceof RoomMessageDeliveredButReplyFailedError) {
           // The server accepted this turn, so release only the attachments that were dispatched.
-          setPendingAttachments((prev) => {
-            for (const attachment of prev) {
-              if (sentFiles.has(attachment.file) && attachment.previewUrl) {
-                URL.revokeObjectURL(attachment.previewUrl);
-              }
-            }
-            return prev.filter((attachment) => !sentFiles.has(attachment.file));
-          });
+          releaseSentAttachments(sentFiles);
           const message = error.message.trim()
             ? error.message
             : t("chat.messageSentButReplyFailed", "Message sent, but assistant reply failed");
@@ -2039,7 +2060,7 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
     }
 
     handleSend();
-  }, [messageInput, pendingAttachments, chatRoomsEnabled, chatScope, rooms, rooms.clearRoom, clearComposerState, addToast, handleSend]);
+  }, [messageInput, pendingAttachments, chatRoomsEnabled, chatScope, rooms, rooms.clearRoom, clearComposerState, addToast, handleSend, releaseSentAttachments]);
 
   const handleQuestionSubmit = useCallback(async (answerText: string) => {
     if (chatRoomsEnabled && chatScope === "rooms") {
@@ -2809,19 +2830,17 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
 
   const showProviderResponseCopy = activeSession?.agentId === FN_AGENT_ID;
 
-  const renderCopyAction = useCallback((messageId: string, content: string, testId?: string) => (
-    <button
-      type="button"
-      className={`btn-icon chat-message-copy-action${copyFeedbackByMessageId[messageId] === "success" ? " chat-message-copy-action--success" : ""}${copyFeedbackByMessageId[messageId] === "error" ? " chat-message-copy-action--error" : ""}`}
-      data-testid={testId ?? `chat-copy-response-${messageId}`}
-      aria-label={copyFeedbackByMessageId[messageId] === "success" ? t("chat.responseCopied", "Response copied") : copyFeedbackByMessageId[messageId] === "error" ? t("chat.copyFailed", "Copy failed") : t("chat.copyResponse", "Copy response")}
-      onClick={() => {
-        void handleCopyResponse(messageId, content);
-      }}
-    >
-      {copyFeedbackByMessageId[messageId] === "success" ? <Check size={14} /> : <Copy size={14} />}
-    </button>
-  ), [copyFeedbackByMessageId, handleCopyResponse]);
+  const renderMessageActions = useCallback((messageId: string, content: string, role: "assistant" | "user" | "system", testId?: string, allowReport = true) => {
+    const canCopy = showProviderResponseCopy && role === "assistant";
+    const report = allowReport && role === "assistant" && onSendAsReport ? buildChatReportHandoff(content, t("chat.reportFallbackTitle", "Chat report")) : null;
+    if (!canCopy && !report?.handoff) return undefined;
+    return <>
+      {canCopy && <button type="button" className={`btn-icon chat-message-copy-action${copyFeedbackByMessageId[messageId] === "success" ? " chat-message-copy-action--success" : ""}${copyFeedbackByMessageId[messageId] === "error" ? " chat-message-copy-action--error" : ""}`} data-testid={testId ?? `chat-copy-response-${messageId}`} aria-label={copyFeedbackByMessageId[messageId] === "success" ? t("chat.responseCopied", "Response copied") : copyFeedbackByMessageId[messageId] === "error" ? t("chat.copyFailed", "Copy failed") : t("chat.copyResponse", "Copy response")} onClick={() => { void handleCopyResponse(messageId, content); }}>
+        {copyFeedbackByMessageId[messageId] === "success" ? <Check size={14} /> : <Copy size={14} />}
+      </button>}
+      {report?.handoff && <button type="button" className="btn-icon" data-testid={`chat-send-as-report-${messageId}`} aria-label={t("chat.sendAsReport", "Send as report")} onClick={() => { if (report.truncated) addToast(t("chat.reportTrimmed", "Message trimmed to 2000 characters for mail"), "warning"); onSendAsReport?.(report.handoff!); }}><FileText size={14} /></button>}
+    </>;
+  }, [addToast, copyFeedbackByMessageId, handleCopyResponse, onSendAsReport, showProviderResponseCopy, t]);
 
   const handleScrollMessageToTop = useCallback((messageId: string) => {
     const containerEl = messagesContainerRef.current;
@@ -2886,7 +2905,7 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
               projectId={projectId}
               mentionAgentsByName={mentionAgentsByName}
               roomContext={null}
-              copyAction={showProviderResponseCopy && message.role === "assistant" ? renderCopyAction(message.id, message.content) : undefined}
+              copyAction={renderMessageActions(message.id, message.content, message.role)}
               onScrollToTop={handleScrollMessageToTop}
               isTopClipped={topClippedMessageIds.has(message.id)}
               isAwaitingQuestionAnswer={message.role === "assistant" && index === messages.length - 1 && !isStreaming}
@@ -2906,7 +2925,8 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
             showAssistantModelTag={showAssistantModelTag}
             activeModelTag={activeModelTag}
             activeModelProvider={activeModelProvider}
-            copyAction={showProviderResponseCopy && streamingText ? renderCopyAction("__streaming__", streamingText, "chat-copy-response-streaming") : undefined}
+            /* FNXC:StructuralMail 2026-08-09-09:09: A streaming answer is unfinished and must never be routed as a report. */
+            copyAction={showProviderResponseCopy && streamingText ? renderMessageActions("__streaming__", streamingText, "assistant", "chat-copy-response-streaming", false) : undefined}
             onQuestionSubmit={handleQuestionSubmit}
           />
         </>
@@ -2932,7 +2952,7 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
               projectId={projectId}
               mentionAgentsByName={mentionAgentsByName}
               roomContext={null}
-              copyAction={showProviderResponseCopy && message.role === "assistant" ? renderCopyAction(message.id, message.content) : undefined}
+              copyAction={renderMessageActions(message.id, message.content, message.role)}
               onScrollToTop={handleScrollMessageToTop}
               isTopClipped={topClippedMessageIds.has(message.id)}
               isAwaitingQuestionAnswer={message.role === "assistant" && index === messages.length - 1 && !isStreaming}

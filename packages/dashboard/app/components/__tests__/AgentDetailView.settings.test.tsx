@@ -29,6 +29,7 @@ import {
   mockFetchModels,
   mockFetchPluginRuntimes,
   mockFetchSkillContent,
+  mockFetchSettings,
   mockFetchWorkspaceFileContent,
   mockMarkMessageRead,
   mockResetAgentBudget,
@@ -189,6 +190,27 @@ describe("Budget Settings", () => {
         undefined,
       );
     });
+  });
+
+  it("shows inherited role thinking without materializing an agent override", async () => {
+    mockFetchAgent.mockResolvedValue(createMockAgent({
+      role: "merger" as AgentCapability,
+      roles: ["merger"] as AgentCapability[],
+      metadata: { builtInWorkflowRole: true, workflowRole: "merger" },
+      runtimeConfig: { enabled: false },
+    }));
+    mockFetchSettings.mockResolvedValue({
+      defaultProviderOverride: "anthropic",
+      defaultModelIdOverride: "claude-project",
+      defaultThinkingLevelOverride: "high",
+    } as any);
+
+    const user = userEvent.setup();
+    render(<AgentDetailView agentId="agent-001" onClose={vi.fn()} addToast={vi.fn()} />);
+    await navigateToSettings(user);
+
+    await screen.findByLabelText("Agent Model thinking level");
+    expect(screen.getByTestId("custom-model-dropdown")).toHaveAttribute("data-default-thinking-level", "high");
   });
 
   it("calls updateAgent with correct budgetConfig in runtimeConfig on save", async () => {

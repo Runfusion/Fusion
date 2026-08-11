@@ -93,7 +93,7 @@
   "packages/engine/src/__tests__/triage.test.ts": 7042,
   "packages/engine/src/agent-heartbeat.ts": 5422,
   "packages/engine/src/agent-tools.ts": 5437,
-  "packages/engine/src/executor.ts": 20489,
+  "packages/engine/src/executor.ts": 10,
   "packages/engine/src/merger-ai.ts": 2445,
   "packages/engine/src/merger.ts": 11244,
   "packages/engine/src/pi.ts": 2900,

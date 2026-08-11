@@ -46,6 +46,24 @@ export function isMergeActiveStatus(status: string | null | undefined): boolean 
 }
 
 /**
+ * True when a merge-lane holder may clear this task's transient merge stamp.
+ *
+ * FNXC:MergeReliability 2026-08-09-22:35:
+ * Issue #3395 needs an aborted attempt and the serialized pump to clear a stamp without waiting
+ * for the age-based stale heuristic: retry/orphan log writes can refresh `updatedAt`, so age can
+ * never certify the stamp left by the attempt being recovered. Soundness instead comes from each
+ * caller's closed writer set: `drainMergeQueue` serializes holders with `mergeRunning`, while an
+ * aborted body is fenced from status writes by its own abort signal. A compare-on-write cannot
+ * distinguish stale `merging` from a newly-written `merging`, and a single-flight claim alone is
+ * insufficient because the bounded settle latch can release while an aborted body still runs.
+ */
+export function shouldClearOrphanedMergeStamp(
+  task: Pick<Task, "status" | "mergeDetails">,
+): boolean {
+  return isMergeActiveStatus(task.status) && task.mergeDetails?.mergeConfirmed !== true;
+}
+
+/**
  * True when `task` carries a merge-active stamp that no live merger owns.
  *
  * Deliberately conservative — a task is stale only when EVERY check passes:

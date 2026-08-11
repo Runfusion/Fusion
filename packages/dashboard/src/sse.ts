@@ -1,5 +1,5 @@
 import type { Request, Response } from "express";
-import { createLogger } from "@fusion/core";
+import { createLogger, getMaxAgentActivitySeq, queryAgentActivityEvents } from "@fusion/core";
 import type {
   TaskStore,
   MissionStore,
@@ -576,6 +576,137 @@ export function createSSE(
       cleanup("send-failed");
     };
 
+    /*
+    FNXC:AgentActivityStream 2026-08-09-09:38:
+    This durable seq tail, rather than the in-process store event, is the cross-process delivery guarantee. A dashboard can only observe short-lived CLI/store writers by polling their committed outbox rows.
+
+    A descending `since` page would return the newest backlog rows first and permanently skip older rows when the mark advances. Drain ascending pages, advance only after the frame writes, and serialize drains: two concurrent readers can otherwise send the same seq range.
+    */
+    const AGENT_ACTIVITY_PAGE_SIZE = 100;
+    const AGENT_ACTIVITY_MAX_PAGES_PER_DRAIN = 20;
+    const AGENT_ACTIVITY_BACKLOG_LIMIT = 5_000n;
+    let activityClosed = false;
+    let activityInitialized = false;
+    let activityInitializing = false;
+    let activityDraining = false;
+    let activityRerun = false;
+    /*
+    FNXC:AgentActivityStream 2026-08-09-12:42:
+    The typed facade nudge carries the just-committed row. Retain the earliest seq observed
+    while seeding so a racing MAX() result cannot advance past it.
+    */
+    let firstNudgedActivitySeq: string | null = null;
+    let lastDeliveredSeq = "0";
+    const activityLayer = store.getAsyncLayer();
+
+    const sendAgentActivityFrame = (payload: unknown): boolean => {
+      if (activityClosed) return false;
+      send(`event: agent:activity\ndata: ${JSON.stringify(payload)}\n\n`);
+      // send() synchronously runs cleanup for dead/backpressured sockets.
+      return !activityClosed;
+    };
+
+    const drainAgentActivity = async (): Promise<void> => {
+      if (!activityLayer || activityClosed || !activityInitialized) return;
+      if (activityDraining) {
+        activityRerun = true;
+        return;
+      }
+
+      activityDraining = true;
+      try {
+        const maxSeq = await getMaxAgentActivitySeq(activityLayer);
+        if (BigInt(maxSeq) - BigInt(lastDeliveredSeq) > AGENT_ACTIVITY_BACKLOG_LIMIT) {
+          // FNXC:AgentActivityStream 2026-08-09-09:38: flooding a reconnected browser is worse than a documented gap it can close with GET /api/agent-activity.
+          if (sendAgentActivityFrame({ truncated: true, fromSeq: lastDeliveredSeq, toSeq: maxSeq })) {
+            lastDeliveredSeq = maxSeq;
+          }
+          return;
+        }
+
+        let pages = 0;
+        while (!activityClosed && pages < AGENT_ACTIVITY_MAX_PAGES_PER_DRAIN) {
+          const page = await queryAgentActivityEvents(activityLayer, {
+            since: lastDeliveredSeq,
+            order: "asc",
+            limit: AGENT_ACTIVITY_PAGE_SIZE,
+          });
+          for (const event of page.events) {
+            if (!sendAgentActivityFrame(event)) return;
+            // Preserve at-least-once delivery: a failed frame leaves this mark unchanged.
+            lastDeliveredSeq = event.seq;
+          }
+          pages++;
+          if (page.events.length < AGENT_ACTIVITY_PAGE_SIZE) return;
+        }
+
+        // The periodic tick resumes a capped backlog without monopolizing this request's event loop.
+      } catch (error) {
+        // FNXC:AgentActivityStream 2026-08-09-09:38: polling failure is retryable monitoring loss, never permission to optimistically advance the durable cursor.
+        sseLog.warn(`agent activity tail failed for connection ${connectionId}; will retry`, error);
+      } finally {
+        activityDraining = false;
+        if (activityRerun && !activityClosed) {
+          activityRerun = false;
+          void drainAgentActivity();
+        }
+      }
+    };
+
+    const initializeAgentActivityTail = async (): Promise<void> => {
+      if (!activityLayer || activityClosed || activityInitialized || activityInitializing) return;
+      activityInitializing = true;
+      try {
+        // Seed at connection time so history remains a deliberate REST read, not an SSE replay.
+        const initialSeq = await getMaxAgentActivitySeq(activityLayer);
+        /*
+        FNXC:AgentActivityStream 2026-08-09-12:27:
+        The initial in-process nudge is only a latency signal; short-lived writers can commit
+        from another process with no local nudge at all. Re-read the durable high-water mark
+        before publishing the seed. A changed mark means a commit raced initialization, so drain
+        from the first mark rather than advancing past it. The interval remains the recovery path
+        for a commit after this bounded check.
+        */
+        const verifiedSeq = await getMaxAgentActivitySeq(activityLayer);
+        /*
+        FNXC:AgentActivityStream 2026-08-09-12:42:
+        An in-process nudge includes its persisted seq. If that commit races the seed MAX(),
+        start immediately before that one row rather than at zero: this delivers the raced row
+        without replaying pre-connect history. An untyped nudge is only a low-latency request;
+        the durable verification/poll remains its correctness fallback.
+        */
+        const nudgedFloor = firstNudgedActivitySeq
+          ? (BigInt(firstNudgedActivitySeq) - 1n).toString()
+          : initialSeq;
+        lastDeliveredSeq = BigInt(nudgedFloor) < BigInt(initialSeq) ? nudgedFloor : initialSeq;
+        activityInitialized = true;
+        if (activityRerun || verifiedSeq !== initialSeq) {
+          activityRerun = false;
+          void drainAgentActivity();
+        }
+      } catch (error) {
+        // Do not seed from "0" after a failed read: that would replay unbounded history.
+        sseLog.warn(`agent activity tail could not establish initial cursor for connection ${connectionId}`, error);
+      } finally {
+        activityInitializing = false;
+      }
+    };
+    const onAgentActivityNudge = (event?: { seq?: unknown }) => {
+      if (!activityInitialized) {
+        const seq = event?.seq;
+        if (typeof seq === "string" && /^\d+$/.test(seq) && BigInt(seq) > 0n) {
+          if (!firstNudgedActivitySeq || BigInt(seq) < BigInt(firstNudgedActivitySeq)) {
+            firstNudgedActivitySeq = seq;
+          }
+        }
+        activityRerun = true;
+        void initializeAgentActivityTail();
+        return;
+      }
+      void drainAgentActivity();
+    };
+    const agentActivityPoll = setInterval(onAgentActivityNudge, 2_000);
+    agentActivityPoll.unref?.();
     // --- Event handler definitions ---
     const onCreated = (task: unknown) => {
       send(`event: task:created\ndata: ${JSON.stringify(stripTaskListHeavyFields(task))}\n\n`);
@@ -929,6 +1060,9 @@ export function createSSE(
       sseDebug(`[sse] - connection (active=${activeConnections})`);
       if (clientStaleTimer) clearTimeout(clientStaleTimer);
       clearInterval(heartbeat);
+      activityClosed = true;
+      clearInterval(agentActivityPoll);
+      store.off("agent:activity", onAgentActivityNudge);
       store.off("task:created", onCreated);
       store.off("task:moved", onMoved);
       store.off("task:updated", onUpdated);
@@ -1053,6 +1187,9 @@ export function createSSE(
     Agent log streaming is authoritative evidence that an in-review agent is active even when the task row has not changed. Forward compact log metadata on the board stream so clients can clear false Stalled/Merge stalled badges without rewriting the full task for every log line.
     */
     store.on("agent:log", onAgentLog);
+    // Subscribe before seeding so an in-process append cannot be lost in the seed-query window.
+    store.on("agent:activity", onAgentActivityNudge);
+    void initializeAgentActivityTail();
     store.on("artifact:registered", onArtifactRegistered);
     store.on("artifact:updated", onArtifactUpdated);
     store.on("workflow:setting-values-updated", onWorkflowSettingValuesUpdated);

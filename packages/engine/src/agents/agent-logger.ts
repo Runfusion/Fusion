@@ -213,6 +213,8 @@ export interface AgentLoggerOptions {
    * node context. Omit to leave agent-log behavior unchanged.
    */
   usageContext?: AgentLoggerUsageContext;
+  /** Store used solely for usage telemetry; supports sessions without a task log. */
+  usageStore?: TaskStore;
 }
 
 /**
@@ -261,6 +263,13 @@ export class AgentLogger {
   private readonly persistAgentThinkingLog: boolean;
   private usageContext?: AgentLoggerUsageContext;
   /*
+   * FNXC:CommandCenterActivity 2026-08-09-10:29:
+   * Durable no-task heartbeat runs must publish usage telemetry, so emission cannot
+   * require a task id. Several lanes resolve model/provider after construction,
+   * therefore telemetry storage and identity are attachable after construction.
+   */
+  private usageStore?: TaskStore;
+  /*
    * FNXC:AgentLogging 2026-07-04-09:40:
    * Task logs must expose Time To First Token once per logger/request on the first persisted visible model output. Capture the arrival time at onText/onThinking instead of flush time so buffered writes do not inflate TTFT.
    */
@@ -291,6 +300,7 @@ export class AgentLogger {
     this.persistAgentToolOutput = options.persistAgentToolOutput === true;
     this.persistAgentThinkingLog = options.persistAgentThinkingLog === true;
     this.usageContext = options.usageContext;
+    this.usageStore = options.usageStore;
 
     // Bind callbacks so they can be passed directly as function references
     this.onText = this.onText.bind(this);
@@ -305,7 +315,14 @@ export class AgentLogger {
    * constructed, so it calls this once those are known.
    */
   setUsageContext(context: AgentLoggerUsageContext | undefined): void {
-    this.usageContext = context;
+    this.setUsageTelemetry({ usageContext: context });
+  }
+
+  /** Attach or refresh telemetry independently from task-log persistence. */
+  setUsageTelemetry(options: { store?: TaskStore; usageContext?: AgentLoggerUsageContext }): void {
+    if (options.store !== undefined) this.usageStore = options.store;
+    /* FNXC:CommandCenterActivity 2026-08-09-16:05: Preserve setUsageContext(undefined)'s historical clearing behavior while allowing callers to refresh only the store. */
+    if ("usageContext" in options) this.usageContext = options.usageContext;
   }
 
   /**
@@ -323,11 +340,12 @@ export class AgentLogger {
     meta?: Record<string, unknown>,
   ): void {
     const ctx = this.usageContext;
-    if (!ctx || !this.store || !this.taskId) return;
+    const store = this.usageStore ?? this.store;
+    if (!ctx || !store) return;
     try {
-      const maybePromise = this.store.emitUsageEvent({
+      const maybePromise = store.emitUsageEvent({
         kind,
-        taskId: this.taskId,
+        taskId: this.taskId || null,
         agentId: ctx.agentId ?? null,
         nodeId: ctx.nodeId ?? null,
         model: ctx.model ?? null,
@@ -338,10 +356,10 @@ export class AgentLogger {
       });
       // Swallow async rejections too so a Promise-returning store stays fail-soft.
       void Promise.resolve(maybePromise).catch((err) => {
-        this.log.warn(`Failed to emit usage event (${kind}) for "${toolName}" on ${this.taskId}: ${err instanceof Error ? err.message : String(err)}`);
+        this.log.warn(`Failed to emit usage event (${kind}) for "${toolName}" on ${this.taskId || "<no task>"}: ${err instanceof Error ? err.message : String(err)}`);
       });
     } catch (err) {
-      this.log.warn(`Failed to emit usage event (${kind}) for "${toolName}" on ${this.taskId}: ${err instanceof Error ? err.message : String(err)}`);
+      this.log.warn(`Failed to emit usage event (${kind}) for "${toolName}" on ${this.taskId || "<no task>"}: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 

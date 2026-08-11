@@ -19,6 +19,7 @@ import { withRateLimitRetry } from "../errors/rate-limit-retry.js";
 import { runVerificationCommand as mockedRunVerificationCommand } from "../execution/verification-utils.js";
 import {
   createMockStore,
+  createWorkflowRoutingAgentStore,
   mockedCreateFnAgent,
   mockedSessionManager,
   mockedGenerateWorktreeName,
@@ -27,6 +28,7 @@ import {
   mockedWithRateLimitRetry,
   mockedExecSync,
   mockedExistsSync,
+  selectImplementationSessionCall,
   mockExecuteAll,
   mockTerminateAllSessions,
   mockCleanup,
@@ -34,6 +36,19 @@ import {
 } from "./executor-test-helpers.js";
 
 const mockedReviewStep = vi.mocked(mockedReviewStepFn);
+
+/*
+FNXC:WorkflowPrincipalRouting 2026-08-09-09:22:
+Graph ownership requires principal routing before an executor harness can open an agent session.
+This local fixture supplies only the durable executor role and capacity leases without bypassing
+admission; unlike createWorktreeExecutor it returns the fixture so a guard test can prove routing
+was reached rather than letting lifecycle assertions fail vacuously.
+*/
+function createRoutingExecutor(store: any, options: any = {}) {
+  const routing = createWorkflowRoutingAgentStore(store);
+  const executor = new TaskExecutor(store, "/tmp/test", { agentStore: routing.agentStore, ...options });
+  return { executor, routing };
+}
 
 /*
 FNXC:EngineTests 2026-07-19-16:30 (U10b):
@@ -78,7 +93,7 @@ describe("TaskExecutor enginePaused soft pause (no agent termination)", () => {
       };
     }) as any);
 
-    const executor = new TaskExecutor(store, "/tmp/test");
+    const { executor } = createRoutingExecutor(store);
     await executor.execute({
       id: "FN-001", title: "Test", description: "T", column: "in-progress" as const,
       dependencies: [], steps: [], currentStep: 0, log: [],
@@ -144,7 +159,7 @@ describe("TaskExecutor enginePaused soft pause (no agent termination)", () => {
       };
     }) as any);
 
-    const executor = new TaskExecutor(store, "/tmp/test");
+    const { executor } = createRoutingExecutor(store);
     const watchdogSpy = vi.spyOn(executor as any, "scheduleCompletedTaskWatchdog");
 
     await executor.execute({
@@ -191,7 +206,7 @@ describe("TaskExecutor enginePaused soft pause (no agent termination)", () => {
       };
     }) as any);
 
-    const executor = new TaskExecutor(store, "/tmp/test");
+    const { executor } = createRoutingExecutor(store);
     await executor.execute({
       id: "FN-001", title: "Test", description: "T", column: "in-progress",
       dependencies: [], steps: [], currentStep: 0, log: [],
@@ -230,7 +245,7 @@ describe("TaskExecutor enginePaused soft pause (no agent termination)", () => {
       };
     }) as any);
 
-    const executor = new TaskExecutor(store, "/tmp/test");
+    const { executor } = createRoutingExecutor(store);
     await executor.execute({
       id: "FN-001", title: "Test", description: "T", column: "in-progress",
       dependencies: [], steps: [], currentStep: 0, log: [],
@@ -269,7 +284,7 @@ describe("TaskExecutor enginePaused soft pause (no agent termination)", () => {
       };
     }) as any);
 
-    const executor = new TaskExecutor(store, "/tmp/test");
+    const { executor } = createRoutingExecutor(store);
     await executor.execute({
       id: "FN-001", title: "Test", description: "T", column: "in-progress",
       dependencies: [], steps: [], currentStep: 0, log: [],
@@ -283,6 +298,67 @@ describe("TaskExecutor enginePaused soft pause (no agent termination)", () => {
       expect.objectContaining({ workflowMoveSource: "workflow-graph" }),
     );
     expect(moveTaskCallsTo(store, "FN-001", "todo")).toHaveLength(0);
+  });
+});
+
+describe("workflow routing fixture", () => {
+  beforeEach(() => {
+    resetExecutorMocks();
+    mockedExistsSync.mockReturnValue(true);
+  });
+
+  /*
+  FNXC:WorkflowPrincipalRouting 2026-08-09-11:05:
+  FN-8883 observed 34 vacuous failures when an unrouted graph run opened zero createFnAgent
+  sessions and never exposed fn_task_done. These paired guards prove the accept path opens the
+  implementation session and the missing-agent-store path stays suspended rather than tolerated.
+  */
+  it("opens an implementation session and hands routed work to graph review", async () => {
+    const store = createMockStore();
+    mockedCreateFnAgent.mockImplementation(async (opts: any) => ({
+      session: {
+        prompt: vi.fn().mockImplementation(async () => {
+          const taskDoneTool = opts.customTools?.find((tool: any) => tool.name === "fn_task_done");
+          if (taskDoneTool) await taskDoneTool.execute("call-routing", { summary: "done" });
+        }),
+        dispose: vi.fn(),
+        subscribe: vi.fn(),
+        on: vi.fn(),
+        sessionManager: { getLeafId: vi.fn().mockReturnValue("leaf-routing") },
+        state: {},
+      },
+    }) as any);
+    const { executor, routing } = createRoutingExecutor(store);
+
+    await executor.execute({
+      id: "FN-routing", title: "Routing fixture", description: "", column: "in-progress",
+      dependencies: [], steps: [], currentStep: 0, log: [],
+      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    } as any);
+
+    expect(routing.agentStore.listAgents).toHaveBeenCalledWith({ includeEphemeral: true });
+    expect(selectImplementationSessionCall(
+      mockedCreateFnAgent.mock.calls.map(([options]) => options as { customTools?: Array<{ name?: string }> }),
+    )).toBeDefined();
+    expect(store.moveTask).toHaveBeenCalledWith(
+      "FN-routing",
+      "in-review",
+      expect.objectContaining({ workflowMoveSource: "workflow-graph" }),
+    );
+  });
+
+  it("suspends an unrouted graph run before opening an implementation session", async () => {
+    const store = createMockStore();
+    const executor = new TaskExecutor(store, "/tmp/test", {});
+
+    await executor.execute({
+      id: "FN-routing", title: "Routing fixture", description: "", column: "in-progress",
+      dependencies: [], steps: [], currentStep: 0, log: [],
+      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    } as any);
+
+    expect(mockedCreateFnAgent).not.toHaveBeenCalled();
+    expect(moveTaskCallsTo(store, "FN-routing", "in-review")).toHaveLength(0);
   });
 });
 
@@ -338,7 +414,7 @@ async function captureToolsWithStore(
   graph ownership (empty steps + harness default getTaskDocument/PROMPT.md). Over-specifying
   frozen steps/worktree on execute has stranded this surface on plan-only sessions.
   */
-  const executor = new TaskExecutor(store, "/tmp/test");
+  const { executor } = createRoutingExecutor(store);
   await executor.execute({
     id: "FN-001",
     title: "Test",
@@ -401,7 +477,7 @@ describe("Code review verdict enforcement - fn_task_update blocking", () => {
 
     const store = createMockStore();
     store.getSettings.mockResolvedValue({ ...(await store.getSettings()), experimentalFeatures: { researchView: false } });
-    const executor = new TaskExecutor(store, "/tmp/test");
+    const { executor } = createRoutingExecutor(store);
     await executor.execute({
       id: "FN-SYS-NO-RESEARCH",
       title: "Test",
@@ -434,7 +510,7 @@ describe("Code review verdict enforcement - fn_task_update blocking", () => {
 
     const store = createMockStore();
     store.getSettings.mockResolvedValue({ ...(await store.getSettings()), experimentalFeatures: { researchView: true } });
-    const executor = new TaskExecutor(store, "/tmp/test");
+    const { executor } = createRoutingExecutor(store);
     await executor.execute({
       id: "FN-SYS-RESEARCH",
       title: "Test",
@@ -467,7 +543,7 @@ describe("Code review verdict enforcement - fn_task_update blocking", () => {
     });
 
     const store = createMockStore();
-    const executor = new TaskExecutor(store, "/tmp/test");
+    const { executor } = createRoutingExecutor(store);
     await executor.execute({
       id: "FN-SYS",
       title: "Test",
@@ -562,7 +638,7 @@ describe("E2E review pipeline — multi-verdict sequence", () => {
     };
     store.getTask.mockImplementation(async (id: string) => (id === task.id ? task : task));
 
-    const executor = new TaskExecutor(store, "/tmp/test");
+    const { executor } = createRoutingExecutor(store);
     await executor.execute(task);
 
     const tools: Record<string, any> = {};
@@ -841,7 +917,7 @@ describe("fn_task_add_dep tool", () => {
       } as any;
     });
 
-    const executor = new TaskExecutor(store, "/tmp/test");
+    const { executor } = createRoutingExecutor(store);
     await executor.execute({
       id: "FN-DEP",
       title: "Test",

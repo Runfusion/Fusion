@@ -306,6 +306,25 @@ describe("a column carrying BOTH intake and hold (U11's merged Planning column)"
       await expect(isUnplannedForExecution(gateStore(), card, ir(MERGED))).resolves.toBe(true);
     });
 
+    /*
+    FNXC:DuplicateIntake 2026-08-09-01:54:
+    FN-8840 makes the durable title an admission source. Check it without getTasksDir so a store
+    adapter cannot accidentally release a title-only custom-prefix redirect while prompt I/O is unavailable.
+    */
+    it("holds a title-only custom-prefix redirect before prompt filesystem access", async () => {
+      const card = task({ id: "D2", title: "DUPLICATE: KB-123", description: "d", column: MERGED.hold });
+      const storeWithoutTasksDir = { getSettings: vi.fn(async () => ({})) } as unknown as TaskStore;
+
+      await expect(isUnplannedForExecution(storeWithoutTasksDir, card, ir(MERGED))).resolves.toBe(true);
+    });
+
+    it("does not hold incidental duplicate prose in a title", async () => {
+      const card = task({ id: "D3", title: "Discuss DUPLICATE: KB-123 before implementation", description: "d", column: MERGED.hold });
+      seedPlannedPrompt("D3");
+
+      await expect(isUnplannedForExecution(gateStore(), card, ir(MERGED))).resolves.toBe(false);
+    });
+
     it("does not gate a card already in the wip column", async () => {
       const card = task({ id: "W1", title: "Working", description: "d", column: MERGED.wip });
       seedUnplannedPrompt("W1", "Working", "d");

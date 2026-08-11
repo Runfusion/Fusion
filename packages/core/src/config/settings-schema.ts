@@ -485,6 +485,7 @@ export const DEFAULT_PROJECT_SETTINGS = {
   voiceInput: undefined,
   mergeRequestContractShadowEnabled: false,
   mergeStrategy: "direct",
+  githubNativeAutoMerge: false,
   directMergeCommitStrategy: "always-squash",
   mergeIntegrationWorktree: "reuse-task-worktree",
   mergeAdvanceAutoSync: "stash-and-ff",
@@ -608,6 +609,7 @@ export const DEFAULT_PROJECT_SETTINGS = {
   mergeDiffVolumeMinLines: undefined,
   mergeDiffVolumeThreshold: undefined,
   mergeDiffVolumeAllowlist: undefined,
+  requiredChecks: undefined,
   mergeStrategyOverlapBehavior: "flip-to-prefer-branch",
   postMergeAuditMode: "warn",
   mergeAuditAutoRecovery: "ai-assisted",
@@ -631,13 +633,6 @@ export const DEFAULT_PROJECT_SETTINGS = {
   // proportional to the change; the thin merge gate carries cross-cutting
   // coverage. Falls back to package/explicit command when no tests resolve.
   scopeVerificationToChangedFiles: true,
-  /*
-  FNXC:WorkflowAgentRouting 2026-08-07-08:45:
-  Keep the legacy project setting defaulted and persistable for existing clients and
-  configuration records. Workflow-stage routing must ignore its value; durable role
-  principals own scheduler, executor, and mission-stage authority.
-  */
-  ephemeralAgentsEnabled: true,
   /*
   FNXC:EphemeralAgentTaskCreation 2026-07-01-00:00:
   Default-on so ephemeral task-worker agents keep the ability to open follow-up tasks via fn_task_create. Operators who want to confine task creation to humans/permanent agents flip this off.
@@ -733,6 +728,8 @@ export const DEFAULT_PROJECT_SETTINGS = {
   memoryBackupSchedule: "0 3 * * *",
   memoryBackupRetention: 14,
   memoryBackupDir: ".fusion/backups/memory",
+  // FNXC:KnowledgeGraph 2026-08-10-10:00: The graph must stay outside gitignored .fusion so operators may commit it.
+  knowledgeGraphDir: ".fusion-knowledge/graph",
   memoryBackupScope: "all" as const,
   autoSummarizeTitles: false,
   /*
@@ -927,6 +924,26 @@ export function isGlobalSettingsKey(key: string): key is keyof GlobalSettings {
 
 export function isProjectSettingsKey(key: string): key is keyof ProjectSettings {
   return (PROJECT_SETTINGS_KEYS as readonly string[]).includes(key);
+}
+
+/*
+FNXC:ConfigVersioning 2026-08-09-04:09:
+`engineLastActiveAt` is liveness bookkeeping written every pollIntervalMs tick. Versioning it evicted real settings changes from the audit window within about 25 minutes, so project revision payloads omit these keys and restores overlay their live values.
+*/
+export const NON_VERSIONED_SETTINGS_KEYS = Object.freeze(["engineLastActiveAt"] as const);
+
+export function isNonVersionedSettingsKey(key: string): key is (typeof NON_VERSIONED_SETTINGS_KEYS)[number] {
+  return (NON_VERSIONED_SETTINGS_KEYS as readonly string[]).includes(key);
+}
+
+/** Preserve live liveness fields when an exact historic project snapshot is restored. */
+export function mergeRestoredProjectSettings(snapshot: Record<string, unknown>, live: Record<string, unknown>): Record<string, unknown> {
+  const merged = { ...snapshot };
+  for (const key of NON_VERSIONED_SETTINGS_KEYS) {
+    delete merged[key];
+    if (Object.hasOwn(live, key)) merged[key] = live[key];
+  }
+  return merged;
 }
 
 export function isGlobalOnlySettingsKey(key: string): key is keyof GlobalSettings {

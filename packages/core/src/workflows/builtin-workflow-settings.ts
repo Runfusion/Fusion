@@ -1,4 +1,33 @@
 import { THINKING_LEVELS, type Settings } from "../types.js";
+
+/*
+FNXC:TriagePlanningTimeout 2026-08-10-18:32:
+Single source for the planning-turn ceiling, mirroring DEFAULT_MAX_POST_REVIEW_FIXES: the declaration
+default and the engine's `settings.planningTimeoutMs ?? N` read site must not drift into two separate
+literals. 90 minutes is deliberately generous — successful planning work items measured over 7 days
+ran p50 12.7 / p90 39.5 / p99 105.7 minutes, so a tighter bound would abort legitimate plans and pay
+for the restart, which is the churn this bound exists to remove.
+*/
+export const DEFAULT_PLANNING_TIMEOUT_MS = 5_400_000;
+
+/*
+FNXC:PlanReviewReplan 2026-08-10-18:32:
+Built-in ceiling for consecutive Plan Review REVISE -> replan cycles when the resolved revision budget
+is unbounded, used when the `planReviewReplanCap` workflow value is unset.
+
+15 preserves the ceiling that was ACTUALLY in force before this constant existed. That backstop was
+`PLAN_REVIEW_FEEDBACK_HISTORY_LIMIT` — a bound on how much reviewer PROSE is replayed into the next
+planning prompt, whose own comment states it is "bounded independently of persistence and retry
+accounting". Two unrelated concerns were sharing one number, so trimming the prompt history would have
+silently tightened a safety ceiling. Splitting them is the point; the value is held at 15 so the split
+is a pure re-wiring rather than a silent behavior change. Operators can now lower it, which is what the
+`planReviewReplanCap` setting always claimed to do but never did — nothing read it.
+*/
+export const DEFAULT_PLAN_REVIEW_REPLAN_CAP = 15;
+import {
+  DEFAULT_CODE_REVIEW_BLOCKING_SEVERITY,
+  DEFAULT_PLAN_REVIEW_BLOCKING_SEVERITY,
+} from "./review-severity-gate.js";
 import type { WorkflowSettingDefinition } from "./workflow-ir-types.js";
 
 /**
@@ -505,6 +534,25 @@ export const BUILTIN_TRIAGE_POLICY_SETTINGS: WorkflowSettingDefinition[] = [
     default: false,
     description: "Auto-approve the generated PROMPT.md and skip the independent spec reviewer.",
   },
+  {
+    id: "planningTimeoutMs",
+    name: "Planning timeout (ms)",
+    type: "number",
+    minimum: 60_000,
+    integer: true,
+    /*
+     * FNXC:TriagePlanningTimeout 2026-08-10-18:32:
+     * Workflow-native triage policy — it never lived in project/global settings, so it belongs here
+     * and must never be added to MOVED_SETTINGS_KEYS. The planning turn previously had NO
+     * Fusion-side ceiling: `workflowStepTimeoutMs` covers pre-merge workflow STEPS only, and the
+     * provider SDK's 300s cap is time-to-first-byte (cleared once headers arrive), so a hung stream
+     * ran unbounded — observed at 126 minutes, with failed-attempt durations showing a smooth
+     * 1-126 min spread and no clustering, the signature of nothing enforcing a bound.
+     */
+    default: DEFAULT_PLANNING_TIMEOUT_MS,
+    description:
+      "Maximum time a single planning/specification turn may run before the session is aborted. A timeout consumes one attempt of the bounded planning retry budget. Generous by design — it bounds hung turns, not slow ones.",
+  },
 ];
 
 export const BUILTIN_REVIEW_REVISION_SETTINGS: WorkflowSettingDefinition[] = [
@@ -545,6 +593,42 @@ export const BUILTIN_REVIEW_REVISION_SETTINGS: WorkflowSettingDefinition[] = [
      */
     description:
       "Maximum automatic Code Review remediation attempts for this workflow. Leave unset to use the workflow's authored default; set 0 to disable automatic revision.",
+  },
+  /*
+   * FNXC:ReviewSeverityGate 2026-08-10-17:33:
+   * The blocking threshold shapes review churn at its source; the revision caps above only truncate a
+   * loop once it is already running. Exposed per workflow so an operator can restore the pre-gate
+   * behavior ("any") for a high-assurance workflow without editing a read-only built-in.
+   */
+  {
+    id: "planReviewBlockingSeverity",
+    name: "Plan Review blocking severity",
+    type: "enum",
+    options: [
+      { value: "critical", label: "P0 only (critical)" },
+      { value: "high", label: "P0 + P1 (high and above)" },
+      { value: "medium", label: "P0 + P1 + P2 medium" },
+      { value: "low", label: "Any classified finding" },
+      { value: "any", label: "Every REVISE blocks" },
+    ],
+    default: DEFAULT_PLAN_REVIEW_BLOCKING_SEVERITY,
+    description:
+      "Minimum finding severity that lets Plan Review block execution. A REVISE carrying no finding at or above this level is recorded as APPROVE_WITH_NOTES and its findings are handed to the implementer. Choose \"any\" to block on every REVISE.",
+  },
+  {
+    id: "codeReviewBlockingSeverity",
+    name: "Code Review blocking severity",
+    type: "enum",
+    options: [
+      { value: "critical", label: "P0 only (critical)" },
+      { value: "high", label: "P0 + P1 (high and above)" },
+      { value: "medium", label: "P0 + P1 + P2 medium" },
+      { value: "low", label: "Any classified finding" },
+      { value: "any", label: "Every REVISE blocks" },
+    ],
+    default: DEFAULT_CODE_REVIEW_BLOCKING_SEVERITY,
+    description:
+      "Minimum finding severity that lets Code Review block merge. A REVISE carrying no finding at or above this level is recorded as APPROVE_WITH_NOTES and its findings are handed to the implementer. Choose \"any\" to block on every REVISE.",
   },
   {
     id: "planReviewReplanCap",

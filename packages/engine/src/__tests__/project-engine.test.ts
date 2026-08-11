@@ -132,6 +132,19 @@ vi.mock("node:child_process", async (importOriginal) => {
   };
 });
 
+/*
+FNXC:EngineTests 2026-08-10-09:35:
+FN-8937 seals the exec-based integration-branch probe so this ProjectEngine suite
+never spawns host git while fake timers exercise workspace dispatch. Resolver data
+states remain owned by integration-branch.test.ts; this seam supplies only a stable branch.
+*/
+vi.mock("../merge/integration-branch.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../merge/integration-branch.js")>()),
+  resolveIntegrationBranch: vi.fn().mockResolvedValue("main"),
+  resolveIntegrationBranchSync: vi.fn().mockReturnValue("main"),
+  __resetIntegrationBranchCacheForTests: vi.fn(),
+}));
+
 vi.mock("../merge/pr-monitor.js", () => ({
   PrMonitor: vi.fn().mockImplementation(function () {
     return {
@@ -2119,7 +2132,12 @@ describe("ProjectEngine paused in-review auto-merge behavior", () => {
 
     await engine.start();
 
-    const taskMovedHandler = mockStore.store.on.mock.calls.find((c: unknown[]) => c[0] === "task:moved")?.[1] as
+    /*
+    FNXC:EngineTests 2026-08-10-10:34:
+    FN-8937 must invoke the auto-merge listener, not spec-drift's earlier observer;
+    the latest registration owns the merge handoff assertions below.
+    */
+    const taskMovedHandler = mockStore.store.on.mock.calls.findLast((c: unknown[]) => c[0] === "task:moved")?.[1] as
       | ((payload: { task: { id: string; column: string; paused?: boolean }; to: string }) => Promise<void>)
       | undefined;
 
@@ -2145,7 +2163,7 @@ describe("ProjectEngine paused in-review auto-merge behavior", () => {
     await engine.start();
     enqueueSpy.mockClear();
 
-    const taskUpdatedHandler = mockStore.store.on.mock.calls.find((c: unknown[]) => c[0] === "task:updated")?.[1] as
+    const taskUpdatedHandler = mockStore.store.on.mock.calls.findLast((c: unknown[]) => c[0] === "task:updated")?.[1] as
       | ((task: { id: string; column: string; paused?: boolean; status?: string | null }) => Promise<void>)
       | undefined;
     if (!taskUpdatedHandler) throw new Error("task:updated handler was not registered");
@@ -2703,7 +2721,7 @@ describe("ProjectEngine paused in-review auto-merge behavior", () => {
       expect(mocks.runAiMerge).toHaveBeenCalledTimes(1);
     });
 
-    const taskUpdatedHandler = mockStore.store.on.mock.calls.find((c: unknown[]) => c[0] === "task:updated")?.[1] as
+    const taskUpdatedHandler = mockStore.store.on.mock.calls.findLast((c: unknown[]) => c[0] === "task:updated")?.[1] as
       | ((task: { id: string; column: string; paused?: boolean }) => void)
       | undefined;
     if (!taskUpdatedHandler) throw new Error("task:updated handler was not registered");
@@ -2731,8 +2749,15 @@ describe("ProjectEngine paused in-review auto-merge behavior", () => {
       { id: "FN-paused", column: "in-review", paused: true, mergeRetries: 0, status: null },
       { id: "FN-ready", column: "in-review", paused: false, mergeRetries: 0, status: null },
     ];
-    // Critical stale-status cleanup reads first; deferred startup then evaluates eligibility.
-    mockStore.store.listTasks.mockResolvedValueOnce([]).mockResolvedValueOnce(inReviewTasks);
+    /*
+    FNXC:EngineTests 2026-08-10-10:34:
+    FN-8937 keeps this rescue suite aligned with the startup ownership contract:
+    spec-drift seeds first, stale-status cleanup reads second, then deferred merge admission reads the candidates.
+    */
+    mockStore.store.listTasks
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce(inReviewTasks);
     mocks.currentStore = mockStore.store;
     const engine = createEngine();
     const privateEngine = engine as unknown as { internalEnqueueMerge: (taskId: string) => void };
@@ -2747,7 +2772,13 @@ describe("ProjectEngine paused in-review auto-merge behavior", () => {
     await engine.stop();
   });
 
-  it("startup merge sweep enqueues shared-group members when autoMerge is false", async () => {
+  /*
+  FNXC:SharedBranchMemberHold 2026-08-09-09:09:
+  FN-8823 applies the project-Off consent rule to startup merge recovery as well
+  as direct admission. An explicit per-task On remains eligible, but group
+  liveness cannot re-admit a non-opted-in shared member.
+  */
+  it("startup merge sweep holds non-opted-in shared-group members when autoMerge is false", async () => {
     const mockStore = createMockStore({ ...baseSettings, autoMerge: false });
     mockStore.store.getBranchGroup.mockReturnValue({ id: "BG-5819", status: "open", branchName: "fusion/groups/bg-5819" });
     const inReviewTasks = [
@@ -2759,19 +2790,27 @@ describe("ProjectEngine paused in-review auto-merge behavior", () => {
         status: null,
         branchContext: { assignmentMode: "shared", groupId: "BG-5819", source: "planning" },
       },
+      { id: "FN-opted-in", column: "in-review", paused: false, mergeRetries: 0, status: null, autoMerge: true, branchContext: { assignmentMode: "shared", groupId: "BG-5819", source: "planning" } },
       { id: "FN-plain", column: "in-review", paused: false, mergeRetries: 0, status: null },
     ];
-    // Critical stale-status cleanup reads first; deferred startup then evaluates eligibility.
-    mockStore.store.listTasks.mockResolvedValueOnce([]).mockResolvedValueOnce(inReviewTasks);
+    /*
+    FNXC:EngineTests 2026-08-10-10:34:
+    FN-8937 preserves the three startup readers: spec-drift seed, stale-status cleanup, then deferred merge admission.
+    */
+    mockStore.store.listTasks
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce(inReviewTasks);
     mocks.currentStore = mockStore.store;
     const engine = createEngine();
     const privateEngine = engine as unknown as { internalEnqueueMerge: (taskId: string) => void };
     const enqueueSpy = vi.spyOn(privateEngine, "internalEnqueueMerge");
 
     await engine.start();
-    await vi.waitFor(() => expect(enqueueSpy).toHaveBeenCalledWith("FN-shared"));
+    await vi.waitFor(() => expect(enqueueSpy).toHaveBeenCalledWith("FN-opted-in"));
 
-    expect(enqueueSpy).toHaveBeenCalledWith("FN-shared");
+    expect(enqueueSpy).toHaveBeenCalledWith("FN-opted-in");
+    expect(enqueueSpy).not.toHaveBeenCalledWith("FN-shared");
     expect(enqueueSpy).not.toHaveBeenCalledWith("FN-plain");
 
     await engine.stop();
@@ -2791,7 +2830,7 @@ describe("ProjectEngine paused in-review auto-merge behavior", () => {
 
       await engine.start();
       enqueueSpy.mockClear();
-      const movedHandler = mockStore.store.on.mock.calls.find((c: unknown[]) => c[0] === "task:moved")?.[1] as
+      const movedHandler = mockStore.store.on.mock.calls.findLast((c: unknown[]) => c[0] === "task:moved")?.[1] as
         | ((event: { task: Task; to: string }) => void)
         | undefined;
       if (!movedHandler) throw new Error("task:moved handler was not registered");
@@ -3239,11 +3278,12 @@ describe("ProjectEngine swallowed error hardening", () => {
 
     const engine = createEngine();
     await engine.start();
-    await vi.waitFor(() => expect(mockStore.store.listTasks).toHaveBeenCalledTimes(2));
+    // Spec-drift's initial scan precedes stale-status cleanup and deferred merge admission.
+    await vi.waitFor(() => expect(mockStore.store.listTasks).toHaveBeenCalledTimes(3));
 
     mockStore.store.getSettings.mockRejectedValueOnce(new Error("db locked"));
 
-    const handler = mockStore.store.on.mock.calls.find((c: unknown[]) => c[0] === "task:moved")?.[1] as
+    const handler = mockStore.store.on.mock.calls.findLast((c: unknown[]) => c[0] === "task:moved")?.[1] as
       | ((payload: { task: { id: string; column: string }; to: string }) => Promise<void>)
       | undefined;
     expect(handler).toBeTypeOf("function");
@@ -3271,8 +3311,9 @@ describe("ProjectEngine swallowed error hardening", () => {
   it("warns when startup merge sweep fails", async () => {
     const mockStore = createMockStore({ ...baseSettings, autoMerge: true });
     mocks.currentStore = mockStore.store;
-    // The critical stale-status read precedes the deferred enqueue sweep.
+    // Spec-drift scans first, stale-status cleanup is second, and deferred admission must fail third.
     mockStore.store.listTasks
+      .mockResolvedValueOnce([])
       .mockResolvedValueOnce([])
       .mockRejectedValueOnce(new Error("connection lost"));
 
@@ -3293,7 +3334,7 @@ describe("ProjectEngine swallowed error hardening", () => {
     mocks.currentStore = mockStore.store;
     const engine = createEngine();
     await engine.start();
-    await vi.waitFor(() => expect(mockStore.store.listTasks).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(mockStore.store.listTasks).toHaveBeenCalledTimes(3));
     warnSpy.mockClear();
 
     mockStore.store.listTasks.mockRejectedValueOnce(new Error("sweep db error"));
@@ -3311,7 +3352,7 @@ describe("ProjectEngine swallowed error hardening", () => {
     mocks.currentStore = mockStore.store;
     const engine = createEngine();
     await engine.start();
-    await vi.waitFor(() => expect(mockStore.store.listTasks).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(mockStore.store.listTasks).toHaveBeenCalledTimes(3));
     warnSpy.mockClear();
 
     mockStore.store.getSettings
@@ -3538,7 +3579,7 @@ describe("ProjectEngine stale mergeActive rescue (FN-3900)", () => {
     });
     const warnSpy = vi.spyOn(runtimeLog, "warn").mockImplementation(() => {});
 
-    const taskMovedHandler = mockStore.store.on.mock.calls.find((c: unknown[]) => c[0] === "task:moved")?.[1] as
+    const taskMovedHandler = mockStore.store.on.mock.calls.findLast((c: unknown[]) => c[0] === "task:moved")?.[1] as
       | ((payload: { task: { id: string; column: string; paused?: boolean }; to: string }) => Promise<void>)
       | undefined;
     if (!taskMovedHandler) throw new Error("task:moved handler was not registered");
@@ -3650,7 +3691,7 @@ describe("ProjectEngine stale mergeActive rescue (FN-3900)", () => {
     const enqueueSpy = vi.spyOn(privateEngine, "internalEnqueueMerge");
     const warnSpy = vi.spyOn(runtimeLog, "warn").mockImplementation(() => {});
 
-    const taskMovedHandler = mockStore.store.on.mock.calls.find((c: unknown[]) => c[0] === "task:moved")?.[1] as
+    const taskMovedHandler = mockStore.store.on.mock.calls.findLast((c: unknown[]) => c[0] === "task:moved")?.[1] as
       | ((payload: { task: { id: string; column: string; paused?: boolean }; to: string }) => Promise<void>)
       | undefined;
     if (!taskMovedHandler) throw new Error("task:moved handler was not registered");
@@ -3689,23 +3730,30 @@ describe("allowInReviewMergeProcessing per-task autoMerge override", () => {
     await expect(gate({ autoMerge: false }, { autoMerge: true })).resolves.toBe(true);
   });
 
-  it("still exempts live shared-branch-group member integration on an intermediate branch when the global setting is off", async () => {
-    await expect(gate(
-      { branchContext: { assignmentMode: "shared", groupId: "grp-1" } as Task["branchContext"] },
-      { autoMerge: false, integrationBranch: "main" },
-      { status: "open", branchName: "mission/M-3324" },
-    )).resolves.toBe(true);
+  /*
+  FNXC:SharedBranchMemberHold 2026-08-09-09:09:
+  FN-8823 supersedes the FN-5819 live-member exemption when project auto-merge
+  is Off. Every non-opted-in member is held before liveness is considered; an
+  explicit task-level On is the sole consent path through this requester.
+  */
+  it("holds live shared-branch-group member integration on an intermediate branch when the global setting is off", async () => {
+    const shared = { branchContext: { assignmentMode: "shared", groupId: "grp-1" } as Task["branchContext"] };
+    const settings = { autoMerge: false, integrationBranch: "main" };
+    const group = { status: "open" as const, branchName: "mission/M-3324" };
+
+    await expect(gate(shared, settings, group)).resolves.toBe(false);
+    await expect(gate({ ...shared, autoMerge: true }, settings, group)).resolves.toBe(true);
   });
 
-  it("holds only an operator-authored false override before live member integration", async () => {
+  it("holds every non-opted-in provenance before live member integration when global auto-merge is off", async () => {
     const shared = { branchContext: { assignmentMode: "shared", groupId: "grp-1" } as Task["branchContext"] };
     const settings = { autoMerge: false, integrationBranch: "main" };
     const group = { status: "open" as const, branchName: "mission/M-3324" };
 
     await expect(gate({ ...shared, autoMerge: false, autoMergeProvenance: "user" }, settings, group)).resolves.toBe(false);
-    await expect(gate({ ...shared, autoMerge: false, autoMergeProvenance: "mission" }, settings, group)).resolves.toBe(true);
-    await expect(gate({ ...shared, autoMerge: false, autoMergeProvenance: "legacy-stamp" }, settings, group)).resolves.toBe(true);
-    await expect(gate({ ...shared, autoMerge: false }, settings, group)).resolves.toBe(true);
+    await expect(gate({ ...shared, autoMerge: false, autoMergeProvenance: "mission" }, settings, group)).resolves.toBe(false);
+    await expect(gate({ ...shared, autoMerge: false, autoMergeProvenance: "legacy-stamp" }, settings, group)).resolves.toBe(false);
+    await expect(gate({ ...shared, autoMerge: false }, settings, group)).resolves.toBe(false);
   });
 
   it("keeps live shared-branch-group member integration on the default branch behind the manual gate", async () => {

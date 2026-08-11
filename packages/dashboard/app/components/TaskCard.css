@@ -981,6 +981,17 @@ On cards with Promote, the opt-in cost badge belongs directly below that action 
   line-height: 1;
 }
 
+/*
+FNXC:TaskCardAgentBadges 2026-08-10-03:41:
+FN-8930 makes created-by provenance distinct from current ownership at every card width. The owner remains the filled Bot pill; provenance stays text-bearing but uses a lighter outlined Sparkles treatment so two names cannot imply two assignees.
+*/
+.card-agent-created-badge--provenance {
+  font-weight: 400;
+  background: color-mix(in srgb, var(--text-muted) 8%, transparent);
+  border-color: color-mix(in srgb, var(--text-muted) 45%, transparent);
+  border-style: dashed;
+}
+
 .card-agent-badge-text {
   min-width: 0;
   flex: 0 1 auto;
@@ -2101,6 +2112,12 @@ The three-dot menu is the sole card move/action entry point. Keep this shared bu
   .card-agent-created-badge {
     font-size: 0.5625rem;
     padding: calc(var(--space-xs) / 4) var(--space-sm);
+  }
+
+  .card-agent-created-badge--provenance {
+    background: color-mix(in srgb, var(--text-muted) 8%, transparent);
+    border-color: color-mix(in srgb, var(--text-muted) 45%, transparent);
+    border-style: dashed;
   }
 
   .card-branch-row {

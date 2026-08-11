@@ -153,6 +153,7 @@ const RAW_BUILTIN_STEPWISE_CODING_WORKFLOW_IR: WorkflowIr = {
     { id: "plan", kind: "prompt", column: "todo", config: builtinPromptConfig("planning", "Plan") },
     planReviewOptionalGroupNode("todo", { requireExternalIntegrationEvidence: true }),
     planReplanNode("todo"),
+    { id: "plan-review-no-op", kind: "gate", column: "todo", config: { workflowAction: "plan-review-no-op" } },
     // KTD-12: parse the planned PROMPT.md into the task step list. This node must
     // dominate the foreach (validator-enforced).
     {
@@ -302,6 +303,8 @@ const RAW_BUILTIN_STEPWISE_CODING_WORKFLOW_IR: WorkflowIr = {
     { from: "plan", to: "plan-review", condition: "success" },
     { from: "plan", to: "end", condition: "failure" },
     { from: "plan-review", to: "parse", condition: "success" },
+    { from: "plan-review", to: "plan-review-no-op", condition: "outcome:close-no-op" },
+    { from: "plan-review-no-op", to: "end", condition: "success" },
     { from: "plan-review", to: "plan-replan", condition: "failure" },
     { from: "plan-replan", to: "plan-review", condition: "success", kind: "rework" },
     { from: "parse", to: "steps", condition: "success" },

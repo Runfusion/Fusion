@@ -498,12 +498,17 @@ describe("one lane snapshot per recovery, across every classifier", () => {
 
   it("threads the memo from handleGraphFailure into every one of them", async () => {
     const { readFile } = await import("node:fs/promises");
-    const source = await readFile(new URL("../executor.ts", import.meta.url), "utf8");
-    const code = source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+    /*
+    FNXC:CodeOrganization 2026-08-03-15:05 (U4 handleGraphFailure peel):
+    Call sites live in the free-function peel (`deps.<classifier>(…resumeLanesMemo)`), not the
+    thin TaskExecutor facade. Scan the peel (and still accept `this.` for any residual class body).
+    */
+    const peel = await readFile(new URL("../executor/handle-graph-failure.ts", import.meta.url), "utf8");
+    const code = peel.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
 
     // The call sites must PASS it — accepting an unused optional parameter proves nothing.
     for (const name of MEMO_THREADED.filter((n) => n !== "isReentrantPausedAbortedInFlightNode")) {
-      const callSite = new RegExp(`this\\.${name}\\([^;]*resumeLanesMemo`);
+      const callSite = new RegExp(`(?:this|deps)\\.${name}\\([^;]*resumeLanesMemo`);
       expect(callSite.test(code), `${name} call site does not pass resumeLanesMemo`).toBe(true);
     }
   });

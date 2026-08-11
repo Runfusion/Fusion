@@ -1,0 +1,98 @@
+/*
+FNXC:CommandCenterAgentActivity 2026-08-10-01:54:
+The activity panel keeps live and timeline controls touch-usable at desktop and mobile widths with existing design tokens. Timeline rows are manual windows, so this stylesheet deliberately adds no nested scroll owner.
+*/
+.cc-agent-activity {
+  display: grid;
+  gap: var(--space-3);
+  min-inline-size: 0;
+}
+
+.cc-agent-activity-mode,
+.cc-agent-activity-filters,
+.cc-agent-activity-target {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-inline-size: 0;
+}
+
+.cc-agent-activity-filters {
+  flex-wrap: wrap;
+}
+
+.cc-agent-activity-filters .input {
+  flex: 1 1 auto;
+  min-inline-size: 0;
+}
+
+.cc-agent-activity-range-note,
+.cc-agent-activity-end,
+.cc-agent-activity-copy small {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.cc-agent-activity-list {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.cc-agent-activity-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-inline-size: 0;
+  padding: var(--space-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+
+button.cc-agent-activity-row {
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+button.cc-agent-activity-row:hover,
+button.cc-agent-activity-row:focus-visible {
+  background: color-mix(in srgb, var(--surface-2) 80%, transparent);
+}
+
+.cc-agent-activity-copy {
+  display: grid;
+  gap: var(--space-1);
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+}
+
+.cc-agent-activity-target .cc-agent-activity-row {
+  flex: 1 1 auto;
+}
+
+@media (max-width: 768px) {
+  .cc-agent-activity-mode,
+  .cc-agent-activity-filters,
+  .cc-agent-activity-target {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .cc-agent-activity-mode .btn,
+  .cc-agent-activity-filters .input,
+  .cc-agent-activity-target .btn {
+    inline-size: 100%;
+  }
+
+  .cc-agent-activity-row {
+    align-items: flex-start;
+  }
+}
+
+@media (max-height: 480px) and (max-width: 768px) {
+  .cc-agent-activity {
+    gap: var(--space-2);
+  }
+}

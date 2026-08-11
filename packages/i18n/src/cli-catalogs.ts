@@ -12,6 +12,9 @@ import fr_errors from "../locales/fr/errors.json";
 import ko_common from "../locales/ko/common.json";
 import ko_cli from "../locales/ko/cli.json";
 import ko_errors from "../locales/ko/errors.json";
+import pt_BR_common from "../locales/pt-BR/common.json";
+import pt_BR_cli from "../locales/pt-BR/cli.json";
+import pt_BR_errors from "../locales/pt-BR/errors.json";
 import zh_CN_common from "../locales/zh-CN/common.json";
 import zh_CN_cli from "../locales/zh-CN/cli.json";
 import zh_CN_errors from "../locales/zh-CN/errors.json";
@@ -39,6 +42,11 @@ export const cliResources = {
     common: ko_common,
     cli: ko_cli,
     errors: ko_errors,
+  },
+  "pt-BR": {
+    common: pt_BR_common,
+    cli: pt_BR_cli,
+    errors: pt_BR_errors,
   },
   "zh-CN": {
     common: zh_CN_common,

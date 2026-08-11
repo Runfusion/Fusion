@@ -5088,6 +5088,60 @@ describe("useChat", () => {
       });
     });
 
+    it("forwards stream acceptance but retains delivery fallback on accepted provider errors", async () => {
+      mockFetchChatSessions.mockResolvedValueOnce({
+        sessions: [makeSession({ id: "session-001", agentId: "agent-001" })],
+      });
+      mockFetchChatMessages.mockResolvedValueOnce({ messages: [] });
+      let acceptedHandler: (() => void) | undefined;
+      let errorHandler: ((data: string | apiModule.ChatFailureInfo, meta?: apiModule.ChatStreamErrorMeta) => void) | undefined;
+      mockStreamChatResponse.mockImplementation((_sessionId, _content, handlers) => {
+        acceptedHandler = handlers.onAccepted;
+        errorHandler = handlers.onError;
+        return { close: vi.fn(), isConnected: () => true };
+      });
+
+      const { result } = renderHook(() => useChat("proj-123"));
+      await waitFor(() => expect(result.current.sessions).toHaveLength(1));
+      act(() => result.current.selectSession("session-001"));
+      await waitFor(() => expect(result.current.activeSession?.id).toBe("session-001"));
+
+      const onAccepted = vi.fn();
+      const onDelivered = vi.fn();
+      const onFailed = vi.fn();
+      act(() => result.current.sendMessage("Hello!", undefined, { onAccepted, onDelivered, onFailed }));
+      act(() => acceptedHandler?.());
+      expect(onAccepted).toHaveBeenCalledTimes(1);
+
+      act(() => errorHandler?.("Provider failed", { requestAccepted: true, receivedStreamEvent: true }));
+      expect(onDelivered).toHaveBeenCalledTimes(1);
+      expect(onFailed).not.toHaveBeenCalled();
+    });
+
+    it("does not accept when the stream reports a pre-acceptance error", async () => {
+      mockFetchChatSessions.mockResolvedValueOnce({
+        sessions: [makeSession({ id: "session-001", agentId: "agent-001" })],
+      });
+      mockFetchChatMessages.mockResolvedValueOnce({ messages: [] });
+      let errorHandler: ((data: string | apiModule.ChatFailureInfo, meta?: apiModule.ChatStreamErrorMeta) => void) | undefined;
+      mockStreamChatResponse.mockImplementation((_sessionId, _content, handlers) => {
+        errorHandler = handlers.onError;
+        return { close: vi.fn(), isConnected: () => true };
+      });
+
+      const { result } = renderHook(() => useChat("proj-123"));
+      await waitFor(() => expect(result.current.sessions).toHaveLength(1));
+      act(() => result.current.selectSession("session-001"));
+      await waitFor(() => expect(result.current.activeSession?.id).toBe("session-001"));
+
+      const onAccepted = vi.fn();
+      const onFailed = vi.fn();
+      act(() => result.current.sendMessage("Hello!", undefined, { onAccepted, onFailed }));
+      act(() => errorHandler?.("Request failed", { requestAccepted: false, receivedStreamEvent: false }));
+      expect(onAccepted).not.toHaveBeenCalled();
+      expect(onFailed).toHaveBeenCalledTimes(1);
+    });
+
     it("keeps accepted sent message visible after provider error and reconciles persisted echo", async () => {
       mockFetchChatSessions.mockResolvedValueOnce({
         sessions: [makeSession({ id: "session-001", agentId: "agent-001" })],

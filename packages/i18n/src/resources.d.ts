@@ -5954,7 +5954,6 @@ export default interface Resources {
         "ephemeralAgentTaskCreationPolicyDeny": "Deny",
         "ephemeralAgentTaskCreationPolicyHint": "No default — unset policy falls back to Allow. Upon validation sends a proposal to your mailbox for one-click approval; Deny rejects follow-up task creation.",
         "ephemeralAgentTaskCreationPolicyUponValidation": "Upon validation",
-        "ephemeralAgentsCompatibilityHint": "Retained for configuration compatibility. Default: enabled. This setting does not affect scheduler assignment or admission, executor workflow dispatch or re-entry, mission start, or workflow-stage principal routing.",
         "fN": "FN",
         "followDashboardLanguage": "Follow dashboard language",
         "general": "General",
@@ -6047,7 +6046,6 @@ export default interface Resources {
         "updateSuccessToast": "Update installed. Restart Fusion to apply it.",
         "updating": "Updating…",
         "upperBoundOnMessagesFetchedFromTheRoom": "Upper bound on messages fetched from the room store for compaction consideration. Default: 200.",
-        "useEphemeralTaskWorkerAgents": " Use ephemeral task-worker agents ",
         "warnOnTheBoardWhenTodoWorkExceeds": "Warn on the board when todo work exceeds the threshold and no idle agents are available. Default: disabled.",
         "whenEnabledDefaultFusionSpawnsShortLived": " When enabled (default), Fusion spawns short-lived ",
         "whenEnabledFusionChecksOpenAndClosedIssues": " When enabled, Fusion checks open and closed issues in the target repo for likely duplicates (using File Scope paths and key symptoms) before creating a new tracking issue. Uncheck to always create a new issue. Default: enabled. ",
@@ -8025,6 +8023,7 @@ export default interface Resources {
       "recommendations": {
         "create": "Create task",
         "created": "Created {{taskId}}",
+        "empty": "No recommendations were produced for this task.",
         "creating": "Creating…",
         "error": "Could not create task. Try again.",
         "retry": "Retry creating task",

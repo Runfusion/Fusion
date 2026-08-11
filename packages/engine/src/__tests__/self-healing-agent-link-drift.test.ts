@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { TaskDeletedError, TaskNotFoundError, isEphemeralAgent, type Agent, type AgentStore, type Task } from "@fusion/core";
+import { isEphemeralAgent, TaskDeletedError, TaskNotFoundError, type Agent, type AgentStore, type Task } from "@fusion/core";
 
 import { SelfHealingManager } from "../self-healing.js";
 
@@ -9,9 +9,13 @@ function makeAgent(id: string, taskId: string, state: Agent["state"] = "active")
 }
 
 describe("FN-4296: self-healing agent link drift", () => {
-  function buildManager(agents: Agent[], tasks: Record<string, Task | null>, hasActiveAgentExecution?: (agentId: string) => boolean) {
+  function buildManager(agents: Agent[], tasks: Record<string, Task | null | Error>, hasActiveAgentExecution?: (agentId: string) => boolean) {
     const store = {
-      getTask: vi.fn(async (taskId: string) => tasks[taskId] ?? null),
+      getTask: vi.fn(async (taskId: string) => {
+        const result = tasks[taskId] ?? null;
+        if (result instanceof Error) throw result;
+        return result;
+      }),
       recordRunAuditEvent: vi.fn(async () => {}),
     } as any;
 
@@ -47,9 +51,12 @@ describe("FN-4296: self-healing agent link drift", () => {
 
   it("FN-4296: durable agent linked to archived task is cleared by sweep", async () => {
     const agents = [makeAgent("agent-1", "FN-1")];
-    const { manager } = buildManager(agents, { "FN-1": { id: "FN-1", column: "archived" } as Task });
+    const { manager, store } = buildManager(agents, { "FN-1": { id: "FN-1", column: "archived" } as Task });
     await manager.recoverDriftedAgentTaskLinks();
     expect(agents[0].taskId).toBeUndefined();
+    expect(store.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
+      metadata: expect.objectContaining({ reason: "linked task in terminal column archived" }),
+    }));
     manager.stop();
   });
 
@@ -185,40 +192,46 @@ describe("FN-4296: self-healing agent link drift", () => {
     manager.stop();
   });
 
-  it("continues after task-gone lookup races and clears later drifted links", async () => {
+  it("FN-8919: a throwing task miss clears itself and later stale links", async () => {
+    const agents = [makeAgent("agent-poison", "ERR-024"), makeAgent("agent-stale", "FN-2")];
+    const { manager, agentStore, store } = buildManager(agents, {
+      "ERR-024": new TaskNotFoundError("ERR-024"),
+      "FN-2": null,
+    });
+
+    await expect(manager.recoverDriftedAgentTaskLinks()).resolves.toBe(2);
+
+    expect(agentStore.syncExecutionTaskLink).toHaveBeenCalledWith("agent-poison", undefined);
+    expect(agentStore.syncExecutionTaskLink).toHaveBeenCalledWith("agent-stale", undefined);
+    expect(store.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
+      target: "agent-poison",
+      metadata: expect.objectContaining({ reason: "linked task missing" }),
+    }));
+    manager.stop();
+  });
+
+  it("FN-8919: TaskDeletedError is a missing task and transient errors isolate one agent", async () => {
     const agents = [
-      makeAgent("agent-deleted", "FN-DELETED"),
-      makeAgent("agent-missing", "FN-MISSING"),
-      makeAgent("agent-error", "FN-ERROR"),
-      makeAgent("agent-done", "FN-DONE"),
+      makeAgent("agent-transient", "FN-connection"),
+      makeAgent("agent-deleted", "KB-1"),
+      makeAgent("agent-stale", "FN-2"),
     ];
-    const store = {
-      getTask: vi.fn(async (taskId: string) => {
-        if (taskId === "FN-DELETED") throw new TaskDeletedError(taskId, new Date().toISOString());
-        if (taskId === "FN-MISSING") throw new TaskNotFoundError(taskId);
-        if (taskId === "FN-ERROR") throw new Error("database unavailable");
-        return { id: taskId, column: "done" } as Task;
-      }),
-      recordRunAuditEvent: vi.fn(async () => {}),
-    } as any;
-    const agentStore = {
-      listAgents: vi.fn(async (filter?: { includeEphemeral?: boolean }) => filter?.includeEphemeral === false ? agents.filter((agent) => !isEphemeralAgent(agent)) : agents),
-      getActiveHeartbeatRun: vi.fn(async () => null),
-      updateAgentState: vi.fn(async (agentId: string, state: Agent["state"]) => {
-        const agent = agents.find((candidate) => candidate.id === agentId);
-        if (agent) agent.state = state;
-      }),
-      syncExecutionTaskLink: vi.fn(async (agentId: string, taskId?: string) => {
-        const agent = agents.find((candidate) => candidate.id === agentId);
-        if (agent) agent.taskId = taskId;
-      }),
-    } as unknown as AgentStore;
-    const manager = new SelfHealingManager(store, { rootDir: "/tmp/test-project", agentStore });
+    const { manager, agentStore, store } = buildManager(agents, {
+      "FN-connection": new Error("connection terminated unexpectedly"),
+      "KB-1": new TaskDeletedError("KB-1", "2026-08-10T00:00:00.000Z"),
+      "FN-2": null,
+    });
 
-    const cleared = await manager.recoverDriftedAgentTaskLinks();
+    await expect(manager.recoverDriftedAgentTaskLinks()).resolves.toBe(2);
 
-    expect(cleared).toBe(3);
-    expect(agentStore.syncExecutionTaskLink).toHaveBeenCalledWith("agent-done", undefined);
+    expect(agents[0].taskId).toBe("FN-connection");
+    expect(agentStore.syncExecutionTaskLink).not.toHaveBeenCalledWith("agent-transient", undefined);
+    expect(agentStore.syncExecutionTaskLink).toHaveBeenCalledWith("agent-deleted", undefined);
+    expect(agentStore.syncExecutionTaskLink).toHaveBeenCalledWith("agent-stale", undefined);
+    expect(store.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
+      target: "agent-deleted",
+      metadata: expect.objectContaining({ reason: "linked task missing" }),
+    }));
     manager.stop();
   });
 

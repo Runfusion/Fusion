@@ -126,3 +126,16 @@ describe("agent-session-helpers test mode overrides", () => {
     });
   });
 });
+
+describe("role-aware heartbeat test mode", () => {
+  it("still forces mock for a supplied permanent workflow role", () => {
+    expect(resolveHeartbeatSessionModels({
+      testMode: true,
+      mergerProvider: "real-provider",
+      mergerModelId: "real-model",
+    }, { enabled: false }, { roles: ["merger"] })).toMatchObject({
+      defaultProvider: "mock",
+      defaultModelId: "scripted",
+    });
+  });
+});

@@ -78,7 +78,10 @@ export function TaskRecommendationsTab({
 
   return (
     <section className="task-recommendations" aria-label={t("taskDetail.recommendations.title", "Recommendations")}>
-      {recommendations.map((recommendation) => {
+      {recommendations.length === 0 ? (
+        /* FNXC:TaskRecommendations 2026-08-09-01:21: Completed-task recommendations are a stable destination; an empty result communicates that no out-of-scope work was produced without rendering inert creation controls. */
+        <p className="task-recommendations__empty">{t("taskDetail.recommendations.empty", "No recommendations were produced for this task.")}</p>
+      ) : recommendations.map((recommendation) => {
         /*
         FNXC:TaskRecommendations 2026-08-08-07:10:
         Effects reset retained-detail state only after React commits. Namespace transient action state by

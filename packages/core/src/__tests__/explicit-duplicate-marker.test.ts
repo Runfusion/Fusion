@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   parseExplicitDuplicateMarker,
+  resolveExplicitDuplicateMarker,
   parseDuplicateMarkerFromSessionText,
   isDuplicateRedirectOnlyPrompt,
   nonExecutableDuplicateRedirectReason,
@@ -69,13 +70,32 @@ describe("parseExplicitDuplicateMarker", () => {
     expect(parseExplicitDuplicateMarker("   ")).toBeNull();
   });
 
-  it("rejects non-FN identifiers", () => {
-    expect(parseExplicitDuplicateMarker("DUPLICATE: NOT-1234")).toBeNull();
+  it("accepts custom task prefixes and normalizes them", () => {
+    expect(parseExplicitDuplicateMarker("DUPLICATE: kb-1234")).toEqual({ canonicalId: "KB-1234" });
   });
 
-  it("flags duplicate-only content as non-executable for dispatch", () => {
+  it("rejects malformed identifiers", () => {
+    expect(parseExplicitDuplicateMarker("DUPLICATE: KB-ABC")).toBeNull();
+    expect(parseExplicitDuplicateMarker("DUPLICATE: KB_1234")).toBeNull();
+  });
+
+  it("resolves exact prompt/title markers with deterministic source and conflicts", () => {
+    expect(resolveExplicitDuplicateMarker("DUPLICATE: kb-123", "DUPLICATE: KB-123")).toEqual({
+      marker: { canonicalId: "KB-123" }, source: "prompt", conflict: false,
+    });
+    expect(resolveExplicitDuplicateMarker(FULL_PROMPT, "DUPLICATE: KB-123")).toEqual({
+      marker: { canonicalId: "KB-123" }, source: "title", conflict: false,
+    });
+    expect(resolveExplicitDuplicateMarker("DUPLICATE: KB-123", "DUPLICATE: FN-123")).toEqual({
+      marker: null, source: null, conflict: true,
+    });
+  });
+
+  it("flags duplicate-only prompt or title content as non-executable for dispatch", () => {
     expect(isDuplicateRedirectOnlyPrompt("DUPLICATE: FN-8676")).toBe(true);
+    expect(isDuplicateRedirectOnlyPrompt(FULL_PROMPT, "DUPLICATE: KB-8676")).toBe(true);
     expect(nonExecutableDuplicateRedirectReason("DUPLICATE: FN-8676")).toContain("FN-8676");
+    expect(nonExecutableDuplicateRedirectReason(FULL_PROMPT, "DUPLICATE: KB-8676")).toContain("task title");
     expect(isDuplicateRedirectOnlyPrompt(FULL_PROMPT)).toBe(false);
     expect(nonExecutableDuplicateRedirectReason(FULL_PROMPT)).toBeNull();
   });
@@ -113,9 +133,9 @@ describe("parseDuplicateMarkerFromSessionText", () => {
     expect(parseDuplicateMarkerFromSessionText(reply)).toEqual({ canonicalId: "FN-1" });
   });
 
-  it("tolerates backtick and bold wrappers and lowercase, like the file parser", () => {
+  it("tolerates wrappers, lowercase, and custom prefixes like the file parser", () => {
     expect(parseDuplicateMarkerFromSessionText("`duplicate: fn-7`")).toEqual({ canonicalId: "FN-7" });
-    expect(parseDuplicateMarkerFromSessionText("**DUPLICATE: FN-8**")).toEqual({ canonicalId: "FN-8" });
+    expect(parseDuplicateMarkerFromSessionText("**DUPLICATE: KB-8**")).toEqual({ canonicalId: "KB-8" });
   });
 
   it("returns null for empty or marker-free text", () => {

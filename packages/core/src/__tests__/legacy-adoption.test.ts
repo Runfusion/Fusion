@@ -102,9 +102,21 @@ describe("KTD-8 adoption table — write-site census completeness (build-failing
   });
 
   it("the census actually finds task-status writes (guards against a broken/vacuous regex)", () => {
-    const files = [readFileSync(join(engineSrc, "executor.ts"), "utf-8")];
+    /*
+    FNXC:LegacyAdoption 2026-08-03-12:00 (U4 executor peels / code-organization wave18):
+    Vacuous-regex guard must scan the whole TaskExecutor surface — `executor.ts` plus free
+    functions under `executor/*` — because U4 peels move live task.status write literals out of
+    the monolith into peel modules (e.g. create-task-done-tool, task-done-refusal-handler).
+    Scanning only executor.ts drops size to exactly 3 (failed/needs-replan/queued) and falsely
+    fails this guard while the recursive completeness census above remains green.
+    */
+    const executorSurface = [
+      join(engineSrc, "executor.ts"),
+      ...listSourceFiles(join(engineSrc, "executor")),
+    ];
+    const files = executorSurface.map((f) => readFileSync(f, "utf-8"));
     const written = censusTaskStatusWrites(files);
-    // executor writes at least these — proves the census pattern is live, not vacuous.
+    // executor surface writes at least these — proves the census pattern is live, not vacuous.
     expect(written.has("failed")).toBe(true);
     expect(written.has("needs-replan")).toBe(true);
     expect(written.size).toBeGreaterThan(3);

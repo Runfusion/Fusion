@@ -738,10 +738,15 @@ export function buildCliAgentAwaitingInputNotificationPayload(input: {
  * await runtime.stop();
  * ```
  */
+/*
+FNXC:CodeOrganization 2026-08-03-12:15:
+Match executor formatGitRepositoryDetectionError: never interpolate the working directory into the
+copy-paste safe.directory shell remedy (quote/metachar injection if pasted). Path stays in prose only.
+*/
 function formatRuntimeGitDetectionWarning(workingDirectory: string, detection: Extract<GitRepoDetection, { status: "error" }>): string {
   const stderr = detection.stderr.trim() || "git rev-parse --git-dir failed without stderr";
   const remedy = detection.reason === "dubious-ownership"
-    ? ` Resolve Git safe-directory ownership with: git config --global --add safe.directory "${workingDirectory}"`
+    ? " Resolve Git safe-directory ownership with: git config --global --add safe.directory <project-directory>"
     : "";
   return `Project directory "${workingDirectory}" could not be verified as a Git repository. ` +
     `Task execution will fail until the Git error is resolved. Git reported: ${stderr}.${remedy}`;
@@ -1344,7 +1349,14 @@ export class InProcessRuntime
         }
       }
 
-      const prNodeGithubOps = this.config.prNodeGithubOps;
+      /*
+      FNXC:PrMergeAutoMerge 2026-08-09-10:59:
+      Native auto-merge is project policy, so construct its CLI callbacks only
+      after this runtime owns the TaskStore. A process-wide callback cannot
+      safely infer which concurrently running project's setting applies.
+      */
+      const prNodeGithubOps = this.config.createPrNodeGithubOps?.(this.taskStore)
+        ?? this.config.prNodeGithubOps;
       /*
       FNXC:SecretsEnvRuntimeWiring 2026-08-05-21:30:
       `secretsEnv` materializes only through fresh executor and heartbeat worktree acquisitions.
@@ -1624,6 +1636,7 @@ export class InProcessRuntime
           stuckTaskDetector: this.stuckTaskDetector,
           usageLimitPauser: this.usageLimitPauser,
           agentStore: this.agentStore,
+          messageStore: this.messageStore,
           pluginRunner: this.pluginRunner,
           // FNXC:NodeWorktreeIsolation 2026-07-25-22:10: planning acquires (or reuses) the task's own
           // worktree through the executor's acquisition path, so no lane runs in the shared checkout.

@@ -124,6 +124,12 @@ describe("isTaskAwaitingPlanning", () => {
     expect(isTaskAwaitingPlanning(task(), "# FN-1: Title\n\n## Steps\n\n1. Do it\n")).toBe(false);
   });
 
+  it("keeps title redirects awaiting planning while incidental title prose remains executable", () => {
+    const plan = "# FN-1: Title\n\n## Steps\n\n1. Do it\n";
+    expect(isTaskAwaitingPlanning(task({ title: "DUPLICATE: KB-123" }), plan)).toBe(true);
+    expect(isTaskAwaitingPlanning(task({ title: "Discuss DUPLICATE: KB-123" }), plan)).toBe(false);
+  });
+
   it("ignores statuses that are not planning parks", () => {
     for (const status of [undefined, null, "planning", "executing", "failed"]) {
       expect(

@@ -63,6 +63,7 @@ See the [2026-07-14 PostgreSQL runtime cutover review](./postgres-migration-revi
 - Archived-task snapshot behavior (`taskToArchiveEntry` / `archiveTask`) embeds a capped agent-log snapshot sourced from JSONL.
 - Retention is independent from PostgreSQL operational-log pruning. `settings.agentLogFileRetentionDays` controls age-based pruning of JSONL entries for soft-deleted and archived tasks only. Default: `0` (disabled).
 - PostgreSQL operational-log pruning is controlled separately by `settings.operationalLogRetentionDays`. It prunes `activityLog`, `runAuditEvents`, `agentHeartbeats`, terminal `agentRuns` rows by `endedAt`, and `agentConfigRevisions` by `createdAt`.
+- `project.agent_activity_events` is a separate 30-day, 50,000-row-per-project durable monitoring outbox. Its `agent_activity_event_seq` companion allocates transactional bigint cursors; `agent_activity_events` uses deterministic `(project_id, event_id)` uniqueness for replay-safe activity delivery.
 - Safety invariants for operational pruning: in-flight `agentRuns` (`endedAt IS NULL`) are never deleted, and the most-recent `agentConfigRevisions` row per agent is always preserved even when older than the retention window.
 
 ### Archived-column pagination (FN-7659)
@@ -822,3 +823,15 @@ FN-8685 adds `task_lifecycle_consumer_registrations`, `task_lifecycle_consumer_c
 Automatic admission locks the project-scoped feature row, records a running row only for an admitted dispatch, and writes one `validation memoized` mission activity event for each suppressed running/pass/budget decision. Matching static passes are reused without fabricating a run. Matching failed rows consume the per-fingerprint budget; exhaustion records `loop_state = blocked` plus fingerprint/run/timestamp provenance and emits exactly one additional `validation-stuck` event for that feature/fingerprint. Repeated unchanged suppressions remain individually auditable but do not repeat the stuck event. Reaped `error` and `blocked` runs are transient and do not seed reuse or the failure count.
 
 `project.agents.roles` is a normalized JSONB role-tag array. Migration `0045_fn_8764_multi_role_workflow_agents.sql` backfills it from legacy singular roles. `workflow_work_items` also persist the routed principal fence fields used for recovery and audit.
+
+### Revision heartbeat and paging (FN-8852)
+
+`engineLastActiveAt` is engine liveness bookkeeping, not operator configuration. It is a non-versioned project-settings key: revision diffs and stored snapshots omit it, while the live project setting remains written normally. Project-settings rollback overlays live non-versioned values over both modern stripped snapshots and legacy snapshots, so rollback cannot delete or resurrect a stale heartbeat. `appendConfigurationRevision` deliberately remains an unfiltered raw writer for migrations and legacy fixtures; a heartbeat-only rollback is rejected as already restored without writing.
+
+Revision listing defaults to 100 rows and clamps `limit` to 1–500. The API accepts `limit` and `offset` and returns `hasMore`, determined by fetching `limit + 1` rows rather than a count query. Rows are ordered `createdAt DESC, sequence DESC`. Since history is append-only, rows appended between offset page requests can shift offsets and be observed twice; they are not silently skipped backwards.
+
+### `project.memory_recall_records`
+
+Project-scoped structured recall records for durable decisions, preferences, and solutions. The table uses the composite `(project_id, id)` key, row-level security, created-at indexes, and a named `(project_id, kind, content_hash)` exact-hash backstop.
+
+- Knowledge-graph artifact: `<rootDir>/.fusion-knowledge/graph/` (`nodes.json`, `edges.json`, and `manifest.json`). This is deliberately outside ignored `.fusion` and may be committed at the operator's discretion.
