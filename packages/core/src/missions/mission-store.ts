@@ -326,6 +326,7 @@ interface FeatureRow {
   description: string | null;
   acceptanceCriteria: string | null;
   status: string;
+  specAlignment: string | null;
   createdAt: string;
   updatedAt: string;
   loopState: string | null;
@@ -624,6 +625,7 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
       description: row.description || undefined,
       acceptanceCriteria: row.acceptanceCriteria || undefined,
       status: row.status as FeatureStatus,
+      specAlignment: row.specAlignment as import("./mission-types.js").MissionFeatureSpecAlignment || undefined,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
       loopState: (row.loopState as import("./mission-types.js").FeatureLoopState) || "idle",
@@ -2217,8 +2219,8 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
     };
 
     this.db.prepare(`
-      INSERT INTO mission_features (id, sliceId, title, description, acceptanceCriteria, status, loopState, implementationAttemptCount, validatorAttemptCount, createdAt, updatedAt)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO mission_features (id, sliceId, title, description, acceptanceCriteria, status, specAlignment, loopState, implementationAttemptCount, validatorAttemptCount, createdAt, updatedAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       feature.id,
       feature.sliceId,
@@ -2226,6 +2228,7 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
       feature.description ?? null,
       feature.acceptanceCriteria ?? null,
       feature.status,
+      feature.specAlignment ?? null,
       feature.loopState ?? "idle",
       feature.implementationAttemptCount ?? 0,
       feature.validatorAttemptCount ?? 0,
@@ -2280,7 +2283,8 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
    * @returns The updated feature
    * @throws Error if feature not found
    */
-  updateFeature(id: string, updates: Partial<MissionFeature>): MissionFeature {
+  /* FNXC:MissionStatusWrites 2026-08-10-12:47: The SQLite store is a non-production legacy mirror; retain options signature parity without adding a second audit implementation. */
+  updateFeature(id: string, updates: Partial<MissionFeature>, _options: MissionUpdateOptions = {}): MissionFeature {
     const feature = this.getFeature(id);
     if (!feature) {
       throw new Error(`Feature ${id} not found`);
@@ -2301,6 +2305,7 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
         description = ?,
         acceptanceCriteria = ?,
         status = ?,
+        specAlignment = ?,
         taskId = ?,
         loopState = ?,
         implementationAttemptCount = ?,
@@ -2316,6 +2321,7 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
       updated.description ?? null,
       updated.acceptanceCriteria ?? null,
       updated.status,
+      updated.specAlignment ?? null,
       updated.taskId ?? null,
       updated.loopState ?? "idle",
       updated.implementationAttemptCount ?? 0,
@@ -2759,13 +2765,13 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
    * @returns The updated feature
    * @throws Error if feature not found
    */
-  updateFeatureStatus(featureId: string, status: FeatureStatus): MissionFeature {
+  updateFeatureStatus(featureId: string, status: FeatureStatus, options: MissionUpdateOptions = {}): MissionFeature {
     const feature = this.getFeature(featureId);
     if (!feature) {
       throw new Error(`Feature ${featureId} not found`);
     }
 
-    const updated = this.updateFeature(featureId, { status });
+    const updated = this.updateFeature(featureId, { status }, options);
 
     // Recompute slice status
     this.recomputeSliceStatus(updated.sliceId);

@@ -169,6 +169,47 @@ describe("Scheduler workflow cutover", () => {
     expect(store.renewSymbolLocks).toHaveBeenCalledWith(["pkg/a.ts#A"], "FN-symbol-owner", 10 * 60_000);
   });
 
+  /*
+  FNXC:EngineDiagnostics 2026-08-10-17:13:
+  Renewal runs every poll, and a LOST lock never recovers by renewing — the same `lost` set comes back on every
+  subsequent pass. Reporting it per poll spammed the log pane AND appended an identical activityLog row forever for a
+  stuck task. Assert the transition contract: report once per distinct lost set, again when the set CHANGES, and once
+  more after a clean renewal clears the memo — with the `logEntry` write gated on the same decision.
+  */
+  it("reports a persistently lost symbol lock once per distinct loss, not once per poll", async () => {
+    const active = task({
+      id: "FN-symbol-owner",
+      column: "in-progress",
+      missionId: "M-1",
+      sliceId: "SL-1",
+      declaredSymbols: ["pkg/a.ts#A"],
+    });
+    const store = storeWith([active]);
+    vi.mocked(store.renewSymbolLocks).mockResolvedValue({ renewed: [], lost: ["pkg/a.ts#A"] } as any);
+    const scheduler = new Scheduler(store);
+    (scheduler as unknown as { running: boolean }).running = true;
+
+    await scheduler.schedule();
+    await scheduler.schedule();
+    await scheduler.schedule();
+
+    const lossEntries = () => vi.mocked(store.logEntry).mock.calls.filter((call) => String(call[1]).startsWith("symbol-lock renewal lost"));
+    expect(lossEntries()).toHaveLength(1);
+
+    // A different lost set is a real transition and reports again.
+    vi.mocked(store.renewSymbolLocks).mockResolvedValue({ renewed: [], lost: ["pkg/a.ts#A", "pkg/b.ts#B"] } as any);
+    await scheduler.schedule();
+    await scheduler.schedule();
+    expect(lossEntries()).toHaveLength(2);
+
+    // A clean renewal clears the memo, so a later loss is reported afresh.
+    vi.mocked(store.renewSymbolLocks).mockResolvedValue({ renewed: ["pkg/a.ts#A"], lost: [] } as any);
+    await scheduler.schedule();
+    vi.mocked(store.renewSymbolLocks).mockResolvedValue({ renewed: [], lost: ["pkg/a.ts#A", "pkg/b.ts#B"] } as any);
+    await scheduler.schedule();
+    expect(lossEntries()).toHaveLength(3);
+  });
+
   it("renews locks in a custom workflow WIP column", async () => {
     const active = task({
       id: "FN-custom-symbol-owner",

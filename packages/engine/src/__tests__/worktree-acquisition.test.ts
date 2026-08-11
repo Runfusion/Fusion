@@ -1,13 +1,18 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { execSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
-import { acquireTaskWorktree, RepoRootWorktreeError } from "../worktree/worktree-acquisition.js";
+import { acquireWorktreePathReservation } from "@fusion/core";
+import { acquireTaskWorktree, RepoRootWorktreeError, WorktreeBaseRefreshError } from "../worktree/worktree-acquisition.js";
 import { classifyTaskWorktree, PoolDoubleLeaseError } from "../worktree/worktree-pool.js";
 import * as desktopArtifacts from "../worktree/worktree-desktop-artifacts.js";
 import * as branchConflicts from "../execution/branch-conflicts.js";
+import { activeSessionRegistry } from "../agents/active-session-registry.js";
+import { NativeWorktreeBackend } from "../worktree/worktree-backend.js";
+
 
 vi.mock("../worktree/worktree-pool.js", async () => {
   const actual = await vi.importActual<any>("../worktree/worktree-pool.js");
@@ -75,7 +80,22 @@ function makeRepo(): string {
   return rootDir;
 }
 
+function seedPreservedOrphans(recoveryRoot: string, count: number): string[] {
+  mkdirSync(recoveryRoot, { recursive: true });
+  return Array.from({ length: count }, (_, index) => {
+    const name = `fn-${100 + index}-${randomUUID()}`;
+    const path = join(recoveryRoot, name);
+    mkdirSync(path);
+    writeFileSync(join(path, "artifact"), `${index}\n`, "utf-8");
+    const timestamp = new Date(Date.now() - (count - index) * 60_000);
+    utimesSync(path, timestamp, timestamp);
+    return name;
+  });
+}
+
 afterEach(() => {
+  vi.restoreAllMocks();
+  activeSessionRegistry.clear();
   for (const path of cleanupPaths.splice(0)) {
     rmSync(path, { recursive: true, force: true });
   }
@@ -93,6 +113,7 @@ describe("acquireTaskWorktree", () => {
   let store: any;
   beforeEach(() => {
     vi.clearAllMocks();
+    activeSessionRegistry.clear();
     /*
     FNXC:EngineTests 2026-07-20-23:55:
     clearAllMocks wipes the hoisted classifyTaskWorktree mockResolvedValue({ ok: true }).
@@ -342,6 +363,603 @@ describe("acquireTaskWorktree", () => {
       metadata: expect.objectContaining({ classification: "unregistered", source: "resume" }),
     }));
     expect(store.updateTask).toHaveBeenCalledWith("FN-1", { worktree: null, branch: null, sessionFile: null });
+  });
+
+  it.each([
+    { classification: "incomplete" as const, reason: "missing .git metadata" },
+    { classification: "unregistered" as const, reason: "not registered in git worktree list" },
+  ])("reclaims a $classification task-pinned directory before recreating the worktree", async ({ classification, reason }) => {
+    const rootDir = makeRepo();
+    const pinnedPath = join(rootDir, ".worktrees", "fn-1");
+    mkdirSync(join(pinnedPath, ".build"), { recursive: true });
+    mkdirSync(join(pinnedPath, ".swiftpm"), { recursive: true });
+    writeFileSync(join(pinnedPath, ".build", "cache"), "stale\n", "utf-8");
+    vi.mocked(classifyTaskWorktree).mockResolvedValueOnce({
+      ok: false,
+      classification,
+      reason,
+    });
+
+    const result = await acquireTaskWorktree({
+      task: { ...task, worktree: pinnedPath, branch: "fusion/fn-1" },
+      rootDir,
+      store,
+      settings: { worktreeNaming: "task-id", recycleWorktrees: false },
+    });
+
+    expect(result).toMatchObject({
+      worktreePath: pinnedPath,
+      branch: "fusion/fn-1",
+      source: "fresh",
+      isResume: false,
+    });
+    expect(existsSync(join(pinnedPath, ".git"))).toBe(true);
+    expect(git(rootDir, "git worktree list --porcelain")).toContain(pinnedPath);
+    const recoveryRoot = join(rootDir, ".fusion", "recovery", "worktrees");
+    const preserved = readdirSync(recoveryRoot);
+    expect(preserved).toHaveLength(1);
+    expect(readFileSync(join(recoveryRoot, preserved[0], ".build", "cache"), "utf-8")).toBe("stale\n");
+    expect(store.logEntry).toHaveBeenCalledWith(
+      "FN-1",
+      expect.stringContaining("Preserved orphaned task-pinned directory"),
+      expect.stringContaining(join(".fusion", "recovery", "worktrees")),
+      undefined,
+    );
+  });
+
+  it("preserves an orphan beside an external worktree root when project recovery is cross-device", async () => {
+    const rootDir = makeRepo();
+    const externalWorktrees = track(mkdtempSync(join(tmpdir(), "fn-external-worktrees-")));
+    const pinnedPath = join(externalWorktrees, "fn-1");
+    mkdirSync(join(pinnedPath, ".build"), { recursive: true });
+    writeFileSync(join(pinnedPath, ".build", "cache"), "stale\n", "utf-8");
+    vi.mocked(classifyTaskWorktree).mockResolvedValueOnce({
+      ok: false,
+      classification: "incomplete",
+      reason: "missing .git metadata",
+    });
+    const actualFs = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+    const renameWorktreeDirectory = vi.fn()
+      .mockRejectedValueOnce(Object.assign(new Error("cross-device link"), { code: "EXDEV" }))
+      .mockImplementationOnce(actualFs.rename);
+
+    const result = await acquireTaskWorktree({
+      task: { ...task, worktree: pinnedPath, branch: "fusion/fn-1" },
+      rootDir,
+      store,
+      settings: { worktreeNaming: "task-id", worktreesDir: externalWorktrees, recycleWorktrees: false },
+      renameWorktreeDirectory,
+    });
+
+    const recoveryRoot = join(externalWorktrees, ".fusion-recovery", "worktrees");
+    const preservedPath = join(recoveryRoot, readdirSync(recoveryRoot)[0]);
+    expect(result.worktreePath).toBe(pinnedPath);
+    expect(readFileSync(join(preservedPath, ".build", "cache"), "utf-8")).toBe("stale\n");
+    expect(renameWorktreeDirectory).toHaveBeenCalledTimes(2);
+  });
+
+  it("retains only the newest ten generated orphan directories in the primary recovery root", async () => {
+    const rootDir = makeRepo();
+    const pinnedPath = join(rootDir, ".worktrees", "fn-1");
+    const recoveryRoot = join(rootDir, ".fusion", "recovery", "worktrees");
+    const seeded = seedPreservedOrphans(recoveryRoot, 11);
+    const unknownPath = join(recoveryRoot, "operator-notes");
+    const symlinkTarget = track(mkdtempSync(join(tmpdir(), "fn-orphan-retention-symlink-target-")));
+    const generatedSymlink = join(recoveryRoot, `fn-999-${randomUUID()}`);
+    mkdirSync(pinnedPath, { recursive: true });
+    mkdirSync(unknownPath);
+    symlinkSync(symlinkTarget, generatedSymlink);
+    activeSessionRegistry.registerPath(join(realpathSync(recoveryRoot), seeded[0]), {
+      taskId: "FN-RETAIN",
+      kind: "executor",
+      ownerKey: "executor:FN-RETAIN",
+    });
+    writeFileSync(join(pinnedPath, "artifact"), "fresh\n", "utf-8");
+    vi.mocked(classifyTaskWorktree).mockResolvedValueOnce({
+      ok: false,
+      classification: "unregistered",
+      reason: "not registered in git worktree list",
+    });
+
+    const result = await acquireTaskWorktree({
+      task: { ...task, worktree: pinnedPath, branch: "fusion/fn-1" },
+      rootDir,
+      store,
+      settings: { worktreeNaming: "task-id", recycleWorktrees: false },
+    });
+
+    const generatedDirectories = readdirSync(recoveryRoot, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && /^fn-\d+-[0-9a-f-]{36}$/.test(entry.name))
+      .map((entry) => entry.name);
+    expect(result.worktreePath).toBe(pinnedPath);
+    expect(generatedDirectories).toHaveLength(11);
+    expect(generatedDirectories).toContain(seeded[0]);
+    expect(generatedDirectories).not.toContain(seeded[1]);
+    expect(existsSync(unknownPath)).toBe(true);
+    expect(existsSync(generatedSymlink)).toBe(true);
+  });
+
+  it("retains only the newest ten generated orphan directories in the EXDEV fallback root", async () => {
+    const rootDir = makeRepo();
+    const externalWorktrees = track(mkdtempSync(join(tmpdir(), "fn-external-retention-worktrees-")));
+    const pinnedPath = join(externalWorktrees, "fn-1");
+    const recoveryRoot = join(externalWorktrees, ".fusion-recovery", "worktrees");
+    const seeded = seedPreservedOrphans(recoveryRoot, 11);
+    const unknownPath = join(recoveryRoot, "operator-notes");
+    mkdirSync(pinnedPath, { recursive: true });
+    mkdirSync(unknownPath);
+    activeSessionRegistry.registerPath(join(realpathSync(recoveryRoot), seeded[0]), {
+      taskId: "FN-RETAIN-EXDEV",
+      kind: "executor",
+      ownerKey: "executor:FN-RETAIN-EXDEV",
+    });
+    writeFileSync(join(pinnedPath, "artifact"), "fresh\n", "utf-8");
+    vi.mocked(classifyTaskWorktree).mockResolvedValueOnce({
+      ok: false,
+      classification: "incomplete",
+      reason: "missing .git metadata",
+    });
+    const actualFs = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+    const renameWorktreeDirectory = vi.fn()
+      .mockRejectedValueOnce(Object.assign(new Error("cross-device link"), { code: "EXDEV" }))
+      .mockImplementationOnce(actualFs.rename);
+
+    const result = await acquireTaskWorktree({
+      task: { ...task, worktree: pinnedPath, branch: "fusion/fn-1" },
+      rootDir,
+      store,
+      settings: { worktreeNaming: "task-id", worktreesDir: externalWorktrees, recycleWorktrees: false },
+      renameWorktreeDirectory,
+    });
+
+    const generatedDirectories = readdirSync(recoveryRoot, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && /^fn-\d+-[0-9a-f-]{36}$/.test(entry.name))
+      .map((entry) => entry.name);
+    expect(result.worktreePath).toBe(pinnedPath);
+    expect(generatedDirectories).toHaveLength(11);
+    expect(generatedDirectories).toContain(seeded[0]);
+    expect(generatedDirectories).not.toContain(seeded[1]);
+    expect(existsSync(unknownPath)).toBe(true);
+  });
+
+  it("continues recreation when orphan-preservation audit and task logging fail after rename", async () => {
+    const rootDir = makeRepo();
+    const pinnedPath = join(rootDir, ".worktrees", "fn-1");
+    mkdirSync(pinnedPath, { recursive: true });
+    writeFileSync(join(pinnedPath, "artifact"), "stale\n", "utf-8");
+    vi.mocked(classifyTaskWorktree).mockResolvedValueOnce({
+      ok: false,
+      classification: "incomplete",
+      reason: "missing .git metadata",
+    });
+    const auditFilesystem = vi.fn().mockRejectedValue(new Error("audit unavailable"));
+    const loggerWarn = vi.fn();
+    store.logEntry.mockImplementation(async (_taskId: string, message: string) => {
+      if (message.includes("Preserved orphaned task-pinned directory")) throw new Error("task log unavailable");
+    });
+
+    const result = await acquireTaskWorktree({
+      task: { ...task, worktree: pinnedPath, branch: "fusion/fn-1" },
+      rootDir,
+      store,
+      settings: { worktreeNaming: "task-id", recycleWorktrees: false },
+      audit: { filesystem: auditFilesystem, git: vi.fn().mockResolvedValue(undefined) } as any,
+      logger: { log: vi.fn(), warn: loggerWarn },
+    });
+
+    expect(result.worktreePath).toBe(pinnedPath);
+    expect(existsSync(join(pinnedPath, ".git"))).toBe(true);
+    expect(auditFilesystem).toHaveBeenCalledTimes(1);
+    expect(store.logEntry).toHaveBeenCalledWith(
+      "FN-1",
+      expect.stringContaining("Preserved orphaned task-pinned directory"),
+      expect.any(String),
+      undefined,
+    );
+    expect(loggerWarn).toHaveBeenCalledWith(expect.stringContaining("audit unavailable"));
+    expect(loggerWarn).toHaveBeenCalledWith(expect.stringContaining("task log unavailable"));
+    expect(loggerWarn).not.toHaveBeenCalledWith(expect.stringContaining("[object Object]"));
+  });
+
+  it("reconciles a durable quarantine for an absent pinned path before recreation", async () => {
+    const rootDir = makeRepo();
+    const worktreesDir = join(rootDir, ".worktrees");
+    const pinnedPath = join(worktreesDir, "fn-1");
+    mkdirSync(worktreesDir, { recursive: true });
+    git(rootDir, `git worktree add -b fusion/fn-1 ${JSON.stringify(pinnedPath)} main`);
+    rmSync(pinnedPath, { recursive: true, force: true });
+    const failedArchiveReservation = await acquireWorktreePathReservation({
+      canonicalPath: pinnedPath,
+      worktreesDir,
+      rootDir,
+    });
+    await failedArchiveReservation.quarantine("simulated archive failure");
+
+    const result = await acquireTaskWorktree({
+      task: { ...task, worktree: pinnedPath, branch: "fusion/fn-1" },
+      rootDir,
+      store,
+      settings: { worktreeNaming: "task-id", recycleWorktrees: false },
+    });
+
+    expect(result.worktreePath).toBe(pinnedPath);
+    expect(existsSync(join(pinnedPath, ".git"))).toBe(true);
+    expect(git(rootDir, "git worktree list --porcelain")).toContain(pinnedPath);
+  });
+
+  it("refuses quarantine reconciliation when an active session owns the absent pinned path", async () => {
+    const rootDir = makeRepo();
+    const worktreesDir = join(rootDir, ".worktrees");
+    const pinnedPath = join(worktreesDir, "fn-1");
+    mkdirSync(worktreesDir, { recursive: true });
+    const failedArchiveReservation = await acquireWorktreePathReservation({
+      canonicalPath: pinnedPath,
+      worktreesDir,
+      rootDir,
+    });
+    await failedArchiveReservation.quarantine("simulated archive failure");
+    activeSessionRegistry.registerPath(pinnedPath, { taskId: "FN-2", kind: "executor", ownerKey: "executor:FN-2" });
+    const createWorktree = vi.fn();
+
+    await expect(acquireTaskWorktree({
+      task: { ...task, worktree: pinnedPath, branch: "fusion/fn-1" },
+      rootDir,
+      store,
+      settings: { worktreeNaming: "task-id", recycleWorktrees: false },
+      createWorktree,
+    })).rejects.toThrow(`Refusing to reconcile absent task-pinned worktree owned by an active session: ${pinnedPath}`);
+
+    expect(createWorktree).not.toHaveBeenCalled();
+    expect(existsSync(pinnedPath)).toBe(false);
+  });
+
+  it("preserves the orphan in place when its path becomes active during recovery", async () => {
+    const rootDir = makeRepo();
+    const pinnedPath = join(rootDir, ".worktrees", "fn-1");
+    mkdirSync(join(pinnedPath, ".build"), { recursive: true });
+    writeFileSync(join(pinnedPath, ".build", "cache"), "stale\n", "utf-8");
+    vi.mocked(classifyTaskWorktree).mockResolvedValueOnce({
+      ok: false,
+      classification: "incomplete",
+      reason: "missing .git metadata",
+    });
+    let becameActive = false;
+    vi.spyOn(activeSessionRegistry, "isPathActive").mockImplementation((path: string) => {
+      if (path !== pinnedPath) return false;
+      if (!becameActive) {
+        becameActive = true;
+        return false;
+      }
+      return true;
+    });
+
+    await expect(acquireTaskWorktree({
+      task: { ...task, worktree: pinnedPath, branch: "fusion/fn-1" },
+      rootDir,
+      store,
+      settings: { worktreeNaming: "task-id", recycleWorktrees: false },
+    })).rejects.toThrow(/became active/);
+
+    expect(readFileSync(join(pinnedPath, ".build", "cache"), "utf-8")).toBe("stale\n");
+    expect(existsSync(join(rootDir, ".fusion", "recovery", "worktrees"))).toBe(true);
+    expect(readdirSync(join(rootDir, ".fusion", "recovery", "worktrees"))).toHaveLength(0);
+  });
+
+  it("refuses to preserve an orphan through a recovery-directory symlink", async () => {
+    const rootDir = makeRepo();
+    const pinnedPath = join(rootDir, ".worktrees", "fn-1");
+    const outside = track(mkdtempSync(join(tmpdir(), "fn-orphan-recovery-outside-")));
+    mkdirSync(join(pinnedPath, ".build"), { recursive: true });
+    writeFileSync(join(pinnedPath, ".build", "cache"), "stale\n", "utf-8");
+    mkdirSync(join(rootDir, ".fusion", "recovery"), { recursive: true });
+    symlinkSync(outside, join(rootDir, ".fusion", "recovery", "worktrees"));
+    vi.mocked(classifyTaskWorktree).mockResolvedValueOnce({
+      ok: false,
+      classification: "incomplete",
+      reason: "missing .git metadata",
+    });
+
+    await expect(acquireTaskWorktree({
+      task: { ...task, worktree: pinnedPath, branch: "fusion/fn-1" },
+      rootDir,
+      store,
+      settings: { worktreeNaming: "task-id", recycleWorktrees: false },
+    })).rejects.toThrow(`Refusing to use recovery directory outside ${realpathSync(join(rootDir, ".fusion", "recovery"))}`);
+
+    expect(readFileSync(join(pinnedPath, ".build", "cache"), "utf-8")).toBe("stale\n");
+    expect(readdirSync(outside)).toHaveLength(0);
+  });
+
+  it("refuses to create recovery contents through an ancestor symlink", async () => {
+    const rootDir = makeRepo();
+    const pinnedPath = join(rootDir, ".worktrees", "fn-1");
+    const outside = track(mkdtempSync(join(tmpdir(), "fn-orphan-recovery-ancestor-outside-")));
+    mkdirSync(join(pinnedPath, ".build"), { recursive: true });
+    writeFileSync(join(pinnedPath, ".build", "cache"), "stale\n", "utf-8");
+    mkdirSync(join(rootDir, ".fusion"), { recursive: true });
+    symlinkSync(outside, join(rootDir, ".fusion", "recovery"));
+    vi.mocked(classifyTaskWorktree).mockResolvedValueOnce({
+      ok: false,
+      classification: "incomplete",
+      reason: "missing .git metadata",
+    });
+
+    await expect(acquireTaskWorktree({
+      task: { ...task, worktree: pinnedPath, branch: "fusion/fn-1" },
+      rootDir,
+      store,
+      settings: { worktreeNaming: "task-id", recycleWorktrees: false },
+    })).rejects.toThrow(`Refusing to use recovery directory outside ${realpathSync(join(rootDir, ".fusion"))}`);
+
+    expect(readFileSync(join(pinnedPath, ".build", "cache"), "utf-8")).toBe("stale\n");
+    expect(readdirSync(outside)).toHaveLength(0);
+  });
+
+  it("serializes concurrent orphan recovery through fresh recreation", async () => {
+    const rootDir = makeRepo();
+    const pinnedPath = join(rootDir, ".worktrees", "fn-1");
+    mkdirSync(join(pinnedPath, ".build"), { recursive: true });
+    writeFileSync(join(pinnedPath, ".build", "cache"), "stale\n", "utf-8");
+    const actualPool = await vi.importActual<typeof import("../worktree/worktree-pool.js")>("../worktree/worktree-pool.js");
+    vi.mocked(classifyTaskWorktree).mockResolvedValueOnce({
+      ok: false,
+      classification: "incomplete",
+      reason: "missing .git metadata",
+    }).mockImplementation(actualPool.classifyTaskWorktree);
+    let signalCreateStarted!: () => void;
+    const createStarted = new Promise<void>((resolve) => { signalCreateStarted = resolve; });
+    let allowCreate!: () => void;
+    const createGate = new Promise<void>((resolve) => { allowCreate = resolve; });
+    const createWorktree = vi.fn(async (branch: string, path: string) => {
+      signalCreateStarted();
+      await createGate;
+      git(rootDir, `git worktree add -b ${JSON.stringify(branch)} ${JSON.stringify(path)} main`);
+      return { path, branch };
+    });
+    const input = {
+      task: { ...task, worktree: pinnedPath, branch: "fusion/fn-1" },
+      rootDir,
+      store,
+      settings: { worktreeNaming: "task-id", recycleWorktrees: false },
+      createWorktree,
+    } as const;
+
+    const first = acquireTaskWorktree(input);
+    await createStarted;
+    const second = acquireTaskWorktree(input);
+    allowCreate();
+
+    const [firstResult, secondResult] = await Promise.all([first, second]);
+    expect(firstResult.worktreePath).toBe(pinnedPath);
+    expect(secondResult.worktreePath).toBe(pinnedPath);
+    expect(createWorktree).toHaveBeenCalledTimes(1);
+    expect(readFileSync(join(rootDir, ".fusion", "recovery", "worktrees", readdirSync(join(rootDir, ".fusion", "recovery", "worktrees"))[0], ".build", "cache"), "utf-8")).toBe("stale\n");
+  });
+
+  it("refreshes a recreated existing task branch after its dependency branch is deleted", async () => {
+    const rootDir = makeRepo();
+    const staleBase = git(rootDir, "git rev-parse HEAD");
+    git(rootDir, `git branch fusion/fn-4 ${staleBase}`);
+    git(rootDir, `git checkout -b fusion/deleted-dependency ${staleBase}`);
+    writeFileSync(join(rootDir, "dependency-output.ts"), "export const dependencyOutput = true;\n", "utf-8");
+    git(rootDir, "git add dependency-output.ts");
+    git(rootDir, 'git commit -m "land dependency"');
+    git(rootDir, "git checkout main");
+    git(rootDir, "git merge --ff-only fusion/deleted-dependency");
+    git(rootDir, "git branch -d fusion/deleted-dependency");
+    const landedBase = git(rootDir, "git rev-parse HEAD");
+
+    const result = await acquireTaskWorktree({
+      task: {
+        ...task,
+        id: "FN-4",
+        branch: "fusion/fn-4",
+        baseCommitSha: staleBase,
+        executionStartBranch: "fusion/deleted-dependency",
+      },
+      rootDir,
+      store,
+      settings: { worktreeNaming: "task-id", recycleWorktrees: false },
+      refreshStaleBase: true,
+      createWorktree: async (branch, path) => {
+        git(rootDir, `git worktree add ${JSON.stringify(path)} ${JSON.stringify(branch)}`);
+        return { path, branch };
+      },
+    });
+
+    expect(result).toMatchObject({
+      source: "fresh",
+      baseRefresh: { kind: "reset-to-base", executionSafe: true, baseSha: landedBase },
+    });
+    expect(git(result.worktreePath, "git rev-parse HEAD")).toBe(landedBase);
+    expect(existsSync(join(result.worktreePath, "dependency-output.ts"))).toBe(true);
+    expect(store.updateTask).toHaveBeenCalledWith("FN-4", { baseCommitSha: landedBase });
+  });
+
+  it("refreshes a retained task branch acquired from the worktree pool", async () => {
+    const rootDir = makeRepo();
+    const staleBase = git(rootDir, "git rev-parse HEAD");
+    const pooledPath = join(rootDir, ".worktrees", "pooled-fn-4");
+    git(rootDir, `git worktree add -b fusion/fn-4 ${JSON.stringify(pooledPath)} ${staleBase}`);
+    writeFileSync(join(rootDir, "dependency-output.ts"), "export const dependencyOutput = true;\n", "utf-8");
+    git(rootDir, "git add dependency-output.ts");
+    git(rootDir, 'git commit -m "land dependency"');
+    const landedBase = git(rootDir, "git rev-parse HEAD");
+    const pool = {
+      acquire: vi.fn().mockReturnValue(pooledPath),
+      prepareForTask: vi.fn().mockResolvedValue({
+        branch: "fusion/fn-4",
+        worktreePath: pooledPath,
+        reclaimed: false,
+      }),
+      release: vi.fn(),
+    } as any;
+
+    const result = await acquireTaskWorktree({
+      task: { ...task, id: "FN-4", branch: "fusion/fn-4", baseCommitSha: staleBase },
+      rootDir,
+      store,
+      settings: { recycleWorktrees: true },
+      pool,
+      refreshStaleBase: true,
+    });
+
+    expect(result).toMatchObject({
+      source: "pool",
+      baseRefresh: { kind: "reset-to-base", executionSafe: true, baseSha: landedBase },
+    });
+    expect(git(pooledPath, "git rev-parse HEAD")).toBe(landedBase);
+    expect(existsSync(join(pooledPath, "dependency-output.ts"))).toBe(true);
+  });
+
+  it("does not apply the native stale-base refresh to fresh Worktrunk acquisitions", async () => {
+    const result = await acquireTaskWorktree({
+      task,
+      rootDir: process.cwd(),
+      store,
+      settings: { worktrunk: { enabled: true } } as any,
+      backend: { kind: "worktrunk" } as any,
+      createWorktreeBackendKind: "worktrunk",
+      refreshStaleBase: true,
+      createWorktree: vi.fn().mockResolvedValue({ path: "/tmp/worktrunk-fresh", branch: "fusion/fn-1" }),
+    });
+
+    expect(result).toMatchObject({ source: "fresh", baseRefresh: undefined });
+  });
+
+  it("persists the backend used by an internally created worktree", async () => {
+    const rootDir = makeRepo();
+
+    const result = await acquireTaskWorktree({
+      task,
+      rootDir,
+      store,
+      settings: { recycleWorktrees: false },
+      backend: new NativeWorktreeBackend(),
+    });
+
+    const markerPath = git(result.worktreePath, "git rev-parse --git-path fusion-worktree-backend-kind");
+    expect(readFileSync(markerPath, "utf-8")).toBe("native\n");
+  });
+
+  it("refreshes a native fallback acquisition even when Worktrunk is enabled", async () => {
+    const rootDir = makeRepo();
+    const staleBase = git(rootDir, "git rev-parse HEAD");
+    git(rootDir, `git branch fusion/fn-4 ${staleBase}`);
+    writeFileSync(join(rootDir, "dependency-output.ts"), "export const dependencyOutput = true;\n", "utf-8");
+    git(rootDir, "git add dependency-output.ts");
+    git(rootDir, 'git commit -m "land dependency"');
+    const landedBase = git(rootDir, "git rev-parse HEAD");
+
+    const result = await acquireTaskWorktree({
+      task: { ...task, id: "FN-4", branch: "fusion/fn-4", baseCommitSha: staleBase },
+      rootDir,
+      store,
+      settings: { worktreeNaming: "task-id", recycleWorktrees: false, worktrunk: { enabled: true } } as any,
+      backend: { kind: "worktrunk" } as any,
+      createWorktreeBackendKind: "native",
+      refreshStaleBase: true,
+      createWorktree: async (branch, path) => {
+        git(rootDir, `git worktree add ${JSON.stringify(path)} ${JSON.stringify(branch)}`);
+        return { path, branch };
+      },
+    });
+
+    expect(result).toMatchObject({
+      source: "fresh",
+      baseRefresh: { kind: "reset-to-base", executionSafe: true, baseSha: landedBase },
+    });
+  });
+
+  it("uses the persisted native backend when a Worktrunk fallback is reused", async () => {
+    const rootDir = makeRepo();
+    const staleBase = git(rootDir, "git rev-parse HEAD");
+    const worktreePath = join(rootDir, ".worktrees", "fallback-fn-4");
+    git(rootDir, `git worktree add -b fusion/fn-4 ${JSON.stringify(worktreePath)} ${staleBase}`);
+    const markerPath = git(worktreePath, "git rev-parse --git-path fusion-worktree-backend-kind");
+    writeFileSync(markerPath, "native\n", "utf-8");
+    writeFileSync(join(rootDir, "dependency-output.ts"), "export const dependencyOutput = true;\n", "utf-8");
+    git(rootDir, "git add dependency-output.ts");
+    git(rootDir, 'git commit -m "land dependency"');
+    const landedBase = git(rootDir, "git rev-parse HEAD");
+
+    const result = await acquireTaskWorktree({
+      task: { ...task, id: "FN-4", worktree: worktreePath, branch: "fusion/fn-4", baseCommitSha: staleBase },
+      rootDir,
+      store,
+      settings: { worktrunk: { enabled: true } } as any,
+      backend: { kind: "worktrunk" } as any,
+      refreshStaleBase: true,
+    });
+
+    expect(result).toMatchObject({
+      source: "existing",
+      baseRefresh: { kind: "reset-to-base", executionSafe: true, baseSha: landedBase },
+    });
+    expect(git(worktreePath, "git rev-parse HEAD")).toBe(landedBase);
+  });
+
+  it("preserves a persisted Worktrunk backend when an injected native creator is available", async () => {
+    const rootDir = makeRepo();
+    const staleBase = git(rootDir, "git rev-parse HEAD");
+    const worktreePath = join(rootDir, ".worktrees", "worktrunk-fn-4");
+    git(rootDir, `git worktree add -b fusion/fn-4 ${JSON.stringify(worktreePath)} ${staleBase}`);
+    const markerPath = git(worktreePath, "git rev-parse --git-path fusion-worktree-backend-kind");
+    writeFileSync(markerPath, "worktrunk\n", "utf-8");
+    writeFileSync(join(rootDir, "dependency-output.ts"), "export const dependencyOutput = true;\n", "utf-8");
+    git(rootDir, "git add dependency-output.ts");
+    git(rootDir, 'git commit -m "land dependency"');
+
+    const result = await acquireTaskWorktree({
+      task: { ...task, id: "FN-4", worktree: worktreePath, branch: "fusion/fn-4", baseCommitSha: staleBase },
+      rootDir,
+      store,
+      settings: { worktrunk: { enabled: true } } as any,
+      backend: { kind: "worktrunk" } as any,
+      createWorktreeBackendKind: "native",
+      refreshStaleBase: true,
+    });
+
+    expect(result).toMatchObject({ source: "existing", baseRefresh: undefined });
+    expect(git(worktreePath, "git rev-parse HEAD")).toBe(staleBase);
+  });
+
+  /*
+  FNXC:WorktreeBaseRefresh 2026-08-09-23:49:
+  The invariant here is the RESOURCE-HYGIENE ordering — the task binding is cleared before the worktree goes
+  back to the pool — not the refusal policy that used to trigger it. A dirty checkout no longer fails base
+  refresh (it declines and executes on the existing base), and in production a pooled worktree never reaches
+  the refresh dirty anyway: `prepareForTask` runs `git checkout -- .` + `git clean -fd` first, so the old
+  fixture's dirt only survived because the pool is mocked here. Drive the ordering through the secrets-record
+  reconciliation refusal instead, which is a secrets-safety gate and remains unconditionally blocking.
+  */
+  it("clears a pooled task binding before releasing a worktree that fails base refresh", async () => {
+    const rootDir = makeRepo();
+    const pooledPath = join(rootDir, ".worktrees", "pooled-fn-4-dirty");
+    git(rootDir, `git worktree add -b fusion/fn-4-dirty ${JSON.stringify(pooledPath)}`);
+    // A malformed root secrets-env record: reconciliation cannot prove the checkout is safe to hand an agent.
+    writeFileSync(join(pooledPath, ".fusion-secrets-env.fingerprint"), "not-a-valid-record\n", "utf-8");
+    const pool = {
+      acquire: vi.fn().mockReturnValue(pooledPath),
+      prepareForTask: vi.fn().mockResolvedValue({
+        branch: "fusion/fn-4-dirty",
+        worktreePath: pooledPath,
+        reclaimed: false,
+      }),
+      release: vi.fn(),
+    } as any;
+
+    await expect(acquireTaskWorktree({
+      task: { ...task, id: "FN-4", branch: "fusion/fn-4-dirty" },
+      rootDir,
+      store,
+      settings: { recycleWorktrees: true },
+      pool,
+      refreshStaleBase: true,
+    })).rejects.toThrow(WorktreeBaseRefreshError);
+
+    expect(store.updateTask).toHaveBeenCalledWith("FN-4", { worktree: null, branch: null, sessionFile: null });
+    expect(store.updateTask.mock.invocationCallOrder.at(-1)).toBeLessThan(pool.release.mock.invocationCallOrder[0]);
   });
 
   it("FN-6861 creates a fresh configured worktree when a resumed assignment points at the repo root", async () => {

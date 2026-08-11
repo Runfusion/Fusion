@@ -7,7 +7,9 @@ import {
 } from "../../__test-utils__/pg-test-harness.js";
 import {
   PlanningLifecycleLockTransportError,
+  planningLifecycleLockTransportAvailability,
   withPlanningLifecycleAdvisoryLock,
+  withPlanningLifecycleAdvisoryLocks,
 } from "../../postgres/advisory-locks.js";
 import { resolveBackendWithOptions } from "../../postgres/backend-resolver.js";
 
@@ -67,6 +69,62 @@ pgDescribe("planning lifecycle advisory lock", () => {
     releaseFirst();
     await Promise.all([first, second]);
     expect(order).toEqual(["first-enter", "first-exit", "second-enter"]);
+  });
+
+  it("shares key space with a single-key holder across a sorted multi-key session", async () => {
+    let releaseMulti!: () => void;
+    const multiCanFinish = new Promise<void>((resolve) => { releaseMulti = resolve; });
+    let multiEntered!: () => void;
+    const multiIsHolding = new Promise<void>((resolve) => { multiEntered = resolve; });
+    const multi = withPlanningLifecycleAdvisoryLocks({
+      projectId: "project-a",
+      taskIds: ["FN-2", "FN-1", "FN-2"],
+      directSessionUrl: h.testUrl(),
+      provenance: "migration-override",
+      runtimeUrl: h.testUrl(),
+      migrationUrl: h.testUrl(),
+      timeoutMs: 1_000,
+    }, async () => {
+      multiEntered();
+      await multiCanFinish;
+    });
+    await multiIsHolding;
+
+    let singleAttempted!: () => void;
+    const singleDispatched = new Promise<void>((resolve) => { singleAttempted = resolve; });
+    const single = lock("project-a", "FN-1", async () => {}, 1_000, singleAttempted);
+    await singleDispatched;
+    releaseMulti();
+    await Promise.all([multi, single]);
+  });
+
+  it("releases every multi-key lock when its callback fails", async () => {
+    await expect(withPlanningLifecycleAdvisoryLocks({
+      projectId: "project-a",
+      taskIds: ["FN-1", "FN-2"],
+      directSessionUrl: h.testUrl(),
+      provenance: "migration-override",
+      runtimeUrl: h.testUrl(),
+      migrationUrl: h.testUrl(),
+    }, async () => { throw new Error("callback failed"); })).rejects.toThrow("callback failed");
+
+    await Promise.all([
+      lock("project-a", "FN-1", async () => {}),
+      lock("project-a", "FN-2", async () => {}),
+    ]);
+  });
+
+  it("shares the structural availability predicate used by acquisition", () => {
+    expect(planningLifecycleLockTransportAvailability({
+      directSessionUrl: null,
+      provenance: null,
+    })).toEqual({ available: false, reason: "direct-session-unavailable" });
+    expect(planningLifecycleLockTransportAvailability({
+      directSessionUrl: h.testUrl(),
+      provenance: "migration-override",
+      runtimeUrl: h.testUrl(),
+      migrationUrl: h.testUrl(),
+    })).toEqual({ available: true });
   });
 
   it("does not contend across project or task keys", async () => {

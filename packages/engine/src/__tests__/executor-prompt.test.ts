@@ -322,13 +322,25 @@ describe("buildExecutionPrompt", () => {
   });
 
   it("keeps the executor source prompt wording and examples for commit summaries", async () => {
-    const { readFileSync } = await vi.importActual<typeof import("node:fs")>("node:fs");
-    const executorSource = readFileSync(new URL("../executor.ts", import.meta.url), "utf8");
+    /*
+    FNXC:CodeOrganization 2026-08-03-08:00:
+    EXECUTOR_SYSTEM_PROMPT lives in executor/system-prompt.ts (U4 pure peels); commit-template
+    examples may still sit in buildExecutionPrompt in executor.ts. Read both surfaces.
 
-    expect(executorSource).toContain("Always include a short, specific summary after the em dash (5–10 words)");
-    expect(executorSource).toContain("Do NOT commit just \\`complete Step N\\`");
-    expect(executorSource).toContain("\\`feat(FN-1234): complete Step 4 — tighten prompt examples for commit summaries\\`");
-    expect(executorSource).toContain("\\`feat(FN-1234): complete Step 2\\`");
+    FNXC:CodeOrganization 2026-08-03-12:45:
+    buildExecutionPrompt peeled to executor/execution-prompt.ts; include that surface so wording
+    ratchet still covers the implementation, not only the facade re-export.
+    */
+    const { readFileSync } = await vi.importActual<typeof import("node:fs")>("node:fs");
+    const systemPromptSource = readFileSync(new URL("../executor/system-prompt.ts", import.meta.url), "utf8");
+    const executionPromptSource = readFileSync(new URL("../executor/execution-prompt.ts", import.meta.url), "utf8");
+    const executorSource = readFileSync(new URL("../executor.ts", import.meta.url), "utf8");
+    const combined = `${systemPromptSource}\n${executionPromptSource}\n${executorSource}`;
+
+    expect(combined).toContain("Always include a short, specific summary after the em dash (5–10 words)");
+    expect(combined).toContain("Do NOT commit just \\`complete Step N\\`");
+    expect(combined).toContain("\\`feat(FN-1234): complete Step 4 — tighten prompt examples for commit summaries\\`");
+    expect(combined).toContain("\\`feat(FN-1234): complete Step 2\\`");
   });
 
   it("omits Project Commands section when neither command is set", () => {
@@ -1830,20 +1842,25 @@ describe("swallowed async store failure observability", () => {
     warnSpy.mockRestore();
   });
 
-  it("logs warning when sessionFile clear fails on completion", async () => {
+  /*
+  FNXC:SessionResume 2026-08-10-17:33:
+  SUPERSEDES "logs warning when sessionFile clear fails on completion". That test asserted the executor
+  nulls `sessionFile` when a completed implementation hands off to review. It no longer does: a review
+  gate can bounce the card straight back for remediation in the same worktree, and clearing here forced
+  every one of those rounds to restart cold and re-derive the change it had just written. The clear now
+  happens only on genuinely terminal exits (and at the explicit fresh-session sites, which also null
+  worktree/branch). This asserts the replacement invariant on the same fixture: the handoff preserves the
+  conversation and attempts no clear at all.
+  */
+  it("preserves sessionFile across the review handoff so remediation can resume the conversation", async () => {
     const warnSpy = vi.spyOn(executorLog, "warn");
     const store = createMockStore();
     let capturedCustomTools: any[] = [];
 
-    /*
-    FNXC:EngineTests 2026-07-19-04:47 (U10b):
-    Only the sessionFile CLEAR may fail; the graph re-reads the card between nodes, so every other write must still land on the row or the run never reaches the completion that triggers the clear.
-    */
+    const sessionFileClears: unknown[] = [];
     const passThroughUpdateTask = store.updateTask.getMockImplementation()!;
     store.updateTask.mockImplementation(async (taskId: string, patch: Record<string, unknown>) => {
-      if (patch?.sessionFile === null) {
-        throw new Error("session clear failed");
-      }
+      if (patch?.sessionFile === null) sessionFileClears.push(patch);
       return passThroughUpdateTask(taskId, patch);
     });
 
@@ -1879,16 +1896,16 @@ describe("swallowed async store failure observability", () => {
 
     /*
     FNXC:EngineTests 2026-07-19-03:19 (U10b):
-    A failed sessionFile clear must warn but must not block the run's handoff to review; that handoff is now the graph's merge boundary, so the move carries workflow-graph provenance.
+    The handoff to review is the graph's merge boundary, so the move carries workflow-graph provenance.
     */
     expect(store.moveTask).toHaveBeenCalledWith(
       "FN-001",
       "in-review",
       expect.objectContaining({ workflowMoveSource: "workflow-graph" }),
     );
-    expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining("FN-001 failed to clear sessionFile: session clear failed"),
-    );
+    // The conversation survives the handoff — nothing nulls sessionFile on this path.
+    expect(sessionFileClears).toEqual([]);
+    expect(warnSpy).not.toHaveBeenCalledWith(expect.stringContaining("failed to clear sessionFile"));
 
     warnSpy.mockRestore();
   });
@@ -3035,10 +3052,14 @@ describe("executor base prompt runtime self-awareness", () => {
   });
 
   it("stays byte-identical with the core EXECUTOR_PROMPT_TEXT mirror at the shared preamble", async () => {
+    /*
+    FNXC:CodeOrganization 2026-08-03-08:00:
+    System prompt constant was peeled to executor/system-prompt.ts; assert the mirror lives there.
+    */
     const { FUSION_RUNTIME_SELF_AWARENESS } = await import("@fusion/core");
     const { readFileSync } = await vi.importActual<typeof import("node:fs")>("node:fs");
-    const executorSource = readFileSync(new URL("../executor.ts", import.meta.url), "utf8");
-    expect(executorSource).toContain("const EXECUTOR_SYSTEM_PROMPT = `${FUSION_RUNTIME_SELF_AWARENESS}");
+    const systemPromptSource = readFileSync(new URL("../executor/system-prompt.ts", import.meta.url), "utf8");
+    expect(systemPromptSource).toContain("const EXECUTOR_SYSTEM_PROMPT = `${FUSION_RUNTIME_SELF_AWARENESS}");
     expect(FUSION_RUNTIME_SELF_AWARENESS.length).toBeGreaterThan(0);
   });
 

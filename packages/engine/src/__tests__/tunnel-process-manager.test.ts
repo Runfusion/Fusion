@@ -219,6 +219,84 @@ describe("TunnelProcessManager", () => {
     expect(states).toContain("stopped");
   });
 
+  it.each([
+    ["cloudflare", cloudflareConfig()],
+    ["tailscale", {
+      provider: "tailscale",
+      executablePath: "tailscale",
+      args: ["funnel", "4040"],
+    } satisfies TunnelProviderConfig],
+  ] as const)("recreates an unexpectedly exited %s tunnel while the manager is active", async (provider, config) => {
+    vi.useFakeTimers();
+    const spawned: FakeChildProcess[] = [];
+    const manager = new TunnelProcessManager({
+      restartBaseDelayMs: 100,
+      restartMaxDelayMs: 1_000,
+      spawnImpl: () => {
+        const child = new FakeChildProcess(++pid);
+        children.set(child.pid, child);
+        spawned.push(child);
+        return child as never;
+      },
+    });
+
+    await manager.start(provider, config);
+    spawned[0].close(1);
+
+    expect(manager.getStatus()).toMatchObject({ state: "failed", provider });
+    await vi.advanceTimersByTimeAsync(99);
+    expect(spawned).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(spawned).toHaveLength(2);
+    expect(manager.getStatus()).toMatchObject({ state: "starting", provider });
+  });
+
+  it("backs off repeated pre-readiness failures and caps the retry delay", async () => {
+    vi.useFakeTimers();
+    const spawned: FakeChildProcess[] = [];
+    const manager = new TunnelProcessManager({
+      restartBaseDelayMs: 100,
+      restartMaxDelayMs: 200,
+      spawnImpl: () => {
+        const child = new FakeChildProcess(++pid);
+        children.set(child.pid, child);
+        spawned.push(child);
+        return child as never;
+      },
+    });
+
+    await manager.start("cloudflare", cloudflareConfig());
+    spawned[0].close(1);
+    await vi.advanceTimersByTimeAsync(100);
+    spawned[1].close(1);
+    await vi.advanceTimersByTimeAsync(199);
+    expect(spawned).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(spawned).toHaveLength(3);
+
+    spawned[2].close(1);
+    await vi.advanceTimersByTimeAsync(200);
+    expect(spawned).toHaveLength(4);
+  });
+
+  it("cancels a pending automatic restart when the tunnel is explicitly stopped", async () => {
+    vi.useFakeTimers();
+    const spawnImpl = vi.fn(() => {
+      const child = new FakeChildProcess(++pid);
+      children.set(child.pid, child);
+      return child as never;
+    });
+    const manager = new TunnelProcessManager({ restartBaseDelayMs: 100, spawnImpl });
+
+    await manager.start("cloudflare", cloudflareConfig());
+    [...children.values()][0].close(1);
+    await manager.stop();
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    expect(spawnImpl).toHaveBeenCalledTimes(1);
+    expect(manager.getStatus()).toMatchObject({ state: "stopped", provider: null });
+  });
+
   it("falls back to SIGKILL when graceful stop times out", async () => {
     vi.useFakeTimers();
 

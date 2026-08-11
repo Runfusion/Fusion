@@ -728,6 +728,8 @@ export const DEFAULT_PROJECT_SETTINGS = {
   memoryBackupSchedule: "0 3 * * *",
   memoryBackupRetention: 14,
   memoryBackupDir: ".fusion/backups/memory",
+  // FNXC:KnowledgeGraph 2026-08-10-10:00: The graph must stay outside gitignored .fusion so operators may commit it.
+  knowledgeGraphDir: ".fusion-knowledge/graph",
   memoryBackupScope: "all" as const,
   autoSummarizeTitles: false,
   /*

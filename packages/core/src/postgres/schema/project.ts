@@ -351,6 +351,19 @@ export const tasks = projectSchema.table("tasks", {
   index("idxTasksSearchVector").using("gin", t.searchVector),
 ]);
 
+/* FNXC:SpecLock 2026-08-09-07:06: plan locks, evidence, and reports omit task FKs so immutable history survives archive cleanup and task tombstones. */
+export const specLocks = projectSchema.table("spec_locks", {
+  projectId: text("project_id").notNull(), taskId: text("task_id").notNull(), version: integer("version").notNull(),
+  acceptedAt: text("accepted_at").notNull(), approvalFingerprint: text("approval_fingerprint").notNull(), currentPlanVersion: integer("current_plan_version").notNull(), currentPlanHash: text("current_plan_hash").notNull(),
+  snapshot: jsonb("snapshot").notNull(), priorVersion: integer("prior_version"), diff: jsonb("diff"),
+}, (t) => [primaryKey({ columns: [t.projectId, t.taskId, t.version] })]);
+export const currentPlanEvidence = projectSchema.table("current_plan_evidence", {
+  projectId: text("project_id").notNull(), taskId: text("task_id").notNull(), version: integer("version").notNull(), sourceRevision: bigint("source_revision", { mode: "number" }).notNull(), sourceHash: text("source_hash").notNull(), capturedAt: text("captured_at").notNull(), snapshot: jsonb("snapshot").notNull(),
+}, (t) => [primaryKey({ columns: [t.projectId, t.taskId, t.version] }), unique("current_plan_evidence_source").on(t.projectId, t.taskId, t.sourceHash)]);
+export const specDriftReports = projectSchema.table("spec_drift_reports", {
+  projectId: text("project_id").notNull(), taskId: text("task_id").notNull(), reportHash: text("report_hash").notNull(), lockVersion: integer("lock_version"), currentPlanVersion: integer("current_plan_version"), currentPlanHash: text("current_plan_hash"), executionHash: text("execution_hash").notNull(), report: jsonb("report").notNull(), createdAt: text("created_at").notNull(),
+}, (t) => [primaryKey({ columns: [t.projectId, t.taskId, t.reportHash] })]);
+
 // ── Config ───────────────────────────────────────────────────────────
 export const config = projectSchema.table("config", {
   // FNXC:MultiProjectIsolation 2026-07-11:
@@ -607,6 +620,14 @@ export const agentActivityEvents = projectSchema.table("agent_activity_events", 
   index("idxAgentActivityEventsSeq").on(t.projectId, t.seq), index("idxAgentActivityEventsAgentSeq").on(t.projectId, t.agentId, t.seq),
   index("idxAgentActivityEventsTaskSeq").on(t.projectId, t.taskId, t.seq), index("idxAgentActivityEventsTypeSeq").on(t.projectId, t.type, t.seq),
 ]);
+/* FNXC:MemoryRecall 2026-08-10-11:03: Project-scoped recall keeps structured durable context isolated by the same composite key and RLS contract as other project rows. */
+export const memoryRecallRecords = projectSchema.table("memory_recall_records", {
+  projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
+  id: text("id").notNull(), kind: text("kind").notNull(), content: text("content").notNull(), contentHash: text("content_hash").notNull(),
+  source: jsonb("source").notNull(), tags: jsonb("tags").notNull().default(sql`'[]'::jsonb`), graphNodeIds: jsonb("graph_node_ids").notNull().default(sql`'[]'::jsonb`),
+  createdAt: text("created_at").notNull(), updatedAt: text("updated_at").notNull(),
+}, (t) => [primaryKey({ columns: [t.projectId, t.id] }), unique("memory_recall_records_project_kind_hash_key").on(t.projectId, t.kind, t.contentHash), index("idxMemoryRecallRecordsKindCreated").on(t.projectId, t.kind, t.createdAt), index("idxMemoryRecallRecordsCreated").on(t.projectId, t.createdAt)]);
+
 export const agentActivityEventSeq = projectSchema.table("agent_activity_event_seq", {
   projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`), lastSeq: bigint("last_seq", { mode: "bigint" }).notNull().default(sql`0`),
 }, (t) => [primaryKey({ columns: [t.projectId] })]);
@@ -1593,6 +1614,8 @@ export const missionFeatures = projectSchema.table("mission_features", {
   // fixed to text to match the SQLite TEXT column and MissionStore semantics.
   acceptanceCriteria: text("acceptance_criteria"),
   status: text("status").notNull(),
+  // FNXC:SpecLockMissionAlignment 2026-08-10-16:17: retain task drift projection independently of feature delivery status so roadmap readers share reconciliation's durable result.
+  specAlignment: text("spec_alignment"),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
   // FNXC:MissionStore 2026-06-24-08:20:
@@ -2448,6 +2471,6 @@ export const projectTableNames = [
   "mission_validator_runs", "mission_validator_failures",
   "mission_fix_feature_lineage", "verification_cache", "import_translation_cache",
   "approval_requests",
-  "approval_request_audit_events", "agent_activity_events", "agent_activity_event_seq", "chat_rooms", "chat_room_members",
+  "approval_request_audit_events", "agent_activity_events", "agent_activity_event_seq", "memory_recall_records", "chat_rooms", "chat_room_members",
   "chat_room_messages", "chat_token_usage",
 ] as const;

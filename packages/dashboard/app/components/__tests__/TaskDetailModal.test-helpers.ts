@@ -54,6 +54,8 @@ vi.mock("../../api", async (importOriginal) => {
     summarizeTitle: vi.fn().mockResolvedValue("Generated Title"),
     fetchTaskDetail: vi.fn().mockResolvedValue(makeTask()),
     fetchTaskPrompt: vi.fn().mockResolvedValue({ id: "FN-099", prompt: "# Task FN-099" }),
+    // FNXC:SpecLockTaskDetail 2026-08-09-19:34: every shared detail fixture provides a stable empty retained-evidence response.
+    fetchSpecLock: vi.fn().mockResolvedValue({ latestLock: null, activeLock: null, currentPlan: null, report: null, latestReport: null, history: { locks: [], currentPlans: [], reports: [] } }),
     // FNXC:DashboardTests 2026-07-19-01:20: FN-8296 TaskDetail polls verification request status.
     fetchTaskVerificationRequest: vi.fn().mockResolvedValue(null),
     fetchAgentLogs: vi.fn().mockResolvedValue([]),

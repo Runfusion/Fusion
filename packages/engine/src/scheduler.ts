@@ -28,8 +28,9 @@ import {
 } from "./concurrency/concurrency.js";
 import { planTaskWorktreePath, resolveTaskWorkingBranch } from "./worktree/worktree-names.js";
 import { schedulerLog } from "./logger.js";
+import { createRepeatSuppressedLog } from "./util/repeat-suppressed-log.js";
 import { type PrMonitor, type PrComment } from "./merge/pr-monitor.js";
-import { reconcileMissionFeatureState } from "./missions/mission-feature-sync.js";
+import { persistMissionFeatureReconciliation, reconcileMissionFeatureState } from "./missions/mission-feature-sync.js";
 import { resolveDedicatedPlannerColumnsForTask, resolvePlannerLanesForTask } from "./planner-lane-resolution.js";
 import { evaluateSpecStaleness, getPromptPath } from "./execution/spec-staleness.js";
 import { resolveEffectiveNode, type EffectiveNode } from "./project/effective-node.js";
@@ -898,6 +899,25 @@ function releaseReservedSlot(reservedSlots: number): number {
   return Math.max(0, reservedSlots - 1);
 }
 
+/**
+ * FNXC:DependencyUnblock 2026-08-10-08:20:
+ * Dependency auto-unblock clears ONLY the `queued` blocked marker it owns — never an arbitrary lifecycle status.
+ *
+ * Both unblock paths used to write `status: null` unconditionally, meaning to undo the `status: "queued"` the
+ * blocked branch sets a few lines up. But `status` is a shared lifecycle channel, and the value most likely to
+ * be sitting there is `needs-replan` — the graph's durable replan signal, and the ONLY thing that re-admits a
+ * hold-column card to planning (`isTaskAwaitingPlanning` refuses a card whose PROMPT.md is already a real spec).
+ *
+ * FN-8923 died exactly here. Its plan node held on principal routing, triage correctly recorded
+ * `needs-replan`, and then its blocker completing nulled that status. From that moment the card was invisible
+ * to BOTH lanes: triage saw a fully-written spec with no replan flag and skipped it, while the executor's
+ * `isUnplannedForExecution` still refused to dispatch because no capacity-boundary continuation existed. It sat
+ * silent in Todo for 7+ hours with zero run-audit rows — not stuck in a retry loop, simply unowned.
+ */
+export function clearBlockedStatusOnly(dependent: Pick<Task, "status">): { status: null } | Record<string, never> {
+  return dependent.status === "queued" || dependent.status == null ? { status: null } : {};
+}
+
 export class Scheduler {
   private running = false;
   private scheduling = false;
@@ -934,6 +954,8 @@ export class Scheduler {
   private wasPermanentAgentUnavailable = new Set<string>();
   /** Tracks dispatch-queued reason signatures to avoid per-tick log spam. */
   private wasDispatchQueuedReasonLogged = new Set<string>();
+  /** Tracks per-task symbol-lock renewal outcomes so a persistent loss/error reports once, not once per poll. */
+  private readonly symbolLockRenewalLog = createRepeatSuppressedLog();
   /** Tracks per-task candidacy fingerprints for task:updated auto-claim invalidation gating. */
   private lastAutoClaimFingerprint = new Map<string, string>();
   /** Tracks recent engine-sourced in-progress → todo requeues to prevent immediate re-dispatch races. */
@@ -1210,7 +1232,7 @@ export class Scheduler {
                     `Auto-reblocked: unresolved dependency ${unresolvedDeps[0]} remains after ${task.id} reached ${to}`,
                   );
                 } else {
-                  await this.store.updateTask(dependent.id, { blockedBy: null, status: null });
+                  await this.store.updateTask(dependent.id, { blockedBy: null, ...clearBlockedStatusOnly(dependent) });
                   const unblockMessage = currentlyBlockedByCompletedTask
                     ? `Auto-unblocked: blocker ${task.id} reached ${to}`
                     : `Auto-unblocked: blocker ${task.id} reached ${to} — all dependencies satisfied`;
@@ -1485,7 +1507,7 @@ export class Scheduler {
                   `Auto-reblocked (FN-5496): unresolved dependency ${nextBlocker} remains after blocker ${task.id} was soft-deleted`,
                 );
               } else if (dependent.column === deletedParked.hold) {
-                await this.store.updateTask(dependent.id, { blockedBy: null, status: null });
+                await this.store.updateTask(dependent.id, { blockedBy: null, ...clearBlockedStatusOnly(dependent) });
                 await this.store.logEntry(dependent.id, `Auto-unblocked (FN-5496): blocker ${task.id} was soft-deleted`);
               } else {
                 await this.store.updateTask(dependent.id, { blockedBy: null });
@@ -1511,16 +1533,7 @@ export class Scheduler {
    * @param id - The task ID to validate
    * @returns Object with `valid: true` if checks pass, or `valid: false` with a `reason` string if they fail
    */
-  private async validateTaskFilesystem(task: Pick<Task, "id" | "title">): Promise<{ valid: boolean; reason?: string }> {
-    const id = task.id;
-    /*
-    FNXC:DuplicateIntake 2026-08-09-01:02:
-    A title redirect is available without filesystem capability or PROMPT.md I/O. Refuse it first
-    so minimal stores and missing artifacts cannot dispatch a task the operator explicitly marked
-    DUPLICATE.
-    */
-    const titleRedirect = nonExecutableDuplicateRedirectReason(null, task.title);
-    if (titleRedirect) return { valid: false, reason: titleRedirect };
+  private async validateTaskFilesystem(id: string): Promise<{ valid: boolean; reason?: string }> {
     if (typeof this.store.getTasksDir !== "function") {
       /*
       FNXC:WorkflowScheduling 2026-06-23-11:38:
@@ -1551,7 +1564,7 @@ export class Scheduler {
       Non-empty is not enough: a sole `DUPLICATE: FN-####` line is a triage redirect, not a
       plan. Admitting it (FN-8704) fails the graph at `parse` and parks failed WIP in a loop.
       */
-      const duplicateOnly = nonExecutableDuplicateRedirectReason(content, task.title);
+      const duplicateOnly = nonExecutableDuplicateRedirectReason(content);
       if (duplicateOnly) {
         return { valid: false, reason: duplicateOnly };
       }
@@ -1614,6 +1627,7 @@ export class Scheduler {
     this.wasNodeDispatchValidationBlocked.clear();
     this.wasPermanentAgentUnavailable.clear();
     this.wasDispatchQueuedReasonLogged.clear();
+    this.symbolLockRenewalLog.reset();
     schedulerLog.log("Stopped");
   }
 
@@ -2160,22 +2174,57 @@ export class Scheduler {
         try {
           missionLinked = Boolean(await this.options.missionStore.getFeatureByTaskId(task.id));
         } catch (error) {
-          schedulerLog.warn(`Symbol-lock renewal lineage lookup failed for ${task.id}:`, error);
+          const message = error instanceof Error ? error.message : String(error);
+          this.symbolLockRenewalLog.logOnce(
+            schedulerLog,
+            task.id,
+            `lineage-lookup-failed:${message}`,
+            `Symbol-lock renewal lineage lookup failed for ${task.id}: ${message}`,
+            "warn",
+          );
           continue;
         }
       }
       if (!missionLinked) continue;
 
+      /*
+      FNXC:EngineDiagnostics 2026-08-10-17:13:
+      Renewal re-runs every poll for every implementation-column task that declares symbols, and a LOST lock never
+      recovers by renewing — `renewSymbolLocks` reports the same `lost` set on every subsequent pass, so the warning and
+      its `logEntry` companion repeated forever: log-pane spam plus an unbounded activityLog append for a stuck task.
+      Report a lost set (and a persistent renewal error) once per task per distinct signature — a changed set of lost
+      symbols or a new error message is a real transition and reports again — and clear the memo on a clean renewal so a
+      later loss is reported afresh. The `logEntry` write is gated on the SAME first-occurrence decision, so the task's
+      activity log records the transition rather than one row per poll.
+      */
       try {
         const result = await this.store.renewSymbolLocks(symbols, task.id, SYMBOL_LOCK_LEASE_MS);
         if (result.lost.length > 0) {
-          schedulerLog.warn(`Symbol-lock renewal lost ownership for ${task.id}: ${result.lost.join(", ")}`);
-          await this.store.logEntry(task.id, `symbol-lock renewal lost: ${result.lost.join(", ")}`);
+          const lost = [...result.lost].sort();
+          const appended = this.symbolLockRenewalLog.logOnce(
+            schedulerLog,
+            task.id,
+            `lost:${lost.join(",")}`,
+            `Symbol-lock renewal lost ownership for ${task.id}: ${result.lost.join(", ")}`,
+            "warn",
+          );
+          if (appended) {
+            await this.store.logEntry(task.id, `symbol-lock renewal lost: ${result.lost.join(", ")}`);
+          }
+        } else {
+          this.symbolLockRenewalLog.clear(task.id);
         }
       } catch (error) {
         // Do not abort capacity admission for unrelated tasks; the durable expiry
         // and self-healing reconciliation remain the crash-safe backstop.
-        schedulerLog.warn(`Symbol-lock renewal failed for ${task.id}:`, error);
+        const message = error instanceof Error ? error.message : String(error);
+        this.symbolLockRenewalLog.logOnce(
+          schedulerLog,
+          task.id,
+          `renewal-failed:${message}`,
+          `Symbol-lock renewal failed for ${task.id}: ${message}`,
+          "warn",
+        );
       }
     }
   }
@@ -2497,7 +2546,7 @@ export class Scheduler {
           FNXC:WorkflowScheduling 2026-06-23-11:12:
           The workflow sweep is the only dispatcher, so the scheduler-only pre-dispatch gates must run before a capacity hold moves to an execution column. Keep dependency, filesystem, node-routing, permanent-agent, and oscillation checks on this path instead of relying on the retired todo loop.
           */
-          const validation = await this.validateTaskFilesystem(task);
+          const validation = await this.validateTaskFilesystem(task.id);
           if (!validation.valid) {
             schedulerLog.warn(`Task ${task.id} filesystem validation failed: ${validation.reason}`);
             /*
@@ -3122,6 +3171,22 @@ export class Scheduler {
         },
       );
 
+      const sliceIdBeforeUpdate = feature.sliceId;
+
+      /*
+      FNXC:SpecLockMissionAlignment 2026-08-10-16:17:
+      Scheduler move reconciliation is a production consumer of deterministic drift. Persist its
+      orthogonal projection even when delivery status is unchanged, or the evaluated alignment is
+      discarded before Mission Manager can render the roadmap's actual state.
+      */
+      if (await persistMissionFeatureReconciliation(missionStore, feature, reconciliation)) {
+        if (reconciliation.kind === "update") {
+          schedulerLog.log(
+            `Feature ${feature.id} marked ${reconciliation.status} (${reconciliation.reason})`,
+          );
+        }
+      }
+
       if (reconciliation.kind === "blocked") {
         schedulerLog.warn(`Task ${taskId} mission update blocked — ${reconciliation.reason}`);
         return;
@@ -3130,15 +3195,6 @@ export class Scheduler {
       if (reconciliation.kind === "failure") {
         schedulerLog.warn(`Task ${taskId} mission update reported failure — ${reconciliation.reason}`);
         return;
-      }
-
-      const sliceIdBeforeUpdate = feature.sliceId;
-
-      if (reconciliation.kind === "update") {
-        await missionStore.updateFeatureStatus(feature.id, reconciliation.status);
-        schedulerLog.log(
-          `Feature ${feature.id} marked ${reconciliation.status} (${reconciliation.reason})`,
-        );
       }
 
       /*
@@ -3505,6 +3561,15 @@ export class Scheduler {
               hasLinkedAssertions,
             });
 
+            /*
+            FNXC:SpecLockMissionAlignment 2026-08-10-16:17:
+            Periodic reconciliation must retain the same drift projection as event-driven moves;
+            otherwise a quiet task's alignment disappears until an unrelated status transition.
+            */
+            if (await persistMissionFeatureReconciliation(missionStore, featureForReconciliation, reconciliation)) {
+              totalFixed++;
+            }
+
             if (reconciliation.kind === "failure") {
               if (this.options.onTaskFailed) {
                 await this.options.onTaskFailed(task.id);
@@ -3520,10 +3585,6 @@ export class Scheduler {
               continue;
             }
 
-            if (reconciliation.kind === "update") {
-              await missionStore.updateFeatureStatus(featureForReconciliation.id, reconciliation.status);
-              totalFixed++;
-            }
           }
         }
       }

@@ -1,4 +1,4 @@
-import type { Task } from "@fusion/core";
+import { classifyTerminalFailureAutoRecovery, type TerminalFailureAutoRecoveryDecision, type Task } from "@fusion/core";
 import { hasTransientMergeRecoveryOwner } from "../errors/transient-merge-error-classifier.js";
 
 /** A bounded, operator-safe description of a task that cannot make progress. */
@@ -102,8 +102,23 @@ export function describeSelfHealingNoActionWedge(task: Task, stage: string, meta
   // Test and legacy proof producers may omit metadata; absent ownership evidence
   // remains ownerless rather than turning best-effort notification into a park failure.
   const proof = metadata ?? {};
-  // These proof signals mean a live executor, checkout, or queued merge owns the task.
-  if (proof.taskActive === true || proof.hasExecutingTaskLock === true || proof.mergePending === true) return null;
+  /*
+  FNXC:TaskWedgeNotifications 2026-08-10-04:35:
+  A declined self-healing move is actionable only when its proof says the card is
+  ownerless. A live session, recent activity, or intentional pause/auto-merge-off
+  hold means the card is working or deliberately waiting, not parked. Keep a
+  usable worktree alerting: with a dead session and stale activity it is evidence
+  of a genuinely stuck card, not progress.
+  */
+  if (
+    proof.sessionDead === false
+    || proof.noRecentActivity === false
+    || proof.taskActive === true
+    || proof.hasExecutingTaskLock === true
+    || proof.mergePending === true
+    || proof.reason === "paused-guard"
+    || proof.reason === "auto-merge-processing-disabled"
+  ) return null;
   if (Array.isArray(proof.livePaths) && proof.livePaths.length > 0) return null;
   return { reasonKey: `self-healing-no-action:${stage}`, ...description };
 }
@@ -117,7 +132,7 @@ lifecycle state, is not an operator-actionable terminal wedge.
 export function isTaskProgressing(task: Task): boolean {
   return task.paused !== true
     && task.status !== "paused"
-    && ["queued", "planning", "in-progress", "merging", "merging-pr", "merging-fix", "merged", "done"].includes(task.status ?? "");
+    && ["queued", "planning", "in-progress", "reviewing", "merging", "merging-pr", "merging-fix", "merged", "done"].includes(task.status ?? "");
 }
 
 /*
@@ -126,6 +141,34 @@ Terminal task updates are the shared delivery seam for merger, executor, heartbe
 and self-healing writers. Classify only states that have no scheduled owner; raw
 error output is never used as an idempotency key or forwarded into audit metadata.
 */
+/*
+FNXC:TaskWedgeNotifications 2026-08-10-18:54:
+Core owns only the durable budget rules. The generic failure classification stays here so
+specific terminal descriptors cannot drift from notification withholding or self-healing.
+A past display mirror is not a live recovery owner for this adapter.
+*/
+export function classifyTerminalFailureAutoRecoveryForTask(
+  task: Task,
+  options: { autoRecoveryEnabled: boolean; inTerminalSuccessColumn?: boolean; isArchivedOrDeleted?: boolean; now?: number },
+): TerminalFailureAutoRecoveryDecision {
+  const now = options.now ?? Date.now();
+  const nextRecoveryAt = Date.parse(task.nextRecoveryAt ?? "");
+  return classifyTerminalFailureAutoRecovery(task, {
+    isGenericTerminalFailure: describeTaskWedge(task)?.reasonKey === "terminal-failed",
+    hasRecoveryOwner: describeTaskRecoveryOwner(task) !== null && Number.isFinite(nextRecoveryAt) && nextRecoveryAt > now,
+    isProgressing: isTaskProgressing(task),
+    inTerminalSuccessColumn: options.inTerminalSuccessColumn === true,
+    isArchivedOrDeleted: options.isArchivedOrDeleted === true || task.deletedAt != null,
+    autoRecoveryEnabled: options.autoRecoveryEnabled,
+    now: () => now,
+  });
+}
+
+export function shouldWithholdWedgeAlertForAutoRecovery(task: Task, options: { autoRecoveryEnabled: boolean }): boolean {
+  const decision = classifyTerminalFailureAutoRecoveryForTask(task, options);
+  return decision.action === "retry" || (decision.action === "skip" && decision.reason === "escalation-already-delivered");
+}
+
 export function describeTaskWedge(task: Task): TaskWedgeDescriptor | null {
   if (isTaskProgressing(task)) return null;
   const error = task.error ?? "";

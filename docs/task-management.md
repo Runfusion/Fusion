@@ -110,21 +110,26 @@ This layer complements, rather than replaces, FN-4829 similarity detection, FN-4
 
 Archiving a workspace (multi-repository) task now synchronously removes every recorded per-sub-repository worktree, including archives initiated by `fn_task_archive` and CLI paths that do not construct an executor. Each path is protected by a per-repository cross-process reservation until backend removal and branch cleanup finish. If one removal fails, its reservation is quarantined and the next acquisition reconciles that orphan; successful sibling repositories are still released. `archiveTask(..., { cleanup: false })` intentionally retains worktrees, and the self-healing workspace sweep remains an idempotent backstop.
 
-#### Explicit duplicate-marker guard (FN-5220)
+### Task-pinned orphan recovery
+
+When `worktreeNaming: "task-id"` finds an inactive pinned directory whose Git metadata is incomplete or unregistered, Fusion preserves the whole directory before recreating the task worktree at the same path. The normal preservation root is `<project>/.fusion/recovery/worktrees`. If the configured worktree directory is on another filesystem, Fusion retries the atomic rename under `<worktreesDir>/.fusion-recovery/worktrees` instead of using copy-and-delete.
+
+Each preservation root retains the newest 10 Fusion-generated orphan directories. Pruning is best-effort and skips unknown names, symlinks, unreadable entries, and paths with active sessions. Copy artifacts elsewhere if they need indefinite retention. Worktree discovery, cleanup, and capacity scans treat `.fusion-recovery` as an internal container rather than a task worktree.
+
+### Explicit duplicate-marker guard (FN-5220)
 
 Fusion also recognizes the canonical one-line redirect marker:
 
 - `DUPLICATE: FN-1234`
-- `DUPLICATE: KB-1234`
-- `` `DUPLICATE: KB-1234` ``
-- `**DUPLICATE: KB-1234**`
+- `` `DUPLICATE: FN-1234` ``
+- `**DUPLICATE: FN-1234**`
 - fenced single-line wrappers such as:
 
   ```text
   DUPLICATE: FN-1234
   ```
 
-The shared parser lives in `packages/core/src/duplicates/explicit-duplicate-marker.ts` (`parseExplicitDuplicateMarker`). It is intentionally strict: after trimming outer whitespace and one optional wrapper layer, the content must reduce to exactly one substantive line matching `^DUPLICATE:\s*[A-Z]+-\d+$`. Exact markers are recognized in either `PROMPT.md` or the task title; a prompt marker wins only when both sources name the same canonical ID. Conflicting exact title/prompt markers fail closed for operator or planning correction. Any extra prose, multiple markers, malformed IDs, or full PROMPT bodies that merely mention duplicate text are ignored.
+The shared parser lives in `packages/core/src/explicit-duplicate-marker.ts` (`parseExplicitDuplicateMarker`). It is intentionally strict: after trimming outer whitespace and one optional wrapper layer, the content must reduce to exactly one substantive line matching `^DUPLICATE:\s*FN-\d+$`. Any extra prose, multiple markers, or full PROMPT bodies that merely mention duplicate text are ignored.
 
 This guard adds three fail-open layers on top of the existing duplicate stack, in final order:
 
@@ -136,10 +141,10 @@ This guard adds three fail-open layers on top of the existing duplicate stack, i
 Layer behavior:
 
 - **Dashboard intake (`POST /api/tasks`)** — after deterministic/similarity/near-duplicate checks and before `createTask`, intake returns `409 duplicate_candidates` with `reason: "explicit-marker"` when the combined title/description is exactly a canonical redirect and the canonical target exists. `acknowledgedDuplicates` and `bypassDuplicateCheck: true` both suppress the conflict. Because this guard runs before task creation, the activity breadcrumb is attached to the canonical target.
-- **Triage planning loop** — before triage starts a planner session, an exact redirect in the prompt or title short-circuits directly into `finalizeApprovedTask()`. Normal plans run deterministic spec hygiene checks in triage, then the selected workflow's optional Plan Review gate owns AI plan review before execution.
+- **Triage planning loop** — after triage reads the generated `PROMPT.md`, an exact redirect marker short-circuits directly into `finalizeApprovedTask()`. Normal plans run deterministic spec hygiene checks in triage, then the selected workflow's optional Plan Review gate owns AI plan review before execution.
 - **Self-healing sweep** — maintenance Batch 2 runs `resolveExplicitDuplicateMarkerTasks()` across `triage`/`todo` tasks to clean up older stuck marker tasks. The sweep is best-effort, capped at 50 marker tasks per cycle, and can be disabled with the internal setting `resolveExplicitDuplicateMarkerEnabled: false` (default `true`).
 
-An operator's decision is durable for a task and its active canonical pair. **Keep** records the acknowledgement, clears the exact redirect source and triage decision hold, and lets planning continue; triage and self-healing will not ask again if that same marker is reprocessed. A marker for a different active canonical remains a new decision. **Delete** for an explicit-marker decision soft-deletes the duplicate, while **Archive** for an ordinary near-duplicate leaves it terminal in Archived; neither outcome is reopened as a duplicate decision.
+An operator's decision is durable for a task and its active canonical pair. **Keep** records the acknowledgement, clears the marker-only prompt and triage decision hold, and lets planning continue; triage and self-healing will not ask again if that same marker is reprocessed. A marker for a different active canonical remains a new decision. **Delete** for an explicit-marker decision soft-deletes the duplicate, while **Archive** for an ordinary near-duplicate leaves it terminal in Archived; neither outcome is reopened as a duplicate decision.
 
 All three layers fail open: parse errors, task lookup failures, file-read failures, activity-recording errors, or other unexpected exceptions log a warning and continue normal intake/triage/self-healing flow instead of blocking task creation or recovery.
 
@@ -293,7 +298,7 @@ This is a forward-safety guard for stranded completed tasks. See FN-4055/FN-4079
 Fusion now derives `task.inReviewStall` for non-paused `in-review` tasks when a known stuck-state shape is detected. This signal is state-based (not log-heuristic) and is computed server-side on task hydration.
 
 `InReviewStallCode` values:
-- `transient-merge-status-no-owner` — task is still in `merging`/`merging-pr`/`merging-fix` after the stale-merging age threshold, but no active merger owns it.
+- `transient-merge-status-no-owner` — task is still in `merging`/`merging-pr`/`merging-fix` after the stale-merging age threshold, but no active merger owns it. `recoverStaleMergingStatus()` clears this stamp and re-enqueues auto-merge-eligible, non-workspace, non-`mergeConfirmed` **unpaused** tasks. Paused tasks never re-enqueue; the sole clear-only exception is the engine-owned `merge-deadlock-detected` hold, whose status-preserving park can otherwise retain an orphan stamp indefinitely. Explicit human, approval, and unknown pauses remain intentionally suppressed. The signal itself remains diagnostic-only.
 - `merge-retries-exhausted` — `mergeRetries` reached the auto-merge retry cap without `mergeDetails.mergeConfirmed === true`.
 - `no-worktree-no-merge-confirmed` — task has no worktree path and merge is not confirmed (excluding explicit no-op merges).
 - `merge-blocker` — `getTaskMergeBlocker()` reports a merge/finalization blocker.
@@ -355,7 +360,7 @@ Scheduler-side reporting emits structured, rate-limited task-log and engine-log 
 Success metric: maintainers can find all stale cards from the board UI in under 30 seconds.
 
 Auto-completion/finalization remains owned by existing recovery passes:
-- `recoverStaleMergingStatus`
+- `recoverStaleMergingStatus` — reconciles unowned aged merge stamps. It may clear the stamp on an engine-owned `merge-deadlock-detected` pause but never resumes, unpauses, moves, finalizes, or enqueues a paused card.
 - `finalizeNoOpReviewTasks`
 - `recoverMergeableReviewTasks`
 - `recoverAlreadyMergedReviewTasks`

@@ -141,11 +141,12 @@ describe("worktree-acquisition secrets env hook", () => {
     expect(refreshReusedWorktreeBase).not.toHaveBeenCalled();
     expect(git).toHaveBeenCalledWith(expect.objectContaining({
       type: "worktree:base-refresh-blocked",
-      target: "FN-1",
+      target: existingWorktree,
       metadata: { taskId: "FN-1", outcome: "base-reconciliation-required", reconciliationOutcome: "git-dir-unavailable" },
     }));
+    // FNXC:SecretsEnvMaterialization 2026-08-09-03:50: Audit targets identify the affected checkout; only
+    // resolver diagnostics and secret-derived values are redacted from the fixed failure outcome.
     expect(JSON.stringify(git.mock.calls)).not.toContain("secret-derived resolver detail");
-    expect(JSON.stringify(git.mock.calls)).not.toContain(existingWorktree);
   });
 
   it("isolates writer failures", async () => {

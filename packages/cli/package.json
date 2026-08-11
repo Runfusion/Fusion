@@ -84,7 +84,8 @@
     "react": "^19.2.0",
     "react-i18next": "^17.0.8",
     "ws": "^8.18.0",
-    "playwright-core": "^1.60.0"
+    "playwright-core": "^1.60.0",
+    "typescript": "^5.7.0"
   },
   "optionalDependencies": {
     "sherpa-onnx-node": "1.13.4"

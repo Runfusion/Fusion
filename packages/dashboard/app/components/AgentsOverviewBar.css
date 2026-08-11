@@ -1,14 +1,23 @@
+/*
+FNXC:AgentsOverviewScroll 2026-08-10-10:02:
+Overview owns vertical scrolling when Active Agents exceeds the constrained Agents flex shell, so mobile and short viewports can reach every card without restoring document scrolling. The overview itself clips its flex child while the content scrollport contains overscroll before nested card transcripts can hand it to the page.
+*/
 .agents-overview-bar {
   border-bottom: 1px solid var(--border);
   background: var(--surface);
   padding: var(--space-md) var(--space-lg);
   display: flex;
+  flex: 0 1 auto;
   flex-direction: column;
+  min-height: 0;
+  max-height: 70%;
   gap: var(--space-sm);
+  overflow: hidden;
 }
 
 .agents-overview-bar__toggle {
   width: 100%;
+  flex-shrink: 0;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--card);
@@ -47,8 +56,13 @@
 
 .agents-overview-bar__content {
   display: flex;
+  flex: 1 1 auto;
   flex-direction: column;
+  min-height: 0;
   gap: var(--space-md);
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
 }
 
 .agents-overview-bar__metrics {

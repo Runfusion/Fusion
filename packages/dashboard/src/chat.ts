@@ -38,6 +38,8 @@ import {
   summarizeTitle,
   FUSION_RUNTIME_SELF_AWARENESS,
   createLogger,
+  resolvePermanentAgentEffectiveModel,
+  resolvePermanentAgentEffectiveThinkingLevel,
 } from "@fusion/core";
 import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
@@ -1425,33 +1427,7 @@ export class ChatManager {
       */
       getPluginSkills?(): Array<{ pluginId: string; pluginRoot?: string; skill: { skillId?: string; name: string; description?: string; enabled?: boolean; skillFiles?: string[] } }>;
     },
-    private getSettings?: () => Promise<Pick<Settings,
-      | "fallbackProvider"
-      | "fallbackModelId"
-      | "defaultProvider"
-      | "defaultModelId"
-      | "defaultThinkingLevel"
-      | "defaultThinkingLevelOverride"
-      | "executionThinkingLevel"
-      | "executionGlobalThinkingLevel"
-      | "chatRoomRecentVerbatimMessages"
-      | "chatRoomCompactionFetchLimit"
-      | "chatRoomSummaryMaxChars"
-      | "modelPricingOverrides"
-    > | undefined> | Pick<Settings,
-      | "fallbackProvider"
-      | "fallbackModelId"
-      | "defaultProvider"
-      | "defaultModelId"
-      | "defaultThinkingLevel"
-      | "defaultThinkingLevelOverride"
-      | "executionThinkingLevel"
-      | "executionGlobalThinkingLevel"
-      | "chatRoomRecentVerbatimMessages"
-      | "chatRoomCompactionFetchLimit"
-      | "chatRoomSummaryMaxChars"
-      | "modelPricingOverrides"
-    > | undefined,
+    private getSettings?: () => Promise<Partial<Settings> | undefined> | Partial<Settings> | undefined,
     private messageStore?: MessageStore,
     // Scoped task store for the chat's project — enables workflow-authoring
     // tools (fn_workflow_*) and explicit-task document tools. Optional so
@@ -1566,23 +1542,14 @@ export class ChatManager {
     defaultThinkingLevelOverride?: Settings["defaultThinkingLevelOverride"];
     executionThinkingLevel?: Settings["executionThinkingLevel"];
     executionGlobalThinkingLevel?: Settings["executionGlobalThinkingLevel"];
-  }> {
+  } & Partial<Settings>> {
     if (!this.getSettings) {
       return {};
     }
 
     try {
       const settings = await this.getSettings();
-      return {
-        fallbackProvider: settings?.fallbackProvider ?? undefined,
-        fallbackModelId: settings?.fallbackModelId ?? undefined,
-        defaultProvider: settings?.defaultProvider ?? undefined,
-        defaultModelId: settings?.defaultModelId ?? undefined,
-        defaultThinkingLevel: settings?.defaultThinkingLevel ?? undefined,
-        defaultThinkingLevelOverride: settings?.defaultThinkingLevelOverride ?? undefined,
-        executionThinkingLevel: settings?.executionThinkingLevel ?? undefined,
-        executionGlobalThinkingLevel: settings?.executionGlobalThinkingLevel ?? undefined,
-      };
+      return settings ?? {};
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       diagnostics.warn(`Failed to load chat fallback settings: ${message}`);
@@ -2138,13 +2105,19 @@ export class ChatManager {
      * FNXC:GrokCliRouting 2026-07-09-22:10:
      * Room responders with no explicit send-time or responder runtime model still need the configured chat/project default to reach createResolvedAgentSession. Without forwarding a defaultProvider of grok-cli, the no-visible-key auto-derive seam cannot route to the Grok CLI runtime and pi can surface the direct xAI missing-key error.
      */
-    const effectiveModelProvider = input.modelProvider ?? responderRuntimeModel.provider ?? chatModelSettings.defaultProvider;
-    const effectiveModelId = input.modelId ?? responderRuntimeModel.modelId ?? chatModelSettings.defaultModelId;
+    const inheritedResponderModel = resolvePermanentAgentEffectiveModel(input.responder, chatModelSettings);
+    const hasCompleteResponderRuntimeModel = !!responderRuntimeModel.provider && !!responderRuntimeModel.modelId;
+    const effectiveModelProvider = input.modelProvider ?? (hasCompleteResponderRuntimeModel ? responderRuntimeModel.provider : inheritedResponderModel.provider);
+    const effectiveModelId = input.modelId ?? (hasCompleteResponderRuntimeModel ? responderRuntimeModel.modelId : inheritedResponderModel.modelId);
     /*
      * FNXC:Chat-ThinkingLevel 2026-07-12-00:00:
      * Room responders apply the room-level reasoning-effort default through the engine `defaultThinkingLevel` session option. An unset room value inherits the resolved project/global chat default and every direct or ambient responder in the room receives the same effective level.
      */
-    const effectiveThinkingLevel = resolveExecutorThinkingLevel(input.roomThinkingLevel ?? undefined, chatModelSettings);
+    const effectiveThinkingLevel = resolvePermanentAgentEffectiveThinkingLevel(
+      input.responder,
+      chatModelSettings,
+      input.roomThinkingLevel ?? undefined,
+    );
     /*
      * FNXC:ChatModels 2026-07-01-16:42:
      * Room responders should pass configured fallback models even when the room send chose an explicit model. The engine still swaps only for retryable provider/model-selection failures, so an unavailable Sonnet 5 can recover without making ordinary prompt errors ambiguous.
@@ -2567,8 +2540,10 @@ export class ChatManager {
         if (runtimeModel.provider && runtimeModel.modelId) {
           hasExplicitAgentRuntimeModel = true;
         }
-        effectiveModelProvider ??= runtimeModel.provider;
-        effectiveModelId ??= runtimeModel.modelId;
+        const inheritedAgentModel = resolvePermanentAgentEffectiveModel(agent, await this.getChatModelSettings());
+        const hasCompleteRuntimeModel = !!runtimeModel.provider && !!runtimeModel.modelId;
+        effectiveModelProvider ??= hasCompleteRuntimeModel ? runtimeModel.provider : inheritedAgentModel.provider;
+        effectiveModelId ??= hasCompleteRuntimeModel ? runtimeModel.modelId : inheritedAgentModel.modelId;
         failureContextProvider = effectiveModelProvider;
         failureContextModelId = effectiveModelId;
       }
@@ -2688,7 +2663,9 @@ export class ChatManager {
        * FNXC:Chat-ThinkingLevel 2026-07-10-00:00:
        * Model-loop chat sessions apply the per-session thinking level through the engine `defaultThinkingLevel` session option; an empty session value inherits the project/global execution default resolved by resolveExecutorThinkingLevel.
        */
-      const effectiveThinkingLevel = resolveExecutorThinkingLevel(session.thinkingLevel ?? undefined, chatModelSettings);
+      const effectiveThinkingLevel = agent
+        ? resolvePermanentAgentEffectiveThinkingLevel(agent, chatModelSettings, session.thinkingLevel ?? undefined)
+        : resolveExecutorThinkingLevel(session.thinkingLevel ?? undefined, chatModelSettings);
 
       if (agent?.id && !this.messageStore) {
         const warning = {

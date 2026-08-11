@@ -74,6 +74,12 @@ test("engine-core remains an explicit allow-listed merge gate", () => {
   FN-8783 measured the W32 gate after six policy files joined the former
   16-file lane. Exact membership is the coverage contract: an efficiency change
   may reduce scheduling overhead, never silently drop an assertion group.
+
+  FNXC:TestInfrastructure 2026-08-10-09:16:
+  `project-engine.test.ts` is now intentionally excluded by its FN-8811
+  quarantine in the engine config, while `check-prerebase-inert.mjs` joined the
+  blocking static composition. Keep this ledger aligned with those authoritative
+  declarations so unrelated policy drift cannot mask PG-gate membership checks.
   */
   const expectedMembers = [
     '"src/__tests__/legacy-column-literal-census.test.ts"',
@@ -83,7 +89,6 @@ test("engine-core remains an explicit allow-listed merge gate", () => {
     '"src/__tests__/merger-diff-scope.test.ts"',
     '"src/__tests__/merger-landed-files-capture.test.ts"',
     '"src/__tests__/branch-attribution.test.ts"',
-    '"src/__tests__/project-engine.test.ts"',
     '"src/__tests__/merge-single-flight-invariant.test.ts"',
     '"src/__tests__/workflow-step-verdict-parsing.test.ts"',
     '"src/__tests__/u9-merge-region-node-config-authority.test.ts"',
@@ -99,7 +104,7 @@ test("engine-core remains an explicit allow-listed merge gate", () => {
     '"src/__tests__/workflow-node-handlers.test.ts"',
     '"src/__tests__/workflow-policy-ownership-map.test.ts"',
   ];
-  assert.deepEqual(includeEntries, expectedMembers, "engine-core must retain its complete ordered 22-file coverage map");
+  assert.deepEqual(includeEntries, expectedMembers, "engine-core must retain its complete ordered 21-file coverage map");
 });
 
 test("root and package gate scripts still propagate real Vitest failures", () => {
@@ -121,6 +126,7 @@ test("root and package gate scripts still propagate real Vitest failures", () =>
     staticCheck("no-cwd-relative-dashboard-test-reads"),
     staticCheck(["no-", "kill-", "40" + "40"].join("")),
     staticCheck("no-getdatabase"),
+    staticCheck("prerebase-inert"),
     staticCheck("capacity-pool-id"),
     staticCheck("no-node-only-core-imports-in-dashboard"),
     staticCheck("pi-versions-pinned"),
@@ -166,30 +172,23 @@ test("pg gate canaries remain a subset of the enabled non-blocking PG suite", ()
   const gateMembers = core.scripts?.["test:pg-gate"]?.match(/src\/__tests__\/postgres\/[^ ]+\.pg\.test\.ts/g) ?? [];
   /*
   FNXC:TestInfrastructure 2026-07-31-20:30:
-  The third canary is RECORDED here, not approved here — and the distinction is the point.
+  FN-8928 evicted `sync-workflow-ir-is-always-default.pg.test.ts` after FN-8912 observed its
+  setup hook exceed the inherited 15s budget in the loaded PG gate lane. The AGENTS.md gate rule
+  requires eviction rather than a skip; its default-core discovery remains enabled, preserving the
+  regression proof outside the blocking canary list. Local evidence was clean in five loaded-gate,
+  three isolated, and five uncapped default-config PostgreSQL runs, which does not undo the observed
+  gate flake or the required disposition.
 
-  #2759 (`ae4ff9c111`) added `sync-workflow-ir-is-always-default.pg.test.ts` and its gate entry in one
-  commit without updating this list, so the assertion has been red on `main` since. A red policy test
-  protects nothing: while it fails, the NEXT gate admission is invisible too, which is the opposite of
-  what a narrow-canary ledger is for. Restoring it re-arms that protection.
-
-  The admission carries the evidence of value AGENTS.md requires, which is why recording it is not a
-  rubber stamp. It pins that `resolveTaskWorkflowIrSync` returns the DEFAULT IR for every task in
-  production — so a guard written as `resolveLifecycleColumns(store.resolveTaskWorkflowIrSync(id))?.hold`
-  reads as converted, counts as census progress, and is silently wrong for every custom workflow
-  because the non-optional return type hides the substitution. Ten call sites depend on that fact
-  today. A whole class of inert conversions is cheaper to catch at the gate than in review.
-
-  If the gate's owner disagrees with a third canary, the fix is to remove it from
-  `packages/core`'s `test:pg-gate` script and shorten this list again — not to leave the ledger red.
+  A red policy test protects nothing: while it fails, the NEXT gate admission or eviction is invisible,
+  which is the opposite of what a narrow-canary ledger is for. The ledger must never be left red.
   */
   const expectedCanaries = [
     "src/__tests__/postgres/handoff-to-review-atomicity.pg.test.ts",
     "src/__tests__/postgres/task-lifecycle-e2e.pg.test.ts",
-    "src/__tests__/postgres/sync-workflow-ir-is-always-default.pg.test.ts",
   ];
   const formerGateMembers = [
     ...expectedCanaries,
+    "src/__tests__/postgres/sync-workflow-ir-is-always-default.pg.test.ts",
     "src/__tests__/postgres/store-list.pg.test.ts",
     "src/__tests__/postgres/soft-delete-resurrection-FN-5233.pg.test.ts",
     "src/__tests__/postgres/agent-logs-and-monitor.pg.test.ts",
@@ -223,6 +222,6 @@ test("pg gate canaries remain a subset of the enabled non-blocking PG suite", ()
     assert.ok(discoveredPgFiles.has(file), `former PG gate member must remain discovered: ${file}`);
   }
   const removedFromGate = formerGateMembers.filter((file) => !gateMembers.includes(file));
-  assert.equal(removedFromGate.length, 21, "all non-canary former gate members must remain in the non-blocking lane");
+  assert.equal(removedFromGate.length, 22, "all non-canary former gate members must remain in the non-blocking lane");
   assert.ok(removedFromGate.every((file) => discoveredPgFiles.has(file)), "removed PG members must remain discoverable");
 });

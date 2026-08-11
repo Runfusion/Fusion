@@ -18,6 +18,7 @@ import {
   attributeTestFile,
   extractFileDurations,
   buildTimingsSnapshot,
+  pruneMissingTimingFiles,
   writeTimings,
   TIMINGS_SNAPSHOT_RELATIVE,
   TIMINGS_STALENESS_DAYS,
@@ -189,6 +190,76 @@ test("buildTimingsSnapshot omits a zero-test package entirely (no zero entry)", 
     const snap = buildTimingsSnapshot([f], { projectRoot: root, packages: PACKAGES, capturedAt: "2026-06-03T00:00:00.000Z" });
     assert.ok(snap.packages["@fusion/core"]);
     assert.ok(!("@fusion/engine" in snap.packages));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("pruneMissingTimingFiles removes absent paths, empty packages, and preserves capturedAt", () => {
+  const root = tmpRoot();
+  try {
+    const existing = "packages/core/live.test.ts";
+    mkdirSync(path.join(root, "packages/core"), { recursive: true });
+    writeFileSync(path.join(root, existing), "");
+    const input = {
+      capturedAt: "2026-07-24T13:09:41.412Z",
+      packages: {
+        "@fusion/core": { files: { [existing]: 700, "packages/core/missing.test.ts": 400 } },
+        "@fusion/engine": { files: { "packages/engine/missing.test.ts": 900 } },
+      },
+    };
+
+    const { snapshot, removedPaths } = pruneMissingTimingFiles(input, { projectRoot: root });
+    assert.deepEqual(removedPaths, ["packages/core/missing.test.ts", "packages/engine/missing.test.ts"]);
+    assert.equal(snapshot.capturedAt, input.capturedAt);
+    assert.equal(snapshot.packages["@fusion/core"].files[existing], 700);
+    assert.ok(!("@fusion/engine" in snapshot.packages));
+    assert.deepEqual(input.packages["@fusion/core"].files, { [existing]: 700, "packages/core/missing.test.ts": 400 });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("pruneMissingTimingFiles leaves complete snapshots unchanged", () => {
+  const root = tmpRoot();
+  try {
+    const file = "packages/core/live.test.ts";
+    mkdirSync(path.join(root, "packages/core"), { recursive: true });
+    writeFileSync(path.join(root, file), "");
+    const input = { capturedAt: "2026-07-24T13:09:41.412Z", packages: { "@fusion/core": { files: { [file]: 700 } } } };
+
+    const { snapshot, removedPaths } = pruneMissingTimingFiles(input, { projectRoot: root });
+    assert.deepEqual(removedPaths, []);
+    assert.deepEqual(snapshot, input);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("--prune-timings prunes the on-disk snapshot without restamping capturedAt", () => {
+  const root = tmpRoot();
+  try {
+    const live = "packages/core/live.test.ts";
+    mkdirSync(path.join(root, "packages/core"), { recursive: true });
+    writeFileSync(path.join(root, live), "");
+    const snapshotPath = path.join(root, TIMINGS_SNAPSHOT_RELATIVE);
+    mkdirSync(path.dirname(snapshotPath), { recursive: true });
+    writeFileSync(snapshotPath, `${JSON.stringify({
+      capturedAt: "2026-07-24T13:09:41.412Z",
+      packages: {
+        "@fusion/core": { files: { [live]: 700, "packages/core/deleted.test.ts": 400 } },
+      },
+    }, null, 2)}\n`);
+
+    const result = spawnSync(process.execPath, [path.join(REPO_ROOT, "scripts/ci-test-shard.mjs"), "--prune-timings"], {
+      cwd: root,
+      encoding: "utf8",
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /pruned 1 missing timing file/);
+    const pruned = JSON.parse(readFileSync(snapshotPath, "utf8"));
+    assert.equal(pruned.capturedAt, "2026-07-24T13:09:41.412Z");
+    assert.deepEqual(pruned.packages, { "@fusion/core": { files: { [live]: 700 } } });
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

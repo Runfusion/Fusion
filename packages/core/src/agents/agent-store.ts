@@ -2058,7 +2058,14 @@ export class AgentStore extends EventEmitter {
             roles: [definition.role],
             title: definition.title,
             metadata: { builtInWorkflowRole: true, workflowRole: definition.role },
-            runtimeConfig: { enabled: false },
+            /*
+            FNXC:WorkflowAgentRouting 2026-08-10-01:15:
+            Heartbeat OFF and auto-claim OFF is correct for these four: they are invoked BY the workflow engine
+            as stage principals and must not run autonomous loops or claim work on their own. This no longer
+            costs routability — `isWorkflowPrincipalEligible` treats built-in owners as routable structurally,
+            precisely so the heartbeat setting and the routing question stay separate concerns.
+            */
+            runtimeConfig: { enabled: false, autoClaimRelevantTasks: false },
             instructionsText: definition.instructionsText,
             soul: definition.soul,
             bundleConfig: { ...BUILTIN_WORKFLOW_AGENT_BUNDLE_CONFIG, files: [...BUILTIN_WORKFLOW_AGENT_BUNDLE_CONFIG.files] },

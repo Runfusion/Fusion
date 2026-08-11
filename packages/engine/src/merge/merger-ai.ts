@@ -122,6 +122,22 @@ const aiMergeLog = createLogger("merger-ai");
 
 const MAX_CONCURRENT_ADVANCE_RETRIES = 3;
 
+/*
+FNXC:MergeReliability 2026-08-09-23:09:
+A generation that lost `raceMergeWithAbort` can outlive the settle latch while a successor owns
+this task. Its aborted signal is the write-authority fence: suppressing every transient status
+write prevents the orphan from re-stamping `merging` or clearing the successor's live stamp.
+Diagnostics remain unfenced, and this deliberately resolves rather than throws for finally paths.
+*/
+export function writeTransientMergeStatus(
+  store: Pick<TaskStore, "updateTask">,
+  taskId: string,
+  signal: AbortSignal | undefined,
+  status: string | null,
+): Promise<unknown> {
+  return signal?.aborted ? Promise.resolve(undefined) : store.updateTask(taskId, { status }).catch(() => undefined);
+}
+
 async function git(args: string[], cwd: string, opts: { timeout?: number } = {}): Promise<string> {
   const { stdout } = await execFileAsync("git", args, {
     cwd,
@@ -1303,8 +1319,16 @@ export async function runAiMerge(
     await store.logEntry(taskId, message, "AiMerge").catch(() => undefined);
     await store.appendAgentLog(taskId, message, "status", undefined, "merger").catch(() => undefined);
   };
+  /*
+  FNXC:MergeReliability 2026-08-09-22:35:
+  `raceMergeWithAbort` rejects only the race; a body can outlive the bounded settle latch while a
+  successor generation owns this task. Its per-claim signal remains aborted, so suppressing this
+  status-only write prevents it from re-stamping `merging` (issue #3395) or clearing a successor's
+  live stamp. Keep diagnostics unfenced and make this a no-op, not a throw, because finally paths
+  must preserve the original failure.
+  */
   const setStatus = (status: string | null): Promise<unknown> =>
-    store.updateTask(taskId, { status }).catch(() => undefined);
+    writeTransientMergeStatus(store, taskId, options.signal, status);
 
   // Branch must exist to merge it.
   if (!(await gitOk(["rev-parse", "--verify", `refs/heads/${branch}`], projectRootDir))) {
@@ -1847,8 +1871,14 @@ export async function landWorkspaceTask(
     await store.logEntry(taskId, message, "AiMerge").catch(() => undefined);
     await store.appendAgentLog(taskId, message, "status", undefined, "merger").catch(() => undefined);
   };
+  /*
+  FNXC:MergeReliability 2026-08-09-22:35:
+  Workspace landing has the same per-generation abort fence as single-repo merges. An orphan that
+  outlives the settle latch must neither re-stamp a cleared status nor let its finally clear a live
+  successor's status; logging remains deliberately unfenced for orphan diagnostics.
+  */
   const setStatus = (status: string | null): Promise<unknown> =>
-    store.updateTask(taskId, { status }).catch(() => undefined);
+    writeTransientMergeStatus(store, taskId, options.signal, status);
 
   const maxPasses = Math.max(0, Math.trunc(settings.merger?.maxReviewPasses ?? 3));
   const mergeAgent = deps.mergeAgent ?? makeMutatingAgent(store, settings, taskId, options, audit, buildMergeSystemPrompt(settings.agentPrompts));

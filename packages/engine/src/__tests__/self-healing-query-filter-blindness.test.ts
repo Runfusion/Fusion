@@ -55,8 +55,14 @@ FNXC:WorkflowResolvedColumns 2026-07-30-21:40 (batch fold):
 `isBranchAheadOfBase` is a STATIC named import that shells out to git, so it is mocked rather than spied —
 the ESM binding is resolved before a spy could replace it.
 */
+/*
+FNXC:WorkflowResolvedColumns 2026-08-10-10:32:
+A `vi.mock` specifier for a moved module does not fail at declaration time: its lazy factory never
+runs, local `vi.fn()` seams remain unwired, and assertions misleadingly report that a sweep never ran.
+Keep these paths aligned with self-healing's imports so this renamed-lane ratchet observes its seams.
+*/
 const isBranchAheadOfBase = vi.fn(async () => ({ aheadCount: 0 }));
-vi.mock("../self-healing-branch.js", async (importOriginal) => {
+vi.mock("../healing/self-healing-branch.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../healing/self-healing-branch.js")>();
   return { ...actual, isBranchAheadOfBase: (...args: unknown[]) => isBranchAheadOfBase(...args as []) };
 });
@@ -74,12 +80,12 @@ vi.mock("../logger.js", async (importOriginal) => {
 });
 
 const classifyForeignOnlyContamination = vi.fn(async () => ({ kind: "clean" as const }));
-vi.mock("../branch-conflicts.js", async (importOriginal) => {
+vi.mock("../execution/branch-conflicts.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../execution/branch-conflicts.js")>();
   return { ...actual, classifyForeignOnlyContamination: (...args: unknown[]) => classifyForeignOnlyContamination(...args as []) };
 });
 
-vi.mock("../run-audit.js", async (importOriginal) => {
+vi.mock("../util/run-audit.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../util/run-audit.js")>();
   return {
     ...actual,
@@ -117,6 +123,14 @@ function productionFaithfulStore(tasks: Task[]) {
       tasksById.set(id, next);
       return next;
     }),
+    transitionQueuedEpisode: vi.fn(async () => ({ appended: true })),
+    /*
+    FNXC:WorkflowResolvedColumns 2026-08-10-10:32:
+    `surfaceInReviewStalls` reads the merge queue before reporting a stalled renamed-lane card.
+    Mirror its Promise<MergeQueueEntry[]> seam so a missing fake method cannot abort the sweep and
+    leave a superficially green assertion vacuous.
+    */
+    peekMergeQueue: vi.fn(async () => []),
     getTaskWorkflowSelectionAsync: vi.fn(async () => ({ workflowId: "self-healing-lifecycle", stepIds: [] })),
     getTaskWorkflowSelection: vi.fn(() => ({ workflowId: "self-healing-lifecycle", stepIds: [] })),
     getWorkflowDefinition: vi.fn(async (id: string) => (id === "self-healing-lifecycle" ? { ir: RENAMED_IR } : undefined)),
@@ -135,7 +149,13 @@ function productionFaithfulStore(tasks: Task[]) {
     recordRunAuditEvent: vi.fn(async () => undefined),
     getCompletionHandoffAcceptedMarker: vi.fn(async () => null),
   }) as unknown as TaskStore & EventEmitter;
-  return { store, listTasks, updateTask: store.updateTask as unknown as ReturnType<typeof vi.fn> };
+  return {
+    store,
+    listTasks,
+    updateTask: store.updateTask as unknown as ReturnType<typeof vi.fn>,
+    transitionQueuedEpisode: store.transitionQueuedEpisode as unknown as ReturnType<typeof vi.fn>,
+    peekMergeQueue: store.peekMergeQueue as unknown as ReturnType<typeof vi.fn>,
+  };
 }
 
 function shippedCard(): Task {
@@ -851,7 +871,10 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
     } as unknown as Task;
     const { store, updateTask } = productionFaithfulStore([stuck]);
 
-    await new SelfHealingManager(store, { rootDir: "/repo" }).recoverStaleMergingStatus();
+    await new SelfHealingManager(store, {
+      rootDir: "/repo",
+      getActiveMergeTaskId: () => null,
+    }).recoverStaleMergingStatus();
 
     expect(updateTask).toHaveBeenCalledWith("FN-STALESTAMP", expect.objectContaining({ status: null }));
   });
@@ -1283,15 +1306,16 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
     expect(clearingWrites).toHaveLength(1);
   });
   /*
-  FNXC:WorkflowResolvedColumns 2026-07-30-21:40 (#2883 review — "overbroad dependency satisfaction"):
+  FNXC:WorkflowResolvedColumns 2026-08-10-10:32:
   A dependency is satisfied when it reaches a TERMINAL lane or a REVIEW lane, and review here means
   `mergeBlocker ∪ humanReview` — NOT merge orchestration. My first version unioned all three review
   roles, which counts a merge-orchestration-only column as satisfied and clears `blockedBy` while the
   dependency is still being merged.
 
   The fix is to call `resolveDependencySatisfactionColumns`, the answer the scheduler already uses for
-  this exact question, rather than to re-derive it. This case pins the narrowed semantics so a future
-  "simplification" back to the three-role union fails here.
+  this exact question, rather than to re-derive it. FNXC:QueuedTaskLogging 2026-08-04-18:32 moved this
+  hold branch from `updateTask` to `transitionQueuedEpisode`, so the ratchet pins the current durable
+  transition seam rather than a retired write path.
 
   REVERT CHECK, measured: widening the satisfaction set to include `mergeOrchestration` fails this — the
   dependent is released while its dependency is still mid-merge.
@@ -1324,7 +1348,7 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
       blockedBy: "FN-DONE",
       dependencies: ["FN-MIDMERGE"],
     } as unknown as Task;
-    const { store, updateTask } = productionFaithfulStore([finished, midMerge, waiting]);
+    const { store, transitionQueuedEpisode } = productionFaithfulStore([finished, midMerge, waiting]);
     Object.assign(store, {
       listWorkflowDefinitions: vi.fn(async () => [{ ir: splitReviewIr }]),
       getWorkflowDefinition: vi.fn(async (id: string) => (id === "self-healing-lifecycle" ? { ir: splitReviewIr } : undefined)),
@@ -1333,7 +1357,10 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
     await new SelfHealingManager(store, { rootDir: "/repo" }).reconcileCompletedTask("FN-DONE");
 
     // Its dependency is still merging, so the card is RE-POINTED at it rather than released.
-    expect(updateTask).toHaveBeenCalledWith("FN-WAITING", expect.objectContaining({ blockedBy: "FN-MIDMERGE" }));
+    expect(transitionQueuedEpisode).toHaveBeenCalledWith(
+      "FN-WAITING",
+      expect.objectContaining({ blockedBy: "FN-MIDMERGE" }),
+    );
   });
   /*
   FNXC:WorkflowResolvedColumns 2026-07-30-21:40 (the query-filter class, sixteenth sweep):

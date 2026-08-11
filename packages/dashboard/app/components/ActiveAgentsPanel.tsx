@@ -10,17 +10,20 @@ import { resolveHeartbeatIntervalMs } from "../utils/heartbeatIntervals";
 import { AgentTaskBadge } from "./AgentTaskBadge";
 import { RuntimeFallbackBadge } from "./RuntimeFallbackBadge";
 import { getCanonicalStepNumber } from "../lib/step-display";
+import { useAgentActivity } from "../hooks/useAgentActivity";
+import type { AgentActivityEvent } from "../api";
 
 interface LiveAgentCardProps {
   agent: Agent;
   projectId?: string;
   onSelect?: (agentId: string) => void;
   onOpenTaskLogs?: (taskId: string) => void;
+  activity?: AgentActivityEvent;
 }
 
 const TASK_STATUS_POLL_MS = 5000;
 
-function LiveAgentCard({ agent, projectId, onSelect, onOpenTaskLogs }: LiveAgentCardProps) {
+function LiveAgentCard({ agent, projectId, onSelect, onOpenTaskLogs, activity }: LiveAgentCardProps) {
   const { t } = useTranslation("app");
   const { entries, isConnected } = useLiveTranscript(agent.taskId, projectId);
   const [task, setTask] = useState<TaskDetail | null>(null);
@@ -61,6 +64,7 @@ function LiveAgentCard({ agent, projectId, onSelect, onOpenTaskLogs }: LiveAgent
       setTask(null);
       return;
     }
+    if (!isInViewport) return;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const load = async () => {
@@ -80,7 +84,7 @@ function LiveAgentCard({ agent, projectId, onSelect, onOpenTaskLogs }: LiveAgent
       cancelled = true;
       if (timer) clearTimeout(timer);
     };
-  }, [agent.taskId, projectId]);
+  }, [agent.taskId, isInViewport, projectId]);
 
   const elapsed = agent.lastHeartbeatAt
     ? Math.floor((Date.now() - new Date(agent.lastHeartbeatAt).getTime()) / 1000)
@@ -101,10 +105,15 @@ function LiveAgentCard({ agent, projectId, onSelect, onOpenTaskLogs }: LiveAgent
     return t("agents.nextHeartbeat", "Next heartbeat in {{elapsed}}", { elapsed: formatElapsed(deltaSec) });
   })();
 
-  // FNXC:TaskStepNumbering 2026-07-05-00:00: use the canonical (0-based, PROMPT-numbered) step
-  // number so this indicator agrees with the Activity tab for the same underlying step (FN-7612).
-  const { stepNumber, totalSteps } = getCanonicalStepNumber(task);
+  /*
+  FNXC:LiveAgentCardActivity 2026-08-09-21:45:
+  Activity events supply live prose only. Step numbers and completed-step names remain derived from the viewport-gated task poll through getCanonicalStepNumber, so this card agrees with Activity without refetching on every push.
+  */
+  const { stepNumber, totalSteps, hasSteps } = getCanonicalStepNumber(task);
   const currentStep = task?.steps?.[stepNumber];
+  const lastCompletedStep = hasSteps
+    ? task?.steps?.slice(0, stepNumber).map((step, index) => ({ step, index })).filter(({ step }) => step.status === "done" || step.status === "skipped").at(-1)
+    : undefined;
   const executorModel = task?.modelId;
 
   const handleSelect = () => {
@@ -152,6 +161,12 @@ function LiveAgentCard({ agent, projectId, onSelect, onOpenTaskLogs }: LiveAgent
           <RuntimeFallbackBadge taskId={agent.taskId} isInViewport={isInViewport} projectId={projectId} />
         )}
       </div>
+      {(activity?.summary || lastCompletedStep) && (
+        <div className="live-agent-card-activity">
+          {activity?.summary && <div className="live-agent-card-now-doing">{activity.summary}</div>}
+          {lastCompletedStep && <div className="live-agent-card-last-step">Last completed Step {lastCompletedStep.index}: {lastCompletedStep.step.name}</div>}
+        </div>
+      )}
       <div className="live-agent-card-transcript">
         {entries.length === 0 ? (
           <div className="live-agent-card-empty">
@@ -234,6 +249,7 @@ interface ActiveAgentsPanelProps {
 
 export function ActiveAgentsPanel({ agents, projectId, onAgentSelect, onOpenTaskLogs, className = "" }: ActiveAgentsPanelProps) {
   const { t } = useTranslation("app");
+  const activitySnapshot = useAgentActivity(projectId);
   // Dedupe by id defensively. The store should return unique agents but a race
   // between the initial fetch and an SSE refresh can briefly surface the same
   // agent twice — without this guard React floods the console with duplicate
@@ -250,7 +266,7 @@ export function ActiveAgentsPanel({ agents, projectId, onAgentSelect, onOpenTask
       </div>
       <div className="active-agents-grid">
         {uniqueAgents.map(agent => (
-          <LiveAgentCard key={agent.id} agent={agent} projectId={projectId} onSelect={onAgentSelect} onOpenTaskLogs={onOpenTaskLogs} />
+          <LiveAgentCard key={agent.id} agent={agent} projectId={projectId} onSelect={onAgentSelect} onOpenTaskLogs={onOpenTaskLogs} activity={activitySnapshot.activityByAgentId.get(agent.id)} />
         ))}
       </div>
     </div>

@@ -1385,3 +1385,7 @@ For configuration details used by these commands, see [Settings Reference](./set
   collision mode defaults to `skip` and `suffix` creates deterministically named copies.
 
 Agent create/update payloads accept `roles` (a non-empty role-tag array) and optional `runtimeConfig.maxWorkflowSessions`. The legacy singular `role` input remains accepted for migration compatibility.
+
+## Knowledge graph
+
+`fn knowledge-graph build [--force] [--dir <path>] [--json]` refreshes the deterministic, committable structure graph. `--force` bypasses incremental reuse; `--dir` overrides the project `knowledgeGraphDir`; `--json` prints build statistics as JSON.

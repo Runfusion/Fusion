@@ -219,7 +219,8 @@ pgDescribe("U13 taskstore-lifecycle (PostgreSQL)", () => {
       const childIds = await findLiveLineageChildren(tx, "KB-PARENT");
       expect(childIds).toEqual(["KB-CHILD"]);
       const cleared = await removeLineageReferences(tx, "KB-PARENT", childIds, nowIso);
-      expect(cleared).toBe(1);
+      expect(cleared.clearedChildIds).toEqual(["KB-CHILD"]);
+      expect(cleared.evidenceUnavailableChildIds).toEqual(["KB-CHILD"]);
     });
 
     // After: gate passes (no live children).

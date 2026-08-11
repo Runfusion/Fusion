@@ -67,6 +67,15 @@ const DELETED_SYMBOLS: Array<{ symbol: string; why: string }> = [
   { symbol: "graphCompletionInterceptors", why: "shared per-task mutable state replaced by an explicit graphCompletion callback" },
   // Out-of-graph Plan Review gate (R4) — the graph owns Plan Review exclusively.
   { symbol: "runPlanReviewBeforeExecution", why: "triage and the graph raced on Plan Review; the graph owns it" },
+  /*
+  FNXC:PlanReviewReplan 2026-08-10-18:32:
+  The deleted triage gate's replan ceiling. It outlived the gate as an unread constant whose companion
+  column (`planReviewReplanCount`) was persisted and reset but never incremented or compared — a
+  ceiling that enforced nothing while reading as live safety. The graph re-owns the cap in
+  `requestPreMergeOptionalStepFix` -> `parkPlanReviewReplanCapExhausted`, budgeted off persisted
+  workflow-step results. Re-adding this name would recreate the second, silent authority.
+  */
+  { symbol: "PLAN_REVIEW_GATE_REPLAN_CAP", why: "an unread ceiling for a deleted gate; the graph's parkPlanReviewReplanCapExhausted owns the cap" },
   // In-session step reviewer (U10 pt2) — a second review authority inside the implementation session.
   { symbol: "createReviewStepTool", why: "review gates are graph nodes; an in-session reviewer duplicated Plan Review" },
   { symbol: "fn_review_step", why: "the deleted in-session review tool's name must not be re-injected" },

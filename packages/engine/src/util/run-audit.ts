@@ -102,7 +102,14 @@ export type GitMutationType =
    * distinguish a mechanical C1 advance, a typed block/conflict, compensated persistence failure,
    * and stateless C0-to-C1 reconciliation without recording command output or branch prose.
    */
+  /*
+   * FNXC:WorktreeBaseRefresh 2026-08-09-23:49:
+   * `-skipped` is the ordinary declined-refresh outcome (dirty tree, own-commit conflict, unresolvable base):
+   * the checkout kept its existing base and execution continued. `-blocked` is now reserved for the rare
+   * unproven tree that genuinely refused execution, so the two are no longer conflated in operator triage.
+   */
   | "worktree:base-refreshed"
+  | "worktree:base-refresh-skipped"
   | "worktree:base-refresh-blocked"
   | "worktree:base-refresh-conflict"
   | "worktree:base-refresh-persistence-failed-compensated"
@@ -510,6 +517,13 @@ export type DatabaseMutationType =
   | "mergeQueue:stale-lease-on-column-exit"
   | "mergeQueue:auto-cleanup-stale-row"
   | "task:auto-recover-already-merged"
+  /*
+  FNXC:TaskWedgeNotifications 2026-08-10-19:12:
+  Generic terminal recovery records only durable identifiers and bounded outcomes.
+  The apply token is a fencing capability, so audit rows must never persist it or task error prose.
+  */
+  | "task:auto-recover-terminal-failure"
+  | "task:auto-recover-terminal-failure-exhausted"
   | "task:auto-recover-finalize-already-on-main"
   /** Metadata: { taskId, previousColumn, targetColumn, commitSha, status, blockedBy, overlapBlockedBy, reason } */
   | "task:auto-merge-finalize-column-mismatch-reconciled"

@@ -960,11 +960,14 @@ describe("Workflow Steps Execution", () => {
     // Code Review budget). A hard-failure exhaustion passes the bounded
     // MAX_WORKFLOW_STEP_RETRIES budget (currently 3), so the injected
     // PROMPT.md note shows "3/3 (0 remaining)".
+    // FNXC:ReviewSeverityGate 2026-08-10-17:33: a trailing `findings` arg now carries structured
+    // review findings into the injection; a prompt-mode hard failure has none, so it is `undefined`.
     expect(injectSpy).toHaveBeenCalledWith(
       mutableTask,
       feedback,
       stepName,
       { attempt: 3, max: 3 },
+      undefined,
     );
 
     // The scheduleWorkflowRerun stub above never registers the 15 s

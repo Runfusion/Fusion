@@ -20,6 +20,7 @@ import {
   DEFAULT_STALE_MERGING_STATUS_MIN_AGE_MS,
   isMergeActiveStatus,
   isStaleMergeActiveStatus,
+  shouldClearOrphanedMergeStamp,
 } from "../merge/merge-active-status.js";
 
 const NOW = Date.parse("2026-07-16T00:00:00.000Z");
@@ -48,6 +49,26 @@ describe("isMergeActiveStatus", () => {
     for (const s of ["failed", "stuck-killed", "needs-replan", null, undefined, ""]) {
       expect(isMergeActiveStatus(s as string | null | undefined)).toBe(false);
     }
+  });
+});
+
+describe("shouldClearOrphanedMergeStamp", () => {
+  it("clears every unconfirmed merge-active status", () => {
+    for (const status of ACTIVE_MERGE_STATUSES) {
+      expect(shouldClearOrphanedMergeStamp(task({ status }) as never)).toBe(true);
+    }
+  });
+
+  it("preserves absent, terminal, and confirmed stamps", () => {
+    for (const status of [null, undefined, "failed", "awaiting-approval", "awaiting-user-review"]) {
+      expect(shouldClearOrphanedMergeStamp(task({ status: status as string | null }) as never)).toBe(false);
+    }
+    expect(
+      shouldClearOrphanedMergeStamp({
+        ...task(),
+        mergeDetails: { mergeConfirmed: true },
+      } as never),
+    ).toBe(false);
   });
 });
 

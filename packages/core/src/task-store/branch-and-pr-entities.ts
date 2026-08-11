@@ -620,10 +620,36 @@ export async function updateTaskImpl(store: TaskStore,
     updates: Parameters<TaskStore["updateTask"]>[1],
     runContext?: RunMutationContext,
   ): Promise<Task> {
-  if (updates.dependencies !== undefined) {
-    return store.withPlanningLifecycleLock(id, () => updateTaskWithTaskLockImpl(store, id, updates, runContext));
+  const hasAuthoritativePlanMutation = updates.prompt !== undefined
+    || updates.dependencies !== undefined
+    || updates.missionId !== undefined
+    || updates.sliceId !== undefined;
+  const hasDriftEvidenceMutation = hasAuthoritativePlanMutation || updates.modifiedFiles !== undefined;
+  const write = () => updateTaskWithTaskLockImpl(store, id, updates, runContext);
+  if (hasAuthoritativePlanMutation) {
+    return store.withPlanningLifecycleLock(id, async () => {
+      const updated = await write();
+      /*
+      FNXC:SpecLock 2026-08-09-20:34:
+      Reconcile only after updateTaskWithTaskLockImpl releases its non-reentrant task lock.
+      Prompt, dependency, and lineage writes share this planning fence so their inactive/active
+      evidence reaches one comparable report before a subsequent approval or execution handoff.
+      */
+      if (store.isBackendMode()) {
+        await store.reconcileSpecDriftWhilePlanningLocked(updated).catch((error: unknown) => {
+          storeLog.warn(`[spec-lock] deferred drift reconciliation for ${updated.id}: ${error instanceof Error ? error.message : String(error)}`);
+        });
+      }
+      return updated;
+    });
   }
-  return updateTaskWithTaskLockImpl(store, id, updates, runContext);
+  const updated = await write();
+  if (hasDriftEvidenceMutation && store.isBackendMode()) {
+    await store.reconcileSpecDrift(updated).catch((error: unknown) => {
+      storeLog.warn(`[spec-lock] deferred drift reconciliation for ${updated.id}: ${error instanceof Error ? error.message : String(error)}`);
+    });
+  }
+  return updated;
 }
 
 async function updateTaskWithTaskLockImpl(store: TaskStore,

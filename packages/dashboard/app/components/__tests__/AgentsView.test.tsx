@@ -327,6 +327,31 @@ describe("AgentsView", () => {
       expect(getCardModelRow("agent-auto").textContent).toMatch(/Model:\s*Auto/);
     });
 
+    it("renders the inherited project model for a model-less built-in role agent", async () => {
+      mockFetchAgents.mockResolvedValueOnce([{
+        ...mockAgents[0],
+        id: "agent-built-in-merger",
+        name: "Workflow Merger",
+        role: "merger",
+        roles: ["merger"],
+        metadata: { builtInWorkflowRole: true, workflowRole: "merger" },
+        runtimeConfig: { enabled: false },
+      }]);
+      mockFetchAgentStats.mockResolvedValueOnce({ total: 1, byState: {}, byRole: {} });
+      mockFetchSettings.mockResolvedValueOnce({
+        defaultProviderOverride: "anthropic",
+        defaultModelIdOverride: "claude-project",
+      });
+
+      const { container } = renderView(<AgentsView addToast={mockAddToast} />);
+      await waitFor(() => {
+        expect(screen.getByText("Workflow Merger")).toBeInTheDocument();
+      });
+      await waitFor(() => {
+        expect(container.querySelector(".agent-model-runtime")?.textContent).toMatch(/anthropic\/claude-project/);
+      });
+    });
+
     it("renders cross-pane overview above split layout", async () => {
       const { container } = renderView(<AgentsView addToast={mockAddToast} />);
 

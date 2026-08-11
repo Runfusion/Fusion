@@ -170,6 +170,18 @@ single small PR and it removes the whole class. It is not built yet because it i
 cross-unit and needs adopters; if you are about to hand-roll a seventh store fake,
 build it instead and link it here.
 
+## FN-8949: complete self-healing fake call surfaces
+
+`self-healing-query-filter-blindness.test.ts` required both
+`transitionQueuedEpisode: vi.fn(async () => ({ appended: true }))` and
+`peekMergeQueue: vi.fn(async () => [])`. The first tracks the current queued
+`blockedBy` transition seam; the second prevents `surfaceInReviewStalls` from
+throwing before its renamed-lane assertion. The merge-queue-peek addition was
+**kept**: it changed no per-case verdict while removing the missing-method path.
+
+See `dead-vi-mock-specifiers-fail-silently.md` for the related case where a mock
+factory is unwired rather than a store fake being incomplete.
+
 ## Related
 
 - `docs/testing.md` — testing lanes and the taxonomy for trim-vs-keep.

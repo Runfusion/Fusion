@@ -1,7 +1,8 @@
 import {
-  canAgentReceiveImplementationTasks,
   classifyWorkflowAgentNode,
+  hasWorkflowRoleCapability,
   isEphemeralAgent,
+  isWorkflowPrincipalEligible,
   resolveColumnAgentBinding,
   type Agent,
   type TaskDetail,
@@ -20,7 +21,19 @@ export interface WorkflowPrincipalRoute {
 
 export type WorkflowPrincipalRouteResult =
   | { status: "unclassified" }
-  | { status: "held"; role: WorkflowAgentRole; reason: "named-principal-unavailable" | "role-pool-exhausted" }
+  | {
+      status: "held";
+      role: WorkflowAgentRole;
+      reason: "named-principal-unavailable" | "role-pool-exhausted";
+      /**
+       * FNXC:WorkflowAgentRouting 2026-08-10-07:50:
+       * Set when a persisted fence names a principal that can NEVER satisfy this node — the agent is gone,
+       * lost the role, or had its authority edited away. The fence is stale, not waiting: the caller must
+       * re-route from scratch instead of holding. A capable-but-busy principal never sets this, so the
+       * "never silently replace a valid named principal" guarantee is unchanged.
+       */
+      staleFence?: true;
+    }
   | { status: "routed"; route: WorkflowPrincipalRoute };
 
 /**
@@ -91,21 +104,36 @@ export function validateFencedWorkflowPrincipal(input: {
   nodeInstanceId?: string;
   activeSessions?: ReadonlyMap<string, number>;
 }): WorkflowPrincipalRouteResult {
+  /*
+   * FNXC:WorkflowAgentRouting 2026-08-10-07:50:
+   * Every branch below proves the fence no longer describes reality — the node changed role, ownership moved,
+   * or the review override was edited away. None of those resolve by waiting, so they are marked `staleFence`
+   * and the caller re-routes. Holding on them is what turned an ordinary reassignment into a permanent wedge.
+   */
+  const staleFence = { status: "held", role: input.role, reason: "named-principal-unavailable", staleFence: true } as const;
   const classifiedRole = classifyWorkflowAgentNode(input.node);
-  if (classifiedRole !== input.role) {
-    return { status: "held", role: input.role, reason: "named-principal-unavailable" };
-  }
+  if (classifiedRole !== input.role) return staleFence;
   if (input.authority === "task-assignee" && (
     input.role !== "executor" || input.task.assignedAgentId !== input.principalAgentId
   )) {
-    return { status: "held", role: input.role, reason: "named-principal-unavailable" };
+    return staleFence;
   }
-  if (input.authority === "review-node-override" && (
-    input.nodeInstanceId
-      ? !isCurrentReviewerNodeOverride(input.ir, input.nodeInstanceId, input.principalAgentId)
-      : input.node.reviewerAgentId !== input.principalAgentId
-  )) {
-    return { status: "held", role: input.role, reason: "named-principal-unavailable" };
+  /*
+   * FNXC:WorkflowAgentRouting 2026-08-10-08:35:
+   * "The override was edited away" and "I cannot resolve this node instance at all" are NOT the same fact, and
+   * `isCurrentReviewerNodeOverride` returns false for both. Marking the second one stale would fail OPEN: an IR
+   * that failed to load, or an instance id this run cannot resolve, would discard a REAL reviewer fence and let
+   * the role pool take a review the operator explicitly named someone for. Only a resolved node whose
+   * `reviewerAgentId` genuinely differs is stale; an unresolvable instance holds closed and waits for a human.
+   */
+  if (input.authority === "review-node-override") {
+    const instance = input.nodeInstanceId
+      ? findWorkflowNodeInstance(input.ir, input.nodeInstanceId)
+      : input.node;
+    if (!instance || classifyWorkflowAgentNode(instance) !== "reviewer") {
+      return { status: "held", role: input.role, reason: "named-principal-unavailable" };
+    }
+    if (instance.reviewerAgentId !== input.principalAgentId) return staleFence;
   }
   /*
    * FNXC:WorkflowAgentRouting 2026-08-07-04:45:
@@ -113,13 +141,20 @@ export function validateFencedWorkflowPrincipal(input: {
    * binding that was removed or redirected; otherwise an old column principal
    * could keep acting after an operator changed workflow routing.
    */
-  if (input.authority === "column-binding" && (!input.ir || resolveColumnAgentBinding(input.ir, input.node.id)?.agentId !== input.principalAgentId)) {
-    return { status: "held", role: input.role, reason: "named-principal-unavailable" };
+  if (input.authority === "column-binding") {
+    // FNXC:WorkflowAgentRouting 2026-08-10-08:35: same fail-closed split as the review override above — an
+    // absent IR is "cannot resolve", not "binding removed", and must never discard a live operator binding.
+    if (!input.ir) return { status: "held", role: input.role, reason: "named-principal-unavailable" };
+    if (resolveColumnAgentBinding(input.ir, input.node.id)?.agentId !== input.principalAgentId) return staleFence;
   }
   const agent = input.agents.find((candidate) => candidate.id === input.principalAgentId);
+  // A vanished or role-less principal is a dead fence; a capable one that is merely busy is a real wait.
+  if (!agent || !hasWorkflowRoleCapability(agent, input.role, {
+    allowEngineerAsExecutor: input.authority === "task-assignee",
+  })) {
+    return staleFence;
+  }
   return available(agent, input.activeSessions ?? new Map())
-    && agent.roles.includes(input.role)
-    && (input.role !== "executor" || canAgentReceiveImplementationTasks(agent))
     ? { status: "routed", route: { agent, role: input.role, authority: input.authority } }
     : { status: "held", role: input.role, reason: "named-principal-unavailable" };
 }
@@ -133,13 +168,10 @@ function available(agent: Agent | undefined, activeSessions: ReadonlyMap<string,
    * never satisfy a role-pool route, even when their singular compatibility role
    * matches. A named transient identity is likewise unavailable and holds closed.
    */
-  if (
-    !agent
-    || isEphemeralAgent(agent)
-    || agent.runtimeConfig?.enabled === false
-    || agent.state === "paused"
-    || agent.state === "error"
-  ) return false;
+  // FNXC:WorkflowAgentRouting 2026-08-10-01:15: the static half is shared with provisioning
+  // (isWorkflowPrincipalEligible) so "what provisioning must produce" and "what routing accepts"
+  // cannot drift apart again — that drift is what left every built-in owner unroutable.
+  if (!agent || isEphemeralAgent(agent) || !isWorkflowPrincipalEligible(agent)) return false;
   const max = agent.runtimeConfig?.maxWorkflowSessions;
   return typeof max !== "number" || activeSessions.get(agent.id) === undefined || activeSessions.get(agent.id)! < max;
 }
@@ -180,9 +212,20 @@ export function routeWorkflowPrincipal(input: {
     // FNXC:IntakeOwnership 2026-08-09-18:15: A persisted executor owner is
     // revalidated at dispatch. Runtime disablement and assignment policy changes
     // revoke implementation authority instead of letting a stale owner run work.
+    /*
+     * FNXC:WorkflowAgentRouting 2026-08-10-07:50:
+     * `undefined` means "not authority for this node" and precedence CONTINUES to the column binding and then
+     * the role pool. A named identity that lacks the role can never run this node, so holding on it waits
+     * forever — that is the deadlock that stranded FN-8869/FN-8928/FN-8845 for hours behind idle pool agents,
+     * each because an operator legitimately assigned the card to an ENGINEER-role permanent agent (which
+     * `canAgentTakeImplementationTaskForExplicitRouting` permits) and the executor node then took that owner as
+     * `task-assignee` authority. Availability is still fail-closed below: a principal that HAS the role but is
+     * paused, disabled, or at session capacity holds, and is never silently replaced by a pool member.
+     */
+    if (!agent || !hasWorkflowRoleCapability(agent, role, { allowEngineerAsExecutor: authority === "task-assignee" })) {
+      return undefined;
+    }
     return available(agent, activeSessions)
-      && agent.roles.includes(role)
-      && (role !== "executor" || canAgentReceiveImplementationTasks(agent))
       ? { status: "routed", route: { agent, role, authority } }
       : { status: "held", role, reason: "named-principal-unavailable" };
   };
@@ -204,7 +247,7 @@ export function routeWorkflowPrincipal(input: {
   if (bound) return bound;
   const pool = input.agents
     .filter((agent) => !input.excludedPoolAgentIds?.has(agent.id)
-      && agent.roles.includes(role) && available(agent, activeSessions))
+      && hasWorkflowRoleCapability(agent, role) && available(agent, activeSessions))
     .sort((left, right) => (activeSessions.get(left.id) ?? 0) - (activeSessions.get(right.id) ?? 0)
       || left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id));
   const agent = pool[0];

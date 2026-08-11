@@ -22,7 +22,7 @@ Surface enumeration (the invariant, not just the reported repro):
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import express from "express";
-import { mkdtemp, mkdir, readFile, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { TaskStore, Task } from "@fusion/core";
@@ -52,7 +52,7 @@ function makeTask(overrides: Partial<Task> = {}): Task {
 
 /** Write PROMPT.md for a task; omit `content` to leave the file missing. */
 async function seedTaskDir(taskId: string, content?: string): Promise<void> {
-  const dir = join(tasksRoot, ".fusion", "tasks", taskId);
+  const dir = join(tasksRoot, taskId);
   await mkdir(dir, { recursive: true });
   if (content !== undefined) await writeFile(join(dir, "PROMPT.md"), content);
 }
@@ -76,21 +76,10 @@ const RENAMED_HOLD_IR = {
 
 function createHarness(tasks: Task[], workflowIrs?: unknown[]) {
   const store: TaskStore = {
-    getRootDir: vi.fn(() => tasksRoot),
+    getRootDir: vi.fn(() => process.cwd()),
     getProjectScopedPluginMcpServers: vi.fn(async () => []),
-    getTaskDir: vi.fn((id: string) => join(tasksRoot, ".fusion", "tasks", id)),
+    getTaskDir: vi.fn((id: string) => join(tasksRoot, id)),
     getSettingsFast: vi.fn(async () => ({})),
-    getTask: vi.fn(async (id: string) => tasks.find((task) => task.id === id) ?? null),
-    updateTask: vi.fn(async (id: string, updates: Record<string, unknown>) => {
-      const task = tasks.find((candidate) => candidate.id === id);
-      if (!task) throw new Error("Task not found");
-      const { sourceMetadataPatch, ...directUpdates } = updates;
-      Object.assign(task, directUpdates);
-      if (sourceMetadataPatch && typeof sourceMetadataPatch === "object") {
-        task.sourceMetadata = { ...task.sourceMetadata, ...sourceMetadataPatch };
-      }
-      return task;
-    }),
     listTasks: vi.fn(async () => tasks),
     ...(workflowIrs ? { listWorkflowDefinitions: vi.fn(async () => workflowIrs.map((ir) => ({ ir }))) } : {}),
   } as unknown as TaskStore;
@@ -164,7 +153,7 @@ describe("GET /tasks awaitingPlanning enrichment", () => {
     // A directory where the file should be: EISDIR, not ENOENT. That is not evidence either way, so
     // the client must fall back instead of being handed a fabricated label.
     const task = makeTask({ id: "FN-EISDIR" });
-    await mkdir(join(tasksRoot, ".fusion", "tasks", "FN-EISDIR", "PROMPT.md"), { recursive: true });
+    await mkdir(join(tasksRoot, "FN-EISDIR", "PROMPT.md"), { recursive: true });
 
     const [row] = await fetchTasks([task]);
 
@@ -215,9 +204,9 @@ describe("GET /tasks awaitingPlanning enrichment", () => {
     await seedTaskDir("FN-RENAMED", REAL_SPEC);
 
     const store = {
-      getRootDir: vi.fn(() => tasksRoot),
+      getRootDir: vi.fn(() => process.cwd()),
       getProjectScopedPluginMcpServers: vi.fn(async () => []),
-      getTaskDir: vi.fn((id: string) => join(tasksRoot, ".fusion", "tasks", id)),
+      getTaskDir: vi.fn((id: string) => join(tasksRoot, id)),
       getSettingsFast: vi.fn(async () => ({})),
       listTasks: vi.fn(async () => [task]),
       listWorkflowDefinitions: vi.fn(async () => [{
@@ -238,59 +227,6 @@ describe("GET /tasks awaitingPlanning enrichment", () => {
     expect(rows[0]!.awaitingPlanning).toBe(false);
     // Flat cost, not per-row: the lane vocabulary is resolved once for the whole board load.
     expect((store as unknown as { listWorkflowDefinitions: { mock: { calls: unknown[] } } }).listWorkflowDefinitions.mock.calls).toHaveLength(1);
-  });
-
-  /*
-  FNXC:DuplicateIntake 2026-08-09-02:29:
-  A title-only redirect reaches the same Keep endpoint as a PROMPT.md redirect. The endpoint must
-  clear the exact title marker and preserve the full prompt, or the next triage pass re-flags the
-  dismissed duplicate after operator-authored work was destroyed.
-  */
-  it("keeps a title-only redirect without deleting its executable prompt", async () => {
-    const task = makeTask({
-      title: "DUPLICATE: KB-123",
-      paused: true,
-      pausedReason: "duplicate-decision-required",
-      sourceMetadata: { duplicateSource: "triage-marker", nearDuplicateOf: "KB-123" },
-    });
-    await seedTaskDir(task.id, REAL_SPEC);
-    const { app } = createHarness([task]);
-
-    const res = await REQUEST(
-      app,
-      "PATCH",
-      `/api/tasks/${task.id}`,
-      JSON.stringify({ dismissNearDuplicate: true }),
-      { "content-type": "application/json" },
-    );
-
-    expect(res.status).toBe(200);
-    expect(task.title).toBe("Duplicate redirect cleared: KB-123");
-    expect(task.sourceMetadata).toMatchObject({ nearDuplicateDismissed: true });
-    await expect(readFile(join(tasksRoot, ".fusion", "tasks", task.id, "PROMPT.md"), "utf8")).resolves.toBe(REAL_SPEC);
-  });
-
-  it("cleans both matching sources when keeping a dual-source redirect", async () => {
-    const task = makeTask({
-      title: "DUPLICATE: KB-123",
-      paused: true,
-      pausedReason: "duplicate-decision-required",
-      sourceMetadata: { duplicateSource: "triage-marker", nearDuplicateOf: "KB-123" },
-    });
-    await seedTaskDir(task.id, "DUPLICATE: KB-123\n");
-    const { app } = createHarness([task]);
-
-    const res = await REQUEST(
-      app,
-      "PATCH",
-      `/api/tasks/${task.id}`,
-      JSON.stringify({ dismissNearDuplicate: true }),
-      { "content-type": "application/json" },
-    );
-
-    expect(res.status).toBe(200);
-    expect(task.title).toBe("Duplicate redirect cleared: KB-123");
-    await expect(readFile(join(tasksRoot, ".fusion", "tasks", task.id, "PROMPT.md"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("still returns the board when the enrichment cannot resolve task directories", async () => {

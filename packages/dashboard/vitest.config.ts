@@ -351,11 +351,6 @@ roughly 300-second stall. Its paired ledger entry is removed in the same commit;
 */
 const quarantinedDashboardTests: string[] = [
   /*
-  FNXC:DashboardTestQuarantine 2026-08-06-15:08:
-  FN-8816 observed PlanningModeModal's direct task-handoff test fail a second time only under a loaded planning-flow file, after its first-sighting register entry. Quarantine the entire file with its ledger row rather than weaken user-flow assertions or add timing retries; delete it at the ratchet deadline unless a root-cause rescue restores stable coverage.
-  */
-  "app/components/__tests__/PlanningModeModal.planning-flow.test.tsx",
-  /*
   FNXC:DashboardTestQuarantine 2026-07-17-16:50:
   FN-8245 re-admits all three UI files with their ledger rows removed in lockstep.
   QuickEntryBox restores focus from its resolved submit path while isolated jsdom

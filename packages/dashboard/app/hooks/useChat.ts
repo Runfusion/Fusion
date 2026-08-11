@@ -165,7 +165,7 @@ export interface UseChatReturn {
   sendMessage: (
     content: string,
     attachments?: File[],
-    callbacks?: { onDelivered?: () => void; onFailed?: () => void },
+    callbacks?: { onAccepted?: () => void; onDelivered?: () => void; onFailed?: () => void },
   ) => void;
   /**
    * FNXC:ChatMessageEdit 2026-07-07-09:00:
@@ -1392,7 +1392,7 @@ export function useChat(
   const sendMessageRef = useRef<(
     content: string,
     attachments?: File[],
-    callbacks?: { onDelivered?: () => void; onFailed?: () => void },
+    callbacks?: { onAccepted?: () => void; onDelivered?: () => void; onFailed?: () => void },
   ) => void>(() => {
     // no-op until sendMessage is defined
   });
@@ -1439,7 +1439,7 @@ export function useChat(
     (
       content: string,
       attachments?: File[],
-      callbacks?: { onDelivered?: () => void; onFailed?: () => void },
+      callbacks?: { onAccepted?: () => void; onDelivered?: () => void; onFailed?: () => void },
     ) => {
       if (!activeSession) {
         callbacks?.onFailed?.();
@@ -1626,7 +1626,10 @@ export function useChat(
         },
       });
 
-      streamRef.current = streamChatResponse(activeSession.id, content, handlers, attachments, projectId);
+      streamRef.current = streamChatResponse(activeSession.id, content, {
+        ...handlers,
+        onAccepted: () => callbacks?.onAccepted?.(),
+      }, attachments, projectId);
     },
     [activeSession, projectId, refreshSessions, addToast, attachIfGenerating, reconnectSessionSilently, flushPendingMessage],
   );

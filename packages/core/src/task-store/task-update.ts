@@ -28,7 +28,7 @@ import {isTaskTerminalNodeIdAsync} from "../workflows/workflow-ir-resolver.js";
 import {extractTaskIdTokens, normalizeTitleForTaskId} from "../tasks/task-title-id-drift.js";
 import {buildBootstrapPrompt} from "../mesh/mesh-task-replication.js";
 import {validateFileScopeInPromptContent} from "../task-store/file-scope.js";
-import {__setTaskActivityLogLimitsForTesting, isBootstrapPromptStub, rewriteHeadingLine, rewriteMissionSection} from "../task-store/comments.js";
+import {__setTaskActivityLogLimitsForTesting, isBootstrapPromptStub, rewriteHeadingLine} from "../task-store/comments.js";
 import {applyOriginalDescription} from "../tasks/original-description-policy.js";
 import {normalizeTaskReviewState} from "../task-store/review-state.js";
 import {hasOwnDeclaredSymbols, normalizeDeclaredSymbols, extractDeclaredSymbolsFromPrompt, resolveTaskSymbolsForTask} from "../tasks/task-symbol-resolution.js";
@@ -229,13 +229,38 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
       let respecifyFromColumn: string | undefined;
       let respecifyMoveLanes: TaskMoveLanes | undefined;
       let previousDependencies: string[] | undefined;
+      let dependenciesChanged = false;
       let planningInvalidatedAt: string | undefined;
+      const priorMissionId = task.missionId;
+      const priorSliceId = task.sliceId;
+      /*
+      FNXC:SpecLock 2026-08-09-20:34:
+      Mission and slice links are locked lineage, not delivery-only labels. Detect a real link
+      change before the shared invalidation block retires approval and Plan Review evidence in the
+      same task-row write; retained locks stay immutable for the ensuing drift report and re-lock.
+      */
+      if ((updates.missionId !== undefined || updates.sliceId !== undefined)
+        && ((updates.missionId !== undefined && (updates.missionId ?? undefined) !== priorMissionId)
+          || (updates.sliceId !== undefined && (updates.sliceId ?? undefined) !== priorSliceId))) {
+        planningInvalidatedAt = new Date().toISOString();
+      }
       if (updates.dependencies !== undefined) {
         previousDependencies = (task.dependencies ?? []).map((dependency) => dependency.trim()).filter(Boolean);
         const oldDeps = new Set(previousDependencies);
         const normalizedDependencies = updates.dependencies.map((dependency) => dependency.trim()).filter(Boolean);
         const hasNewDeps = normalizedDependencies.some((d) => !oldDeps.has(d));
+        dependenciesChanged = normalizedDependencies.length !== previousDependencies.length
+          || normalizedDependencies.some((dependency) => !oldDeps.has(dependency));
         task.dependencies = normalizedDependencies;
+        /*
+        FNXC:SpecLock 2026-08-09-20:34:
+        Every dependency-set mutation changes the approved plan contract, including removals and
+        same-length replacements that do not enter the hold-lane re-specification branch below.
+        Invalidate the durable approval projection before writing the row; history remains intact.
+        */
+        if (dependenciesChanged) {
+          planningInvalidatedAt = new Date().toISOString();
+        }
 
         /*
         FNXC:WorkflowLifecycleColumns 2026-07-31-02:40 (batch-core feed):
@@ -297,7 +322,7 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
           graph-owned durable re-entry signal: it preserves prompt authority and
           makes the interrupted planner's stale finalizer harmless.
           */
-          planningInvalidatedAt = new Date().toISOString();
+          planningInvalidatedAt ??= new Date().toISOString();
           const depLogEntry: TaskLogEntry = {
             timestamp: new Date().toISOString(),
             action: relocating
@@ -1072,10 +1097,17 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
         }
         await mkdir(dir, { recursive: true });
         await writeFile(join(dir, "PROMPT.md"), updates.prompt);
+        /*
+        FNXC:SpecLock 2026-08-09-12:34:
+        An explicit full-spec write is an authoritative plan revision, not cosmetic title sync.
+        Capture comparable evidence and retire approval before publishing the task update so a
+        rewritten plan cannot inherit release authorization from its predecessor.
+        */
+        task.approvedPlanFingerprint = undefined;
       }
 
       // When runContext is provided, record audit event atomically with task mutation
-      const planningInvalidation = movedToTriage
+      const planningInvalidation = dependenciesChanged
         ? {expectedCurrentDependencies: previousDependencies ?? []}
         : undefined;
       if (runContext) {
@@ -1090,9 +1122,21 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
             updatedFields: Object.keys(updates).filter((k) => (updates as Record<string, unknown>)[k] !== undefined),
             ...(titleNormalized ? { titleNormalized: true } : {}),
           },
-        }, planningInvalidation);
+        }, planningInvalidation, updates.prompt);
       } else {
-        await store.atomicWriteTaskJsonWithAudit(dir, task, undefined, planningInvalidation);
+        await store.atomicWriteTaskJsonWithAudit(dir, task, undefined, planningInvalidation, updates.prompt);
+      }
+
+      if (store.isBackendMode() && updates.prompt !== undefined) {
+        /*
+        FNXC:SpecLock 2026-08-09-19:01:
+        The task row clears approval only after PROMPT.md reaches disk. Append the same persisted
+        prompt as current-plan evidence while the caller's planning lifecycle lock is still held;
+        reconciliation then has a comparable revision instead of reporting an inactive lock with
+        missing evidence. This runs after the authoritative row write so a failed file write never
+        fabricates a plan revision.
+        */
+        await store.captureCurrentPlanEvidenceWhilePlanningLocked(task.id, updates.prompt, Date.now(), task);
       }
 
       /*
@@ -1164,10 +1208,14 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
                 next = rewriteHeadingLine(next, heading);
               }
               if (updates.description !== undefined) {
-                // FNXC:OriginalDescriptionInPrompt 2026-07-14-23:35:
-                // Keep ## Mission and ## Original Description in sync with task.description
-                // on real specs so operator edits stay visible at the top of PROMPT.md.
-                next = rewriteMissionSection(next, task.description);
+                /*
+                FNXC:SpecLockMissionAuthority 2026-08-09-20:04:
+                `## Mission` is locked structural evidence, not a task-description mirror. A
+                description-only edit is deliberately cosmetic; rewriting Mission here would mutate
+                an active accepted plan outside the authoritative prompt-write transaction and leave
+                approval briefly claiming a plan that no longer exists. Original Description remains
+                non-contract context and can still mirror the task description.
+                */
                 next = applyOriginalDescription(next, task.description ?? "");
               }
               if (next !== existingPrompt) {

@@ -22,7 +22,7 @@ import {
   isUnplannedSeedPrompt,
   isTaskAwaitingPlanning,
   getTaskDuplicateLineage,
-  resolveExplicitDuplicateMarker,
+  parseExplicitDuplicateMarker,
   resolveAgentPrompt,
   buildPlanningDuplicatePolicyInstruction,
   builtinSeamPrompt,
@@ -104,23 +104,26 @@ function isPlanningLifecycleLockTransportError(error: unknown): error is Error {
 }
 
 /*
-FNXC:PlanReviewReplan 2026-07-13-00:00:
-The triage pre-execution Plan Review gate (runPlanReviewBeforeExecution) routes a REVISE
-verdict back to `needs-replan`, which re-plans and re-reviews. Without a ceiling, a planner
-and reviewer that persistently disagree loop plan → Plan Review REVISE → replan forever
-(observed on TC-002), and in `planApprovalMode: require-all` there is no human escape because
-the task never reaches `awaiting-approval`. Bound the consecutive REVISE replans with a
-cap (default 8, mirroring the executor graph's PLAN_REVIEW_REPLAN_HARD_CAP backstop): after
-this many replans the gate escalates the task to `awaiting-approval` for a human decision
-instead of replanning again. The counter (Task.planReviewReplanCount) resets when the gate passes.
+FNXC:PlanReviewReplan 2026-08-10-18:32 (TOMBSTONE — do not re-add):
+`PLAN_REVIEW_GATE_REPLAN_CAP = 8` is DELETED. It belonged to the out-of-graph triage Plan Review gate
+(`runPlanReviewBeforeExecution`, itself tombstoned in U10/R4), and it did not survive that deletion as
+working code: nothing read it, and its companion counter `Task.planReviewReplanCount` was persisted,
+serialized and reset but never incremented and never compared. A constant and a column that look like
+a live safety ceiling while enforcing nothing are worse than no ceiling at all — they answer "is this
+loop bounded?" with a confident yes.
 
-FNXC:PlanReviewReplan 2026-07-15-11:09:
-Raise the automatic REVISE replan ceiling from 3 to 8 so planner/reviewer pairs get more
-room to converge before escalation. When the cap is hit, the dashboard must still make the
-approval reason explicit (awaitingApprovalReason `plan-review-replan-cap`) so operators know
-this is a non-converging Plan Review loop, not a routine require-all plan gate.
+The capability was NOT lost, only re-owned. U3 moved the cap-park into the graph, where
+`requestPreMergeOptionalStepFix` enforces it against a per-step budget derived from the persisted
+workflow-step results (`countPlanReviewRevisionAttempts`) rather than a task column:
+  - an explicit finite budget (`planReviewMaxRevisions`, node `maxRevisions`) parks at `budget.max`;
+  - the unbounded default is backstopped at `PLAN_REVIEW_FEEDBACK_HISTORY_LIMIT`;
+both call `parkPlanReviewReplanCapExhausted`, which parks `awaiting-approval` with
+`awaitingApprovalReason: "plan-review-replan-cap"` — the same reason string the dashboard badge,
+detail banner and notifications already key on. That is the live owner; look there, not here.
+
+Ratcheted by `packages/engine/src/__tests__/legacy-tombstones.test.ts`, which strips comments before
+searching, so this note survives while the constant must not.
 */
-export const PLAN_REVIEW_GATE_REPLAN_CAP = 8;
 
 export function inlineTaskListFallback(
   lines: string[],
@@ -252,7 +255,7 @@ import {
 import { createRunAuditor, generateSyntheticRunId } from "./util/run-audit.js";
 import { resolveAndEmitGoalContext } from "./goals/goal-injection-diagnostics.js";
 import { accumulateSessionTokenUsage } from "./execution/session-token-usage.js";
-import { finalizePlanningSegment, startPlanningSegment } from "@fusion/core";
+import { DEFAULT_PLANNING_TIMEOUT_MS, finalizePlanningSegment, startPlanningSegment } from "@fusion/core";
 import { collectPlanReviewFeedbackHistory, isPlanReviewRevisionLog } from "./plan-review-feedback-history.js";
 import type { AgentActionGateContext } from "./agents/agent-action-gate.js";
 import { buildAgentGatedActionSummary } from "./agents/permanent-agent-gating.js";
@@ -1460,7 +1463,7 @@ export class TriageProcessor {
     to flag/delete/clear in finalizeApprovedTask. Requiring step headings for those markers
     withheld recovery forever (empty steps) so the marker path never ran.
     */
-    const isExplicitDuplicateRedirect = Boolean(resolveExplicitDuplicateMarker(written, task.title).marker);
+    const isExplicitDuplicateRedirect = Boolean(parseExplicitDuplicateMarker(written));
     const workflow = await resolveWorkflowIrForTask(this.store, task.id).catch(() => undefined);
     const requiresPromptImplementationSteps = workflow?.nodes.some((node) =>
       node.kind === "parse-steps"
@@ -2468,45 +2471,6 @@ export class TriageProcessor {
     }
   }
 
-  /**
-   * Resolves an exact prompt/title redirect before this task claims any planning capacity.
-   *
-   * FNXC:DuplicateIntake 2026-08-09-01:31:
-   * FN-8840 requires title redirects to take the same duplicate-decision route as prompt
-   * redirects before `specifyTask()` can start a planner session. Reading the prompt here is
-   * required only to detect a conflicting exact marker; a missing or unreadable prompt leaves
-   * a title-only redirect actionable and never lets it consume an implementation session.
-   */
-  private async finalizeExplicitDuplicateBeforePlanning(task: Task): Promise<boolean> {
-    try {
-      const liveTask = await this.store.getTask(task.id).catch(() => null);
-      if (!liveTask || liveTask.paused === true || liveTask.userPaused === true) return false;
-
-      const promptPath = join(this.rootDir, ".fusion", "tasks", liveTask.id, "PROMPT.md");
-      const written = await readFile(promptPath, "utf-8").catch(() => "");
-      const duplicateResolution = resolveExplicitDuplicateMarker(written, liveTask.title);
-      if (!duplicateResolution.marker && !duplicateResolution.conflict) return false;
-
-      const settings = await mergeEffectiveSettings(this.store, liveTask, await this.store.getSettings());
-      if (duplicateResolution.conflict) {
-        await this.finalizeApprovedTask(liveTask, written, settings);
-        return true;
-      }
-
-      return await this.tryFinalizeExplicitDuplicateMarker(liveTask, written, settings);
-    } catch (error: unknown) {
-      /*
-      FNXC:DuplicateIntake 2026-08-09-01:49:
-      Duplicate detection is an admission optimization, not a second source of planning failure.
-      If settings or lifecycle finalization is unavailable, retain the existing fail-open planner
-      path so a pre-held coordinator slot cannot leak before `specifyTask()` reaches its cleanup.
-      */
-      const message = error instanceof Error ? error.message : String(error);
-      planLog.warn(`${task.id}: pre-planning duplicate resolution failed open: ${message}`);
-      return false;
-    }
-  }
-
   async specifyTask(task: Task): Promise<void> {
     /*
     FNXC:TriageStuckKill 2026-07-18-21:05:
@@ -2522,12 +2486,6 @@ export class TriageProcessor {
       // FNXC:ConcurrencyAdmission 2026-08-03-09:00:
       // A coordinator winner owns a real pre-held host slot. A duplicate/stale
       // planner handoff must return it instead of pinning max concurrency.
-      if (dropPreHeldExecutorSlot(task.id)) this.options.semaphore?.release();
-      this.coordinatorAdmittedTaskIds.delete(task.id);
-      return;
-    }
-
-    if (await this.finalizeExplicitDuplicateBeforePlanning(task)) {
       if (dropPreHeldExecutorSlot(task.id)) this.options.semaphore?.release();
       this.coordinatorAdmittedTaskIds.delete(task.id);
       return;
@@ -3336,11 +3294,55 @@ export class TriageProcessor {
               planReviewFeedbackHistory,
             },
           );
-          await promptWithFallback(
-            session,
-            agentPrompt,
-            imageContents.length > 0 ? { images: imageContents } : undefined,
-          );
+          /*
+          FNXC:TriagePlanningTimeout 2026-08-10-18:32:
+          Hard ceiling on the planning turn. Fusion previously set NO timeout here, and the only
+          inherited one is the provider SDK's `APIConnectionTimeoutError` (300s) which caps
+          TIME-TO-FIRST-BYTE only — it is cleared as soon as response headers arrive, after which the
+          stream is uncapped. `configureHttpDispatcher` (which would install undici body/headers idle
+          timeouts) is only called from pi's own CLI entrypoints, never in the in-process engine, so
+          there was no idle timeout either. Measured consequence: single planning attempts ran to 126
+          minutes, and failed-attempt durations showed a smooth 1-126 min spread with no clustering —
+          the signature of nothing enforcing a bound.
+
+          The stuck detector does not cover this: `recordActivity` fires on every streamed token, so a
+          session that emits anything between provider stalls never trips its inactivity threshold.
+
+          Default is deliberately GENEROUS (90 min) rather than tight. Successful planning work items
+          measured over 7 days: p50 12.7 min, p90 39.5 min, p99 105.7 min. A tight ceiling would abort
+          legitimate long plans and pay for the restart, which is the churn this work is removing. The
+          ceiling exists to make a HUNG turn terminate at all, not to discipline slow ones. A timeout
+          here is recoverable, not fatal: it surfaces as a transient error and consumes one attempt of
+          the bounded planning budget below.
+          */
+          const planningTimeoutMs = Math.max(60_000, settings.planningTimeoutMs ?? DEFAULT_PLANNING_TIMEOUT_MS);
+          let planningTimeoutHandle: ReturnType<typeof setTimeout> | undefined;
+          const planningTimeoutPromise = new Promise<"timeout">((resolveTimeout) => {
+            planningTimeoutHandle = setTimeout(() => resolveTimeout("timeout"), planningTimeoutMs);
+          });
+          try {
+            const planningOutcome = await Promise.race([
+              promptWithFallback(
+                session,
+                agentPrompt,
+                imageContents.length > 0 ? { images: imageContents } : undefined,
+              ).then(() => "completed" as const),
+              planningTimeoutPromise,
+            ]);
+            if (planningOutcome === "timeout") {
+              planLog.warn(`${task.id}: planning turn exceeded ${planningTimeoutMs}ms — disposing session`);
+              await this.store.logEntry(
+                task.id,
+                `Planning turn timed out after ${Math.round(planningTimeoutMs / 60_000)} min — aborting session`,
+              ).catch(() => undefined);
+              try { session.dispose(); } catch { /* best-effort */ }
+              // Phrased to match the provider-timeout transient pattern so this routes into the
+              // bounded planning retry budget instead of the unclassified-failure park.
+              throw new Error(`Planning request timed out after ${planningTimeoutMs}ms`);
+            }
+          } finally {
+            if (planningTimeoutHandle) clearTimeout(planningTimeoutHandle);
+          }
           /*
           FNXC:TriagePlanningRetry 2026-08-03-01:01:
           Plan Review needs a finite runtime-owned admission-close signal, not a global async-hooks
@@ -3852,12 +3854,31 @@ export class TriageProcessor {
           this.options.onSpecifyError?.(task, err instanceof Error ? err : new Error(errorMessage));
           return;
         }
-        // For interrupted recovery states, restore the original triage-held status;
-        // otherwise clear to null so the next poll can re-pick ordinary tasks up.
-        const restoreStatus = this.restoreStatusAfterInterruptedTriageWork(task);
-        await this.updatePlanningStateIfStillCurrent(task, { status: restoreStatus }).catch((restoreErr: unknown) => {
-          const msg = restoreErr instanceof Error ? restoreErr.message : String(restoreErr);
-          planLog.warn(`${task.id}: failed to restore status to '${restoreStatus}' after planning error: ${msg}`);
+        /*
+        FNXC:TriagePlanningRetry 2026-08-10-18:32:
+        UNCLASSIFIED planning failures are bounded. This branch is the catch-all for every error the
+        classifiers above did not recognize, and it used to restore the card's claimable status and
+        write NOTHING else — no counter, no `nextRecoveryAt`, no park. Triage rediscovery therefore
+        re-admitted the card on the very next poll, forever, and `replaceActiveTaskWorkflowContinuation`
+        replaced the terminal work item with a fresh one carrying no attempt count, so nothing anywhere
+        recorded that the task had already failed N times.
+
+        Measured cost of that hole: `"Request timed out."` (unrecognized until the companion fix to
+        `transient-error-patterns.ts`) produced 48 failures across 10 tasks in 30 hours with zero
+        backoff — FN-8950 burned 8 consecutive attempts over ~8 hours and never reached implementation.
+        Classifying that ONE string fixes that ONE symptom; this budget is what makes the NEXT
+        unrecognized error string fail safely instead of looping for a day.
+
+        Deliberately reuses the `recoveryRetryCount`/`nextRecoveryAt` pair (and its 60s/120s/300s
+        jittered backoff) that the transient branch above already uses, rather than adding a parallel
+        counter: the budget answers "this task keeps failing to plan", which is true regardless of
+        which classifier recognized the error, and sharing it avoids a schema migration for a counter
+        that means the same thing. On exhaustion the card is parked `failed` for a human — unlike a
+        transient exhaustion, an unrecognized error has no evidence it is retryable at all.
+        */
+        const genericDecision = computeRecoveryDecision({
+          recoveryRetryCount: task.recoveryRetryCount,
+          nextRecoveryAt: task.nextRecoveryAt,
         });
         planLog.error(`✗ ${task.id} planning failed:`, errorDetail);
         if (errorStack) {
@@ -3866,6 +3887,54 @@ export class TriageProcessor {
             planLog.warn(`${task.id}: failed to persist specification-failure stack trace: ${msg}`);
           });
         }
+
+        if (genericDecision.shouldRetry) {
+          const attempt = genericDecision.nextState.recoveryRetryCount;
+          const delay = formatDelay(genericDecision.delayMs);
+          planLog.warn(`⚡ ${task.id} planning failed — retry ${attempt}/${MAX_RECOVERY_RETRIES} in ${delay}: ${errorMessage}`);
+          await this.store.logEntry(
+            task.id,
+            `Specification failed (retry ${attempt}/${MAX_RECOVERY_RETRIES} in ${delay}): ${errorMessage}`,
+          ).catch((logErr: unknown) => {
+            const msg = logErr instanceof Error ? logErr.message : String(logErr);
+            planLog.warn(`${task.id}: failed to log planning-failure retry entry: ${msg}`);
+          });
+          // For interrupted recovery states, restore the original triage-held status;
+          // otherwise clear to null so the next poll can re-pick ordinary tasks up.
+          const restoreStatus = this.restoreStatusAfterInterruptedTriageWork(task);
+          await this.updatePlanningStateIfStillCurrent(task, {
+            status: restoreStatus,
+            recoveryRetryCount: genericDecision.nextState.recoveryRetryCount,
+            nextRecoveryAt: genericDecision.nextState.nextRecoveryAt,
+          }).catch((restoreErr: unknown) => {
+            const msg = restoreErr instanceof Error ? restoreErr.message : String(restoreErr);
+            planLog.warn(`${task.id}: failed to restore status to '${restoreStatus}' after planning error: ${msg}`);
+          });
+          this.options.onSpecifyError?.(task, err instanceof Error ? err : new Error(errorMessage));
+          return;
+        }
+
+        /*
+        Budget exhausted — park for a human. Mirrors the in-file `maxStuckKills` park
+        (status `failed` + a prefixed error a human can grep) so the card stops being re-picked:
+        `status: "failed"` is what suppresses triage rediscovery.
+        */
+        const exhaustedMessage = `PLANNING_FAILED_EXHAUSTED: specification failed ${MAX_RECOVERY_RETRIES} times — last error: ${errorMessage}`;
+        planLog.error(`✗ ${task.id} planning retries exhausted (${MAX_RECOVERY_RETRIES} attempts) — parking failed: ${errorMessage}`);
+        await this.store.logEntry(task.id, exhaustedMessage).catch((logErr: unknown) => {
+          const msg = logErr instanceof Error ? logErr.message : String(logErr);
+          planLog.warn(`${task.id}: failed to log planning-retries-exhausted entry: ${msg}`);
+        });
+        await this.updatePlanningStateIfStillCurrent(task, {
+          status: "failed",
+          error: exhaustedMessage,
+          recoveryRetryCount: null,
+          nextRecoveryAt: null,
+        }).catch((restoreErr: unknown) => {
+          const msg = restoreErr instanceof Error ? restoreErr.message : String(restoreErr);
+          planLog.warn(`${task.id}: failed to park task after planning retries exhausted: ${msg}`);
+        });
+        await this.backfillBlankTitleAfterTerminalTriageFailure(task);
         this.options.onSpecifyError?.(task, err instanceof Error ? err : new Error(errorMessage));
       }
     } finally {
@@ -4385,12 +4454,12 @@ export class TriageProcessor {
     report: PlanningHandoffReport = { outcome: "parked" },
   ): Promise<boolean> {
     try {
-      const duplicateResolution = resolveExplicitDuplicateMarker(written, task.title);
-      if (!duplicateResolution.marker || duplicateResolution.conflict) {
+      const explicitDuplicateMarker = parseExplicitDuplicateMarker(written);
+      if (!explicitDuplicateMarker) {
         return false;
       }
 
-      const canonicalId = duplicateResolution.marker.canonicalId;
+      const canonicalId = explicitDuplicateMarker.canonicalId;
       // A transient lookup failure must still fail open; only a genuine missing row is inactive.
       const canonicalTask = await this.store.getTask(canonicalId);
       if (canonicalTask?.id.toLowerCase() === task.id.toLowerCase()) {
@@ -4580,23 +4649,10 @@ export class TriageProcessor {
     task: Task,
     canonicalId: string,
     feedback: string,
-    options?: { exhausted?: boolean; priorClearCount?: number; source?: "prompt" | "title" },
+    options?: { exhausted?: boolean; priorClearCount?: number },
   ): Promise<boolean> {
     if (!await this.runIfStillPlanningUnderTaskLock(task, async () => {
-      /*
-      FNXC:DuplicateIntake 2026-08-09-02:14:
-      A title-only redirect can coexist with a complete operator-authored PROMPT.md. Keep that
-      plan when clearing the title source; deleting it would turn an acknowledged redirect into
-      avoidable user-work loss. A prompt source (including same-ID dual sources) still clears the
-      marker-only file, and the matching title is cleared with it.
-      */
-      if (options?.source !== "title") {
-        await rm(join(this.rootDir, ".fusion", "tasks", task.id, "PROMPT.md"), { force: true });
-      }
-      // Same-ID dual-source redirects are one decision; clear both exact sources together.
-      if (resolveExplicitDuplicateMarker(null, task.title).marker?.canonicalId === canonicalId) {
-        await this.store.updateTask(task.id, { title: `Duplicate redirect cleared: ${canonicalId}` });
-      }
+      await rm(join(this.rootDir, ".fusion", "tasks", task.id, "PROMPT.md"), { force: true });
     })) return false;
 
     const priorClearCount = options?.priorClearCount ?? 0;
@@ -4641,21 +4697,11 @@ export class TriageProcessor {
     report: PlanningHandoffReport = { outcome: "parked" },
   ): Promise<void> {
     let written = writtenInput;
-    const duplicateResolution = resolveExplicitDuplicateMarker(written, task.title);
-    if (duplicateResolution.conflict) {
-      /*
-      FNXC:DuplicateIntake 2026-08-09-01:02:
-      Conflicting exact title and prompt redirects must never select a canonical implicitly.
-      Keep the card in planning for operator correction rather than admitting it or inventing a
-      duplicate decision.
-      */
-      await this.updatePlanningStateIfStillCurrent(task, { status: "needs-replan", error: null });
-      await this.store.logEntry(task.id, "Duplicate redirect sources conflict", "PROMPT.md and task title name different canonical tasks; correct one exact redirect before planning.");
-      return;
-    }
-    // A title-only redirect is authoritative even when there is no prompt file to recover.
-    if (!duplicateResolution.marker && await this.recoverMissingPromptBeforeRelease(task)) return;
-    const explicitDuplicateMarker = duplicateResolution.marker;
+    // FNXC:WorkflowArtifacts 2026-07-21-17:00: Confirm the authoritative plan
+    // exists before persisting any dependencies, steps, metadata, or review state
+    // derived from it; a missing plan must leave no partially accepted projection.
+    if (await this.recoverMissingPromptBeforeRelease(task)) return;
+    const explicitDuplicateMarker = parseExplicitDuplicateMarker(written);
 
     /*
      * FNXC:DuplicateIntake 2026-07-16-13:00:
@@ -4669,7 +4715,6 @@ export class TriageProcessor {
         return { customFields };
       });
       const canonicalId = explicitDuplicateMarker.canonicalId;
-      const duplicateSource = duplicateResolution.source ?? "prompt";
       const canonicalTask = await this.store.getTask(canonicalId).catch(() => null);
       const canClearInactiveMarker = task.userPaused !== true
         && (task.paused !== true || task.pausedReason === "duplicate-decision-required")
@@ -4703,7 +4748,7 @@ export class TriageProcessor {
             task,
             canonicalId,
             buildInactiveDuplicateClearFeedback(canonicalId),
-            { exhausted: false, priorClearCount, source: duplicateSource },
+            { exhausted: false, priorClearCount },
           );
         }
         return;
@@ -4724,7 +4769,7 @@ export class TriageProcessor {
             task,
             canonicalId,
             buildKeepDuplicateClearFeedback(canonicalId),
-            { exhausted: priorClearCount >= 1, priorClearCount, source: duplicateSource },
+            { exhausted: priorClearCount >= 1, priorClearCount },
           );
         }
         return;
@@ -4761,7 +4806,6 @@ export class TriageProcessor {
         task,
         canonicalId,
         buildKeepDuplicateClearFeedback(canonicalId),
-        { source: duplicateSource },
       );
       return;
     }
@@ -4880,6 +4924,17 @@ export class TriageProcessor {
       author: "triage",
       logger: { warn: (m: string) => planLog.warn(m) },
     });
+
+    /*
+    FNXC:SpecLock 2026-08-09-07:36:
+    Planning finalization writes PROMPT.md without going through updateTask({ prompt }), so it must
+    capture the same canonical evidence before any approval path can release the task. This remains
+    before the release boundary: a database/parser failure leaves the planning hold intact.
+    */
+    const supportsSpecLock = (this.store as unknown as { isBackendMode?: () => boolean }).isBackendMode?.() === true;
+    if (supportsSpecLock) {
+      await this.store.captureCurrentPlanEvidence(task.id, written);
+    }
 
     let taskIntentSignature: ReturnType<typeof extractIntentSignature> = {
       routePaths: [],
@@ -5190,6 +5245,24 @@ export class TriageProcessor {
         planLog.log(`✓ ${task.id} specified and awaiting manual approval`);
         return;
       }
+    }
+
+    /*
+    FNXC:SpecLock 2026-08-09-07:36:
+    Auto-approved finalization is an accepted-plan path too. Append/reuse its immutable lock before
+    the scheduler-visible handoff, then persist the matching fingerprint; a crash between these
+    writes leaves an inert historical lock rather than granting mutable prompt content approval.
+    */
+    if (supportsSpecLock) {
+      const fingerprint = computePlanApprovalFingerprint(written);
+      await this.store.lockCurrentPlanWhilePlanningLocked(task.id, fingerprint, written);
+      if (!await this.updatePlanningStateIfStillCurrent(task, { approvedPlanFingerprint: fingerprint })) return;
+      /*
+      FNXC:SpecDrift 2026-08-09-07:36:
+      Establish the first report while the planning lifecycle fence is still held. A release never
+      races ahead of the deterministic comparison; later evidence updates can coalesce retries.
+      */
+      await this.store.reconcileSpecDriftWhilePlanningLocked({ ...task, approvedPlanFingerprint: fingerprint });
     }
 
     if (shouldClearWorkflowRunStepInstances) {

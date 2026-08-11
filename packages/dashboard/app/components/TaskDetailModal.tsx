@@ -35,8 +35,8 @@ import {
   isWipColumnRole,
 } from "../utils/columnRoles";
 import { resolveEffectiveAutoMerge } from "../../../core/src/merge/task-merge";
-import { uploadAttachment, deleteAttachment, updateTask, repairOverlapBlocker, fetchTaskDetail, fetchTaskPrompt, fetchTaskVerificationRequest, fetchSettings, fetchTaskEffectiveSettings, fetchGlobalSettings, requestSpecRevision, rebuildTaskSpec, approvePlan, rejectPlan, refineTask, fetchWorkflowResults, assignTask, fetchAgents, fetchAgent, refreshPrStatus, fetchBoardWorkflows, updateTaskCustomFields, summarizeTitle, fetchWorkflowSettingValues, nudgeOverseer, stopOverseer, explainOverseer, fetchModels, fetchNodes, api } from "../api";
-import type { RevertTaskOptions, RevertTaskResult, ModelInfo, NodeInfo } from "../api";
+import { uploadAttachment, deleteAttachment, updateTask, repairOverlapBlocker, fetchTaskDetail, fetchTaskPrompt, fetchSpecLock, fetchTaskVerificationRequest, fetchSettings, fetchTaskEffectiveSettings, fetchGlobalSettings, requestSpecRevision, rebuildTaskSpec, approvePlan, rejectPlan, refineTask, fetchWorkflowResults, assignTask, fetchAgents, fetchAgent, refreshPrStatus, fetchBoardWorkflows, updateTaskCustomFields, summarizeTitle, fetchWorkflowSettingValues, nudgeOverseer, stopOverseer, explainOverseer, fetchModels, fetchNodes, api } from "../api";
+import type { RevertTaskOptions, RevertTaskResult, ModelInfo, NodeInfo, SpecLockResponse } from "../api";
 import type { BoardWorkflowsPayload, WorkflowFieldDefinition, CustomFieldRejection } from "../api";
 import { WorkflowIcon } from "./WorkflowIcon";
 import { ApiRequestError } from "../api";
@@ -851,6 +851,7 @@ export function TaskDetailContent({
     !("prompt" in task),
   );
   const [verificationRequest, setVerificationRequest] = useState<TaskVerificationRequest | null>(null);
+  const [specLock, setSpecLock] = useState<SpecLockResponse | null>(null);
   const detailRequestGenerationRef = useRef(0);
   const detailRequestRef = useRef<{ key: string; promise: Promise<TaskDetail> } | null>(null);
   /*
@@ -896,6 +897,20 @@ export function TaskDetailContent({
     const timer = window.setInterval(refresh, 5_000);
     return () => { cancelled = true; window.clearInterval(timer); };
   }, [task.id, projectId, active]);
+
+  /*
+  FNXC:SpecLockTaskDetail 2026-08-09-07:36:
+  Both modal and right-dock hosts render this shared content, so the Definition tab requests the
+  persisted report once per visible task. Rendering must not re-evaluate prompt prose in-browser.
+  */
+  useEffect(() => {
+    if (!active || activeTab !== "definition") return;
+    let cancelled = false;
+    void fetchSpecLock(task.id, projectId)
+      .then((value) => { if (!cancelled) setSpecLock(value); })
+      .catch(() => { if (!cancelled) setSpecLock(null); });
+    return () => { cancelled = true; };
+  }, [active, activeTab, projectId, task.id]);
 
   useEffect(() => {
     // FNXC:TaskDetailPlan 2026-08-03-02:06: hidden kept-alive hosts defer their initial detail request until reveal.
@@ -6151,6 +6166,49 @@ export function TaskDetailContent({
           ) : (
           <>
           {/* FNXC:TaskDetailSummaryTab 2026-07-29-00:00: FN-8197 keeps Definition focused on plan, retry, and source metadata; completed merge metadata renders exclusively in the done-only Summary tab. */}
+          {specLock && (
+            <section className="detail-section spec-lock-report" data-testid="spec-lock-report" aria-label="Spec lock alignment">
+              <div className="detail-source-header">
+                <div className="detail-source-summary">
+                  <span className="detail-source-label">Spec alignment</span>
+                  <span className="badge">{specLock.report?.alignment ?? "unavailable"}</span>
+                </div>
+              </div>
+              <dl className="detail-source-grid">
+                <div><dt>Latest lock</dt><dd>v{specLock.latestLock?.version ?? "—"}</dd></div>
+                <div><dt>Current plan</dt><dd>v{specLock.currentPlan?.version ?? "—"}</dd></div>
+                <div><dt>Lock state</dt><dd>{specLock.activeLock ? "active" : "inactive"}</dd></div>
+                <div><dt>Findings</dt><dd>{specLock.report?.findings.length ?? 0}</dd></div>
+              </dl>
+              {specLock.latestLock && (
+                <p className="spec-lock-provenance">
+                  Accepted {specLock.latestLock.acceptedAt} · plan hash {specLock.latestLock.currentPlanHash} · approval {specLock.latestLock.approvalFingerprint}
+                </p>
+              )}
+              {specLock.currentPlan && (
+                <p className="spec-lock-provenance">
+                  Captured {specLock.currentPlan.capturedAt} · source revision {specLock.currentPlan.sourceRevision} · source hash {specLock.currentPlan.sourceHash}
+                </p>
+              )}
+              {specLock.latestLock?.diff?.changedSections.length ? (
+                <p className="spec-lock-provenance">Re-lock changed: {specLock.latestLock.diff.changedSections.join(", ")}</p>
+              ) : null}
+              {(specLock.history?.locks.length ?? 0) > 1 || (specLock.history?.currentPlans.length ?? 0) > 1 || (specLock.history?.reports.length ?? 0) > 1 ? (
+                <p className="spec-lock-provenance">
+                  Retained history: {specLock.history.locks.map((lock) => `lock v${lock.version}`).join(", ") || "no locks"}; {specLock.history.currentPlans.map((plan) => `plan v${plan.version}`).join(", ") || "no plan evidence"}; {specLock.history.reports.length} reports
+                </p>
+              ) : null}
+              {specLock.report?.findings.length ? (
+                <ul className="spec-lock-findings">
+                  {specLock.report.findings.map((finding, index) => (
+                    <li key={`${finding.kind}:${finding.category}:${finding.path ?? index}`}>
+                      {finding.kind}: {finding.category}{finding.path ? ` (${finding.path})` : ""}
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </section>
+          )}
           {(retrySummary?.total ?? 0) > 0 && (
             <div className="detail-section detail-retries-section">
               <div className="detail-source-header">

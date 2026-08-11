@@ -119,6 +119,8 @@ export interface MissionFeature {
   description?: string;
   acceptanceCriteria?: string;
   status: FeatureStatus;
+  /** Deterministic spec-lock projection persisted by mission reconciliation. */
+  specAlignment?: "on-plan" | "diverged-needs-review" | "diverged-relocked-approved" | "unavailable";
   createdAt: string;
   updatedAt: string;
 }

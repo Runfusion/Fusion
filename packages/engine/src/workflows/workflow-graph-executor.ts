@@ -75,10 +75,40 @@ export const PLAN_REVIEW_LEASE_HELD_VALUE = "plan-review-lease-held";
  * template ID. This keeps reviewer overrides and durable principal fences scoped
  * to the exact foreach iteration, loop iteration, or optional-group invocation.
  */
-function materializedTemplateNodeId(node: WorkflowIrNode, context: Record<string, unknown>): string {
-  const parent = typeof context["workflow:node-instance-id"] === "string"
-    ? context["workflow:node-instance-id"]
-    : undefined;
+/**
+ * FNXC:WorkflowAgentRouting 2026-08-10-08:20:
+ * Materialization must be IDEMPOTENT, because a resume seeds `workflow:node-instance-id` from the persisted
+ * continuation — which holds this node's OWN materialized id, not its enclosing container's.
+ *
+ * Read raw, that self-instance was treated as the parent container and re-wrapped on every dispatch:
+ * `steps#4:step-execute` -> `steps#4:step-execute#4:step-execute` -> ... FN-8869 accumulated ~30 repetitions
+ * (a ~1.8 KB run_id on a hot indexed column) because it re-dispatched every ~15 minutes for hours, and each
+ * retry looked like a distinct run to anything grouping by run id.
+ *
+ * Peeling the self-instance suffix recovers the ENCLOSING container, so re-materializing iteration 4 yields
+ * `steps#4:step-execute` again while advancing to iteration 5 correctly yields `steps#5:step-execute`. Simply
+ * returning the seeded id unchanged would be idempotent but would freeze the card on a stale iteration.
+ */
+function enclosingContainerInstanceId(parent: string | undefined, nodeId: string): string | undefined {
+  if (!parent || parent === nodeId) return undefined;
+  if (parent.endsWith(`::${nodeId}`)) {
+    const container = parent.slice(0, -(nodeId.length + 2));
+    return container.length > 0 ? container : undefined;
+  }
+  // `<container>#<iteration>:<nodeId>` — peel the iteration marker together with the node id it wraps.
+  if (!parent.endsWith(`:${nodeId}`)) return parent;
+  const head = parent.slice(0, -(nodeId.length + 1));
+  const marker = head.lastIndexOf("#");
+  if (marker < 0 || !/^\d+$/.test(head.slice(marker + 1))) return parent;
+  const container = head.slice(0, marker);
+  return container.length > 0 ? container : undefined;
+}
+
+export function materializedTemplateNodeId(node: WorkflowIrNode, context: Record<string, unknown>): string {
+  const parent = enclosingContainerInstanceId(
+    typeof context["workflow:node-instance-id"] === "string" ? context["workflow:node-instance-id"] : undefined,
+    node.id,
+  );
   const foreach = context["foreach:active"] as { foreachNodeId?: unknown; stepIndex?: unknown } | undefined;
   if (typeof foreach?.foreachNodeId === "string" && typeof foreach.stepIndex === "number") {
     const containerId = parent && parent !== foreach.foreachNodeId ? parent : foreach.foreachNodeId;
@@ -89,8 +119,18 @@ function materializedTemplateNodeId(node: WorkflowIrNode, context: Record<string
     const containerId = parent && parent !== loop.loopNodeId ? parent : loop.loopNodeId;
     return `${containerId}#${loop.iteration}:${node.id}`;
   }
+  /*
+   * FNXC:WorkflowAgentRouting 2026-08-10-08:35:
+   * `optional-group:active` needs the SAME peel as `parent`, because it is seeded from the same accreting
+   * value: workflow-graph-loop.ts copies `workflow:node-instance-id` into it verbatim, and on resume that key
+   * already holds the CHILD's materialized id. Peeling only `parent` left optional groups still growing one
+   * `::<node>` segment per dispatch — the exact accretion this fix exists to stop, on the branch the first
+   * round of tests happened to pin with a hand-written container id instead of a resume-shaped one.
+   */
   const optionalGroup = context["optional-group:active"];
-  if (typeof optionalGroup === "string") return `${optionalGroup}::${node.id}`;
+  if (typeof optionalGroup === "string") {
+    return `${enclosingContainerInstanceId(optionalGroup, node.id) ?? optionalGroup}::${node.id}`;
+  }
   return node.id;
 }
 
@@ -1217,6 +1257,13 @@ export class WorkflowGraphExecutor {
               ...(parseRequiredArtifactMissingValue(verdictRaw) ? { failureValue: verdictRaw } : {}),
               nodeId: node.id,
               maxRevisions: node.config?.maxRevisions,
+              /*
+               * FNXC:ReviewSeverityGate 2026-08-10-17:33:
+               * Carry the structured findings into remediation so PROMPT.md can present them grouped by
+               * priority. Without this the implementer only ever saw `feedback` prose and could not tell
+               * a blocking defect from an optional note.
+               */
+              ...(stepFindings?.length ? { findings: stepFindings } : {}),
             };
             context[optionalStepFailureContextKey(node.id)] = failureContext;
             /*

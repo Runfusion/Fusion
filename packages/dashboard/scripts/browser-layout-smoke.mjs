@@ -4,9 +4,9 @@
 import { Buffer } from "node:buffer";
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
-import { superviseSpawn } from "@fusion/core";
+import { superviseSpawn, SUPPORTED_LOCALES } from "@fusion/core";
 import { readFile, readdir, rm, stat, mkdtemp, writeFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
@@ -15,6 +15,7 @@ import { fileURLToPath } from "node:url";
 const dashboardRoot = path.resolve(import.meta.dirname, "..");
 const appRoot = path.join(dashboardRoot, "app");
 const clientDistRoot = path.join(dashboardRoot, "dist", "client");
+const i18nLocalesRoot = path.resolve(dashboardRoot, "..", "i18n", "locales");
 const requireBrowser = process.argv.includes("--require-browser") || process.env.FUSION_BROWSER_SMOKE_REQUIRE === "1";
 const screenshotPath = process.env.FUSION_BROWSER_SMOKE_SCREENSHOT;
 const agentHeartbeatMobileScreenshotPath = process.env.FUSION_AGENT_HEARTBEAT_MOBILE_SCREENSHOT;
@@ -36,6 +37,62 @@ function log(message) {
 
 function fail(message) {
   throw new Error(message);
+}
+
+function escapeHtml(value) {
+  return value.replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function validateQuickAddSaveLabels(labels) {
+  for (const [locale, label] of labels) {
+    if (typeof locale !== "string" || locale.length === 0 || typeof label !== "string" || label.trim().length === 0) {
+      fail(`Quick Add Save fixture requires a non-empty tasks.save translation for locale ${String(locale)}.`);
+    }
+  }
+  return labels;
+}
+
+function loadShippedQuickAddSaveLabels() {
+  return validateQuickAddSaveLabels(SUPPORTED_LOCALES
+    .map((locale) => {
+      const catalog = JSON.parse(readFileSync(path.join(i18nLocalesRoot, locale, "app.json"), "utf8"));
+      return [locale, catalog?.tasks?.save];
+    })
+    // Preserve the emitted fixture section's existing deterministic order while deriving its members.
+    .sort(([left], [right]) => left.localeCompare(right)));
+}
+
+const QUICK_ADD_COMPOSER_VARIANTS = [
+  ["board", "", "minimum", "300px", "disabled"],
+  ["board", "", "wide", "600px", "disabled"],
+  ["list", "quick-entry--single-line", "minimum", "300px", "enabled"],
+  ["list", "quick-entry--single-line", "wide", "600px", "enabled"],
+];
+
+const shippedQuickAddSaveLabels = loadShippedQuickAddSaveLabels();
+export const QUICK_ADD_SAVE_FIXTURE_COUNT = QUICK_ADD_COMPOSER_VARIANTS.length * shippedQuickAddSaveLabels.length;
+
+export function buildQuickAddSaveFixtures(labels = shippedQuickAddSaveLabels) {
+  return QUICK_ADD_COMPOSER_VARIANTS.flatMap(([surface, modifier, width, maxWidth, state]) => validateQuickAddSaveLabels(labels).map(([locale, label]) => `
+    <section class="quick-entry-smoke-fixture" data-smoke="quick-add-save-${surface}-${width}-${locale}" style="width: min(${maxWidth}, calc(100vw - 24px)); margin: 0 auto 12px;">
+      <div class="quick-entry-box quick-entry-box--expanded ${modifier}" data-smoke="quick-add-${surface}-composer">
+        <div class="quick-entry-actions" data-smoke="quick-add-save-row">
+          <div class="quick-entry-primary-group">
+            <button class="btn btn-icon btn-sm" data-testid="quick-entry-attach" type="button" aria-label="Attach"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M3 7h8"/></svg></button>
+            <button class="btn btn-icon btn-sm" data-testid="quick-entry-github-toggle" type="button" aria-label="GitHub"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M3 7h8"/></svg></button>
+            <button class="btn btn-icon btn-sm" data-testid="quick-entry-session-advisor-toggle" type="button" aria-label="Session advisor"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M2 7s2-3 5-3 5 3 5 3-2 3-5 3-5-3-5-3Z"/></svg></button>
+            <button class="btn btn-icon btn-sm" data-testid="quick-entry-priority-button" type="button" aria-label="Priority"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M3 7h8"/></svg></button>
+            <button class="btn btn-icon btn-sm" data-testid="quick-entry-fast-toggle" type="button" aria-label="Fast"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M3 7h8"/></svg></button>
+            <button class="btn btn-task-create btn-sm" data-testid="quick-entry-save" data-smoke="quick-add-save-button" data-locale="${escapeHtml(locale)}" type="button" ${state === "disabled" ? "disabled" : ""}><svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true" style="vertical-align: middle; margin-right: 4px;"><path d="M2 6h8"/></svg>${escapeHtml(label)}</button>
+          </div>
+        </div>
+      </div>
+    </section>
+  `)).join("");
 }
 
 /*
@@ -98,7 +155,7 @@ function runCommand(command, commandArgs, cwd) {
   });
 }
 
-export function createSmokeHtml() {
+export function createSmokeHtml(options = {}) {
   const columns = [
     ["triage", "Triage", "1"],
     ["todo", "Todo", "2"],
@@ -131,6 +188,12 @@ export function createSmokeHtml() {
       </section>
     `)
     .join("");
+  const agentsOverviewCards = Array.from({ length: 13 }, (_, index) => `
+    <div class="live-agent-card" role="button" tabindex="0"${index === 12 ? ' data-smoke="agents-overview-last-card"' : ""}>
+      <div class="live-agent-card-header"><span class="live-agent-card-name">Active agent ${index + 1}</span></div>
+      <div class="live-agent-card-transcript">Waiting for workflow output and heartbeat activity.</div>
+      <div class="live-agent-card-footer">Active</div>
+    </div>`).join("");
 
   /*
   FNXC:QuickAddActionRow 2026-07-17-12:00:
@@ -149,37 +212,14 @@ export function createSmokeHtml() {
   pt-BR joined the supported translations (the scaffold was previously empty and now carries
   machine-drafted translations) — add it here so the smoke keeps measuring the widest
   emitted-font label across every shipped locale.
+
+  FNXC:QuickAddActionRow 2026-08-10-19:11:
+  FN-8952 replaces the stale 24-fixture expectation desynchronized by pt-BR with fixtures and
+  counts derived from SUPPORTED_LOCALES plus each shipped tasks.save catalog value. Catalog text
+  is HTML-escaped before interpolation because QuickEntryBox renders a React text child: arbitrary
+  metacharacters must remain literal measured glyphs, never become fixture markup.
   */
-  const localizedSaveLabels = [
-    ["en", "Save"],
-    ["es", "Guardar"],
-    ["fr", "Enregistrer"],
-    ["ko", "저장"],
-    ["pt-BR", "Salvar"],
-    ["zh-CN", "保存"],
-    ["zh-TW", "儲存"],
-  ];
-  const quickAddComposerFixtures = [
-    ["board", "", "minimum", "300px", "disabled"],
-    ["board", "", "wide", "600px", "disabled"],
-    ["list", "quick-entry--single-line", "minimum", "300px", "enabled"],
-    ["list", "quick-entry--single-line", "wide", "600px", "enabled"],
-  ].flatMap(([surface, modifier, width, maxWidth, state]) => localizedSaveLabels.map(([locale, label]) => `
-    <section class="quick-entry-smoke-fixture" data-smoke="quick-add-save-${surface}-${width}-${locale}" style="width: min(${maxWidth}, calc(100vw - 24px)); margin: 0 auto 12px;">
-      <div class="quick-entry-box quick-entry-box--expanded ${modifier}" data-smoke="quick-add-${surface}-composer">
-        <div class="quick-entry-actions" data-smoke="quick-add-save-row">
-          <div class="quick-entry-primary-group">
-            <button class="btn btn-icon btn-sm" data-testid="quick-entry-attach" type="button" aria-label="Attach"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M3 7h8"/></svg></button>
-            <button class="btn btn-icon btn-sm" data-testid="quick-entry-github-toggle" type="button" aria-label="GitHub"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M3 7h8"/></svg></button>
-            <button class="btn btn-icon btn-sm" data-testid="quick-entry-session-advisor-toggle" type="button" aria-label="Session advisor"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M2 7s2-3 5-3 5 3 5 3-2 3-5 3-5-3-5-3Z"/></svg></button>
-            <button class="btn btn-icon btn-sm" data-testid="quick-entry-priority-button" type="button" aria-label="Priority"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M3 7h8"/></svg></button>
-            <button class="btn btn-icon btn-sm" data-testid="quick-entry-fast-toggle" type="button" aria-label="Fast"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M3 7h8"/></svg></button>
-            <button class="btn btn-task-create btn-sm" data-testid="quick-entry-save" data-smoke="quick-add-save-button" data-locale="${locale}" type="button" ${state === "disabled" ? "disabled" : ""}><svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true" style="vertical-align: middle; margin-right: 4px;"><path d="M2 6h8"/></svg>${label}</button>
-          </div>
-        </div>
-      </div>
-    </section>
-  `)).join("");
+  const quickAddComposerFixtures = buildQuickAddSaveFixtures(options.quickAddSaveLabels);
 
   /*
   FNXC:TaskDetailModalResponsive 2026-07-19-12:00:
@@ -398,6 +438,7 @@ export function createSmokeHtml() {
             <button class="btn-icon" data-smoke="show-command-center-charts" type="button" aria-label="Show Command Center charts fixture">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V5"></path><path d="M4 19h16"></path><path d="M8 15l3-4 3 2 4-6"></path></svg>
             </button>
+            <button class="btn-icon" data-smoke="show-agents-overview-scroll" type="button" aria-label="Show Agents overview scroll fixture">Agents overview</button>
           </div>
         </header>
       </div>
@@ -628,6 +669,26 @@ export function createSmokeHtml() {
       </section>
 
       <!--
+      FNXC:AgentsOverviewScroll 2026-08-10-10:02:
+      Real Blink must verify this flex scroll chain because jsdom has no layout engine. This fixture mirrors the production chain asserted by AgentsOverviewBar.mobile-scroll.test.tsx, including metrics, panel, grid, and realistic live-agent cards.
+      -->
+      <section data-smoke="agents-overview-scroll" hidden>
+        <section class="agents-view" aria-label="Agents overview scroll fixture" style="height: min(calc(var(--space-2xl) * 16), calc(100dvh - var(--space-2xl)));">
+          <section class="agents-overview-bar" aria-label="Agents overview">
+            <button class="agents-overview-bar__toggle" type="button" aria-expanded="true"><span class="agents-overview-bar__title-wrap"><span class="agents-overview-bar__title">Overview</span></span><span class="agents-overview-bar__meta text-secondary">13 active</span></button>
+            <div class="agents-overview-bar__content" data-smoke="agents-overview-scroll-owner">
+              <div class="agent-metrics-bar agents-overview-bar__metrics"><div class="agent-metric-card agent-metric-card--active">Active</div><div class="agent-metric-card agent-metric-card--tasks">Tasks</div><div class="agent-metric-card agent-metric-card--success">Success</div><div class="agent-metric-card agent-metric-card--runs">Runs</div></div>
+              <div class="active-agents-panel agents-overview-bar__active-panel"><div class="active-agents-panel-header">Active Agents (13)</div><div class="active-agents-grid">${agentsOverviewCards}</div></div>
+            </div>
+          </section>
+          <div class="agents-view-content">Sibling Agents content</div>
+        </section>
+        <section class="agents-view" data-smoke="agents-overview-scroll-empty" style="height: min(calc(var(--space-2xl) * 16), calc(100dvh - var(--space-2xl)));">
+          <section class="agents-overview-bar" aria-label="Empty Agents overview"><button class="agents-overview-bar__toggle" type="button" aria-expanded="true">Overview</button><div class="agents-overview-bar__content" data-smoke="agents-overview-empty-scroll-owner"><div class="agent-metrics-bar agents-overview-bar__metrics"><div class="agent-metric-card agent-metric-card--active">Active</div><div class="agent-metric-card agent-metric-card--tasks">Tasks</div><div class="agent-metric-card agent-metric-card--success">Success</div><div class="agent-metric-card agent-metric-card--runs">Runs</div></div></div></section>
+        </section>
+      </section>
+
+      <!--
       FNXC:CommandCenterTesting 2026-06-19-02:04:
       FN-6685 requires a real-Blink desktop and mobile gate for the FN-6683/FN-6684 recharts surfaces because jsdom cannot compute ResponsiveContainer parent height, min-content shrink, or overflow. This fixture mirrors Command Center tabpanel/card wrappers and includes populated pie/line plus empty states so emitted dashboard CSS owns the sizing chain under test.
       -->
@@ -743,6 +804,7 @@ export function createSmokeHtml() {
       const prPanel = document.querySelector('[data-smoke="pr-panel"]');
       const prChecks = document.querySelector('[data-smoke="pr-checks"]');
       const commandCenterCharts = document.querySelector('[data-smoke="command-center-charts"]');
+      const agentsOverviewScroll = document.querySelector('[data-smoke="agents-overview-scroll"]');
 
       function setView(view) {
         const isList = view === 'list';
@@ -757,6 +819,7 @@ export function createSmokeHtml() {
         prPanel.hidden = name !== 'pr-panel';
         prChecks.hidden = name !== 'pr-checks';
         commandCenterCharts.hidden = name !== 'command-center-charts';
+        agentsOverviewScroll.hidden = name !== 'agents-overview-scroll';
       }
 
       boardButton.addEventListener('click', () => setView('board'));
@@ -765,6 +828,7 @@ export function createSmokeHtml() {
       document.querySelector('[data-smoke="show-pr-panel"]').addEventListener('click', () => showSmokeSection('pr-panel'));
       document.querySelector('[data-smoke="show-pr-checks"]').addEventListener('click', () => showSmokeSection('pr-checks'));
       document.querySelector('[data-smoke="show-command-center-charts"]').addEventListener('click', () => showSmokeSection('command-center-charts'));
+      document.querySelector('[data-smoke="show-agents-overview-scroll"]').addEventListener('click', () => showSmokeSection('agents-overview-scroll'));
       document.querySelector('[data-smoke="open-modal"]').addEventListener('click', () => {
         modalOverlay.classList.add('open');
         nav.hidden = true;
@@ -1241,6 +1305,62 @@ async function runSmokeChecks(page, pageUrl) {
     && layout.banner.top >= layout.card.bottom - 1
     && layout.badgeReason === "plan-review-replan-cap"
     && layout.bannerReason === "plan-review-replan-cap";
+
+  const collectAgentsOverviewScrollLayout = () => evaluate(page, `(() => {
+    document.querySelector('[data-smoke="show-agents-overview-scroll"]').click();
+    const section = document.querySelector('[data-smoke="agents-overview-scroll"]');
+    const fixture = section.querySelector('.agents-view');
+    const owner = section.querySelector('[data-smoke="agents-overview-scroll-owner"]');
+    const lastCard = section.querySelector('[data-smoke="agents-overview-last-card"]');
+    const sibling = fixture.querySelector('.agents-view-content');
+    const empty = section.querySelector('[data-smoke="agents-overview-scroll-empty"]');
+    const emptyOwner = section.querySelector('[data-smoke="agents-overview-empty-scroll-owner"]');
+    owner.scrollTop = owner.scrollHeight - owner.clientHeight;
+    const ownerRect = owner.getBoundingClientRect();
+    const lastRect = lastCard.getBoundingClientRect();
+    const toggleRect = empty.querySelector('.agents-overview-bar__toggle').getBoundingClientRect();
+    const emptyRect = empty.getBoundingClientRect();
+    return {
+      overflowY: getComputedStyle(owner).overflowY,
+      overflow: owner.scrollHeight - owner.clientHeight,
+      lastCard: { top: lastRect.top, bottom: lastRect.bottom },
+      owner: { top: ownerRect.top, bottom: ownerRect.bottom },
+      siblingHeight: sibling.clientHeight,
+      documentOverflow: document.documentElement.scrollWidth - window.innerWidth,
+      emptyOverflow: emptyOwner.scrollHeight - emptyOwner.clientHeight,
+      emptyToggleVisible: toggleRect.top >= emptyRect.top - 1 && toggleRect.bottom <= emptyRect.bottom + 1,
+    };
+  })()`);
+
+  for (const { width, height, deviceScaleFactor, mobile } of [
+    { width: 390, height: 844, deviceScaleFactor: 2, mobile: true },
+    { width: 1280, height: 700, deviceScaleFactor: 1, mobile: false },
+  ]) {
+    await page.send("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor, mobile });
+    const agentsOverviewLayout = await collectAgentsOverviewScrollLayout();
+    const viewport = `${width}×${height}`;
+    assertSmokeResult(
+      `Agents Overview scroll owner reaches every active card at ${viewport}`,
+      (agentsOverviewLayout.overflowY === "auto" || agentsOverviewLayout.overflowY === "scroll")
+        && agentsOverviewLayout.overflow > 0
+        && agentsOverviewLayout.lastCard.bottom <= agentsOverviewLayout.owner.bottom + 1
+        && agentsOverviewLayout.lastCard.top >= agentsOverviewLayout.owner.top - 1
+        && agentsOverviewLayout.siblingHeight > 0
+        && agentsOverviewLayout.documentOverflow <= 1,
+      JSON.stringify(agentsOverviewLayout),
+    );
+    assertSmokeResult(
+      `Agents Overview empty scroll owner stays unclipped at ${viewport}`,
+      agentsOverviewLayout.emptyOverflow <= 1 && agentsOverviewLayout.emptyToggleVisible,
+      JSON.stringify(agentsOverviewLayout),
+    );
+  }
+  await page.send("Emulation.setDeviceMetricsOverride", {
+    width: 390,
+    height: 844,
+    deviceScaleFactor: 2,
+    mobile: true,
+  });
 
   const mobileResolvedGithubTableLayout = await collectResolvedGithubTableLayout();
   assertSmokeResult(
@@ -1873,8 +1993,9 @@ async function runSmokeChecks(page, pageUrl) {
     .map((layout) => layout.saveWidth));
   assertSmokeResult(
     "Quick Add localized Save labels fit at the 300px supported minimum on mobile",
-    frenchMobileWidth === widestMobileWidth
-      && mobileQuickAddSaveLayout.length === 24
+    Number.isFinite(frenchMobileWidth)
+      && frenchMobileWidth === widestMobileWidth
+      && mobileQuickAddSaveLayout.length === QUICK_ADD_SAVE_FIXTURE_COUNT
       && mobileQuickAddSaveLayout.every((layout) => layout.saveOverflow <= 1
         && layout.rowOverflow <= 1
         && layout.composerOverflow <= 1
@@ -1936,8 +2057,9 @@ async function runSmokeChecks(page, pageUrl) {
     .map((layout) => layout.saveWidth));
   assertSmokeResult(
     "Quick Add localized Save labels fit at the 300px supported minimum on desktop",
-    frenchDesktopWidth === widestDesktopWidth
-      && desktopQuickAddSaveLayout.length === 24
+    Number.isFinite(frenchDesktopWidth)
+      && frenchDesktopWidth === widestDesktopWidth
+      && desktopQuickAddSaveLayout.length === QUICK_ADD_SAVE_FIXTURE_COUNT
       && desktopQuickAddSaveLayout.every((layout) => layout.saveOverflow <= 1
         && layout.rowOverflow <= 1
         && layout.composerOverflow <= 1

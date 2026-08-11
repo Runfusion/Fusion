@@ -803,6 +803,11 @@ function AppInner() {
   const [missionResumeSessionId, setMissionResumeSessionId] = useState<string | undefined>(undefined);
   const [missionTargetId, setMissionTargetId] = useState<string | undefined>(undefined);
   const [goalAnchorId, setGoalAnchorId] = useState<string | undefined>(undefined);
+  /*
+  FNXC:CommandCenterAgentActivity 2026-08-10-01:54:
+  Agent activity raises a focused-agent anchor through App's existing view router rather than changing routing itself. The request id mirrors goalAnchorId but preserves repeated activation of one agent.
+  */
+  const [agentAnchor, setAgentAnchor] = useState<{ agentId: string; requestId: number } | undefined>(undefined);
   const [selectedPrId, setSelectedPrId] = useState<string | undefined>(() => {
     if (typeof window === "undefined") return undefined;
     const v = new URL(window.location.href).searchParams.get("pr");
@@ -815,6 +820,11 @@ function AppInner() {
       setGoalAnchorId(undefined);
     }
   }, [goalAnchorId, taskView]);
+  useEffect(() => {
+    if (taskView !== "agents" && agentAnchor !== undefined) {
+      setAgentAnchor(undefined);
+    }
+  }, [agentAnchor, taskView]);
   useEffect(() => {
     if (taskView !== "pull-requests" && selectedPrId !== undefined) {
       setSelectedPrId(undefined);
@@ -1696,6 +1706,8 @@ function AppInner() {
     milestoneSliceResumeSessionId,
     setGoalAnchorId,
     goalAnchorId,
+    agentAnchor,
+    setAgentAnchor,
     agentsEnabled,
     agentOnboardingEnabled,
     handleOpenTaskLogs,

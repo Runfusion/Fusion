@@ -151,9 +151,9 @@ describe("ChatView core interactions", () => {
       expect(clickSpy).toHaveBeenCalled();
     });
 
-    it("allows attaching an image and clears it after attachment-only delivery", async () => {
-      const sendMessage = vi.fn((_content: string, _files?: File[], callbacks?: { onDelivered?: () => void }) => {
-        callbacks?.onDelivered?.();
+    it("dismisses image previews at acceptance before stream delivery", async () => {
+      const sendMessage = vi.fn((_content: string, _files?: File[], callbacks?: { onAccepted?: () => void }) => {
+        callbacks?.onAccepted?.();
       });
       setupMockChat({ activeSession: activeSessionFixture, messages: [], sendMessage });
       await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
@@ -171,12 +171,123 @@ describe("ChatView core interactions", () => {
 
       await userEvent.click(sendButton);
       expect(sendMessage).toHaveBeenCalledWith("", [imageFile], expect.objectContaining({
+        onAccepted: expect.any(Function),
         onDelivered: expect.any(Function),
         onFailed: expect.any(Function),
       }));
       await waitFor(() => {
         expect(screen.queryByTestId("chat-attachment-previews")).not.toBeInTheDocument();
+        expect(screen.queryByTestId("chat-attachment-preview-0")).not.toBeInTheDocument();
       });
+      expect(mockRevokeObjectURL).toHaveBeenCalledTimes(1);
+      expect(screen.getByTestId("chat-attach-btn")).toBeInTheDocument();
+    });
+
+    it("releases every accepted file, including a filename-only preview", async () => {
+      const sendMessage = vi.fn((_content: string, _files?: File[], callbacks?: { onAccepted?: () => void }) => {
+        callbacks?.onAccepted?.();
+      });
+      setupMockChat({ activeSession: activeSessionFixture, messages: [], sendMessage });
+      await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+      const imageFile = new File(["image"], "accepted.png", { type: "image/png" });
+      const textFile = new File(["note"], "accepted.txt", { type: "text/plain" });
+      const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+      fireEvent.change(fileInput, { target: { files: [imageFile, textFile] } });
+      expect(await screen.findByText("accepted.txt")).toBeInTheDocument();
+
+      await userEvent.click(screen.getByTestId("chat-send-btn"));
+
+      await waitFor(() => {
+        expect(screen.queryByTestId("chat-attachment-previews")).not.toBeInTheDocument();
+        expect(screen.queryByAltText("accepted.png")).not.toBeInTheDocument();
+        expect(screen.queryByText("accepted.txt")).not.toBeInTheDocument();
+      });
+      expect(mockRevokeObjectURL).toHaveBeenCalledTimes(1);
+      expect(mockRevokeObjectURL).toHaveBeenCalledWith("blob:accepted.png");
+    });
+
+    it("retains attachments staged after a direct send while its acceptance is pending", async () => {
+      let onAccepted: (() => void) | undefined;
+      const sendMessage = vi.fn((_content: string, _files?: File[], callbacks?: { onAccepted?: () => void }) => {
+        onAccepted = callbacks?.onAccepted;
+      });
+      setupMockChat({ activeSession: activeSessionFixture, messages: [], sendMessage });
+      await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+      const acceptedFile = new File(["accepted"], "accepted.png", { type: "image/png" });
+      const stagedLaterFile = new File(["later"], "later.png", { type: "image/png" });
+      const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+      fireEvent.change(fileInput, { target: { files: [acceptedFile] } });
+      await userEvent.click(screen.getByTestId("chat-send-btn"));
+      expect(onAccepted).toEqual(expect.any(Function));
+
+      fireEvent.change(fileInput, { target: { files: [stagedLaterFile] } });
+      expect(await screen.findByAltText("later.png")).toBeInTheDocument();
+      await act(async () => onAccepted?.());
+
+      await waitFor(() => {
+        expect(screen.queryByAltText("accepted.png")).not.toBeInTheDocument();
+        expect(screen.getByAltText("later.png")).toBeInTheDocument();
+      });
+      expect(mockRevokeObjectURL).toHaveBeenCalledTimes(1);
+      expect(mockRevokeObjectURL).toHaveBeenCalledWith("blob:accepted.png");
+      expect(mockRevokeObjectURL).not.toHaveBeenCalledWith("blob:later.png");
+    });
+
+    it("refuses staged attachments while a direct reply is streaming", async () => {
+      const sendMessage = vi.fn();
+      const addToast = vi.fn();
+      setupMockChat({ activeSession: activeSessionFixture, messages: [], isStreaming: true, sendMessage });
+      await renderWithAct(<ChatView projectId="proj-123" addToast={addToast} />);
+
+      const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+      const imageFile = new File(["image"], "queued.png", { type: "image/png" });
+      fireEvent.change(fileInput, { target: { files: [imageFile] } });
+      fireEvent.keyDown(screen.getByTestId("chat-input"), { key: "Enter" });
+
+      expect(addToast).toHaveBeenCalledWith(expect.stringContaining("Attachments can't be queued"), "warning");
+      expect(sendMessage).not.toHaveBeenCalled();
+      expect(screen.getByTestId("chat-attachment-previews")).toBeInTheDocument();
+    });
+
+    it.each(["/clear", "/new"])("refuses %s while attachments are staged", async (command) => {
+      const createSession = vi.fn();
+      const sendMessage = vi.fn();
+      const addToast = vi.fn();
+      setupMockChat({ activeSession: activeSessionFixture, messages: [], createSession, sendMessage });
+      await renderWithAct(<ChatView projectId="proj-123" addToast={addToast} />);
+
+      const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+      fireEvent.change(fileInput, { target: { files: [new File(["image"], "guarded.png", { type: "image/png" })] } });
+      await userEvent.type(screen.getByTestId("chat-input"), `${command}{enter}`);
+
+      expect(screen.getByTestId("chat-attachment-previews")).toBeInTheDocument();
+      expect(mockRevokeObjectURL).not.toHaveBeenCalled();
+      expect(addToast).toHaveBeenCalledWith(expect.stringContaining("Remove the attachments"), "warning");
+      expect(createSession).not.toHaveBeenCalled();
+      expect(sendMessage).not.toHaveBeenCalled();
+    });
+
+    it.each(["/clear", "/new"])("refuses %s in a task-planner session before its command handler clears attachments", async (command) => {
+      const addToast = vi.fn();
+      const createSession = vi.fn();
+      setupMockChat({
+        activeSession: { ...activeSessionFixture, agentId: "task-planner:task-123" },
+        messages: [],
+        createSession,
+      });
+      await renderWithAct(<ChatView projectId="proj-123" addToast={addToast} />);
+
+      const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+      fireEvent.change(fileInput, { target: { files: [new File(["image"], "planner.png", { type: "image/png" })] } });
+      await userEvent.type(screen.getByTestId("chat-input"), `${command}{enter}`);
+
+      expect(screen.getByTestId("chat-attachment-previews")).toBeInTheDocument();
+      expect(mockRevokeObjectURL).not.toHaveBeenCalled();
+      expect(createSession).not.toHaveBeenCalled();
+      expect(addToast).toHaveBeenCalledWith(expect.stringContaining("Remove the attachments"), "warning");
+      expect(addToast).not.toHaveBeenCalledWith(expect.stringContaining("tied to a task"), "warning");
     });
 
     it("retains direct-chat attachments after a failed upload for retry", async () => {

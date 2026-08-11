@@ -5897,7 +5897,7 @@ describe("TaskCard", () => {
     expect(badge?.closest(".card-header")).toBeNull();
     expect(badge?.getAttribute("title")).toBe("Created by agent: Task Robot");
     expect(badge?.getAttribute("aria-label")).toBe("Created by agent: Task Robot");
-    expect(badge?.querySelector("span[aria-hidden='true']")?.textContent).toBe("Task Robot");
+    expect(badge?.querySelector("span[aria-hidden='true']")?.textContent).toBe("by Task Robot");
     expect(badge?.querySelector(".visually-hidden")?.textContent).toBe("Created by agent: Task Robot");
   });
 
@@ -5942,7 +5942,7 @@ describe("TaskCard", () => {
     expect(badge).not.toBeNull();
     expect(badge?.closest(".card-agent-badge-row")).not.toBeNull();
     expect(badge?.getAttribute("title")).toBe("Created by agent: Legacy Robot");
-    expect(badge?.querySelector("span[aria-hidden='true']")?.textContent).toBe("Legacy Robot");
+    expect(badge?.querySelector("span[aria-hidden='true']")?.textContent).toBe("by Legacy Robot");
   });
 
   it("falls back to the generic Agent label when source type is agent-created without a resolvable name", () => {

@@ -1,0 +1,4 @@
+import { posix } from "node:path";
+import { normalizeRelPath } from "./graph-types.js";
+export function importCandidates(fromRelPath:string,specifier:string):string[]{if(!specifier.startsWith("./")&&!specifier.startsWith("../"))return[];let base:string;try{base=normalizeRelPath(posix.join(posix.dirname(normalizeRelPath(fromRelPath)),specifier));}catch{return[];}if(/\.tsx?$/.test(specifier))return[base];if(/\.(?:jsx?|mjs|cjs)$/.test(specifier))return[base.replace(/\.(?:jsx?|mjs|cjs)$/, ".ts"),base.replace(/\.(?:jsx?|mjs|cjs)$/, ".tsx")];if(specifier.endsWith("/"))return[`${base}/index.ts`,`${base}/index.tsx`];return[`${base}.ts`,`${base}.tsx`,`${base}/index.ts`,`${base}/index.tsx`];}
+export const selectImportTarget=(candidates:readonly string[],discovered:ReadonlySet<string>)=>candidates.find(x=>discovered.has(x))??candidates[0];

@@ -18,6 +18,7 @@ import { eq, sql } from "drizzle-orm";
 import { readFile } from "node:fs/promises";
 import type { DbTransaction } from "../../postgres/data-layer.js";
 import type { TaskCreateInput } from "../../types/task/task-core.js";
+import type { MissionEvent } from "../../missions/mission-types.js";
 
 import {
   pgDescribe,
@@ -44,6 +45,8 @@ const pgTest = pgDescribe;
 pgTest("MissionStore (PostgreSQL backend mode)", () => {
   const h: SharedPgTaskStoreHarness = createSharedPgTaskStoreTestHarness({
     prefix: "fusion_mission_store",
+    /* FNXC:MissionStatusWrites 2026-08-10-13:49: Defined-feature bootstrap validates task ownership through a bound project partition. */
+    projectId: "mission-store-pg-test",
   });
 
   beforeAll(h.beforeAll);
@@ -145,15 +148,43 @@ pgTest("MissionStore (PostgreSQL backend mode)", () => {
       "autopilot_disabled", "mission_status_changed", "autopilot_enabled", "mission_status_changed",
     ]);
     const statusEvents = events.filter((event) => event.eventType === "mission_status_changed");
+    const persistedActor = { type: "operator", id: "user-42", source: "dashboard" };
     expect(statusEvents.map((event) => event.metadata)).toEqual(expect.arrayContaining([
-      expect.objectContaining({ field: "status", from: "planning", to: "active", source: "dashboard", actor }),
-      expect.objectContaining({ field: "status", from: "active", to: "blocked", source: "dashboard", actor }),
+      expect.objectContaining({ field: "status", from: "planning", to: "active", source: "dashboard", actor: persistedActor }),
+      expect.objectContaining({ field: "status", from: "active", to: "blocked", source: "dashboard", actor: persistedActor }),
     ]));
     const autopilotEvents = events.filter((event) => event.eventType.startsWith("autopilot_"));
     expect(autopilotEvents.map((event) => event.metadata)).toEqual(expect.arrayContaining([
-      expect.objectContaining({ field: "autopilotEnabled", from: false, to: true, actor }),
-      expect.objectContaining({ field: "autopilotEnabled", from: true, to: false, actor }),
+      expect.objectContaining({ field: "autopilotEnabled", from: false, to: true, actor: persistedActor }),
+      expect.objectContaining({ field: "autopilotEnabled", from: true, to: false, actor: persistedActor }),
     ]));
+    expect(events.every((event) => !(event.metadata?.actor as Record<string, unknown> | undefined)?.displayName)).toBe(true);
+  });
+
+  it("atomically audits feature status changes from both public status seams", async () => {
+    const m = missions();
+    const mission = await m.createMission({ title: "Feature audit" });
+    const milestone = await m.addMilestone(mission.id, { title: "Milestone" });
+    const slice = await m.addSlice(milestone.id, { title: "Slice" });
+    const first = await m.addFeature(slice.id, { title: "First" });
+    const second = await m.addFeature(slice.id, { title: "Second" });
+    const actor = { type: "agent" as const, id: "agent-42", source: "fn_feature_set_status", displayName: "Not persisted" };
+
+    await m.updateFeatureStatus(first.id, "done", { actor, reason: `Authorization: Bearer sk-live-ABCDEFG1234567890abcdef ${"ordinary prose ".repeat(100)}` });
+    await m.updateFeature(second.id, { status: "done" }, { actor });
+    await m.updateFeature(second.id, { title: "No status event" }, { actor });
+
+    const events = (await m.getMissionEvents(mission.id, { limit: 20 })).events
+      .filter((event) => event.eventType === "feature_status_changed");
+    expect(events).toHaveLength(2);
+    expect(events.map((event) => event.metadata)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ featureId: first.id, sliceId: slice.id, from: "defined", to: "done", source: "fn_feature_set_status", actor: { type: "agent", id: "agent-42", source: "fn_feature_set_status" }, reasonTruncated: true }),
+      expect.objectContaining({ featureId: second.id, sliceId: slice.id, from: "defined", to: "done" }),
+    ]));
+    const reasonEvent = events.find((event) => (event.metadata as Record<string, unknown>)?.featureId === first.id)!;
+    expect(JSON.stringify(reasonEvent.metadata)).toContain("[REDACTED]");
+    expect(JSON.stringify(reasonEvent.metadata)).not.toContain("displayName");
+    expect((await m.getSlice(slice.id))?.status).toBe("complete");
   });
 
   it("createMission → addMilestone → addSlice → addFeature assembles getMissionWithHierarchy tree", async () => {
@@ -274,14 +305,57 @@ pgTest("MissionStore (PostgreSQL backend mode)", () => {
     const slice = await m.addSlice(milestone.id, { title: "SL" });
     const feature = await m.addFeature(slice.id, { title: "F" });
     const task = await h.store().createTask({ description: "delivery task" });
+    const observedEvents: MissionEvent[] = [];
+    m.on("mission:event", (event) => observedEvents.push(event));
 
     const linked = await m.linkFeatureToTask(feature.id, task.id);
     expect(linked.taskId).toBe(task.id);
     expect(linked.status).toBe("triaged");
+    expect(observedEvents).toEqual(expect.arrayContaining([expect.objectContaining({ eventType: "feature_status_changed", metadata: expect.objectContaining({ source: "mission-link" }) })]));
+    expect((await m.getMissionEvents(mission.id, { limit: 10 })).events).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        eventType: "feature_status_changed",
+        metadata: expect.objectContaining({ featureId: feature.id, from: "defined", to: "triaged", source: "mission-link" }),
+      }),
+    ]));
 
     const unlinked = await m.unlinkFeatureFromTask(feature.id);
     expect(unlinked.taskId).toBeUndefined();
     expect(unlinked.status).toBe("defined");
+    expect((await m.getMissionEvents(mission.id, { limit: 10 })).events).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        eventType: "feature_status_changed",
+        metadata: expect.objectContaining({ featureId: feature.id, from: "triaged", to: "defined", source: "mission-store" }),
+      }),
+    ]));
+  });
+
+  it("audits defined-feature bootstrap claims inside their task transaction", async () => {
+    const m = missions();
+    const mission = await m.createMission({ title: "Claim audit" });
+    const milestone = await m.addMilestone(mission.id, { title: "MS" });
+    const slice = await m.addSlice(milestone.id, { title: "SL" });
+    const feature = await m.addFeature(slice.id, { title: "Claimed feature" });
+
+    const task = await h.store().createTask({
+      description: "bootstrap claim",
+      missionId: mission.id,
+      sliceId: slice.id,
+      afterTaskInsert: (tx: DbTransaction, inserted: { id: string }) => m.claimDefinedFeatureTaskInTransaction(tx, {
+        featureId: feature.id,
+        taskId: inserted.id,
+        missionId: mission.id,
+        sliceId: slice.id,
+      }),
+    } as TaskCreateInput & { afterTaskInsert: (tx: DbTransaction, task: { id: string }) => Promise<void> });
+
+    expect(await m.getFeature(feature.id)).toMatchObject({ taskId: task.id, status: "triaged" });
+    expect((await m.getMissionEvents(mission.id, { limit: 10 })).events).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        eventType: "feature_status_changed",
+        metadata: expect.objectContaining({ featureId: feature.id, from: "defined", to: "triaged", source: "defined-feature-claim" }),
+      }),
+    ]));
   });
 
   it("does not overwrite an existing task directory on a creation collision", async () => {
@@ -600,11 +674,27 @@ pgTest("MissionStore (PostgreSQL backend mode)", () => {
     expect(await m.getMission(mission.id)).toMatchObject({ status: "planning", autopilotEnabled: false, autoAdvance: false });
     expect(await h.store().getTask(task.id)).toMatchObject({ missionId: mission.id, sliceId: slice.id, column: "done" });
     expect((await h.store().listTasks()).length).toBe(taskCount);
+    const statusEvents = (await m.getMissionEvents(mission.id, { limit: 10 })).events
+      .filter((event) => event.eventType === "feature_status_changed");
+    expect(statusEvents).toEqual([expect.objectContaining({
+      metadata: expect.objectContaining({ featureId: feature.id, from: "defined", to: "done", source: "terminal-task-reconcile" }),
+    })]);
 
     const firstUpdatedAt = reconciled.updatedAt;
     const idempotent = await m.reconcileFeatureDoneWithTerminalTask(feature.id, task.id);
     expect(idempotent.updatedAt).toBe(firstUpdatedAt);
     expect(idempotent).toEqual(reconciled);
+    expect((await m.getMissionEvents(mission.id, { limit: 10 })).events
+      .filter((event) => event.eventType === "feature_status_changed")).toHaveLength(1);
+
+    // A link-only repair has featureChanged=true but no status delta, so it stays silent.
+    const linkOnly = await m.addFeature(slice.id, { title: "Already done" });
+    await m.updateFeature(linkOnly.id, { status: "done" });
+    const linkOnlyTask = await h.store().createTask({ description: "done", column: "done" });
+    await m.reconcileFeatureDoneWithTerminalTask(linkOnly.id, linkOnlyTask.id);
+    expect((await m.getMissionEvents(mission.id, { limit: 20 })).events
+      .filter((event) => event.eventType === "feature_status_changed" && (event.metadata as Record<string, unknown>)?.featureId === linkOnly.id))
+      .toHaveLength(1);
 
     const duplicate = await m.addFeature(slice.id, { title: "Corrupt duplicate" });
     await m.updateFeature(duplicate.id, { taskId: task.id });
@@ -682,6 +772,8 @@ pgTest("MissionStore (PostgreSQL backend mode)", () => {
     expect(await m.getSlice(slice.id)).toMatchObject({ status: "pending" });
     expect(await m.getMilestone(milestone.id)).toMatchObject({ status: "planning" });
     expect(await h.store().getTask(task.id)).toMatchObject({ missionId: undefined, sliceId: undefined });
+    expect((await m.getMissionEvents(mission.id, { limit: 10 })).events
+      .filter((event) => event.eventType === "feature_status_changed")).toHaveLength(0);
   });
 
   it("addContractAssertion appears in listContractAssertions", async () => {
@@ -805,6 +897,66 @@ pgTest("MissionStore (PostgreSQL backend mode)", () => {
       validationBudgetRunId: undefined,
       validationBudgetBlockedAt: undefined,
     });
+  });
+
+  it("audits validator reuse-pass status promotion and skips repeat admission", async () => {
+    const m = missions();
+    const mission = await m.createMission({ title: "Reuse pass audit" });
+    const milestone = await m.addMilestone(mission.id, { title: "MS" });
+    const slice = await m.addSlice(milestone.id, { title: "SL" });
+    const feature = await m.addFeature(slice.id, { title: "Validated feature" });
+    const fingerprint = "reuse-pass-fingerprint";
+    const run = await m.startValidatorRun(feature.id, "scheduled", undefined, fingerprint);
+    await m.completeValidatorRun(run.id, "passed", "passed");
+
+    await expect(m.admitValidatorRun(feature.id, {
+      inputFingerprint: fingerprint,
+      failureBudget: 1,
+      reusePass: true,
+    })).resolves.toMatchObject({ outcome: "reuse-pass", run: { id: run.id } });
+    expect((await m.getMissionEvents(mission.id, { limit: 10 })).events).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        eventType: "feature_status_changed",
+        metadata: expect.objectContaining({ featureId: feature.id, from: "defined", to: "done", source: "validator-reuse-pass" }),
+      }),
+    ]));
+
+    await m.admitValidatorRun(feature.id, { inputFingerprint: fingerprint, failureBudget: 1, reusePass: true });
+    expect((await m.getMissionEvents(mission.id, { limit: 20 })).events
+      .filter((event) => event.eventType === "feature_status_changed" && (event.metadata as Record<string, unknown>)?.featureId === feature.id))
+      .toHaveLength(1);
+  });
+
+  it("audits each changed superseded generated fix without expanding the bulk write", async () => {
+    const m = missions();
+    const mission = await m.createMission({ title: "Superseded fix audit" });
+    const milestone = await m.addMilestone(mission.id, { title: "MS" });
+    const slice = await m.addSlice(milestone.id, { title: "SL" });
+    const root = await m.addFeature(slice.id, { title: "Root" });
+    const failedRun = await m.startValidatorRun(root.id, "scheduled");
+    await m.completeValidatorRun(failedRun.id, "failed", "needs fix");
+    const firstFix = await m.createGeneratedFixFeature(root.id, failedRun.id, [], "repair");
+    const secondRoot = await m.addFeature(slice.id, { title: "Second root" });
+    const secondRun = await m.startValidatorRun(secondRoot.id, "scheduled");
+    await m.completeValidatorRun(secondRun.id, "failed", "needs fix");
+    const secondFix = await m.createGeneratedFixFeature(secondRoot.id, secondRun.id, [], "repair");
+    await m.updateFeature(root.id, { lastValidatorStatus: "passed", loopState: "passed" });
+    await m.updateFeature(secondRoot.id, { lastValidatorStatus: "passed", loopState: "passed" });
+
+    await expect(m.reconcileSupersededGeneratedFixFeatures(slice.id)).resolves.toMatchObject({
+      supersededCount: 2,
+      featureIds: expect.arrayContaining([firstFix.id, secondFix.id]),
+    });
+    const audited = (await m.getMissionEvents(mission.id, { limit: 20 })).events
+      .filter((event) => event.eventType === "feature_status_changed" && (event.metadata as Record<string, unknown>)?.source === "superseded-fix-reconcile");
+    expect(audited).toHaveLength(2);
+    expect(audited.map((event) => (event.metadata as Record<string, unknown>)?.featureId))
+      .toEqual(expect.arrayContaining([firstFix.id, secondFix.id]));
+
+    await expect(m.reconcileSupersededGeneratedFixFeatures(slice.id)).resolves.toMatchObject({ supersededCount: 0, featureIds: [] });
+    expect((await m.getMissionEvents(mission.id, { limit: 20 })).events
+      .filter((event) => event.eventType === "feature_status_changed" && (event.metadata as Record<string, unknown>)?.source === "superseded-fix-reconcile"))
+      .toHaveLength(2);
   });
 
   it("runs the validator/fix lifecycle and reaps stale runs in PostgreSQL", async () => {

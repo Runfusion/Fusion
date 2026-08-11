@@ -51,6 +51,40 @@ describe("streamChatResponse SSE parser", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it("fires acceptance once before the first stream event", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(createChunkedStream(["event: text\ndata: \"Hello\"\n\nevent: done\ndata: {\"messageId\":\"msg-1\"}\n\n"]), { status: 200 }),
+    );
+
+    const events: string[] = [];
+    streamChatResponse("s-1", "hi", {
+      onAccepted: () => events.push("accepted"),
+      onText: () => events.push("text"),
+      onDone: () => events.push("done"),
+    });
+
+    await vi.waitFor(() => expect(events).toEqual(["accepted", "text", "done"]));
+  });
+
+  it.each([
+    { name: "the response is rejected", result: new Response("no", { status: 500 }) },
+    { name: "fetch rejects", result: new Error("network failure") },
+  ])("does not accept when $name", async ({ result }) => {
+    const onAccepted = vi.fn();
+    const onError = vi.fn();
+    if (result instanceof Error) {
+      vi.spyOn(globalThis, "fetch").mockRejectedValue(result);
+    } else {
+      vi.spyOn(globalThis, "fetch").mockResolvedValue(result);
+    }
+
+    streamChatResponse("s-1", "hi", { onAccepted, onError });
+
+    await vi.waitFor(() => expect(onError).toHaveBeenCalled());
+    expect(onAccepted).not.toHaveBeenCalled();
+    expect(onError.mock.calls[0]?.[1]).toMatchObject({ requestAccepted: false });
+  });
+
   it("flushes terminal done event when stream ends without final newline", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(createChunkedStream(["event: done\ndata: {\"messageId\":\"msg-tail\"}"]), { status: 200 }),

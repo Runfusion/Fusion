@@ -12,6 +12,9 @@ import type {
   TaskGitLabTracking,
   TaskGitLabTrackedItem,
   GithubIssueAction,
+  CurrentPlanEvidence,
+  DriftReport,
+  SpecLock,
 } from "@fusion/core";
 import { withTokenHeader } from "../../auth";
 import { api, ApiRequestError, buildApiUrl, proxyApi } from "../client/client.js";
@@ -69,6 +72,25 @@ export function fetchArchivedTasks(
 export interface TaskPromptResponse {
   id: string;
   prompt?: string;
+}
+
+/** Persisted structural plan evidence; the browser renders it but never recomputes drift. */
+export interface SpecLockResponse {
+  latestLock: SpecLock | null;
+  activeLock: SpecLock | null;
+  currentPlan: CurrentPlanEvidence | null;
+  /** Current-only report; stale immutable reports remain in history. */
+  report: DriftReport | null;
+  latestReport: DriftReport | null;
+  history: {
+    locks: SpecLock[];
+    currentPlans: CurrentPlanEvidence[];
+    reports: DriftReport[];
+  };
+}
+
+export function fetchSpecLock(id: string, projectId?: string): Promise<SpecLockResponse> {
+  return api<SpecLockResponse>(withProjectId(`/tasks/${encodeURIComponent(id)}/spec-lock`, projectId));
 }
 
 /*

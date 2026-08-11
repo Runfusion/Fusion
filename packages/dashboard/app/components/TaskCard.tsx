@@ -1709,7 +1709,9 @@ function TaskCardComponent({
   const hasBranchMetadata = Boolean(branchMetadata.branch || branchMetadata.baseBranch);
   const isAgentCreated = isAgentCreatedTask(task);
   const sourceAgentName = getSourceAgentName(task, agentsMap);
-  const agentCreatedVisibleLabel = sourceAgentName ? abbreviateBadge(sourceAgentName, 15) : t("tasks.agentLabel", "Agent");
+  const agentCreatedVisibleLabel = sourceAgentName
+    ? t("tasks.createdByAgentShort", "by {{name}}", { name: abbreviateBadge(sourceAgentName, 15) })
+    : t("tasks.agentLabel", "Agent");
   const agentCreatedTitle = sourceAgentName
     ? t("tasks.createdByAgentNamed", "Created by agent: {{name}}", { name: sourceAgentName })
     : t("tasks.createdByAgent", "Created by agent");
@@ -4292,6 +4294,7 @@ function TaskCardComponent({
             <span
               className={`card-agent-badge${isAgentNameLoading ? " card-agent-badge--loading" : ""}`}
               title={t("tasks.assignedTo", "Assigned to {{name}}", { name: assignedAgentBadgeLabel })}
+              aria-label={t("tasks.assignedTo", "Assigned to {{name}}", { name: assignedAgentBadgeLabel })}
             >
               <Bot size={11} />
               <span className="card-agent-badge-text" aria-hidden="true">
@@ -4383,13 +4386,16 @@ function TaskCardComponent({
           {/**
            * FNXC:TaskCardLayout 2026-07-10-00:00:
            * FN-7780 moves the created-by-agent chip below the task content and before the workflow identity row so the header keeps only ID/status/actions metadata and no longer wraps on narrow/mobile cards. The badge content, tooltip, and accessible name remain unchanged.
+           *
+           * FNXC:TaskCardAgentBadges 2026-08-10-03:41:
+           * FN-8930 requires current ownership and created-by provenance to never read as two assigned agents. Bot plus the filled owner pill means the current owner; Sparkles plus the outlined "by …" pill means creation provenance.
            */}
           <span
-            className="card-agent-created-badge"
+            className="card-agent-created-badge card-agent-created-badge--provenance"
             title={agentCreatedTitle}
             aria-label={agentCreatedTitle}
           >
-            <Bot size={11} aria-hidden="true" />
+            <Sparkles size={11} aria-hidden="true" />
             <span className="visually-hidden">{agentCreatedTitle}</span>
             <span aria-hidden="true">{agentCreatedVisibleLabel}</span>
           </span>

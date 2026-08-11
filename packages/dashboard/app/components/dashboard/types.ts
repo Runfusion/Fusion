@@ -152,6 +152,9 @@ export interface MainContentProps {
   milestoneSliceResumeSessionId: string | undefined;
   setGoalAnchorId: Dispatch<SetStateAction<string | undefined>>;
   goalAnchorId: string | undefined;
+  /** Command Center agent-detail request; optional for existing dashboard prop factories. */
+  agentAnchor?: { agentId: string; requestId: number };
+  setAgentAnchor?: (anchor: { agentId: string; requestId: number } | undefined) => void;
   agentsEnabled: boolean;
   agentOnboardingEnabled: boolean;
   handleOpenTaskLogs: (taskId: string) => Promise<void>;
