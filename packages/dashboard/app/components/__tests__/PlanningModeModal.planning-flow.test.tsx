@@ -45,6 +45,18 @@ function answeredHistory(count: number) {
   }));
 }
 
+/*
+FNXC:PlanningMode 2026-08-10-05:45:
+A resumed plan can finish hydration after its Proceed action first becomes discoverable, replacing
+that action-bar node before an event dispatches. Settle the pending commit and query the live button
+at click time so every direct-create handoff tests a real user action rather than a detached node.
+*/
+async function clickProceedAfterHydration() {
+  await screen.findByRole("button", { name: "Proceed with plan" });
+  await act(async () => {});
+  fireEvent.click(screen.getByRole("button", { name: "Proceed with plan" }));
+}
+
 describe("PlanningModeModal sequential flow", () => {
   beforeEach(() => {
     vi.useRealTimers();
@@ -604,7 +616,7 @@ describe("PlanningModeModal sequential flow", () => {
     const onViewTask = vi.fn();
     render(<PlanningModeModal isOpen onClose={onClose} onTaskCreated={onTaskCreated} onTasksCreated={vi.fn()} onViewTask={onViewTask} tasks={mockTasks} projectId="project-1" resumeSessionId="session-1" />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Proceed with plan" }));
+    await clickProceedAfterHydration();
 
     await waitFor(() => expect(mockCreateTaskFromPlanning).toHaveBeenCalledWith(
       "session-1",
@@ -716,7 +728,7 @@ describe("PlanningModeModal sequential flow", () => {
     const onViewTask = vi.fn();
     render(<PlanningModeModal isOpen onClose={vi.fn()} onTaskCreated={vi.fn()} onTasksCreated={vi.fn()} onViewTask={onViewTask} tasks={mockTasks} projectId="project-1" resumeSessionId="session-1" />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Proceed with plan" }));
+    await clickProceedAfterHydration();
 
     expect(await screen.findByRole("button", { name: "View task" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Return to sessions" })).toBeEnabled();
@@ -784,7 +796,7 @@ describe("PlanningModeModal sequential flow", () => {
     // tasks={[]} proves the banner resolves the just-created Task object, not the tasks prop.
     render(<PlanningModeModal isOpen onClose={vi.fn()} onTaskCreated={vi.fn()} onTasksCreated={vi.fn()} onViewTask={vi.fn()} tasks={[]} projectId="project-1" resumeSessionId="session-1" />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Proceed with plan" }));
+    await clickProceedAfterHydration();
     expect(await screen.findByTestId("planning-task-created")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Continue planning" }));
@@ -821,7 +833,7 @@ describe("PlanningModeModal sequential flow", () => {
 
     render(<PlanningModeModal isOpen onClose={vi.fn()} onTaskCreated={vi.fn()} onTasksCreated={vi.fn()} onViewTask={vi.fn()} tasks={mockTasks} projectId="project-1" resumeSessionId="session-1" />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Proceed with plan" }));
+    await clickProceedAfterHydration();
     expect(await screen.findByTestId("planning-create-retry")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Retry create" }));
 

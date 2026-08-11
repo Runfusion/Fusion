@@ -266,7 +266,9 @@ Separation of concerns:
 
 ### Task wedge operator notifications
 
-When a task is terminally blocked (for example, by a merge gate, exhausted execution retries, or a completion blocker), Fusion posts a system message to the dashboard mailbox and sends a `task-wedged` notification through configured providers. Pause-derived alerts require actual pause state, and an actively progressing task never alerts even if a resume path retained a pause marker. The message identifies the task, bounded reason/gate when known, and a recovery action. The active/resolved episode is persisted with the task, so it is sent once per active reason across service restarts; retrying or otherwise restoring progress clears the episode, so a later recurrence is visible again.
+When a task is terminally blocked (for example, by a merge gate, exhausted execution retries, or a completion blocker), Fusion posts a system message to the dashboard mailbox and sends a `task-wedged` notification through configured providers. Self-healing declines alert only when their proof shows no live session, no recent activity, and no intentional pause or auto-merge-off hold. Before delivery, Fusion revalidates the live row: progressing (including `reviewing`), paused, auto-merge-off, deleted, archived, and complete-lane rows do not alert. The message identifies the task, bounded reason/gate when known, and a recovery action. The active/resolved episode is persisted with the task, so it is sent once per active reason across service restarts; retrying or otherwise restoring progress clears the episode, so a later recurrence is visible again.
+
+For an unclassified generic `terminal-failed` park, Fusion first uses a small durable automatic-recovery budget rather than immediately paging an operator. While retries are owed, all failure-alert channels are withheld. Budget exhaustion produces one confirmed terminal-failure escalation; turning automatic recovery off emits a reason-tagged drain alert without discarding remaining retries, so turning it back on resumes recovery. An operator Retry starts a fresh budget; success, archive, and deletion clear it automatically. Agent-initiated retry intentionally does not mint a fresh budget. A spent budget can also expire after its age bound only when a later foreign row write proves the episode moved on.
 
 ### CLI agent permission prompts and notifications
 
@@ -366,14 +368,13 @@ Executor precedence for task runs:
 
 If the assigned agent runtime model is missing or incomplete, Fusion continues to automatic provider/model resolution without mixing partial runtime fields into the selected pair.
 
-### Durable-agent heartbeat model precedence and unavailable-provider behavior
+### Permanent role-agent identity, chat, and heartbeat model inheritance
 
-Heartbeat sessions for durable agents resolve models with the same fresh-settings-first rule:
+For permanent role agents, the Agents page, Agent Detail, Chat session creation, direct chat, room responders, and model-less heartbeats share one identity resolution chain. Explicit session or room thinking wins, then an agent's explicit thinking, then its role lane, project default override, and global default. A complete per-agent runtime model (`runtimeConfig.model` or `modelProvider` + `modelId`) wins for agent-bound interactive sessions and heartbeats; incomplete pairs are ignored.
 
-1. Execution-lane settings fallback (`executionProvider`/`executionModelId` → `executionGlobalProvider`/`executionGlobalModelId` → project/global defaults)
-2. Agent runtime model (`runtimeConfig.model` or `runtimeConfig.modelProvider` + `runtimeConfig.modelId`) only when both provider and model ID are present and no execution/default pair is configured
+Built-in workflow roles select their own lanes: Planner uses planning, Reviewer uses validator, Merger uses merger, and Executor/other permanent agents use execution. Thus an unset role lane inherits `defaultProviderOverride`/`defaultModelIdOverride` before global defaults. The Agent Detail picker labels an empty stored model as **Inherit project/role default**; saving inherit leaves the agent row empty rather than materialising the selected project model.
 
-Heartbeat no longer passes a stale runtime model ahead of a saved execution lane or project default override.
+Model-less durable-agent heartbeats use the same role-lane chain. Calling the low-level heartbeat resolver without role context deliberately retains its historical execution-lane behavior for compatibility. Task execution remains settings-first as described above and is not changed by identity inheritance.
 
 Task-scoped heartbeat runs for durable agents execute inside the task's git worktree (same as ephemeral task execution), while no-task heartbeat runs continue to execute from the project root.
 Heartbeat and executor system prompts share the same active-goal context injector (`buildGoalContextSection`), so both lanes receive identical goal preambles when active goals exist.

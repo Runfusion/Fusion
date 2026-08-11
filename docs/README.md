@@ -162,3 +162,5 @@ FN-7088 links previously-unlinked first-class testing and baseline docs here so 
 - **Workflow author:** Dashboard Guide → Workflow Editor → Workflow Steps → Settings Reference
 - **Power user / automation owner:** Settings Reference → Workflow Steps → Agents → Planner Oversight (Settings Reference § Workflow Settings)
 - **Maintainer / contributor:** Architecture → Multi-Project → Contributing
+
+- [Knowledge graph](knowledge-graph.md) — deterministic committable codebase structure graph.

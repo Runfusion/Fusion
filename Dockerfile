@@ -10,9 +10,9 @@ RUN apt-get update \
 RUN corepack enable && corepack prepare pnpm@10.33.0 --activate
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-# FNXC:DockerBuild 2026-07-22-13:00: The dependency-cache layer must include every
-# selected workspace manifest before frozen install; otherwise pnpm omits a package's
-# dependencies and the later full-workspace build can fail despite its source being copied.
+# FNXC:DockerBuild 2026-08-10-18:03: This list is derived from pnpm-workspace.yaml.
+# Every selected workspace manifest must be copied before frozen install, or pnpm
+# omits its dependencies and the later full-workspace image build can fail.
 COPY packages/cli/package.json ./packages/cli/package.json
 COPY packages/cli-alias/package.json ./packages/cli-alias/package.json
 COPY packages/core/package.json ./packages/core/package.json
@@ -30,6 +30,7 @@ COPY plugins/examples/fusion-plugin-ci-status/package.json ./plugins/examples/fu
 COPY plugins/examples/fusion-plugin-notification/package.json ./plugins/examples/fusion-plugin-notification/package.json
 COPY plugins/examples/fusion-plugin-settings-demo/package.json ./plugins/examples/fusion-plugin-settings-demo/package.json
 COPY plugins/fusion-plugin-acp-runtime/package.json ./plugins/fusion-plugin-acp-runtime/package.json
+COPY plugins/fusion-plugin-todos/package.json ./plugins/fusion-plugin-todos/package.json
 COPY plugins/fusion-plugin-compound-engineering/package.json ./plugins/fusion-plugin-compound-engineering/package.json
 COPY plugins/fusion-plugin-linear-import/package.json ./plugins/fusion-plugin-linear-import/package.json
 COPY plugins/fusion-plugin-paperclip-runtime/package.json ./plugins/fusion-plugin-paperclip-runtime/package.json

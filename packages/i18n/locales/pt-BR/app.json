@@ -1832,7 +1832,8 @@
       "team": "Equipe",
       "workflows": "Fluxos de trabalho",
       "tokens": "Tokens",
-      "tools": "Ferramentas"
+      "tools": "Ferramentas",
+      "agentActivity": "Agent Activity"
     },
     "team": {
       "agent": "Agente",
@@ -1910,6 +1911,33 @@
       "sessions": "Sessões",
       "summaryTitle": "Resumo",
       "toolCalls": "Chamadas de ferramenta"
+    },
+    "agentActivity": {
+      "live": "Live",
+      "timeline": "Timeline",
+      "mode": "Activity mode",
+      "empty": "No agent activity yet.",
+      "loadingOlder": "Loading…",
+      "loadOlder": "Load older",
+      "showMore": "Show more loaded activity",
+      "end": "End of activity history",
+      "agentFilter": "Filter by agent",
+      "allAgents": "All agents",
+      "taskFilter": "Filter by task",
+      "typeFilter": "Filter by event type",
+      "allTypes": "All event types",
+      "rangeNote": "Time range filters loaded events; it is not sent to the server.",
+      "openTask": "Open task {{taskId}}",
+      "openAgent": "Open agent {{agentId}}",
+      "eventTypes": {
+        "task:started": "Task started",
+        "task:handed-off": "Task handed off",
+        "task:completed": "Task completed",
+        "agent:state-changed": "Agent state changed",
+        "workflow:gate-passed": "Workflow gate passed",
+        "workflow:gate-failed": "Workflow gate failed",
+        "approval:requested": "Approval requested"
+      }
     }
   },
   "comments": {

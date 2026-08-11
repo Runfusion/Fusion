@@ -9,6 +9,13 @@
 import {type TaskStore, type MoveTaskOptions, type MoveTaskInternalOptions, storeLog} from "../store.js";
 import * as schema from "../postgres/schema/index.js";
 import {TaskDeletedError, HandoffInvariantViolationError, TransitionRejectionError} from "./errors.js";
+
+/** @internal A fenced terminal-failure apply lost ownership before its move transaction. */
+export class TerminalFailureApplyRejected extends Error {
+  constructor(readonly outcome: "superseded" | "not-failed" | "deleted" | "no-budget") {
+    super(`terminal failure apply ${outcome}`);
+  }
+}
 import {and, eq, sql} from "drizzle-orm";
 import type {Task, Column, ColumnId, HandoffToReviewOptions} from "../types.js";
 import {VALID_TRANSITIONS, COLUMNS} from "../types.js";
@@ -403,7 +410,7 @@ export async function handoffToReviewImpl(store: TaskStore, taskId: string, opts
 
 export async function moveTaskInternalImpl(store: TaskStore, id: string, toColumn: ColumnId, options: MoveTaskOptions | undefined, internal: MoveTaskInternalOptions, currentTask?: Task,): Promise<Task> {
     const dir = store.taskDir(id);
-    const task = currentTask ?? await store.readTaskForMove(id);
+    let task = currentTask ?? await store.readTaskForMove(id);
     /*
     FNXC:TaskMovement 2026-06-22-18:20:
     Public moveTask calls without an explicit source keep the legacy emitted source of "engine", but they do not inherit workflow guard bypass. Engine, scheduler, handoff, and recovery call sites opt into bypass semantics with an explicit moveSource or skipMergeBlocker.
@@ -487,7 +494,7 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
     */
     const moveReviewColumns = workflowIr ? new Set(resolveReviewColumns(workflowIr)) : undefined;
 
-    if (task.column === toColumn) {
+    if (task.column === toColumn && !internal.terminalFailureApply) {
       /*
       FNXC:WorkflowResolvedColumns 2026-07-31-17:20 (fleet — the same-column handoff target):
       A MOVE TARGET, resolved from the set already computed three lines above.
@@ -604,6 +611,9 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
     }
 
     const fromColumn = task.column;
+    // A fenced recovery apply may already be in its rebound column; it still needs the transaction
+    // to persist the failure clear and consume the fence, but must not become an invalid self-move.
+    const terminalFailureApplySameColumn = internal.terminalFailureApply !== undefined && fromColumn === toColumn;
 
     if (workflowIr) {
       // ── Flag-ON validation + sync guards (typed rejections, KTD-3/R13) ─────
@@ -636,7 +646,7 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
       //    re-home (recoveryRehome) skips this so a stranded card can reach its
       //    new workflow's entry column from any current column.
       const allowed = resolveAllowedColumns(workflowIr, fromColumn);
-      if (options?.recoveryRehome !== true && !allowed.includes(toColumn)) {
+      if (!terminalFailureApplySameColumn && options?.recoveryRehome !== true && !allowed.includes(toColumn)) {
         throw new TransitionRejectionError(
           makeTransitionRejection(
             "guard-rejected",
@@ -823,7 +833,7 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
         options?.recoveryRehome === true &&
         !(COLUMNS as readonly string[]).includes(toColumn) &&
         workflowHasColumn(await resolveTaskWorkflowIrForMove(store, id), toColumn);
-      if (!isEvacuation && !isLegacyRecoveryRehome && !isWorkflowDeclaredRecoveryRehome) {
+      if (!terminalFailureApplySameColumn && !isEvacuation && !isLegacyRecoveryRehome && !isWorkflowDeclaredRecoveryRehome) {
         /*
         FNXC:WorkflowColumns 2026-07-05-19:30:
         Workflow columns graduated to always-on (no experimental flag emitted), so this "flag-OFF"
@@ -1128,6 +1138,36 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
       (the failure mode that made the R1 sentinel unbindable).
       */
       await acquireTaskAdvisoryXactLock(tx, layer.projectId, id);
+      if (internal.terminalFailureApply) {
+        /*
+        FNXC:TaskWedgeNotifications 2026-08-10-20:40:
+        The apply fence is checked after the database advisory lock, inside the same transaction
+        that writes the cleared task and its column move. `withTaskLock` serializes only one
+        process; without this re-read, two engines can both carry a previously-valid token into
+        separate move transactions and the loser can requeue a card after the winner has advanced it.
+        */
+        const row = await readTaskRowInTransaction(tx, id, { includeDeleted: true }, layer.projectId);
+        if (!row) throw new TerminalFailureApplyRejected("no-budget");
+        const live = store.rowToTask(store.pgRowToTaskRow(row));
+        const budget = live.wedgeNotification?.autoRecovery;
+        if (!budget) throw new TerminalFailureApplyRejected("no-budget");
+        if (live.deletedAt != null) throw new TerminalFailureApplyRejected("deleted");
+        if (live.status !== "failed") throw new TerminalFailureApplyRejected("not-failed");
+        if (live.column !== internal.terminalFailureApply.expectedColumn || budget.applyToken !== internal.terminalFailureApply.applyToken) {
+          throw new TerminalFailureApplyRejected("superseded");
+        }
+        const now = new Date().toISOString();
+        const { applyToken: _token, lastApplyStartedAt: _started, ...remainingBudget } = budget;
+        task = {
+          ...live,
+          ...internal.terminalFailureApply.patch,
+          wedgeNotification: {
+            ...live.wedgeNotification!,
+            budgetRevision: (live.wedgeNotification!.budgetRevision ?? 0) + 1,
+            autoRecovery: { ...remainingBudget, retryAppliedAt: now, lastBudgetWriteAt: now },
+          },
+        } as Task;
+      }
       const capacityWorkflowId = await readTaskWorkflowSelectionInTransaction(tx, layer.projectId, id);
       const capacityPoolId = resolveCapacityPoolId(capacityWorkflowId);
       const capacityIr = await resolveWorkflowIrForSelectedWorkflowId(store, capacityWorkflowId);

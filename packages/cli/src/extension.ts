@@ -2419,6 +2419,8 @@ export default function kbExtension(pi: ExtensionAPI) {
       const autoPauseClearPatch = buildAutoPauseClearPatch(task);
       const clearedDeadlockAutoPause = Object.keys(autoPauseClearPatch).length > 0;
       const retryLogSuffix = clearedDeadlockAutoPause ? ", cleared deadlock auto-pause" : "";
+      // FNXC:TaskWedgeNotifications 2026-08-10-20:15: an operator retry ends the prior terminal-failure episode and mints a fresh budget.
+      await store.resetTerminalFailureAutoRecoveryBudget(params.id);
 
       if (isMissingWorktreeSessionRetry) {
         await store.updateTask(params.id, {
@@ -4553,6 +4555,18 @@ export default function kbExtension(pi: ExtensionAPI) {
     },
   });
 
+  // ── fn_mission_set_status ───────────────────────────────────────
+  pi.registerTool({
+    name: "fn_mission_set_status", label: "fn: Set Mission Status", description: "Set a mission lifecycle status.", promptSnippet: "Set a mission status", promptGuidelines: ["Use lifecycle statuses only"],
+    parameters: Type.Object({ id: Type.String(), status: Type.Union(fusionCore.MISSION_STATUSES.map((status) => Type.Literal(status))), reason: Type.Optional(Type.String()) }),
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      if (!fusionCore.MISSION_STATUSES.includes(params.status)) return { content: [{ type: "text", text: `Invalid status. Must be one of: ${fusionCore.MISSION_STATUSES.join(", ")}` }], isError: true, details: { error: "Invalid status" } };
+      const missionStore = (await getStore(ctx.cwd)).getMissionStore();
+      try { const mission = await missionStore.updateMission(params.id, { status: params.status }, { actor: missionTransitionActor(ctx), reason: params.reason }); return { content: [{ type: "text", text: `Set ${mission.id} status to ${mission.status}` }], details: { mission } }; }
+      catch (error) { const message = error instanceof Error ? error.message : String(error); return { content: [{ type: "text", text: message }], isError: true, details: { error: message } }; }
+    },
+  });
+
   // ── fn_mission_update ───────────────────────────────────────────
 
   pi.registerTool({
@@ -4995,6 +5009,21 @@ export default function kbExtension(pi: ExtensionAPI) {
           details: { error: message },
         };
       }
+    },
+  });
+
+  // ── fn_feature_set_status ───────────────────────────────────────
+  /* FNXC:MissionStatusWrites 2026-08-10-12:47: Dedicated tools keep the linked-task execution-status guard unambiguous instead of widening generic updates. */
+  pi.registerTool({
+    name: "fn_feature_set_status", label: "fn: Set Feature Status", description: "Set a feature lifecycle status.", promptSnippet: "Set a feature status", promptGuidelines: ["Link a task before execution statuses"],
+    parameters: Type.Object({ id: Type.String(), status: Type.Union(fusionCore.FEATURE_STATUSES.map((status) => Type.Literal(status))), reason: Type.Optional(Type.String()) }),
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      if (!fusionCore.FEATURE_STATUSES.includes(params.status)) return { content: [{ type: "text", text: `Invalid status. Must be one of: ${fusionCore.FEATURE_STATUSES.join(", ")}` }], isError: true, details: { error: "Invalid status" } };
+      const missionStore = (await getStore(ctx.cwd)).getMissionStore(); const feature = await missionStore.getFeature(params.id);
+      if (!feature) return { content: [{ type: "text", text: `Feature ${params.id} not found` }], isError: true, details: { error: "Feature not found" } };
+      if ((["triaged", "in-progress", "done", "blocked"] as const).includes(params.status) && !feature.taskId) return { content: [{ type: "text", text: `Cannot set status to '${params.status}' without a linked task. Use the triage endpoint to create and link a task first, or link an existing task via fn_feature_link_task.` }], isError: true, details: { error: "FEATURE_TASK_REQUIRED" } };
+      try { const updated = await missionStore.updateFeatureStatus(params.id, params.status, { actor: missionTransitionActor(ctx), reason: params.reason }); return { content: [{ type: "text", text: `Set ${updated.id} status to ${updated.status}` }], details: { feature: updated } }; }
+      catch (error) { const message = error instanceof Error ? error.message : String(error); return { content: [{ type: "text", text: message }], isError: true, details: { error: message } }; }
     },
   });
 

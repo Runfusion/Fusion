@@ -33,6 +33,8 @@ import {
   type MemoryGetOptions,
   type MemoryGetResult,
 } from "./memory-backend.js";
+import { appendRecallInstructionSection } from "./recall/recall-instructions.js";
+import type { RecallSearchHit } from "./recall/recall-types.js";
 
 // ── Default Scaffold ─────────────────────────────────────────────────
 
@@ -337,6 +339,7 @@ export async function getProjectMemory(
 export function buildTriageMemoryInstructions(
   rootDir: string,
   settings?: MemorySettings,
+  recallHits?: readonly RecallSearchHit[],
 ): string {
   void rootDir; // Parameter kept for future use (e.g., checking file existence)
   const ctx = resolveMemoryInstructionContext(settings);
@@ -348,7 +351,7 @@ export function buildTriageMemoryInstructions(
 
   if (!ctx.capabilities.writable) {
     // Read-only backend: consult memory for context but don't mention file path
-    return `
+    return appendRecallInstructionSection(`
 ## Project Memory
 
 This project has a memory system that stores durable project learnings.
@@ -356,13 +359,13 @@ This project has a memory system that stores durable project learnings.
 **Before writing the specification:**
 1. Consult the project memory for relevant context
 2. Incorporate any useful learnings into your specification
-`;
+`, recallHits);
   }
 
   // Writable backend (file or qmd)
   if (ctx.instructionPathHint) {
     // File backend: mention the explicit path
-    return `
+    return appendRecallInstructionSection(`
 ## Project Memory
 
 This project has OpenClaw-style memory files:
@@ -379,11 +382,11 @@ This project has OpenClaw-style memory files:
 - Do **not** write \`.fusion/memory/MEMORY.md\`, \`.fusion/memory/YYYY-MM-DD.md\`, or any other memory files directly when \`fn_memory_append\` is available
 
 Do not read all memory directly by default. If memory is irrelevant, skip it.
-`;
+`, recallHits);
   }
 
   // QMD/non-file writable backend: generic instructions without specific path
-  return `
+  return appendRecallInstructionSection(`
 ## Project Memory
 
 This project has a memory system that stores durable project learnings.
@@ -398,7 +401,7 @@ This project has a memory system that stores durable project learnings.
 - Do **not** write memory files directly when \`fn_memory_append\` is available
 
 **If the memory contains useful context for this task, reference it in the specification.**
-`;
+`, recallHits);
 }
 
 /**
@@ -423,6 +426,7 @@ This project has a memory system that stores durable project learnings.
 export function buildExecutionMemoryInstructions(
   rootDir: string,
   settings?: MemorySettings,
+  recallHits?: readonly RecallSearchHit[],
 ): string {
   void rootDir; // Parameter kept for future use (e.g., checking file existence)
   const ctx = resolveMemoryInstructionContext(settings);
@@ -434,7 +438,7 @@ export function buildExecutionMemoryInstructions(
 
   if (!ctx.capabilities.writable) {
     // Read-only backend: consult memory for context but no update instructions
-    return `
+    return appendRecallInstructionSection(`
 ## Project Memory
 
 This project has a memory system that stores durable project learnings.
@@ -442,13 +446,13 @@ This project has a memory system that stores durable project learnings.
 **At the start of execution:**
 1. Consult the project memory for relevant context
 2. Apply any useful learnings to your implementation
-`;
+`, recallHits);
   }
 
   // Writable backend (file or qmd)
   if (ctx.instructionPathHint) {
     // File backend: mention the explicit path with full read/write instructions
-    return `
+    return appendRecallInstructionSection(`
 ## Project Memory
 
 This project has OpenClaw-style memory files:
@@ -479,11 +483,11 @@ This project has OpenClaw-style memory files:
 - Use \`- \` prefix for list items
 - Keep entries concise and actionable
 - Example: \`- The API layer uses Zod schemas for all request validation\`
-`;
+`, recallHits);
   }
 
   // QMD/non-file writable backend: generic instructions without specific path
-  return `
+  return appendRecallInstructionSection(`
 ## Project Memory
 
 This project has a memory system that stores durable project learnings accumulated from past task runs.
@@ -504,12 +508,13 @@ This project has a memory system that stores durable project learnings accumulat
 4. **If nothing durable was learned, skip the memory update entirely** — do not append trivial or task-specific notes
 5. **Avoid task-specific trivia** in project scope (for example: personal reminders, one-off scratch thoughts, individual communication preferences)
 6. Consolidate when possible: refine an existing memory entry instead of adding duplicates.
-`;
+`, recallHits);
 }
 
 export function buildReviewerMemoryInstructions(
   rootDir: string,
   settings?: MemorySettings,
+  recallHits?: readonly RecallSearchHit[],
 ): string {
   void rootDir;
   const ctx = resolveMemoryInstructionContext(settings);
@@ -517,7 +522,7 @@ export function buildReviewerMemoryInstructions(
     return "";
   }
 
-  return `
+  return appendRecallInstructionSection(`
 ## Project Memory
 
 This project has a memory system that stores durable project learnings.
@@ -528,7 +533,7 @@ This project has a memory system that stores durable project learnings.
 3. Treat documented durable conventions and pitfalls as review evidence when deciding APPROVE, REVISE, or RETHINK
 4. Do not update memory during review; reviewer memory access is read-only
 5. Skip memory reads when they are not relevant to the reviewed plan or code
-`;
+`, recallHits);
 }
 
 /**

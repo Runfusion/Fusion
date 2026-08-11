@@ -69,3 +69,6 @@ export async function getAgentActivity(
   */
   return api<AgentActivityPage>(`/agent-activity${query.size ? `?${query}` : ""}`, options);
 }
+
+export { fetchSpecLock } from "./api/tasks/tasks";
+export type { SpecLockResponse } from "./api/tasks/tasks";

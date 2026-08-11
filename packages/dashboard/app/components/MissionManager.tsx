@@ -3,7 +3,7 @@ import { useState, useEffect, useCallback, useRef, useMemo, type MouseEvent, typ
 import { useTranslation } from "react-i18next";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { getErrorMessage, type Goal } from "@fusion/core";
+import { getErrorMessage, type DriftAlignment, type Goal } from "@fusion/core";
 import {
   X,
   Plus,
@@ -1271,6 +1271,22 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
   an unavailable candidate can be skipped but an old response never leaks its
   branch, member count, or PR state into the current mission.
   */
+  /*
+  FNXC:SpecLockMissionAlignment 2026-08-10-16:17:
+  FN-8845 keeps delivery status and spec alignment independent. Mission reconciliation persists
+  its deterministic projection on linked features; render that shared state rather than performing
+  browser-only task-report joins that can disagree with periodic/autopilot reconciliation. An
+  unlinked or archived feature remains unavailable and never receives a fabricated projection.
+  */
+  const featureSpecAlignments = useMemo<Record<string, DriftAlignment>>(() => Object.fromEntries(
+    (selectedMission?.milestones ?? []).flatMap((milestone) => milestone.slices.flatMap((slice) =>
+      slice.features.map((feature) => [
+        feature.id,
+        feature.taskId ? (feature.specAlignment ?? "unavailable") : "unavailable",
+      ] as const),
+    )),
+  ), [selectedMission]);
+
   useEffect(() => {
     let cancelled = false;
     setSelectedMissionBranchGroup(null);
@@ -3726,6 +3742,15 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
                                           >
                                             {feature.status}
                                           </span>
+                                          {feature.taskId && featureSpecAlignments[feature.id] && (
+                                            <span
+                                              className={`mission-status-badge mission-status-badge--sm mission-spec-alignment mission-spec-alignment--${featureSpecAlignments[feature.id]}`}
+                                              data-testid={`mission-feature-spec-alignment-${feature.id}`}
+                                              aria-label={t("missions.specAlignment", "Spec alignment: {{alignment}}", { alignment: featureSpecAlignments[feature.id] })}
+                                            >
+                                              {featureSpecAlignments[feature.id]}
+                                            </span>
+                                          )}
                                           {/* Loop state indicator */}
                                           {(feature.loopState && feature.loopState !== "idle") && (
                                             <span

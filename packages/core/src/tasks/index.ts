@@ -21,6 +21,7 @@ export * from "./step-parsers.js";
 export * from "./symbol-lock-lineage-approval.js";
 export * from "./symbol-lock-types.js";
 export * from "./task-age-staleness.js";
+export * from "./terminal-failure-auto-recovery.js";
 export * from "./task-creation-hooks.js";
 export * from "./task-fields.js";
 export * from "./task-helpers.js";

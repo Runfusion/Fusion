@@ -123,6 +123,30 @@ let routed = hasFencedPrincipal
       agents,
       activeSessions,
     });
+/** Cleared when a stale fence is discarded, so the pool-capacity retry below is no longer fenced off. */
+let fenceStillGoverns = Boolean(hasFencedPrincipal);
+/*
+ * FNXC:WorkflowAgentRouting 2026-08-10-07:50:
+ * A fence that no longer describes reality is not a wait — the principal is gone, lost the role, or had its
+ * authority edited away, and no amount of re-dispatching fixes that. Re-route from scratch so the card keeps
+ * executing under whoever IS authority now. Without this, a resumed continuation kept re-asserting a dead
+ * principal every dispatch and the task only ever advanced when a human moved it.
+ */
+if (routed.status === "held" && routed.staleFence) {
+  executorLog.warn(
+    `[workflow-graph] ${nodeTask.id}: fenced principal '${fencedPrincipalId}' can no longer run node '${node.id}' `
+    + `as '${classifiedRole}' — discarding the stale fence and re-routing.`,
+  );
+  routed = routeWorkflowPrincipal({
+    task: nodeTask,
+    ir: deps.columnAgentIr,
+    node,
+    agents,
+    activeSessions,
+  });
+  // The fence is discarded, so a fresh role-pool route may take the cross-engine capacity retry below.
+  fenceStillGoverns = false;
+}
 if (routed.status === "unclassified") return undefined;
 /*
  * FNXC:WorkflowAgentRouting 2026-08-07-23:50:
@@ -264,7 +288,7 @@ let capacity = await deps.workflowAgentCapacity.acquire({
  * Fenced and named principals never take this fallback.
  */
 if (capacity.status === "held" && capacity.reason === "agent-capacity"
-  && routed.route.authority === "role-pool" && !hasFencedPrincipal) {
+  && routed.route.authority === "role-pool" && !fenceStillGoverns) {
   const excludedPoolAgentIds = new Set<string>();
   while (capacity.status === "held" && capacity.reason === "agent-capacity"
     && routed.route.authority === "role-pool") {

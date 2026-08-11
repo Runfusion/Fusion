@@ -8,3 +8,4 @@ export * from "./memory-compaction.js";
 export * from "./memory-dreams.js";
 export * from "./memory-insights.js";
 export * from "./project-memory.js";
+export * from "./recall/index.js";

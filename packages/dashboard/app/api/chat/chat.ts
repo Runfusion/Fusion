@@ -540,6 +540,8 @@ export interface ChatStreamErrorMeta {
 }
 
 export interface ChatStreamHandlers {
+  /** Fires once when the server accepts this new turn after multipart upload and before stream events. */
+  onAccepted?: () => void;
   onThinking?: (data: string) => void;
   onText?: (data: string) => void;
   onToolStart?: (data: { toolName: string; args?: Record<string, unknown> }) => void;
@@ -683,6 +685,11 @@ export function streamChatResponse(
       }
 
       requestAccepted = true;
+      /*
+      FNXC:ChatAttachments 2026-08-10-05:51:
+      Server acceptance is the earliest point staged files are provably uploaded, so composer previews release here rather than at stream completion. Pre-acceptance failures retain them for retry.
+      */
+      handlers.onAccepted?.();
       handlers.onConnectionStateChange?.("connected");
       firstEventTimer = setTimeout(() => {
         if (terminated || closedByUser || receivedStreamEvent) {

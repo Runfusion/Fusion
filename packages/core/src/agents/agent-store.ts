@@ -110,7 +110,6 @@ import {
   BUILTIN_WORKFLOW_ROLE_AGENT_DEFAULT_LIST,
   type BuiltinWorkflowRole,
 } from "./workflow-role-agent-defaults.js";
-import { enforceBuiltinWorkflowRoleRoutability } from "./agent-role-policy.js";
 
 const agentStoreLog = createLogger("agent-store");
 
@@ -2061,14 +2060,12 @@ export class AgentStore extends EventEmitter {
             metadata: { builtInWorkflowRole: true, workflowRole: definition.role },
             /*
             FNXC:WorkflowAgentRouting 2026-08-10-01:15:
-            These four ARE the permanent principals that route built-in workflow stages, and the router treats
-            `runtimeConfig.enabled === false` as unavailable. Provisioning them disabled therefore created a
-            system that could not route ANY built-in role: every task held at its first workflow node with
-            `workflow-principal-role-pool-exhausted:<role>`, and the held item was re-claimed with no backoff,
-            burning CPU and ~19k audit rows/hour while nothing executed. Seed them ENABLED so a fresh instance
-            can route out of the box; an operator can still disable one deliberately afterwards.
+            Heartbeat OFF and auto-claim OFF is correct for these four: they are invoked BY the workflow engine
+            as stage principals and must not run autonomous loops or claim work on their own. This no longer
+            costs routability — `isWorkflowPrincipalEligible` treats built-in owners as routable structurally,
+            precisely so the heartbeat setting and the routing question stay separate concerns.
             */
-            runtimeConfig: { enabled: true },
+            runtimeConfig: { enabled: false, autoClaimRelevantTasks: false },
             instructionsText: definition.instructionsText,
             soul: definition.soul,
             bundleConfig: { ...BUILTIN_WORKFLOW_AGENT_BUNDLE_CONFIG, files: [...BUILTIN_WORKFLOW_AGENT_BUNDLE_CONFIG.files] },
@@ -2080,11 +2077,6 @@ export class AgentStore extends EventEmitter {
             || (agent.bundleConfig !== undefined && !canonicalOrPartialBundle)
             || (Boolean(agent.instructionsText?.trim()) && agent.instructionsText !== definition.instructionsText);
           const updates: Partial<Agent> = {};
-          // FNXC:WorkflowAgentRouting 2026-08-10-01:15: converge every existing built-in owner to routable.
-          // See enforceBuiltinWorkflowRoleRoutability — routability is an invariant for these four, not a setting.
-          if (agent.runtimeConfig?.enabled === false) {
-            updates.runtimeConfig = { ...agent.runtimeConfig, enabled: true };
-          }
           if (!customInstructions && !agent.instructionsText?.trim()) updates.instructionsText = definition.instructionsText;
           if (!agent.soul?.trim()) updates.soul = definition.soul;
           // FNXC:WorkflowAgentIdentities 2026-08-08-06:38: Do not rewrite complete canonical
@@ -3198,16 +3190,9 @@ export class AgentStore extends EventEmitter {
   }
 
   private async writeAgent(agent: Agent, executor?: QueryHandle): Promise<void> {
-    /*
-    FNXC:WorkflowAgentRouting 2026-08-10-01:15:
-    The single durable write seam for agents, and therefore the only place the built-in-owner routability
-    invariant cannot be bypassed. Enforcing here — rather than in the REST handler — covers the API, the
-    dashboard toggle, plugins, provisioning, config-revision restores, and any future caller at once.
-    */
-    const routable = enforceBuiltinWorkflowRoleRoutability(agent);
     // FNXC:SqliteFinalRemoval 2026-06-25-23:40:
     // Backend mode: delegate to async Drizzle writeAgent helper.
-        await writeAgentAsync(executor ?? this.asyncLayer!.db, routable, this.asyncLayer!.projectId);
+        await writeAgentAsync(executor ?? this.asyncLayer!.db, agent, this.asyncLayer!.projectId);
     return;
 }
 

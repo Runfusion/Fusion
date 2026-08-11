@@ -1260,3 +1260,57 @@ describe("resolveImplicitPlanningFallbackModel (FN-7719)", () => {
     });
   });
 });
+
+describe("role-aware heartbeat model inheritance", () => {
+  const projectOverride = {
+    defaultProviderOverride: "project-provider",
+    defaultModelIdOverride: "project-model",
+    defaultProvider: "global-provider",
+    defaultModelId: "global-model",
+  };
+
+  it("uses each supplied workflow role lane and leaves no-role calls on execution", () => {
+    const settings = {
+      ...projectOverride,
+      planningProvider: "planning-provider",
+      planningModelId: "planning-model",
+      executionProvider: "execution-provider",
+      executionModelId: "execution-model",
+      validatorProvider: "validator-provider",
+      validatorModelId: "validator-model",
+      mergerProvider: "merger-provider",
+      mergerModelId: "merger-model",
+    };
+    const expected = {
+      triage: ["planning-provider", "planning-model"],
+      executor: ["execution-provider", "execution-model"],
+      reviewer: ["validator-provider", "validator-model"],
+      merger: ["merger-provider", "merger-model"],
+    } as const;
+
+    for (const role of ["triage", "executor", "reviewer", "merger"] as const) {
+      expect(resolveHeartbeatSessionModels(settings, { enabled: false }, { roles: [role] })).toMatchObject({
+        defaultProvider: expected[role][0],
+        defaultModelId: expected[role][1],
+      });
+    }
+    expect(resolveHeartbeatSessionModels(settings, { enabled: false })).toMatchObject({
+      defaultProvider: "execution-provider",
+      defaultModelId: "execution-model",
+    });
+  });
+
+  it("uses project override for model-less roles and preserves complete runtime assignments", () => {
+    expect(resolveHeartbeatSessionModels(projectOverride, { enabled: false }, { roles: ["merger"] })).toMatchObject({
+      defaultProvider: "project-provider",
+      defaultModelId: "project-model",
+    });
+    expect(resolveHeartbeatSessionModels(projectOverride, {
+      modelProvider: "agent-provider",
+      modelId: "agent-model",
+    }, { roles: ["merger"] })).toMatchObject({
+      defaultProvider: "agent-provider",
+      defaultModelId: "agent-model",
+    });
+  });
+});

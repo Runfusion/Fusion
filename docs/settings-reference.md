@@ -332,11 +332,12 @@ Actions. It has two tabs:
   workflow's authored default, enter a non-negative integer to cap attempts, or
   enter `0` to disable automatic revision for that path. Compound Engineering's
   authored Code Review default is two passes; most other built-in review loops
-  remain unbounded. The separate triage Plan Review
-  replan ceiling, `planReviewReplanCap`, controls consecutive pre-execution
-  `REVISE` → replan cycles before Fusion requests manual approval; leave it empty
-  to use the built-in engine default, or set a non-negative integer (including
-  `0`) for the workflow. `plannerOversightLevel` is the
+  remain unbounded. The separate Plan Review replan ceiling,
+  `planReviewReplanCap`, backstops that unbounded default: it bounds consecutive
+  `REVISE` → replan cycles before Fusion parks the task at `awaiting-approval`.
+  Leave it empty to use the built-in 15, or set a non-negative integer (`0` parks
+  on the first REVISE). An explicit `planReviewMaxRevisions` is a stricter,
+  earlier gate and takes precedence over it. `plannerOversightLevel` is the
   workflow-native planner oversight mode and accepts `off`, `observe`, `steer`,
   or `autonomous` (default). `plannerHeartbeatPatrolEnabled` controls idle/no-task
   heartbeat patrol task creation separately and defaults to `true`. Edits batch
@@ -354,7 +355,9 @@ project workflow-lane baseline stored on the active default workflow → global 
 → selected-workflow lane → project default override → global default. The
 task-detail Workflow, Chat, and Agent Log displays use this same effective model
 resolution, so their Plan/Triage, Executor, Reviewer, and fallback lanes match the
-sessions that actually run.
+sessions that actually run. Permanent role-agent identity surfaces (Agents and Chat)
+also inherit their matching role lane; when it is unset, the project default override
+feeds that inheritance before the global default.
 
 **Built-in prompt overrides.** Built-in workflow prompt/gate node text has a similar project-scoped persistence model, but it is separate from workflow settings: prompt overrides are stored per `(workflowId, nodeId, projectId)` and resolve as `stored prompt ?? shipped prompt`. Resetting a prompt deletes the stored node override and restores the built-in IR text; graph structure and setting declarations remain read-only for built-ins. See [Workflow Steps → Overriding built-in workflow prompts](./workflow-steps.md#overriding-built-in-workflow-prompts).
 
@@ -381,7 +384,7 @@ These groups moved out of project settings and into workflow settings (built-in
 | Group | Keys (examples) |
 |---|---|
 | **Step execution** | `workflowStepTimeoutMs`, `runStepsInNewSessions`, `maxParallelSteps`, `workflowStepScopeEnforcement`, `strictScopeEnforcement`, `verificationFixRetries`, `maxPostReviewFixes`, `buildRetryCount` |
-| **Review / approval** | Workflow values: `requirePrApproval`, `requirePlanApproval`, `reviewHandoffPolicy`, `maxReviewerContextRetries`, `maxReviewerFallbackRetries`, `planReviewMaxRevisions`, `codeReviewMaxRevisions`, `planReviewReplanCap`; project override: `planApprovalMode` |
+| **Review / approval** | Workflow values: `requirePrApproval`, `requirePlanApproval`, `reviewHandoffPolicy`, `maxReviewerContextRetries`, `maxReviewerFallbackRetries`, `planReviewMaxRevisions`, `codeReviewMaxRevisions`, `planReviewBlockingSeverity`, `codeReviewBlockingSeverity`, `planReviewReplanCap`; project override: `planApprovalMode` |
 | **Planner oversight** | `plannerOversightLevel` (workflow-native; values: `off`, `observe`, `steer`, `autonomous`); `plannerOversightNotificationLevel` (workflow-native; values: `silent`, `errors`, `important`, `all`); `plannerOverseerExecutorStuckAfterMs` (workflow-native; number, default `7200000` = 2h); `plannerOverseerAdvisorEnabled` (boolean, **default false**); `plannerOverseerAdvisorProvider` / `plannerOverseerAdvisorModelId` (session-advisor model; both required when enabled); `plannerHeartbeatPatrolEnabled` (workflow-native; boolean, default `true`, gates idle/no-task heartbeat patrol task creation) |
 | **Per-phase model lanes** | `executionProvider`/`executionModelId` + `executionThinkingLevel`, `planningProvider`/`planningModelId` + `planningThinkingLevel` (+ fallbacks), `validatorProvider`/`validatorModelId` + `validatorThinkingLevel` (+ fallbacks). Thinking values accept `off`, `minimal`, `low`, `medium`, `high`, or `xhigh`; unset inherits. |
 
@@ -419,7 +422,9 @@ The built-in workflows also declare triage/spec policy settings that were **not*
 | `autoApproveSpec` | `false` | Legacy compatibility setting. Workflow Plan Review now owns optional pre-execution AI plan approval. |
 | `planReviewMaxRevisions` | unset | Workflow-native Plan Review/spec revision cap. Unset/empty means unbounded automatic replans; a non-negative integer caps attempts; `0` disables automatic Plan Review revision. |
 | `codeReviewMaxRevisions` | unset | Workflow-native Code Review remediation cap. Unset/empty uses the workflow's authored default (Compound Engineering: 2; most other built-ins: unbounded); a non-negative integer overrides the cap; `0` disables automatic Code Review remediation. |
-| `planReviewReplanCap` | unset | Workflow-native triage Plan Review replan ceiling. It bounds consecutive pre-execution Plan Review `REVISE` → replan cycles before manual approval; unset/empty uses the built-in engine default, and a non-negative integer (including `0`) overrides it. |
+| `planReviewBlockingSeverity` | `high` | Minimum finding severity that lets Plan Review block execution. A `REVISE` carrying no finding at or above this level is recorded as `APPROVE_WITH_NOTES` and its findings are written into PROMPT.md as non-blocking `## Review Advisory Notes` instead of forcing another planning round. Values: `critical` (P0 only), `high` (P0+P1, the default), `medium`, `low`, or `any` to restore the previous behavior where every `REVISE` blocks. **Fails closed:** a `REVISE` with no structured findings, or with any finding that omits `severity`, still blocks — so prose-only and custom reviewers keep their full blocking power. |
+| `codeReviewBlockingSeverity` | `critical` | Same gate for Code Review, defaulting to `critical` (P0 only) because Code Review findings land against real code the implementer can address inline. Same values and the same fail-closed contract as `planReviewBlockingSeverity`. |
+| `planReviewReplanCap` | unset (built-in 15) | Ceiling on consecutive Plan Review `REVISE` → replan cycles before the task parks at `awaiting-approval` with reason `plan-review-replan-cap`. Applies to the **unbounded default only** — an explicit `planReviewMaxRevisions` or node `maxRevisions` budget is a stricter, earlier gate and wins. Unset uses the built-in 15; `0` parks on the first REVISE. (Until 2026-08-10 nothing read this setting: the backstop was hardcoded to a prompt-history constant, so changing this value had no effect.) |
 | `plannerOversightLevel` | `autonomous` | Workflow-native planner oversight mode. `off` disables oversight; `observe` watches only; `steer` injects guidance or suggests revisions; `autonomous` enables bounded retry and targeted-fix recovery — but merge/PR progression and any destructive or external-service side effect ALWAYS require an explicit, recorded human confirmation before they run, even at `autonomous` (FN-7513's confirmation gate; see `docs/architecture.md` → "Planner overseer confirmation gate"). Tasks may set a nullable `Task.plannerOversightLevel` override (same four values) that wins over this workflow value when present; `null`/unset means "inherit the workflow value". `resolveEffectivePlannerOversightLevel` in `@fusion/core` computes the effective level (task override → workflow effective → `autonomous`). The per-task override is exposed in the dashboard as a "Planner oversight" selector (Inherit from workflow / Off / Observe / Steer / Autonomous recovery) in both the New Task dialog and Task Detail edit form, threaded through `createTask`/`updateTask` (FN-7515); the project/global default is set via the **Workflow Editor → Values** tab on the default workflow's `plannerOversightLevel` value, not in Project Settings. FN-7517 additionally exposes a quick inline oversight-level select in the Task Detail modal's meta-controls cluster (same `updateTask` override plumbing, no parallel path) plus manual nudge/stop-oversight/explain-current-action controls that call the overseer runtime directly — see `docs/dashboard-guide.md`. Engine read-site behavior beyond the FN-7513 confirmation gate remains follow-up work (FN-7510+). |
 | `plannerOversightNotificationLevel` | `important` | Workflow-native planner-overseer notification verbosity (FN-7518). `silent` suppresses overseer notifications; `errors` notifies only on failures/escalations; `important` (the default) notifies on interventions/recovery actions and errors; `all` notifies on every observation. Resolves through the generic `resolveEffectiveSettings` default path with no special-casing, alongside `plannerOversightLevel`. This is a declaration-only setting: the notification-emission gating that reads it lands downstream in FN-7519 (intervention timeline) and FN-7520 (run-audit/activity events). |
 | `plannerOverseerAdvisorEnabled` | `false` | Master switch for the planner overseer **session advisor** (live LLM transcript review). **Off by default.** When false, no second-model advisor runs regardless of model fields or `plannerOversightLevel`. Lifecycle stage watching, stall recovery, and merge confirmation are unaffected. |
@@ -1935,3 +1940,7 @@ Settings → Authentication can hold multiple named credential accounts for each
 ### Engine liveness heartbeat
 
 `engineLastActiveAt` is engine liveness bookkeeping. It is deliberately non-versioned and is preserved from the live settings object when a project configuration rollback restores a historic snapshot.
+
+### Knowledge graph artifact location
+
+`knowledgeGraphDir` is an optional project setting. Its default is `.fusion-knowledge/graph`; keep it outside `.fusion`, which is ignored. The directory is intentionally committable and is refreshed with `fn knowledge-graph build`.

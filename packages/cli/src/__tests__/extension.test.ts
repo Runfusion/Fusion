@@ -296,6 +296,7 @@ legacyDescribe("fn pi extension (legacy exhaustive suite)", () => {
         "fn_mission_backfill_assertions",
         "fn_mission_delete",
         "fn_mission_update",
+        "fn_mission_set_status",
         "fn_milestone_add",
         "fn_slice_add",
         "fn_feature_add",
@@ -305,6 +306,7 @@ legacyDescribe("fn pi extension (legacy exhaustive suite)", () => {
         "fn_slice_activate",
         "fn_feature_link_task",
         "fn_feature_update",
+        "fn_feature_set_status",
         "fn_milestone_update",
         "fn_agent_stop",
         "fn_agent_start",
@@ -2891,6 +2893,50 @@ pgTest("fn pi extension (runnable structured-output regression slice)", () => {
     expect(result.details.taskId).toMatch(/^[A-Z]+-\d+$/);
     expect(result.details.dependencies).toEqual([parent.details.taskId]);
     expect(result.content[0].text).toContain(result.details.taskId);
+  });
+
+  it("executes the dedicated mission status tools with linked-feature protection", async () => {
+    const context = makeCtx(tmpDir);
+    const mission = await api.tools.get("fn_mission_create")!.execute("m", { title: "Mission" }, undefined, undefined, context);
+    const milestone = await api.tools.get("fn_milestone_add")!.execute("ms", { missionId: mission.details.missionId, title: "Milestone" }, undefined, undefined, context);
+    const slice = await api.tools.get("fn_slice_add")!.execute("sl", { milestoneId: milestone.details.milestoneId, title: "Slice" }, undefined, undefined, context);
+    const feature = await api.tools.get("fn_feature_add")!.execute("f", { sliceId: slice.details.sliceId, title: "Feature" }, undefined, undefined, context);
+    const setFeatureStatus = api.tools.get("fn_feature_set_status")!;
+
+    const unlinked = await setFeatureStatus.execute("unlinked", { id: feature.details.featureId, status: "done" }, undefined, undefined, context);
+    expect(unlinked.isError).toBe(true);
+    expect(unlinked.content[0].text).toContain("linked task");
+    expect((await h.store().getMissionStore().getMissionEvents(mission.details.missionId, { limit: 10 })).events
+      .filter((event) => event.eventType === "feature_status_changed")).toHaveLength(0);
+
+    const invalidFeature = await setFeatureStatus.execute("invalid-feature", { id: feature.details.featureId, status: "invalid" }, undefined, undefined, context);
+    expect(invalidFeature.isError).toBe(true);
+    expect(invalidFeature.content[0].text).toContain("Invalid status. Must be one of:");
+
+    const task = await api.tools.get("fn_task_create")!.execute("task", { description: "Linked delivery" }, undefined, undefined, context);
+    await api.tools.get("fn_feature_link_task")!.execute("link", { featureId: feature.details.featureId, taskId: task.details.taskId }, undefined, undefined, context);
+    const changed = await setFeatureStatus.execute("status", { id: feature.details.featureId, status: "done", reason: "completed" }, undefined, undefined, context);
+    expect(changed.isError).not.toBe(true);
+    expect((await h.store().getMissionStore().getFeature(feature.details.featureId))?.status).toBe("done");
+    expect((await h.store().getMissionStore().getMissionEvents(mission.details.missionId, { limit: 10 })).events).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        eventType: "feature_status_changed",
+        metadata: expect.objectContaining({ reason: "completed", actor: { type: "operator", id: "cli-operator", source: "pi-extension" } }),
+      }),
+    ]));
+
+    const missionChanged = await api.tools.get("fn_mission_set_status")!.execute("mission-status", { id: mission.details.missionId, status: "blocked", reason: "waiting" }, undefined, undefined, context);
+    expect(missionChanged.isError).not.toBe(true);
+    expect((await h.store().getMissionStore().getMission(mission.details.missionId))?.status).toBe("blocked");
+    expect((await h.store().getMissionStore().getMissionEvents(mission.details.missionId, { limit: 10 })).events).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        eventType: "mission_status_changed",
+        metadata: expect.objectContaining({ reason: "waiting", actor: { type: "operator", id: "cli-operator", source: "pi-extension" } }),
+      }),
+    ]));
+    const invalidMission = await api.tools.get("fn_mission_set_status")!.execute("invalid-mission", { id: mission.details.missionId, status: "invalid" }, undefined, undefined, context);
+    expect(invalidMission.isError).toBe(true);
+    expect(invalidMission.content[0].text).toContain("Invalid status. Must be one of:");
   });
 
   describe("fn_task_list", () => {

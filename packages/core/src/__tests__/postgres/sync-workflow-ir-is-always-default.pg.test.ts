@@ -24,6 +24,12 @@ assertion to read instead of a plausible-looking guard.
 
 If a future change makes the sync path authoritative, this test SHOULD fail — that is the signal to
 revisit those ten sites, not to delete the assertion.
+
+FNXC:TestQuarantine 2026-08-10-09:16:
+FN-8928 removed this file from the PostgreSQL merge gate after FN-8912 observed its setup hook
+exceed the inherited 15s budget in the loaded lane. The non-blocking core suite retains this
+regression proof. `PgTestTemplateDb 2026-07-19-17:20` and `PgTestWorkerCap 2026-07-18-18:00`
+already mitigate this mode; this disposition does not alter the harness, assertions, or budgets.
 */
 import { it, expect, beforeAll, beforeEach, afterEach, afterAll } from "vitest";
 import {

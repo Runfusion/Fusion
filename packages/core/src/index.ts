@@ -103,6 +103,10 @@ export {
 } from "./plugins/plugin-prompt-condition.js";
 export type { PromptConditionEvaluationResult } from "./plugins/plugin-prompt-condition.js";
 export { computePlanApprovalFingerprint, isPlanReviewSatisfied, resolvePlanApprovalRequired } from "./planner/plan-approval.js";
+export { canonicalizePlan, createCurrentPlanEvidence, diffSpecLocks, isSpecLockActive, SPEC_LOCK_PARSER_VERSION } from "./planner/spec-lock.js";
+export { evaluateSpecDrift, hasPriorLockDivergence, isCurrentSpecDriftReport } from "./planner/drift-report.js";
+export type { CanonicalPlan, CanonicalPlanSection, CurrentPlanEvidence, SpecLock, SpecLockDiff, SpecLockSection } from "./planner/spec-lock.js";
+export type { DriftAlignment, DriftFinding, DriftFindingCategory, DriftFindingKind, DriftReport } from "./planner/drift-report.js";
 export type { PlanApprovalMode } from "./planner/plan-approval.js";
 export { isActiveNearDuplicateColumn, isNearDuplicateCanonicalInactive } from "./duplicates/near-duplicate-canonical.js";
 export { resolveNearDuplicateCanonicalFlags } from "./duplicates/near-duplicate-canonical-flags.js";
@@ -126,6 +130,7 @@ types/policy for severity-routed notes before they reach steering inject.
 export * from "./planner/overseer-advice.js";
 export * from "./planner/overseer-emission-guard.js";
 export * from "./tasks/frontend-ux-policy.js";
+export * from "./tasks/terminal-failure-auto-recovery.js";
 export * from "./tasks/original-description-policy.js";
 export * from "./planner/planning-plan-md.js";
 export * from "./tasks/file-scope-classification.js";
@@ -334,6 +339,8 @@ export {
   BUILTIN_TRIAGE_POLICY_SETTINGS,
   BUILTIN_OVERSIGHT_SETTINGS,
   DEFAULT_MAX_POST_REVIEW_FIXES,
+  DEFAULT_PLANNING_TIMEOUT_MS,
+  DEFAULT_PLAN_REVIEW_REPLAN_CAP,
   DEFAULT_PLANNER_OVERSEER_EXECUTOR_STUCK_AFTER_MS,
   PLANNER_HEARTBEAT_PATROL_ENABLED_SETTING_ID,
   renderTriagePolicyPlaceholders,
@@ -646,6 +653,23 @@ export {
   type ResolveOptionalReviewRevisionBudgetInput,
 } from "./workflows/workflow-settings-resolver.js";
 export {
+  applyReviewSeverityGate,
+  formatFindingsByPriority,
+  isBlockingFinding,
+  isReviewBlockingSeverity,
+  resolveReviewBlockingSeverity,
+  CODE_REVIEW_BLOCKING_SEVERITY_SETTING_ID,
+  DEFAULT_CODE_REVIEW_BLOCKING_SEVERITY,
+  DEFAULT_PLAN_REVIEW_BLOCKING_SEVERITY,
+  PLAN_REVIEW_BLOCKING_SEVERITY_SETTING_ID,
+  REVIEW_BLOCKING_SEVERITIES,
+  SEVERITY_PRIORITY_LABEL,
+  type ResolveReviewBlockingSeverityInput,
+  type ReviewBlockingSeverity,
+  type ReviewSeverityGateInput,
+  type ReviewSeverityGateResult,
+} from "./workflows/review-severity-gate.js";
+export {
   applyWorkflowSettingsOverlay,
   type WorkflowSettingsOverlayInput,
 } from "./config/effective-settings-overlay.js";
@@ -797,13 +821,13 @@ export {
   isAgentAutoAssignable,
   canAgentReceiveImplementationTasks,
   isWorkflowPrincipalEligible,
+  hasWorkflowRoleCapability,
   isBuiltinWorkflowRoleAgent,
-  enforceBuiltinWorkflowRoleRoutability,
   evaluateImplementationTaskBind,
   assertImplementationTaskBindAllowed,
   AgentTaskRoutingPolicyError,
 } from "./agents/agent-role-policy.js";
-export type { AgentAssignmentPolicy, ImplementationTaskBindContext, ImplementationTaskBindVerdict } from "./agents/agent-role-policy.js";
+export type { AgentAssignmentPolicy, ImplementationTaskBindContext, ImplementationTaskBindVerdict, WorkflowRoleCapabilityOptions } from "./agents/agent-role-policy.js";
 export { ReflectionStore } from "./agents/reflection-store.js";
 export type { ReflectionStoreEvents } from "./agents/reflection-store.js";
 export { MessageStore } from "./stores/message-store.js";
@@ -1603,6 +1627,7 @@ export {
   syncMemoryBackupRoutine,
 } from "./memory/memory-backup.js";
 export type { MemoryBackupInfo, MemoryBackupOptions } from "./memory/memory-backup.js";
+export * from "./knowledge-graph/index.js";
 export {
   exportSettings,
   importSettings,
@@ -1664,6 +1689,7 @@ export {
   resolveSelectedWorkflowModelLane,
   resolveMergerFallbackModel,
   resolveMergerSettingsModel,
+  resolveMergerPhaseThinkingLevel,
   resolvePhaseThinkingLevel,
   resolvePlanningSettingsModel,
   resolveProjectDefaultModel,
@@ -1681,6 +1707,12 @@ export {
   routeTaskValidatorModel,
 } from "./ai/model-resolution.js";
 export type { ModelThinkingPhase, ResolvedModelSelection, RouterLaneOptions } from "./ai/model-resolution.js";
+export {
+  getPrimaryWorkflowRole,
+  resolvePermanentAgentEffectiveModel,
+  resolvePermanentAgentEffectiveThinkingLevel,
+} from "./ai/agent-effective-model.js";
+export type { PermanentAgentModelLike, PrimaryWorkflowRole } from "./ai/agent-effective-model.js";
 export {
   routeModel,
   routeModelAndEmit,
@@ -1747,6 +1779,11 @@ export {
   VALIDATOR_RUN_STATUSES,
   VALIDATION_DIAGNOSTICS_MAX_EVIDENCE_PER_ASSERTION,
   VALIDATION_DIAGNOSTICS_MAX_TEXT_BYTES,
+  MISSION_EVENT_REASON_MAX_BYTES,
+  MISSION_EVENT_METADATA_MAX_BYTES,
+  boundMissionEventReason,
+  normalizeMissionTransitionActorForEvent,
+  buildMissionStatusEventMetadata,
   selectNextSerialMissionSlice,
   normalizeValidationDiagnostics,
   renderValidationFailureDescription,
@@ -2768,3 +2805,4 @@ export type { AgentActivityEventType, AgentActivityAttribution, AgentActivityIdP
 export { AGENT_ACTIVITY_EVENT_TYPES, AGENT_ACTIVITY_ATTRIBUTIONS, AGENT_ACTIVITY_LANE_SENTINELS, AGENT_ACTIVITY_GENERATED_ID_PATTERNS, AGENT_ACTIVITY_HANDOFF_REASONS, AGENT_ACTIVITY_TOOL_NAMES, AGENT_ACTIVITY_WORKFLOW_STEP_IDS, AGENT_ACTIVITY_METADATA_SCHEMA, AGENT_ACTIVITY_METADATA_KEYS, isAgentActivityEventType } from "./types/agents/agents.js";
 export { appendAgentActivityEvent, queryAgentActivityEvents, getMaxAgentActivitySeq, pruneAgentActivityEvents } from "./task-store/async/async-agent-activity.js";
 export { makeAgentActivityEventId, resolveAgentActivityAttribution, agentIdExistsInRoster, formatAgentActivitySummary, sanitizeAgentActivityMetadata } from "./task-store/agent-activity-outbox.js";
+export * from "./memory/recall/index.js";

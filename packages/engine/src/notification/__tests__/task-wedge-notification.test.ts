@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { WEDGE_RENOTIFY_COOLDOWN_MS, type NotificationProvider, type Settings, type Task } from "@fusion/core";
+import { TaskNotFoundError, WEDGE_RENOTIFY_COOLDOWN_MS, type NotificationProvider, type Settings, type Task } from "@fusion/core";
 import { NotificationService } from "../notification-service.js";
 import { MAX_AUTO_MERGE_TRANSIENT_RETRIES } from "../../errors/transient-merge-error-classifier.js";
-import { describeSelfHealingNoActionWedge, describeTaskRecoveryOwner, describeTaskWedge } from "../task-wedge-notification.js";
+import { describeSelfHealingNoActionWedge, describeTaskRecoveryOwner, describeTaskWedge, isTaskProgressing } from "../task-wedge-notification.js";
 
 type Listener = (task: Task) => void;
 
@@ -26,6 +26,7 @@ function fixture(workflowIr?: unknown) {
   const listeners = new Set<Listener>();
   let wedge: Task["wedgeNotification"];
   let liveTask: Task | undefined;
+  let liveReadError: Error | undefined;
   const claimTaskWedgeNotificationEpisode = vi.fn(async (taskId: string, reasonKey: string | null) => {
     if (reasonKey === null) {
       if (wedge?.status === "active") wedge = { ...wedge, status: "resolved" };
@@ -37,11 +38,15 @@ function fixture(workflowIr?: unknown) {
   });
   const store = {
     getSettings: async () => ({ ntfyEnabled: true, ntfyTopic: "test" }) as Settings,
-    getTask: async () => liveTask,
+    getTask: async () => {
+      if (liveReadError) throw liveReadError;
+      return liveTask;
+    },
     on: (event: string, listener: Listener) => { if (event === "task:updated") listeners.add(listener); },
     off: () => undefined,
     emit: (task: Task) => listeners.forEach((listener) => listener(task)),
     setLiveTask: (next: Task | undefined) => { liveTask = next; },
+    setLiveReadError: (next: Error | undefined) => { liveReadError = next; },
     claimTaskWedgeNotificationEpisode,
     /* Absent → the helper keeps the legacy ids, which is every pre-existing case in this file. */
     ...(workflowIr ? { listWorkflowDefinitions: async () => [{ ir: workflowIr }] } : {}),
@@ -93,9 +98,8 @@ function cooldownFixture({ durable = true }: { durable?: boolean } = {}) {
 }
 
 async function flushWedgeHandling() {
-  await Promise.resolve();
-  await Promise.resolve();
-  await Promise.resolve();
+  // FNXC:TaskWedgeNotifications 2026-08-10-04:35: Wedge delivery resolves lifecycle roles before its claim, so drain both the per-task chain and role-resolution promise turns without real timers.
+  for (let index = 0; index < 8; index += 1) await Promise.resolve();
 }
 
 describe("task wedge notifications", () => {
@@ -237,6 +241,56 @@ describe("task wedge notifications", () => {
     await service.stop();
   });
 
+  it("does not deliver self-healing descriptors when the live row is held or reviewing", async () => {
+    const { store, service, sendMessageOnce, sendNotification, task } = fixture();
+    const stalled = task({ status: "in-review", error: undefined, paused: false, userPaused: false });
+    const descriptor = describeSelfHealingNoActionWedge(stalled, "reconcile-in-review-unmet-dependencies", { taskActive: false })!;
+    await service.start();
+
+    for (const live of [
+      task({ status: "in-review", paused: true, error: undefined }),
+      task({ status: "in-review", userPaused: true, error: undefined }),
+      task({ status: "in-review", autoMerge: false, error: undefined }),
+      task({ status: "reviewing", error: undefined }),
+    ]) {
+      store.setLiveTask(live);
+      await service.notifyTaskWedge(stalled, descriptor);
+    }
+
+    expect(sendMessageOnce).not.toHaveBeenCalled();
+    expect(sendNotification).not.toHaveBeenCalled();
+    await service.stop();
+  });
+
+  it("quietly handles a typed not-found live read without rejecting the wedge chain", async () => {
+    const { store, service, sendMessageOnce, sendNotification, task } = fixture();
+    store.setLiveReadError(new TaskNotFoundError("FN-8501"));
+    await service.start();
+
+    await expect(service.notifyTaskWedge(task(), describeTaskWedge(task())!)).resolves.toBe("unavailable");
+    store.emit(task());
+    await flushWedgeHandling();
+
+    expect(sendMessageOnce).not.toHaveBeenCalled();
+    expect(sendNotification).not.toHaveBeenCalled();
+    await service.stop();
+  });
+
+  it("resolves an active episode for an archived failed live row", async () => {
+    const { store, service, sendMessageOnce, sendNotification, task, setWedge, claimTaskWedgeNotificationEpisode } = fixture();
+    const active = { reasonKey: "merge-blocked:changeset-format", episodeId: "archived-episode", status: "active" as const, transitionedAt: "2026-07-22T12:00:00.000Z" };
+    setWedge(active);
+    store.setLiveTask(task({ column: "archived", status: "failed", wedgeNotification: active }));
+    await service.start();
+
+    await service.notifyTaskWedge(task({ wedgeNotification: active }), describeTaskWedge(task())!);
+
+    expect(sendMessageOnce).not.toHaveBeenCalled();
+    expect(sendNotification).not.toHaveBeenCalled();
+    expect(claimTaskWedgeNotificationEpisode).toHaveBeenCalledWith("FN-8501", null);
+    await service.stop();
+  });
+
   /*
   FNXC:TaskWedgeNotifications 2026-08-01-07:44:
   A recovery and re-wedge can be emitted back-to-back by synchronous task lifecycle writers. The
@@ -320,6 +374,59 @@ describe("task wedge notifications", () => {
     await restarted.stop();
   });
 
+  it.each([
+    "reclaim-pr-conflict",
+    "reclaim-self-owned-branch-conflict",
+    "reconcile-in-review-unmet-dependencies",
+    "reconcile-dependency-blocking-lease",
+    "auto-rebound-paused-scope-decay",
+    "stuck-merge-deadlock",
+    "missing-worktree-merge-active",
+    "missing-worktree-review",
+    "finalize-no-op-review",
+    "stale-incomplete-review",
+    "ghost-review",
+    "no-progress-no-task-done",
+    "partial-progress-no-task-done",
+  ])("preserves ownerless self-healing alerts for %s", (stage) => {
+    const { task } = fixture();
+    const ownerless = task({ status: "in-review", error: undefined, paused: false, userPaused: false });
+    expect(describeSelfHealingNoActionWedge(ownerless, stage, {
+      sessionDead: true,
+      noRecentActivity: true,
+      worktreeUnusable: false,
+      taskActive: false,
+      hasExecutingTaskLock: false,
+      livePaths: [],
+    })).toMatchObject({ reasonKey: `self-healing-no-action:${stage}` });
+  });
+
+  it("suppresses self-healing declines that prove liveness or intentional holds", () => {
+    const { task } = fixture();
+    const ownerless = task({ status: "in-review", error: undefined, paused: false, userPaused: false });
+    const stage = "reconcile-in-review-unmet-dependencies";
+    for (const proof of [
+      { sessionDead: false },
+      { noRecentActivity: false },
+      { taskActive: true },
+      { hasExecutingTaskLock: true },
+      { mergePending: true },
+      { livePaths: ["/live/session"] },
+      { reason: "paused-guard" },
+      { reason: "auto-merge-processing-disabled" },
+    ]) {
+      expect(describeSelfHealingNoActionWedge(ownerless, stage, proof)).toBeNull();
+    }
+    expect(describeSelfHealingNoActionWedge(ownerless, stage, undefined)).toMatchObject({ reasonKey: `self-healing-no-action:${stage}` });
+  });
+
+  it("treats reviewing as progressing while preserving pause guards", () => {
+    const { task } = fixture();
+    expect(isTaskProgressing(task({ status: "reviewing", paused: false }))).toBe(true);
+    expect(isTaskProgressing(task({ status: "reviewing", paused: true }))).toBe(false);
+    expect(isTaskProgressing(task({ status: "paused", paused: false }))).toBe(false);
+  });
+
   it("delivers one durable episode for an ownerless self-healing no-action escalation", async () => {
     const { service, sendMessageOnce, sendNotification, task } = fixture();
     await service.start();
@@ -359,7 +466,7 @@ describe("task wedge notifications", () => {
     await service.stop();
   });
 
-  it.each(["queued", "planning", "in-progress", "merging", "merging-pr", "merging-fix", "merged", "done"])("does not classify a stale pause reason while %s is progressing", (status) => {
+  it.each(["queued", "planning", "in-progress", "reviewing", "merging", "merging-pr", "merging-fix", "merged", "done"])("does not classify a stale pause reason while %s is progressing", (status) => {
     const { task } = fixture();
     expect(describeTaskWedge(task({ status: status as Task["status"], paused: false, pausedReason: "completed-blocked", error: undefined }))).toBeNull();
   });

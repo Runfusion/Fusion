@@ -223,7 +223,7 @@ export async function updateTaskDependenciesImpl(store: TaskStore, id: string, m
 }
 
 async function updateTaskDependenciesWithTaskLockImpl(store: TaskStore, id: string, mutation: TaskDependencyMutation, runContext?: RunMutationContext,): Promise<Task> {
-    return store.withTaskLock(id, async () => {
+    const updated = await store.withTaskLock(id, async () => {
       const dir = store.taskDir(id);
       const task = await store.readTaskJson(dir);
       const previousDependencies = [...(task.dependencies ?? [])];
@@ -345,6 +345,8 @@ async function updateTaskDependenciesWithTaskLockImpl(store: TaskStore, id: stri
 
       const previousDependencySet = new Set(normalizedCurrent);
       const hasNewDependencies = nextDependencies.some((dependencyId) => !previousDependencySet.has(dependencyId));
+      const dependenciesChanged = normalizedCurrent.length !== nextDependencies.length
+        || normalizedCurrent.some((dependency, index) => dependency !== nextDependencies[index]);
 
       task.dependencies = nextDependencies;
       /*
@@ -465,14 +467,23 @@ async function updateTaskDependenciesWithTaskLockImpl(store: TaskStore, id: stri
       when merged intake/hold lanes make this a same-column transition. Leaving
       the old fingerprint would let an unchanged prompt bypass manual approval.
       */
-      if (shouldRespecify) {
-        task.status = "needs-replan";
+      /*
+      FNXC:SpecLockDependencyInvalidation 2026-08-09-18:45:
+      Dependencies are part of the frozen contract. Adding was previously the only mutation that
+      cleared admission, leaving a removed or replaced prerequisite able to run under approval for
+      a different plan. Every material dependency edit retires approval evidence, while only the
+      existing new-dependency path changes lifecycle placement to request a re-plan.
+      */
+      if (dependenciesChanged) {
         task.approvedPlanFingerprint = undefined;
         task.awaitingApprovalReason = undefined;
         task.workflowStepResults = supersedePlanReviewResults(
           task.workflowStepResults,
           task.updatedAt,
         );
+      }
+      if (shouldRespecify) {
+        task.status = "needs-replan";
       }
       if (shouldRespecify && intakeColumn !== undefined) {
         task.column = intakeColumn;
@@ -528,7 +539,7 @@ async function updateTaskDependenciesWithTaskLockImpl(store: TaskStore, id: stri
         },
       };
       await store.atomicWriteTaskJsonWithAudit(dir, task, auditEvent,
-        hasNewDependencies && task.status === "needs-replan"
+        dependenciesChanged
           ? {expectedCurrentDependencies: normalizedCurrent}
           : undefined,
       );
@@ -560,4 +571,16 @@ async function updateTaskDependenciesWithTaskLockImpl(store: TaskStore, id: stri
       store.emitTaskLifecycleEventSafely("task:updated", [task]);
       return task;
     });
+    /*
+    FNXC:SpecLockDependencyInvalidation 2026-08-09-18:45:
+    Publish the inactive-lock report before the planning lifecycle lock is released, but after the
+    task lock is released: `getTask()` intentionally acquires the latter and is non-reentrant.
+    A report outage remains retryable telemetry and cannot undo a valid dependency mutation.
+    */
+    if (store.isBackendMode()) {
+      await store.reconcileSpecDriftWhilePlanningLocked(updated).catch((error: unknown) => {
+        storeLog.warn(`[spec-lock] deferred dependency drift reconciliation for ${updated.id}: ${error instanceof Error ? error.message : String(error)}`);
+      });
+    }
+    return updated;
   }

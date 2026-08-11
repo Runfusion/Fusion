@@ -10,10 +10,48 @@ describe("createMissionTools", () => {
   it("exposes the complete hierarchy surface with read and mutation names", () => {
     const store = { getMissionStore: vi.fn() } as never;
     expect(createMissionTools(store).map((tool) => tool.name)).toEqual([
-      "fn_mission_list", "fn_mission_show", "fn_mission_create", "fn_mission_update", "fn_mission_delete",
+      "fn_mission_list", "fn_mission_show", "fn_mission_create", "fn_mission_update", "fn_mission_set_status", "fn_mission_delete",
       "fn_milestone_add", "fn_milestone_update", "fn_milestone_delete", "fn_slice_add", "fn_slice_activate",
-      "fn_slice_delete", "fn_feature_add", "fn_feature_update", "fn_feature_delete", "fn_feature_link_task", "fn_research_promote_finding",
+      "fn_slice_delete", "fn_feature_add", "fn_feature_update", "fn_feature_set_status", "fn_feature_delete", "fn_feature_link_task", "fn_research_promote_finding",
     ]);
+  });
+
+  it("sets a linked feature status with attributed raw reason", async () => {
+    const updateFeatureStatus = vi.fn().mockResolvedValue({ id: "F-1", status: "done", taskId: "FN-1" });
+    const store = { getMissionStore: () => ({ getFeature: vi.fn().mockResolvedValue({ id: "F-1", taskId: "FN-1", status: "defined" }), updateFeatureStatus }) } as never;
+    const tool = createMissionTools(store, { agentId: "agent-1" }).find((candidate) => candidate.name === "fn_feature_set_status")!;
+    await tool.execute("call", { id: "F-1", status: "done", reason: "raw reason" });
+    expect(updateFeatureStatus).toHaveBeenCalledWith("F-1", "done", expect.objectContaining({ reason: "raw reason", actor: expect.objectContaining({ type: "agent", id: "agent-1" }) }));
+  });
+
+  it("rejects an unlinked feature execution status", async () => {
+    const updateFeatureStatus = vi.fn();
+    const store = { getMissionStore: () => ({ getFeature: vi.fn().mockResolvedValue({ id: "F-1", status: "defined" }), updateFeatureStatus }) } as never;
+    const tool = createMissionTools(store).find((candidate) => candidate.name === "fn_feature_set_status")!;
+    const result = await tool.execute("call", { id: "F-1", status: "done" });
+    expect(result.isError).toBe(true); expect(result.content[0].text).toContain("linked task"); expect(updateFeatureStatus).not.toHaveBeenCalled();
+  });
+
+  it("rejects invalid feature and mission statuses before reaching the store", async () => {
+    const updateFeatureStatus = vi.fn();
+    const updateMission = vi.fn();
+    const store = { getMissionStore: () => ({ getFeature: vi.fn(), updateFeatureStatus, updateMission }) } as never;
+    const featureTool = createMissionTools(store).find((candidate) => candidate.name === "fn_feature_set_status")!;
+    const missionTool = createMissionTools(store).find((candidate) => candidate.name === "fn_mission_set_status")!;
+    await expect(featureTool.execute("call", { id: "F-1", status: "invalid" })).resolves.toMatchObject({ isError: true, content: [{ text: expect.stringContaining("Invalid status. Must be one of:") }] });
+    await expect(missionTool.execute("call", { id: "M-1", status: "invalid" })).resolves.toMatchObject({ isError: true, content: [{ text: expect.stringContaining("Invalid status. Must be one of:") }] });
+    expect(updateFeatureStatus).not.toHaveBeenCalled();
+    expect(updateMission).not.toHaveBeenCalled();
+  });
+
+  it("delegates mission status through updateMission with the attributed raw reason", async () => {
+    const updateMission = vi.fn().mockResolvedValue({ id: "M-1", status: "blocked" });
+    const store = { getMissionStore: () => ({ updateMission }) } as never;
+    const tool = createMissionTools(store, { agentId: "agent-1" }).find((candidate) => candidate.name === "fn_mission_set_status")!;
+    await tool.execute("call", { id: "M-1", status: "blocked", reason: "raw reason" });
+    expect(updateMission).toHaveBeenCalledWith("M-1", { status: "blocked" }, expect.objectContaining({
+      reason: "raw reason", actor: expect.objectContaining({ type: "agent", id: "agent-1" }),
+    }));
   });
 
   it("delegates feature linkage to MissionStore without a second task update", async () => {

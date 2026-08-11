@@ -29,6 +29,7 @@ import {
   evaluateImplementationTaskBind,
   resolvePersistAgentThinkingLog,
   resolveAgentMemoryInclusionMode,
+  resolvePermanentAgentEffectiveThinkingLevel,
   AWAITING_APPROVAL_PAUSE_REASON,
   rankAssignedTasksForWakeDelta,
   formatAssignedTasksWakeDeltaSection,
@@ -3066,7 +3067,13 @@ export class HeartbeatMonitor {
         heartbeatModelSettings = taskDetail
           ? await mergeEffectiveSettings(taskStore, taskDetail, heartbeatBaseSettings)
           : await mergeProjectWorkflowModelLaneBaseline(taskStore, heartbeatBaseSettings);
-        const heartbeatSessionModels = resolveHeartbeatSessionModels(heartbeatModelSettings, agent.runtimeConfig);
+        /*
+        FNXC:AgentModelInheritance 2026-08-09-22:38:
+        A model-less durable workflow role agent inherits its own role lane rather than always
+        taking the execution lane; complete runtime models remain authoritative in the helper.
+        */
+        const heartbeatSessionModels = resolveHeartbeatSessionModels(heartbeatModelSettings, agent.runtimeConfig, agent);
+        const effectiveHeartbeatThinkingLevel = resolvePermanentAgentEffectiveThinkingLevel(agent, heartbeatModelSettings);
         // FNXC:CommandCenterActivity 2026-08-09-11:12: Heartbeat model selection happens after
         // logger construction, so refresh telemetry before the session boundary and tool callbacks.
         attachAgentUsageTelemetry(agentLogger, {
@@ -3106,6 +3113,7 @@ export class HeartbeatMonitor {
           fallbackProvider: heartbeatSessionModels.fallbackProvider,
           fallbackModelId: heartbeatSessionModels.fallbackModelId,
           fallbackThinkingLevel: resolveExecutorFallbackThinkingLevel(undefined, heartbeatModelSettings),
+          ...(effectiveHeartbeatThinkingLevel ? { defaultThinkingLevel: effectiveHeartbeatThinkingLevel } : {}),
           runAuditor: audit,
           settings: heartbeatModelSettings,
           mcpServers: heartbeatMcp.servers,

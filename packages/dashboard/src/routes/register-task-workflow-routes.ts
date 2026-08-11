@@ -1,4 +1,4 @@
-import { createIngestedCheckResolver, createLogger, resolveRequiredCheckNames } from "@fusion/core";
+import { createIngestedCheckResolver, createLogger, isCurrentSpecDriftReport, resolveRequiredCheckNames } from "@fusion/core";
 import type { Request, Response } from "express";
 
 const severityAuditLog = createLogger("dashboard-register-task-workflow-routes");
@@ -3421,6 +3421,8 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       const autoPauseClearPatch = buildAutoPauseClearPatch(task);
       const clearedDeadlockAutoPause = Object.keys(autoPauseClearPatch).length > 0;
       const retryLogSuffix = clearedDeadlockAutoPause ? ", cleared deadlock auto-pause" : "";
+      // FNXC:TaskWedgeNotifications 2026-08-10-20:15: dashboard Retry is explicit operator intervention, so it clears the spent generic-terminal budget.
+      await scopedStore.resetTerminalFailureAutoRecoveryBudget(req.params.id);
 
       if (isMissingWorktreeSessionRetry) {
         /*
@@ -4312,6 +4314,38 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
     }
   });
 
+  /*
+  FNXC:SpecLock 2026-08-09-12:34:
+  Task Detail reads retained structural evidence from the store rather than recomputing it in the
+  browser, keeping displayed alignment identical to the execution-time evaluator.
+  */
+  router.get("/tasks/:id/spec-lock", async (req, res) => {
+    try {
+      const { store: scopedStore } = await getProjectContext(req);
+      const task = await scopedStore.getTask(req.params.id);
+      const [latestLock, activeLock, currentPlan, latestReport, locks, currentPlans, reports] = await Promise.all([
+        scopedStore.getLatestSpecLock(req.params.id),
+        scopedStore.getActiveSpecLock(req.params.id),
+        scopedStore.getLatestCurrentPlanEvidence(req.params.id),
+        scopedStore.getLatestSpecDriftReport(req.params.id),
+        scopedStore.listSpecLocks(req.params.id),
+        scopedStore.listCurrentPlanEvidence(req.params.id),
+        scopedStore.listSpecDriftReports(req.params.id),
+      ]);
+      /*
+      FNXC:SpecDrift 2026-08-09-19:19:
+      Route readers expose the active lock separately and never promote a historical clean report
+      after a prompt rewrite or re-lock. The stale row remains in immutable history for audit.
+      */
+      const report = isCurrentSpecDriftReport(latestReport, latestLock, currentPlan, task.approvedPlanFingerprint) ? latestReport : undefined;
+      res.json({ latestLock: latestLock ?? null, activeLock: activeLock ?? null, currentPlan: currentPlan ?? null, report: report ?? null, latestReport: latestReport ?? null, history: { locks, currentPlans, reports } });
+    } catch (err: unknown) {
+      if (err instanceof ApiError) throw err;
+      if (isTaskLookupMiss(err)) throw notFound(`Task ${req.params.id} not found`);
+      rethrowAsApiError(err, "Internal server error");
+    }
+  });
+
   // Get single task with prompt content
   router.get("/tasks/:id", async (req, res) => {
     try {
@@ -4589,14 +4623,22 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
          * manual gate falls back to today's always-re-park behavior for this task.
          */
         let approvedPlanFingerprint: string | undefined;
+        let approvedPrompt: string | undefined;
         try {
           const { readFile } = await import("node:fs/promises");
           const { join } = await import("node:path");
           const promptPath = join(scopedStore.getRootDir(), ".fusion", "tasks", task.id, "PROMPT.md");
           const promptText = await readFile(promptPath, "utf8");
+          approvedPrompt = promptText;
           approvedPlanFingerprint = computePlanApprovalFingerprint(promptText);
         } catch {
-          // No PROMPT.md to fingerprint (unusual for an awaiting-approval task) — leave unset.
+          /*
+          FNXC:SpecLockApproval 2026-08-09-20:04:
+          Manual approval is a release boundary, so an unreadable PROMPT.md cannot fall back to
+          clearing a stale fingerprint and releasing un-lockable work. Keep the existing hold until
+          the operator restores a readable, structurally comparable plan that can be locked.
+          */
+          throw conflict("Cannot approve plan: PROMPT.md must be readable to create the immutable spec lock");
         }
 
         /*
@@ -4647,6 +4689,15 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
           approvedWorkflowStepResults = results;
         }
 
+        /*
+        FNXC:SpecLock 2026-08-09-17:37:
+        Validate an exhausted Plan Review before attempting persistence. A malformed cap state must
+        retain its established conflict response, while every valid release still locks under this fence.
+        */
+        if (approvedPlanFingerprint && approvedPrompt) {
+          await scopedStore.lockCurrentPlanWhilePlanningLocked(task.id, approvedPlanFingerprint, approvedPrompt);
+        }
+
         const approvalPatch = {
           status: null,
           approvedPlanFingerprint: approvedPlanFingerprint ?? null,
@@ -4681,6 +4732,12 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
          * so a stale plan can never bypass a later manual approval gate.
          */
         const approved = await scopedStore.updateTask(task.id, approvalPatch);
+        /*
+        FNXC:SpecDrift 2026-08-09-07:36:
+        Publish the deterministic report before the approval handoff seeds graph execution. A
+        missing/unreadable PROMPT.md yields an unavailable report rather than an unexamined release.
+        */
+        await scopedStore.reconcileSpecDriftWhilePlanningLocked(approved);
         /*
          * FNXC:PlanApprovalDispatch 2026-08-05-01:57:
          * Clearing awaiting-approval is only the first half of the operator decision. Resume the

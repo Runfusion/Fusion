@@ -1,4 +1,4 @@
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import express from "express";
 import { afterEach, beforeEach, expect, it } from "vitest";
@@ -37,6 +37,13 @@ pgDescribe("plan approval status persistence", () => {
     return { promise, release };
   }
 
+  /** FNXC:SpecLock 2026-08-09-17:37: approval-path fixtures need a structurally available plan because malformed Mission evidence now fails closed. */
+  async function writeLockablePrompt(taskId: string): Promise<void> {
+    const taskDir = join(harness.rootDir, ".fusion", "tasks", taskId);
+    await mkdir(taskDir, { recursive: true });
+    await writeFile(join(taskDir, "PROMPT.md"), "## Mission\n\nImplement the approved plan.\n\n## File Scope\n\n- src/**\n\n## Steps\n\n- Implement it\n", "utf8");
+  }
+
   it("clears the approval hold and persists the approved plan fingerprint", async () => {
     const task = await store.createTask({ description: "Approve this plan" });
     await store.updateTask(task.id, {
@@ -45,7 +52,7 @@ pgDescribe("plan approval status persistence", () => {
     });
     expect((await store.getTask(task.id)).approvedPlanFingerprint).toBe("stale-fingerprint");
 
-    const prompt = "# Approved plan\n\nImplement the requested behavior.\n";
+    const prompt = "# Approved plan\n\n## Mission\n\nImplement the requested behavior.\n\n## File Scope\n\n- src/**\n\n## Steps\n\n- Implement it\n";
     const taskDir = join(harness.rootDir, ".fusion", "tasks", task.id);
     await mkdir(taskDir, { recursive: true });
     await writeFile(join(taskDir, "PROMPT.md"), prompt, "utf8");
@@ -58,6 +65,34 @@ pgDescribe("plan approval status persistence", () => {
     expect(isTaskBlockedOnApproval(persisted)).toBe(false);
     expect(persisted.approvedPlanFingerprint).toBe(computePlanApprovalFingerprint(prompt));
     expect(response.body.approvedPlanFingerprint).toBe(persisted.approvedPlanFingerprint);
+
+    // FNXC:SpecLockApproval 2026-08-09-19:51: the manual release route must append the
+    // immutable lock and a current deterministic report before graph execution can resume.
+    await expect(store.getActiveSpecLock(task.id)).resolves.toMatchObject({
+      version: 1,
+      approvalFingerprint: persisted.approvedPlanFingerprint,
+    });
+    await expect(store.getLatestSpecDriftReport(task.id)).resolves.toMatchObject({
+      alignment: "on-plan",
+      lockVersion: 1,
+      currentPlanVersion: 1,
+    });
+  });
+
+  it("does not rewrite locked Mission evidence during a description-only synchronization", async () => {
+    const task = await store.createTask({ description: "Initial description" });
+    const prompt = "# Approved plan\n\n## Mission\n\nKeep this locked Mission statement.\n\n## File Scope\n\n- src/**\n\n## Steps\n\n- Implement it\n";
+    const taskDir = join(harness.rootDir, ".fusion", "tasks", task.id);
+    await mkdir(taskDir, { recursive: true });
+    await writeFile(join(taskDir, "PROMPT.md"), prompt, "utf8");
+    await store.updateTask(task.id, { status: "awaiting-approval" });
+    expect((await request(createApp(), "POST", `/api/tasks/${task.id}/approve-plan`)).status).toBe(200);
+
+    await store.updateTask(task.id, { description: "Cosmetic task description update" });
+
+    await expect(store.getActiveSpecLock(task.id)).resolves.toMatchObject({ version: 1 });
+    await expect(store.getLatestSpecDriftReport(task.id)).resolves.toMatchObject({ alignment: "on-plan" });
+    expect(await readFile(join(taskDir, "PROMPT.md"), "utf8")).toContain("## Mission\n\nKeep this locked Mission statement.");
   });
 
   it.each(["failed", "advisory_failure"] as const)(
@@ -87,7 +122,7 @@ pgDescribe("plan approval status persistence", () => {
 
     const taskDir = join(harness.rootDir, ".fusion", "tasks", task.id);
     await mkdir(taskDir, { recursive: true });
-    await writeFile(join(taskDir, "PROMPT.md"), "# Human-approved plan\n", "utf8");
+    await writeFile(join(taskDir, "PROMPT.md"), "# Human-approved plan\n\n## Mission\n\nImplement the approved plan.\n\n## File Scope\n\n- src/**\n\n## Steps\n\n- Implement it\n", "utf8");
 
     const response = await request(createApp(), "POST", `/api/tasks/${task.id}/approve-plan`);
 
@@ -121,8 +156,10 @@ pgDescribe("plan approval status persistence", () => {
         verdict: "REVISE",
       }],
     } as never);
+    await writeLockablePrompt(task.id);
 
     const response = await request(createApp(), "POST", `/api/tasks/${task.id}/approve-plan`);
+
 
     expect(response.status).toBe(200);
     const persisted = await store.getTask(task.id);
@@ -164,6 +201,7 @@ pgDescribe("plan approval status persistence", () => {
         verdict: "REVISE",
       }],
     } as never);
+    await writeLockablePrompt(task.id);
 
     const originalUpdate = store.updateTask.bind(store);
     let approvalUpdates = 0;
@@ -312,6 +350,7 @@ pgDescribe("plan approval status persistence", () => {
     const task = await store.createTask({ description: "Approval precedes dependency" });
     const dependency = await store.createTask({ description: "Later prerequisite", column: "done" });
     await store.updateTask(task.id, { status: "awaiting-approval" });
+    await writeLockablePrompt(task.id);
 
     const mutationStore = new TaskStore(harness.rootDir, undefined, { asyncLayer: harness.layer });
     await mutationStore.init();
@@ -372,7 +411,7 @@ pgDescribe("plan approval status persistence", () => {
     expect(persisted.awaitingApprovalReason).toBe("plan-review-replan-cap");
   });
 
-  it("clears a prior fingerprint when the approved plan cannot be read", async () => {
+  it("keeps the approval hold when the plan cannot be read for a spec lock", async () => {
     const task = await store.createTask({ description: "Approve without a readable plan" });
     await store.updateTask(task.id, {
       status: "awaiting-approval",
@@ -383,12 +422,38 @@ pgDescribe("plan approval status persistence", () => {
 
     const response = await request(createApp(), "POST", `/api/tasks/${task.id}/approve-plan`);
 
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(409);
     const persisted = await store.getTask(task.id);
-    expect(persisted.status).toBeUndefined();
-    expect(isTaskBlockedOnApproval(persisted)).toBe(false);
-    expect(persisted.approvedPlanFingerprint).toBeUndefined();
-    expect(response.body.approvedPlanFingerprint).toBeUndefined();
+    expect(persisted.status).toBe("awaiting-approval");
+    expect(isTaskBlockedOnApproval(persisted)).toBe(true);
+    expect(persisted.approvedPlanFingerprint).toBe("stale-fingerprint");
+    await expect(store.getLatestSpecLock(task.id)).resolves.toBeUndefined();
+  });
+
+  it("invalidates an accepted lock for removed and replaced dependencies", async () => {
+    const task = await store.createTask({ description: "Dependency changes invalidate the lock" });
+    const first = await store.createTask({ description: "First prerequisite", column: "done" });
+    const replacement = await store.createTask({ description: "Replacement prerequisite", column: "done" });
+    await writeLockablePrompt(task.id);
+    await store.updateTask(task.id, { status: "awaiting-approval" });
+    expect((await request(createApp(), "POST", `/api/tasks/${task.id}/approve-plan`)).status).toBe(200);
+    expect((await store.getTask(task.id)).approvedPlanFingerprint).toBeTruthy();
+
+    await store.updateTaskDependencies(task.id, { operation: "add", dependency: first.id });
+    await store.updateTask(task.id, { status: "awaiting-approval" });
+    expect((await request(createApp(), "POST", `/api/tasks/${task.id}/approve-plan`)).status).toBe(200);
+    await store.updateTaskDependencies(task.id, { operation: "replace", from: first.id, to: replacement.id });
+
+    const afterReplace = await store.getTask(task.id);
+    expect(afterReplace.approvedPlanFingerprint).toBeUndefined();
+    // FNXC:SpecLock 2026-08-10-16:40: A dependency replacement invalidates admission but remains
+    // structurally comparable to the retained lock, so the roadmap receives divergence—not silence.
+    expect((await store.getLatestSpecDriftReport(task.id))?.alignment).toBe("diverged-needs-review");
+
+    await store.updateTask(task.id, { status: "awaiting-approval" });
+    expect((await request(createApp(), "POST", `/api/tasks/${task.id}/approve-plan`)).status).toBe(200);
+    await store.updateTaskDependencies(task.id, { operation: "remove", dependency: replacement.id });
+    expect((await store.getTask(task.id)).approvedPlanFingerprint).toBeUndefined();
   });
 
   it("clears the approval hold and stale fingerprint when rejecting a plan", async () => {

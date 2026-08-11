@@ -13,7 +13,7 @@ import { resolveCapacityPoolId } from "../workflows/workflow-capacity.js";
 import {resolveWorkflowIntakeFacts} from "./task-creation.js";
 import {TransitionRejectionError} from "./errors.js";
 import * as schema from "../postgres/schema/index.js";
-import {and, eq, inArray, isNull, ne, or, sql} from "drizzle-orm";
+import {and, desc, eq, inArray, isNull, ne, or, sql} from "drizzle-orm";
 import {mkdir, writeFile} from "node:fs/promises";
 import {join} from "node:path";
 import type {Task, ColumnId, CheckoutClaimPrecondition, ActivityLogEntry, RunAuditEvent, RunAuditEventInput, RunAuditEventFilter, GoalCitation, GoalCitationFilter} from "../types.js";
@@ -33,7 +33,7 @@ import {CentralCore} from "../central/central-core.js";
 import {extractTaskIdTokens, normalizeTitleForTaskId} from "../tasks/task-title-id-drift.js";
 import {generateTaskLineageId} from "../tasks/task-lineage.js";
 import {sanitizeFileScopeInPromptContent} from "../task-store/file-scope.js";
-import {preserveResolvedTaskWedgeEpisode, type TaskRow} from "../task-store/persistence.js";
+import {preserveDurableTaskWedgeInvariants, type TaskRow} from "../task-store/persistence.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 import {isWorkflowDefinitionIdPrimaryKeyCollision, nextWorkflowDefinitionIdAsyncImpl} from "../task-store/workflow-definitions.js";
 import {upsertTaskRowInTransaction, buildTaskInsertValues} from "./async/async-persistence.js";
@@ -42,6 +42,7 @@ import {withTaskWorkflowSerialization} from "./async/async-workflow-workitems.js
 import {recordActivityLogEntry as recordActivityLogEntryAsync} from "./async/async-audit.js";
 import {applyOriginalDescription} from "../tasks/original-description-policy.js";
 import {isPlanReviewSatisfied} from "../planner/plan-approval.js";
+import {createCurrentPlanEvidence} from "../planner/spec-lock.js";
 import {recordRunAuditEvent as recordRunAuditEventAsync} from "../postgres/data-layer.js";
 import {listGoalCitations as listGoalCitationsAsync} from "./async/async-events.js";
 import type {RunAuditEventRow} from "../task-store/row-types.js";
@@ -114,7 +115,7 @@ function sameDependencySet(actual: readonly string[], expected: readonly string[
     && actual.every((dependency, index) => dependency === expected[index]);
 }
 
-export async function atomicWriteTaskJsonWithAuditImpl(store: TaskStore, dir: string, task: Task, auditInput?: RunAuditEventInput, planningInvalidation?: PlanningDependencyInvalidation,): Promise<void> {
+export async function atomicWriteTaskJsonWithAuditImpl(store: TaskStore, dir: string, task: Task, auditInput?: RunAuditEventInput, planningInvalidation?: PlanningDependencyInvalidation, specPlanPrompt?: string,): Promise<void> {
     const id = store.getTaskIdFromDir(dir);
     // FNXC:RuntimeTaskOrchestrationAsync 2026-06-24-14:10:
     // Backend mode: upsert the task row + audit event in one async Drizzle
@@ -135,6 +136,35 @@ export async function atomicWriteTaskJsonWithAuditImpl(store: TaskStore, dir: st
     const existingRow = await layer.transactionImmediate(async (tx) => {
       const persist = async () => {
       const row = await readTaskRowInTransaction(tx, id, { includeDeleted: true }, layer.projectId);
+      /*
+      FNXC:SpecLock 2026-08-09-18:17:
+      A full PROMPT.md rewrite publishes its evidence and clears approval in this one task-row
+      transaction. A database rollback therefore cannot leave either half visible by itself.
+      */
+      if (specPlanPrompt !== undefined) {
+        const projectId = layer.projectId ?? "";
+        const priorRows = await tx.select().from(schema.project.currentPlanEvidence)
+          .where(and(eq(schema.project.currentPlanEvidence.projectId, projectId), eq(schema.project.currentPlanEvidence.taskId, id)))
+          .orderBy(desc(schema.project.currentPlanEvidence.version)).limit(1);
+        const prior = priorRows[0]?.snapshot as import("../planner/spec-lock.js").CurrentPlanEvidence | undefined;
+        const candidate = createCurrentPlanEvidence({
+          version: (prior?.version ?? 0) + 1,
+          sourceRevision: Date.now(),
+          capturedAt: new Date().toISOString(),
+          prompt: specPlanPrompt,
+        });
+        if (prior?.sourceHash !== candidate.sourceHash) {
+          await tx.insert(schema.project.currentPlanEvidence).values({
+            projectId,
+            taskId: id,
+            version: candidate.version,
+            sourceRevision: candidate.sourceRevision,
+            sourceHash: candidate.sourceHash,
+            capturedAt: candidate.capturedAt,
+            snapshot: candidate,
+          });
+        }
+      }
       if (row && row.deletedAt != null) {
         return { deletedAt: row.deletedAt as string };
       }
@@ -154,7 +184,7 @@ export async function atomicWriteTaskJsonWithAuditImpl(store: TaskStore, dir: st
         )) {
           throw new Error(`Planning dependency invalidation conflict for ${id}: dependencies changed before the lifecycle mutation committed`);
         }
-        preserveResolvedTaskWedgeEpisode(existing, task);
+        preserveDurableTaskWedgeInvariants(existing, task);
         const changedColumns = store.getChangedTaskColumns(existing, task);
         if (changedColumns.size > 0) {
           const context = store.createTaskPersistSerializationContext(task, existing);

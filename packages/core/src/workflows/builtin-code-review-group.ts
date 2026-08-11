@@ -1,5 +1,6 @@
 import type { WorkflowIrNode } from "./workflow-ir-types.js";
 import { CODE_REVIEW_COMPLETENESS_POLICY } from "../agents/code-review-policy.js";
+import { REVIEW_REREVIEW_POLICY, REVIEW_SEVERITY_POLICY } from "../agents/review-severity-policy.js";
 
 /*
 FNXC:CodeReviewStep 2026-06-25-15:00:
@@ -68,15 +69,20 @@ const CODE_REVIEW_PROMPT = `You are a senior code reviewer. Review the task's di
 
 ${CODE_REVIEW_COMPLETENESS_POLICY}
 
+${REVIEW_SEVERITY_POLICY}
+
+${REVIEW_REREVIEW_POLICY}
+
 Be specific: cite \`file:line\` for every finding and explain the concrete failure it causes.
 
 ## Output Requirements
 - Fast-bail: if the diff is trivial, generated, or out-of-scope for code review (e.g. pure docs/config/formatting with no logic), output {"verdict":"APPROVE","notes":"out of scope: code review"} immediately and stop.
 - APPROVE: no correctness concerns; use empty or brief notes.
-- APPROVE_WITH_NOTES: shippable, but include non-blocking advisories (with file:line) in notes.
-- REVISE: a correctness bug, regression, or contract break requires changes; include file:line and the concrete failure plus remediation in notes.
+- APPROVE_WITH_NOTES: shippable. Use this when your findings are all P1/P2 — they are recorded and handed to the implementer without another remediation round.
+- REVISE: a correctness bug, regression, or contract break requires changes before merge. Requires at least one \`critical\` finding in \`findings\`; a REVISE without one will be treated as APPROVE_WITH_NOTES.
+- Every blocking issue MUST appear as an entry in \`findings\` with its severity and \`filePath\`/\`line\`. Prose in \`notes\` alone does not block.
 - Final output: output exactly one trailing JSON object on the final line (no markdown fences, no surrounding prose):
-{"verdict":"APPROVE|APPROVE_WITH_NOTES|REVISE","notes":"..."}`;
+{"verdict":"APPROVE|APPROVE_WITH_NOTES|REVISE","notes":"...","findings":[{"id":"stable-id","title":"concise issue","body":"concrete failure and remediation","filePath":"path/to/file.ts","line":1,"severity":"critical|high|medium|low"}]}`;
 
 /**
  * Build the `code-review` optional-group node placed on a workflow's pre-merge path.

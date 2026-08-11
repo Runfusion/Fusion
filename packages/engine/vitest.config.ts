@@ -250,11 +250,10 @@ export default defineConfig({
             "src/__tests__/merger-landed-files-capture.test.ts",
             "src/__tests__/branch-attribution.test.ts",
             /*
-            FNXC:EngineTests 2026-08-06-00:04:
-            FN-8811 quarantines project-engine.test.ts after its workspace-busy case
-            contradicted its 60s cap with a real 120s retry and left a timed-out git
-            subprocess. The paired ledger entry owns its 14-day deletion ratchet; keep
-            this gate allow-list free of the file until a root-cause fix rescues it.
+            FNXC:EngineTests 2026-08-10-09:35:
+            FN-8937 rescued project-engine.test.ts into engine-default by sealing its
+            git resolver seam and using real guard watchdog timers. It remains outside
+            engine-core: merge-gate admission requires separate deterministic evidence.
             */
             /*
             FNXC:EngineTests 2026-07-28-21:05 (#2520 review — greptile P1):
@@ -388,9 +387,6 @@ export default defineConfig({
             Quarantined on sight per AGENTS.md; mirrored in scripts/lib/test-quarantine.json.
             */
             // SQLite-path gate test evicted + quarantined (see engine-core comment + ledger).
-            // FNXC:EngineTests 2026-08-06-00:04: paired with the ledger's FN-8811
-            // workspace-busy quarantine; do not appease its timing assertion.
-            "src/__tests__/project-engine.test.ts",
             "node_modules/**",
             "dist/**",
             // FNXC:PgMigrationQuarantine 2026-07-18-04:30: FN-8270 rescued the final seven VAL-REMOVAL-005 holdouts by awaiting PG audit reads and modeling async collaborators. Their paired ledger entries and excludes were removed only after targeted green runs.

@@ -2078,6 +2078,27 @@ Narrow/mobile Missions puts Plan New Mission at the bottom of the list, using th
   flex-wrap: wrap;
 }
 
+/*
+FNXC:SpecLockMissionAlignment 2026-08-09-19:34:
+FN-8845 renders delivery state and retained spec alignment independently. Semantic token colors make
+needs-review and unavailable visible without suggesting that a re-lock is a quality or completion result.
+*/
+.mission-spec-alignment--on-plan,
+.mission-spec-alignment--diverged-relocked-approved {
+  color: var(--color-success);
+  background: color-mix(in srgb, var(--color-success) 12%, transparent);
+}
+
+.mission-spec-alignment--diverged-needs-review {
+  color: var(--color-warning);
+  background: color-mix(in srgb, var(--color-warning) 12%, transparent);
+}
+
+.mission-spec-alignment--unavailable {
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--text-muted) 12%, transparent);
+}
+
 .mission-feature__icon {
   flex-shrink: 0;
   color: var(--text-muted);

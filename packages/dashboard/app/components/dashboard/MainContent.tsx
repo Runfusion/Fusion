@@ -28,6 +28,13 @@ import type { DetailTaskTab } from "../../hooks/useModalManager";
 import type { SectionId } from "../SettingsModal";
 import type { MainContentProps } from "./types";
 
+/*
+FNXC:CommandCenterAgentActivity 2026-08-10-01:54:
+A monotonic request id makes repeated clicks for the same agent observable to AgentsView. Date.now() can collide in one millisecond and under frozen timers, silently losing the focus request.
+*/
+let agentAnchorRequestSeq = 0;
+export function nextAgentAnchorRequestId(): number { return ++agentAnchorRequestSeq; }
+
 export function MainContent({
   columnFlagsByTaskId,
   showBackendConnectionErrorPage,
@@ -97,6 +104,8 @@ export function MainContent({
   milestoneSliceResumeSessionId,
   setGoalAnchorId,
   goalAnchorId,
+  agentAnchor,
+  setAgentAnchor,
   agentsEnabled,
   agentOnboardingEnabled,
   handleOpenTaskLogs,
@@ -584,6 +593,7 @@ export function MainContent({
             projectId={currentProject?.id}
             onOpenTaskLogs={handleOpenTaskLogs}
             agentOnboardingEnabled={agentOnboardingEnabled}
+            focusAgent={agentAnchor}
           />
         </Suspense>
       </PageErrorBoundary>
@@ -740,6 +750,15 @@ export function MainContent({
             addToast={addToast}
             nodesEnabled={nodesEnabled}
             onChangeView={handleChangeTaskView}
+            onOpenAgent={(agentId) => {
+              setAgentAnchor?.({ agentId, requestId: nextAgentAnchorRequestId() });
+              handleChangeTaskView("agents");
+            }}
+            onOpenTask={(taskId) => {
+              void fetchTaskDetail(taskId, currentProject?.id)
+                .then((task) => openDetailTask(task as TaskDetail))
+                .catch(() => addToast?.("Failed to open task", "error"));
+            }}
           />
         </Suspense>
       </PageErrorBoundary>

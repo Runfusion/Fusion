@@ -152,6 +152,7 @@ import { StepSessionExecutor } from "../execution/step-session-executor.js";
 import { isResearchToolSurfaceEnabled } from "../execution/tool-availability.js";
 import { summarizeVerificationOutput } from "../execution/verification-utils.js";
 import { buildAgentPersona } from "./agent-binding-pure.js";
+import { releaseExternalExecutionActiveWorktree } from "./active-worktrees.js";
 import { evaluateImplicitCompletionRefusal } from "./completion-predicates.js";
 import {
   configuredCommandErrorMessage,
@@ -188,7 +189,7 @@ import { resolveDedicatedPlannerColumnsForTask } from "../planner-lane-resolutio
 import { mergeEffectiveSettings } from "../project/effective-settings.js";
 import { buildStepFailureMessage, emitProactiveStatus, sanitizeFailureReason } from "../project/proactive-status.js";
 import { createRunAuditor, generateSyntheticRunId, type EngineRunContext } from "../util/run-audit.js";
-import { acquireTaskWorktree } from "../worktree/worktree-acquisition.js";
+import { acquireTaskWorktree, WorktreeBaseRefreshError } from "../worktree/worktree-acquisition.js";
 import { resolveWorktreesDir } from "../worktree/worktree-paths.js";
 import {
   RemovalReason,
@@ -762,14 +763,16 @@ export async function runImplementation(
 
       /*
       FNXC:Workspace 2026-06-21-12:00:
-      KTD1 — every preflight below (base-commit capture, contamination check, worktree-liveness gate) runs git against `worktreePath`, which equals the non-git workspace root in workspace mode. They would all fail. Gate the whole block off in workspace mode; the per-repo equivalents return in Phase B (master U3) against each acquired sub-repo worktree. The non-workspace branch is unchanged.
+      KTD1 — the git preflights below run against `worktreePath`, which equals the non-git workspace root in workspace mode. The per-repo equivalents return in Phase B (master U3) against each acquired sub-repo worktree.
+
+      FNXC:ExternalExecutionCheckout 2026-08-10-03:05:
+      An operator-routed checkout still needs the read-only base snapshot used by modified-file capture. It must not enter contamination or managed-worktree liveness checks: the persisted checkout is deliberately operator-owned and lives outside Fusion's worktree directory.
       */
-      if (!deps.workspaceConfig) {
-      // Capture the base commit SHA for diff computation whenever a task
-      // starts with a newly assigned worktree.
-      if (!acquisition.isResume) {
+      if (!deps.workspaceConfig && !acquisition.isResume) {
         await captureBaseCommitSha(deps.store, task, worktreePath, audit, { isResume: false });
       }
+
+      if (!deps.workspaceConfig && !externalExecutionRoute.configured) {
 
       // Contamination check must use a FRESH merge-base with the integration
       // branch — NOT task.baseCommitSha. baseCommitSha is intentionally
@@ -1441,6 +1444,7 @@ export async function runImplementation(
             deps.clearCompletedTaskWatchdog(task.id);
             executorLog.log(`✓ ${task.id} implementation complete — graph interpreter owns the remaining lifecycle`);
             const liveModified = (await deps.store.getTask(task.id).catch(() => task)).modifiedFiles ?? [];
+            handedOffForReview = true;
             reportImplementationExit?.("complete-from-live-files");
             graphCompletion({ modifiedFiles: liveModified });
             return;
@@ -1511,7 +1515,7 @@ export async function runImplementation(
                 executorLog.warn(`⚡ ${task.id} transient error — retry ${attempt}/${MAX_RECOVERY_RETRIES} in ${delay}: ${errorMessage}`);
                 await deps.store.logEntry(task.id, `Transient error (retry ${attempt}/${MAX_RECOVERY_RETRIES} in ${delay}): ${errorMessage}`, undefined, deps.getRunContextFor(task.id));
               }
-              if (worktreePath && existsSync(worktreePath)) {
+              if (!externalExecutionRoute.configured && worktreePath && existsSync(worktreePath)) {
                 try {
                   const settings = await deps.store.getSettings();
                   await removeWorktree({
@@ -1611,9 +1615,11 @@ export async function runImplementation(
                 FNXC:StuckRequeue 2026-06-27-23:15:
                 Stuck requeue may destroy a checkout that contains only uncommitted step output. Always reconcile lost-work step state before worktree removal, even when preserve-progress is enabled, so a retry cannot skip code that no longer exists.
                 */
-                await deps.resetStepsIfWorkLost(latestTask);
+                if (!externalExecutionRoute.configured) {
+                  await deps.resetStepsIfWorkLost(latestTask);
+                }
 
-                if (worktreePath && existsSync(worktreePath)) {
+                if (!externalExecutionRoute.configured && worktreePath && existsSync(worktreePath)) {
                   try {
                     await removeWorktree({
                       worktreePath,
@@ -1661,6 +1667,22 @@ export async function runImplementation(
       const codeReviewVerdicts = new Map<number, ReviewVerdict>();
 
       let wasPaused = false;
+      /*
+      FNXC:SessionResume 2026-08-10-17:33:
+      Set when the run ends by handing the COMPLETED implementation to the graph for review, rather than
+      by finishing or failing the task. The distinction matters because a review gate can bounce the card
+      straight back here for remediation in the SAME worktree: before this flag the `finally` below nulled
+      `sessionFile` on every non-paused exit, so pause -> unpause was the only path that ever resumed a
+      conversation and every remediation round restarted cold — re-reading the repo and re-deriving the
+      change it had just written, once per round. Preserving the session across the review round-trip is
+      what makes a bounce a follow-up turn instead of a fresh investigation.
+
+      Scoped deliberately to the handoff exits, NOT to every non-terminal exit: paths that require a fresh
+      session (context overflow, stale assistant continuation, worktree reacquisition, non-continuable
+      session, task-done retry) clear `sessionFile` explicitly and synchronously at their own site, and the
+      resume guard re-validates the persisted worktree before reopening. Those defenses stay authoritative.
+      */
+      let handedOffForReview = false;
       // Mutable ref — populated after createFnAgent, tools access lazily via closure
       const sessionRef: { current: AgentSession | null } = { current: null };
       /*
@@ -2228,12 +2250,26 @@ export async function runImplementation(
 
           executorLog.debug(`${task.id}: calling promptWithFallback()...`);
           if (isResuming) {
-            // Session already has full conversation history — just tell the
-            // agent it was paused and should pick up where it left off.
+            /*
+             * Session already has full conversation history — re-prompt with a short continuation
+             * instead of the full execution prompt.
+             *
+             * FNXC:SessionResume 2026-08-10-17:33:
+             * A resume is no longer only a pause/unpause: a review gate can bounce a completed
+             * implementation back here for remediation with the same session. The remediation findings
+             * are written into PROMPT.md (`## Workflow Step Failure`) by sendTaskBackForFix AFTER this
+             * conversation's last turn, so the agent has never seen them. This prompt must therefore
+             * direct a re-read of PROMPT.md unconditionally — the previous wording ("you were paused,
+             * pick up where you left off") would silently skip the findings and the remediation round
+             * would do nothing, bouncing again on the next review.
+             */
             await promptWithFallback(session, [
-              "Your session was paused and has now been resumed.",
-              "Continue working on the task from where you left off.",
-              "Review the current state of your worktree and proceed with the next pending step.",
+              "Your session was resumed.",
+              "PROMPT.md may have been UPDATED since your last turn — re-read it now before doing anything else.",
+              "If it contains a `## Workflow Step Failure` section, a review gate requested changes: address those findings. Fix every P0; fix P1 unless you have a concrete reason not to, and say which you declined and why. P2 items are optional.",
+              "If it contains a `## Review Advisory Notes` section, those are non-blocking suggestions — address them only if cheap and clearly correct.",
+              "Otherwise continue the task from where you left off.",
+              "Review the current state of your worktree, then proceed with the next pending step.",
             ].join("\n"));
           } else {
             const customFieldDefs = await deps.resolveTaskCustomFieldDefs(task.id);
@@ -2426,6 +2462,7 @@ export async function runImplementation(
             // at the implementation-complete boundary and hand control back.
             deps.clearCompletedTaskWatchdog(task.id);
             executorLog.log(`✓ ${task.id} implementation complete — graph interpreter owns the remaining lifecycle`);
+            handedOffForReview = true;
             reportImplementationExit?.("complete");
             graphCompletion({ modifiedFiles });
             return;
@@ -2502,6 +2539,7 @@ export async function runImplementation(
                 deadlocks the merge queue) now lives with the node in the IR, where the routing
                 decision is.
                 */
+                handedOffForReview = true;
                 reportImplementationExit?.("review-handoff-pending-review");
                 pendingReviewParked = true;
                 break;
@@ -2721,6 +2759,7 @@ export async function runImplementation(
               // executeWorkflowGraph, KTD-5) — nothing to gate before handoff.
               deps.clearCompletedTaskWatchdog(task.id);
               executorLog.log(`✓ ${task.id} implementation complete (retry) — graph interpreter owns the remaining lifecycle`);
+              handedOffForReview = true;
               reportImplementationExit?.("complete-after-retry");
               graphCompletion({ modifiedFiles });
               return;
@@ -2805,11 +2844,19 @@ export async function runImplementation(
           session.dispose();
           // Terminate all spawned child agents when parent session ends
           await deps.terminateAllChildren(task.id);
-          // Clear session file when task completes or fails (not when paused —
-          // the file is preserved so unpause can resume the conversation).
-          // Check both the local flag (graceful exit) and the instance set
-          // (error path where dispose caused prompt to throw).
-          if (!wasPaused && !deps.pausedAborted.has(task.id)) {
+          /*
+           * Clear session file when task completes or fails (not when paused —
+           * the file is preserved so unpause can resume the conversation).
+           * Check both the local flag (graceful exit) and the instance set
+           * (error path where dispose caused prompt to throw).
+           *
+           * FNXC:SessionResume 2026-08-10-17:33:
+           * Also preserved across a review handoff (`handedOffForReview`): a review gate may bounce the
+           * card back here for remediation in the same worktree, and that round should continue the
+           * conversation instead of re-deriving the change from scratch. See the flag's declaration for
+           * why this is scoped to the handoff exits rather than to every non-terminal exit.
+           */
+          if (!wasPaused && !handedOffForReview && !deps.pausedAborted.has(task.id)) {
             deps.store.updateTask(task.id, { sessionFile: null }).catch((err: unknown) => {
               const msg = err instanceof Error ? err.message : String(err);
               executorLog.warn(`${task.id} failed to clear sessionFile: ${msg}`);
@@ -2884,6 +2931,26 @@ export async function runImplementation(
         // Dependency added mid-execution — discard worktree and move to triage
         deps.depAborted.delete(task.id);
         await deps.handleDepAbortCleanup(task.id, worktreePath);
+      } else if (err instanceof WorktreeBaseRefreshError) {
+        /*
+        FNXC:WorktreeBaseRefresh 2026-08-10-01:15:
+        Classified FIRST among error types, and re-applied after the U4 executor peel (#3317) rewrote
+        executor.ts from a pre-change base and dropped it. Acquisition throws this BEFORE any session starts,
+        so the generic sink below would park the task `failed` and page the operator for a pre-session
+        checkout state — that path parked 99 tasks and produced 47 operator alerts over 2026-08-01..09.
+        Post-fix only an UNPROVEN tree (failed compensation) still throws, and a later acquisition can repair
+        that once git state changes, so it stays a wait: leave the row cleanly dispatchable and let ordinary
+        scheduling retry it rather than terminalizing recoverable work.
+        */
+        executorLog.warn(`${task.id}: worktree base refresh blocked execution (${err.refresh.kind}) — leaving the task queued for re-dispatch (not a failure)`);
+        await deps.store.logEntry(
+          task.id,
+          `Worktree base refresh blocked execution (${err.refresh.kind}) — task left queued for a later clean acquisition`,
+          err.refresh.detail,
+          deps.getRunContextFor(task.id),
+        ).catch(() => undefined);
+        await deps.persistTokenUsage(task.id);
+        return;
       } else if (isInvalidAssistantContinuationErrorMessage(errorMessage)) {
         /*
         FNXC:PostDoneContinuation 2026-07-16-11:57:
@@ -3022,7 +3089,7 @@ export async function runImplementation(
           return;
         } else {
           executorLog.log(`${task.id} paused — moving to todo`);
-          if (worktreePath && existsSync(worktreePath)) {
+          if (!externalExecutionRoute.configured && worktreePath && existsSync(worktreePath)) {
             try {
               const settings = await deps.store.getSettings();
               await removeWorktree({
@@ -3546,7 +3613,7 @@ export async function runImplementation(
               await deps.store.logEntry(task.id, `Transient error (retry ${attempt}/${MAX_RECOVERY_RETRIES} in ${delay}): ${errorMessage}`, undefined, deps.getRunContextFor(task.id));
             }
             // Clean up the old worktree so the retry gets a fresh one
-            if (worktreePath && existsSync(worktreePath)) {
+            if (!externalExecutionRoute.configured && worktreePath && existsSync(worktreePath)) {
               try {
                 const settings = await deps.store.getSettings();
                 await removeWorktree({
@@ -3601,6 +3668,16 @@ export async function runImplementation(
         deps.options.onError?.(task, err instanceof Error ? err : new Error(errorMessage));
       }
     } finally {
+      /*
+      FNXC:ExternalExecutionCheckout 2026-08-10-03:13:
+      External checkouts remain operator-owned and are never removed by Fusion, but every run exit must clear their in-memory active-worktree ownership before any awaited teardown or executor-lock release. This prevents teardown errors from retaining a phantom holder and prevents an old run from deleting a successor run's binding.
+      */
+      releaseExternalExecutionActiveWorktree(
+        deps.activeWorktrees,
+        task.id,
+        externalExecutionRoute.configured,
+      );
+
       if (reviewAddressingActivated) {
         const latestTask = await deps.store.getTask(task.id);
         if (taskDone) {
@@ -3738,10 +3815,12 @@ export async function runImplementation(
             FNXC:StuckRequeue 2026-06-27-23:15:
             Preserve-progress stuck requeues still remove the old checkout. Reconcile steps first so uncommitted-only output is reset to pending while committed progress can remain complete.
             */
-            await deps.resetStepsIfWorkLost(latestTask);
+            if (!externalExecutionRoute.configured) {
+              await deps.resetStepsIfWorkLost(latestTask);
+            }
 
             // Clean up the old worktree so the retry gets a fresh one
-            if (worktreePath && existsSync(worktreePath)) {
+            if (!externalExecutionRoute.configured && worktreePath && existsSync(worktreePath)) {
               try {
                 await removeWorktree({
                   worktreePath,

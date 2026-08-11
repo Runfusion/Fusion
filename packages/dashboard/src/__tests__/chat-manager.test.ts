@@ -4122,4 +4122,49 @@ describe("ChatManager generation isolation", () => {
     });
   });
 
+  it("forwards inherited project model and thinking for direct role-agent chat", async () => {
+    mockAgentStore.getAgent.mockResolvedValue({
+      id: "agent-001", name: "Workflow Merger", role: "merger", roles: ["merger"],
+      metadata: { builtInWorkflowRole: true, workflowRole: "merger" }, runtimeConfig: { enabled: false },
+    });
+    const createResolvedSession = vi.fn(async () => ({
+      session: { prompt: vi.fn().mockResolvedValue(undefined), dispose: vi.fn(), state: { messages: [{ role: "assistant", content: "Done" }] } },
+    }));
+    __setCreateResolvedAgentSession(createResolvedSession as any);
+    const chatManager = createChatManagerWithSettings({
+      defaultProviderOverride: "anthropic", defaultModelIdOverride: "claude-project", defaultThinkingLevelOverride: "high",
+    } as any);
+
+    await chatManager.sendMessage("chat-001", "Hello");
+
+    expect(createResolvedSession).toHaveBeenCalledWith(expect.objectContaining({
+      defaultProvider: "anthropic", defaultModelId: "claude-project", defaultThinkingLevel: "high",
+    }));
+  });
+
+  it("forwards inherited role settings for room responders while room thinking wins", async () => {
+    (mockChatStore as any).getRoom = vi.fn().mockReturnValue({ id: "room-1", name: "team", thinkingLevel: "off" });
+    (mockChatStore as any).listRoomMembers = vi.fn().mockReturnValue([{ roomId: "room-1", agentId: "agent-001", role: "member" }]);
+    (mockChatStore as any).addRoomMessage = vi.fn().mockImplementation((_roomId: string, input: any) => ({ id: "room-message", ...input }));
+    const merger = {
+      id: "agent-001", name: "Workflow Merger", role: "merger", roles: ["merger"], state: "active",
+      metadata: { builtInWorkflowRole: true, workflowRole: "merger" }, runtimeConfig: { enabled: false },
+    };
+    mockAgentStore.listAgents.mockResolvedValue([merger]);
+    mockAgentStore.getAgent.mockResolvedValue(merger);
+    const createResolvedSession = vi.fn(async () => ({
+      session: { prompt: vi.fn().mockResolvedValue(undefined), dispose: vi.fn(), state: { messages: [{ role: "assistant", content: "Done" }] } },
+    }));
+    __setCreateResolvedAgentSession(createResolvedSession as any);
+    const chatManager = createChatManagerWithSettings({
+      defaultProviderOverride: "anthropic", defaultModelIdOverride: "claude-project", mergerThinkingLevel: "high",
+    } as any);
+
+    await chatManager.sendRoomMessage("room-1", "Hello @Workflow_Merger");
+
+    expect(createResolvedSession).toHaveBeenCalledWith(expect.objectContaining({
+      defaultProvider: "anthropic", defaultModelId: "claude-project", defaultThinkingLevel: "off",
+    }));
+  });
+
 });

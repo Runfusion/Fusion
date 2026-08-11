@@ -686,9 +686,21 @@ describe("built-in workflows", () => {
     const planReviewPrompt = String(planReviewInnerConfig(ir).prompt);
     expect(planReviewPrompt).toContain("## Mandatory Plan Review Procedure");
     expect(planReviewPrompt).toContain("all independently discoverable blocking findings");
-    expect(planReviewPrompt).toContain("prior-review ledger as a decision primer");
-    expect(planReviewPrompt).toContain("never demote a critical defect merely because it was missed before");
     expect(planReviewPrompt).toContain("verdict notes must contain the complete blocking checklist");
+    /*
+    FNXC:ReviewSeverityGate 2026-08-10-17:33:
+    The re-review contract moved out of the completeness policy into REVIEW_REREVIEW_POLICY, which
+    replaces the former "distrust the edit / fresh holistic pass" instruction with an incremental one.
+    Assert the interpolated severity + re-review policies rather than the retired wording: the prompt
+    must still forbid reopening settled findings and still refuse to demote a genuinely-missed P0.
+    */
+    expect(planReviewPrompt).toContain("## Finding Priority");
+    expect(planReviewPrompt).toContain("## Do Not Report Nits");
+    expect(planReviewPrompt).toContain("## Re-Review (round 2 and later)");
+    expect(planReviewPrompt).toContain("Resolved items are settled");
+    expect(planReviewPrompt).toContain("say so plainly rather than demoting it");
+    expect(planReviewPrompt).toContain("Never introduce a new P1 or P2 finding as grounds for another revision round");
+    expect(planReviewPrompt).not.toContain("distrust the edit");
     expect(byId.get("parse")?.column).toBe("in-progress");
     expect(byId.get("steps")?.column).toBe("in-progress");
     /*

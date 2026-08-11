@@ -13,12 +13,15 @@ import type {
   Settings,
   Task,
   TaskStore,
+  WorkflowReviewKind,
   WorkflowStep,
 } from "@fusion/core";
 import {
+  applyReviewSeverityGate,
   finalizePlanningSegment,
   resolveExecutorFallbackModel,
   resolvePersistAgentThinkingLog,
+  resolveReviewBlockingSeverity,
   resolveValidatorFallbackModel,
   startPlanningSegment,
 } from "@fusion/core";
@@ -60,6 +63,8 @@ import {
   filterCustomToolsForReadonly,
 } from "../workflows/workflow-step-tool-policy.js";
 import { executorLog } from "../logger.js";
+import { mergeEffectiveSettings } from "../project/effective-settings.js";
+import { injectReviewAdvisoryNotes } from "./workflow-step-failure-injection.js";
 import { parseAwaitInputQuestionToolCall } from "./await-input-parse.js";
 import {
   augmentSessionSkillsForBrowserStep,
@@ -308,6 +313,32 @@ export async function executeWorkflowStep(
     const isSummaryProjectionStep = (workflowStep as WorkflowStep & { summaryTarget?: string }).summaryTarget === "task";
     const requireVerdict = !isSummaryProjectionStep && (workflowStep.gateMode === "gate" || !isSkillStep);
     const reviewFindingsContract = workflowStepMetadata.reviewKind === "plan" || workflowStepMetadata.reviewKind === "code";
+    /*
+     * FNXC:ReviewSeverityGate 2026-08-10-17:33:
+     * Severity is now the gate input, not decoration — state the threshold in the prompt so the reviewer
+     * knows which classifications actually block. Telling it the exact rule is what makes the
+     * classification honest; when severity had no stated consequence, reviewers marked everything
+     * blocking and every nit forced a remediation round.
+     *
+     * `settings` here is the RAW project map: the graph run loads it via `store.getSettings()` and never
+     * merges per-workflow values (see execute-workflow-graph.ts). Reading the threshold off it directly
+     * would silently ignore an operator's Workflow Editor override and always use the built-in default.
+     * Merge the per-task effective workflow settings first, exactly as the remediation path does — the
+     * merge is scoped to review-kind nodes so non-review steps pay nothing.
+     */
+    const reviewBlockingSeverity = reviewFindingsContract
+      ? resolveReviewBlockingSeverity({
+        reviewKind: workflowStepMetadata.reviewKind as WorkflowReviewKind,
+        workflowSettings: await mergeEffectiveSettings(deps.store, task, settings)
+          .catch(() => settings) as unknown as Record<string, unknown>,
+        nodeBlockingSeverity: (workflowStep as WorkflowStep & { blockingSeverity?: unknown }).blockingSeverity,
+      })
+      : undefined;
+    const blockingSeverityRule = reviewBlockingSeverity === undefined || reviewBlockingSeverity === "any"
+      ? ""
+      : reviewBlockingSeverity === "critical"
+        ? "\n  - REVISE requires at least one `critical` (P0) finding. A REVISE without one is recorded as APPROVE_WITH_NOTES and its findings are handed to the implementer without another review round."
+        : "\n  - REVISE requires at least one `critical` (P0) or `high` (P1) finding. A REVISE without one is recorded as APPROVE_WITH_NOTES and its findings are handed to the implementer without another review round.";
     const verdictBlock = requireVerdict
       ? `
 
@@ -323,7 +354,7 @@ export async function executeWorkflowStep(
   - Output exactly one trailing JSON object and stop.
   - verdict must be exactly APPROVE, APPROVE_WITH_NOTES, or REVISE.
   - notes should be concise and actionable. Use an empty string when there are no notes.
-  - For out-of-scope fast-bail responses, use: {"verdict":"APPROVE","notes":"out of scope: no UI files changed"}
+  - For out-of-scope fast-bail responses, use: {"verdict":"APPROVE","notes":"out of scope: no UI files changed"}${reviewFindingsContract ? "\n  - Every finding MUST carry a `severity`. Put each blocking issue in `findings` — prose in `notes` alone does not block." : ""}${blockingSeverityRule}
 
   Backward compat fallback: if JSON is unavailable, you may still begin output with REQUEST REVISION to request changes.`
       : `
@@ -358,8 +389,10 @@ export async function executeWorkflowStep(
 
   Your role:
   - Execute this workflow step exactly as scoped.
-  - Prioritize high-impact correctness/risk findings over stylistic nits.
+  - Report only what changes the delivered result. Do NOT report nits — wording, formatting, naming or ordering preferences, internal numbering/cross-reference mismatches that do not change what gets built, or detail any reasonable implementation choice would satisfy. Omit them entirely rather than filing them as low-severity findings.
+  - Assume the implementer is a competent engineer who resolves local detail correctly without being told.
   - Keep feedback actionable and directly tied to evidence in files/outputs.
+  - Finding nothing is a valid and common outcome. Do not manufacture findings to justify the review.
 
   Your Instructions:
   ${workflowStep.prompt}
@@ -744,15 +777,42 @@ export async function executeWorkflowStep(
           ? parseWorkflowStepOutput(output, { optionalGroupId })
           : parseWorkflowStepOutput(output, { requireVerdict: false, optionalGroupId });
         if (parsed.verdict) {
-          const revisionRequested = parsed.verdict === "REVISE";
+          /*
+           * FNXC:ReviewSeverityGate 2026-08-10-17:33:
+           * Apply the severity gate HERE, at the single parse boundary, so the rewritten verdict is what
+           * every downstream consumer sees (step-result status mapping, remediation routing, Review tab,
+           * merge blocking). Downgrading later would leave the persisted verdict disagreeing with the
+           * routing decision. Only a REVISE with no finding at or above the threshold is relaxed; a
+           * prose-only or unclassified REVISE still blocks (fail-closed contract in review-severity-gate.ts).
+           */
+          const gated = reviewBlockingSeverity
+            ? applyReviewSeverityGate({
+              verdict: parsed.verdict,
+              findings: parsed.findings,
+              threshold: reviewBlockingSeverity,
+            })
+            : undefined;
+          const effectiveVerdict = (gated?.verdict ?? parsed.verdict) as typeof parsed.verdict;
+          if (gated?.downgraded) {
+            await deps.store.logEntry(
+              task.id,
+              `[pre-merge] ${workflowStep.name} returned REVISE with no finding at or above "${reviewBlockingSeverity}" — recorded as APPROVE_WITH_NOTES; ${gated.advisory.length} advisory finding(s) handed to the implementer.`,
+            );
+            // Non-fatal: losing the advisory carry-forward must never fail the step itself.
+            await injectReviewAdvisoryNotes(deps.store, task, workflowStep.name, gated.advisory).catch((err: unknown) => {
+              const msg = err instanceof Error ? err.message : String(err);
+              executorLog.warn(`${task.id}: failed to carry forward advisory review findings: ${msg}`);
+            });
+          }
+          const revisionRequested = effectiveVerdict === "REVISE";
           if (workflowStep.requiresBrowser === true) {
-            await logBrowserVerificationActivity(`[browser-verification] finished browser verification for task ${task.id}: verdict ${parsed.verdict}`);
+            await logBrowserVerificationActivity(`[browser-verification] finished browser verification for task ${task.id}: verdict ${effectiveVerdict}`);
           }
           return {
             success: !revisionRequested,
             revisionRequested,
             output: parsed.output,
-            verdict: parsed.verdict,
+            verdict: effectiveVerdict,
             notes: parsed.notes,
             ...(parsed.findings ? { findings: parsed.findings } : {}),
           };

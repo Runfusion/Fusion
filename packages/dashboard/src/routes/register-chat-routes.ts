@@ -3,7 +3,13 @@ import { archivedColumnsForTask } from "../task-lifecycle-lanes.js";
 import { createReadStream } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
-import { THINKING_LEVELS, type EnrichedChatSession, type ChatAttachment } from "@fusion/core";
+import {
+  THINKING_LEVELS,
+  resolvePermanentAgentEffectiveModel,
+  resolvePermanentAgentEffectiveThinkingLevel,
+  type EnrichedChatSession,
+  type ChatAttachment,
+} from "@fusion/core";
 import { ApiError, badRequest, notFound } from "../api-error.js";
 /*
 FNXC:GrokAcp 2026-07-11-18:30:
@@ -445,8 +451,8 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
    * POST /api/chat/sessions
    * Create a new chat session.
    * Body: { agentId: string, title?: string, modelProvider?: string, modelId?: string, thinkingLevel?: string }
-   * If modelProvider and modelId are provided, those are used. Otherwise the model is
-   * resolved from the agent's runtimeConfig.model setting.
+   * If modelProvider and modelId are provided, those are used. Otherwise the model and
+   * thinking level resolve through the agent's permanent-role inheritance chain.
    * The session is scoped to the project identified by projectId query param or header.
    */
   router.post("/chat/sessions", rateLimit(RATE_LIMITS.mutation), async (req, res) => {
@@ -479,9 +485,16 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
         throw badRequest("Both modelProvider and modelId must be provided together, or neither should be provided");
       }
 
+      const agent = await agentStore.getAgent(agentId);
+      if (!agent) {
+        throw notFound(`Agent ${agentId} not found`);
+      }
+      const settings = await scopedStore.getSettings();
+
       // Fetch the agent to resolve model configuration (only if client didn't provide model)
       let resolvedProvider: string | null = null;
       let resolvedModelId: string | null = null;
+      let inheritedThinkingLevel: string | undefined;
 
       if (hasClientModelProvider && hasClientModelId) {
         // Use client-provided model
@@ -489,18 +502,12 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
         resolvedModelId = modelId!.trim();
       } else {
         // Resolve from agent's runtimeConfig.model
-        const agent = await agentStore.getAgent(agentId);
-        if (!agent) {
-          throw notFound(`Agent ${agentId} not found`);
-        }
-
-        // Parse the agent's model config from runtimeConfig.model
-        // Format: "provider/modelId" (e.g., "anthropic/claude-sonnet-4-5")
-        const runtimeModel = typeof agent.runtimeConfig?.model === "string" ? agent.runtimeConfig.model : "";
-        const slashIdx = runtimeModel.indexOf("/");
-        resolvedProvider = slashIdx > 0 ? runtimeModel.slice(0, slashIdx) : null;
-        resolvedModelId = slashIdx > 0 ? runtimeModel.slice(slashIdx + 1) : null;
+        const resolved = resolvePermanentAgentEffectiveModel(agent, settings);
+        resolvedProvider = resolved.provider ?? null;
+        resolvedModelId = resolved.modelId ?? null;
+        inheritedThinkingLevel = resolvePermanentAgentEffectiveThinkingLevel(agent, settings);
       }
+      inheritedThinkingLevel ??= resolvePermanentAgentEffectiveThinkingLevel(agent, settings);
 
       // Create the chat session with projectId for multi-project scoping
       const session = await chatStore.createSession({
@@ -509,7 +516,7 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
         projectId: projectId ?? null,
         modelProvider: resolvedProvider,
         modelId: resolvedModelId,
-        ...(thinkingLevel ? { thinkingLevel } : {}),
+        ...((thinkingLevel ?? inheritedThinkingLevel) ? { thinkingLevel: thinkingLevel ?? inheritedThinkingLevel } : {}),
       });
 
       res.status(201).json({ session });

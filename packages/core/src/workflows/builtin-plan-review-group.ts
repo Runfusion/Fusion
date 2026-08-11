@@ -1,5 +1,6 @@
 import type { WorkflowIrNode } from "./workflow-ir-types.js";
 import { PLAN_REVIEW_COMPLETENESS_POLICY } from "../agents/planning-review-policy.js";
+import { REVIEW_REREVIEW_POLICY, REVIEW_SEVERITY_POLICY } from "../agents/review-severity-policy.js";
 
 /*
 FNXC:PlanReviewStep 2026-06-28-23:29:
@@ -32,15 +33,20 @@ const PLAN_REVIEW_PROMPT = `You are a senior plan reviewer. Review the task's PR
 
 ${PLAN_REVIEW_COMPLETENESS_POLICY}
 
+${REVIEW_SEVERITY_POLICY}
+
+${REVIEW_REREVIEW_POLICY}
+
 Be specific: cite the plan section or file path for every finding and explain the concrete correction.
 
 ## Output Requirements
 - APPROVE: the plan is ready for execution.
-- APPROVE_WITH_NOTES: execution may proceed, but include non-blocking advisory notes.
-- REVISE: the plan should be corrected before execution; include every blocking finding and needed change in the JSON notes, not only in preceding prose.
+- APPROVE_WITH_NOTES: execution may proceed. Use this when your findings are all P2 — they are recorded and handed to the implementer without another planning round.
+- REVISE: the plan must be corrected before execution. Requires at least one \`critical\` or \`high\` finding in \`findings\`; a REVISE whose findings are all P2 will be treated as APPROVE_WITH_NOTES.
 - CLOSE_NO_OP: implementation must not proceed because the premise is stale, the work is already satisfied, redundant, or a duplicate. The notes field MUST begin with exactly one existing completion sentinel: PREMISE STALE:, NO-OP:, NOOP:, REDUNDANT:, or DUPLICATE:. For duplicates, use DUPLICATE: FN-NNNN ... when the canonical task is known.
+- Every blocking issue MUST appear as an entry in \`findings\` with its severity. Prose in \`notes\` alone does not block, and is not a durable input to the next planning round.
 - Final output: output exactly one trailing JSON object on the final line (no markdown fences, no surrounding prose):
-{"verdict":"APPROVE|APPROVE_WITH_NOTES|REVISE|CLOSE_NO_OP","notes":"..."}`;
+{"verdict":"APPROVE|APPROVE_WITH_NOTES|REVISE|CLOSE_NO_OP","notes":"...","findings":[{"id":"stable-id","title":"concise issue","body":"actionable correction","severity":"critical|high|medium|low"}]}`;
 
 /*
 FNXC:PlanReviewStep 2026-07-27-06:10:

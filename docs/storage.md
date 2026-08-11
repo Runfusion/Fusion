@@ -829,3 +829,9 @@ Automatic admission locks the project-scoped feature row, records a running row 
 `engineLastActiveAt` is engine liveness bookkeeping, not operator configuration. It is a non-versioned project-settings key: revision diffs and stored snapshots omit it, while the live project setting remains written normally. Project-settings rollback overlays live non-versioned values over both modern stripped snapshots and legacy snapshots, so rollback cannot delete or resurrect a stale heartbeat. `appendConfigurationRevision` deliberately remains an unfiltered raw writer for migrations and legacy fixtures; a heartbeat-only rollback is rejected as already restored without writing.
 
 Revision listing defaults to 100 rows and clamps `limit` to 1–500. The API accepts `limit` and `offset` and returns `hasMore`, determined by fetching `limit + 1` rows rather than a count query. Rows are ordered `createdAt DESC, sequence DESC`. Since history is append-only, rows appended between offset page requests can shift offsets and be observed twice; they are not silently skipped backwards.
+
+### `project.memory_recall_records`
+
+Project-scoped structured recall records for durable decisions, preferences, and solutions. The table uses the composite `(project_id, id)` key, row-level security, created-at indexes, and a named `(project_id, kind, content_hash)` exact-hash backstop.
+
+- Knowledge-graph artifact: `<rootDir>/.fusion-knowledge/graph/` (`nodes.json`, `edges.json`, and `manifest.json`). This is deliberately outside ignored `.fusion` and may be committed at the operator's discretion.

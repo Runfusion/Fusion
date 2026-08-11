@@ -941,18 +941,24 @@ describe("scanIdleWorktrees", () => {
     );
   });
 
-  it("excludes the .ai-merge container even when git lists clean-room children", async () => {
+  it("excludes internal containers even when git lists their children", async () => {
     mockedReaddirSync.mockReturnValue([
       makeDirEntry(".ai-merge"),
+      makeDirEntry(".fusion-recovery"),
       makeDirEntry("registered-wt"),
     ] as any);
-    mockRegisteredWorktrees("/root", [".ai-merge/fusion-ai-merge-fn-1-active", "registered-wt"]);
+    mockRegisteredWorktrees("/root", [
+      ".ai-merge/fusion-ai-merge-fn-1-active",
+      ".fusion-recovery/worktrees/fn-1-preserved",
+      "registered-wt",
+    ]);
 
     const store = createMockStore([]);
 
     const idle = await scanIdleWorktrees("/root", store);
     expect(idle).toEqual(["/root/.worktrees/registered-wt"]);
     expect(idle).not.toContain("/root/.worktrees/.ai-merge");
+    expect(idle).not.toContain("/root/.worktrees/.fusion-recovery");
   });
 
   it("does not return unregistered directories for pool rehydration", async () => {
@@ -1113,9 +1119,10 @@ describe("cleanupOrphanedWorktrees", () => {
     expect(removeCalls).toHaveLength(0);
   });
 
-  it("excludes the .ai-merge container while still removing genuine unregistered orphans", async () => {
+  it("excludes internal containers while still removing genuine unregistered orphans", async () => {
     mockedReaddirSync.mockReturnValue([
       makeDirEntry(".ai-merge"),
+      makeDirEntry(".fusion-recovery"),
       makeDirEntry("broken-wt"),
     ] as any);
     mockRegisteredWorktrees("/root", []);
@@ -1130,6 +1137,7 @@ describe("cleanupOrphanedWorktrees", () => {
       force: true,
     });
     expect(mockedRmSync).not.toHaveBeenCalledWith("/root/.worktrees/.ai-merge", expect.anything());
+    expect(mockedRmSync).not.toHaveBeenCalledWith("/root/.worktrees/.fusion-recovery", expect.anything());
   });
 
   it("removes unregistered directories even when stale active task metadata references them", async () => {
@@ -1163,9 +1171,10 @@ describe("reapOrphanWorktrees", () => {
     mockedLstatSync.mockReturnValue({ isDirectory: () => true, isSymbolicLink: () => false } as any);
   });
 
-  it("excludes the .ai-merge container while removing half-initialized task worktrees", async () => {
+  it("excludes internal containers while removing half-initialized task worktrees", async () => {
     mockedReaddirSync.mockReturnValue([
       makeDirEntry(".ai-merge"),
+      makeDirEntry(".fusion-recovery"),
       makeDirEntry("half-built"),
     ] as any);
 
@@ -1174,6 +1183,7 @@ describe("reapOrphanWorktrees", () => {
     expect(removed).toBe(1);
     expect(mockedRmSync).toHaveBeenCalledWith("/root/.worktrees/half-built", { recursive: true, force: true });
     expect(mockedRmSync).not.toHaveBeenCalledWith("/root/.worktrees/.ai-merge", expect.anything());
+    expect(mockedRmSync).not.toHaveBeenCalledWith("/root/.worktrees/.fusion-recovery", expect.anything());
   });
 
   // FN-6782 follow-up: a directory whose `.git` points to a missing admin entry is leak

@@ -134,6 +134,7 @@ async function loadCommandHandlers() {
   const { runBackupCreate, runBackupList, runBackupRestore, runBackupCleanup } = await import("./commands/backup.js");
   const { runDbVacuum, runDbMigrate } = await import("./commands/db.js");
   const { runMemoryBackupCreate, runMemoryBackupList, runMemoryBackupRestore } = await import("./commands/memory-backup.js");
+  const { runKnowledgeGraphBuild } = await import("./commands/knowledge-graph.js");
   const { runMissionCreate, runMissionList, runMissionShow, runMissionDelete, runMissionActivateSlice, runMissionLinkGoal, runMissionUnlinkGoal, runMissionGoals } = await import("./commands/mission.js");
   const { runGoalsList, runGoalsCreate, runGoalsArchive, runGoalsCitations } = await import("./commands/goals.js");
   const { runProjectList, runProjectAdd, runProjectRemove, runProjectShow, runProjectInfo, runProjectSetDefault, runProjectDetect } = await import("./commands/project.js");
@@ -228,6 +229,7 @@ async function loadCommandHandlers() {
     runMemoryBackupCreate,
     runMemoryBackupList,
     runMemoryBackupRestore,
+    runKnowledgeGraphBuild,
     runMissionCreate,
     runMissionList,
     runMissionShow,
@@ -466,6 +468,8 @@ PR:
   fn memory-backup --list    List all memory backups
   fn memory-backup --restore <dir>
                              Restore memory from a backup directory snapshot
+  fn knowledge-graph build [--force] [--dir <path>] [--json]
+                             Build the deterministic knowledge graph
   fn plugin list | ls                List installed plugins
   fn plugin install <path-or-package> [--ai-scan] Install a plugin from path or package
   fn plugin add <path-or-package>     Alias for plugin install
@@ -779,6 +783,7 @@ async function main() {
     runMemoryBackupCreate,
     runMemoryBackupList,
     runMemoryBackupRestore,
+    runKnowledgeGraphBuild,
     runMissionCreate,
     runMissionList,
     runMissionShow,
@@ -2003,6 +2008,20 @@ async function main() {
           console.error("Usage: fn backup --create | --list | --cleanup | --restore <filename>");
           process.exit(1);
         }
+        break;
+      }
+
+      case "knowledge-graph": {
+        const usage = "Usage: fn knowledge-graph build [--force] [--dir <path>] [--json]";
+        const dirIndex = args.indexOf("--dir");
+        const allowed = new Set(["build", "--force", "--dir", "--json"]);
+        const hasUnknownArgument = args.slice(1).some((arg, index) => !allowed.has(arg)
+          && !(dirIndex >= 0 && index === dirIndex));
+        if (args[1] !== "build" || hasUnknownArgument || (dirIndex >= 0 && !args[dirIndex + 1])) {
+          console.error(usage);
+          process.exit(1);
+        }
+        await runKnowledgeGraphBuild({ projectName, force: args.includes("--force"), json: args.includes("--json"), dir: dirIndex >= 0 ? args[dirIndex + 1] : undefined });
         break;
       }
 

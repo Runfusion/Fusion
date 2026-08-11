@@ -3,6 +3,16 @@
  * Planning and Plan Review share one completeness contract: planning researches
  * and maps the full requirement ledger up front, while review evaluates the whole
  * artifact and batches every independently discoverable blocker in one round.
+ *
+ * FNXC:ReviewSeverityGate 2026-08-10-17:33:
+ * Two clauses were removed from the review procedure because they manufactured revision rounds rather
+ * than finding defects. The former step 6 ordered a full re-derivation of the artifact after every edit
+ * ("distrust the edit ... rebuild the ledger ... fresh holistic pass"), which surfaced a new crop of
+ * previously-acceptable observations each round; the former step 3's "keep wording polish advisory"
+ * carve-out was too weak to stop them being filed as blockers. Re-review is now incremental (see
+ * REVIEW_REREVIEW_POLICY) and nits are suppressed at the source (see REVIEW_SEVERITY_POLICY).
+ * Measured driver: 311 of 331 findings over 14 days were spec-internal-consistency complaints, and
+ * tasks with >=5 remediation rounds consumed 78% of all task active time.
  */
 export const PLANNING_COMPLETENESS_POLICY = `## Mandatory Planning Completeness Procedure
 
@@ -29,9 +39,8 @@ Before choosing a verdict:
 
 1. Build one **review ledger** for the entire PROMPT.md: Original Description and user comments; Mission and Completion Criteria; Surface Enumeration and Symptom Verification when required; every implementation step, File Scope entry, dependency, risk, and test/verification promise.
 2. Complete the full review before reporting. Check coherence and requirement traceability, feasibility against the current repository, scope discipline, execution ordering, and verification quality. When relevant, also inspect security/data integrity, state transitions, concurrency orderings, deployment/configuration boundaries, recovery competitors, and force/bypass paths.
-3. Review at specification altitude. Block when a required behavior, surface, ordering, safety constraint, or proof is missing or the stated approach cannot work. Keep optional implementation detail, wording polish, and nonessential improvements advisory.
-4. If REVISE is necessary, batch **all independently discoverable blocking findings** into this one verdict; do not stop after the first defect. Give each blocker a stable ID, cite the affected section or repository evidence, and state the concrete PROMPT.md correction. Put advisory observations in a separate list.
-5. On re-review, use the supplied prior-review ledger as a decision primer. Verify every prior blocker, do not re-raise resolved or rejected semantic duplicates, and preserve accepted decisions. A newly blocking finding must say whether the revision introduced it, which prior blocker genuinely masked it, or why it is independently delivery-blocking for correctness, security, data safety, or executability. Record an earlier reviewer miss explicitly; never demote a critical defect merely because it was missed before.
-6. After any same-session PROMPT.md edit, distrust the edit: reread the complete artifact, rebuild the ledger, and perform a fresh holistic pass before APPROVE.
+3. Review at specification altitude. Block when a required behavior, surface, ordering, safety constraint, or proof is missing or the stated approach cannot work. A plan does not need to be internally seamless to be executable — judge whether a competent implementer would build the right thing from it, not whether every section agrees with every other section.
+4. If REVISE is necessary, batch **all independently discoverable blocking findings** into this one verdict; do not stop after the first defect. Give each blocker a stable ID, cite the affected section or repository evidence, and state the concrete PROMPT.md correction.
+5. After a same-session PROMPT.md edit, verify that the edit resolved what you asked for. Confine that check to the changed sections and their direct dependencies; a fresh whole-artifact re-derivation at this point produces new observations rather than new information.
 
 APPROVE when the plan is executable and verifiable, not when it is cosmetically perfect. If returning REVISE, the verdict notes must contain the complete blocking checklist because those notes are the durable input to the next planning round.`;

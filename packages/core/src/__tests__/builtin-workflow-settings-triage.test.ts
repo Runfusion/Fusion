@@ -5,6 +5,7 @@ import {
   BUILTIN_REVIEW_REVISION_SETTINGS,
   BUILTIN_TRIAGE_POLICY_SETTINGS,
   BUILTIN_WORKFLOW_SETTINGS,
+  DEFAULT_PLANNING_TIMEOUT_MS,
   renderTriagePolicyPlaceholders,
 } from "../workflows/builtin-workflow-settings.js";
 import { MOVED_SETTINGS_KEYS } from "../config/moved-settings.js";
@@ -32,6 +33,12 @@ const expectedDefaults: Record<string, { type: string; default: unknown }> = {
   triageDefaultWorkflowId: { type: "string", default: "" },
   leanPlanning: { type: "boolean", default: false },
   autoApproveSpec: { type: "boolean", default: false },
+  /*
+  FNXC:TriagePlanningTimeout 2026-08-10-18:32:
+  Driven off the exported constant, not a literal — same anti-drift rule the maxPostReviewFixes
+  parity anchor documents. The planning turn previously had no Fusion-side ceiling at all.
+  */
+  planningTimeoutMs: { type: "number", default: DEFAULT_PLANNING_TIMEOUT_MS },
 };
 
 describe("workflow-native built-in workflow settings", () => {
@@ -59,12 +66,34 @@ describe("workflow-native built-in workflow settings", () => {
     const movedIds = new Set(BUILTIN_MOVED_WORKFLOW_SETTINGS.map((setting) => setting.id));
     const movedKeyIds = new Set(MOVED_SETTINGS_KEYS);
 
+    /*
+    FNXC:ReviewSeverityGate 2026-08-10-18:32:
+    The blocking-severity pair is review-loop policy and belongs in this catalog alongside the
+    revision caps: the caps bound how many times a REVISE may cycle, the thresholds decide whether a
+    REVISE blocks at all. They are enum-typed with defaults, so the number-typed assertions below
+    deliberately continue to cover only the three cap settings.
+    */
     expect(BUILTIN_REVIEW_REVISION_SETTINGS.map((setting) => setting.id)).toEqual([
       "reviewerInlineFixes",
       "planReviewMaxRevisions",
       "codeReviewMaxRevisions",
+      "planReviewBlockingSeverity",
+      "codeReviewBlockingSeverity",
       "planReviewReplanCap",
     ]);
+    for (const id of ["planReviewBlockingSeverity", "codeReviewBlockingSeverity"]) {
+      const setting = revisionById.get(id);
+      expect(setting, `${id} should be declared`).toBeDefined();
+      expect(setting?.type).toBe("enum");
+      // Defaulted (unlike the caps): the gate is always active, with "any" restoring pre-gate blocking.
+      expect(setting).toHaveProperty("default");
+      expect(setting?.options?.map((option) => option.value)).toContain("any");
+      expect(fullIds.has(id), `${id} should be in the full built-in catalog`).toBe(true);
+      expect(movedIds.has(id), `${id} should not be in the moved-key catalog`).toBe(false);
+      expect(movedKeyIds.has(id), `${id} should not be in MOVED_SETTINGS_KEYS`).toBe(false);
+    }
+    expect(revisionById.get("planReviewBlockingSeverity")?.default).toBe("high");
+    expect(revisionById.get("codeReviewBlockingSeverity")?.default).toBe("critical");
     const inlineFixes = revisionById.get("reviewerInlineFixes");
     expect(inlineFixes).toMatchObject({
       type: "boolean",

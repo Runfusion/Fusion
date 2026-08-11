@@ -30,9 +30,40 @@ export class PlanningLifecycleLockTransportError extends Error {
   }
 }
 
-const DEFAULT_PLANNING_LIFECYCLE_LOCK_TIMEOUT_MS = 5_000;
+export const DEFAULT_PLANNING_LIFECYCLE_LOCK_TIMEOUT_MS = 5_000;
 
 type DedicatedPostgresClient = ReturnType<typeof postgres>;
+type PlanningLifecycleLockInput = {
+  projectId: string;
+  taskId: string;
+  directSessionUrl: string | null;
+  provenance: "embedded-lifecycle" | "migration-override" | "runtime-direct" | null;
+  runtimeUrl?: string | null;
+  migrationUrl?: string | null;
+  timeoutMs?: number;
+  onLockAcquisitionAttempt?: () => void;
+};
+
+/** Side-effect-free structural check shared by the lineage degrade path and lock acquisition. */
+export function planningLifecycleLockTransportAvailability(input: Pick<PlanningLifecycleLockInput, "directSessionUrl" | "provenance" | "runtimeUrl" | "migrationUrl">): { available: true } | { available: false; reason: string } {
+  const directUrl = input.directSessionUrl;
+  if (!directUrl || !input.provenance || looksLikePoolerUrl(directUrl)) return { available: false, reason: "direct-session-unavailable" };
+  let directDatabase: string;
+  try { directDatabase = decodeURIComponent(new URL(directUrl).pathname.replace(/^\//, "")); } catch { return { available: false, reason: "direct-session-invalid" }; }
+  if (!directDatabase) return { available: false, reason: "direct-session-database-missing" };
+  const descriptorEndpoint = input.provenance === "embedded-lifecycle" || input.provenance === "runtime-direct" ? input.runtimeUrl : input.migrationUrl;
+  if (!descriptorEndpoint || descriptorEndpoint !== directUrl) return { available: false, reason: "backend-descriptor-mismatch" };
+  const operationalUrl = input.runtimeUrl ?? input.migrationUrl;
+  if (operationalUrl) {
+    try {
+      const operationalDatabase = decodeURIComponent(new URL(operationalUrl).pathname.replace(/^\//, ""));
+      if (!operationalDatabase || operationalDatabase !== directDatabase) return { available: false, reason: "backend-database-mismatch" };
+    } catch { return { available: false, reason: "backend-endpoint-invalid" }; }
+  }
+  return { available: true };
+}
+
+const planningLifecycleLockKey = (projectId: string, taskId: string): string => `fusion:planning-lifecycle:${projectId}:${taskId}`;
 type PostgresBackendIdentity = {
   database: string;
   host: string | null;
@@ -85,53 +116,17 @@ async function runBoundedTransportPhase<T>(
  * lock and unlock and silently defeat session advisory locking.
  */
 export async function withPlanningLifecycleAdvisoryLock<T>(
-  input: {
-    projectId: string;
-    taskId: string;
-    directSessionUrl: string | null;
-    provenance: "embedded-lifecycle" | "migration-override" | "runtime-direct" | null;
-    runtimeUrl?: string | null;
-    migrationUrl?: string | null;
-    /** Bounds dedicated-session setup and lock acquisition, not callback work. */
-    timeoutMs?: number;
-    /** @internal Test seam fired when the driver dispatches the lock query. */
-    onLockAcquisitionAttempt?: () => void;
-  },
+  input: PlanningLifecycleLockInput,
   callback: () => Promise<T>,
 ): Promise<T> {
-  const directUrl = input.directSessionUrl;
-  const timeoutMs = Math.max(1, input.timeoutMs ?? DEFAULT_PLANNING_LIFECYCLE_LOCK_TIMEOUT_MS);
-  if (!directUrl || !input.provenance || looksLikePoolerUrl(directUrl)) {
-    throw new PlanningLifecycleLockTransportError("Planning lifecycle lock requires a direct PostgreSQL session endpoint; set DATABASE_MIGRATION_URL to a direct, non-pooled connection");
+  const availability = planningLifecycleLockTransportAvailability(input);
+  if (!availability.available) {
+    throw new PlanningLifecycleLockTransportError(`Planning lifecycle lock transport unavailable: ${availability.reason}`);
   }
-
-  let directDatabase: string;
-  try {
-    directDatabase = decodeURIComponent(new URL(directUrl).pathname.replace(/^\//, ""));
-  } catch {
-    throw new PlanningLifecycleLockTransportError("Planning lifecycle lock has an invalid direct PostgreSQL session endpoint");
-  }
-  if (!directDatabase) {
-    throw new PlanningLifecycleLockTransportError("Planning lifecycle lock direct endpoint must select a database");
-  }
-  const descriptorEndpoint = input.provenance === "embedded-lifecycle" || input.provenance === "runtime-direct"
-    ? input.runtimeUrl
-    : input.migrationUrl;
-  if (!descriptorEndpoint || descriptorEndpoint !== directUrl) {
-    throw new PlanningLifecycleLockTransportError("Planning lifecycle lock endpoint does not match the resolved backend descriptor");
-  }
+  const directUrl = input.directSessionUrl!;
+  const directDatabase = decodeURIComponent(new URL(directUrl).pathname.replace(/^\//, ""));
   const operationalUrl = input.runtimeUrl ?? input.migrationUrl;
-  if (operationalUrl) {
-    try {
-      const operationalDatabase = decodeURIComponent(new URL(operationalUrl).pathname.replace(/^\//, ""));
-      if (!operationalDatabase || operationalDatabase !== directDatabase) {
-        throw new PlanningLifecycleLockTransportError("Planning lifecycle lock endpoint selects a different database than the resolved backend");
-      }
-    } catch (error) {
-      if (error instanceof PlanningLifecycleLockTransportError) throw error;
-      throw new PlanningLifecycleLockTransportError("Resolved backend has an invalid PostgreSQL endpoint");
-    }
-  }
+  const timeoutMs = Math.max(1, input.timeoutMs ?? DEFAULT_PLANNING_LIFECYCLE_LOCK_TIMEOUT_MS);
 
   const client = postgres(directUrl, {
     max: 1,
@@ -144,7 +139,7 @@ export async function withPlanningLifecycleAdvisoryLock<T>(
         }
       : undefined,
   });
-  const key = `fusion:planning-lifecycle:${input.projectId}:${input.taskId}`;
+  const key = planningLifecycleLockKey(input.projectId, input.taskId);
   let acquired = false;
   try {
     /*
@@ -229,5 +224,84 @@ export async function withPlanningLifecycleAdvisoryLock<T>(
     } finally {
       await client.end({ timeout: 5 }).catch(() => undefined);
     }
+  }
+}
+
+/**
+ * FNXC:SpecLockLineageInvalidation 2026-08-10-14:33:
+ * Parent removal can affect many children, but no child may be cleared outside its planning lock.
+ * Advisory locks are session-scoped, so this acquires every sorted task key on one dedicated session
+ * instead of trading correctness for a fan-out cap or opening one connection per child.
+ */
+export async function withPlanningLifecycleAdvisoryLocks<T>(
+  input: Omit<PlanningLifecycleLockInput, "taskId"> & { taskIds: readonly string[] },
+  callback: () => Promise<T>,
+): Promise<T> {
+  const taskIds = [...new Set(input.taskIds)].sort();
+  if (taskIds.length === 0) return callback();
+  const availability = planningLifecycleLockTransportAvailability(input);
+  if (!availability.available) throw new PlanningLifecycleLockTransportError(`Planning lifecycle lock transport unavailable: ${availability.reason}`);
+  const directUrl = input.directSessionUrl!;
+  const timeoutMs = Math.max(1, input.timeoutMs ?? DEFAULT_PLANNING_LIFECYCLE_LOCK_TIMEOUT_MS);
+  const directDatabase = decodeURIComponent(new URL(directUrl).pathname.replace(/^\//, ""));
+  const operationalUrl = input.runtimeUrl ?? input.migrationUrl;
+  const client = postgres(directUrl, {
+    max: 1, connect_timeout: Math.max(1, Math.ceil(timeoutMs / 1_000)), prepare: false, onnotice: () => {},
+    debug: input.onLockAcquisitionAttempt ? (_connection, query) => { if (query.includes("pg_advisory_lock(")) input.onLockAcquisitionAttempt?.(); } : undefined,
+  });
+  const keys = taskIds.map((taskId) => planningLifecycleLockKey(input.projectId, taskId));
+  const acquired: string[] = [];
+  try {
+    const identity = await runBoundedTransportPhase(client, timeoutMs, `Planning lifecycle lock session setup timed out after ${timeoutMs}ms`, "Planning lifecycle lock could not establish its dedicated session", async () => {
+      const rows = await readPostgresBackendIdentity(client);
+      await client`SELECT set_config('lock_timeout', ${`${timeoutMs}ms`}, false)`;
+      return rows;
+    });
+    if (identity[0]?.database !== directDatabase) throw new PlanningLifecycleLockTransportError("Planning lifecycle lock session selected an unexpected database");
+
+    /*
+    FNXC:SpecLockLineageInvalidation 2026-08-10-14:47:
+    The multi-key session must prove the same resolved backend identity as the single-key lock.
+    Matching advisory key strings on a different PostgreSQL server would serialize nothing.
+    */
+    if (operationalUrl && operationalUrl !== directUrl) {
+      const operationalClient = postgres(operationalUrl, {
+        max: 1,
+        connect_timeout: Math.max(1, Math.ceil(timeoutMs / 1_000)),
+        prepare: false,
+        onnotice: () => {},
+      });
+      try {
+        const operationalIdentity = await runBoundedTransportPhase(
+          operationalClient,
+          timeoutMs,
+          `Planning lifecycle lock backend identity check timed out after ${timeoutMs}ms`,
+          "Planning lifecycle lock could not verify the resolved backend server identity",
+          () => readPostgresBackendIdentity(operationalClient),
+        );
+        const expected = operationalIdentity[0];
+        const actual = identity[0];
+        if (!expected || !actual
+          || expected.database !== actual.database
+          || expected.host !== actual.host
+          || expected.port !== actual.port
+          || (expected.cluster && actual.cluster && expected.cluster !== actual.cluster)) {
+          throw new PlanningLifecycleLockTransportError("Planning lifecycle lock endpoint targets a different PostgreSQL server than the resolved backend");
+        }
+      } catch (error) {
+        if (error instanceof PlanningLifecycleLockTransportError) throw error;
+        throw new PlanningLifecycleLockTransportError("Planning lifecycle lock could not verify the resolved backend server identity");
+      } finally {
+        await operationalClient.end({ timeout: 5 }).catch(() => undefined);
+      }
+    }
+    for (const key of keys) {
+      await runBoundedTransportPhase(client, timeoutMs, `Planning lifecycle lock acquisition timed out after ${timeoutMs}ms`, "Planning lifecycle lock acquisition failed", () => client`SELECT pg_advisory_lock(hashtext(${key}))`);
+      acquired.push(key);
+    }
+    return await callback();
+  } finally {
+    for (const key of acquired.reverse()) await runBoundedTransportPhase(client, timeoutMs, `Planning lifecycle lock cleanup timed out after ${timeoutMs}ms`, "Planning lifecycle lock cleanup failed", () => client`SELECT pg_advisory_unlock(hashtext(${key}))`).catch(() => undefined);
+    await client.end({ timeout: 5 }).catch(() => undefined);
   }
 }

@@ -179,6 +179,36 @@ describe("Transient Error Detector", () => {
       expect(isTransientError("Aborted")).toBe(false);
       expect(isTransientError("The operation was aborted by user")).toBe(false);
     });
+
+    /*
+    FNXC:Reliability-ErrorClassification 2026-08-10-18:32:
+    `"Request timed out."` is the Anthropic/OpenAI SDK `APIConnectionTimeoutError` default message.
+    It previously matched no pattern, so it fell through to the generic planning-failure branch that
+    writes no counter and no backoff — triage re-admitted the card every poll, forever. Measured:
+    48 such events across 10 tasks in 30 hours with 0-minute gaps between attempts. Classifying it
+    transient routes it into the bounded MAX_RECOVERY_RETRIES=3 + backoff policy.
+    */
+    it("classifies a provider request timeout as transient", () => {
+      expect(isTransientError("Request timed out.")).toBe(true);
+      expect(isTransientError("Specification failed: Request timed out.")).toBe(true);
+      expect(isTransientError("request timed out")).toBe(true);
+      expect(isTransientError("APIConnectionTimeoutError: Request timed out.")).toBe(true);
+    });
+
+    /*
+    The pattern is anchored to "request timed out" rather than a bare /timed? out/ because agent log
+    prose and verification output legitimately contain "timed out". A broad match would reclassify
+    real, permanent task failures as retryable — the mistake the connection-only rule was written to
+    avoid. These strings are all observed in production task logs.
+    */
+    it("does NOT treat non-request timeout prose as transient", () => {
+      expect(isTransientError("BuildKit timed out while building the image")).toBe(false);
+      expect(isTransientError("force-requeue after stuck-kill unwind timeout")).toBe(false);
+      expect(isTransientError("Test suite timed out after 30000ms")).toBe(false);
+      expect(isTransientError("Verification command timed out")).toBe(false);
+      // Pre-existing negative cases that must stay negative: "timeout" is not "timed out".
+      expect(isTransientError("Request timeout")).toBe(false);
+    });
   });
 
   describe("isNonPlanDefectPlanReviewFailure", () => {

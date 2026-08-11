@@ -5,9 +5,18 @@ import type { WorktreeBackendKind } from "./worktree-backend.js";
 import { canonicalizePath } from "./worktree-pool.js";
 
 export const AI_MERGE_DIRNAME = ".ai-merge";
+export const WORKTREE_RECOVERY_DIRNAME = ".fusion-recovery";
 
 export function isAiMergeContainerDir(name: string): boolean {
   return name === AI_MERGE_DIRNAME;
+}
+
+/**
+ * FNXC:TaskPinnedWorktrees 2026-08-10-01:12:
+ * Cross-filesystem orphan recovery stores preserved task directories under a container inside the configured worktree root. Discovery, cleanup, and capacity scans must treat both internal containers as boundaries rather than task worktrees.
+ */
+export function isWorktreeContainerDir(name: string): boolean {
+  return isAiMergeContainerDir(name) || name === WORKTREE_RECOVERY_DIRNAME;
 }
 
 export function resolveAiMergeRootPath(

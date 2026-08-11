@@ -96,35 +96,37 @@ export function isBuiltinWorkflowRoleAgent(agent: { metadata?: Record<string, un
   return agent.metadata?.builtInWorkflowRole === true;
 }
 
-/**
- * FNXC:WorkflowAgentRouting 2026-08-10-01:15:
- * HARD INVARIANT: a built-in workflow role owner is never unroutable.
- *
- * These four are the engine's own principals for triage/executor/reviewer/merger. Unlike an operator's agent,
- * disabling one does not "opt an agent out" — it removes the only thing that can run that workflow stage, and
- * the engine has no fallback: every task holds at its first node of that role and the hold re-dispatches
- * forever. That is not a configuration an operator can meaningfully choose, so `runtimeConfig.enabled` is
- * COERCED back to true for them at the write seam rather than validated and rejected: the write still
- * succeeds, every other runtimeConfig key the caller sent is preserved, and the system cannot be put into the
- * deadlocked state by an API call, a UI toggle, a plugin, or a stale record.
- *
- * To take a built-in owner out of rotation, add your own agent with that role and route to it — that path
- * leaves the role routable, which is the property this protects.
- */
-export function enforceBuiltinWorkflowRoleRoutability<T extends {
-  metadata?: Record<string, unknown> | null;
-  runtimeConfig?: Record<string, unknown> | null;
-}>(agent: T): T {
-  if (!isBuiltinWorkflowRoleAgent(agent)) return agent;
-  if (agent.runtimeConfig?.enabled !== false) return agent;
-  return { ...agent, runtimeConfig: { ...agent.runtimeConfig, enabled: true } };
-}
+/*
+FNXC:WorkflowAgentRouting 2026-08-10-01:15:
+`runtimeConfig.enabled` means ONE thing: run this agent's own durable heartbeat loop. Every consumer in the
+engine reads it that way — heartbeat scheduling, error recovery, self-healing, the in-process runtime — except
+the workflow router, which also treated it as "may own a workflow stage". Those are different questions, and
+conflating them is what produced BOTH failures here:
+
+ - Built-in owners ship with the heartbeat off (correct — they are invoked BY the workflow engine and must not
+   run autonomous loops or auto-claim work), and that silently made every built-in role unroutable, deadlocking
+   the board.
+ - Turning the heartbeat on to restore routing then gave four agents autonomous loops nobody asked for.
+
+So the flag is separated: `enabled` governs the heartbeat runtime ONLY, and workflow routability is answered by
+{@link isWorkflowPrincipalEligible}. For the four built-in owners routability is STRUCTURAL — they are the
+engine's own principals for triage/executor/reviewer/merger, there is no fallback if a role cannot route, and
+"unroutable" is not a state an operator can meaningfully select. To take one out of rotation, add your own
+agent with that role and route to it; that leaves the role routable, which is the property this protects.
+*/
 
 export function isWorkflowPrincipalEligible(
-  agent: Pick<RoleTaggedAgent, "runtimeConfig"> & { state?: string; id?: string },
+  agent: Pick<RoleTaggedAgent, "runtimeConfig"> & {
+    state?: string;
+    id?: string;
+    metadata?: Record<string, unknown> | null;
+  },
 ): boolean {
-  if (agent.runtimeConfig?.enabled === false) return false;
-  return agent.state !== "paused" && agent.state !== "error";
+  // A paused or errored agent is genuinely unusable — that applies to built-ins too, so it is checked first.
+  if (agent.state === "paused" || agent.state === "error") return false;
+  // Built-in owners route regardless of their heartbeat setting; see the note above.
+  if (isBuiltinWorkflowRoleAgent(agent)) return true;
+  return agent.runtimeConfig?.enabled !== false;
 }
 
 export function isImplementationTask(task: Pick<Task, "column">): boolean {
@@ -137,6 +139,56 @@ export function isExecutorRoleAgent(agent: RoleTaggedAgent): boolean {
 
 export function isEngineerRoleAgent(agent: RoleTaggedAgent): boolean {
   return agentRoles(agent).includes("engineer");
+}
+
+/*
+FNXC:WorkflowAgentRouting 2026-08-10-07:50:
+STRUCTURAL capability for a workflow stage, kept separate from AVAILABILITY. The distinction decides
+whether an unroutable named principal is a WAIT or a DEAD END, and conflating the two wedged the board:
+
+FN-8869/FN-8928/FN-8845 were each explicitly assigned to a permanent ENGINEER-role agent, which
+`canAgentTakeImplementationTaskForExplicitRouting` allows by design. The workflow `step-execute` node then
+took that owner as `task-assignee` named authority, found no `executor` tag, and held closed — and a NAMED
+principal never falls through to the role pool. Two idle `Workflow Executor` pool agents sat unused while the
+cards re-dispatched and re-held every ~15 minutes for hours. The only thing still touching them was the owner
+agent's own hourly heartbeat, which logged "progressing, no blockers" and exited: heartbeat observation had
+silently replaced execution.
+
+An agent that lacks the role can NEVER satisfy the node, so waiting on it is unbounded by construction. It was
+never authority for this node in the first place — routing must skip it and continue precedence. Only an agent
+that HAS the role but is momentarily unusable (paused/errored/disabled runtime/at session capacity) earns a
+hold, because that hold ends on its own.
+*/
+export interface WorkflowRoleCapabilityOptions {
+  /*
+  FNXC:WorkflowAgentRouting 2026-08-10-07:50:
+  Accept an ENGINEER-role owner as capable of an executor node. Set ONLY for named task-assignee authority,
+  never for the role pool.
+
+  A durable engineer explicitly assigned to a task is already allowed to take implementation work
+  (`canAgentTakeImplementationTaskForExplicitRouting`), so the executor node it owns must run — and run
+  CONTINUOUSLY under graph dispatch. The alternative, which is what actually shipped, is that the owner's
+  hourly heartbeat becomes the only thing that ever touches the card: it wakes, logs "progressing, no
+  blockers", calls fn_heartbeat_done, and the work never advances. An agent holding a task executes it; a
+  heartbeat is a liveness tick, not a work loop.
+
+  The POOL stays strict, because automatic backlog pickup by engineers is a separate opt-in
+  (`canAgentTakeImplementationTaskForBacklogPickup`) and unassigned work must not silently land on engineers.
+  */
+  readonly allowEngineerAsExecutor?: boolean;
+}
+
+export function hasWorkflowRoleCapability(
+  agent: RoleTaggedAgent,
+  role: AgentCapability,
+  options: WorkflowRoleCapabilityOptions = {},
+): boolean {
+  const roles = agentRoles(agent);
+  const tagged = roles.includes(role)
+    || (role === "executor" && options.allowEngineerAsExecutor === true && roles.includes("engineer"));
+  if (!tagged) return false;
+  // Assignment policy "none" is a hard floor on implementation work; such an agent can never run an executor node.
+  return role !== "executor" || canAgentReceiveImplementationTasks(agent);
 }
 
 export function canAgentTakeImplementationTaskForExplicitRouting(

@@ -1843,6 +1843,22 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
     });
   }, [activeDraftKey]);
 
+  /*
+  FNXC:ChatAttachments 2026-08-10-05:53:
+  Composer previews leave only after the server accepts their File set, not after stream or refetch completion. Filtering inside the state updater makes repeated terminal backstops idempotent and preserves files staged after acceptance.
+  */
+  const releaseSentAttachments = useCallback((sentFiles: Set<File>) => {
+    setPendingAttachments((prev) => {
+      const released = prev.filter((attachment) => sentFiles.has(attachment.file));
+      for (const attachment of released) {
+        if (attachment.previewUrl) {
+          URL.revokeObjectURL(attachment.previewUrl);
+        }
+      }
+      return prev.filter((attachment) => !sentFiles.has(attachment.file));
+    });
+  }, []);
+
   // Handle send message including pending attachment uploads.
   const handleSend = useCallback(() => {
     const trimmed = messageInput.trim();
@@ -1897,6 +1913,15 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
 
     if (trimmed === "/clear" || trimmed === "/new") {
       /*
+      FNXC:ChatSlashCommands 2026-08-10-05:57:
+      Exact /clear and /new route through clearComposerState(), which revokes staged preview URLs and discards unsent Files. Refuse with feedback, matching command attachment handling, instead of silently destroying them.
+      */
+      if (files.length > 0) {
+        addToast(t("chat.clearNoAttachments", "Remove the attachments before running /clear or /new — they would be discarded unsent"), "warning");
+        return;
+      }
+
+      /*
       FNXC:ChatSlashCommands 2026-07-23-12:00:
       `/new`//`/clear` must never wipe a task-bound planner chat. With `showTaskChatsInCommonFeed`
       enabled, task-planner sessions appear in the common Direct feed, so a user can run `/new`
@@ -1922,26 +1947,22 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
       return;
     }
 
+    if (isStreaming && files.length > 0) {
+      /*
+      FNXC:ChatAttachments 2026-08-10-05:53:
+      Queued direct turns carry text only, so refuse staged attachments during a live reply rather than orphaning previews for files the queue cannot send.
+      */
+      addToast(t("chat.attachmentsNotQueued", "Attachments can't be queued while a reply is streaming — wait for it to finish"), "warning");
+      return;
+    }
+
     const sentFiles = new Set(files);
-    /*
-    FNXC:QuickAddAttachments 2026-07-23-00:00:
-    Keep direct-chat previews alive until useChat confirms multipart delivery. A direct-session
-    upload fails asynchronously, so clearComposerState() here would revoke the only retryable File
-    references before its stream error handler can report the rejection.
-    */
     setMessageInput("");
     try {
       sendMessage(trimmed, files, {
-        onDelivered: () => {
-          setPendingAttachments((prev) => {
-            for (const attachment of prev) {
-              if (sentFiles.has(attachment.file) && attachment.previewUrl) {
-                URL.revokeObjectURL(attachment.previewUrl);
-              }
-            }
-            return prev.filter((attachment) => !sentFiles.has(attachment.file));
-          });
-        },
+        onAccepted: () => releaseSentAttachments(sentFiles),
+        // Completion remains an idempotent backstop for accepted provider-error and legacy paths.
+        onDelivered: () => releaseSentAttachments(sentFiles),
         onFailed: () => {
           // Do not overwrite text the user entered while the failed request was in flight.
           setMessageInput((current) => current || trimmed);
@@ -1961,6 +1982,8 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
     addToast,
     sendMessage,
     chatCommandContext,
+    isStreaming,
+    releaseSentAttachments,
     t,
   ]);
 
@@ -1982,6 +2005,14 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
       }
 
       if (trimmed === "/clear" || trimmed === "/new") {
+        /*
+        FNXC:ChatSlashCommands 2026-08-10-05:57:
+        Room clear/new also revokes and discards pending previews, so reject only exact commands with staged files before touching room state.
+        */
+        if (files.length > 0) {
+          addToast(t("chat.clearNoAttachments", "Remove the attachments before running /clear or /new — they would be discarded unsent"), "warning");
+          return;
+        }
         clearComposerState();
         try {
           await rooms.clearRoom(rooms.activeRoom.id);
@@ -2003,26 +2034,13 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
       setMessageInput("");
 
       try {
-        await rooms.sendRoomMessage(trimmed, { files });
-        setPendingAttachments((prev) => {
-          for (const attachment of prev) {
-            if (sentFiles.has(attachment.file) && attachment.previewUrl) {
-              URL.revokeObjectURL(attachment.previewUrl);
-            }
-          }
-          return prev.filter((attachment) => !sentFiles.has(attachment.file));
-        });
+        await rooms.sendRoomMessage(trimmed, { files, onDelivered: () => releaseSentAttachments(sentFiles) });
+        // Refetch completion is an idempotent backstop after delivery acceptance.
+        releaseSentAttachments(sentFiles);
       } catch (error) {
         if (error instanceof RoomMessageDeliveredButReplyFailedError) {
           // The server accepted this turn, so release only the attachments that were dispatched.
-          setPendingAttachments((prev) => {
-            for (const attachment of prev) {
-              if (sentFiles.has(attachment.file) && attachment.previewUrl) {
-                URL.revokeObjectURL(attachment.previewUrl);
-              }
-            }
-            return prev.filter((attachment) => !sentFiles.has(attachment.file));
-          });
+          releaseSentAttachments(sentFiles);
           const message = error.message.trim()
             ? error.message
             : t("chat.messageSentButReplyFailed", "Message sent, but assistant reply failed");
@@ -2042,7 +2060,7 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
     }
 
     handleSend();
-  }, [messageInput, pendingAttachments, chatRoomsEnabled, chatScope, rooms, rooms.clearRoom, clearComposerState, addToast, handleSend]);
+  }, [messageInput, pendingAttachments, chatRoomsEnabled, chatScope, rooms, rooms.clearRoom, clearComposerState, addToast, handleSend, releaseSentAttachments]);
 
   const handleQuestionSubmit = useCallback(async (answerText: string) => {
     if (chatRoomsEnabled && chatScope === "rooms") {

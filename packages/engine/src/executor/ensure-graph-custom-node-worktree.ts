@@ -89,6 +89,7 @@ export async function ensureGraphCustomNodeWorktree(
       runContext: deps.getRunContextFor(task.id),
       runInitCommand: true,
       createWorktree: deps.createWorktree,
+      createWorktreeBackendKind: "native",
       runConfiguredCommand: (command, cwd, timeoutMs, env) =>
         deps.runConfiguredCommand(
           command,

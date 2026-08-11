@@ -26,7 +26,7 @@ import {
   MIN_HEARTBEAT_INTERVAL_MS,
   HEARTBEAT_INTERVAL_PRESETS,
 } from "../utils/heartbeatIntervals";
-import { isEphemeralAgent, getErrorMessage } from "@fusion/core";
+import { isEphemeralAgent, getErrorMessage, resolvePermanentAgentEffectiveModel, type Settings } from "@fusion/core";
 import { formatAgentSkillBadgeLabel } from "../utils/agentSkills";
 import {
   ORG_CHART_LAYOUT_STORAGE_KEY,
@@ -49,6 +49,7 @@ export interface AgentsViewProps {
   projectId?: string;
   onOpenTaskLogs?: (taskId: string) => void;
   agentOnboardingEnabled?: boolean;
+  focusAgent?: { agentId: string; requestId: number };
 }
 
 function getAgentRoles(t: TFunction<"app">): { value: AgentCapability; label: string; icon: string }[] {
@@ -138,7 +139,7 @@ FNXC:AgentsView 2026-06-23-04:00:
 Agent list cards must expose the configured model or plugin runtime without requiring a detail-view open.
 Use the same runtimeHint/modelProvider+modelId/legacy model fallback order as the detail view and leave no-override agents as Auto at render time.
 */
-function getAgentModelLabel(agent: Agent): AgentModelLabel {
+function getAgentModelLabel(agent: Agent, settings?: Partial<Settings>): AgentModelLabel {
   const runtimeConfig = agent.runtimeConfig ?? {};
   const runtimeHint = typeof runtimeConfig.runtimeHint === "string" ? runtimeConfig.runtimeHint : "";
   if (runtimeHint) {
@@ -157,7 +158,8 @@ function getAgentModelLabel(agent: Agent): AgentModelLabel {
     return { label: legacyModel.slice(slashIdx + 1), isRuntime: false };
   }
 
-  return { label: null, isRuntime: false };
+  const effective = resolvePermanentAgentEffectiveModel(agent, settings);
+  return { label: effective.provider && effective.modelId ? `${effective.provider}/${effective.modelId}` : null, isRuntime: false };
 }
 
 function getOrgChartLeafCount(node: OrgTreeNode): number {
@@ -391,7 +393,7 @@ function OrgChartConnectors({
   );
 }
 
-export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardingEnabled = false }: AgentsViewProps) {
+export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardingEnabled = false, focusAgent }: AgentsViewProps) {
   const { t } = useTranslation("app");
   const activitySnapshot = useAgentActivity(projectId);
   const agentRoles = getAgentRoles(t);
@@ -639,6 +641,7 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
   const [customHeartbeatMinutes, setCustomHeartbeatMinutes] = useState<Record<string, string>>({});
   /** Global heartbeat multiplier loaded from project settings */
   const [heartbeatMultiplier, setHeartbeatMultiplier] = useState<number>(1);
+  const [agentModelSettings, setAgentModelSettings] = useState<Partial<Settings>>({});
   /** Whether the heartbeat multiplier is currently being saved */
   const [isSavingMultiplier, setIsSavingMultiplier] = useState(false);
   /** Agent IDs with an in-flight state transition (for optimistic update guard) */
@@ -660,6 +663,7 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
       .then((settings) => {
         if (!isMountedRef.current) return;
         setHeartbeatMultiplier(settings.heartbeatMultiplier ?? 1);
+        setAgentModelSettings(settings);
       })
       .catch(() => {
         // Use default on error
@@ -1228,6 +1232,16 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
       setIsOverviewOpen(false);
     }
   }, [isMobileViewport, openAgentDetail]);
+  const handledFocusRequestRef = useRef<number | undefined>(undefined);
+  /*
+  FNXC:CommandCenterAgentActivity 2026-08-10-01:30:
+  Command Center supplies a monotonic request id, not merely an agent id, so repeat activity-row clicks reopen the same detail while unrelated renders remain inert.
+  */
+  useEffect(() => {
+    if (!focusAgent || handledFocusRequestRef.current === focusAgent.requestId) return;
+    handledFocusRequestRef.current = focusAgent.requestId;
+    handleOverviewAgentSelect(focusAgent.agentId);
+  }, [focusAgent, handleOverviewAgentSelect]);
 
   const handleRunHeartbeat = async (agentId: string, agentName: string) => {
     // Optimistic state flip: the API call can take several seconds before the
@@ -2038,7 +2052,7 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
               const isHeartbeatDisabled = !isAgentHeartbeatEnabled(agent);
               const heartbeatSelectValue = isHeartbeatDisabled ? HEARTBEAT_DISABLED_OPTION_VALUE : String(configuredIntervalMs);
               const isUpdatingHeartbeat = isBulkHeartbeatMutationRunning || updatingHeartbeatAgentId === agent.id || heartbeatMutationAgentIds.has(agent.id);
-              const modelLabel = getAgentModelLabel(agent);
+              const modelLabel = getAgentModelLabel(agent, agentModelSettings);
               return (
                 <div
                   key={agent.id}

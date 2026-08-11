@@ -262,6 +262,26 @@ policy rather than malfunction. It is appended last so it wins over the base tex
 applies to a custom operator prompt too (an operator who overrode the prompt still gets a
 truthful statement of what this session may do).
 */
+function getCompletionRecommendationGuidance(maximum: number): string {
+  /*
+  FNXC:TaskRecommendations 2026-08-09-04:06:
+  Engine-appended guidance preserves the accepted-completion recommendation contract even when an
+  operator customizes the executor prompt. A disabled cap must not invite unavailable writes.
+
+  FNXC:TaskRecommendations 2026-08-10-01:15:
+  Restored verbatim after the U4 executor peel (#3317) rewrote executor.ts from a pre-FN-8850 base and
+  dropped both this function and its call site, leaving the validator wired with no producer.
+  */
+  if (maximum === 0) {
+    return `## Completion recommendations
+
+Recommendation capture is disabled for this project (maxRecommendationsPerTask is 0). Ignore any earlier generic recommendation guidance: do not send recommendations, including \`recommendations: []\`; use an honest summary or task log for non-blocking context, and do not fabricate a finding.`;
+  }
+  return `## Completion recommendations
+
+At the final accepted \`fn_task_done(outcome="completed")\` checkpoint, evaluate optional, non-blocking work discovered outside this task. Send at most ${maximum} task-ready recommendations, each with a stable unique \`id\`, \`title\`, \`description\`, and \`category\`, or explicitly send \`recommendations: []\` when none genuinely qualify. Example populated payload: \`recommendations: [{ id: "follow-up-export", title: "Add task export", description: "Provide a CSV export for completed tasks.", category: "feature" }]\`. Do not fabricate filler or include required current-task work, blockers, secrets, executable commands, reasoning, or duplicate ids. Recommendations are only for completed outcomes; never send them with \`outcome="blocked"\`. Use immediate task creation/delegation only for an explicit task requirement, necessary dependency coordination, or operator direction.`;
+}
+
 function getWithheldTaskCreationGuidance(taskCreateWithheld: boolean, delegateWithheld: boolean): string {
   if (!taskCreateWithheld && !delegateWithheld) return "";
   const withheld = [
@@ -286,9 +306,17 @@ export function getExecutorSystemPrompt(
 ): string {
   const customPrompt = resolveAgentPrompt("executor", settings.agentPrompts);
   const basePrompt = customPrompt || EXECUTOR_SYSTEM_PROMPT;
+  /*
+  FNXC:TaskRecommendations 2026-08-10-01:15:
+  Re-applied after the U4 executor peel (#3317) dropped it: `fn_task_done` kept VALIDATING recommendations
+  while nothing asked the executor to produce any, so capture silently stopped. Keep the guidance adjacent to
+  the validator it pairs with — the two must be added or removed together.
+  */
+  const maximumRecommendations = settings.maxRecommendationsPerTask ?? 3;
   const sections = [
     basePrompt,
     isResearchToolSurfaceEnabled(settings) ? getResearchGuidanceForSurface("executor") : "",
+    getCompletionRecommendationGuidance(maximumRecommendations),
     getWithheldTaskCreationGuidance(
       toolAvailability?.taskCreateWithheld === true,
       toolAvailability?.delegateWithheld === true,

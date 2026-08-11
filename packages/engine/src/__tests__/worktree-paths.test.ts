@@ -3,7 +3,9 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import {
   AI_MERGE_DIRNAME,
+  WORKTREE_RECOVERY_DIRNAME,
   isAiMergeContainerDir,
+  isWorktreeContainerDir,
   isInsideConfiguredWorktreesDir,
   resolveAiMergeRootPath,
   resolveTaskWorktreePath,
@@ -63,6 +65,13 @@ describe("worktree-paths", () => {
     expect(isAiMergeContainerDir(AI_MERGE_DIRNAME)).toBe(true);
     expect(isAiMergeContainerDir("fusion-ai-merge-fn-1-abc")).toBe(false);
     expect(isAiMergeContainerDir(".ai-merge-child")).toBe(false);
+  });
+
+  it("identifies internal worktree containers without hiding task worktrees", () => {
+    expect(isWorktreeContainerDir(AI_MERGE_DIRNAME)).toBe(true);
+    expect(isWorktreeContainerDir(WORKTREE_RECOVERY_DIRNAME)).toBe(true);
+    expect(isWorktreeContainerDir("fusion-ai-merge-fn-1-abc")).toBe(false);
+    expect(isWorktreeContainerDir(".fusion-recovery-child")).toBe(false);
   });
 
   it("detects paths inside and outside configured dir", () => {

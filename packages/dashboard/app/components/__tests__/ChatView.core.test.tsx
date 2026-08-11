@@ -1499,7 +1499,7 @@ describe("ChatView", () => {
     await userEvent.type(textarea, "Room hello{enter}");
 
     await waitFor(() => {
-      expect(sendRoomMessage).toHaveBeenCalledWith("Room hello", { files: [] });
+      expect(sendRoomMessage).toHaveBeenCalledWith("Room hello", expect.objectContaining({ files: [] }));
     });
     expect(textarea.value).toBe("");
     localStorage.removeItem("fusion:chat-scope");
@@ -1528,7 +1528,7 @@ describe("ChatView", () => {
     await userEvent.click(screen.getByTestId("chat-send-btn"));
 
     await waitFor(() => {
-      expect(sendRoomMessage).toHaveBeenCalledWith("Room click hello", { files: [] });
+      expect(sendRoomMessage).toHaveBeenCalledWith("Room click hello", expect.objectContaining({ files: [] }));
     });
     expect(sendMessage).not.toHaveBeenCalled();
     expect(textarea.value).toBe("");
@@ -1565,7 +1565,7 @@ describe("ChatView", () => {
       await userEvent.click(sendButton);
 
       await waitFor(() => {
-        expect(sendRoomMessage).toHaveBeenCalledWith("", { files: [textFile] });
+        expect(sendRoomMessage).toHaveBeenCalledWith("", expect.objectContaining({ files: [textFile] }));
       });
       expect(sendMessage).not.toHaveBeenCalled();
       expect(screen.queryByTestId("chat-attachment-previews")).not.toBeInTheDocument();

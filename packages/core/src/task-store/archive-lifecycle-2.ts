@@ -21,12 +21,14 @@ import {buildDeleteCallerAuditFields, buildDeleteClosureAuditFields, type TaskDe
 import {notifyOperatorOfNonOperatorDelete} from "../task-delete-notice.js";
 import "../builtin-traits.js";
 import {normalizeTaskPriority} from "../tasks/task-priority.js";
+import {clearTerminalFailureAutoRecoveryBudget} from "../tasks/terminal-failure-auto-recovery.js";
 import {generateTaskLineageId} from "../tasks/task-lineage.js";
 import {sanitizeFileScopeInPromptContent} from "../task-store/file-scope.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 import {softDeleteTaskRowInTransaction, readTaskRow as readTaskRowAsync, readTaskRowInTransaction} from "../task-store/async/async-persistence.js";
 import {appendTaskLifecycleEventInTransaction} from "../task-store/lifecycle-outbox.js";
-import {findLiveLineageChildren as findLiveLineageChildrenAsync, projectPartition, removeLineageReferences} from "../task-store/async/async-lifecycle.js";
+import {findLiveLineageChildren as findLiveLineageChildrenAsync, projectPartition, removeLineageReferences, type LineageRemovalOutcome} from "../task-store/async/async-lifecycle.js";
+import { classifyLineageInvalidationOutcomeError, lineageEvidenceTargetVersionForTest, recordLineageInvalidationOutcome, reconcileClearedLineageChildren, resolveAndAssertLineageCandidatesUnchanged, runLineageInvalidation } from "../task-store/lineage-approval-invalidation.js";
 import { resolveProjectColumnsForRoles } from "../project-lane-vocabulary.js";
 import {archiveParentTaskWithLineageGate, findArchivedTaskEntry, deleteArchivedTaskEntry, restoreTaskFromArchive} from "../task-store/async/async-archive-lineage.js";
 import {getArchivedRowCount, listArchivedTaskEntriesPage} from "../async-stores/async-archive-db.js";
@@ -190,7 +192,11 @@ async function deleteTaskBackendWithClaimResultImpl(store: TaskStore, id: string
     await (store as unknown as { __beforeDeleteClaimForTest?: (taskId: string) => void | Promise<void> }).__beforeDeleteClaimForTest?.(id);
 
     // Soft-delete + lineage clear + mission unlink + audit in one transaction (atomicity).
-    const deletion = await layer.transactionImmediate(async (tx) => {
+    const executeDelete = async (context?: { candidateIds: string[]; promptByChildId: ReadonlyMap<string, string>; locksHeld: boolean; attempt: number }) => {
+    let deletion: DeleteTaskClaimResult & { lineageOutcome: LineageRemovalOutcome };
+    try {
+      deletion = await layer.transactionImmediate(async (tx) => {
+      if (context) await resolveAndAssertLineageCandidatesUnchanged(tx, id, layer.projectId, lineageArchivedLanes, context.candidateIds);
       /*
       FNXC:LifecycleOutbox 2026-08-01-10:33:
       The pre-transaction deletedAt read is a cross-process TOCTOU window. A conditional
@@ -201,12 +207,26 @@ async function deleteTaskBackendWithClaimResultImpl(store: TaskStore, id: string
       if (claimed === false) {
         const reloaded = await readTaskRowInTransaction(tx, id, { includeDeleted: true }, projectId);
         if (!reloaded) throw new TaskNotFoundError(id);
-        return { claimed: false, task: store.rowToTask(store.pgRowToTaskRow(reloaded)) };
+        return { claimed: false, task: store.rowToTask(store.pgRowToTaskRow(reloaded)), lineageOutcome: { clearedChildIds: [] as string[], evidenceVersionByChild: new Map<string, number>(), evidenceUnavailableChildIds: [], evidenceInsertAttempts: 0 } };
       }
-      // Clear lineage references on live children so the parent can be deleted.
-      if (lineageChildIds.length > 0) {
-        await removeLineageReferences(tx, id, lineageChildIds, deletedAt, layer.projectId);
+      /*
+      FNXC:TaskWedgeNotifications 2026-08-10-20:30:
+      A soft-deleted row is invisible to the recovery sweep. Clear its terminal-failure budget
+      only after this transaction won the first-delete claim, so a declined conditional delete
+      cannot mute a live card and every backend delete path shares the same atomic boundary.
+      */
+      const deletedRow = await readTaskRowInTransaction(tx, id, { includeDeleted: true }, projectId);
+      if (!deletedRow) throw new TaskNotFoundError(id);
+      const deletedTask = store.rowToTask(store.pgRowToTaskRow(deletedRow));
+      if (deletedTask.wedgeNotification?.autoRecovery) {
+        await tx.update(schema.project.tasks)
+          .set({ wedgeNotification: JSON.stringify(clearTerminalFailureAutoRecoveryBudget(deletedTask.wedgeNotification, deletedAt)) })
+          .where(and(eq(schema.project.tasks.projectId, projectId), eq(schema.project.tasks.id, id)));
       }
+      // Clear lineage references and approval only after locked candidates were revalidated.
+      const lineageOutcome = context
+        ? await removeLineageReferences(tx, id, context.candidateIds, deletedAt, layer.projectId, context.promptByChildId, lineageEvidenceTargetVersionForTest(store))
+        : { clearedChildIds: [], evidenceVersionByChild: new Map<string, number>(), evidenceUnavailableChildIds: [], evidenceInsertAttempts: 0 };
       /*
       FNXC:MissionStore 2026-07-17-17:40:
       Clear any mission feature→task link IN THIS TRANSACTION so it commits (or rolls
@@ -281,8 +301,32 @@ async function deleteTaskBackendWithClaimResultImpl(store: TaskStore, id: string
       // callers so neither receives the pre-claim live snapshot after a successful delete.
       const reloaded = await readTaskRowInTransaction(tx, id, { includeDeleted: true }, projectId);
       if (!reloaded) throw new TaskNotFoundError(id);
-      return { claimed: true, task: store.rowToTask(store.pgRowToTaskRow(reloaded)) };
+      return { claimed: true, task: store.rowToTask(store.pgRowToTaskRow(reloaded)), lineageOutcome };
     });
+    } catch (error) {
+      if (context) recordLineageInvalidationOutcome(store, {
+        attempt: context.attempt, locksHeld: context.locksHeld, degraded: !context.locksHeld,
+        candidateIds: context.candidateIds, clearedChildIds: [], evidenceVersionByChild: new Map(),
+        evidenceUnavailableChildIds: [], evidenceInsertAttempts: 0,
+        error: classifyLineageInvalidationOutcomeError(error),
+      });
+      throw error;
+    }
+      if (context) {
+        recordLineageInvalidationOutcome(store, {
+          attempt: context.attempt, locksHeld: context.locksHeld, degraded: !context.locksHeld,
+          candidateIds: context.candidateIds, clearedChildIds: deletion.lineageOutcome.clearedChildIds,
+          evidenceVersionByChild: deletion.lineageOutcome.evidenceVersionByChild,
+          evidenceUnavailableChildIds: deletion.lineageOutcome.evidenceUnavailableChildIds,
+          evidenceInsertAttempts: deletion.lineageOutcome.evidenceInsertAttempts,
+        });
+        await reconcileClearedLineageChildren(store, deletion.lineageOutcome.clearedChildIds, { locksHeld: context.locksHeld });
+      }
+      return deletion;
+    };
+    const deletion = options?.removeLineageReferences
+      ? await runLineageInvalidation(store, id, { archivedColumns: lineageArchivedLanes, initialCandidateIds: lineageChildIds }, executeDelete)
+      : await executeDelete();
 
     if (!deletion.claimed) return deletion;
 
@@ -396,31 +440,61 @@ export async function archiveTaskBackendImpl(store: TaskStore, id: string, optio
     const entry = await store.taskToArchiveEntry(task, archivedAt);
 
     /*
-    FNXC:WorkflowLifecycle 2026-07-16-15:30:
-    Backend archive persists cold storage before its cleanup phase. Hold the
-    per-repository reservations across that transaction so another process sees
-    the path as unavailable until the awaited workspace disposer has removed it.
+    FNXC:SpecLockLineageInvalidation 2026-08-10-14:33:
+    Archive keeps its legacy archived-lane semantics (undefined -> "archived") but threads that
+    one value through pre-read and gate. The workspace reservation is created inside the locked body.
     */
-    const preparedWorkspace = cleanup ? await prepareArchivedWorkspaceWorktrees(store, task) : undefined;
-    let result;
-    try {
-      // Lineage gate + archive in one transaction.
-      result = await archiveParentTaskWithLineageGate(layer, id, entry, {
-        removeLineageReferences: removeLineageRefs,
-        now: archivedAt,
-        beforeArchive: async (tx) => {
-          const linkedFeature = await getMissionFeatureByTaskId(tx, id);
-          if (linkedFeature) {
-            await recordGeneratedFixOperatorStop(tx, linkedFeature, "task-archive");
-            await unlinkMissionFeatureFromTaskId(tx, linkedFeature.id);
-          }
-        },
-      });
-    } catch (error) {
-      if (preparedWorkspace) await releasePreparedWorkspaceArchiveDisposal(preparedWorkspace);
-      throw error;
-    }
-
+    const archiveLineageArchivedLanes: ReadonlySet<string> | undefined = undefined;
+    const archiveRun = async (context?: { candidateIds: string[]; promptByChildId: ReadonlyMap<string, string>; locksHeld: boolean; attempt: number }) => {
+      const preparedWorkspace = cleanup ? await prepareArchivedWorkspaceWorktrees(store, task) : undefined;
+      try {
+        const result = await archiveParentTaskWithLineageGate(layer, id, entry, {
+          removeLineageReferences: removeLineageRefs,
+          now: archivedAt,
+          archivedColumns: archiveLineageArchivedLanes,
+          ...(context ? {
+            revalidateAgainst: context.candidateIds,
+            promptByChildId: context.promptByChildId,
+            evidenceTargetVersionForTest: lineageEvidenceTargetVersionForTest(store),
+            beforeLineageGate: (store as unknown as { __beforeArchiveLineageGateForTest?: () => void | Promise<void> }).__beforeArchiveLineageGateForTest,
+          } : {}),
+          beforeArchive: async (tx) => {
+            const linkedFeature = await getMissionFeatureByTaskId(tx, id);
+            if (linkedFeature) {
+              await recordGeneratedFixOperatorStop(tx, linkedFeature, "task-archive");
+              await unlinkMissionFeatureFromTaskId(tx, linkedFeature.id);
+            }
+          },
+        });
+        // Reconcile only rows the guarded UPDATE actually cleared; candidates can reparent away.
+        if (context) {
+          const lineageOutcome = result.archived
+            ? result.lineageOutcome ?? { clearedChildIds: [], evidenceVersionByChild: new Map<string, number>(), evidenceUnavailableChildIds: [], evidenceInsertAttempts: 0 }
+            : { clearedChildIds: [], evidenceVersionByChild: new Map<string, number>(), evidenceUnavailableChildIds: [], evidenceInsertAttempts: 0 };
+          recordLineageInvalidationOutcome(store, {
+            attempt: context.attempt, locksHeld: context.locksHeld, degraded: !context.locksHeld,
+            candidateIds: context.candidateIds, ...lineageOutcome,
+            ...(result.archived ? {} : { error: "gate-rejected" as const }),
+          });
+          if (result.archived) await reconcileClearedLineageChildren(store, lineageOutcome.clearedChildIds, { locksHeld: context.locksHeld });
+        }
+        return { result, preparedWorkspace };
+      } catch (error) {
+        if (context) recordLineageInvalidationOutcome(store, {
+          attempt: context.attempt, locksHeld: context.locksHeld, degraded: !context.locksHeld,
+          candidateIds: context.candidateIds, clearedChildIds: [], evidenceVersionByChild: new Map(),
+          evidenceUnavailableChildIds: [], evidenceInsertAttempts: 0,
+          error: classifyLineageInvalidationOutcomeError(error),
+        });
+        if (preparedWorkspace) await releasePreparedWorkspaceArchiveDisposal(preparedWorkspace);
+        throw error;
+      }
+    };
+    const archiveExecution = removeLineageRefs
+      ? await runLineageInvalidation(store, id, { archivedColumns: archiveLineageArchivedLanes }, archiveRun)
+      : await archiveRun();
+    const result = archiveExecution.result;
+    const preparedWorkspace = archiveExecution.preparedWorkspace;
     if (!result.archived) {
       if (preparedWorkspace) await releasePreparedWorkspaceArchiveDisposal(preparedWorkspace);
       throw new TaskHasLineageChildrenError(id, result.liveChildIds);

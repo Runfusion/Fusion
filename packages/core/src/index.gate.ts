@@ -86,11 +86,16 @@ export {
 } from "./plugins/plugin-prompt-condition.js";
 export type { PromptConditionEvaluationResult } from "./plugins/plugin-prompt-condition.js";
 export { computePlanApprovalFingerprint, isPlanReviewSatisfied, resolvePlanApprovalRequired } from "./planner/plan-approval.js";
+export { canonicalizePlan, createCurrentPlanEvidence, diffSpecLocks, isSpecLockActive, SPEC_LOCK_PARSER_VERSION } from "./planner/spec-lock.js";
+export { evaluateSpecDrift, hasPriorLockDivergence, isCurrentSpecDriftReport } from "./planner/drift-report.js";
+export type { CanonicalPlan, CanonicalPlanSection, CurrentPlanEvidence, SpecLock, SpecLockDiff, SpecLockSection } from "./planner/spec-lock.js";
+export type { DriftAlignment, DriftFinding, DriftFindingCategory, DriftFindingKind, DriftReport } from "./planner/drift-report.js";
 export type { PlanApprovalMode } from "./planner/plan-approval.js";
 export { isActiveNearDuplicateColumn, isNearDuplicateCanonicalInactive } from "./duplicates/near-duplicate-canonical.js";
 export { resolveNearDuplicateCanonicalFlags } from "./duplicates/near-duplicate-canonical-flags.js";
 export type { NearDuplicateCanonicalState } from "./duplicates/near-duplicate-canonical.js";
 export * from "./tasks/frontend-ux-policy.js";
+export * from "./tasks/terminal-failure-auto-recovery.js";
 export * from "./tasks/original-description-policy.js";
 export * from "./planner/planning-plan-md.js";
 export * from "./tasks/file-scope-classification.js";
@@ -289,6 +294,8 @@ export {
   BUILTIN_TRIAGE_POLICY_SETTINGS,
   BUILTIN_OVERSIGHT_SETTINGS,
   DEFAULT_PLANNER_OVERSEER_EXECUTOR_STUCK_AFTER_MS,
+  DEFAULT_PLANNING_TIMEOUT_MS,
+  DEFAULT_PLAN_REVIEW_REPLAN_CAP,
   PLANNER_HEARTBEAT_PATROL_ENABLED_SETTING_ID,
   renderTriagePolicyPlaceholders,
 } from "./workflows/builtin-workflow-settings.js";
@@ -552,6 +559,28 @@ export {
   type OptionalReviewRevisionBudget,
   type ResolveOptionalReviewRevisionBudgetInput,
 } from "./workflows/workflow-settings-resolver.js";
+/*
+FNXC:ReviewSeverityGate 2026-08-10-17:33:
+Keep in SYNC with the main barrel (index.ts) — the `engine-core` vitest project builds @fusion/core from
+THIS file, so a gate export present only in index.ts resolves to `undefined` under engine-core alone.
+*/
+export {
+  applyReviewSeverityGate,
+  formatFindingsByPriority,
+  isBlockingFinding,
+  isReviewBlockingSeverity,
+  resolveReviewBlockingSeverity,
+  CODE_REVIEW_BLOCKING_SEVERITY_SETTING_ID,
+  DEFAULT_CODE_REVIEW_BLOCKING_SEVERITY,
+  DEFAULT_PLAN_REVIEW_BLOCKING_SEVERITY,
+  PLAN_REVIEW_BLOCKING_SEVERITY_SETTING_ID,
+  REVIEW_BLOCKING_SEVERITIES,
+  SEVERITY_PRIORITY_LABEL,
+  type ResolveReviewBlockingSeverityInput,
+  type ReviewBlockingSeverity,
+  type ReviewSeverityGateInput,
+  type ReviewSeverityGateResult,
+} from "./workflows/review-severity-gate.js";
 export {
   applyWorkflowSettingsOverlay,
   type WorkflowSettingsOverlayInput,
@@ -673,11 +702,17 @@ export {
   getAgentAssignmentPolicy,
   isAgentAutoAssignable,
   canAgentReceiveImplementationTasks,
+  // FNXC:WorkflowAgentRouting 2026-08-10-08:35: the gate barrel must mirror index.ts for anything the routing
+  // hot path calls. workflow-agent-router.ts calls all three of these on every dispatch; when the reduced
+  // barrel omits one it resolves to `undefined` inside the gate bundle and throws only once a suite reaches it.
+  hasWorkflowRoleCapability,
+  isWorkflowPrincipalEligible,
+  isBuiltinWorkflowRoleAgent,
   evaluateImplementationTaskBind,
   assertImplementationTaskBindAllowed,
   AgentTaskRoutingPolicyError,
 } from "./agents/agent-role-policy.js";
-export type { AgentAssignmentPolicy, ImplementationTaskBindContext, ImplementationTaskBindVerdict } from "./agents/agent-role-policy.js";
+export type { AgentAssignmentPolicy, ImplementationTaskBindContext, ImplementationTaskBindVerdict, WorkflowRoleCapabilityOptions } from "./agents/agent-role-policy.js";
 export { ReflectionStore } from "./agents/reflection-store.js";
 export type { ReflectionStoreEvents } from "./agents/reflection-store.js";
 export { MessageStore } from "./stores/message-store.js";
@@ -1484,6 +1519,7 @@ export {
   resolveSelectedWorkflowModelLane,
   resolveMergerFallbackModel,
   resolveMergerSettingsModel,
+  resolveMergerPhaseThinkingLevel,
   resolvePlanningSettingsModel,
   resolveProjectDefaultModel,
   resolveTaskExecutionModel,
@@ -1499,6 +1535,12 @@ export {
   routeTaskValidatorModel,
 } from "./ai/model-resolution.js";
 export type { ResolvedModelSelection, RouterLaneOptions } from "./ai/model-resolution.js";
+export {
+  getPrimaryWorkflowRole,
+  resolvePermanentAgentEffectiveModel,
+  resolvePermanentAgentEffectiveThinkingLevel,
+} from "./ai/agent-effective-model.js";
+export type { PermanentAgentModelLike, PrimaryWorkflowRole } from "./ai/agent-effective-model.js";
 export {
   routeModel,
   routeModelAndEmit,

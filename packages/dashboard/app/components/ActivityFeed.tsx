@@ -1,4 +1,4 @@
-import { memo, useCallback, useMemo } from "react";
+import { memo, useCallback, useMemo, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import "./ActivityFeed.css";
 import {
@@ -11,6 +11,7 @@ import {
   AlertTriangle,
   Folder,
   Trash2,
+  type LucideIcon,
 } from "lucide-react";
 import type { ActivityFeedEntry } from "../api";
 import { getRelativeTimeBucket } from "../utils/relativeTimeAgo";
@@ -25,7 +26,7 @@ export interface ActivityFeedProps {
 
 const TYPE_CONFIG: Record<ActivityFeedEntry["type"], { 
   label: string; 
-  icon: typeof Plus; 
+  icon: LucideIcon;
   color: string;
 }> = {
   "task:created": { label: "Created", icon: Plus, color: "var(--todo)" },
@@ -76,6 +77,38 @@ function formatFullTime(timestamp: string): string {
   return date.toLocaleString();
 }
 
+export interface ActivityFeedRowPresentationProps {
+  config: { label: string; icon: LucideIcon; color: string };
+  details: ReactNode;
+  timestamp: string;
+  headerSuffix?: ReactNode;
+}
+
+/**
+ * FNXC:CommandCenterAgentActivity 2026-08-10-03:02:
+ * The Command Center agent timeline must share ActivityFeed's compact row vocabulary rather than
+ * fork a second event style. This primitive owns the common icon, label, details, and timestamp;
+ * ActivityFeed retains its existing outer DOM while other feeds supply their own click container.
+ */
+export function ActivityFeedRowPresentation({ config, details, timestamp, headerSuffix }: ActivityFeedRowPresentationProps) {
+  const Icon = config.icon;
+  return <>
+    <div className="activity-feed-icon" style={{ color: config.color }}>
+      <Icon size={16} />
+    </div>
+    <div className="activity-feed-content">
+      <div className="activity-feed-header">
+        <span className="activity-feed-type">{config.label}</span>
+        {headerSuffix}
+      </div>
+      <div className="activity-feed-details">{details}</div>
+      <div className="activity-feed-meta">
+        <span className="activity-feed-time" title={formatFullTime(timestamp)}>{formatRelativeTime(timestamp)}</span>
+      </div>
+    </div>
+  </>;
+}
+
 interface ActivityFeedItemProps {
   entry: ActivityFeedEntry;
   projectName?: string;
@@ -83,40 +116,18 @@ interface ActivityFeedItemProps {
 
 function ActivityFeedItem({ entry, projectName }: ActivityFeedItemProps) {
   const config = TYPE_CONFIG[entry.type];
-  const Icon = config.icon;
-
   return (
     <div className="activity-feed-item" data-type={entry.type}>
-      <div className="activity-feed-icon" style={{ color: config.color }}>
-        <Icon size={16} />
-      </div>
-      <div className="activity-feed-content">
-        <div className="activity-feed-header">
-          <span className="activity-feed-type">{config.label}</span>
-          {projectName && (
-            <span className="activity-feed-project-badge">
-              <Folder size={10} />
-              {projectName}
-            </span>
-          )}
-        </div>
-        <div className="activity-feed-details">
-          {entry.taskId && (
-            <span className="activity-feed-task-id">{entry.taskId}</span>
-          )}
-          {entry.taskTitle && (
-            <span className="activity-feed-task-title" title={entry.taskTitle}>
-              {entry.taskTitle}
-            </span>
-          )}
+      <ActivityFeedRowPresentation
+        config={config}
+        timestamp={entry.timestamp}
+        headerSuffix={projectName ? <span className="activity-feed-project-badge"><Folder size={10} />{projectName}</span> : undefined}
+        details={<>
+          {entry.taskId && <span className="activity-feed-task-id">{entry.taskId}</span>}
+          {entry.taskTitle && <span className="activity-feed-task-title" title={entry.taskTitle}>{entry.taskTitle}</span>}
           <span className="activity-feed-description">{entry.details}</span>
-        </div>
-        <div className="activity-feed-meta">
-          <span className="activity-feed-time" title={formatFullTime(entry.timestamp)}>
-            {formatRelativeTime(entry.timestamp)}
-          </span>
-        </div>
-      </div>
+        </>}
+      />
     </div>
   );
 }

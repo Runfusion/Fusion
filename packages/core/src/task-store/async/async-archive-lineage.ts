@@ -32,7 +32,8 @@ import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import * as schema from "../../postgres/schema/index.js";
 import type { AsyncDataLayer, DbTransaction } from "../../postgres/data-layer.js";
 import { ACTIVE_TASK_FILTER } from "./async-persistence.js";
-import { findLiveLineageChildren, projectPartition, removeLineageReferences } from "./async-lifecycle.js";
+import { findLiveLineageChildren, projectPartition, removeLineageReferences, type LineageRemovalOutcome } from "./async-lifecycle.js";
+import { assertLineageCandidatesUnchanged } from "../lineage-approval-invalidation.js";
 import {
   softDeleteTaskRowInTransaction,
   readTaskRowInTransaction,
@@ -236,21 +237,25 @@ export async function archiveParentTaskWithLineageGate(
   layer: AsyncDataLayer,
   taskId: string,
   entry: ArchivedTaskEntry,
-  options: { removeLineageReferences?: boolean; now?: string; beforeArchive?: (tx: DbTransaction) => Promise<void> } = {},
-): Promise<{ archived: true } | { archived: false; liveChildIds: string[] }> {
+  options: { removeLineageReferences?: boolean; now?: string; beforeArchive?: (tx: DbTransaction) => Promise<void>; beforeLineageGate?: () => void | Promise<void>; archivedColumns?: ReadonlySet<string>; revalidateAgainst?: readonly string[]; promptByChildId?: ReadonlyMap<string, string>; evidenceTargetVersionForTest?: (childId: string, computed: number, attempt: number) => number } = {},
+
+): Promise<{ archived: true; lineageOutcome?: LineageRemovalOutcome } | { archived: false; liveChildIds: string[] }> {
   const now = options.now ?? new Date().toISOString();
 
   return layer.transactionImmediate(async (tx) => {
+    // Test-only barrier is before this operation's single in-transaction lineage read.
+    await options.beforeLineageGate?.();
     // 1. Lineage gate — check for live children inside the transaction.
-    const liveChildIds = await findLiveLineageChildren(tx, taskId, layer.projectId);
+    const liveChildIds = await findLiveLineageChildren(tx, taskId, layer.projectId, options.archivedColumns);
     if (liveChildIds.length > 0 && !options.removeLineageReferences) {
       return { archived: false as const, liveChildIds };
     }
 
-    // 2. Lineage clear (if requested and there are live children).
-    if (liveChildIds.length > 0 && options.removeLineageReferences) {
-      await removeLineageReferences(tx, taskId, liveChildIds, now, layer.projectId);
-    }
+    if (options.removeLineageReferences && options.revalidateAgainst !== undefined) assertLineageCandidatesUnchanged(liveChildIds, options.revalidateAgainst);
+    // 2. Lineage clear only for candidates whose planning locks this attempt holds.
+    const lineageOutcome = options.removeLineageReferences
+      ? await removeLineageReferences(tx, taskId, options.revalidateAgainst ?? liveChildIds, now, layer.projectId, options.promptByChildId, options.evidenceTargetVersionForTest)
+      : { clearedChildIds: [], evidenceVersionByChild: new Map<string, number>(), evidenceUnavailableChildIds: [], evidenceInsertAttempts: 0 };
 
     /*
     FNXC:MissionLineageBudget 2026-07-22-15:00:
@@ -275,7 +280,11 @@ export async function archiveParentTaskWithLineageGate(
     //    breaking atomicity (a later rollback left the soft-delete persisted).
     await softDeleteTaskRowInTransaction(tx, taskId, now, false, layer.projectId);
 
-    return { archived: true as const };
+    // Preserve the public legacy success shape for direct callers; only the serialized boundary
+    // supplies revalidation and needs the actual-clear outcome for post-commit reconciliation.
+    return options.revalidateAgainst === undefined
+      ? { archived: true as const }
+      : { archived: true as const, lineageOutcome };
   });
 }
 
