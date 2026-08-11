@@ -116,3 +116,16 @@ packages/desktop/deploy/
 # vi.mock interception for imports nested inside the bundle; see the script
 # comment (scripts/build-engine-core-gate-bundle.mjs) for the full repro.
 packages/core/.gate-bundle/
+
+# FNXC:KnowledgeGraph 2026-08-10-18:32:
+# `fn knowledge-graph build` output (FN-8920 memory epic). Deterministic and fully
+# regenerable from source, with SHA-256 fingerprints in the manifest driving
+# incremental rebuilds — so committing it preserves nothing that a rebuild cannot
+# reproduce. It is ~85MB (edges.json alone is 43MB, past GitHub's 50MB warning
+# threshold) and rewritten on every build, so tracking it would add irreversible,
+# compounding history bloat to every clone and CI checkout.
+# Operator decision, 2026-08-10: ignore it. docs/knowledge-graph.md previously said
+# "it is not ignored" and left committing to the operator; that guidance is updated
+# alongside this entry. An operator who does want a snapshot committed can still
+# force it with `git add -f .fusion-knowledge/graph`.
+.fusion-knowledge/

@@ -49,6 +49,7 @@ export type RecoverFailedPreMergeStepDeps = {
     preserveResumeState?: boolean,
     mergeVerificationFailure?: boolean,
     retryPresentation?: { attempt: number; max?: number },
+    findings?: CoreWorkflowStepResult["findings"],
   ) => Promise<void>;
 };
 
@@ -131,6 +132,14 @@ export async function recoverFailedPreMergeWorkflowStep(
       true,
       false,
       { attempt: budget.attempts + 1, max: budget.unbounded ? undefined : budget.max },
+      /*
+       * FNXC:ReviewSeverityGate 2026-08-10-17:33:
+       * Self-healing recovery of a failed pre-merge review step is the SAME remediation the executor
+       * schedules inline, so it must hand the implementer the same priority-grouped findings. Reading
+       * them off the persisted step result (rather than re-deriving from prose) is what keeps a
+       * restart-recovered bounce indistinguishable from a live one.
+       */
+      target.findings,
     );
     return true;
   } catch (err: unknown) {

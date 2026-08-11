@@ -33,7 +33,7 @@ import {CentralCore} from "../central/central-core.js";
 import {extractTaskIdTokens, normalizeTitleForTaskId} from "../tasks/task-title-id-drift.js";
 import {generateTaskLineageId} from "../tasks/task-lineage.js";
 import {sanitizeFileScopeInPromptContent} from "../task-store/file-scope.js";
-import {preserveResolvedTaskWedgeEpisode, type TaskRow} from "../task-store/persistence.js";
+import {preserveDurableTaskWedgeInvariants, type TaskRow} from "../task-store/persistence.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 import {isWorkflowDefinitionIdPrimaryKeyCollision, nextWorkflowDefinitionIdAsyncImpl} from "../task-store/workflow-definitions.js";
 import {upsertTaskRowInTransaction, buildTaskInsertValues} from "./async/async-persistence.js";
@@ -184,7 +184,7 @@ export async function atomicWriteTaskJsonWithAuditImpl(store: TaskStore, dir: st
         )) {
           throw new Error(`Planning dependency invalidation conflict for ${id}: dependencies changed before the lifecycle mutation committed`);
         }
-        preserveResolvedTaskWedgeEpisode(existing, task);
+        preserveDurableTaskWedgeInvariants(existing, task);
         const changedColumns = store.getChangedTaskColumns(existing, task);
         if (changedColumns.size > 0) {
           const context = store.createTaskPersistSerializationContext(task, existing);

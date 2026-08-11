@@ -1952,6 +1952,43 @@ describe("SelfHealingManager", () => {
       managerWithAgents.stop();
     });
 
+    it("continues after task-gone lookup races and recovers later agents", async () => {
+      const agents: Agent[] = [
+        { id: "agent-deleted", state: "running", taskId: "FN-DELETED", updatedAt: new Date(Date.now() - 120_000).toISOString() } as Agent,
+        { id: "agent-missing", state: "running", taskId: "FN-MISSING", updatedAt: new Date(Date.now() - 120_000).toISOString() } as Agent,
+        { id: "agent-error", state: "running", taskId: "FN-ERROR", updatedAt: new Date(Date.now() - 120_000).toISOString() } as Agent,
+        { id: "agent-later", state: "running", taskId: "FN-LATER", updatedAt: new Date(Date.now() - 120_000).toISOString() } as Agent,
+      ];
+      const getTask = vi.fn(async (taskId: string) => {
+        if (taskId === "FN-DELETED") throw new TaskDeletedError(taskId, new Date().toISOString());
+        if (taskId === "FN-MISSING") throw new TaskNotFoundError(taskId);
+        if (taskId === "FN-ERROR") throw new Error("database unavailable");
+        return { id: taskId, column: "todo" } as Task;
+      });
+      const agentStore = {
+        listAgents: vi.fn(async () => agents),
+        getActiveHeartbeatRun: vi.fn(async () => null),
+        updateAgentState: vi.fn(async (agentId: string, state: Agent["state"]) => {
+          const agent = agents.find((candidate) => candidate.id === agentId);
+          if (agent) agent.state = state;
+        }),
+        syncExecutionTaskLink: vi.fn(async (agentId: string, taskId?: string) => {
+          const agent = agents.find((candidate) => candidate.id === agentId);
+          if (agent) agent.taskId = taskId;
+        }),
+      } as unknown as AgentStore;
+      const managerWithAgents = new SelfHealingManager(
+        createMockStore({ getTask }),
+        { rootDir: "/tmp/test-project", agentStore },
+      );
+
+      const recovered = await managerWithAgents.recoverAgentsRunningOnInactiveTasks();
+
+      expect(recovered).toBe(3);
+      expect(agentStore.syncExecutionTaskLink).toHaveBeenCalledWith("agent-later", undefined);
+      managerWithAgents.stop();
+    });
+
     /*
     FNXC:WorkflowResolvedColumns 2026-07-31-23:55:
     `agentLinkTerminalColumns` was UNCOVERED on the #3115 map. The case above uses `todo` and
@@ -4946,7 +4983,14 @@ describe("SelfHealingManager", () => {
       managerWithRecovery.stop();
     });
 
-    it("does not recover fresh merging tasks before the stuck timeout", async () => {
+    /*
+    FNXC:MergeReliability 2026-08-10-15:52:
+    FN-8924 rejects replacing this age gate with merger-log recency: abandoned merge bodies can
+    write the same `agent: "merger"` records, so that clock is not independently attributable.
+    Keep this pin until a task-scoped ownership/activity generation exists that an orphan cannot
+    refresh; a fresh `updatedAt` must therefore continue to prevent non-owner recovery.
+    */
+    it("retains the age gate when a non-owner merging task was recently updated", async () => {
       const managerWithRecovery = new SelfHealingManager(store, {
         rootDir: "/tmp/test-project",
       });

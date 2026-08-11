@@ -270,7 +270,15 @@ export function wireExecutorLifecycle(deps: WireExecutorLifecycleDeps): WireExec
   as a live inertness path rather than defensive dead code.
   */
   deps.store.on("task:moved", ({ task, from, to, source, lanes }) => {
-    executorLog.log(`[event:task:moved] ${task.id}: ${from} → ${to}`);
+    /*
+    FNXC:Diagnostics 2026-08-10-18:32:
+    Per-move tracing is DEBUG. This listener fires on every task:moved event — every dispatch,
+    rebound, requeue, archive and self-healing move across every task — so at `log` level it was the
+    single loudest line in engine output and buried the events an operator actually needs to see.
+    The information is still available at debug level; nothing here is an operator-actionable signal
+    on its own.
+    */
+    executorLog.debug(`[event:task:moved] ${task.id}: ${from} → ${to}`);
     /*
     FNXC:WorkflowResolvedColumns 2026-07-31-21:30 (fleet):
     Lanes come from the EMITTER (see `moves.ts`), not from a resolver called here.
@@ -294,7 +302,7 @@ export function wireExecutorLifecycle(deps: WireExecutorLifecycleDeps): WireExec
         return;
       }
       deps.clearWorkflowRerunWatchdog(task.id);
-      executorLog.log(`[event:task:moved] Initiating execute() for ${task.id}`);
+      executorLog.debug(`[event:task:moved] Initiating execute() for ${task.id}`);
       void (async () => {
         // FN-5256: if the prior session is still being torn down (because the
         // task was just moved away from in-progress), wait for the worktree-
@@ -303,7 +311,7 @@ export function wireExecutorLifecycle(deps: WireExecutorLifecycleDeps): WireExec
         // executor's own conflict cleanup against a still-live shell.
         const pending = deps.pendingTaskDisposals.get(task.id);
         if (pending) {
-          executorLog.log(`[event:task:moved] Awaiting pending disposal for ${task.id} before dispatch`);
+          executorLog.debug(`[event:task:moved] Awaiting pending disposal for ${task.id} before dispatch`);
           await pending;
         }
         const taskForExecution = await deps.resetMergeStateIfNeeded(task, from);
@@ -364,7 +372,7 @@ export function wireExecutorLifecycle(deps: WireExecutorLifecycleDeps): WireExec
       );
     } else if (from === wipLane) {
       if (deps.workflowLifecycleMovesInFlight.has(task.id) && deps.graphRouting.has(task.id)) {
-        executorLog.log(
+        executorLog.debug(
           `[event:task:moved] Preserving graph run for ${task.id} across its own ${from} → ${to} boundary`,
         );
         return;

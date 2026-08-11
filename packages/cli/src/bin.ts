@@ -128,12 +128,14 @@ async function loadCommandHandlers() {
   const { runSettingsExport } = await import("./commands/settings-export.js");
   const { runSettingsImport } = await import("./commands/settings-import.js");
   const { runMcpList, runMcpAdd, runMcpEdit, runMcpRemove, runMcpEnable, runMcpDisable, runMcpImport, runMcpExport, runMcpValidate } = await import("./commands/mcp.js");
+  const { runMcpMemoryServer } = await import("./commands/mcp-memory-server.js");
   const { runWorkflowValidate } = await import("./commands/workflow.js");
   const { runGitStatus, runGitFetch, runGitPull, runGitPush } = await import("./commands/git.js");
   const { runBranchGroupList, runBranchGroupShow, runBranchGroupPromote, runBranchGroupAbandon } = await import("./commands/branch-group.js");
   const { runBackupCreate, runBackupList, runBackupRestore, runBackupCleanup } = await import("./commands/backup.js");
   const { runDbVacuum, runDbMigrate } = await import("./commands/db.js");
   const { runMemoryBackupCreate, runMemoryBackupList, runMemoryBackupRestore } = await import("./commands/memory-backup.js");
+  const { runKnowledgeGraphBuild } = await import("./commands/knowledge-graph.js");
   const { runMissionCreate, runMissionList, runMissionShow, runMissionDelete, runMissionActivateSlice, runMissionLinkGoal, runMissionUnlinkGoal, runMissionGoals } = await import("./commands/mission.js");
   const { runGoalsList, runGoalsCreate, runGoalsArchive, runGoalsCitations } = await import("./commands/goals.js");
   const { runProjectList, runProjectAdd, runProjectRemove, runProjectShow, runProjectInfo, runProjectSetDefault, runProjectDetect } = await import("./commands/project.js");
@@ -210,6 +212,7 @@ async function loadCommandHandlers() {
     runMcpImport,
     runMcpExport,
     runMcpValidate,
+    runMcpMemoryServer,
     runWorkflowValidate,
     runGitStatus,
     runGitFetch,
@@ -228,6 +231,7 @@ async function loadCommandHandlers() {
     runMemoryBackupCreate,
     runMemoryBackupList,
     runMemoryBackupRestore,
+    runKnowledgeGraphBuild,
     runMissionCreate,
     runMissionList,
     runMissionShow,
@@ -466,6 +470,8 @@ PR:
   fn memory-backup --list    List all memory backups
   fn memory-backup --restore <dir>
                              Restore memory from a backup directory snapshot
+  fn knowledge-graph build [--force] [--dir <path>] [--json]
+                             Build the deterministic knowledge graph
   fn plugin list | ls                List installed plugins
   fn plugin install <path-or-package> [--ai-scan] Install a plugin from path or package
   fn plugin add <path-or-package>     Alias for plugin install
@@ -761,6 +767,7 @@ async function main() {
     runMcpImport,
     runMcpExport,
     runMcpValidate,
+    runMcpMemoryServer,
     runWorkflowValidate,
     runGitStatus,
     runGitFetch,
@@ -779,6 +786,7 @@ async function main() {
     runMemoryBackupCreate,
     runMemoryBackupList,
     runMemoryBackupRestore,
+    runKnowledgeGraphBuild,
     runMissionCreate,
     runMissionList,
     runMissionShow,
@@ -1792,6 +1800,9 @@ async function main() {
           secretScope,
         };
         switch (subcommand) {
+          case "serve-memory":
+            await runMcpMemoryServer(getFlagValue(args, "--project-root") ?? process.cwd());
+            break;
           case "list":
           case "ls":
             await runMcpList({ projectName, json: args.includes("--json") });
@@ -2003,6 +2014,20 @@ async function main() {
           console.error("Usage: fn backup --create | --list | --cleanup | --restore <filename>");
           process.exit(1);
         }
+        break;
+      }
+
+      case "knowledge-graph": {
+        const usage = "Usage: fn knowledge-graph build [--force] [--dir <path>] [--json]";
+        const dirIndex = args.indexOf("--dir");
+        const allowed = new Set(["build", "--force", "--dir", "--json"]);
+        const hasUnknownArgument = args.slice(1).some((arg, index) => !allowed.has(arg)
+          && !(dirIndex >= 0 && index === dirIndex));
+        if (args[1] !== "build" || hasUnknownArgument || (dirIndex >= 0 && !args[dirIndex + 1])) {
+          console.error(usage);
+          process.exit(1);
+        }
+        await runKnowledgeGraphBuild({ projectName, force: args.includes("--force"), json: args.includes("--json"), dir: dirIndex >= 0 ? args[dirIndex + 1] : undefined });
         break;
       }
 

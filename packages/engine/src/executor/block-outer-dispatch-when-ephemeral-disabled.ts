@@ -12,6 +12,7 @@ import { isEphemeralAgent } from "@fusion/core";
 import type { EngineRunContext } from "../util/run-audit.js";
 import { executorLog } from "../logger.js";
 import { resolveReboundColumnFor } from "./lifecycle-columns.js";
+import { clearDispatchBlockedLogState, logDispatchBlockedOnce } from "./dispatch-block-log.js";
 
 export type BlockOuterDispatchWhenEphemeralDisabledDeps = {
   store: TaskStore;
@@ -24,7 +25,10 @@ export async function blockOuterDispatchWhenEphemeralDisabled(
   task: Task,
 ): Promise<boolean> {
     const settings = await deps.store.getSettings();
-    if (settings.ephemeralAgentsEnabled !== false) return false;
+    if (settings.ephemeralAgentsEnabled !== false) {
+      clearDispatchBlockedLogState(task.id);
+      return false;
+    }
 
     // A permanent (non-ephemeral) assignment is the sanctioned executor when
     // ephemeral workers are off. `assignedAgentId` is only ever set by permanent
@@ -33,9 +37,15 @@ export async function blockOuterDispatchWhenEphemeralDisabled(
     // the run rather than starving a legitimately-assigned task.
     const assignedId = task.assignedAgentId?.trim();
     if (assignedId) {
-      if (!deps.agentStore) return false;
+      if (!deps.agentStore) {
+        clearDispatchBlockedLogState(task.id);
+        return false;
+      }
       const agent = await deps.agentStore.getAgent(assignedId).catch(() => null);
-      if (agent && !isEphemeralAgent(agent)) return false;
+      if (agent && !isEphemeralAgent(agent)) {
+        clearDispatchBlockedLogState(task.id);
+        return false;
+      }
     }
 
     const liveTask = (await deps.store.getTask(task.id).catch(() => null)) ?? task;
@@ -56,6 +66,11 @@ export async function blockOuterDispatchWhenEphemeralDisabled(
       "Executor pre-dispatch ephemeral gate blocked workflow/authoritative execution.",
       deps.getRunContextFor(liveTask.id),
     );
-    executorLog.log(`${liveTask.id}: executor dispatch blocked — ephemeralAgentsEnabled=false and no permanent agent assigned`);
+    logDispatchBlockedOnce(
+      executorLog,
+      liveTask.id,
+      "ephemeral-disabled",
+      `${liveTask.id}: executor dispatch blocked — ephemeralAgentsEnabled=false and no permanent agent assigned`,
+    );
     return true;
 }

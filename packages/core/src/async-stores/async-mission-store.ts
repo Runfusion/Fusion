@@ -14,7 +14,7 @@ import { EventEmitter } from "node:events";
 import { and, desc, eq, inArray, notInArray, sql } from "drizzle-orm";
 import * as schema from "../postgres/schema/index.js";
 import type { AsyncDataLayer } from "../postgres/data-layer.js";
-import { FEATURE_LOOP_TRANSITIONS, normalizeMissionAssertionType, renderValidationCause, selectNextSerialMissionSlice } from "../missions/mission-types.js";
+import { buildMissionStatusEventMetadata, FEATURE_LOOP_TRANSITIONS, normalizeMissionAssertionType, renderValidationCause, selectNextSerialMissionSlice } from "../missions/mission-types.js";
 import type {
   Mission,
   Milestone,
@@ -585,12 +585,12 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
         createdAt: mission.createdAt,
         updatedAt: new Date().toISOString(),
       };
-      const transitions: Array<{ eventType: MissionEventType; description: string; metadata: Record<string, unknown> }> = [];
+      const transitions: Array<{ eventType: MissionEventType; description: string; metadataInput: Parameters<typeof buildMissionStatusEventMetadata>[0] }> = [];
       if (mission.status !== updated.status) {
         transitions.push({
           eventType: "mission_status_changed",
           description: `Mission status changed from ${mission.status} to ${updated.status}`,
-          metadata: { source: actor.source, actor, field: "status", from: mission.status, to: updated.status },
+          metadataInput: { entity: "mission", field: "status", from: mission.status, to: updated.status, ids: {}, actor, reason: options.reason },
         });
       }
       // FNXC:MissionAutonomyAudit 2026-07-23-14:20: Legacy rows may omit this
@@ -602,16 +602,22 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
         transitions.push({
           eventType: isAutopilotEnabled ? "autopilot_enabled" : "autopilot_disabled",
           description: `Autopilot ${isAutopilotEnabled ? "enabled" : "disabled"}`,
-          metadata: { source: actor.source, actor, field: "autopilotEnabled", from: wasAutopilotEnabled, to: isAutopilotEnabled },
+          metadataInput: { entity: "mission", field: "autopilotEnabled", from: wasAutopilotEnabled, to: isAutopilotEnabled, ids: {}, actor },
         });
       }
       await updateMission(tx, updated);
       if (transitions.length === 0) return { updated, events: [] as MissionEvent[] };
+      /*
+      FNXC:MissionStatusWrites 2026-08-10-12:47:
+      Like feature transitions, mission audit metadata is built only after the row write. The
+      builder is total, so malformed caller-shaped actor or reason data cannot abort this same
+      transaction after a legitimate lifecycle repair has been applied.
+      */
       let seq = await getMaxEventSeq(tx);
       const events = await Promise.all(transitions.map(async (transition) => {
         const event: MissionEvent = {
           id: this.generateId("ME"), missionId: id, eventType: transition.eventType,
-          description: transition.description, metadata: transition.metadata,
+          description: transition.description, metadata: buildMissionStatusEventMetadata(transition.metadataInput),
           timestamp: new Date().toISOString(), seq: ++seq,
         };
         await insertMissionEvent(tx, event);
@@ -1101,29 +1107,65 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
     return getFeatureByTaskId(this.db, taskId);
   }
 
-  async updateFeature(id: string, updates: Partial<MissionFeature>): Promise<MissionFeature> {
-    const feature = await getFeature(this.db, id);
-    if (!feature) throw new Error(`Feature ${id} not found`);
-    const updated: MissionFeature = {
-      ...feature,
-      ...updates,
-      id,
-      sliceId: feature.sliceId,
-      createdAt: feature.createdAt,
-      updatedAt: new Date().toISOString(),
+  /*
+  FNXC:MissionStatusWrites 2026-08-10-12:47:
+  Status events share the feature mutation transaction. The metadata builder is total, so it is
+  safe after the row write; missing hierarchy skips auditing rather than blocking a repair.
+  */
+  private async recordFeatureStatusChange(tx: QueryHandle, feature: MissionFeature, toStatus: FeatureStatus, actor?: MissionTransitionActor, reason?: unknown, seq?: number): Promise<MissionEvent | undefined> {
+    if (feature.status === toStatus) return undefined;
+    const slice = await getSlice(tx, feature.sliceId);
+    const milestone = slice ? await getMilestone(tx, slice.milestoneId) : undefined;
+    const mission = milestone ? await getMission(tx, milestone.missionId) : undefined;
+    if (!mission) return undefined;
+    const event: MissionEvent = {
+      id: this.generateId("ME"), missionId: mission.id, eventType: "feature_status_changed",
+      description: `Feature ${feature.id} status changed from ${feature.status} to ${toStatus}`,
+      metadata: buildMissionStatusEventMetadata({ entity: "feature", field: "status", from: feature.status, to: toStatus, ids: { featureId: feature.id, sliceId: slice?.id }, actor, reason }),
+      timestamp: new Date().toISOString(), seq: seq ?? (await getMaxEventSeq(tx)) + 1,
     };
-    await updateFeature(this.db, updated);
+    await insertMissionEvent(tx, event);
+    return event;
+  }
+
+  /**
+   * Locks the feature before reading its status pre-image. A concurrent writer must observe the
+   * prior committed transition before it can write the next one, so every audit `from` is exact.
+   */
+  private async getFeatureForStatusWrite(tx: QueryHandle, id: string): Promise<MissionFeature | undefined> {
+    const locked = await tx.select({ id: schema.project.missionFeatures.id })
+      .from(schema.project.missionFeatures)
+      .where(eq(schema.project.missionFeatures.id, id))
+      .for("update");
+    return locked.length > 0 ? getFeature(tx, id) : undefined;
+  }
+
+  async updateFeature(id: string, updates: Partial<MissionFeature>, options: MissionUpdateOptions = {}): Promise<MissionFeature> {
+    const { updated, event, taskIdChanged, statusChanged } = await this.layer.transactionImmediate(async (tx) => {
+      const feature = await this.getFeatureForStatusWrite(tx, id);
+      if (!feature) throw new Error(`Feature ${id} not found`);
+      const updated: MissionFeature = { ...feature, ...updates, id, sliceId: feature.sliceId, createdAt: feature.createdAt, updatedAt: new Date().toISOString() };
+      await updateFeature(tx, updated);
+      const event = updates.status !== undefined ? await this.recordFeatureStatusChange(tx, feature, updates.status, options.actor, options.reason) : undefined;
+      // FNXC:MissionStatusWrites 2026-08-10-13:32: Preserve no-op PATCH behavior:
+      // unchanged optional fields must not trigger a post-commit rollup solely because present.
+      return {
+        updated,
+        event,
+        taskIdChanged: updates.taskId !== undefined && updates.taskId !== feature.taskId,
+        statusChanged: updates.status !== undefined && updates.status !== feature.status,
+      };
+    });
     this.emit("feature:updated", updated);
-    const taskIdChanged = updates.taskId !== undefined && updates.taskId !== feature.taskId;
-    const statusChanged = updates.status !== undefined && updates.status !== feature.status;
+    if (event) this.emit("mission:event", event);
     if (taskIdChanged || statusChanged) await this.recomputeSliceStatus(updated.sliceId);
-    const shouldSyncAssertion =
-      updates.title !== undefined || updates.description !== undefined || updates.acceptanceCriteria !== undefined;
-    if (shouldSyncAssertion) {
-      await this.ensureFeatureAssertion(updated);
-      return (await getFeature(this.db, updated.id)) ?? updated;
-    }
+    const shouldSyncAssertion = updates.title !== undefined || updates.description !== undefined || updates.acceptanceCriteria !== undefined;
+    if (shouldSyncAssertion) { await this.ensureFeatureAssertion(updated); return (await getFeature(this.db, updated.id)) ?? updated; }
     return updated;
+  }
+
+  async updateFeatureStatus(featureId: string, status: FeatureStatus, options: MissionUpdateOptions = {}): Promise<MissionFeature> {
+    return this.updateFeature(featureId, { status }, options);
   }
 
   /*
@@ -1184,13 +1226,6 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
     await this.recomputeSliceStatus(sliceId);
   }
 
-  async updateFeatureStatus(featureId: string, status: FeatureStatus): Promise<MissionFeature> {
-    const feature = await getFeature(this.db, featureId);
-    if (!feature) throw new Error(`Feature ${featureId} not found`);
-    const updated = await this.updateFeature(featureId, { status });
-    await this.recomputeSliceStatus(updated.sliceId);
-    return updated;
-  }
 
   /**
    * FNXC:MissionReconciliation 2026-07-20-08:34:
@@ -1198,7 +1233,7 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
    */
   async reconcileFeatureDoneWithTerminalTask(featureId: string, taskId: string): Promise<MissionFeature> {
     const outcome = await this.layer.transactionImmediate(async (tx) => {
-      const feature = await getFeature(tx, featureId);
+      const feature = await this.getFeatureForStatusWrite(tx, featureId);
       if (!feature) {
         throw new TerminalTaskReconciliationError("FEATURE_NOT_FOUND", `Feature ${featureId} not found`);
       }
@@ -1266,6 +1301,9 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
         ? { ...feature, taskId, status: "done", updatedAt: now }
         : feature;
       if (featureChanged) await updateFeature(tx, reconciledFeature);
+      const event = feature.status !== "done"
+        ? await this.recordFeatureStatusChange(tx, feature, "done", { type: "system", id: "mission-store", source: "terminal-task-reconcile" })
+        : undefined;
 
       if (evidence.kind === "done") {
         await setTaskMissionLinkage(tx, taskId, mission.id, slice.id);
@@ -1285,12 +1323,14 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
         feature: reconciledFeature,
         featureChanged,
         linked: feature.taskId !== taskId,
+        event,
         slice: reconciledSlice !== slice ? reconciledSlice : undefined,
         milestone: reconciledMilestone !== milestone ? reconciledMilestone : undefined,
       };
     });
 
     if (outcome.featureChanged) this.emit("feature:updated", outcome.feature);
+    if (outcome.event) this.emit("mission:event", outcome.event);
     if (outcome.linked) this.emit("feature:linked", { feature: outcome.feature, taskId });
     if (outcome.slice) this.emit("slice:updated", outcome.slice);
     if (outcome.milestone) this.emit("milestone:updated", outcome.milestone);
@@ -1305,7 +1345,7 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
    */
   async claimDefinedFeatureTaskInTransaction(
     tx: import("../postgres/data-layer.js").DbTransaction,
-    input: { featureId: string; taskId: string; missionId: string; sliceId: string; requireExistingFeatureLink?: boolean },
+    input: { featureId: string; taskId: string; missionId: string; sliceId: string; requireExistingFeatureLink?: boolean; statusEvent?: { value?: MissionEvent } },
   ): Promise<MissionFeature> {
     /*
     FNXC:MissionAdmission 2026-07-23-15:30:
@@ -1376,6 +1416,8 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
       updatedAt: now,
     };
     await updateFeature(tx, updated);
+    const event = await this.recordFeatureStatusChange(tx, feature, "triaged", { type: "system", id: "mission-store", source: "defined-feature-claim" });
+    if (input.statusEvent) input.statusEvent.value = event;
     // The inserted task already carries this verified linkage; retain this write
     // for retry parity when the same canonical is claimed again.
     await setTaskMissionLinkage(tx, input.taskId, input.missionId, input.sliceId);
@@ -1383,8 +1425,10 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
   }
 
   async claimDefinedFeatureTask(input: { featureId: string; taskId: string; missionId: string; sliceId: string }): Promise<MissionFeature> {
-    const feature = await this.layer.transactionImmediate((tx) => this.claimDefinedFeatureTaskInTransaction(tx, { ...input, requireExistingFeatureLink: true }));
+    const statusEvent: { value?: MissionEvent } = {};
+    const feature = await this.layer.transactionImmediate((tx) => this.claimDefinedFeatureTaskInTransaction(tx, { ...input, requireExistingFeatureLink: true, statusEvent }));
     this.emit("feature:updated", feature);
+    if (statusEvent.value) this.emit("mission:event", statusEvent.value);
     this.emit("feature:linked", { feature, taskId: input.taskId });
     await this.recomputeSliceStatus(feature.sliceId);
     return feature;
@@ -1472,7 +1516,7 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
     existing taskId: retries may reuse only that same canonical task.
     */
     const outcome = await this.layer.transactionImmediate(async (tx) => {
-      const feature = await getFeature(tx, featureId);
+      const feature = await this.getFeatureForStatusWrite(tx, featureId);
       if (!feature) throw new Error(`Feature ${featureId} not found`);
       if (feature.taskId && feature.taskId !== taskId) {
         throw new Error(`Feature ${featureId} is already linked to task ${feature.taskId}`);
@@ -1500,13 +1544,15 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
         updatedAt: now,
       };
       await updateFeature(tx, updated);
+      const event = await this.recordFeatureStatusChange(tx, feature, "triaged", { type: "system", id: "mission-store", source: "mission-link" });
       await setTaskMissionLinkage(tx, taskId, milestone.missionId, slice.id);
-      return updated;
+      return { feature: updated, event };
     });
-    this.emit("feature:updated", outcome);
-    this.emit("feature:linked", { feature: outcome, taskId });
-    await this.recomputeSliceStatus(outcome.sliceId);
-    return outcome;
+    this.emit("feature:updated", outcome.feature);
+    if (outcome.event) this.emit("mission:event", outcome.event);
+    this.emit("feature:linked", { feature: outcome.feature, taskId });
+    await this.recomputeSliceStatus(outcome.feature.sliceId);
+    return outcome.feature;
   }
 
   async unlinkFeatureFromTask(featureId: string): Promise<MissionFeature> {
@@ -1560,7 +1606,8 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
    * holding a database transaction while a model session executes.
    */
   async admitValidatorRun(featureId: string, input: ValidatorRunAdmissionInput): Promise<ValidatorRunAdmission> {
-    return this.layer.transactionImmediate(async (tx) => {
+    let statusEvent: MissionEvent | undefined;
+    const admission = await this.layer.transactionImmediate<ValidatorRunAdmission>(async (tx) => {
       const locked = await tx.select().from(schema.project.missionFeatures).where(and(
         eq(schema.project.missionFeatures.projectId, missionProjectId()),
         eq(schema.project.missionFeatures.id, featureId),
@@ -1588,6 +1635,7 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
       if (running) { await append("running", running); return { outcome: "running", run: running }; }
       if (terminal?.status === "passed" && input.reusePass) {
         await updateFeature(tx, { ...feature, status: "done", loopState: "passed", lastValidatorStatus: "passed", lastValidatorRunId: terminal.id, updatedAt: new Date().toISOString() });
+        statusEvent = await this.recordFeatureStatusChange(tx, feature, "done", { type: "system", id: "mission-store", source: "validator-reuse-pass" });
         await append("reuse-pass", terminal);
         return { outcome: "reuse-pass", run: terminal };
       }
@@ -1609,6 +1657,10 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
       await updateFeature(tx, { ...feature, validatorAttemptCount: run.validatorAttempt, lastValidatorRunId: run.id, loopState: "validating", validationBudgetFingerprint: feature.validationBudgetFingerprint !== input.inputFingerprint ? undefined : feature.validationBudgetFingerprint, validationBudgetRunId: feature.validationBudgetFingerprint !== input.inputFingerprint ? undefined : feature.validationBudgetRunId, validationBudgetBlockedAt: feature.validationBudgetFingerprint !== input.inputFingerprint ? undefined : feature.validationBudgetBlockedAt, updatedAt: now });
       return { outcome: "start", run };
     });
+    // FNXC:MissionStatusWrites 2026-08-10-13:45: Emit only after commit so observers never
+    // receive a transition for a transaction that subsequently rolls back.
+    if (statusEvent) this.emit("mission:event", statusEvent);
+    return admission;
   }
 
   async getValidatorRun(id: string): Promise<MissionValidatorRun | undefined> {
@@ -1901,20 +1953,48 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
       FNXC:PostgresMissionStatusReconciliation 2026-07-14-17:55:
       Superseded generated fixes are one reconciliation set. Update their terminal status in one statement instead of routing every ID through updateFeature/getFeature/cascade reads; emit the same per-feature observable events after persistence.
       */
-      await this.db.update(schema.project.missionFeatures).set({
-        status: "done",
-        taskId: null,
-        loopState: "passed",
-        lastValidatorStatus: "passed",
-        updatedAt: now,
-      }).where(inArray(schema.project.missionFeatures.id, ids));
-      for (const id of ids) {
-        const feature = byId.get(id)!;
+      const { events, updatedFeatures } = await this.layer.transactionImmediate(async (tx) => {
+        /*
+        FNXC:MissionStatusWrites 2026-08-10-13:21:
+        The bulk reconciliation must lock and re-read its candidates inside this transaction.
+        Using the earlier discovery snapshot would let a concurrent link/status writer overwrite
+        a newer row and emit an event with a stale `from` status.
+        */
+        const locked = await tx.select({ id: schema.project.missionFeatures.id })
+          .from(schema.project.missionFeatures)
+          .where(inArray(schema.project.missionFeatures.id, ids))
+          .for("update");
+        const lockedIds = locked.map((row) => row.id);
+        const preImages = lockedIds.length > 0 ? await listFeaturesByIds(tx, lockedIds) : [];
+        const changed = preImages.filter((feature) => feature.status !== "done" || feature.loopState !== "passed" || feature.lastValidatorStatus !== "passed" || feature.taskId);
+        if (changed.length === 0) return { events: [] as MissionEvent[], updatedFeatures: [] as MissionFeature[] };
+
+        await tx.update(schema.project.missionFeatures).set({
+          status: "done",
+          taskId: null,
+          loopState: "passed",
+          lastValidatorStatus: "passed",
+          updatedAt: now,
+        }).where(inArray(schema.project.missionFeatures.id, changed.map((feature) => feature.id)));
+        // One sequence read preserves contiguous ordering for the bulk statement without
+        // expanding its write into per-feature updates.
+        let seq = await getMaxEventSeq(tx);
+        const events: MissionEvent[] = [];
+        for (const feature of changed) {
+          if (feature.status !== "done") {
+            const event = await this.recordFeatureStatusChange(tx, feature, "done", { type: "system", id: "mission-store", source: "superseded-fix-reconcile" }, undefined, ++seq);
+            if (event) events.push(event);
+          }
+        }
+        return { events, updatedFeatures: changed };
+      });
+      for (const event of events) this.emit("mission:event", event);
+      for (const feature of updatedFeatures) {
         const updated = { ...feature, status: "done" as const, taskId: undefined, loopState: "passed" as const, lastValidatorStatus: "passed" as const, updatedAt: now };
         this.emit("feature:updated", updated);
         if (feature.taskId) await clearTaskMissionLinkage(this.db, feature.taskId);
       }
-      await this.recomputeSliceStatus(sliceId);
+      if (updatedFeatures.length > 0) await this.recomputeSliceStatus(sliceId);
     }
     return { supersededCount: ids.length, featureIds: ids };
   }

@@ -4,9 +4,9 @@
 import { Buffer } from "node:buffer";
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
-import { superviseSpawn } from "@fusion/core";
+import { superviseSpawn, SUPPORTED_LOCALES } from "@fusion/core";
 import { readFile, readdir, rm, stat, mkdtemp, writeFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
@@ -15,6 +15,7 @@ import { fileURLToPath } from "node:url";
 const dashboardRoot = path.resolve(import.meta.dirname, "..");
 const appRoot = path.join(dashboardRoot, "app");
 const clientDistRoot = path.join(dashboardRoot, "dist", "client");
+const i18nLocalesRoot = path.resolve(dashboardRoot, "..", "i18n", "locales");
 const requireBrowser = process.argv.includes("--require-browser") || process.env.FUSION_BROWSER_SMOKE_REQUIRE === "1";
 const screenshotPath = process.env.FUSION_BROWSER_SMOKE_SCREENSHOT;
 const agentHeartbeatMobileScreenshotPath = process.env.FUSION_AGENT_HEARTBEAT_MOBILE_SCREENSHOT;
@@ -36,6 +37,62 @@ function log(message) {
 
 function fail(message) {
   throw new Error(message);
+}
+
+function escapeHtml(value) {
+  return value.replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function validateQuickAddSaveLabels(labels) {
+  for (const [locale, label] of labels) {
+    if (typeof locale !== "string" || locale.length === 0 || typeof label !== "string" || label.trim().length === 0) {
+      fail(`Quick Add Save fixture requires a non-empty tasks.save translation for locale ${String(locale)}.`);
+    }
+  }
+  return labels;
+}
+
+function loadShippedQuickAddSaveLabels() {
+  return validateQuickAddSaveLabels(SUPPORTED_LOCALES
+    .map((locale) => {
+      const catalog = JSON.parse(readFileSync(path.join(i18nLocalesRoot, locale, "app.json"), "utf8"));
+      return [locale, catalog?.tasks?.save];
+    })
+    // Preserve the emitted fixture section's existing deterministic order while deriving its members.
+    .sort(([left], [right]) => left.localeCompare(right)));
+}
+
+const QUICK_ADD_COMPOSER_VARIANTS = [
+  ["board", "", "minimum", "300px", "disabled"],
+  ["board", "", "wide", "600px", "disabled"],
+  ["list", "quick-entry--single-line", "minimum", "300px", "enabled"],
+  ["list", "quick-entry--single-line", "wide", "600px", "enabled"],
+];
+
+const shippedQuickAddSaveLabels = loadShippedQuickAddSaveLabels();
+export const QUICK_ADD_SAVE_FIXTURE_COUNT = QUICK_ADD_COMPOSER_VARIANTS.length * shippedQuickAddSaveLabels.length;
+
+export function buildQuickAddSaveFixtures(labels = shippedQuickAddSaveLabels) {
+  return QUICK_ADD_COMPOSER_VARIANTS.flatMap(([surface, modifier, width, maxWidth, state]) => validateQuickAddSaveLabels(labels).map(([locale, label]) => `
+    <section class="quick-entry-smoke-fixture" data-smoke="quick-add-save-${surface}-${width}-${locale}" style="width: min(${maxWidth}, calc(100vw - 24px)); margin: 0 auto 12px;">
+      <div class="quick-entry-box quick-entry-box--expanded ${modifier}" data-smoke="quick-add-${surface}-composer">
+        <div class="quick-entry-actions" data-smoke="quick-add-save-row">
+          <div class="quick-entry-primary-group">
+            <button class="btn btn-icon btn-sm" data-testid="quick-entry-attach" type="button" aria-label="Attach"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M3 7h8"/></svg></button>
+            <button class="btn btn-icon btn-sm" data-testid="quick-entry-github-toggle" type="button" aria-label="GitHub"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M3 7h8"/></svg></button>
+            <button class="btn btn-icon btn-sm" data-testid="quick-entry-session-advisor-toggle" type="button" aria-label="Session advisor"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M2 7s2-3 5-3 5 3 5 3-2 3-5 3-5-3-5-3Z"/></svg></button>
+            <button class="btn btn-icon btn-sm" data-testid="quick-entry-priority-button" type="button" aria-label="Priority"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M3 7h8"/></svg></button>
+            <button class="btn btn-icon btn-sm" data-testid="quick-entry-fast-toggle" type="button" aria-label="Fast"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M3 7h8"/></svg></button>
+            <button class="btn btn-task-create btn-sm" data-testid="quick-entry-save" data-smoke="quick-add-save-button" data-locale="${escapeHtml(locale)}" type="button" ${state === "disabled" ? "disabled" : ""}><svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true" style="vertical-align: middle; margin-right: 4px;"><path d="M2 6h8"/></svg>${escapeHtml(label)}</button>
+          </div>
+        </div>
+      </div>
+    </section>
+  `)).join("");
 }
 
 /*
@@ -98,7 +155,7 @@ function runCommand(command, commandArgs, cwd) {
   });
 }
 
-export function createSmokeHtml() {
+export function createSmokeHtml(options = {}) {
   const columns = [
     ["triage", "Triage", "1"],
     ["todo", "Todo", "2"],
@@ -155,37 +212,14 @@ export function createSmokeHtml() {
   pt-BR joined the supported translations (the scaffold was previously empty and now carries
   machine-drafted translations) — add it here so the smoke keeps measuring the widest
   emitted-font label across every shipped locale.
+
+  FNXC:QuickAddActionRow 2026-08-10-19:11:
+  FN-8952 replaces the stale 24-fixture expectation desynchronized by pt-BR with fixtures and
+  counts derived from SUPPORTED_LOCALES plus each shipped tasks.save catalog value. Catalog text
+  is HTML-escaped before interpolation because QuickEntryBox renders a React text child: arbitrary
+  metacharacters must remain literal measured glyphs, never become fixture markup.
   */
-  const localizedSaveLabels = [
-    ["en", "Save"],
-    ["es", "Guardar"],
-    ["fr", "Enregistrer"],
-    ["ko", "저장"],
-    ["pt-BR", "Salvar"],
-    ["zh-CN", "保存"],
-    ["zh-TW", "儲存"],
-  ];
-  const quickAddComposerFixtures = [
-    ["board", "", "minimum", "300px", "disabled"],
-    ["board", "", "wide", "600px", "disabled"],
-    ["list", "quick-entry--single-line", "minimum", "300px", "enabled"],
-    ["list", "quick-entry--single-line", "wide", "600px", "enabled"],
-  ].flatMap(([surface, modifier, width, maxWidth, state]) => localizedSaveLabels.map(([locale, label]) => `
-    <section class="quick-entry-smoke-fixture" data-smoke="quick-add-save-${surface}-${width}-${locale}" style="width: min(${maxWidth}, calc(100vw - 24px)); margin: 0 auto 12px;">
-      <div class="quick-entry-box quick-entry-box--expanded ${modifier}" data-smoke="quick-add-${surface}-composer">
-        <div class="quick-entry-actions" data-smoke="quick-add-save-row">
-          <div class="quick-entry-primary-group">
-            <button class="btn btn-icon btn-sm" data-testid="quick-entry-attach" type="button" aria-label="Attach"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M3 7h8"/></svg></button>
-            <button class="btn btn-icon btn-sm" data-testid="quick-entry-github-toggle" type="button" aria-label="GitHub"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M3 7h8"/></svg></button>
-            <button class="btn btn-icon btn-sm" data-testid="quick-entry-session-advisor-toggle" type="button" aria-label="Session advisor"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M2 7s2-3 5-3 5 3 5 3-2 3-5 3-5-3-5-3Z"/></svg></button>
-            <button class="btn btn-icon btn-sm" data-testid="quick-entry-priority-button" type="button" aria-label="Priority"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M3 7h8"/></svg></button>
-            <button class="btn btn-icon btn-sm" data-testid="quick-entry-fast-toggle" type="button" aria-label="Fast"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M3 7h8"/></svg></button>
-            <button class="btn btn-task-create btn-sm" data-testid="quick-entry-save" data-smoke="quick-add-save-button" data-locale="${locale}" type="button" ${state === "disabled" ? "disabled" : ""}><svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true" style="vertical-align: middle; margin-right: 4px;"><path d="M2 6h8"/></svg>${label}</button>
-          </div>
-        </div>
-      </div>
-    </section>
-  `)).join("");
+  const quickAddComposerFixtures = buildQuickAddSaveFixtures(options.quickAddSaveLabels);
 
   /*
   FNXC:TaskDetailModalResponsive 2026-07-19-12:00:
@@ -1959,8 +1993,9 @@ async function runSmokeChecks(page, pageUrl) {
     .map((layout) => layout.saveWidth));
   assertSmokeResult(
     "Quick Add localized Save labels fit at the 300px supported minimum on mobile",
-    frenchMobileWidth === widestMobileWidth
-      && mobileQuickAddSaveLayout.length === 24
+    Number.isFinite(frenchMobileWidth)
+      && frenchMobileWidth === widestMobileWidth
+      && mobileQuickAddSaveLayout.length === QUICK_ADD_SAVE_FIXTURE_COUNT
       && mobileQuickAddSaveLayout.every((layout) => layout.saveOverflow <= 1
         && layout.rowOverflow <= 1
         && layout.composerOverflow <= 1
@@ -2022,8 +2057,9 @@ async function runSmokeChecks(page, pageUrl) {
     .map((layout) => layout.saveWidth));
   assertSmokeResult(
     "Quick Add localized Save labels fit at the 300px supported minimum on desktop",
-    frenchDesktopWidth === widestDesktopWidth
-      && desktopQuickAddSaveLayout.length === 24
+    Number.isFinite(frenchDesktopWidth)
+      && frenchDesktopWidth === widestDesktopWidth
+      && desktopQuickAddSaveLayout.length === QUICK_ADD_SAVE_FIXTURE_COUNT
       && desktopQuickAddSaveLayout.every((layout) => layout.saveOverflow <= 1
         && layout.rowOverflow <= 1
         && layout.composerOverflow <= 1

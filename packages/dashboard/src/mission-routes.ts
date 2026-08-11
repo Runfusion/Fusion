@@ -2716,7 +2716,8 @@ export function createMissionRouter(
       }
 
       try {
-        const feature = await missionStore.updateFeature(featureId, updates);
+        /* FNXC:MissionStatusWrites 2026-08-10-12:47: Operator and agent repairs share the attributed status-event contract consumed by mission reconciliation. */
+        const feature = await missionStore.updateFeature(featureId, updates, { actor: DASHBOARD_MISSION_ACTOR });
         res.json(feature);
       } catch (err: unknown) {
         const errMsg = err instanceof Error ? err.message : String(err);

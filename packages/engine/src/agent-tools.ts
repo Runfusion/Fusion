@@ -4376,6 +4376,7 @@ export const missionCreateParams = Type.Object({
 });
 export const missionUpdateParams = Type.Object({ id: Type.String(), title: Type.Optional(Type.String()), description: Type.Optional(Type.String()) });
 export const missionDeleteParams = Type.Object({ id: Type.String() });
+export const missionSetStatusParams = Type.Object({ id: Type.String(), status: Type.Union(fusionCore.MISSION_STATUSES.map((status) => Type.Literal(status))), reason: Type.Optional(Type.String()) });
 export const milestoneAddParams = Type.Object({ missionId: Type.String(), title: Type.String(), description: Type.Optional(Type.String()) });
 export const milestoneUpdateParams = Type.Object({ id: Type.String(), title: Type.Optional(Type.String()), description: Type.Optional(Type.String()), acceptanceCriteria: Type.Optional(Type.String()) });
 export const milestoneDeleteParams = Type.Object({ milestoneId: Type.String(), force: Type.Optional(Type.Boolean()) });
@@ -4385,6 +4386,7 @@ export const sliceDeleteParams = Type.Object({ sliceId: Type.String(), force: Ty
 export const featureAddParams = Type.Object({ sliceId: Type.String(), title: Type.String(), description: Type.Optional(Type.String()), acceptanceCriteria: Type.Optional(Type.String()) });
 export const featureUpdateParams = Type.Object({ id: Type.String(), title: Type.Optional(Type.String()), description: Type.Optional(Type.String()), acceptanceCriteria: Type.Optional(Type.String()) });
 export const featureDeleteParams = Type.Object({ featureId: Type.String(), force: Type.Optional(Type.Boolean()) });
+export const featureSetStatusParams = Type.Object({ id: Type.String(), status: Type.Union(fusionCore.FEATURE_STATUSES.map((status) => Type.Literal(status))), reason: Type.Optional(Type.String()) });
 export const featureLinkTaskParams = Type.Object({ featureId: Type.String(), taskId: Type.String() });
 export const researchFindingPromoteParams = Type.Object({
   runId: Type.String(),
@@ -4516,6 +4518,11 @@ export function createMissionTools(store: TaskStore, context: MissionToolActorCo
     tool("fn_mission_show", "Show Mission", "Show a mission with its full milestone, slice, and feature hierarchy.", missionShowParams, async ({ id }) => { const mission = await store.getMissionStore().getMissionWithHierarchy(id); return mission ? missionToolResult(formatMissionHierarchy(mission), { mission }) : missionToolResult(`Mission ${id} not found`, { code: "MISSION_NOT_FOUND", missionId: id }, true); }),
     tool("fn_mission_create", "Create Mission", "Create a high-level mission.", missionCreateParams, async (p) => { const ms = store.getMissionStore(); const mission = await ms.createMission({ title: p.title.trim(), description: optionalText(p.description), baseBranch: optionalText(p.baseBranch) }); const updated = p.autoAdvance === undefined ? mission : await ms.updateMission(mission.id, { autoAdvance: p.autoAdvance }, { actor }); return missionToolResult(`Created ${updated.id}: ${updated.title}`, { mission: updated }); }),
     tool("fn_mission_update", "Update Mission", "Partially update a mission.", missionUpdateParams, async (p) => { const updates = updateFields(p, ["title", "description"]); if (!Object.keys(updates).length) return missionToolResult("No fields to update", {}, true); const mission = await store.getMissionStore().updateMission(p.id, updates, { actor }); return missionToolResult(`Updated ${mission.id}: ${mission.title}`, { mission }); }),
+    tool("fn_mission_set_status", "Set Mission Status", "Set a mission lifecycle status.", missionSetStatusParams, async (p) => {
+      if (!fusionCore.MISSION_STATUSES.includes(p.status)) return missionToolResult(`Invalid status. Must be one of: ${fusionCore.MISSION_STATUSES.join(", ")}`, {}, true);
+      const mission = await store.getMissionStore().updateMission(p.id, { status: p.status }, { actor, reason: p.reason });
+      return missionToolResult(`Set ${mission.id} status to ${mission.status}`, { mission });
+    }),
     tool("fn_mission_delete", "Delete Mission", "Delete a mission and its hierarchy.", missionDeleteParams, async ({ id }) => { await store.getMissionStore().deleteMission(id); return missionToolResult(`Deleted ${id}`, { missionId: id }); }),
     tool("fn_milestone_add", "Add Milestone", "Add a milestone to a mission.", milestoneAddParams, async (p) => { const milestone = await store.getMissionStore().addMilestone(p.missionId, { title: p.title.trim(), description: optionalText(p.description) }); return missionToolResult(`Added ${milestone.id}`, { milestone }); }),
     tool("fn_milestone_update", "Update Milestone", "Partially update a milestone.", milestoneUpdateParams, async (p) => { const updates = updateFields(p, ["title", "description", "acceptanceCriteria"]); if (!Object.keys(updates).length) return missionToolResult("No fields to update", {}, true); const milestone = await store.getMissionStore().updateMilestone(p.id, updates); return missionToolResult(`Updated ${milestone.id}`, { milestone }); }),
@@ -4525,6 +4532,17 @@ export function createMissionTools(store: TaskStore, context: MissionToolActorCo
     tool("fn_slice_delete", "Delete Slice", "Delete a slice and descendants.", sliceDeleteParams, async (p) => { await store.getMissionStore().deleteSlice(p.sliceId, p.force === true); return missionToolResult(`Deleted ${p.sliceId}`, { sliceId: p.sliceId }); }),
     tool("fn_feature_add", "Add Feature", "Add a feature to a slice.", featureAddParams, async (p) => { const feature = await store.getMissionStore().addFeature(p.sliceId, { title: p.title.trim(), description: optionalText(p.description), acceptanceCriteria: optionalText(p.acceptanceCriteria) }); return missionToolResult(`Added ${feature.id}`, { feature }); }),
     tool("fn_feature_update", "Update Feature", "Partially update a feature.", featureUpdateParams, async (p) => { const updates = updateFields(p, ["title", "description", "acceptanceCriteria"]); if (!Object.keys(updates).length) return missionToolResult("No fields to update", {}, true); const feature = await store.getMissionStore().updateFeature(p.id, updates); return missionToolResult(`Updated ${feature.id}`, { feature }); }),
+    /* FNXC:MissionStatusWrites 2026-08-10-12:47: Dedicated status tools preserve the linked-task guard; generic partial updates intentionally cannot bypass it. */
+    tool("fn_feature_set_status", "Set Feature Status", "Set a feature lifecycle status.", featureSetStatusParams, async (p) => {
+      if (!fusionCore.FEATURE_STATUSES.includes(p.status)) return missionToolResult(`Invalid status. Must be one of: ${fusionCore.FEATURE_STATUSES.join(", ")}`, {}, true);
+      const missionStore = store.getMissionStore(); const feature = await missionStore.getFeature(p.id);
+      if (!feature) return missionToolResult(`Feature ${p.id} not found`, { code: "FEATURE_NOT_FOUND", featureId: p.id }, true);
+      if ((["triaged", "in-progress", "done", "blocked"] as const).includes(p.status) && !feature.taskId) {
+        return missionToolResult(`Cannot set status to '${p.status}' without a linked task. Use the triage endpoint to create and link a task first, or link an existing task via fn_feature_link_task.`, { error: "FEATURE_TASK_REQUIRED" }, true);
+      }
+      const updated = await missionStore.updateFeatureStatus(p.id, p.status, { actor, reason: p.reason });
+      return missionToolResult(`Set ${updated.id} status to ${updated.status}`, { feature: updated });
+    }),
     tool("fn_feature_delete", "Delete Feature", "Delete a feature, respecting linked-task guards.", featureDeleteParams, async (p) => { await store.getMissionStore().deleteFeature(p.featureId, p.force ===true); return missionToolResult(`Deleted ${p.featureId}`, { featureId: p.featureId }); }),
     tool("fn_feature_link_task", "Link Feature to Task", "Link a feature to a live project-scoped task.", featureLinkTaskParams, async (p) => { const feature = await store.getMissionStore().linkFeatureToTask(p.featureId, p.taskId); return missionToolResult(`Linked ${feature.id} to ${p.taskId}`, { feature }); }),
     tool("fn_research_promote_finding", "Promote Research Finding", "Promote a completed research finding into a canonical mission feature.", researchFindingPromoteParams, async (p) => {

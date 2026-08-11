@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "_comment": "FNXC:CustomWorkflowReliability 2026-06-19-00:00: FN-6694 requires this manifest to encode goal G-MPW67VQR-0001-97S3's release-check checklist as objective, runnable seam evidence instead of prose-only QA signoff.",
+  "_comment": "FNXC:CustomWorkflowReliability 2026-08-10-18:03: FN-6694 requires this manifest to encode goal G-MPW67VQR-0001-97S3's release-check checklist as objective, runnable seam evidence instead of prose-only QA signoff. FN-8951 repointed deleted pre-cutover seams to live tests that cover definitions and route validation, selection dispatch, REVISE completion, interpreter recovery, and restart durability.",
   "checklist": [
     {
       "id": "author-import-save-discover-reload",
@@ -9,19 +9,19 @@
       "seams": [
         {
           "package": "@fusion/core",
-          "file": "packages/core/src/__tests__/workflow-definition-store.test.ts"
+          "file": "packages/core/src/__tests__/postgres/workflow-definitions.pg.test.ts"
         },
         {
           "package": "@fusion/dashboard",
-          "file": "packages/dashboard/src/routes/__tests__/workflow-import-export.test.ts"
+          "file": "packages/dashboard/src/routes/__tests__/workflow-validate-route.test.ts"
         },
         {
           "package": "@fusion/dashboard",
-          "file": "packages/dashboard/src/routes/__tests__/workflow-design-route.test.ts"
+          "file": "packages/dashboard/src/routes/__tests__/workflow-setting-attribution.test.ts"
         },
         {
           "package": "@fusion/core",
-          "file": "packages/core/src/__tests__/workflow-selection-store.test.ts"
+          "file": "packages/core/src/__tests__/workflow-ir-selection-cache.test.ts"
         }
       ]
     },
@@ -32,7 +32,7 @@
       "seams": [
         {
           "package": "@fusion/core",
-          "file": "packages/core/src/__tests__/workflow-selection-store.test.ts"
+          "file": "packages/core/src/__tests__/custom-v1-workflow-dispatch.test.ts"
         },
         {
           "package": "@fusion/engine",
@@ -59,7 +59,7 @@
         },
         {
           "package": "@fusion/engine",
-          "file": "packages/engine/src/__tests__/executor-workflow-revision-scope.test.ts"
+          "file": "packages/engine/src/__tests__/executor-task-done-revise-verdict-guard.test.ts"
         }
       ]
     },
@@ -74,11 +74,11 @@
         },
         {
           "package": "@fusion/engine",
-          "file": "packages/engine/src/__tests__/reliability-interactions/workflow-interpreter-cutover.test.ts"
+          "file": "packages/engine/src/__tests__/interpreter-merge-seam.test.ts"
         },
         {
           "package": "@fusion/engine",
-          "file": "packages/engine/src/__tests__/self-healing-custom-workflow-recovery.test.ts"
+          "file": "packages/engine/src/__tests__/workflow-step-results-self-healing-recovery.test.ts"
         }
       ]
     },
@@ -89,11 +89,11 @@
       "seams": [
         {
           "package": "@fusion/core",
-          "file": "packages/core/src/__tests__/workflow-restart-durability.test.ts"
+          "file": "packages/core/src/__tests__/postgres/workflow-continuation-slot.pg.test.ts"
         },
         {
           "package": "@fusion/engine",
-          "file": "packages/engine/src/__tests__/self-healing-custom-workflow-recovery.test.ts"
+          "file": "packages/engine/src/__tests__/restart-recovery-coordinator.test.ts"
         }
       ]
     }

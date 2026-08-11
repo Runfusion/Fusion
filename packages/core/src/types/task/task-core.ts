@@ -574,6 +574,14 @@ engine's no-store fallback aligned across restarts.
 */
 export const WEDGE_RENOTIFY_COOLDOWN_MS = 6 * 60 * 60 * 1_000;
 
+/*
+FNXC:TaskWedgeNotifications 2026-08-10-18:54:
+`recoveryRetryCount` is a display mirror that executor, triage, and scheduler clear while
+creating terminal parks, so it cannot bound generic terminal-failure recovery. The durable
+budget instead lives in the existing wedge JSON and is revisioned because stale full-row writes
+can otherwise erase it. `applyToken` is a rotating fence consumed by the single clear/requeue
+transition; `lastApplyStartedAt` only detects abandonment and is never a lock.
+*/
 export interface TaskWedgeNotificationState {
   reasonKey: string;
   episodeId: string;
@@ -586,6 +594,22 @@ export interface TaskWedgeNotificationState {
   would let X -> Y -> X re-notify X while its own cooldown is still active.
   */
   lastNotifiedAtByReason?: Record<string, string>;
+  /** Monotonic durable-state version used to reject stale whole-object writes. */
+  budgetRevision?: number;
+  /** Sweep-owned generic terminal-failure recovery state. */
+  autoRecovery?: {
+    attempts: number;
+    lastAttemptAt: string;
+    budgetStartedAt?: string;
+    retryAppliedAt?: string;
+    resumeCount?: number;
+    lastApplyStartedAt?: string;
+    applyToken?: string;
+    lastBudgetWriteAt?: string;
+    exhaustedAt?: string;
+    escalationNotifiedAt?: string;
+    escalationReason?: "budget-exhausted" | "auto-recovery-disabled";
+  };
 }
 
 export type TaskRecommendationCategory = "improvement" | "feature" | "bug" | "other";
@@ -938,15 +962,21 @@ export interface Task {
    *  Review defaults to unbounded recovery so ordinary REVISE feedback does not
    *  terminal-fail the task. */
   postReviewFixCount?: number;
-  /** Number of consecutive triage pre-execution Plan Review REVISE replans this task
-   *  has consumed. Incremented by the triage Plan Review gate
-   *  (packages/engine/src/triage.ts runPlanReviewBeforeExecution) each time it blocks
-   *  execution with a REVISE verdict and routes the task back to `needs-replan`. When it
-   *  reaches `PLAN_REVIEW_GATE_REPLAN_CAP` the task is escalated to `awaiting-approval`
-   *  (awaitingApprovalReason `plan-review-replan-cap`) instead of replanning again, so a
-   *  planner/reviewer disagreement can never loop forever. Reset when the gate passes
-   *  (APPROVE) or on a manual retry. Distinct from `postReviewFixCount`, which bounds the
-   *  executor graph's post-merge/advisory optional-step REVISE budget. */
+  /** LEGACY — persisted but NEVER WRITTEN. Do not read it as a live signal.
+   *
+   *  FNXC:PlanReviewReplan 2026-08-10-18:32:
+   *  This counted consecutive Plan Review REVISE replans for the out-of-graph triage gate
+   *  (`runPlanReviewBeforeExecution`), which U10/R4 deleted along with its `PLAN_REVIEW_GATE_REPLAN_CAP`
+   *  ceiling. The column survived the deletion; its writer did not. It is still serialized and still
+   *  cleared by the operator Retry reset (harmless, and dropping it would need a schema migration for
+   *  no behavioral gain), but it is permanently 0 and must not be used to decide anything.
+   *
+   *  The live owner is the graph: `requestPreMergeOptionalStepFix` budgets Plan Review replans off the
+   *  PERSISTED workflow-step results (`countPlanReviewRevisionAttempts`) rather than a task column, and
+   *  parks via `parkPlanReviewReplanCapExhausted` at either an explicit `planReviewMaxRevisions` /
+   *  node `maxRevisions` budget or, for the unbounded default, `PLAN_REVIEW_FEEDBACK_HISTORY_LIMIT`.
+   *  Distinct from `postReviewFixCount`, which is the aggregate observability counter for the same
+   *  graph remediation loop. */
   planReviewReplanCount?: number;
   /** Number of bounded recovery retry attempts for transient executor/triage failures.
    *  Distinct from `mergeRetries` (merge-conflict-specific). Incremented by the
@@ -1063,11 +1093,15 @@ export interface Task {
    * that legacy value as an ordinary manual plan-approval hold (Approve/Reject Plan render
    * normally).
 
-   * FNXC:PlanReviewReplan 2026-07-15-11:09:
-   * Live writer: triage Plan Review REVISE replan-cap escalation stamps
-   * `plan-review-replan-cap` when automatic REVISE replans hit PLAN_REVIEW_GATE_REPLAN_CAP.
-   * Dashboard badge/detail banner/notifications must surface that reason so operators know
-   * approval is required because Plan Review did not converge — not a generic require-all gate.
+   * FNXC:PlanReviewReplan 2026-08-10-18:32:
+   * Live writer: `parkPlanReviewReplanCapExhausted` (packages/engine/src/executor/), called from
+   * `requestPreMergeOptionalStepFix` when the graph's Plan Review replan budget is exhausted —
+   * either an explicit `planReviewMaxRevisions` / node `maxRevisions` value, or
+   * `PLAN_REVIEW_FEEDBACK_HISTORY_LIMIT` backstopping the unbounded default. (Supersedes the
+   * pre-U10 triage gate and its deleted `PLAN_REVIEW_GATE_REPLAN_CAP`; the reason string is
+   * unchanged so no dashboard/notification surface moved.) Dashboard badge/detail banner/
+   * notifications must surface that reason so operators know approval is required because Plan
+   * Review did not converge — not a generic require-all gate.
    *
    * FNXC:PullRequestMerge 2026-08-09-05:07:
    * The PR merge queue stamps `merge-blocked-by-policy` for branch-protection holds.

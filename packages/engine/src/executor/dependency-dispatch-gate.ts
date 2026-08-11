@@ -11,6 +11,7 @@ import { getUnmetSchedulingDependencies } from "../scheduler.js";
 import { executorLog } from "../logger.js";
 import type { EngineRunContext } from "../util/run-audit.js";
 import { resolveReboundColumnFor } from "./lifecycle-columns.js";
+import { clearDispatchBlockedLogState, logDispatchBlockedOnce } from "./dispatch-block-log.js";
 
 export type DependencyDispatchGateDeps = {
   store: TaskStore;
@@ -21,7 +22,10 @@ export async function blockOuterDispatchWhenDependenciesUnmet(
   deps: DependencyDispatchGateDeps,
   task: Task,
 ): Promise<boolean> {
-  if (!task.dependencies || task.dependencies.length === 0) return false;
+  if (!task.dependencies || task.dependencies.length === 0) {
+    clearDispatchBlockedLogState(task.id);
+    return false;
+  }
 
   const settings = await deps.store.getSettings();
   const tasks = await deps.store.listTasks({ includeArchived: false, slim: true });
@@ -37,7 +41,10 @@ export async function blockOuterDispatchWhenDependenciesUnmet(
     tasks,
     settings.mergeRequestContractShadowEnabled === true ? { markerAcceptedByTaskId } : undefined,
   );
-  if (unmetDeps.length === 0) return false;
+  if (unmetDeps.length === 0) {
+    clearDispatchBlockedLogState(liveTask.id);
+    return false;
+  }
 
   const reboundColumn = await resolveReboundColumnFor(deps.store, liveTask.id);
   if (liveTask.column !== reboundColumn) {
@@ -73,6 +80,11 @@ export async function blockOuterDispatchWhenDependenciesUnmet(
       deps.getRunContextFor(liveTask.id),
     );
   }
-  executorLog.log(`${liveTask.id}: executor dispatch blocked by unmet dependencies: ${unmetDeps.join(", ")}`);
+  logDispatchBlockedOnce(
+    executorLog,
+    liveTask.id,
+    `dependencies:${normalizedUnmetDeps.join(",")}`,
+    `${liveTask.id}: executor dispatch blocked by unmet dependencies: ${unmetDeps.join(", ")}`,
+  );
   return true;
 }

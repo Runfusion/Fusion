@@ -47,9 +47,40 @@ export const TRANSIENT_ERROR_PATTERNS: RegExp[] = [
   /ETIMEDOUT/i,
   /socket hang up/i,
 
-  // Timeout patterns (only when related to connections, not general timeouts)
+  // Timeout patterns (connection-scoped — see the provider-request-timeout block below for the
+  // narrow exception covering SDK request timeouts)
   /timeout.*connection/i,
   /connection.*timeout/i,
+
+  /*
+  FNXC:Reliability-ErrorClassification 2026-08-10-18:32:
+  Provider REQUEST timeouts are transient. `"Request timed out."` is the literal default message of
+  the Anthropic and OpenAI SDKs' `APIConnectionTimeoutError`, surfaced to Fusion by
+  `checkSessionError` after pi-coding-agent exhausts its own in-session retries.
+
+  Previously the connection-scoped patterns above deliberately excluded "general timeouts", so this
+  string matched NOTHING and fell through to the generic failure branch in `specifyTask`
+  (triage.ts) — which restores `status: null` and writes no counter, no `nextRecoveryAt`, and no
+  park. Triage rediscovery then re-admitted the card on the very next poll, forever.
+
+  Measured impact before this change: 48 `Specification failed: Request timed out.` events across
+  10 tasks in 30 hours, with zero backoff between attempts (FN-8950 alone burned 8 consecutive
+  attempts over ~8 hours and never reached implementation). Failed planning attempts averaged 33
+  minutes each — 91 of them in 2 days, ~50 hours of wall-clock producing nothing, which was 24% of
+  all planning time. Classifying these as transient routes them into the BOUNDED recovery policy
+  (`MAX_RECOVERY_RETRIES` = 3 with 60s/120s/300s jittered backoff via `nextRecoveryAt`) that the
+  connection-level patterns already use, so a provider blip costs three spaced retries instead of an
+  unbounded loop.
+
+  ANCHORING IS LOAD-BEARING: match `request timed out`, never a bare /timed? out/. Agent log prose
+  and verification output legitimately contain "timed out" (observed: "BuildKit timed out",
+  "stuck-kill unwind timeout"), and a broad pattern would reclassify real, permanent task failures
+  as retryable — the exact mistake the original connection-only rule was written to avoid. This
+  does NOT affect model fallback, which pi decides internally and Fusion only observes
+  (`auth/fallback-model-observer.ts`).
+  */
+  /\brequest timed out\b/i,
+  /\bAPIConnectionTimeoutError\b/i,
 
   // AI provider abort errors — temporary request cancellations (e.g., Anthropic streaming aborts)
   // These occur when the provider's infrastructure drops an in-flight request.

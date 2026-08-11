@@ -39,6 +39,16 @@
       "source": "./src/i18n/detect-content-language.ts",
       "import": "./dist/i18n/detect-content-language.js"
     },
+    "./mcp-builtin-servers": {
+      "types": "./src/config/mcp-builtin-servers.ts",
+      "source": "./src/config/mcp-builtin-servers.ts",
+      "import": "./dist/config/mcp-builtin-servers.js"
+    },
+    "./memory-mcp": {
+      "types": "./src/memory/mcp/index.ts",
+      "source": "./src/memory/mcp/index.ts",
+      "import": "./dist/memory/mcp/index.js"
+    },
     "./package.json": "./package.json"
   },
   "publishConfig": {
@@ -61,7 +71,6 @@
     "@types/dockerode": "^3.3.41",
     "@types/node": "^25.5.0",
     "@vitest/coverage-v8": "^4.1.10",
-    "typescript": "^5.7.0",
     "vitest": "^4.1.10"
   },
   "engines": {
@@ -78,7 +87,8 @@
     "extract-zip": "^2.0.1",
     "postgres": "^3.4.9",
     "tar": "^7.5.13",
-    "yaml": "^2.8.3"
+    "yaml": "^2.8.3",
+    "typescript": "^5.7.0"
   },
   "optionalDependencies": {
     "keytar": "^7.9.0"

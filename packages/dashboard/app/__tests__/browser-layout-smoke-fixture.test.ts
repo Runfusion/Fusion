@@ -1,5 +1,33 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { SUPPORTED_LOCALES } from "@fusion/core";
 import { describe, expect, it, vi } from "vitest";
-import { createSmokeHtml, prepareBrowserSmoke } from "../../scripts/browser-layout-smoke.mjs";
+import {
+  buildQuickAddSaveFixtures,
+  createSmokeHtml,
+  prepareBrowserSmoke,
+  QUICK_ADD_SAVE_FIXTURE_COUNT,
+} from "../../scripts/browser-layout-smoke.mjs";
+
+const i18nLocalesRoot = path.resolve(import.meta.dirname, "../../../i18n/locales");
+const shippedQuickAddSaveLabels = SUPPORTED_LOCALES.map((locale) => {
+  const catalog = JSON.parse(readFileSync(path.join(i18nLocalesRoot, locale, "app.json"), "utf8"));
+  return [locale, catalog.tasks.save] as const;
+});
+
+function quickAddFixtureIds(html: string) {
+  return [...html.matchAll(/data-smoke="quick-add-save-(?:board|list)-(?:minimum|wide)-([^"]+)"/g)];
+}
+
+function hasQuickAddFixtureParity(html: string) {
+  const ids = quickAddFixtureIds(html);
+  const locales = ids.map((match) => match[1]);
+  return ids.length === SUPPORTED_LOCALES.length * 4
+    && new Set(locales).size === SUPPORTED_LOCALES.length
+    && [...SUPPORTED_LOCALES].every((locale) => locales.filter((candidate) => candidate === locale).length === 4)
+    && new Set(locales).size === new Set(SUPPORTED_LOCALES).size
+    && [...new Set(locales)].every((locale) => SUPPORTED_LOCALES.includes(locale as typeof SUPPORTED_LOCALES[number]));
+}
 
 describe("browser layout smoke fixture", () => {
   /*
@@ -173,8 +201,17 @@ describe("browser layout smoke fixture", () => {
     expect(html).toContain('<span class="provider-icon"><svg width="16" height="16"');
   });
 
-  it("includes localized Quick Add Save fixtures for Board and List composers", () => {
+  /*
+  FNXC:DashboardBrowserSmoke 2026-08-10-19:14:
+  FN-8952 keeps locale-derivation and escaping failures in this jsdom lane so they fail in seconds
+  instead of aborting Chromium after its expensive client build. Negative cases use the fixture
+  injection seam because a real shipped locale addition must correctly keep the derived guard green.
+  */
+  it("derives localized Quick Add Save fixtures from every shipped locale", () => {
     const html = createSmokeHtml();
+    const fixtureIds = quickAddFixtureIds(html);
+    const fixtureLocales = fixtureIds.map((match) => match[1]);
+
     expect(html).toContain('data-smoke="quick-add-save-fixtures"');
     expect(html).toContain('data-smoke="quick-add-save-board-minimum-fr"');
     expect(html).toContain('data-smoke="quick-add-save-list-minimum-fr"');
@@ -182,10 +219,40 @@ describe("browser layout smoke fixture", () => {
     expect(html).toContain('data-smoke="quick-add-save-row"');
     expect(html).toContain('data-smoke="quick-add-save-button"');
     expect(html).toContain('data-testid="quick-entry-session-advisor-toggle"');
-    expect(html.match(/data-testid="quick-entry-(?:attach|github-toggle|session-advisor-toggle|priority-button|fast-toggle)"/g)).toHaveLength(140);
-    for (const label of ["Save", "Guardar", "Enregistrer", "저장", "保存", "儲存"]) {
+    expect(fixtureIds).toHaveLength(SUPPORTED_LOCALES.length * 4);
+    expect(QUICK_ADD_SAVE_FIXTURE_COUNT).toBe(SUPPORTED_LOCALES.length * 4);
+    expect(new Set(fixtureLocales)).toEqual(new Set(SUPPORTED_LOCALES));
+    for (const locale of SUPPORTED_LOCALES) {
+      expect(fixtureLocales.filter((candidate) => candidate === locale)).toHaveLength(4);
+    }
+    expect(new Set(fixtureIds.map((match) => match[0]))).toHaveLength(fixtureIds.length);
+    expect(html.match(/data-testid="quick-entry-(?:attach|github-toggle|session-advisor-toggle|priority-button|fast-toggle)"/g))
+      .toHaveLength(QUICK_ADD_SAVE_FIXTURE_COUNT * 5);
+    for (const [, label] of shippedQuickAddSaveLabels) {
       expect(html).toContain(label);
     }
+  });
+
+  it("detects injected Quick Add locale derivation drift", () => {
+    expect(hasQuickAddFixtureParity(buildQuickAddSaveFixtures(shippedQuickAddSaveLabels.slice(0, -1)))).toBe(false);
+    expect(hasQuickAddFixtureParity(buildQuickAddSaveFixtures([...shippedQuickAddSaveLabels, ["synthetic", "Synthetic"]]))).toBe(false);
+  });
+
+  it("escapes injected Quick Add labels as React-equivalent text", () => {
+    const label = 'Save & <measure> > "quoted"';
+    const fixtures = buildQuickAddSaveFixtures([["synthetic", label]]);
+    const buttonMarkup = fixtures.match(/<button[^>]*data-locale="synthetic"[^>]*>.*?<\/button>/)?.[0];
+    const container = document.createElement("div");
+    container.innerHTML = fixtures;
+
+    expect(buttonMarkup).toContain("Save &amp; &lt;measure&gt; &gt; &quot;quoted&quot;");
+    expect(buttonMarkup).not.toContain(label);
+    expect(container.querySelector('[data-locale="synthetic"]')?.textContent).toBe(label);
+  });
+
+  it("fails loudly when an injected Quick Add translation is missing", () => {
+    expect(() => buildQuickAddSaveFixtures([["en", ""]])).toThrow(/non-empty tasks\.save translation/);
+    expect(() => buildQuickAddSaveFixtures([["en", undefined] as unknown as [string, string]])).toThrow(/non-empty tasks\.save translation/);
   });
 
   /*

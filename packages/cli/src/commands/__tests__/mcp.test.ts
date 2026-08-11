@@ -98,6 +98,7 @@ import {
   runMcpImport,
   runMcpList,
   runMcpRemove,
+  runMcpValidate,
 } from "../mcp.js";
 
 function resetState() {
@@ -135,16 +136,36 @@ describe("mcp commands", () => {
     const listed = JSON.parse(consoleCapture.output.at(-1) ?? "{}");
     expect(listed.global[0]).toMatchObject({ name: "github", command: "global-gh" });
     expect(listed.project[0]).toMatchObject({ name: "github", command: "project-gh" });
-    expect(listed.effective).toEqual([expect.objectContaining({ name: "github", command: "project-gh" })]);
+    expect(listed.effective).toEqual(expect.arrayContaining([expect.objectContaining({ name: "github", command: "project-gh" })]));
 
     await runMcpDisable("github", { scope: "project" });
     await runMcpList({ json: true });
-    expect(JSON.parse(consoleCapture.output.at(-1) ?? "{}").effective).toEqual([]);
+    expect(JSON.parse(consoleCapture.output.at(-1) ?? "{}").effective).not.toEqual(expect.arrayContaining([expect.objectContaining({ name: "github" })]));
 
     await runMcpRemove("github", { scope: "project" });
     await runMcpList({ json: true });
-    expect(JSON.parse(consoleCapture.output.at(-1) ?? "{}").effective).toEqual([expect.objectContaining({ command: "global-gh" })]);
+    expect(JSON.parse(consoleCapture.output.at(-1) ?? "{}").effective).toEqual(expect.arrayContaining([expect.objectContaining({ command: "global-gh" })]));
     consoleCapture.restore();
+  });
+
+  it("includes an injected fusion-memory entry through list, export, and validate direct resolvers", async () => {
+    const previousEntry = process.env.FUSION_MEMORY_MCP_ENTRY;
+    process.env.FUSION_MEMORY_MCP_ENTRY = join(process.cwd(), "../..", "package.json");
+    state.globalSettings = { mcpServers: { enabled: true, servers: [] } };
+    state.projectSettings = { mcpServers: { enabled: true, servers: [] } };
+    const consoleCapture = captureConsole();
+    try {
+      await runMcpList({ json: true });
+      expect(JSON.stringify(JSON.parse(consoleCapture.output.at(-1) ?? "{}"))).toContain("fusion-memory");
+      await runMcpExport({ scope: "effective" });
+      expect(consoleCapture.output.at(-1)).toContain("fusion-memory");
+      await runMcpValidate({ scope: "effective", json: true });
+      expect(JSON.parse(consoleCapture.output.at(-1) ?? "{}").servers).toBeGreaterThan(0);
+    } finally {
+      consoleCapture.restore();
+      if (previousEntry === undefined) delete process.env.FUSION_MEMORY_MCP_ENTRY;
+      else process.env.FUSION_MEMORY_MCP_ENTRY = previousEntry;
+    }
   });
 
   it("imports Claude Desktop mcpServers JSON by creating secrets and persisting only references", async () => {

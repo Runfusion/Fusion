@@ -130,6 +130,7 @@ types/policy for severity-routed notes before they reach steering inject.
 export * from "./planner/overseer-advice.js";
 export * from "./planner/overseer-emission-guard.js";
 export * from "./tasks/frontend-ux-policy.js";
+export * from "./tasks/terminal-failure-auto-recovery.js";
 export * from "./tasks/original-description-policy.js";
 export * from "./planner/planning-plan-md.js";
 export * from "./tasks/file-scope-classification.js";
@@ -338,6 +339,8 @@ export {
   BUILTIN_TRIAGE_POLICY_SETTINGS,
   BUILTIN_OVERSIGHT_SETTINGS,
   DEFAULT_MAX_POST_REVIEW_FIXES,
+  DEFAULT_PLANNING_TIMEOUT_MS,
+  DEFAULT_PLAN_REVIEW_REPLAN_CAP,
   DEFAULT_PLANNER_OVERSEER_EXECUTOR_STUCK_AFTER_MS,
   PLANNER_HEARTBEAT_PATROL_ENABLED_SETTING_ID,
   renderTriagePolicyPlaceholders,
@@ -649,6 +652,23 @@ export {
   type OptionalReviewRevisionBudget,
   type ResolveOptionalReviewRevisionBudgetInput,
 } from "./workflows/workflow-settings-resolver.js";
+export {
+  applyReviewSeverityGate,
+  formatFindingsByPriority,
+  isBlockingFinding,
+  isReviewBlockingSeverity,
+  resolveReviewBlockingSeverity,
+  CODE_REVIEW_BLOCKING_SEVERITY_SETTING_ID,
+  DEFAULT_CODE_REVIEW_BLOCKING_SEVERITY,
+  DEFAULT_PLAN_REVIEW_BLOCKING_SEVERITY,
+  PLAN_REVIEW_BLOCKING_SEVERITY_SETTING_ID,
+  REVIEW_BLOCKING_SEVERITIES,
+  SEVERITY_PRIORITY_LABEL,
+  type ResolveReviewBlockingSeverityInput,
+  type ReviewBlockingSeverity,
+  type ReviewSeverityGateInput,
+  type ReviewSeverityGateResult,
+} from "./workflows/review-severity-gate.js";
 export {
   applyWorkflowSettingsOverlay,
   type WorkflowSettingsOverlayInput,
@@ -1607,6 +1627,7 @@ export {
   syncMemoryBackupRoutine,
 } from "./memory/memory-backup.js";
 export type { MemoryBackupInfo, MemoryBackupOptions } from "./memory/memory-backup.js";
+export * from "./knowledge-graph/index.js";
 export {
   exportSettings,
   importSettings,
@@ -1758,6 +1779,11 @@ export {
   VALIDATOR_RUN_STATUSES,
   VALIDATION_DIAGNOSTICS_MAX_EVIDENCE_PER_ASSERTION,
   VALIDATION_DIAGNOSTICS_MAX_TEXT_BYTES,
+  MISSION_EVENT_REASON_MAX_BYTES,
+  MISSION_EVENT_METADATA_MAX_BYTES,
+  boundMissionEventReason,
+  normalizeMissionTransitionActorForEvent,
+  buildMissionStatusEventMetadata,
   selectNextSerialMissionSlice,
   normalizeValidationDiagnostics,
   renderValidationFailureDescription,
@@ -2780,3 +2806,9 @@ export { AGENT_ACTIVITY_EVENT_TYPES, AGENT_ACTIVITY_ATTRIBUTIONS, AGENT_ACTIVITY
 export { appendAgentActivityEvent, queryAgentActivityEvents, getMaxAgentActivitySeq, pruneAgentActivityEvents } from "./task-store/async/async-agent-activity.js";
 export { makeAgentActivityEventId, resolveAgentActivityAttribution, agentIdExistsInRoster, formatAgentActivitySummary, sanitizeAgentActivityMetadata } from "./task-store/agent-activity-outbox.js";
 export * from "./memory/recall/index.js";
+/*
+ * FNXC:MemoryMcp 2026-08-11-00:19:
+ * The dashboard aliases this barrel for browser code. Keep the pure descriptor here, while the
+ * filesystem-dependent spawn factory remains available only at @fusion/core/mcp-builtin-servers.
+ */
+export * from "./config/mcp-builtin-descriptor.js";

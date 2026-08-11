@@ -54,6 +54,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { InProcessRuntime } from "./runtimes/in-process-runtime.js";
 import { createStoreSpecDriftRepository, SpecDriftReconciler } from "./spec-drift-reconciler.js";
+import { publishPersistedMissionFeatureAlignment } from "./missions/mission-feature-sync.js";
 import type { WorktreePool } from "./worktree/worktree-pool.js";
 import type { ProjectRuntimeConfig } from "./project/project-runtime.js";
 import { PrMonitor } from "./merge/pr-monitor.js";
@@ -860,6 +861,12 @@ export class ProjectEngine {
     return tracked;
   }
 
+  /*
+  FNXC:MergeReliability 2026-08-10-19:27:
+  FN-8923 documents that this bounded latch can release while an aborted body still runs. The
+  durable-write inventory is complete only over its pinned closure and writer surface; additions
+  there are checked by engine affected/full-suite lanes, not asserted to block the curated gate.
+  */
   private async awaitPriorMergeBodySettle(): Promise<void> {
     const prior = this.mergeBodyInFlight;
     if (canStartNextMergeBody(prior)) return;
@@ -955,7 +962,7 @@ export class ProjectEngine {
     inline latest-report snapshot. Full append-only history preserves re-locked divergence, while
     the report identity fence intentionally cannot detect an incorrect alignment value.
     */
-    this.specDriftReconciler = new SpecDriftReconciler(createStoreSpecDriftRepository(store));
+    this.specDriftReconciler = new SpecDriftReconciler(createStoreSpecDriftRepository(store, async (taskId, report) => { await publishPersistedMissionFeatureAlignment(store, taskId, report); }));
     /*
     FNXC:SpecDrift 2026-08-09-18:32:
     Startup repair alone leaves a long-running engine blind to direct task mutations and workflow

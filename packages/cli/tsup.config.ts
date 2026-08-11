@@ -440,6 +440,8 @@ const cliBuildConfig = {
     esbuild cannot resolve, while the published CLI installs this direct runtime dep.
     */
     "playwright-core",
+    // FNXC:KnowledgeGraph 2026-08-10-10:00: TypeScript 5.9.3 (sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==) stays runtime external.
+    "typescript",
   ],
   splitting: false,
   // Keep clean disabled so the dedicated plugin-sdk tsup config can emit into

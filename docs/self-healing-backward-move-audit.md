@@ -37,7 +37,7 @@ Stages that cannot satisfy all three must either (a) tighten predicate to requir
 | surfaceStalePausedReviews | 4478 | stale paused in-review | `settings.stalePausedReviewThresholdMs` | age signal | log only | ANNOTATION-ONLY | keep | n/a | n/a |
 | surfaceStalePausedTodos | 4529 | stale paused todo | `settings.stalePausedTodoThresholdMs` | age signal | log only | ANNOTATION-ONLY | keep | n/a | n/a |
 | recoverGhostReviewTasks | 4583 | idle in-review ghost | `settings.taskStuckTimeoutMs` | idle + status filters | move to todo preserveProgress | BACKWARD | tighten | triple proof + existing ghost predicates | gate move; emit `task:ghost-review-no-action` |
-| recoverInterruptedMergingTasks | 4650 | stale transient merging status | `settings.taskStuckTimeoutMs` | stale status + landed-commit detection | done finalize or status clear/requeue | FORWARD/INTERNAL-RETRY | keep | n/a | n/a |
+| recoverInterruptedMergingTasks | 4650 | stale transient merging status | `updatedAt` age ≥ `settings.taskStuckTimeoutMs` | stale status + landed-commit detection | done finalize or status clear/requeue | FORWARD/INTERNAL-RETRY | keep | FN-8924 retained the age gate: merger-agent logs are not an orphan-proof task-scoped clock | n/a |
 | recoverDoneTaskMergeMetadata | 4777 | done merge metadata drift | n/a | landed evidence + metadata gap | metadata update | RECONCILE-ONLY | keep | n/a | n/a |
 | recoverMergedReviewTasks | 4937 | in-review already merged | landed commit proof | landed proof | move to done | FORWARD | keep | n/a | n/a |
 | recoverStuckMergeDeadlocks (landed) | 5036 | retry-exhausted merge failed but landed | cooldown + retries | landed proof | move to done + unblock deps | FORWARD | keep | n/a | n/a |
@@ -62,6 +62,12 @@ Stages that cannot satisfy all three must either (a) tighten predicate to requir
 | recoverOrphanedPlanningTasks | 6940 | planning-status tasks drifted | `APPROVED_TRIAGE_RECOVERY_GRACE_MS` | planning drift + inactive | clear planning status | RECONCILE-ONLY | keep | n/a | n/a |
 
 ## Per-stage rationale
+### FN-8924 — retain age-based interrupted-merge recovery
+- **Decision: REJECT.** `recoverInterruptedMergingTasks()` retains `Date.now() - task.updatedAt >= settings.taskStuckTimeoutMs` for its non-owner grace gate.
+- **Concrete counter-evidence:** the required replacement clock, `getLastMergerAgentActivityMs(taskId)`, reads entries written by the merger itself. The merge body's `log()` helper in `packages/engine/src/merge/merger-ai.ts` appends a task `logEntry` and a `"merger"` agent log together (lines 1317–1321; duplicated by the workspace helper at 1869–1873). These diagnostic writes are intentionally best-effort/unfenced, so an abandoned or superseded merge body can refresh both `updatedAt` and the proposed attributed clock. Merger-recency is therefore not an orphan-proof, task-scoped clock and cannot satisfy FN-8924's adoption bias.
+- The process-global active-merge-start clock is not an alternative: `measureActiveMergeSilenceMs()` falls back to `getActiveMergeStartedAtMs()` only for the owner path, where `isActiveMergeWedged()` first proves task identity. It has no task parameter and can belong to another merge. No durable cross-process merge-ownership claim or lease exists; the remaining pending/task-active/session/lock signals are in-process only, leaving the same cross-process blind spot that the retained age gate already has.
+- Consequently, the owner arm and all mutation-time recovery behavior remain unchanged. The proposed two-phase re-proof and routing-input divergence design is not adopted without a sound admission clock; changing sibling stale-status, deadlock, or dashboard Retry definitions would create unsupported divergent semantics. The regression test pins this contract: a fresh-`updatedAt`, unowned merge-active task is not recovered even if an older merger log would satisfy the rejected quiet-window proposal.
+
 ### recoverStaleIncompleteReviewTasks
 - Current evidence is age + incomplete steps only; this can race live executor/session churn.
 - Tighten chosen: preserve recovery semantics but require dead-session + unusable-worktree + stale activity proof.

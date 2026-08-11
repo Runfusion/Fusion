@@ -90,6 +90,8 @@ export interface MissionFeature {
   description?: string;
   acceptanceCriteria?: string;
   status: FeatureStatus;
+  /** Deterministic plan/execution projection retained by mission reconciliation. */
+  specAlignment?: "on-plan" | "diverged-needs-review" | "diverged-relocked-approved" | "unavailable";
   createdAt: string;
   updatedAt: string;
   /** Current loop state for the execution loop (idle, implementing, validating, needs_fix, passed, blocked) */

@@ -109,6 +109,9 @@ importers:
       react-i18next:
         specifier: ^17.0.8
         version: 17.0.8(i18next@26.3.6(typescript@5.9.3))(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(typescript@5.9.3)
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
       ws:
         specifier: ^8.18.0
         version: 8.21.1
@@ -161,9 +164,6 @@ importers:
       typebox:
         specifier: ^1.0.0
         version: 1.1.38
-      typescript:
-        specifier: ^5.7.0
-        version: 5.9.3
       vitest:
         specifier: ^4.1.10
         version: 4.1.10(@opentelemetry/api@1.9.0)(@types/node@25.9.5)(@vitest/coverage-v8@4.1.10)(happy-dom@20.10.1)(jsdom@29.1.1(@noble/hashes@2.3.0))(vite@6.4.1(@types/node@25.9.5)(jiti@2.7.0)(tsx@4.21.0)(yaml@2.9.0))
@@ -210,6 +210,9 @@ importers:
       tar:
         specifier: ^7.5.13
         version: 7.5.13
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
       yaml:
         specifier: ^2.8.3
         version: 2.9.0
@@ -226,9 +229,6 @@ importers:
       '@vitest/coverage-v8':
         specifier: ^4.1.10
         version: 4.1.10(vitest@4.1.10)
-      typescript:
-        specifier: ^5.7.0
-        version: 5.9.3
       vitest:
         specifier: ^4.1.10
         version: 4.1.10(@opentelemetry/api@1.9.0)(@types/node@25.9.5)(@vitest/coverage-v8@4.1.10)(happy-dom@20.10.1)(jsdom@29.1.1(@noble/hashes@2.3.0))(vite@6.4.1(@types/node@25.9.5)(jiti@2.7.0)(tsx@4.21.0)(yaml@2.9.0))

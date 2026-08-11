@@ -9,6 +9,7 @@ const lock = (current = evidence()) => ({ version: 1, acceptedAt: "2026-08-09T07
 describe("spec lock canonicalization", () => {
   it("normalizes Mission whitespace but preserves a structural Mission rewrite", () => {
     expect(canonicalizePlan(prompt).sections.mission.hash).toBe(canonicalizePlan(prompt.replace("Build a safe widget.", " Build   a safe widget. ")).sections.mission.hash);
+    expect(canonicalizePlan(prompt).sections.mission.hash).toBe(canonicalizePlan(prompt.replace("Build a safe widget.", "Build a\n\n safe\twidget.")).sections.mission.hash);
     expect(canonicalizePlan(prompt).sections.mission.hash).not.toBe(canonicalizePlan(prompt.replace("safe", "different")).sections.mission.hash);
   });
 

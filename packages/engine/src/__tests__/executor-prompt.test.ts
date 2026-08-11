@@ -1842,20 +1842,25 @@ describe("swallowed async store failure observability", () => {
     warnSpy.mockRestore();
   });
 
-  it("logs warning when sessionFile clear fails on completion", async () => {
+  /*
+  FNXC:SessionResume 2026-08-10-17:33:
+  SUPERSEDES "logs warning when sessionFile clear fails on completion". That test asserted the executor
+  nulls `sessionFile` when a completed implementation hands off to review. It no longer does: a review
+  gate can bounce the card straight back for remediation in the same worktree, and clearing here forced
+  every one of those rounds to restart cold and re-derive the change it had just written. The clear now
+  happens only on genuinely terminal exits (and at the explicit fresh-session sites, which also null
+  worktree/branch). This asserts the replacement invariant on the same fixture: the handoff preserves the
+  conversation and attempts no clear at all.
+  */
+  it("preserves sessionFile across the review handoff so remediation can resume the conversation", async () => {
     const warnSpy = vi.spyOn(executorLog, "warn");
     const store = createMockStore();
     let capturedCustomTools: any[] = [];
 
-    /*
-    FNXC:EngineTests 2026-07-19-04:47 (U10b):
-    Only the sessionFile CLEAR may fail; the graph re-reads the card between nodes, so every other write must still land on the row or the run never reaches the completion that triggers the clear.
-    */
+    const sessionFileClears: unknown[] = [];
     const passThroughUpdateTask = store.updateTask.getMockImplementation()!;
     store.updateTask.mockImplementation(async (taskId: string, patch: Record<string, unknown>) => {
-      if (patch?.sessionFile === null) {
-        throw new Error("session clear failed");
-      }
+      if (patch?.sessionFile === null) sessionFileClears.push(patch);
       return passThroughUpdateTask(taskId, patch);
     });
 
@@ -1891,16 +1896,16 @@ describe("swallowed async store failure observability", () => {
 
     /*
     FNXC:EngineTests 2026-07-19-03:19 (U10b):
-    A failed sessionFile clear must warn but must not block the run's handoff to review; that handoff is now the graph's merge boundary, so the move carries workflow-graph provenance.
+    The handoff to review is the graph's merge boundary, so the move carries workflow-graph provenance.
     */
     expect(store.moveTask).toHaveBeenCalledWith(
       "FN-001",
       "in-review",
       expect.objectContaining({ workflowMoveSource: "workflow-graph" }),
     );
-    expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining("FN-001 failed to clear sessionFile: session clear failed"),
-    );
+    // The conversation survives the handoff — nothing nulls sessionFile on this path.
+    expect(sessionFileClears).toEqual([]);
+    expect(warnSpy).not.toHaveBeenCalledWith(expect.stringContaining("failed to clear sessionFile"));
 
     warnSpy.mockRestore();
   });

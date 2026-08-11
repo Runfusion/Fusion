@@ -288,6 +288,16 @@ Expected outcome: enabling a server makes it available to subsequent supported A
 
 See [Settings Reference](./settings-reference.md) for the `mcpServers` settings contract and [Agents](./agents.md) for runtime/model lane behavior.
 
+## Fusion memory built-in
+
+When MCP is enabled, Fusion automatically resolves the `fusion-memory` stdio server for project-rooted sessions. It exposes `graph_query`, `graph_neighbors`, and `graph_shortest_path` for the knowledge graph, plus `recall_search` and `recall_append` for durable recall. Graph edges preserve `provenance` (`extracted` or `inferred`) in JSON result text.
+
+The server emits one bounded text block containing `{ tool, results, truncated, omittedCount }`. It drops complete trailing results before using a clearly marked non-JSON fallback. Its cap follows `agentToolOutputMaxChars`; `0` remains unlimited and small configured values are raised to the server's safe minimum. The budget is read from the project store once per MCP process, so restart a session after changing it. If the store is unavailable, graph tools still answer under the default cap and recall tools return an `isError` result. Protocol errors use JSON-RPC errors, while valid tool calls that fail during execution return `isError` so a model can react.
+
+A built CLI entry is required; `FUSION_MEMORY_MCP_ENTRY` can provide an explicit entry for packaged or development installations. A source checkout without a resolvable entry shows the built-in as unavailable rather than breaking MCP resolution.
+
+Disable the built-in with an `enabled: false` MCP entry (a tombstone). Removing that tombstone re-enables it; do not create a normal transport-less server definition. A project marker can cancel a global tombstone without replacing the built-in transport. Lanes without a project store continue to resolve no MCP servers, which is a pre-existing limitation.
+
 ## Plugin-provided servers
 
 A plugin can declaratively contribute an MCP server without modifying project settings. Fusion includes it only when that plugin is enabled for the active project, then applies normal project override and `enabled:false` tombstone semantics by name. The server binary remains the consuming project's responsibility; an unavailable command produces the normal isolated MCP spawn failure. Plugin declarations may contain only Fusion secret references for sensitive values.

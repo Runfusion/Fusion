@@ -205,6 +205,7 @@ The canonical per-parameter tool reference lives in `packages/cli/skill/fusion/r
 | `fn_mission_unlink_goal` | Idempotently unlink a goal from a mission, including archived goals. |
 | `fn_mission_delete` | Delete a mission and its hierarchy. |
 | `fn_mission_update` | Update mission title/description using partial patches. |
+| `fn_mission_set_status` | Set mission lifecycle status with an attributed audit event. |
 | `fn_milestone_add` | Add a milestone to a mission. |
 | `fn_milestone_update` | Update milestone fields using partial patches. |
 | `fn_slice_add` | Add a slice to a milestone. |
@@ -213,6 +214,7 @@ The canonical per-parameter tool reference lives in `packages/cli/skill/fusion/r
 | `fn_feature_add` | Add a feature to a slice with optional acceptance criteria. |
 | `fn_feature_delete` | Delete a feature (with linked-task guard and optional `force`). |
 | `fn_feature_update` | Update feature fields using partial patches. |
+| `fn_feature_set_status` | Set feature status; execution statuses require a linked task. |
 | `fn_feature_link_task` | Link a feature to a task for implementation. |
 | `fn_milestone_delete` | Delete a milestone (with linked-task guard and optional `force`). |
 
@@ -740,7 +742,7 @@ See also: [Multi-Project](./multi-project.md) and [Task Management](./task-manag
 
 ## Agent and dashboard-chat tools
 
-Mission hierarchy operations are available with the same project-scoped `MissionStore` contract in the pi extension, engine-managed executor/triage/heartbeat agents, and provider-backed dashboard chat. The surface is `fn_mission_list`, `fn_mission_show`, `fn_mission_create`, `fn_mission_update`, `fn_mission_delete`, `fn_milestone_add`, `fn_milestone_update`, `fn_milestone_delete`, `fn_slice_add`, `fn_slice_activate`, `fn_slice_delete`, `fn_feature_add`, `fn_feature_update`, `fn_feature_delete`, and `fn_feature_link_task`.
+Mission hierarchy operations are available with the same project-scoped `MissionStore` contract in the pi extension, engine-managed executor/triage/heartbeat agents, and provider-backed dashboard chat. The surface is `fn_mission_list`, `fn_mission_show`, `fn_mission_create`, `fn_mission_update`, `fn_mission_set_status`, `fn_mission_delete`, `fn_milestone_add`, `fn_milestone_update`, `fn_milestone_delete`, `fn_slice_add`, `fn_slice_activate`, `fn_slice_delete`, `fn_feature_add`, `fn_feature_update`, `fn_feature_set_status`, `fn_feature_delete`, and `fn_feature_link_task`.
 
 `fn_mission_list` and `fn_mission_show` are positively classified read-only. All other hierarchy operations mutate persisted project data and remain subject to the engine action gate and permanent-agent permission policy; they are never treated as unknown or exempt tools.
 
@@ -766,4 +768,7 @@ Every automatic suppression appends one visible `validation memoized` activity e
 
 ## Spec alignment
 
-A linked task may expose a separate spec alignment signal: `on-plan`, `diverged-needs-review`, `diverged-relocked-approved`, or `unavailable`. This signal is independent of feature delivery and validation status; it never marks a feature done, blocks a task, or substitutes for assertion validation. Archived tasks retain their task-visible lock history but follow the existing unlink behavior and do not recreate a feature projection.
+A linked task may expose a separate spec alignment signal: `on-plan`, `diverged-needs-review`, `diverged-relocked-approved`, or `unavailable`. This signal is independent of feature delivery and validation status; it never marks a feature done, blocks a task, or substitutes for assertion validation. Archived tasks retain their task-visible lock history but follow the existing unlink behavior and do not recreate a feature projection. Scheduler and autopilot reconciliation persist the current deterministic projection on each linked feature even when delivery status does not change, and Mission Manager renders that retained projection.
+
+
+`fn_feature_set_status` preserves the linked-task guard: `triaged`, `in-progress`, `done`, and `blocked` require a linked task; link an existing task with `fn_feature_link_task` or triage the feature first. Feature status writes emit `feature_status_changed` atomically with the row write at every production writer: engine and pi tools, dashboard REST repairs, scheduler work, linking/claiming, terminal-task reconciliation, validator reuse, and superseded-fix reconciliation. Feature and mission status events use one total, size-capped metadata builder, which persists only ids-only actor fields (`type`, `id`, `source`; never `displayName`) and an optional redacted, byte-bounded reason.

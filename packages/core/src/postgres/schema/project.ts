@@ -1614,6 +1614,8 @@ export const missionFeatures = projectSchema.table("mission_features", {
   // fixed to text to match the SQLite TEXT column and MissionStore semantics.
   acceptanceCriteria: text("acceptance_criteria"),
   status: text("status").notNull(),
+  // FNXC:SpecLockMissionAlignment 2026-08-10-16:17: retain task drift projection independently of feature delivery status so roadmap readers share reconciliation's durable result.
+  specAlignment: text("spec_alignment"),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
   // FNXC:MissionStore 2026-06-24-08:20:

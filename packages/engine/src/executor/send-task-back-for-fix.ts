@@ -6,7 +6,7 @@
  * FNXC:ExternalExecutionCheckout 2026-08-09-22:43:
  * Remediation reuses the live external checkout path and must not persist it as task.worktree.
  */
-import type { Task, TaskStore } from "@fusion/core";
+import type { Task, TaskStore, WorkflowReviewFinding } from "@fusion/core";
 import type { EngineRunContext } from "../util/run-audit.js";
 import { resolveAuthoritativeExternalExecutionRoute } from "./resolve-authoritative-external-execution-route.js";
 
@@ -19,6 +19,7 @@ export type SendTaskBackForFixDeps = {
     failureFeedback: string,
     stepName: string,
     retry: { attempt: number; max?: number },
+    findings?: WorkflowReviewFinding[],
   ) => Promise<void>;
   reopenLastStepForRevision: (
     taskId: string,
@@ -44,6 +45,7 @@ export async function sendTaskBackForFix(
   preserveResumeState: boolean = true,
   mergeVerificationFailure: boolean = false,
   retryPresentation?: { attempt: number; max?: number },
+  findings?: WorkflowReviewFinding[],
 ): Promise<void> {
   const taskId = task.id;
   deps.clearCompletedTaskWatchdog(taskId);
@@ -92,6 +94,7 @@ export async function sendTaskBackForFix(
     failureFeedback,
     stepName,
     retryPresentation ?? { attempt: deps.maxWorkflowStepRetries, max: deps.maxWorkflowStepRetries },
+    findings,
   );
 
   // 4. Re-open only the last step for a single in-place fix pass. Earlier
@@ -107,10 +110,22 @@ export async function sendTaskBackForFix(
   //    task is still in-review would drop the merge blocker during the async
   //    bounce window and let a concurrent auto-merge sweep merge an
   //    empty-`steps` graph-native task with the gate failure unaddressed.
+  /*
+  FNXC:SessionResume 2026-08-10-17:33:
+  `preserveResumeState` now also preserves the CONVERSATION, not just step progress. Previously this
+  unconditionally nulled `sessionFile`, so every remediation round re-read the repository and re-derived
+  the change it had just written. The remediation instructions live in PROMPT.md, and the resume prompt
+  in run-implementation.ts directs the agent to re-read it, so a resumed session sees the new findings as
+  a follow-up turn — which is how a review round-trip actually works.
+
+  A caller that explicitly does NOT preserve resume state still gets a cold session, and the resume guard
+  re-validates the persisted worktree before reopening, so a remediation routed to a different checkout
+  (external execution route) starts fresh rather than resuming against the wrong tree.
+  */
   await deps.store.updateTask(taskId, {
     status: mergeVerificationFailure ? "merging-fix" : null,
     error: null,
-    sessionFile: null,
+    ...(preserveResumeState ? {} : { sessionFile: null }),
     workflowStepRetries: 0,
   });
 

@@ -94,6 +94,7 @@ const PERMANENT_TASK_AGENT_ONLY_TOOLS = [
   "fn_mission_create",
   "fn_mission_delete",
   "fn_mission_update",
+  "fn_mission_set_status",
   "fn_mission_backfill_assertions",
   "fn_milestone_add",
   "fn_slice_add",
@@ -104,6 +105,7 @@ const PERMANENT_TASK_AGENT_ONLY_TOOLS = [
   "fn_slice_activate",
   "fn_feature_link_task",
   "fn_feature_update",
+  "fn_feature_set_status",
   "fn_milestone_update",
   /* FNXC:Ideation 2026-07-30-15:30: Persisted divergence/convergence writes require both action and permanent-agent policy recognition. */
   "fn_ideation_start",

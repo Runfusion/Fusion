@@ -63,6 +63,8 @@ export type ValidatorRunStatus = (typeof VALIDATOR_RUN_STATUSES)[number];
  */
 export const VALIDATION_DIAGNOSTICS_MAX_EVIDENCE_PER_ASSERTION = 16;
 export const VALIDATION_DIAGNOSTICS_MAX_TEXT_BYTES = 4096;
+export const MISSION_EVENT_REASON_MAX_BYTES = 512;
+export const MISSION_EVENT_METADATA_MAX_BYTES = 2048;
 
 export type ValidationAssertionVerdict = "pass" | "fail" | "blocked";
 
@@ -107,10 +109,16 @@ export interface ValidationDiagnosticsInput {
   projectRoot?: string;
 }
 
-function boundValidationText(value: unknown, projectRoot?: string): { value?: string; truncated?: boolean } {
+/*
+FNXC:MissionStatusWrites 2026-08-10-12:47:
+Mission status audit metadata is constructed at the store boundary because agent reasons and
+identity strings are untrusted. The total builder runs after the row write in its transaction,
+so a malformed caller value cannot roll back a legitimate status repair.
+*/
+function boundMissionText(value: unknown, limit: number, projectRoot?: string): { value?: string; truncated?: boolean } {
   if (typeof value !== "string") return {};
-  let text = redactSecrets(value);
-  // Paths from the project are useful evidence; disposable/external paths are not.
+  let text: string;
+  try { text = redactSecrets(value); } catch { return {}; }
   text = text.replace(/(?:[A-Za-z]:\\|\/)[^\s'"`]+/g, (path) => {
     const normalizedRoot = projectRoot?.replace(/\\/g, "/").replace(/\/+$/, "");
     const normalizedPath = path.replace(/\\/g, "/");
@@ -119,20 +127,88 @@ function boundValidationText(value: unknown, projectRoot?: string): { value?: st
       : "[external path omitted]";
   });
   const bytes = Buffer.byteLength(text, "utf8");
-  if (bytes <= VALIDATION_DIAGNOSTICS_MAX_TEXT_BYTES) return { value: text };
+  if (bytes <= limit) return { value: text };
   const marker = "… [truncated]";
-  const limit = VALIDATION_DIAGNOSTICS_MAX_TEXT_BYTES - Buffer.byteLength(marker, "utf8");
-  let end = 0;
-  let used = 0;
+  const remaining = limit - Buffer.byteLength(marker, "utf8");
+  let end = 0; let used = 0;
   for (const character of text) {
     const size = Buffer.byteLength(character, "utf8");
-    if (used + size > limit) break;
-    used += size;
-    end += character.length;
+    if (used + size > remaining) break;
+    used += size; end += character.length;
   }
   return { value: `${text.slice(0, end)}${marker}`, truncated: true };
 }
+function boundValidationText(value: unknown, projectRoot?: string): { value?: string; truncated?: boolean } {
+  return boundMissionText(value, VALIDATION_DIAGNOSTICS_MAX_TEXT_BYTES, projectRoot);
+}
 
+/** Bounds untrusted agent/operator prose before it enters a mission-event row. */
+export function boundMissionEventReason(reason: unknown): { value?: string; truncated?: boolean } {
+  // Check semantic emptiness before adding the truncation marker: whitespace-only
+  // input must not become audit prose merely because it exceeds the byte limit.
+  if (typeof reason !== "string" || !reason.trim()) return {};
+  return boundMissionText(reason, MISSION_EVENT_REASON_MAX_BYTES);
+}
+
+export function normalizeMissionTransitionActorForEvent(actor: unknown): { type: MissionTransitionActorType; id: string; source: string } {
+  try {
+    const candidate = actor && typeof actor === "object" ? actor as Record<string, unknown> : {};
+    const type = MISSION_TRANSITION_ACTOR_TYPES.includes(candidate.type as MissionTransitionActorType) ? candidate.type as MissionTransitionActorType : "system";
+    const id = boundMissionText(typeof candidate.id === "string" ? candidate.id : "mission-store", 200).value || "mission-store";
+    const source = boundMissionText(typeof candidate.source === "string" ? candidate.source : "mission-store", 200).value || "mission-store";
+    return { type, id, source };
+  } catch { return { type: "system", id: "mission-store", source: "mission-store" }; }
+}
+
+/** Builds the only persisted metadata shape for mission and feature transitions. */
+export function buildMissionStatusEventMetadata(input: { entity: "feature" | "mission"; field: string; from: unknown; to: unknown; ids: Record<string, string | undefined>; actor: unknown; reason?: unknown }): Record<string, unknown> {
+  /*
+  FNXC:MissionStatusWrites 2026-08-10-13:04:
+  This builder executes after a status row changes but before its transaction commits. It must
+  tolerate hostile values and bound even its required fields, so audit metadata can never roll
+  back a legitimate repair or exceed the event-row budget.
+  */
+  const fallbackActor = { type: "system" as const, id: "mission-store", source: "mission-store" };
+  const safeText = (value: unknown, fallback: string): string => {
+    try { return boundMissionText(typeof value === "string" ? value : fallback, 200).value || fallback; } catch { return fallback; }
+  };
+  const safePrimitive = (value: unknown): string | number | boolean | null => {
+    try {
+      if (typeof value === "string") return safeText(value, "");
+      if (typeof value === "number" || typeof value === "boolean" || value === null) return value;
+      return safeText(String(value ?? ""), "");
+    } catch { return ""; }
+  };
+  try {
+    const actor = normalizeMissionTransitionActorForEvent(input?.actor);
+    const minimal: Record<string, unknown> = {
+      source: actor.source,
+      actor,
+      field: safeText(input?.field, "status"),
+      from: safePrimitive(input?.from),
+      to: safePrimitive(input?.to),
+    };
+    const ids = Object.fromEntries(Object.entries(input?.ids ?? {}).flatMap(([key, value]) =>
+      value === undefined ? [] : [[safeText(key, "id"), safeText(value, "mission-store")]],
+    ));
+    const reason = boundMissionEventReason(input?.reason);
+    const result: Record<string, unknown> = {
+      ...minimal,
+      ...ids,
+      ...(reason.value !== undefined ? { reason: reason.value } : {}),
+      ...(reason.truncated ? { reasonTruncated: true } : {}),
+    };
+    const fits = () => {
+      try { return Buffer.byteLength(JSON.stringify(result), "utf8") <= MISSION_EVENT_METADATA_MAX_BYTES; } catch { return false; }
+    };
+    if (!fits()) { delete result.reason; result.metadataTrimmed = true; }
+    if (!fits()) { delete result.reasonTruncated; result.metadataTrimmed = true; }
+    if (!fits()) return { ...minimal, metadataTrimmed: true };
+    return result;
+  } catch {
+    return { source: fallbackActor.source, actor: fallbackActor, field: "status", from: "", to: "", metadataTrimmed: true };
+  }
+}
 /** Normalize and redact validation evidence before any mission artifact persists it. */
 export function normalizeValidationDiagnostics(input: ValidationDiagnosticsInput): ValidationDiagnostics {
   return {
@@ -208,6 +284,7 @@ export const MISSION_EVENT_TYPES = [
   "mission_completed",
   "mission_started",
   "mission_status_changed",
+  "feature_status_changed",
   "mission_paused",
   "mission_resumed",
   "autopilot_enabled",
@@ -239,6 +316,8 @@ export interface MissionTransitionActor {
 /** Optional attribution supplied to a mission mutation that can arm autonomy. */
 export interface MissionUpdateOptions {
   actor?: MissionTransitionActor;
+  /** Untrusted caller prose; the store redacts and bounds it before persistence. */
+  reason?: string;
 }
 
 /** Autopilot status for a mission */
@@ -416,6 +495,14 @@ export interface ResearchFeatureProvenance {
 
 export type ImplementationStopReason = "budget-exhausted" | "operator-intervention";
 
+/**
+ * FNXC:SpecLockMissionAlignment 2026-08-10-16:17:
+ * Alignment is a persisted roadmap projection from the linked task's deterministic drift report.
+ * It stays separate from delivery and validation lifecycle state, so divergence never fabricates
+ * completion or blocks work.
+ */
+export type MissionFeatureSpecAlignment = "on-plan" | "diverged-needs-review" | "diverged-relocked-approved" | "unavailable";
+
 export interface MissionFeature {
   /** Unique identifier (e.g., "F-J6K9AB-G7H3") */
   id: string;
@@ -431,6 +518,8 @@ export interface MissionFeature {
   acceptanceCriteria?: string;
   /** Current lifecycle status */
   status: FeatureStatus;
+  /** Orthogonal, machine-derived alignment of the linked task's current plan and execution. */
+  specAlignment?: MissionFeatureSpecAlignment;
   /** Durable lineage when this canonical feature came from Fusion Research. */
   researchProvenance?: ResearchFeatureProvenance;
   /** ISO-8601 timestamp of creation */
