@@ -133,10 +133,11 @@ export async function reconcileMissionState(
           Reconciliation has always projected spec alignment independently of delivery status.
           Preserve that projection even when the lifecycle decision is a no-op, while routing its
           write through the same explicit actor boundary as every automatic reconcile mutation.
+          Dry-run previews must also require that write capability so they never promise an unavailable mutation.
           */
-          if (feature.specAlignment !== decision.alignment) {
+          if (feature.specAlignment !== decision.alignment && missionApi.updateFeature) {
             if (options.dryRun) result.planned!.push({ featureId: feature.id, action: "spec-alignment" });
-            else if (missionApi.updateFeature) await missionApi.updateFeature(feature.id, { specAlignment: decision.alignment }, { actor });
+            else await missionApi.updateFeature(feature.id, { specAlignment: decision.alignment }, { actor });
           }
           const wip = task.column !== undefined && !plannerColumns.includes(task.column) && decision.kind === "update" && decision.status === "in-progress";
           const complete = decision.kind === "update" && decision.status === "done" && (!assertions.length || feature.lastValidatorStatus === "passed");

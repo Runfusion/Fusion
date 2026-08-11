@@ -2119,7 +2119,17 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
       const winner = await transitionRunningValidatorRun(tx, updatedRun);
       if (!winner) return { won: false, updatedFeature: false, feature: currentFeature };
       const ownsFeature = currentFeature.lastValidatorRunId === run.id;
-      const shouldUpdateFeature = ownsFeature && mission.status !== "archived" && mission.status !== "complete" && currentFeature.status !== "done";
+      /*
+      FNXC:MissionValidation 2026-08-11-05:54:
+      Reaper eligibility must use mission state protected by the same transaction as the feature update. A mission that becomes archived or complete after the preflight read must not be reopened by a stale validator reap.
+      */
+      await tx.select().from(schema.project.missions).where(and(
+        eq(schema.project.missions.projectId, missionProjectId()),
+        eq(schema.project.missions.id, mission.id),
+      )).for("update");
+      const currentMission = await getMission(tx, mission.id);
+      if (!currentMission) throw new Error(`Mission ${mission.id} not found`);
+      const shouldUpdateFeature = ownsFeature && currentMission.status !== "archived" && currentMission.status !== "complete" && currentFeature.status !== "done";
       if (shouldUpdateFeature) await updateFeature(tx, { ...currentFeature, loopState: "needs_fix", lastValidatorStatus: "error", updatedAt: now });
       return { won: true, updatedFeature: shouldUpdateFeature, feature: currentFeature };
     });

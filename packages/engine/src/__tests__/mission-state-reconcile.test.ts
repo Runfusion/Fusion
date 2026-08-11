@@ -45,6 +45,37 @@ describe("reconcileMissionState", () => {
     expect(updateFeature).not.toHaveBeenCalled();
   });
 
+  it("does not preview spec alignment when the store cannot apply that mutation", async () => {
+    const task = {
+      id: "FN-1", title: "Delivery", column: "in-progress", status: "in-progress",
+      missionId: "M-1", sliceId: "SL-1", updatedAt: "2026-08-11T00:00:00.000Z",
+    };
+    const feature = {
+      id: "F-1", title: "Delivery", sliceId: "SL-1", taskId: "FN-1", status: "in-progress",
+      specAlignment: "on-plan", createdAt: "2026-08-11T00:00:00.000Z", updatedAt: "2026-08-11T00:00:00.000Z",
+    };
+    const missionStore = {
+      listMissions: vi.fn().mockResolvedValue([{ id: "M-1", status: "active" }]),
+      getMissionWithHierarchy: vi.fn().mockResolvedValue({
+        id: "M-1", milestones: [{ slices: [{ id: "SL-1", features: [feature] }] }],
+      }),
+      listAssertionsForFeature: vi.fn().mockResolvedValue([]),
+      updateFeatureStatus: vi.fn(),
+    };
+    const taskStore = {
+      listTasks: vi.fn().mockResolvedValue([task]),
+      getTask: vi.fn().mockResolvedValue(task),
+      getLatestSpecDriftReport: vi.fn().mockResolvedValue({ alignment: "diverged-needs-review" }),
+    };
+
+    const result = await reconcileMissionState(
+      { taskStore: taskStore as never, missionStore },
+      { source: "self-healing", dryRun: true },
+    );
+
+    expect(result.planned).toEqual([]);
+  });
+
   it("preserves the TaskStore receiver while listing reconciliation candidates", async () => {
     const taskStore = {
       async listTasks(this: unknown, options: unknown) {

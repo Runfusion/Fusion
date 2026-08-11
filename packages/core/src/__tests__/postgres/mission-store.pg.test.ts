@@ -983,6 +983,10 @@ pgTest("MissionStore (PostgreSQL backend mode)", () => {
     const manualReplacement = await m.startManualValidatorRun(manualReplacementFeature.id);
     expect(manualReplacement).toMatchObject({ outcome: "started" });
     await m.completeValidatorRun(oldEngineRun.id, "failed");
+    expect(await m.getValidatorRun(oldEngineRun.id)).toMatchObject({
+      status: "failed",
+      completedAt: expect.any(String),
+    });
     expect(await m.getFeature(manualReplacementFeature.id)).toMatchObject({
       lastValidatorRunId: manualReplacement.run.id,
       loopState: "validating",
@@ -994,6 +998,10 @@ pgTest("MissionStore (PostgreSQL backend mode)", () => {
     await ageRun(oldManual.run.id);
     const fallbackReplacement = await m.startValidatorRun(fallbackReplacementFeature.id, "task_completion");
     await m.completeValidatorRun(oldManual.run.id, "passed");
+    expect(await m.getValidatorRun(oldManual.run.id)).toMatchObject({
+      status: "passed",
+      completedAt: expect.any(String),
+    });
     expect(await m.getFeature(fallbackReplacementFeature.id)).toMatchObject({
       lastValidatorRunId: fallbackReplacement.id,
       loopState: "validating",
@@ -1005,8 +1013,35 @@ pgTest("MissionStore (PostgreSQL backend mode)", () => {
     const reaperReplacement = await m.startManualValidatorRun(reaperReplacementFeature.id);
     expect(reaperReplacement).toMatchObject({ outcome: "started" });
     await m.reapValidatorRun(oldReapTarget.id, "stale owner");
+    expect(await m.getValidatorRun(oldReapTarget.id)).toMatchObject({
+      status: "error",
+      completedAt: expect.any(String),
+    });
     expect(await m.getFeature(reaperReplacementFeature.id)).toMatchObject({
       lastValidatorRunId: reaperReplacement.run.id,
+      loopState: "validating",
+    });
+
+    const terminalMissionFeature = await m.addFeature(slice.id, { title: "Terminal mission guard" });
+    const terminalMissionRun = await m.startValidatorRun(terminalMissionFeature.id, "task_completion");
+    const layer = h.layer();
+    const originalTransaction = layer.transactionImmediate.bind(layer);
+    let archiveBeforeReapTransaction = true;
+    const transaction = vi.spyOn(layer, "transactionImmediate").mockImplementation(async (callback) => {
+      if (archiveBeforeReapTransaction) {
+        archiveBeforeReapTransaction = false;
+        await m.updateMission(mission.id, { status: "archived" });
+      }
+      return originalTransaction(callback);
+    });
+    try {
+      await m.reapValidatorRun(terminalMissionRun.id, "mission became terminal");
+    } finally {
+      transaction.mockRestore();
+    }
+    expect(await m.getMission(mission.id)).toMatchObject({ status: "archived" });
+    expect(await m.getFeature(terminalMissionFeature.id)).toMatchObject({
+      lastValidatorRunId: terminalMissionRun.id,
       loopState: "validating",
     });
   });
