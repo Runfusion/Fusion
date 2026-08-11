@@ -129,6 +129,8 @@ export async function resolveFeatureRepairTargets(
   const task = await taskStore.getTask(feature.taskId).catch(() => null);
   /*
   FNXC:MissionValidationRepair 2026-08-11-02:05:
+  DELIBERATE-LITERAL: this fence describes the physical legacy row that the locked core
+  verifier can inspect, not the task's workflow-resolved archive lane.
   The repair fence may call a link absent only for physical states the core transaction can verify
   without resolving a workflow: a missing/soft-deleted task or the legacy literal archived row.
   A renamed archived lifecycle lane remains a live row until archival soft-deletes it; classifying

@@ -1721,6 +1721,11 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
           const rows = await tx.select({ column: schema.project.tasks.column, updatedAt: schema.project.tasks.updatedAt, deletedAt: schema.project.tasks.deletedAt })
             .from(schema.project.tasks).where(and(eq(schema.project.tasks.projectId, missionProjectId()), eq(schema.project.tasks.id, fence.taskId))).for("update");
           const task = rows[0];
+          /*
+          FNXC:MissionValidationRepair 2026-08-11-03:04 DELIBERATE-LITERAL:
+          The locked verifier must match the producer's physical legacy-row predicate; renamed
+          archive lanes remain live until archival soft-deletes them.
+          */
           const liveness = task && !task.deletedAt && task.column !== "archived" ? "live" : "absent";
           if (fence.taskLiveness === "live") {
             if (liveness !== "live" || task!.column !== fence.taskColumn || task!.updatedAt !== fence.taskUpdatedAt) throw new RepairGroundTruthStaleError(featureId);

@@ -123,6 +123,8 @@ export function resolveTaskIntakeOwner(input: ResolveTaskIntakeOwnerInput): Task
     const explicit = byId.get(input.explicitAssigneeId);
     /*
     FNXC:IntakeOwnership 2026-08-11-02:04:
+    DELIBERATE-LITERAL: this synthetic task-like value asks only whether an explicitly selected
+    agent may perform implementation work; it is not a persisted task query or move target.
     FN-8843 duplicated an executor-only role check here, contradicting explicit-routing policy and the
     executorRoleOverride contract so every explicitly assigned engineer or operator override failed before insert.
     The shared policy now owns the explicit role decision; binding and pool routing remain executor-only.

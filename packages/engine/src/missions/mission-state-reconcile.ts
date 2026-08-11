@@ -44,6 +44,10 @@ function titleKey(sliceId: string, title: string): string { return `${sliceId}\0
 function hasRepairCapability(store: unknown): store is RepairCapability {
   return typeof (store as Record<string, unknown> | null | undefined)?.repairFeatureValidationState === "function";
 }
+/*
+FNXC:MissionAutoReconcile 2026-08-11-04:57 DELIBERATE-LITERAL:
+The physical archived lane remains a compatibility terminal signal before workflow resolution; custom workflows are checked against their resolved archived lane immediately afterward.
+*/
 async function isArchivedTask(taskStore: TaskStore, task: Task): Promise<boolean> {
   if (task.deletedAt || task.column === "archived") return true;
   const ir = await resolveWorkflowIrForTask(taskStore, task.id).catch(() => undefined);
