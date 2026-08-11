@@ -533,6 +533,8 @@ export default defineConfig({
       */
       "@fusion/core/task-delete-attribution": resolve(__dirname, "../core/src/task-delete-attribution.ts"),
       "@fusion/core/column-roles": resolve(__dirname, "../core/src/column-roles.ts"),
+      // FNXC:MemoryMcp 2026-08-11-00:19: Route tests use the Node-only factory subpath; browser components remain on the pure descriptor barrel.
+      "@fusion/core/mcp-builtin-servers": resolve(__dirname, "../core/src/config/mcp-builtin-servers.ts"),
       "@fusion/core": resolve(__dirname, "../core/src/index.ts"),
       "@fusion/engine": resolve(__dirname, "../engine/src/index.ts"),
       "@fusion/plugin-sdk": resolve(__dirname, "../plugin-sdk/src/index.ts"),

@@ -39,6 +39,16 @@
       "source": "./src/i18n/detect-content-language.ts",
       "import": "./dist/i18n/detect-content-language.js"
     },
+    "./mcp-builtin-servers": {
+      "types": "./src/config/mcp-builtin-servers.ts",
+      "source": "./src/config/mcp-builtin-servers.ts",
+      "import": "./dist/config/mcp-builtin-servers.js"
+    },
+    "./memory-mcp": {
+      "types": "./src/memory/mcp/index.ts",
+      "source": "./src/memory/mcp/index.ts",
+      "import": "./dist/memory/mcp/index.js"
+    },
     "./package.json": "./package.json"
   },
   "publishConfig": {

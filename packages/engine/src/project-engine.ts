@@ -861,6 +861,12 @@ export class ProjectEngine {
     return tracked;
   }
 
+  /*
+  FNXC:MergeReliability 2026-08-10-19:27:
+  FN-8923 documents that this bounded latch can release while an aborted body still runs. The
+  durable-write inventory is complete only over its pinned closure and writer surface; additions
+  there are checked by engine affected/full-suite lanes, not asserted to block the curated gate.
+  */
   private async awaitPriorMergeBodySettle(): Promise<void> {
     const prior = this.mergeBodyInFlight;
     if (canStartNextMergeBody(prior)) return;

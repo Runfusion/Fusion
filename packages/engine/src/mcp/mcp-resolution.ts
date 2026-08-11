@@ -9,6 +9,7 @@ import {
   type PluginMcpServerContribution,
   type ResolvedMcpServerDefinition,
 } from "@fusion/core";
+import { buildFusionMemoryBuiltIns } from "@fusion/core/mcp-builtin-servers";
 
 export interface ResolveMcpServersForRuntimeOptions {
   globalSettings?: Pick<GlobalSettings, "mcpServers"> | null;
@@ -17,6 +18,8 @@ export interface ResolveMcpServersForRuntimeOptions {
   reader?: McpSecretReaderIdentity;
   /** Already project-scoped plugin entries. Raw runner/loader output is forbidden here. */
   pluginServers?: Array<{ pluginId: string; server: PluginMcpServerContribution }>;
+  projectRoot?: string | undefined;
+  memoryMcpEntry?: string | null;
 }
 
 export interface ResolvedMcpServersForRuntime {
@@ -35,7 +38,7 @@ export interface ResolvedMcpServersForRuntime {
 export async function resolveMcpServersForRuntime(
   options: ResolveMcpServersForRuntimeOptions,
 ): Promise<ResolvedMcpServersForRuntime> {
-  const effective = resolveEffectiveMcpServers(options.globalSettings, options.projectSettings, options.pluginServers);
+  const effective = resolveEffectiveMcpServers(options.globalSettings, options.projectSettings, options.pluginServers, buildFusionMemoryBuiltIns(options.projectRoot, options.memoryMcpEntry));
   if (effective.length === 0) return { servers: [], errors: [] };
 
   const materialized = await materializeMcpServersSecrets(
@@ -60,6 +63,7 @@ export interface McpSettingsAndSecretsStore {
   }>;
   getSecretsStore?(): Promise<McpSecretReader> | McpSecretReader;
   /** Shared provider hook; implementations must filter project_plugin_states. */
+  getRootDir?(): string | undefined | Promise<string | undefined>;
   getProjectScopedPluginMcpServers?(): Promise<Array<{ pluginId: string; server: PluginMcpServerContribution }>> | Array<{ pluginId: string; server: PluginMcpServerContribution }>;
 }
 
@@ -81,10 +85,11 @@ export async function resolveMcpServersForStore(
     return { servers: [], errors: [] };
   }
 
-  const [settings, secrets, pluginServers] = await Promise.all([
+  const [settings, secrets, pluginServers, projectRoot] = await Promise.all([
     store.getSettingsByScope(),
     typeof store.getSecretsStore === "function" ? store.getSecretsStore() : emptyMcpSecretReader,
     typeof store.getProjectScopedPluginMcpServers === "function" ? store.getProjectScopedPluginMcpServers() : [],
+    typeof store.getRootDir === "function" ? Promise.resolve(store.getRootDir()).catch(() => undefined) : undefined,
   ]);
   return resolveMcpServersForRuntime({
     globalSettings: settings.global,
@@ -92,5 +97,6 @@ export async function resolveMcpServersForStore(
     secrets,
     reader,
     pluginServers,
+    projectRoot,
   });
 }

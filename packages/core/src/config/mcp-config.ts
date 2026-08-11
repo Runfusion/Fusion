@@ -74,12 +74,6 @@ function normalizeMcpServersSettings(settings?: McpServersSettings): McpServersS
   };
 }
 
-function validServers(settings?: McpServersSettings): McpServerDefinition[] {
-  return normalizeMcpServersSettings(settings).servers
-    ?.map(validateMcpServerDefinition)
-    .filter((server): server is McpServerDefinition => Boolean(server)) ?? [];
-}
-
 /** Converts a declarative plugin contribution into a validated settings-shaped server. */
 export function mapPluginMcpServerContribution(server: PluginMcpServerContribution | unknown): McpServerDefinition | undefined {
   if (!server || typeof server !== "object" || Array.isArray(server)) return undefined;
@@ -100,6 +94,7 @@ export function resolveEffectiveMcpServers(
   globalSettings?: Pick<GlobalSettings, "mcpServers"> | null,
   projectSettings?: Pick<ProjectSettings, "mcpServers"> | null,
   pluginServers: Array<{ pluginId: string; server: PluginMcpServerContribution }> = [],
+  builtIns: McpServerDefinition[] = [],
 ): McpServerDefinition[] {
   try {
     const globalMcp = normalizeMcpServersSettings(globalSettings?.mcpServers);
@@ -107,10 +102,21 @@ export function resolveEffectiveMcpServers(
     const effectiveEnabled = typeof projectMcp?.enabled === "boolean" ? projectMcp.enabled : globalMcp.enabled;
     if (!effectiveEnabled) return [];
 
-    const byName = new Map<string, McpServerDefinition>();
-    for (const server of validServers(globalSettings?.mcpServers)) {
-      if (server.enabled === false) continue;
-      byName.set(server.name, server);
+    /*
+    FNXC:MemoryMcp 2026-08-10-20:32:
+    FN-8926 seeds Fusion-provided servers below operator configuration. Tombstones remove
+    them at either scope, while a project transport-less enabled marker restores the seeded
+    definition after a global tombstone; re-enable is deletion, not an unspawnable override.
+    Entry selection remains injectable upstream so resolution never depends on local build state.
+    */
+    const seededBuiltIns = new Map<string, McpServerDefinition>();
+    for (const server of builtIns.map(validateMcpServerDefinition).filter((server): server is McpServerDefinition => Boolean(server))) seededBuiltIns.set(server.name, server);
+    const byName = new Map(seededBuiltIns);
+    // Raw tombstones/markers are intentionally inspected before validation: markers have no transport.
+    for (const raw of globalMcp.servers ?? []) {
+      if (raw?.enabled === false) { byName.delete(raw.name); continue; }
+      const server = validateMcpServerDefinition(raw);
+      if (server) byName.set(server.name, server);
     }
     // Plugin order is deterministic at the scoped-provider boundary; later plugins win
     // duplicate names just as later project settings win inherited definitions.
@@ -125,12 +131,16 @@ export function resolveEffectiveMcpServers(
       const server = mapPluginMcpServerContribution(rawServer);
       if (server) byName.set(server.name, server);
     }
-    for (const server of validServers(projectMcp)) {
-      if (server.enabled === false) {
-        byName.delete(server.name);
-        continue;
+    for (const raw of normalizeMcpServersSettings(projectMcp).servers ?? []) {
+      if (raw?.enabled === false) { byName.delete(raw.name); continue; }
+      const server = validateMcpServerDefinition(raw);
+      if (server) byName.set(server.name, server);
+      else if (raw?.enabled === true && typeof raw.name === "string") {
+        // The only valid transport-less enabled record is the scoped marker that cancels
+        // a global built-in tombstone; never let it replace a runnable seeded definition.
+        const seeded = seededBuiltIns.get(raw.name);
+        if (seeded) byName.set(raw.name, seeded);
       }
-      byName.set(server.name, server);
     }
     return [...byName.values()].filter((server) => server.enabled !== false);
   } catch {

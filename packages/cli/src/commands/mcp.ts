@@ -3,6 +3,8 @@ import { readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { TaskStore,
   GlobalSettingsStore,
+  applyBuiltInMcpToggle,
+  FUSION_MEMORY_MCP_SERVER_NAME,
   exportMcpServersJson,
   importMcpServersJson,
   isMcpSecretRef,
@@ -17,6 +19,7 @@ import { TaskStore,
   type SecretScope,
   type Settings,
 } from "@fusion/core";
+import { buildFusionMemoryBuiltIns } from "@fusion/core/mcp-builtin-servers";
 import { resolveProject, createLocalStore, closeProjectStore, asLocalProjectContext, type ProjectContext } from "../project-context.js";
 import { retryOnLock, LockRetryExhaustedError } from "../lock-retry.js";
 
@@ -115,6 +118,34 @@ async function failMcpCommand(error: unknown, context?: McpContext): Promise<nev
     await closeMcpContext(context);
   }
   return process.exit(1);
+}
+
+/** Resolve the built-in only with a concrete project root; global-only CLI use stays non-spawnable. */
+function memoryBuiltInsFor(context: McpContext): McpServerDefinition[] {
+  const root = context.project?.projectPath ?? context.project?.store.getRootDir();
+  return buildFusionMemoryBuiltIns(root);
+}
+
+/*
+ * FNXC:MemoryMcp 2026-08-11-00:19:
+ * List, export, and validate bypass the engine runtime resolver, so retain a named production
+ * seam for each direct path. Each accepts precomputed built-ins so tests prove these CLI paths
+ * include the Fusion-owned server without relying on a locally built CLI entry.
+ */
+export function resolveMcpListEffectiveServers(globalSettings: McpServersSettings, projectSettings: McpServersSettings | undefined, builtIns: McpServerDefinition[]) {
+  return resolveEffectiveMcpServers({ mcpServers: globalSettings }, projectSettings ? { mcpServers: projectSettings } : null, [], builtIns);
+}
+
+export function resolveMcpExportEffectiveServers(globalSettings: McpServersSettings, projectSettings: McpServersSettings | undefined, builtIns: McpServerDefinition[]) {
+  return resolveEffectiveMcpServers({ mcpServers: globalSettings }, projectSettings ? { mcpServers: projectSettings } : null, [], builtIns);
+}
+
+export function resolveMcpValidateEffectiveServers(globalSettings: McpServersSettings, projectSettings: McpServersSettings | undefined, builtIns: McpServerDefinition[]) {
+  return resolveEffectiveMcpServers({ mcpServers: globalSettings }, projectSettings ? { mcpServers: projectSettings } : null, [], builtIns);
+}
+
+function isFusionMemoryServer(name: string): boolean {
+  return name === FUSION_MEMORY_MCP_SERVER_NAME;
 }
 
 function normalizeScope(scope?: McpScope): McpScope {
@@ -346,7 +377,7 @@ export async function runMcpList(opts: { projectName?: string; json?: boolean } 
     const globalSettings = mcpSettings(await context.globalStore.getSettings());
     const project = context.project;
     const projectSettings = project ? mcpSettings((await retryOnLock(async () => project.store.getSettingsByScope(), { id: "mcp-settings", action: "read project MCP settings" })).project) : undefined;
-    const effective = resolveEffectiveMcpServers({ mcpServers: globalSettings }, projectSettings ? { mcpServers: projectSettings } : null);
+    const effective = resolveMcpListEffectiveServers(globalSettings, projectSettings, memoryBuiltInsFor(context));
     if (opts.json) {
       console.log(JSON.stringify({ global: globalSettings.servers ?? [], project: projectSettings?.servers ?? [], effective }, null, 2));
       return;
@@ -381,6 +412,7 @@ export async function runMcpAdd(name: string, opts: McpMutationOptions = {}): Pr
   let context: McpContext | undefined;
   try {
     const scope = normalizeScope(opts.scope);
+    if (isFusionMemoryServer(name)) throw new Error(`MCP server "${name}" is built in; use mcp enable or mcp disable.`);
     context = await loadContext(opts.projectName, scope === "project");
     const current = await readScopedSettings(context, scope);
     if ((current.servers ?? []).some((server) => server.name === name)) throw new Error(`MCP server "${name}" already exists in ${scope} scope. Use edit to update it.`);
@@ -407,6 +439,7 @@ export async function runMcpEdit(name: string, opts: McpMutationOptions = {}): P
   let context: McpContext | undefined;
   try {
     const scope = normalizeScope(opts.scope);
+    if (isFusionMemoryServer(name)) throw new Error(`MCP server "${name}" is built in; use mcp enable or mcp disable.`);
     context = await loadContext(opts.projectName, scope === "project");
     const current = await readScopedSettings(context, scope);
     const existing = (current.servers ?? []).find((server) => server.name === name);
@@ -433,6 +466,7 @@ export async function runMcpEdit(name: string, opts: McpMutationOptions = {}): P
 export async function runMcpRemove(name: string, opts: { projectName?: string; scope?: McpScope } = {}): Promise<void> {
   let context: McpContext | undefined;
   try {
+    if (isFusionMemoryServer(name)) throw new Error(`MCP server "${name}" is built in; use mcp enable or mcp disable.`);
     const scope = normalizeScope(opts.scope);
     context = await loadContext(opts.projectName, scope === "project");
     const current = await readScopedSettings(context, scope);
@@ -458,19 +492,25 @@ async function setEnabled(name: string, enabled: boolean, opts: { projectName?: 
     const scope = normalizeScope(opts.scope);
     context = await loadContext(opts.projectName, scope === "project");
     const current = await readScopedSettings(context, scope);
-    const existing = (current.servers ?? []).find((server) => server.name === name);
-    if (!existing) throw new Error(`MCP server "${name}" not found in ${scope} scope.`);
-    await writeScopedSettings(context, scope, { enabled: current.enabled ?? true, servers: upsertServer(current.servers ?? [], { ...existing, enabled }) });
+    if (isFusionMemoryServer(name)) {
+      const global = mcpSettings(await context.globalStore.getSettings());
+      const lowerScopeTombstoned = scope === "project" && (global.servers ?? []).some((server) => server.name === name && server.enabled === false);
+      await writeScopedSettings(context, scope, applyBuiltInMcpToggle(current, {
+        scope,
+        intent: enabled ? "enable" : "disable",
+        lowerScopeTombstoned,
+      }));
+    } else {
+      const existing = (current.servers ?? []).find((server) => server.name === name);
+      if (!existing) throw new Error(`MCP server "${name}" not found in ${scope} scope.`);
+      await writeScopedSettings(context, scope, { enabled: current.enabled ?? true, servers: upsertServer(current.servers ?? [], { ...existing, enabled }) });
+    }
     console.log(`✓ ${enabled ? "Enabled" : "Disabled"} MCP server "${name}" in ${scope} scope`);
   } catch (error) {
-    if (error instanceof LockRetryExhaustedError) {
-      await failMcpCommand(error, context);
-    }
+    if (error instanceof LockRetryExhaustedError) await failMcpCommand(error, context);
     throw error;
   } finally {
-    if (context) {
-      await closeMcpContext(context);
-    }
+    if (context) await closeMcpContext(context);
   }
 }
 
@@ -566,7 +606,7 @@ export async function runMcpExport(opts: { projectName?: string; scope?: McpScop
       ? globalSettings.servers ?? []
       : scope === "project"
         ? projectSettings?.servers ?? []
-        : resolveEffectiveMcpServers({ mcpServers: globalSettings }, projectSettings ? { mcpServers: projectSettings } : null);
+        : resolveMcpExportEffectiveServers(globalSettings, projectSettings, memoryBuiltInsFor(context));
     const exported = exportMcpServersJson(definitions);
     const json = JSON.stringify(exported, null, 2);
     if (opts.output) {
@@ -603,7 +643,7 @@ export async function runMcpValidate(opts: { projectName?: string; scope?: McpSc
       ? globalSettings.servers ?? []
       : scope === "project"
         ? projectSettings?.servers ?? []
-        : resolveEffectiveMcpServers({ mcpServers: globalSettings }, projectSettings ? { mcpServers: projectSettings } : null);
+        : resolveMcpValidateEffectiveServers(globalSettings, projectSettings, memoryBuiltInsFor(context));
     const validation = validateMcpServerDefinitionsDetailed(definitions);
     const result = { ok: validation.errors.length === 0, servers: definitions.length, errors: validation.errors };
     if (opts.json) {

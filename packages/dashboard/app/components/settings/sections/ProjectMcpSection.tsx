@@ -18,9 +18,9 @@ export interface ProjectMcpSectionProps {
 export function ProjectMcpSection({ form, setForm, globalSettings, projectId, pluginServers, addToast }: ProjectMcpSectionProps) {
   const { t } = useTranslation("app");
   const [loadedPluginServers, setLoadedPluginServers] = useState<Array<{ pluginId: string; server: PluginMcpServerContribution }>>([]);
+  const [builtInAvailable, setBuiltInAvailable] = useState(false);
 
   useEffect(() => {
-    if (pluginServers) return;
     const controller = new AbortController();
     const query = projectId ? `?projectId=${encodeURIComponent(projectId)}` : "";
     /*
@@ -32,17 +32,22 @@ export function ProjectMcpSection({ form, setForm, globalSettings, projectId, pl
     void fetch(`/api/mcp/plugin-servers${query}`, { signal: controller.signal })
       .then(async (response) => {
         if (!response.ok) throw new Error("Failed to load project plugin MCP servers");
-        return response.json() as Promise<{ servers?: Array<{ pluginId: string; server: PluginMcpServerContribution }> }>;
+        return response.json() as Promise<{ servers?: Array<{ pluginId: string; server: PluginMcpServerContribution }>; fusionMemoryMcpAvailable?: boolean }>;
       })
-      .then((payload) => { if (!controller.signal.aborted) setLoadedPluginServers(Array.isArray(payload.servers) ? payload.servers : []); })
-      .catch(() => { if (!controller.signal.aborted) setLoadedPluginServers([]); });
+      .then((payload) => {
+        if (!controller.signal.aborted) {
+          if (!pluginServers) setLoadedPluginServers(Array.isArray(payload.servers) ? payload.servers : []);
+          setBuiltInAvailable(payload.fusionMemoryMcpAvailable === true);
+        }
+      })
+      .catch(() => { if (!controller.signal.aborted) { if (!pluginServers) setLoadedPluginServers([]); setBuiltInAvailable(false); } });
     return () => controller.abort();
   }, [pluginServers, projectId]);
 
   return (
     <>
       <h4 className="settings-section-heading">{t("settings.nav.mcp", "MCP Servers")}</h4>
-      <McpServersCard scope="project" form={form} setForm={setForm} globalSettings={globalSettings} projectId={projectId} pluginServers={pluginServers ?? loadedPluginServers} addToast={addToast} />
+      <McpServersCard scope="project" form={form} setForm={setForm} globalSettings={globalSettings} projectId={projectId} pluginServers={pluginServers ?? loadedPluginServers} builtInAvailable={builtInAvailable} addToast={addToast} />
     </>
   );
 }
