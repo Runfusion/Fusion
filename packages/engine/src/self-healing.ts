@@ -7844,8 +7844,6 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
               task.deletedAt != null
               || task.column === archivedColumn
               || task.column === doneColumn
-              || task.column === "archived"
-              || task.column === "done"
             ),
             taskPaused: task?.userPaused === true || task?.paused === true,
             live: live(item.taskId),

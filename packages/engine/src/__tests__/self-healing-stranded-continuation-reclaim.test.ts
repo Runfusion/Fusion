@@ -124,6 +124,14 @@ describe("reconcileStrandedWorkflowContinuations", () => {
     }
   });
 
+  it("does not treat default column ids as terminal for a custom workflow", async () => {
+    const { manager, transitions } = harness([item()], { column: "done" });
+    resolveTaskLifecycleColumnsMock.mockResolvedValue({ complete: "shipped", archived: "retired" });
+
+    await expect(manager.reconcileStrandedWorkflowContinuations()).resolves.toBe(1);
+    expect(transitions[0]?.state).toBe("runnable");
+  });
+
   it("retires a row whose task no longer resolves at all", async () => {
     const { manager, transitions } = harness([item({ taskId: "FN-DELETED" })]);
     await expect(manager.reconcileStrandedWorkflowContinuations()).resolves.toBe(1);
