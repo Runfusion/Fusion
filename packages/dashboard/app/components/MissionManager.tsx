@@ -782,7 +782,13 @@ function MissionReconcilePreview({
 }) {
   const planned = result.planned ?? [];
   const isEmpty = planned.length === 0 && result.statusUpdates === 0 && result.badgeRepairs === 0 && result.terminalRepairs === 0;
-  const canApply = result.skippedReason !== "archived" && !isEmpty && planned.length > 0;
+  /*
+  FNXC:MissionReconcileUI 2026-08-11-07:37 DELIBERATE-LITERAL:
+  The reconciliation API's `skippedReason` discriminant describes mission state; it is not a task lifecycle column or move target.
+  Hoist the check so preview copy and apply eligibility share one interpretation of the archived-mission response.
+  */
+  const missionIsArchived = result.skippedReason === "archived";
+  const canApply = !missionIsArchived && !isEmpty && planned.length > 0;
 
   return (
     <section className="mission-detail__reconcile-panel" aria-label={t("missions.reconcilePreview", "Reconcile preview")}>
@@ -791,7 +797,7 @@ function MissionReconcilePreview({
         <span>{t("missions.reconcileBadgeRepairs", "Badge repairs: {{count}}", { count: result.badgeRepairs })}</span>
         <span>{t("missions.reconcileTerminalRepairs", "Terminal repairs: {{count}}", { count: result.terminalRepairs })}</span>
       </div>
-      {result.skippedReason === "archived" ? <p>{t("missions.reconcileArchived", "Mission is archived — nothing reconciled")}</p>
+      {missionIsArchived ? <p>{t("missions.reconcileArchived", "Mission is archived — nothing reconciled")}</p>
         : isEmpty ? <p>{t("missions.reconcileUpToDate", "Already up to date")}</p>
           : <ul className="mission-detail__reconcile-list">{planned.map((entry) => (
             <li key={`${entry.featureId}:${entry.action}`}>
