@@ -1044,6 +1044,30 @@ export async function listFeaturesForMilestone(handle: QueryHandle, milestoneId:
   return rows.map((row) => rowToFeature(row as FeatureRow));
 }
 
+/**
+ * FNXC:MissionBlockedRepair 2026-08-11-05:25:
+ * Blocked-mission diagnostics are mission-scoped and may run inside the clear transaction. Resolve the requested hierarchy in one joined query so unrelated project features cannot lengthen that transaction.
+ */
+export async function listFeaturesForMission(handle: QueryHandle, missionId: string): Promise<MissionFeature[]> {
+  const rows = await handle
+    .select(featureColumns)
+    .from(schema.project.missionFeatures)
+    .innerJoin(schema.project.slices, and(
+      eq(schema.project.slices.projectId, schema.project.missionFeatures.projectId),
+      eq(schema.project.slices.id, schema.project.missionFeatures.sliceId),
+    ))
+    .innerJoin(schema.project.milestones, and(
+      eq(schema.project.milestones.projectId, schema.project.slices.projectId),
+      eq(schema.project.milestones.id, schema.project.slices.milestoneId),
+    ))
+    .where(and(
+      missionProjectScope(schema.project.missionFeatures.projectId),
+      eq(schema.project.milestones.missionId, missionId),
+    ))
+    .orderBy(asc(schema.project.missionFeatures.createdAt));
+  return rows.map((row) => rowToFeature(row as FeatureRow));
+}
+
 /** List ALL features across all slices, ordered by createdAt ASC. */
 export async function listAllFeatures(handle: QueryHandle): Promise<MissionFeature[]> {
   const rows = await handle

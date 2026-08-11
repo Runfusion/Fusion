@@ -3008,6 +3008,7 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
         break;
     }
 
+    let ownsFeature = false;
     this.db.transaction(() => {
       // Update the validator run
       this.db.prepare(`
@@ -3027,11 +3028,16 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
         runId,
       );
 
-      // Update the feature's loop state and lastValidatorStatus
-      this.updateFeature(run.featureId, {
-        loopState: featureLoopState,
-        lastValidatorStatus: featureLastValidatorStatus,
-      });
+      const currentFeature = this.getFeature(run.featureId);
+      if (!currentFeature) throw new Error(`Feature ${run.featureId} not found`);
+      ownsFeature = currentFeature.lastValidatorRunId === run.id;
+      // FNXC:MissionValidation 2026-08-11-05:26: Keep SQLite parity with PostgreSQL: historical completions become terminal records but cannot overwrite the newer validator owner's feature state.
+      if (ownsFeature) {
+        this.updateFeature(run.featureId, {
+          loopState: featureLoopState,
+          lastValidatorStatus: featureLastValidatorStatus,
+        });
+      }
     });
 
     this.db.bumpLastModified();
@@ -3040,7 +3046,7 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
     const updatedRun = this.getValidatorRun(runId)!;
     this.emit("validator-run:completed", updatedRun, result, durationMs);
 
-    if (result === "passed") {
+    if (result === "passed" && ownsFeature) {
       const passedFeature = this.getFeature(run.featureId);
       if (passedFeature) {
         this.reconcileSupersededGeneratedFixFeatures(passedFeature.sliceId);
@@ -3211,7 +3217,8 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
     const startedAtMs = new Date(run.startedAt).getTime();
     const completedAtMs = new Date(completedAt).getTime();
     const durationMs = Math.max(0, completedAtMs - startedAtMs);
-    const shouldUpdateFeature = mission.status !== "archived" && mission.status !== "complete" && feature.status !== "done";
+    // FNXC:MissionValidation 2026-08-11-05:26: Reaping a superseded SQLite run must not reopen the feature owned by its newer validator run.
+    const shouldUpdateFeature = feature.lastValidatorRunId === run.id && mission.status !== "archived" && mission.status !== "complete" && feature.status !== "done";
 
     this.db.transaction(() => {
       this.db.prepare(`
