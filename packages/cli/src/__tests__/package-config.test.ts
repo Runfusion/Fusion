@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
+import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { builtinModules } from "node:module";
 import { execFileSync } from "node:child_process";
@@ -536,12 +537,21 @@ describe("shipped agent skills", () => {
     expect(cli.files).toContain("skill/**");
     expect(applyPrepackTransform(cli).files).toContain("skill/**");
     const packageDir = join(workspaceRoot, "packages", "cli");
-    const packed = JSON.parse(execFileSync("npm", ["pack", "--dry-run", "--json", "--ignore-scripts"], {
-      cwd: packageDir,
-      encoding: "utf8",
-    })) as Array<{ files: Array<{ path: string }> }>;
-    const packedPaths = new Set(packed[0]!.files.map((file) => file.path));
-    expect(packedPaths).toContain("skill/fusion/SKILL.md");
-    expect(packedPaths).toContain("skill/computer-use/SKILL.md");
+    const packFixture = mkdtempSync(join(tmpdir(), "fusion-cli-packlist-"));
+    try {
+      /* Keep npm's real packlist semantics without making this focused manifest test scan the
+       * multi-megabyte built CLI and dashboard bundles. Source presence is still proven by cpSync. */
+      writeFileSync(join(packFixture, "package.json"), JSON.stringify(cli));
+      cpSync(join(packageDir, "skill"), join(packFixture, "skill"), { recursive: true });
+      const packed = JSON.parse(execFileSync("npm", ["pack", "--dry-run", "--json", "--ignore-scripts"], {
+        cwd: packFixture,
+        encoding: "utf8",
+      })) as Array<{ files: Array<{ path: string }> }>;
+      const packedPaths = new Set(packed[0]!.files.map((file) => file.path));
+      expect(packedPaths).toContain("skill/fusion/SKILL.md");
+      expect(packedPaths).toContain("skill/computer-use/SKILL.md");
+    } finally {
+      rmSync(packFixture, { recursive: true, force: true });
+    }
   });
 });
