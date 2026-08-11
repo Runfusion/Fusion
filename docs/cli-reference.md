@@ -1386,6 +1386,10 @@ For configuration details used by these commands, see [Settings Reference](./set
 
 Agent create/update payloads accept `roles` (a non-empty role-tag array) and optional `runtimeConfig.maxWorkflowSessions`. The legacy singular `role` input remains accepted for migration compatibility.
 
+## MCP memory transport
+
+`fn mcp serve-memory --project-root <path>` is an internal stdio transport command used by Fusion's built-in `fusion-memory` MCP server. It is not intended for direct interactive use. The built-in name is reserved; configure it through MCP enable/disable controls rather than add, edit, or remove commands. Disabling writes an `enabled: false` tombstone; normal re-enable deletes that tombstone, while a project enable may write a marker only to cancel a global tombstone.
+
 ## Knowledge graph
 
 `fn knowledge-graph build [--force] [--dir <path>] [--json]` refreshes the deterministic, committable structure graph. `--force` bypasses incremental reuse; `--dir` overrides the project `knowledgeGraphDir`; `--json` prints build statistics as JSON.

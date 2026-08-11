@@ -230,3 +230,15 @@ describe("MCP core config", () => {
     expect(resolved.errors).toHaveLength(1);
   });
 });
+
+describe("built-in MCP precedence", () => {
+  const memory = { name: "fusion-memory", transport: "stdio" as const, command: "node", args: ["memory"] };
+
+  it("restores a seeded built-in when a project marker cancels a global tombstone", () => {
+    expect(resolveEffectiveMcpServers(
+      { mcpServers: { enabled: true, servers: [{ name: "fusion-memory", enabled: false } as never] } },
+      { mcpServers: { enabled: true, servers: [{ name: "fusion-memory", enabled: true } as never] } },
+      [], [memory],
+    )).toEqual([memory]);
+  });
+});

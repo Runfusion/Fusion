@@ -128,6 +128,12 @@ A generation that lost `raceMergeWithAbort` can outlive the settle latch while a
 this task. Its aborted signal is the write-authority fence: suppressing every transient status
 write prevents the orphan from re-stamping `merging` or clearing the successor's live stamp.
 Diagnostics remain unfenced, and this deliberately resolves rather than throws for finally paths.
+
+FNXC:MergeReliability 2026-08-10-19:27:
+FN-8923 records this narrow fence's durable-write frontier in
+`merge-orphan-durable-write-inventory.json`. New writes in its pinned merge closure must be
+classified by the AST guard, which runs in engine affected/full-suite lanes rather than the
+curated merge gate; completeness is only over that pinned closure and writer surface.
 */
 export function writeTransientMergeStatus(
   store: Pick<TaskStore, "updateTask">,

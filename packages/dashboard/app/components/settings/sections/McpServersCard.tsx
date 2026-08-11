@@ -6,7 +6,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { withProjectId } from "../../../api/client/health";
 import {
+  applyBuiltInMcpToggle,
   exportMcpServersJson,
+  FUSION_MEMORY_MCP_DESCRIPTION,
+  FUSION_MEMORY_MCP_LABEL,
+  FUSION_MEMORY_MCP_SERVER_NAME,
   importMcpServersJson,
   isMcpSecretRef,
   mapPluginMcpServerContribution,
@@ -26,7 +30,16 @@ type ToastKind = "info" | "success" | "error";
 type SecretScope = "project" | "global";
 type Transport = McpServerDefinition["transport"];
 type ValidationStatus = "idle" | "pending" | "valid" | "unreachable" | "error";
-type DisplayState = "configured" | "disabled" | "inherited" | "overridden" | "project-local" | "disabled-global" | "plugin" | "plugin-overridden" | "plugin-disabled";
+type DisplayState = "configured" | "disabled" | "inherited" | "overridden" | "project-local" | "disabled-global" | "plugin" | "plugin-overridden" | "plugin-disabled" | "builtin" | "builtin-disabled" | "builtin-unavailable";
+
+/*
+ * FNXC:MemoryMcp 2026-08-11-00:19:
+ * The SPA renders descriptor-only metadata. Node resolves the runnable command server-side, so
+ * this display definition must never gain a command path or import the Node-only factory.
+ */
+export function getFusionMemoryMcpDisplayDefinition(): McpServerDefinition {
+  return { name: FUSION_MEMORY_MCP_SERVER_NAME, transport: "stdio", command: "", args: [] };
+}
 
 type FormSetter = Dispatch<SetStateAction<Settings>>;
 
@@ -97,6 +110,8 @@ export interface McpServersCardProps {
   projectId?: string;
   /** Already project-scoped contributions supplied by the API/provider. */
   pluginServers?: Array<{ pluginId: string; server: PluginMcpServerContribution }>;
+  /** Node-only entry resolution is computed by the settings route, never in the browser. */
+  builtInAvailable?: boolean;
   addToast: (message: string, type?: ToastKind) => void;
 }
 
@@ -238,6 +253,9 @@ function getStateLabel(state: DisplayState): string {
   if (state === "project-local") return "project local";
   if (state === "plugin-overridden") return "plugin overridden";
   if (state === "plugin-disabled") return "plugin disabled";
+  if (state === "builtin") return "built-in";
+  if (state === "builtin-disabled") return "built-in disabled";
+  if (state === "builtin-unavailable") return "built-in unavailable";
   return state;
 }
 
@@ -258,7 +276,7 @@ function getValidationLabel(status: ValidationStatus): string {
  *
  * Project MCP declarations override global servers by matching name and may save enabled:false tombstones to disable inherited global servers. The project card shows inherited, overridden, local, and disabled states so operators can see effective behavior before saving.
  */
-export function McpServersCard({ scope, form, setForm, globalSettings, projectId, pluginServers = [], addToast }: McpServersCardProps) {
+export function McpServersCard({ scope, form, setForm, globalSettings, projectId, pluginServers = [], builtInAvailable = true, addToast }: McpServersCardProps) {
   const { t } = useTranslation("app");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const settings = normalizeMcpSettings(form.mcpServers ?? EMPTY_MCP_SETTINGS);
@@ -356,7 +374,14 @@ export function McpServersCard({ scope, form, setForm, globalSettings, projectId
   }, [discovered?.servers]);
 
   const displayRows = useMemo(() => {
-    if (scope === "global") return configuredServers.map((server): { server: McpServerDefinition; state: DisplayState } => ({ server, state: server.enabled === false ? "disabled" : "configured" }));
+    const builtIn = getFusionMemoryMcpDisplayDefinition();
+    const builtInState = !builtInAvailable ? "builtin-unavailable" as const : "builtin" as const;
+    if (scope === "global") {
+      const rows = configuredServers.map((server): { server: McpServerDefinition; state: DisplayState } => ({ server, state: server.enabled === false ? "disabled" : "configured" }));
+      const configured = configuredServers.find((server) => server.name === FUSION_MEMORY_MCP_SERVER_NAME) as { enabled?: boolean; transport?: string } | undefined;
+      if (settings.enabled && (!configured || !configured.transport)) rows.unshift({ server: builtIn, state: configured?.enabled === false ? "builtin-disabled" : builtInState });
+      return rows;
+    }
     const effectiveByName = new Set(effectiveServers.map((server) => server.name));
     const rows: Array<{ server: McpServerDefinition; state: DisplayState }> = [];
     // FNXC:PluginMcpServers 2026-07-22-12:00:
@@ -364,7 +389,11 @@ export function McpServersCard({ scope, form, setForm, globalSettings, projectId
     // that session resolution uses. In particular, a plugin replaces a
     // same-name global server rather than being hidden behind it (FN-8491/#2401).
     const inheritedByName = new Map<string, { server: McpServerDefinition; plugin: boolean }>();
-    for (const server of globalServers) inheritedByName.set(server.name, { server, plugin: false });
+    // Transport-less Fusion-memory records are enablement markers/tombstones, not runnable servers.
+    for (const server of globalServers) {
+      if (server.name === FUSION_MEMORY_MCP_SERVER_NAME && !(server as { transport?: string }).transport) continue;
+      inheritedByName.set(server.name, { server, plugin: false });
+    }
     for (const [name, entry] of pluginByName) inheritedByName.set(name, { server: entry.definition, plugin: true });
     for (const [name, inherited] of inheritedByName) {
       const projectServer = projectByName.get(name);
@@ -377,16 +406,33 @@ export function McpServersCard({ scope, form, setForm, globalSettings, projectId
       }
     }
     for (const server of configuredServers) {
+      if (server.name === FUSION_MEMORY_MCP_SERVER_NAME && !(server as { transport?: string }).transport) continue;
       if (!inheritedByName.has(server.name)) rows.push({ server, state: server.enabled === false || !effectiveByName.has(server.name) ? "disabled" : "project-local" });
     }
+    const globalBuiltIn = globalByName.get(FUSION_MEMORY_MCP_SERVER_NAME) as { enabled?: boolean; transport?: string } | undefined;
+    const projectBuiltIn = projectByName.get(FUSION_MEMORY_MCP_SERVER_NAME) as { enabled?: boolean; transport?: string } | undefined;
+    if (settings.enabled && !globalBuiltIn?.transport && !projectBuiltIn?.transport) {
+      /*
+      FNXC:MemoryMcp 2026-08-10-16:50:
+      A project enabled marker cancels a global tombstone in the resolver. The display must
+      reflect that restored seeded server rather than presenting it as globally disabled.
+      */
+      const globalTombstoneStillApplies = globalBuiltIn?.enabled === false && projectBuiltIn?.enabled !== true;
+      rows.unshift({ server: builtIn, state: projectBuiltIn?.enabled === false || globalTombstoneStillApplies ? "builtin-disabled" : builtInState });
+    }
     return rows;
-  }, [configuredServers, effectiveServers, globalServers, pluginByName, projectByName, scope]);
+  }, [builtInAvailable, configuredServers, effectiveServers, globalByName, globalServers, pluginByName, projectByName, scope, settings.enabled]);
 
   const updateMcpSettings = (next: McpServersSettings) => {
     setForm((current) => ({ ...current, mcpServers: next }));
   };
 
   const setEnabled = (enabled: boolean) => updateMcpSettings({ ...settings, enabled });
+
+  const toggleBuiltIn = (enabled: boolean) => {
+    const lowerScopeTombstoned = scope === "project" && globalByName.get(FUSION_MEMORY_MCP_SERVER_NAME)?.enabled === false;
+    updateMcpSettings(applyBuiltInMcpToggle(settings, { scope, intent: enabled ? "enable" : "disable", lowerScopeTombstoned }));
+  };
 
   const saveServer = () => {
     if (!editor) return;
@@ -642,6 +688,7 @@ export function McpServersCard({ scope, form, setForm, globalSettings, projectId
           {displayRows.map(({ server, state }) => {
             const validation = validateStates[server.name] ?? { status: "idle" as const };
             const editable = scope === "global" || state !== "inherited";
+            const isBuiltInPlaceholder = state === "builtin" || state === "builtin-disabled" || state === "builtin-unavailable";
             return (
               /*
               FNXC:McpSettings 2026-07-22-12:10:
@@ -650,19 +697,19 @@ export function McpServersCard({ scope, form, setForm, globalSettings, projectId
               <article className="mcp-server-row" key={server.name} data-testid={`mcp-server-row-${server.name}`}>
                 <div className="mcp-server-row__main">
                   <div className="mcp-server-row__titleline">
-                    <strong>{server.name}</strong>
+                    <strong>{isBuiltInPlaceholder ? FUSION_MEMORY_MCP_LABEL : server.name}</strong>
                     <span className={`mcp-state-badge mcp-state-badge--${state}`} data-state={state}>{getStateLabel(state)}</span>{scope === "project" && pluginByName.has(server.name) ? <span className="mcp-state-badge" data-testid={`mcp-plugin-provenance-${server.name}`}>{`plugin:${pluginByName.get(server.name)!.pluginId}`}</span> : null}
                     <span className="mcp-transport-badge">{server.transport}</span>
                   </div>
-                  <p>{serverSummary(server)}</p>
+                  {isBuiltInPlaceholder ? <p>{state === "builtin-unavailable" ? t("settings.mcp.builtinUnavailable", "Built-in entry is unavailable in this installation.") : FUSION_MEMORY_MCP_DESCRIPTION}</p> : <p>{serverSummary(server)}</p>}
                   <p className={`mcp-validation-status mcp-validation-status--${validation.status}`} data-testid={`mcp-validation-${server.name}`} aria-live="polite"><span className={getValidateDotClass(validation.status)} aria-hidden="true" /> <span className="mcp-validation-status__badge">{validation.status === "idle" ? t("settings.mcp.notTested", "Not tested") : getValidationLabel(validation.status)}</span>{validation.message ? <span>{validation.message}</span> : null}</p>
                 </div>
                 <div className="mcp-server-row__actions">
-                  <button type="button" className="btn btn-sm touch-target" onClick={() => void validateServer(server)} disabled={validation.status === "pending"}><Play aria-hidden="true" size={MCP_BUTTON_ICON_SIZE_SM} /> {validation.status === "pending" ? t("settings.mcp.testing", "Testing…") : t("settings.mcp.test", "Test")}</button>
+                  {isBuiltInPlaceholder ? <button type="button" className="btn btn-sm touch-target" onClick={() => toggleBuiltIn(state === "builtin-disabled")} disabled={state === "builtin-unavailable"}>{state === "builtin-disabled" ? t("settings.mcp.enableBuiltin", "Enable") : t("settings.mcp.disableBuiltin", "Disable")}</button> : <button type="button" className="btn btn-sm touch-target" onClick={() => void validateServer(server)} disabled={validation.status === "pending"}><Play aria-hidden="true" size={MCP_BUTTON_ICON_SIZE_SM} /> {validation.status === "pending" ? t("settings.mcp.testing", "Testing…") : t("settings.mcp.test", "Test")}</button>}
                   {(state === "inherited" || state === "plugin") ? <button type="button" className="btn btn-sm touch-target" onClick={() => { setEditor(draftFromServer(server)); setEditorError(null); }}><Pencil aria-hidden="true" size={MCP_BUTTON_ICON_SIZE_SM} /> {t("settings.mcp.override", "Override")}</button> : null}
                   {(state === "inherited" || state === "plugin") ? <button type="button" className="btn btn-warning btn-sm touch-target" onClick={() => disableInheritedServer(server.name)}>{t("settings.mcp.disableInherited", "Disable")}</button> : null}
-                  {editable ? <button type="button" className="btn btn-sm touch-target" onClick={() => { setEditor(draftFromServer(server)); setEditorError(null); }}><Pencil aria-hidden="true" size={MCP_BUTTON_ICON_SIZE_SM} /> {t("actions.edit", "Edit")}</button> : null}
-                  {editable ? <button type="button" className="btn btn-icon touch-target" aria-label={t("settings.mcp.removeServer", "Remove {{name}}", { name: server.name })} onClick={() => removeServer(server.name)}><Trash2 aria-hidden="true" /></button> : null}
+                  {editable && !isBuiltInPlaceholder ? <button type="button" className="btn btn-sm touch-target" onClick={() => { setEditor(draftFromServer(server)); setEditorError(null); }}><Pencil aria-hidden="true" size={MCP_BUTTON_ICON_SIZE_SM} /> {t("actions.edit", "Edit")}</button> : null}
+                  {editable && !isBuiltInPlaceholder ? <button type="button" className="btn btn-icon touch-target" aria-label={t("settings.mcp.removeServer", "Remove {{name}}", { name: server.name })} onClick={() => removeServer(server.name)}><Trash2 aria-hidden="true" /></button> : null}
                 </div>
               </article>
             );

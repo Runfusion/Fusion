@@ -831,12 +831,13 @@ describe("SettingsModal", () => {
     renderModal({ initialSection: "merge" });
     await waitForSettingsModalReady();
 
-    await settingsModalUser.selectOptions(screen.getByLabelText("AI merge"), "deterministic");
-    await settingsModalUser.selectOptions(screen.getByLabelText("Integration worktree"), "cwd-main");
-
-    await waitFor(() => {
-      expect(mockUpdateSettings).toHaveBeenCalledTimes(1);
-    });
+    // FNXC:SettingsModalTests 2026-08-11-00:19: set both selects under fake timers so the 500ms auto-save debounce still coalesces them into one write, without the real-timer wait.
+    vi.useFakeTimers();
+    fireEvent.change(screen.getByLabelText("AI merge"), { target: { value: "deterministic" } });
+    fireEvent.change(screen.getByLabelText("Integration worktree"), { target: { value: "cwd-main" } });
+    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+    expect(mockUpdateSettings).toHaveBeenCalledTimes(1);
+    vi.useRealTimers();
 
     const payload = mockUpdateSettings.mock.calls[0][0] as Record<string, unknown>;
     expect(payload.mergeIntegrationWorktree).toBe("cwd-main");
@@ -908,14 +909,15 @@ describe("SettingsModal", () => {
     const checkbox = screen.getByRole("checkbox", { name: "Allow silent sibling branch rename during executor conflicts" });
     expect(checkbox).not.toBeChecked();
 
-    await settingsModalUser.click(checkbox);
-
-    await waitFor(() => {
-      expect(mockUpdateSettings).toHaveBeenCalledWith(
-        expect.objectContaining({ executorAllowSiblingBranchRename: true }),
-        undefined,
-      );
-    });
+    // FNXC:SettingsModalTests 2026-08-11-00:19: navigate with userEvent under real timers, then flush the 500ms auto-save debounce with fake timers instead of a real-timer waitFor.
+    vi.useFakeTimers();
+    fireEvent.click(checkbox);
+    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+    expect(mockUpdateSettings).toHaveBeenCalledWith(
+      expect.objectContaining({ executorAllowSiblingBranchRename: true }),
+      undefined,
+    );
+    vi.useRealTimers();
     expect(screen.getByText(/restores the legacy behavior/i)).toBeInTheDocument();
   });
 
@@ -1122,11 +1124,20 @@ describe("SettingsModal", () => {
       renderModal({ initialSection: "global-general" });
       await waitForSettingsModalReady();
 
-      await settingsModalUser.click(screen.getByRole("checkbox", { name: "Dismiss modals by clicking outside" }));
-
-      await waitFor(() => {
-        expect(mockUpdateGlobalSettings).toHaveBeenCalled();
-      });
+      /*
+      FNXC:SettingsModalTests 2026-08-11-00:19:
+      Drive the 500ms auto-save debounce with fake timers instead of a real-timer waitFor.
+      Each of these single-edit "saves X via settings payload" tests otherwise burned a real
+      ~500ms debounce wall-clock wait, and together they dominated the dashboard's slowest
+      feedback-loop suite. Advancing fake timers keeps the payload-routing assertions identical
+      while removing the artificial wait (Standing Rule: prefer fake timers over real time waits;
+      matches the FN-7506 auto-save conversions already in this file).
+      */
+      vi.useFakeTimers();
+      fireEvent.click(screen.getByRole("checkbox", { name: "Dismiss modals by clicking outside" }));
+      await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+      expect(mockUpdateGlobalSettings).toHaveBeenCalled();
+      vi.useRealTimers();
 
       const globalPayload = mockUpdateGlobalSettings.mock.calls[0]?.[0] as Record<string, unknown>;
       expect(globalPayload.dismissModalsOnOutsideClick).toBe(true);
@@ -1140,11 +1151,11 @@ describe("SettingsModal", () => {
       renderModal({ initialSection: "global-general" });
       await waitForSettingsModalReady();
 
-      await settingsModalUser.click(screen.getByRole("checkbox", { name: "Skip confirmation dialogs for critical actions" }));
-
-      await waitFor(() => {
-        expect(mockUpdateGlobalSettings).toHaveBeenCalled();
-      });
+      vi.useFakeTimers();
+      fireEvent.click(screen.getByRole("checkbox", { name: "Skip confirmation dialogs for critical actions" }));
+      await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+      expect(mockUpdateGlobalSettings).toHaveBeenCalled();
+      vi.useRealTimers();
 
       const globalPayload = mockUpdateGlobalSettings.mock.calls[0]?.[0] as Record<string, unknown>;
       expect(globalPayload.skipConfirmationDialogs).toBe(true);
@@ -1158,11 +1169,11 @@ describe("SettingsModal", () => {
       renderModal({ initialSection: "global-general" });
       await waitForSettingsModalReady();
 
-      await settingsModalUser.click(screen.getByRole("checkbox", { name: "Save tool output in agent logs" }));
-
-      await waitFor(() => {
-        expect(mockUpdateGlobalSettings).toHaveBeenCalled();
-      });
+      vi.useFakeTimers();
+      fireEvent.click(screen.getByRole("checkbox", { name: "Save tool output in agent logs" }));
+      await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+      expect(mockUpdateGlobalSettings).toHaveBeenCalled();
+      vi.useRealTimers();
 
       const globalPayload = mockUpdateGlobalSettings.mock.calls[0]?.[0] as Record<string, unknown>;
       expect(globalPayload.persistAgentToolOutput).toBe(true);
@@ -1176,11 +1187,11 @@ describe("SettingsModal", () => {
       renderModal({ initialSection: "global-general" });
       await waitForSettingsModalReady();
 
-      await settingsModalUser.click(screen.getByRole("checkbox", { name: "Enable proactive task-chat updates" }));
-
-      await waitFor(() => {
-        expect(mockUpdateGlobalSettings).toHaveBeenCalled();
-      });
+      vi.useFakeTimers();
+      fireEvent.click(screen.getByRole("checkbox", { name: "Enable proactive task-chat updates" }));
+      await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+      expect(mockUpdateGlobalSettings).toHaveBeenCalled();
+      vi.useRealTimers();
 
       const globalPayload = mockUpdateGlobalSettings.mock.calls[0]?.[0] as Record<string, unknown>;
       expect(globalPayload.proactiveTaskChatEnabled).toBe(true);
@@ -1194,12 +1205,12 @@ describe("SettingsModal", () => {
       renderModal({ initialSection: "global-general" });
       await waitForSettingsModalReady();
 
-      await settingsModalUser.click(screen.getByRole("checkbox", { name: "Save AI thinking for permanent agents" }));
-      await settingsModalUser.click(screen.getByRole("checkbox", { name: "Save AI thinking for ephemeral / task-worker agents" }));
-
-      await waitFor(() => {
-        expect(mockUpdateGlobalSettings).toHaveBeenCalled();
-      });
+      vi.useFakeTimers();
+      fireEvent.click(screen.getByRole("checkbox", { name: "Save AI thinking for permanent agents" }));
+      fireEvent.click(screen.getByRole("checkbox", { name: "Save AI thinking for ephemeral / task-worker agents" }));
+      await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+      expect(mockUpdateGlobalSettings).toHaveBeenCalled();
+      vi.useRealTimers();
 
       const globalPayload = mockUpdateGlobalSettings.mock.calls[0]?.[0] as Record<string, unknown>;
       expect(globalPayload.persistAgentThinkingLogPermanent).toBe(true);
@@ -1246,12 +1257,19 @@ describe("SettingsModal", () => {
       expect(screen.getByLabelText("Global GitLab instance URL")).toHaveAttribute("placeholder", "https://gitlab.com");
       expect(screen.getByText(/Blank defaults to GitLab.com/i)).toBeInTheDocument();
 
-      await settingsModalUser.type(screen.getByLabelText("Global GitLab instance URL"), " https://gitlab.company.test/ ");
-      await settingsModalUser.type(screen.getByLabelText("Global GitLab API base URL (optional / advanced)"), " https://gitlab.company.test/api/v4/ ");
-
-      await waitFor(() => {
-        expect(mockUpdateGlobalSettings).toHaveBeenCalled();
-      });
+      /*
+      FNXC:SettingsModalTests 2026-08-11-00:19:
+      Both field edits are set with fireEvent.change under fake timers so the 500ms auto-save
+      debounce still coalesces them into a single global payload (the trimming lives in the save
+      path, so the raw padded values persist trimmed exactly as before) while removing the
+      real-timer wait that made this the single slowest case in the suite.
+      */
+      vi.useFakeTimers();
+      fireEvent.change(screen.getByLabelText("Global GitLab instance URL"), { target: { value: " https://gitlab.company.test/ " } });
+      fireEvent.change(screen.getByLabelText("Global GitLab API base URL (optional / advanced)"), { target: { value: " https://gitlab.company.test/api/v4/ " } });
+      await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+      expect(mockUpdateGlobalSettings).toHaveBeenCalled();
+      vi.useRealTimers();
 
       const globalPayload = mockUpdateGlobalSettings.mock.calls[0]?.[0] as Record<string, unknown>;
       expect(globalPayload.gitlabInstanceUrl).toBe("https://gitlab.company.test/");
@@ -1290,11 +1308,11 @@ describe("SettingsModal", () => {
       renderModal({ initialSection: "source-control-global" });
       await waitForSettingsModalReady();
 
-      await settingsModalUser.click(screen.getByLabelText("Enable GitLab integration"));
-
-      await waitFor(() => {
-        expect(mockUpdateGlobalSettings).toHaveBeenCalledWith(expect.objectContaining({ gitlabEnabled: true }));
-      });
+      vi.useFakeTimers();
+      fireEvent.click(screen.getByLabelText("Enable GitLab integration"));
+      await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+      expect(mockUpdateGlobalSettings).toHaveBeenCalledWith(expect.objectContaining({ gitlabEnabled: true }));
+      vi.useRealTimers();
       if (mockUpdateSettings.mock.calls.length > 0) {
         expect(mockUpdateSettings.mock.calls[0]?.[0]).not.toHaveProperty("gitlabEnabled");
       }
@@ -1327,12 +1345,12 @@ describe("SettingsModal", () => {
       const enableToggle = screen.getByLabelText("Enable GitLab integration") as HTMLInputElement;
       expect(enableToggle).toBeChecked();
 
-      await settingsModalUser.click(enableToggle);
+      vi.useFakeTimers();
+      fireEvent.click(enableToggle);
       expect(enableToggle).not.toBeChecked();
-
-      await waitFor(() => {
-        expect(mockUpdateGlobalSettings).toHaveBeenCalledWith(expect.objectContaining({ gitlabEnabled: false }));
-      });
+      await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+      expect(mockUpdateGlobalSettings).toHaveBeenCalledWith(expect.objectContaining({ gitlabEnabled: false }));
+      vi.useRealTimers();
     });
 
     it("shows global tracking repo error hint and keeps custom entry when lookups fail", async () => {
@@ -1356,11 +1374,11 @@ describe("SettingsModal", () => {
 
     expect(screen.getByRole("heading", { name: "Agent Provisioning Approvals" })).toBeInTheDocument();
 
-    await settingsModalUser.selectOptions(screen.getByLabelText("Approval mode"), "always");
-
-    await waitFor(() => {
-      expect(mockUpdateSettings).toHaveBeenCalled();
-    });
+    vi.useFakeTimers();
+    fireEvent.change(screen.getByLabelText("Approval mode"), { target: { value: "always" } });
+    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+    expect(mockUpdateSettings).toHaveBeenCalled();
+    vi.useRealTimers();
 
     const payload = mockUpdateSettings.mock.calls[0]?.[0] as {
       agentProvisioning?: { approvalMode?: string };
@@ -1389,11 +1407,12 @@ describe("SettingsModal", () => {
       await waitForSettingsModalReady();
 
       await settingsModalUser.click(screen.getByRole("button", { name: /Appearance/ }));
-      await settingsModalUser.click(screen.getByRole("button", { name: "Largest" }));
-
-      await waitFor(() => {
-        expect(mockUpdateGlobalSettings).toHaveBeenCalled();
-      });
+      // FNXC:SettingsModalTests 2026-08-11-00:19: flush the 500ms auto-save debounce with fake timers rather than a real-timer waitFor.
+      vi.useFakeTimers();
+      fireEvent.click(screen.getByRole("button", { name: "Largest" }));
+      await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+      expect(mockUpdateGlobalSettings).toHaveBeenCalled();
+      vi.useRealTimers();
 
       const payload = mockUpdateGlobalSettings.mock.calls[0][0];
       expect(payload).toEqual(expect.objectContaining({ dashboardFontScalePct: 120 }));

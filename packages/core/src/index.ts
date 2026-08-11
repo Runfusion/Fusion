@@ -2806,3 +2806,9 @@ export { AGENT_ACTIVITY_EVENT_TYPES, AGENT_ACTIVITY_ATTRIBUTIONS, AGENT_ACTIVITY
 export { appendAgentActivityEvent, queryAgentActivityEvents, getMaxAgentActivitySeq, pruneAgentActivityEvents } from "./task-store/async/async-agent-activity.js";
 export { makeAgentActivityEventId, resolveAgentActivityAttribution, agentIdExistsInRoster, formatAgentActivitySummary, sanitizeAgentActivityMetadata } from "./task-store/agent-activity-outbox.js";
 export * from "./memory/recall/index.js";
+/*
+ * FNXC:MemoryMcp 2026-08-11-00:19:
+ * The dashboard aliases this barrel for browser code. Keep the pure descriptor here, while the
+ * filesystem-dependent spawn factory remains available only at @fusion/core/mcp-builtin-servers.
+ */
+export * from "./config/mcp-builtin-descriptor.js";
