@@ -52,10 +52,8 @@ import {
   buildDuplicateReplanExhaustedError,
 } from "./duplicate-marker-clear.js";
 import { mergeEffectiveSettings } from "./project/effective-settings.js";
-import { RemovalReason, classifyTaskWorktree, getRegisteredWorktreeBranchMap, getRegisteredWorktreePaths, hasUsableWorktreeShape, isUsableTaskWorktree, relocateReclaimableWorktreeIntoRoot, removeWorktree, resolveWorktreeBackend, scanIdleWorktrees, scanOrphanedBranches } from "./worktree/worktree-pool.js";
+import { RemovalReason, classifyTaskWorktree, getRegisteredWorktreeBranchMap, getRegisteredWorktreePaths, isUsableTaskWorktree, relocateReclaimableWorktreeIntoRoot, removeWorktree, resolveWorktreeBackend, scanIdleWorktrees, scanOrphanedBranches } from "./worktree/worktree-pool.js";
 import {
-  classifyMissingWorktreeSessionStartFailure,
-  extractMissingWorktreePathFromSessionStartFailure,
   isMissingWorktreeSessionStartFailure,
   isMergeActiveMissingWorktreeSessionStartFailure,
   isRecoverableMissingWorktreeReviewFailureNoProgress,
@@ -151,7 +149,6 @@ import {
   COMPLETION_HANDOFF_LIMBO_GRACE_MS,
   MAX_COMPLETION_HANDOFF_LIMBO_RECOVERIES,
   MAX_POST_DONE_NONCONTINUABLE_WEDGE_RECOVERIES,
-  MAX_WORKTREE_SESSION_RETRIES,
   PAUSE_ABORT_PARK_ERROR_MARKER,
   PAUSE_ABORT_PARK_OPERATOR_MARKER,
   MAX_TRANSIENT_MERGE_RECOVERIES,
