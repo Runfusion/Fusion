@@ -74,6 +74,8 @@ describe("reconcileMissionState", () => {
     );
 
     expect(result.planned).toEqual([]);
+    expect(result).toMatchObject({ missionsScanned: 1, featuresScanned: 1, failures: 0 });
+    expect(taskStore.getLatestSpecDriftReport).toHaveBeenCalled();
   });
 
   it("preserves the TaskStore receiver while listing reconciliation candidates", async () => {
