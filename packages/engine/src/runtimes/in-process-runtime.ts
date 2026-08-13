@@ -1973,6 +1973,15 @@ export class InProcessRuntime
           return !!run;
         },
       });
+      /*
+      FNXC:PauseGatedMaintenance 2026-08-13-03:08 (RUFU-076):
+      SelfHealingManager.start() is now itself pause-aware: it registers the settings:updated re-arm
+      listener unconditionally, but its periodic-maintenance timer is only armed when the project is not
+      paused (globalPause/enginePaused). This call runs before the startup pause gate below, yet a
+      project that starts paused never arms the setInterval that drives batch-1 git churn — fixing the
+      production perf collapse where pausing every project failed to cut CPU because maintenance ran at
+      the task-store/runtime level, not per-agent. The listener re-arms the timer on unpause.
+      */
       this.selfHealingManager.start();
       this.stuckTaskDetector.start();
       this.detachAgentLinkSync = attachAgentLinkSync({
