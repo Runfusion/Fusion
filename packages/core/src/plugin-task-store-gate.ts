@@ -144,10 +144,13 @@ export interface PluginTaskStoreGateOptions {
 
 /**
  * FNXC:PluginTaskStoreGate 2026-07-26-12:20:
- * Wrap a TaskStore for hand-off to a plugin context. When the plugin manifest
- * declares `permissions.destructiveTaskOps: true` the raw store is returned
- * unchanged. Otherwise a Proxy intercepts the denylisted methods and throws a
- * clear declaration-pointing error.
+ * Wrap a TaskStore for hand-off to a plugin context. A Proxy classifies every member access and
+ * throws a declaration-pointing error for anything not permitted.
+ *
+ * FNXC:PluginTaskStoreGate 2026-08-09-03:04:
+ * Superseded the original two-outcome shape. `permissions.destructiveTaskOps: true` no longer
+ * returns the raw store — it widens the destructive set and nothing else, so a declaring plugin is
+ * still subject to deny-by-default on the rest of the write surface.
  *
  * Implementation notes:
  * - Non-denylisted function properties are bound to the RAW store (and cached per
