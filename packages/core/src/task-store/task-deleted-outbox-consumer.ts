@@ -22,11 +22,25 @@ import {
 } from "./task-lifecycle-consumer-registry.js";
 
 export const TASK_DELETED_OUTBOX_POLL_MS = 5_000;
+export const TASK_DELETED_OUTBOX_MAX_POLL_MS = 60_000;
+export const TASK_DELETED_OUTBOX_BACKOFF_STEP_MS = 10_000;
+export const TASK_DELETED_OUTBOX_POLL_JITTER_RATIO = 0.2;
 export const TASK_DELETED_OUTBOX_LEASE_MS = 15_000;
 export const TASK_DELETED_OUTBOX_BATCH_SIZE = 100;
 export const TASK_DELETED_OUTBOX_RETENTION_DAYS = 30;
 
 const outboxConsumerLog = createLogger("task-deleted-outbox-consumer");
+
+/**
+ * Apply ±`TASK_DELETED_OUTBOX_POLL_JITTER_RATIO` multiplicative jitter to a poll delay so the ~44
+ * per-project dashboard/engine consumers de-synchronize instead of firing on the same cadence.
+ * Imported by the regression test to assert its bounded, non-negative range. The delay never falls
+ * below the fast base so jitter cannot speed an idle consumer back into the storm.
+ */
+export function applyPollJitter(delayMs: number, ratio = TASK_DELETED_OUTBOX_POLL_JITTER_RATIO): number {
+  const delta = delayMs * ratio * (Math.random() * 2 - 1);
+  return Math.max(TASK_DELETED_OUTBOX_POLL_MS, Math.round(delayMs + delta));
+}
 
 type OutboxEventForValidation = {
   eventId: string;
@@ -67,23 +81,42 @@ function assertTaskDeletedOutboxEvent(event: OutboxEventForValidation): void {
  * observed notifications in the crash window; observed dispatch has no writer-owned effects.
  */
 export class TaskDeletedOutboxConsumer {
-  private pollTimer: ReturnType<typeof setInterval> | null = null;
+  private pollTimer: ReturnType<typeof setTimeout> | null = null;
   private renewalTimer: ReturnType<typeof setInterval> | null = null;
   private running = false;
   private lease: TaskLifecycleLease | null = null;
+  private idlePollsSinceEvent = 0;
 
   constructor(private readonly store: TaskStore) {}
 
+  /*
+  FNXC:TaskLifecycleConsumerIdleBackoff 2026-08-13-06:41:
+  The outbox consumer reschedules itself instead of polling a fixed 5s setInterval forever. Each
+  poll feeds back its outcome: an idle poll (the outbox returned zero events) grows the next delay
+  by TASK_DELETED_OUTBOX_BACKOFF_STEP_MS toward TASK_DELETED_OUTBOX_MAX_POLL_MS, with ±20% jitter
+  so the ~44 per-project dashboard/engine consumers de-synchronize instead of thundering together;
+  a poll that delivered events resets to the fast TASK_DELETED_OUTBOX_POLL_MS base. A paused/idle
+  project stops writing lifecycle events, so its outbox drains and backoff alone drops the DB
+  idx_scan/CPU storm on task_lifecycle_consumer_cursors without touching delivery semantics. Any
+  new event mid-backoff resets the cadence to 5s, bounding delivery latency. Cursor fencing, lease
+  advance, per-event ordering, and at-least-once delivery are unchanged — backoff only changes when
+  poll() runs, never the poll/dispatch/ack logic.
+  */
   async start(): Promise<void> {
     if (this.running || !this.store.asyncLayer || !this.store.consumerId) return;
     this.running = true;
-    await this.pollSafely();
-    this.pollTimer = setInterval(() => void this.pollSafely(), TASK_DELETED_OUTBOX_POLL_MS);
+    /* Drain any backlog with the immediate poll, then feed its idle/active outcome into the first
+    scheduled delay so a fresh idle consumer backs off from the very first timer (not after one
+    wasted 5s tick). */
+    const active = await this.pollSafely();
+    if (active) this.idlePollsSinceEvent = 0;
+    else this.idlePollsSinceEvent += 1;
+    this.scheduleNextPoll();
   }
 
   async stop(): Promise<void> {
     this.running = false;
-    if (this.pollTimer) clearInterval(this.pollTimer);
+    if (this.pollTimer) clearTimeout(this.pollTimer);
     if (this.renewalTimer) clearInterval(this.renewalTimer);
     this.pollTimer = null;
     this.renewalTimer = null;
@@ -106,18 +139,26 @@ export class TaskDeletedOutboxConsumer {
     }
   }
 
-  private async pollSafely(): Promise<void> {
+  private async pollSafely(): Promise<boolean> {
     try {
-      await this.poll();
+      return await this.poll();
     } catch (error) {
       outboxConsumerLog.warn("Task:deleted outbox poll failed; delivery will retry", error);
+      return false;
     }
   }
 
-  async poll(): Promise<void> {
+  /**
+   * Idle/active backoff contract: returns `true` when the poll delivered/processed at least one
+   * lifecycle event (the consumer is active), `false` when it found the outbox empty or took a
+   * non-delivering early return (the consumer is idle). The rescheduling loop uses this to extend
+   * the next poll delay toward the 60s cap while idle and reset to the fast 5s base once events
+   * flow again.
+   */
+  async poll(): Promise<boolean> {
     const layer = this.store.asyncLayer;
     const consumerId = this.store.consumerId;
-    if (!this.running || !layer || !consumerId) return;
+    if (!this.running || !layer || !consumerId) return false;
     await registerTaskLifecycleConsumer(layer, consumerId);
     /*
     FNXC:CrossProcessDeleteObservation 2026-08-01-12:14:
@@ -126,7 +167,7 @@ export class TaskDeletedOutboxConsumer {
     */
     if (!this.running) {
       await setTaskLifecycleConsumerActive(layer, consumerId, false);
-      return;
+      return false;
     }
     const now = new Date();
     const acquired = await acquireTaskLifecycleLease(
@@ -136,27 +177,27 @@ export class TaskDeletedOutboxConsumer {
       new Date(now.getTime() + TASK_DELETED_OUTBOX_LEASE_MS).toISOString(),
       now.toISOString(),
     );
-    if (!acquired) return;
+    if (!acquired) return false;
     if (!this.running) {
       await releaseTaskLifecycleLease(layer, consumerId, acquired);
-      return;
+      return false;
     }
     this.lease = acquired;
     this.startRenewal(acquired);
     try {
       const cursor = await readTaskLifecycleConsumerCursor(layer, consumerId);
-      if (!cursor) return;
-      if (cursor.retryBackoffUntil && Date.parse(cursor.retryBackoffUntil) > Date.now()) return;
+      if (!cursor) return false;
+      if (cursor.retryBackoffUntil && Date.parse(cursor.retryBackoffUntil) > Date.now()) return false;
       const reconciliationReason = await this.needsReconciliation(cursor.lastAckedSeq, cursor.updatedAt);
       if (reconciliationReason) {
         const reconciled = await this.reconcile(cursor.lastAckedSeq, acquired, reconciliationReason);
         if (!reconciled) {
           await this.recordLeaseFenced(acquired, 0);
-          return;
+          return false;
         }
       }
       const currentCursor = await readTaskLifecycleConsumerCursor(layer, consumerId);
-      if (!currentCursor) return;
+      if (!currentCursor) return false;
       const events = await listTaskLifecycleEvents(layer, currentCursor.lastAckedSeq, TASK_DELETED_OUTBOX_BATCH_SIZE);
       let priorSeq = currentCursor.lastAckedSeq;
       let dispatchedCount = 0;
@@ -228,6 +269,7 @@ export class TaskDeletedOutboxConsumer {
         });
       }
       if (this.running) await setTaskLifecycleConsumerActive(layer, consumerId, true);
+      return events.length > 0;
     } finally {
       if (this.renewalTimer) clearInterval(this.renewalTimer);
       this.renewalTimer = null;
@@ -255,6 +297,37 @@ export class TaskDeletedOutboxConsumer {
       return "cursor-older-than-retention-bound";
     }
     return null;
+  }
+
+  /**
+   * Reschedule the next poll with a setTimeout whose delay reflects the previous poll's outcome,
+   * replacing the old fixed-interval setInterval so an idle consumer stops thundering against the
+   * DB. pollSafely always resolves (it swallows errors), so the reschedule chain never stalls.
+   */
+  private scheduleNextPoll(): void {
+    if (!this.running) return;
+    if (this.pollTimer) clearTimeout(this.pollTimer);
+    this.pollTimer = setTimeout(() => {
+      this.pollTimer = null;
+      void this.pollSafely().then((active) => {
+        if (active) this.idlePollsSinceEvent = 0;
+        else this.idlePollsSinceEvent += 1;
+        this.scheduleNextPoll();
+      });
+    }, this.nextPollDelayMs());
+  }
+
+  /** Jittered delay for the upcoming poll, derived from the accumulated idle-poll count. */
+  private nextPollDelayMs(): number {
+    return applyPollJitter(this.computeNextPollDelayMs());
+  }
+
+  /** Deterministic idle-backoff delay (no jitter): 5s -> 15s -> 25s -> ... -> 60s cap. */
+  private computeNextPollDelayMs(): number {
+    if (this.idlePollsSinceEvent <= 0) return TASK_DELETED_OUTBOX_POLL_MS;
+    const grown = TASK_DELETED_OUTBOX_POLL_MS
+      + this.idlePollsSinceEvent * TASK_DELETED_OUTBOX_BACKOFF_STEP_MS;
+    return Math.min(grown, TASK_DELETED_OUTBOX_MAX_POLL_MS);
   }
 
   private async reconcile(
