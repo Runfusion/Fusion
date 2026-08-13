@@ -303,6 +303,30 @@ export interface ActorRoleGrant {
  *
  * The grant is upserted on the `(project_id, actor_id, role)` primary key so re-granting a
  * previously revoked role clears `revoked_at` rather than colliding.
+ *
+ * FNXC:IdentityGrantEscalation 2026-08-09-03:04:
+ * BLOCKED ON A PRIVILEGED CONNECTION — this write, {@link revokeActorRole}, and the grant revoke
+ * inside {@link setActorStatus} will fail with PostgreSQL `42501` once identity is enabled.
+ *
+ * Migration 0059 revokes INSERT/UPDATE/DELETE on `project.actor_role_grants` from `fusion_runtime`,
+ * because that is the role a plugin's `getAsyncLayer()` handle connects as and its write privilege
+ * was a grant-yourself-a-role escalation. These functions still write over `layer.db`, which IS that
+ * role. Harmless today only because nothing calls them outside tests, and the existing actor-store
+ * suite builds its layer on the harness's OWNER connection, so the failure is invisible there.
+ *
+ * The fix needs a DEDICATED owner-role connection. Reusing `PostgresConnections.migration` was tried
+ * and does not work: it is deliberately a `max: 1` pool reserved for session advisory locks and
+ * `session_replication_role`, and a transaction opened on it hangs — measured with a trivial
+ * `SELECT 1`, which timed out at 20s. Single statements on it do succeed, so a partial fix that
+ * moves only `grantActorRole` would look like it worked while `setActorStatus` still hung.
+ *
+ * Two hazards that connection brings, both silent, and both to be handled when it lands:
+ *   1. It bypasses project isolation, so RLS stops confining these statements. `revokeActorRole`
+ *      currently carries NO project predicate and relies on the policy; moved as-is it would revoke
+ *      a role in EVERY project. It needs an explicit `project_id` scope.
+ *   2. It is a separate connection, so `setActorStatus` cannot split its status write and its grant
+ *      revoke across handles — that yields two transactions, and a failure between them leaves an
+ *      actor recorded as suspended while its grants stay live.
  */
 export async function grantActorRole(
   layer: Pick<AsyncDataLayer, "db" | "projectId">,
