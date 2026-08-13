@@ -127,4 +127,31 @@ BEGIN
   DROP TRIGGER IF EXISTS fusion_assign_project_id ON project.actor_role_grants;
   CREATE TRIGGER fusion_assign_project_id BEFORE INSERT OR UPDATE OF project_id ON project.actor_role_grants
     FOR EACH ROW EXECUTE FUNCTION project.fusion_assign_project_id();
+
+  /*
+  FNXC:IdentityGrantEscalation 2026-08-09-03:04:
+  Take write privilege on this table away from `fusion_runtime` (U5 step 4, AE18/R14).
+
+  This table is the ONLY thing that says who holds authority, and without this REVOKE any installed
+  plugin can rewrite it. The chain is short and every link already exists: a plugin receives the real
+  TaskStore through `PluginContext`, `createPluginGatedTaskStore` deliberately does not deny
+  `getAsyncLayer()` (four in-repo plugins depend on it), that handle is the SAME pooled connection
+  core uses, and 0006 sets `ALTER DEFAULT PRIVILEGES IN SCHEMA project GRANT SELECT, INSERT, UPDATE,
+  DELETE ON TABLES TO fusion_runtime` — so this table was born writable by the runtime role. The
+  `fusion_project_isolation` policy above does NOT close it: RLS here filters by `project_id` only,
+  never by caller, so a plugin writing a grant for its own project passes the policy cleanly. Net
+  effect without this statement: any plugin can `INSERT INTO project.actor_role_grants` making itself
+  `admin`, and every `can()` check downstream then honestly returns allow.
+
+  SELECT is deliberately retained. Authorization reads grants on every mutation over the runtime
+  connection; revoking reads would break enforcement rather than harden it. Only the write verbs go.
+
+  Consequence for grant mutations: they must run on the owner/`migration` connection, which plugins
+  never receive. That connection sets `fusion.project_bypass = on`, so the `fusion_assign_project_id`
+  trigger above cannot infer `project_id` there — a grant write MUST pass `project_id` explicitly.
+  RLS is not a backstop on that path.
+  */
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'fusion_runtime') THEN
+    REVOKE INSERT, UPDATE, DELETE ON project.actor_role_grants FROM fusion_runtime;
+  END IF;
 END $$;

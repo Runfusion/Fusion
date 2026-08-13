@@ -200,15 +200,18 @@ pgDescribe("identity schema: migration 0061", () => {
         useRuntimeRole: true,
       });
       try {
-        // project_id is intentionally omitted: the fusion_assign_project_id trigger stamps it.
-        await projectA.runtime.execute(sql`
-          INSERT INTO project.actor_role_grants (actor_id, role, granted_at)
-          VALUES ('actor-a', 'admin', ${NOW})
-        `);
-        await projectB.runtime.execute(sql`
-          INSERT INTO project.actor_role_grants (actor_id, role, granted_at)
-          VALUES ('actor-b', 'viewer', ${NOW})
-        `);
+        /*
+        FNXC:IdentityGrantEscalation 2026-08-09-03:04:
+        Seeded over the OWNER connection, not the runtime role, because 0059 revokes write on this
+        table from `fusion_runtime` (that revoke is what stops a plugin granting itself a role). The
+        runtime role keeps SELECT, which is the half this test is about: it asserts that RLS filters
+        what each project can READ. project_id is explicit here — the owner connection runs with
+        `fusion.project_bypass = on`, so the fusion_assign_project_id trigger cannot infer it.
+        */
+        await h.adminSql`
+          INSERT INTO project.actor_role_grants (project_id, actor_id, role, granted_at)
+          VALUES ('project-a', 'actor-a', 'admin', ${NOW}), ('project-b', 'actor-b', 'viewer', ${NOW})
+        `;
 
         const seenByA = (await projectA.runtime.execute(sql`
           SELECT project_id, actor_id, role FROM project.actor_role_grants ORDER BY actor_id
@@ -228,6 +231,122 @@ pgDescribe("identity schema: migration 0061", () => {
       } finally {
         await projectA.close();
         await projectB.close();
+      }
+    });
+  });
+
+  /*
+  FNXC:IdentityGrantEscalation 2026-08-09-03:04:
+  AE18 / U5 step 4. A plugin holds the same pooled `fusion_runtime` connection core does (the plugin
+  gate does not deny `getAsyncLayer()`), and RLS on this table filters by project_id, never by caller
+  — so before 0059's REVOKE, a plugin could INSERT itself an `admin` grant and every downstream
+  `can()` check would then honestly allow it. Asserted at the ROLE boundary rather than through a
+  plugin fixture: that is where the guarantee actually lives, and it holds for any caller who gets a
+  raw handle, including ones no fixture anticipates.
+
+  Both verbs are asserted. The write must be rejected and the read must still succeed: revoking SELECT
+  too would "pass" a denial test while breaking enforcement, since authorization reads grants on this
+  same runtime connection on every mutation.
+  */
+  /*
+  FNXC:IdentityGrantEscalation 2026-08-09-03:04:
+  Assert the rejection by PostgreSQL's `42501 insufficient_privilege` code, walking the cause chain.
+  Two reasons this is not a message match: drizzle wraps the driver error, so the outer message is
+  only "Failed query: ..." and the real text lives on `cause`; and a bare `.rejects.toThrow()` would
+  pass on ANY failure — an RLS violation, a typo'd column, a dropped table — which is precisely how a
+  privilege test comes to assert nothing. The code pins the exact reason we require.
+  */
+  async function expectInsufficientPrivilege(operation: Promise<unknown>): Promise<void> {
+    let thrown: unknown;
+    try {
+      await operation;
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown, "expected the statement to be rejected, but it succeeded").toBeDefined();
+    const codes: unknown[] = [];
+    for (let cursor = thrown, depth = 0; cursor !== undefined && cursor !== null && depth < 8; depth++) {
+      codes.push((cursor as { code?: unknown }).code);
+      cursor = (cursor as { cause?: unknown }).cause;
+    }
+    expect(codes, `expected 42501 in the cause chain, saw codes: ${JSON.stringify(codes)}`).toContain("42501");
+  }
+
+  it("denies the runtime role write on actor_role_grants while preserving its reads", async () => {
+    await withHarness(async (h) => {
+      await h.adminSql.unsafe(`
+        DO $$ BEGIN
+          IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'fusion_runtime') THEN
+            CREATE ROLE fusion_runtime NOLOGIN NOSUPERUSER;
+          END IF;
+          EXECUTE format('GRANT fusion_runtime TO %I', current_user);
+        END $$
+      `);
+      await seedActor(h, "actor-a");
+      await h.adminSql`
+        INSERT INTO project.actor_role_grants (project_id, actor_id, role, granted_at)
+        VALUES ('project-a', 'actor-a', 'viewer', ${NOW})
+      `;
+
+      const backend: ResolvedBackend = {
+        mode: "external",
+        runtimeUrl: h.testUrl,
+        migrationUrl: h.testUrl,
+        migrationUrlOverridden: false,
+      };
+      const projectA = await createConnectionSetFromUrl(backend, {
+        poolMax: 1,
+        connectTimeoutSeconds: 5,
+        projectId: "project-a",
+        useRuntimeRole: true,
+      });
+      try {
+        /*
+        FNXC:IdentityGrantEscalation 2026-08-09-03:04:
+        Pin the session identity before asserting any denial. `FORCE ROW LEVEL SECURITY` applies to
+        the table owner too, so a passing RLS assertion does NOT prove the connection actually
+        switched to `fusion_runtime` — without this, every denial below could be asserting against
+        the wrong role, or against a role holding no privilege on the table for unrelated reasons,
+        and would pass either way.
+        */
+        const identity = (await projectA.runtime.execute(sql`
+          SELECT current_user::text AS current_user_name,
+                 has_table_privilege('project.actor_role_grants', 'INSERT') AS can_insert,
+                 has_table_privilege('project.actor_role_grants', 'SELECT') AS can_select
+        `)) as unknown as Array<{ current_user_name: string; can_insert: boolean; can_select: boolean }>;
+        expect(identity[0]).toEqual({
+          current_user_name: "fusion_runtime",
+          can_insert: false,
+          can_select: true,
+        });
+
+        // The escalation itself: grant myself admin in my own project. Must be refused.
+        await expectInsufficientPrivilege(
+          projectA.runtime.execute(sql`
+            INSERT INTO project.actor_role_grants (actor_id, role, granted_at)
+            VALUES ('actor-a', 'admin', ${NOW})
+          `),
+        );
+
+        // Escalation by mutating the row that already exists is the same attack; also refused.
+        await expectInsufficientPrivilege(
+          projectA.runtime.execute(sql`
+            UPDATE project.actor_role_grants SET role = 'admin' WHERE actor_id = 'actor-a'
+          `),
+        );
+
+        // Revoking the grant that constrains you is an escalation too.
+        await expectInsufficientPrivilege(
+          projectA.runtime.execute(sql`DELETE FROM project.actor_role_grants WHERE actor_id = 'actor-a'`),
+        );
+
+        // Reads must survive — enforcement depends on them, and no write above took effect.
+        const seen = (await projectA.runtime.execute(sql`
+          SELECT actor_id, role FROM project.actor_role_grants
+        `)) as unknown as Array<{ actor_id: string; role: string }>;
+        expect(seen).toEqual([{ actor_id: "actor-a", role: "viewer" }]);
+      } finally {
+        await projectA.close();
       }
     });
   });
