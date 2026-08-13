@@ -1643,7 +1643,27 @@ export class Scheduler {
     task: Task,
     input: { signature: string; blockedBy: string | null; overlapBlockedBy: string | null; action: string },
   ): Promise<boolean> {
-    return (await this.store.transitionQueuedEpisode(task.id, input)).appended;
+    /*
+    FNXC:RUFU-075 2026-08-13-03:16:
+    The review-lease and dependency overlap-queue writes historically went straight through
+    `store.updateTask(…, { status: "queued", …, overlapBlockedBy })`. FN-8785 moved them onto the
+    store's atomic `transitionQueuedEpisode` helper (advisory-locked, edge-triggered queue logging).
+    A minimal/legacy store that does not implement `transitionQueuedEpisode` (as several scheduler
+    test mocks and older store shims do not) must still receive a correct queue write, or the lease
+    overlap / dependency block is silently dropped. Mirror the FN-8806 convention already used by
+    `executor/dependency-dispatch-gate.ts`: require the method before using it, and fall back to the
+    pre-FN-8785 `updateTask` + `logEntry` contract otherwise, so `overlapBlockedBy` reaches the row.
+    */
+    if (typeof this.store.transitionQueuedEpisode === "function") {
+      return (await this.store.transitionQueuedEpisode(task.id, input)).appended;
+    }
+    await this.store.updateTask(task.id, {
+      status: "queued",
+      blockedBy: input.blockedBy ?? null,
+      overlapBlockedBy: input.overlapBlockedBy ?? null,
+    });
+    await this.logDispatchQueuedReason(task.id, input.action);
+    return true;
   }
 
   private async logDispatchQueuedReason(taskId: string, reason: string, memoKey?: string): Promise<boolean> {
@@ -3173,25 +3193,34 @@ export class Scheduler {
       }
 
       const sliceIdBeforeUpdate = feature.sliceId;
-      const featureSlice = await missionStore.getSlice(feature.sliceId);
-      const milestone = featureSlice ? await missionStore.getMilestone(featureSlice.milestoneId) : undefined;
-      const missionId = task.missionId ?? milestone?.missionId;
-      if (!missionId) {
-        schedulerLog.warn(`Task ${taskId} feature ${feature.id} has no resolvable mission; skipping reconciliation`);
-        return;
-      }
       /*
-      FNXC:MissionAutoReconcile 2026-08-11-02:39:
-      Live moves use the same authority as maintenance rather than retaining a second direct
-      writer. This keeps task-move attribution and validation-badge repair identical to every
-      other deterministic ground-truth projection.
+      FNXC:RUFU-075 2026-08-13-03:16:
+      FN-8948 routed the task-move feature-status reconciliation through a resolve-missionId ->
+      reconcileMissionState authority. That block is a maintenance side-channel and must not gate the
+      mission-completion advance below: a missionStore that cannot resolve the mission (does not
+      implement getSlice/getMilestone, or genuinely has no mission) should skip reconcile rather than
+      abort the completion check. Pre-FN-8948 the completion check ran directly from the resolved
+      feature, which is what the scheduler contract (and minimal missionStore mocks) still require.
       */
-      if (missionId !== task.missionId) {
-        try {
-          await reconcileMissionState({ taskStore: this.store, missionStore }, { missionId, source: "task-move" });
-        } catch (error) {
-          schedulerLog.warn(`Mission reconciliation failed after resolving task ${taskId}; continuing mission completion handling:`, error);
+      let missionId = task.missionId;
+      try {
+        if (!missionId && typeof missionStore.getSlice === "function") {
+          const featureSlice = await missionStore.getSlice(feature.sliceId);
+          const milestone =
+            featureSlice && typeof missionStore.getMilestone === "function"
+              ? await missionStore.getMilestone(featureSlice.milestoneId)
+              : undefined;
+          missionId = milestone?.missionId;
         }
+        if (!missionId) {
+          schedulerLog.warn(`Task ${taskId} feature ${feature.id} has no resolvable mission; skipping reconciliation`);
+        } else if (missionId !== task.missionId) {
+          await reconcileMissionState({ taskStore: this.store, missionStore }, { missionId, source: "task-move" });
+        }
+      } catch (error) {
+        // Best-effort reconcile — a partial missionStore (missing getSlice/getMilestone or the
+        // reconcile probes) must not gate the completion advance below.
+        schedulerLog.warn(`Task ${taskId} feature ${feature.id} mission reconcile skipped (${String(error)}); continuing to completion check`);
       }
 
       /*
