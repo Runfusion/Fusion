@@ -7,6 +7,7 @@ import {
   getIssue,
   getIssueComments,
   getIssueViaCli,
+  getRun,
   getRunEvents,
   listCompaniesViaCli,
   listCompanyAgents,
@@ -202,8 +203,28 @@ describe("wakeAgent", () => {
 });
 
 // ---------------------------------------------------------------------------
-// getRunEvents
+// getRun / getRunEvents
 // ---------------------------------------------------------------------------
+
+describe("getRun", () => {
+  it("fetches the heartbeat-run record with bearer auth", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(jsonResponse({ id: "RUN-1", status: "succeeded" }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await getRun("http://localhost:3100/", "secret", "RUN-1");
+
+    expect(result).toEqual({ id: "RUN-1", status: "succeeded" });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost:3100/api/heartbeat-runs/RUN-1",
+      expect.objectContaining({
+        method: "GET",
+        headers: expect.objectContaining({ Authorization: "Bearer secret" }),
+      }),
+    );
+  });
+});
 
 describe("getRunEvents", () => {
   it("uses afterSeq + limit query params", async () => {

@@ -89,6 +89,13 @@ export interface RunEvent {
   createdAt?: string;
 }
 
+/** A heartbeat-run record returned by GET /api/heartbeat-runs/{runId}. */
+export interface HeartbeatRunRecord {
+  id?: string;
+  status?: string;
+  [key: string]: unknown;
+}
+
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
@@ -507,6 +514,20 @@ export async function getRunEvents(
   const r = result as Record<string, unknown>;
   if (Array.isArray(r.events)) return r.events as RunEvent[];
   return [];
+}
+
+/**
+ * Fetches the current heartbeat-run record.
+ *
+ * This is the authoritative terminal-state fallback when the incremental
+ * events endpoint has no new status event.
+ */
+export async function getRun(
+  apiUrl: string,
+  apiKey: string | undefined,
+  runId: string,
+): Promise<HeartbeatRunRecord> {
+  return request<HeartbeatRunRecord>(apiUrl, `/heartbeat-runs/${runId}`, { apiKey });
 }
 
 // ---------------------------------------------------------------------------

@@ -11,6 +11,7 @@ const {
   mockGetIssue,
   mockGetIssueViaCli,
   mockGetIssueComments,
+  mockGetRun,
   mockGetRunEvents,
   mockWakeAgent,
   mockResolveConfig,
@@ -23,6 +24,7 @@ const {
   mockGetIssue: vi.fn(),
   mockGetIssueViaCli: vi.fn(),
   mockGetIssueComments: vi.fn(),
+  mockGetRun: vi.fn(),
   mockGetRunEvents: vi.fn(),
   mockWakeAgent: vi.fn(),
   mockResolveConfig: vi.fn((settings?: Record<string, unknown>) => ({
@@ -50,6 +52,7 @@ vi.mock("../paperclip-client.js", () => ({
   getIssue: mockGetIssue,
   getIssueViaCli: mockGetIssueViaCli,
   getIssueComments: mockGetIssueComments,
+  getRun: mockGetRun,
   getRunEvents: mockGetRunEvents,
   wakeAgent: mockWakeAgent,
   resolvePaperclipConfig: mockResolveConfig,
@@ -60,10 +63,13 @@ const baseSessionOpts = {
   systemPrompt: "be helpful",
 };
 
-function makeAdapter(config: Record<string, unknown> = {}) {
+function makeAdapter(
+  config: Record<string, unknown> = {},
+  warn: (message: string) => void = () => undefined,
+) {
   return new PaperclipRuntimeAdapter(config, {
     info: () => undefined,
-    warn: () => undefined,
+    warn,
     error: () => undefined,
   });
 }
@@ -82,6 +88,7 @@ beforeEach(() => {
     { seq: 2, type: "heartbeat.run.status", payload: { status: "succeeded" } },
   ];
   mockGetRunEvents.mockResolvedValue(defaultEvents);
+  mockGetRun.mockResolvedValue({ id: "RUN-1", status: "running" });
   mockWakeAgent.mockResolvedValue({ id: "RUN-1", status: "queued" });
   mockCreateIssue.mockResolvedValue({ id: "ISS-1", status: "todo" });
   mockGetIssue.mockResolvedValue({ id: "ISS-1", status: "done" });
@@ -235,10 +242,157 @@ describe("PaperclipRuntimeAdapter — terminal statuses", () => {
     );
   });
 
+  it("empty events + terminal run record returns the exact final response", async () => {
+    mockGetRunEvents.mockResolvedValueOnce([]);
+    mockGetRun.mockResolvedValueOnce({ id: "RUN-1", status: "succeeded" });
+    mockGetIssueComments.mockResolvedValueOnce([
+      { id: "C-1", body: "RICHARD_CANARY_EXACT_RESPONSE" },
+    ]);
+    const adapter = makeAdapter({ agentId: "AG-1", companyId: "CO-1" });
+    const onText = vi.fn();
+    const onToolEnd = vi.fn();
+    const { session } = await adapter.createSession({
+      ...baseSessionOpts,
+      onText,
+      onToolEnd,
+    });
+
+    await adapter.promptWithFallback(session, "p");
+
+    expect(onText).toHaveBeenCalledTimes(1);
+    expect(onText).toHaveBeenCalledWith("RICHARD_CANARY_EXACT_RESPONSE");
+    expect(onToolEnd).toHaveBeenCalledWith(
+      "paperclip.run",
+      false,
+      expect.objectContaining({ runStatus: "succeeded" }),
+    );
+  });
+
+  it("polls the run record until running becomes succeeded", async () => {
+    mockGetRunEvents.mockResolvedValue([]);
+    mockGetRun
+      .mockResolvedValueOnce({ id: "RUN-1", status: "running" })
+      .mockResolvedValueOnce({ id: "RUN-1", status: "succeeded" });
+    const adapter = makeAdapter({ agentId: "AG-1", companyId: "CO-1" });
+    const onToolEnd = vi.fn();
+    const { session } = await adapter.createSession({ ...baseSessionOpts, onToolEnd });
+
+    await adapter.promptWithFallback(session, "p");
+
+    expect(mockGetRun).toHaveBeenCalledTimes(2);
+    expect(onToolEnd).toHaveBeenCalledWith(
+      "paperclip.run",
+      false,
+      expect.objectContaining({ runStatus: "succeeded" }),
+    );
+  });
+
+  it.each(["failed", "cancelled", "interrupted", "timed_out"])(
+    "%s from the run record → onToolEnd isError=true",
+    async (status) => {
+      mockGetRunEvents.mockResolvedValueOnce([]);
+      mockGetRun.mockResolvedValueOnce({ id: "RUN-1", status });
+      const adapter = makeAdapter({ agentId: "AG-1", companyId: "CO-1" });
+      const onToolEnd = vi.fn();
+      const { session } = await adapter.createSession({ ...baseSessionOpts, onToolEnd });
+
+      await adapter.promptWithFallback(session, "p");
+
+      expect(onToolEnd).toHaveBeenCalledWith(
+        "paperclip.run",
+        true,
+        expect.objectContaining({ runStatus: status }),
+      );
+    },
+  );
+
+  it("treats interrupted from the run record as terminal without a local timeout", async () => {
+    mockGetRunEvents.mockResolvedValue([]);
+    mockGetRun.mockResolvedValue({ id: "RUN-1", status: "interrupted" });
+    const adapter = makeAdapter({
+      agentId: "AG-1",
+      companyId: "CO-1",
+      runTimeoutMs: 1,
+      pollIntervalMs: 1,
+      pollIntervalMaxMs: 1,
+    });
+    const onToolEnd = vi.fn();
+    const { session } = await adapter.createSession({ ...baseSessionOpts, onToolEnd });
+
+    await adapter.promptWithFallback(session, "p");
+
+    expect(mockGetRunEvents).toHaveBeenCalledTimes(1);
+    expect(mockGetRun).toHaveBeenCalledTimes(1);
+    expect(onToolEnd).toHaveBeenCalledWith(
+      "paperclip.run",
+      true,
+      expect.objectContaining({
+        runStatus: "interrupted",
+        timedOutLocally: false,
+      }),
+    );
+  });
+
+  it("preserves polling after a transient run-record failure", async () => {
+    mockGetRunEvents.mockResolvedValue([]);
+    mockGetRun
+      .mockRejectedValueOnce(new Error("temporary network error"))
+      .mockResolvedValueOnce({ id: "RUN-1", status: "succeeded" });
+    const warn = vi.fn();
+    const adapter = makeAdapter({ agentId: "AG-1", companyId: "CO-1" }, warn);
+    const onToolEnd = vi.fn();
+    const { session } = await adapter.createSession({ ...baseSessionOpts, onToolEnd });
+
+    await adapter.promptWithFallback(session, "p");
+
+    expect(mockGetRun).toHaveBeenCalledTimes(2);
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("temporary network error"),
+    );
+    expect(onToolEnd).toHaveBeenCalledWith(
+      "paperclip.run",
+      false,
+      expect.objectContaining({ runStatus: "succeeded" }),
+    );
+  });
+
+  it("ignores a malformed run-record status and keeps polling", async () => {
+    mockGetRunEvents.mockResolvedValue([]);
+    mockGetRun
+      .mockResolvedValueOnce({ id: "RUN-1", status: 123 })
+      .mockResolvedValueOnce({ id: "RUN-1", status: "succeeded" });
+    const warn = vi.fn();
+    const adapter = makeAdapter({ agentId: "AG-1", companyId: "CO-1" }, warn);
+    const onToolEnd = vi.fn();
+    const { session } = await adapter.createSession({ ...baseSessionOpts, onToolEnd });
+
+    await adapter.promptWithFallback(session, "p");
+
+    expect(mockGetRun).toHaveBeenCalledTimes(2);
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("missing or empty status"),
+    );
+    expect(onToolEnd).toHaveBeenCalledWith(
+      "paperclip.run",
+      false,
+      expect.objectContaining({ runStatus: "succeeded" }),
+    );
+  });
+
+  it("does not fetch the run record when an event is already terminal", async () => {
+    const adapter = makeAdapter({ agentId: "AG-1", companyId: "CO-1" });
+    const { session } = await adapter.createSession({ ...baseSessionOpts });
+
+    await adapter.promptWithFallback(session, "p");
+
+    expect(mockGetRun).not.toHaveBeenCalled();
+  });
+
   it("local timeout → exits with timedOutLocally=true, no throw", async () => {
     mockGetRunEvents.mockResolvedValue([
       { seq: 1, type: "heartbeat.run.status", payload: { status: "running" } },
     ]);
+    mockGetRun.mockResolvedValue({ id: "RUN-1", status: "running" });
     const adapter = makeAdapter({
       agentId: "AG-1",
       companyId: "CO-1",

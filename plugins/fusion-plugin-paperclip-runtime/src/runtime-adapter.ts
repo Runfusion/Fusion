@@ -8,6 +8,7 @@ import {
   getIssue,
   getIssueComments,
   getIssueViaCli,
+  getRun,
   getRunEvents,
   resolvePaperclipConfig,
   wakeAgent,
@@ -28,6 +29,7 @@ const TERMINAL_RUN_STATUSES = new Set<string>([
   "succeeded",
   "failed",
   "cancelled",
+  "interrupted",
   "timed_out",
 ]);
 
@@ -296,7 +298,11 @@ export class PaperclipRuntimeAdapter implements AgentRuntime {
     if (finalText) session.onText?.(finalText);
     if (stream.thinking) session.onThinking?.(stream.thinking);
 
-    const isError = stream.runStatus === "failed" || stream.runStatus === "timed_out";
+    const isError =
+      stream.runStatus === "failed" ||
+      stream.runStatus === "cancelled" ||
+      stream.runStatus === "interrupted" ||
+      stream.runStatus === "timed_out";
     session.onToolEnd?.("paperclip.run", isError || stream.timedOutLocally, {
       runId,
       runStatus: stream.runStatus,
@@ -400,6 +406,25 @@ export class PaperclipRuntimeAdapter implements AgentRuntime {
           }
         }
         // Other event types (adapter.invoke, tool calls) are ignored for v1.
+      }
+
+      if (TERMINAL_RUN_STATUSES.has(runStatus)) break;
+
+      try {
+        const run = await getRun(session.apiUrl, session.apiKey, runId);
+        const recordStatus = asString(run.status)?.trim();
+        if (recordStatus) {
+          runStatus = recordStatus;
+        } else {
+          this.logger.warn(
+            `Paperclip getRun returned a missing or empty status for run ${runId}; preserving the event/timeout polling path.`,
+          );
+        }
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        this.logger.warn(
+          `Paperclip getRun failed for run ${runId}: ${reason}; preserving the event/timeout polling path.`,
+        );
       }
 
       if (TERMINAL_RUN_STATUSES.has(runStatus)) break;
