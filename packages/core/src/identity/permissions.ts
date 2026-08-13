@@ -527,7 +527,14 @@ export function permissionForClassification(classification: InvocationClassifica
   return ACTION_CATEGORY_PERMISSIONS[classification.category];
 }
 
-function resolveHeldDisposition(
+/**
+ * FNXC:IdentityAuthorize 2026-08-09-03:04:
+ * Exported so the store-seam authorizer in `authorize.ts` resolves a held disposition through the
+ * SAME function `can()` uses. Forking this logic would let tool-override precedence or the
+ * deny-by-default floor drift between the two entry points, and a drift in that direction is a
+ * silent authorization bypass rather than a visible bug.
+ */
+export function resolveHeldDisposition(
   grants: ResolvedGrantSet,
   permission: CatalogPermission,
   toolName: string,
