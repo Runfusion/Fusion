@@ -175,7 +175,7 @@ export function createPluginGatedTaskStore(
   };
 
   return new Proxy(store, {
-    get(target, prop, receiver) {
+    get(target, prop) {
       /*
       FNXC:PluginTaskStoreGate 2026-08-09-03:04:
       Symbols pass through untouched and are never gated. They are not plugin API — they are how the
