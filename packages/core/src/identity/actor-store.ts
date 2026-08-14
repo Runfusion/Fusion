@@ -173,12 +173,30 @@ export async function updateActorDisplayName(
  * despite KTD17's deliberate absence of a cross-schema foreign key.
  */
 export async function setActorStatus(
-  layer: Pick<AsyncDataLayer, "db" | "projectId" | "transactionImmediate">,
+  layer: Pick<
+    AsyncDataLayer,
+    "db" | "projectId" | "transactionImmediate" | "privilegedTransactionImmediate"
+  >,
   id: string,
   status: ActorStatus,
   now = new Date().toISOString(),
 ): Promise<Actor | null> {
-  return layer.transactionImmediate(async (tx) => {
+  /*
+  FNXC:IdentityGrantEscalation 2026-08-09-03:04:
+  The WHOLE transaction runs on the owner connection, not just its grant write. 0059 revoked the
+  runtime role's write on `project.actor_role_grants`, so the `revokeActorRoleGrants` call below
+  fails with 42501 on `transactionImmediate`; and because the privileged handle is a SEPARATE
+  connection, splitting the status write from the grant revoke would give two transactions — a
+  failure between them leaves an actor recorded suspended while its grants stay live, which is the
+  dangerous half of the state this transaction exists to prevent.
+
+  The bypass also finally makes `revokeActorRoleGrants` do what it documents: drop an actor's
+  authority in EVERY project. Under RLS on a project-bound runtime connection it only ever reached
+  the bound one.
+  */
+  const runTransaction =
+    layer.privilegedTransactionImmediate?.bind(layer) ?? layer.transactionImmediate.bind(layer);
+  return runTransaction(async (tx) => {
     const existing = await getActor(layer, id, tx);
     if (!existing) return null;
 
@@ -304,37 +322,17 @@ export interface ActorRoleGrant {
  * The grant is upserted on the `(project_id, actor_id, role)` primary key so re-granting a
  * previously revoked role clears `revoked_at` rather than colliding.
  *
- * FNXC:IdentityGrantEscalation 2026-08-09-03:04:
- * BLOCKED ON A PRIVILEGED CONNECTION — this write, {@link revokeActorRole}, and the grant revoke
- * inside {@link setActorStatus} will fail with PostgreSQL `42501` once identity is enabled.
- *
- * Migration 0059 revokes INSERT/UPDATE/DELETE on `project.actor_role_grants` from `fusion_runtime`,
- * because that is the role a plugin's `getAsyncLayer()` handle connects as and its write privilege
- * was a grant-yourself-a-role escalation. These functions still write over `layer.db`, which IS that
- * role. Harmless today only because nothing calls them outside tests, and the existing actor-store
- * suite builds its layer on the harness's OWNER connection, so the failure is invisible there.
- *
- * The fix needs a DEDICATED owner-role connection. Reusing `PostgresConnections.migration` was tried
- * and does not work: it is deliberately a `max: 1` pool reserved for session advisory locks and
- * `session_replication_role`, and a transaction opened on it hangs — measured with a trivial
- * `SELECT 1`, which timed out at 20s. Single statements on it do succeed, so a partial fix that
- * moves only `grantActorRole` would look like it worked while `setActorStatus` still hung.
- *
- * Two hazards that connection brings, both silent, and both to be handled when it lands:
- *   1. It bypasses project isolation, so RLS stops confining these statements. `revokeActorRole`
- *      currently carries NO project predicate and relies on the policy; moved as-is it would revoke
- *      a role in EVERY project. It needs an explicit `project_id` scope.
- *   2. It is a separate connection, so `setActorStatus` cannot split its status write and its grant
- *      revoke across handles — that yields two transactions, and a failure between them leaves an
- *      actor recorded as suspended while its grants stay live.
  */
 export async function grantActorRole(
-  layer: Pick<AsyncDataLayer, "db" | "projectId">,
+  layer: Pick<AsyncDataLayer, "db" | "projectId" | "privilegedDb">,
   input: { actorId: string; role: string; grantedByActorId?: string | null; now?: string },
   handle?: QueryHandle,
 ): Promise<ActorRoleGrant> {
   if (isReservedActorId(input.actorId)) throw new ReservedActorIdError(input.actorId);
-  const db = handle ?? layer.db;
+  // Owner connection: 0059 revokes this table's write from `fusion_runtime`, the role `layer.db`
+  // connects as. Safe there because `project_id` is set explicitly below — that connection bypasses
+  // project isolation, so neither RLS nor the assign-project trigger would confine this row.
+  const db = handle ?? layer.privilegedDb ?? layer.db;
   const now = input.now ?? new Date().toISOString();
   const row: ActorRoleGrant = {
     projectId: projectOwnershipPartition(layer.projectId),
@@ -398,13 +396,23 @@ export async function listAllRoleGrants(
 
 /** Revoke one specific role grant. */
 export async function revokeActorRole(
-  layer: Pick<AsyncDataLayer, "db" | "projectId">,
+  layer: Pick<AsyncDataLayer, "db" | "projectId" | "privilegedDb">,
   actorId: string,
   role: string,
   now = new Date().toISOString(),
   handle?: QueryHandle,
 ): Promise<void> {
-  const db = handle ?? layer.db;
+  /*
+  FNXC:IdentityGrantEscalation 2026-08-09-03:04:
+  The project scope is EXPLICIT, and that is load bearing. This statement previously carried no
+  project predicate and relied on the RLS policy to confine it, which worked only because it ran on
+  the runtime connection. The owner connection required here (0059 revoked the runtime role's write)
+  bypasses isolation, so the unscoped statement would have quietly revoked this role for the actor in
+  EVERY project — a single-project admin action going global with no error and no diff at the call
+  site. Contrast {@link revokeActorRoleGrants}, which is deliberately cross-project.
+  */
+  const db = handle ?? layer.privilegedDb ?? layer.db;
+  const scope = projectScopeFor(schema.project.actorRoleGrants.projectId, layer.projectId);
   await db
     .update(schema.project.actorRoleGrants)
     .set({ revokedAt: now })
@@ -413,6 +421,7 @@ export async function revokeActorRole(
         eq(schema.project.actorRoleGrants.actorId, actorId),
         eq(schema.project.actorRoleGrants.role, role),
         isNull(schema.project.actorRoleGrants.revokedAt),
+        ...(scope ? [scope] : []),
       ),
     );
 }

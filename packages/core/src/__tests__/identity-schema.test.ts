@@ -30,6 +30,8 @@ import {
   SCHEMA_BASELINE_VERSION,
 } from "../postgres/schema-applier.js";
 import { createConnectionSetFromUrl } from "../postgres/connection.js";
+import { createAsyncDataLayer } from "../postgres/data-layer.js";
+import { grantActorRole, revokeActorRole, suspendActor } from "../identity/actor-store.js";
 import type { ResolvedBackend } from "../postgres/backend-resolver.js";
 
 const NOW = "2026-08-09T03:04:00.000Z";
@@ -55,6 +57,33 @@ pgDescribe("identity schema: migration 0061", () => {
     } finally {
       await h.teardown();
     }
+  }
+
+  /** The NOSUPERUSER role production runs as; a superuser bypasses every privilege check here. */
+  async function ensureRuntimeRole(h: PgTestHarness): Promise<void> {
+    await h.adminSql.unsafe(`
+      DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'fusion_runtime') THEN
+          CREATE ROLE fusion_runtime NOLOGIN NOSUPERUSER;
+        END IF;
+        EXECUTE format('GRANT fusion_runtime TO %I', current_user);
+      END $$
+    `);
+  }
+
+  async function runtimeRoleConnections(h: PgTestHarness, projectId: string) {
+    const backend: ResolvedBackend = {
+      mode: "external",
+      runtimeUrl: h.testUrl,
+      migrationUrl: h.testUrl,
+      migrationUrlOverridden: false,
+    };
+    return createConnectionSetFromUrl(backend, {
+      poolMax: 1,
+      connectTimeoutSeconds: 5,
+      projectId,
+      useRuntimeRole: true,
+    });
   }
 
   async function seedActor(h: PgTestHarness, id: string, kind = "human"): Promise<void> {
@@ -347,6 +376,103 @@ pgDescribe("identity schema: migration 0061", () => {
         expect(seen).toEqual([{ actor_id: "actor-a", role: "viewer" }]);
       } finally {
         await projectA.close();
+      }
+    });
+  });
+
+  /*
+  FNXC:IdentityGrantEscalation 2026-08-09-03:04:
+  0059's REVOKE closed the plugin escalation but also sat on every LEGITIMATE grant write, which all
+  went over `layer.db` — the runtime role that just lost the privilege. That regression was invisible
+  to the actor-store suite because it builds its layer on the harness's OWNER connection, so those
+  writes never exercised the affected role. These tests run through a layer whose `db` really is
+  `fusion_runtime`, which is the only configuration that can catch it.
+  */
+  it("writes a role grant through the privileged handle when db is the runtime role", async () => {
+    await withHarness(async (h) => {
+      await ensureRuntimeRole(h);
+      await seedActor(h, "grantee");
+      const connections = await runtimeRoleConnections(h, "project-a");
+      try {
+        const layer = createAsyncDataLayer(connections, { projectId: "project-a" });
+
+        // Proves the privileged handle is doing the work: the identical write over the runtime
+        // handle is refused, so a regression back to `layer.db` cannot pass this test.
+        await expectInsufficientPrivilege(
+          grantActorRole({ ...layer, privilegedDb: undefined }, { actorId: "grantee", role: "merger" }),
+        );
+
+        await grantActorRole(layer, { actorId: "grantee", role: "merger" });
+        const rows = (await h.adminSql`
+          SELECT project_id, actor_id, role FROM project.actor_role_grants
+        `) as unknown as Array<{ project_id: string; actor_id: string; role: string }>;
+        expect(rows).toEqual([{ project_id: "project-a", actor_id: "grantee", role: "merger" }]);
+      } finally {
+        await connections.close();
+      }
+    });
+  });
+
+  /*
+  The owner connection bypasses project isolation, so RLS no longer confines this statement. Without
+  the explicit project predicate, revoking one project's role revokes it in every project — a
+  single-project admin action going global with no error at the call site.
+  */
+  it("revokes a role only in the bound project, not in every project", async () => {
+    await withHarness(async (h) => {
+      await ensureRuntimeRole(h);
+      await seedActor(h, "shared");
+      await h.adminSql`
+        INSERT INTO project.actor_role_grants (project_id, actor_id, role, granted_at)
+        VALUES ('project-a', 'shared', 'merger', ${NOW}), ('project-b', 'shared', 'merger', ${NOW})
+      `;
+      const connections = await runtimeRoleConnections(h, "project-a");
+      try {
+        await revokeActorRole(
+          createAsyncDataLayer(connections, { projectId: "project-a" }),
+          "shared",
+          "merger",
+          NOW,
+        );
+        const rows = (await h.adminSql`
+          SELECT project_id, revoked_at FROM project.actor_role_grants ORDER BY project_id
+        `) as unknown as Array<{ project_id: string; revoked_at: string | null }>;
+        expect(rows).toEqual([
+          { project_id: "project-a", revoked_at: NOW },
+          { project_id: "project-b", revoked_at: null },
+        ]);
+      } finally {
+        await connections.close();
+      }
+    });
+  });
+
+  /*
+  Suspension is documented to drop an actor's authority in EVERY project (actors are global, grants
+  are per-project). Running the whole transaction on the owner connection is what makes that true —
+  under RLS on a project-bound runtime connection it only ever reached the bound project.
+  */
+  it("drops an actor's grants in every project when the actor is suspended", async () => {
+    await withHarness(async (h) => {
+      await ensureRuntimeRole(h);
+      await seedActor(h, "everywhere");
+      await h.adminSql`
+        INSERT INTO project.actor_role_grants (project_id, actor_id, role, granted_at)
+        VALUES ('project-a', 'everywhere', 'merger', ${NOW}), ('project-b', 'everywhere', 'merger', ${NOW})
+      `;
+      const connections = await runtimeRoleConnections(h, "project-a");
+      try {
+        await suspendActor(
+          createAsyncDataLayer(connections, { projectId: "project-a" }),
+          "everywhere",
+          NOW,
+        );
+        const live = (await h.adminSql`
+          SELECT project_id FROM project.actor_role_grants WHERE revoked_at IS NULL
+        `) as unknown as Array<{ project_id: string }>;
+        expect(live).toEqual([]);
+      } finally {
+        await connections.close();
       }
     });
   });
