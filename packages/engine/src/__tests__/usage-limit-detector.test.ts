@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { ANY_MUTATION_CONTEXT } from "./mutation-context-matchers.js";
+import { ANY_MUTATION_CONTEXT, UNATTRIBUTED_CONTEXT_MATCHER } from "./mutation-context-matchers.js";
 import { isUsageLimitError, UsageLimitPauser, checkSessionError } from "../errors/usage-limit-detector.js";
 import { CredentialInstanceRotator } from "../credential-instance-rotation.js";
 
@@ -251,7 +251,7 @@ describe("UsageLimitPauser", () => {
     expect(store.pauseTask).toHaveBeenCalledWith("FN-101", false);
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-101",
-      "Provider anthropic is available again; resuming task", undefined, ANY_MUTATION_CONTEXT);
+      "Provider anthropic is available again; resuming task", undefined, UNATTRIBUTED_CONTEXT_MATCHER);
   });
 
   it("does nothing when provider health has no matching persisted parks", async () => {

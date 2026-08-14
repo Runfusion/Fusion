@@ -17,10 +17,25 @@ So the assertions are EXTENDED instead: they now pin the context too.
 
 import { expect } from "vitest";
 
+/*
+FNXC:Identity 2026-08-14-05:32 (review finding — the generic matcher must not accept the unattributed marker):
+
+`expect.any(String)` matched `"system:unattributed"`, so a converted call site could regress to an
+unattributed context and every assertion using this matcher would stay green. That is the exact
+failure this file exists to prevent: the matcher would have proven only that SOME object arrived,
+not that the write was attributed.
+
+The id is therefore matched against a pattern that excludes the marker. A site that is KNOWN to be
+unwired asserts `UNATTRIBUTED_CONTEXT_MATCHER` explicitly, which keeps the remaining gaps countable
+instead of letting them hide inside the generic matcher.
+*/
+
 /** A mutation context carrying some resolved actor — the minimum U18 guarantees at every call site. */
 export const ANY_MUTATION_CONTEXT = expect.objectContaining({
   actor: expect.objectContaining({
-    actor: expect.objectContaining({ id: expect.any(String) }),
+    actor: expect.objectContaining({
+      id: expect.stringMatching(/^(?!system:unattributed$).+/),
+    }),
   }),
 });
 

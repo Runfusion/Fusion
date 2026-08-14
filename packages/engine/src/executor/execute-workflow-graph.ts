@@ -593,7 +593,7 @@ export async function executeWorkflowGraph(
         unified progress bar (getUnifiedTaskProgress) reflects graph-run steps —
         NO new table/type/store method. Upsert by `workflowStepId === node.id`
         (replace-if-present else append) through the existing
-        `store.updateTask({workflowStepResults})` path. Fail-soft: degrade to a
+        `store.updateTask(taskId, {workflowStepResults}, runContextForTotal(deps.getRunContextFor, taskId))` path. Fail-soft: degrade to a
         no-op when the store lacks updateTask, and swallow read/write errors (the
         executor wrapper also swallows) so result recording never affects the run.
         */

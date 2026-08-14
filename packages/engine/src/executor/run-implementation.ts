@@ -192,6 +192,7 @@ import { resolveDedicatedPlannerColumnsForTask } from "../planner-lane-resolutio
 import { mergeEffectiveSettings } from "../project/effective-settings.js";
 import { buildStepFailureMessage, emitProactiveStatus, sanitizeFailureReason } from "../project/proactive-status.js";
 import { createRunAuditor, generateSyntheticRunId, toRunMutationContext, type EngineRunContext } from "../util/run-audit.js";
+import { runContextForTotal } from "./run-context-for.js";
 import { acquireTaskWorktree, WorktreeBaseRefreshError } from "../worktree/worktree-acquisition.js";
 import { resolveWorktreesDir } from "../worktree/worktree-paths.js";
 import {
@@ -777,7 +778,20 @@ export async function runImplementation(
       An operator-routed checkout still needs the read-only base snapshot used by modified-file capture. It must not enter contamination or managed-worktree liveness checks: the persisted checkout is deliberately operator-owned and lives outside Fusion's worktree directory.
       */
       if (!deps.workspaceConfig && !acquisition.isResume) {
-        await captureBaseCommitSha(deps.store, task, worktreePath, audit, { isResume: false });
+        /*
+        FNXC:Identity 2026-08-14-05:32:
+        The base-SHA write is attributed to the run that captures it. Omitting the context here made
+        `captureBaseCommitSha` fall back to an executor-lane actor with run id `unknown`, even though
+        this caller resolves a real context for every other write on the path.
+        */
+        await captureBaseCommitSha(
+          deps.store,
+          task,
+          worktreePath,
+          audit,
+          { isResume: false },
+          runContextForTotal(deps.getRunContextFor, task.id),
+        );
       }
 
       if (!deps.workspaceConfig && !externalExecutionRoute.configured) {

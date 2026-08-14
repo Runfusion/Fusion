@@ -136,3 +136,18 @@ FN-8928 evicted the file from the blocking gate under the AGENTS.md gate rule; d
 | targeted file with dot reporter | **afterAll hook timed out** at 15s; 61 tests passed |
 
 The timeout occurred after all test assertions and is unrelated to FN-8979's canonical mission-blocker contract. This file retains substantial coverage, so this first observation is recorded rather than quarantined. A second sighting requires the normal file-level quarantine decision.
+
+## 8. Self-healing pending wedge notification — suite-only failure
+
+- **File:** `packages/engine/src/__tests__/self-healing-pending-wedge-notification.test.ts`
+- **Exact test:** `reconcile pending wedge notifications > selects elapsed markers and audits the completion outcome verbatim`
+- **Observed tree/SHA:** `de024dcdcc` (`feature/user-accounts`, U18 review-feedback pass).
+- **Observed frequency:** 1 sighting, in a full `engine-default` project run only. The file is **unmodified** by the change under test (`git status` clean for this path).
+
+| run | result |
+|---|---|
+| full `--project engine-default` (821 files), earlier pass in same session | passed |
+| full `--project engine-default` (821 files), later pass in same session | **1 failed** |
+| targeted file, isolated | 4 passed |
+
+Recorded rather than quarantined under the first-sighting exception: it reproduces only under full-project concurrency, never in isolation, and the file's remaining coverage of the FN-8953 pending-wedge reconcile contract is substantial. Non-determinism across two runs of the *same* tree with no intervening edit rules out the review-feedback change as the cause. A second sighting is an ordinary on-sight file-level quarantine with no further discretion.

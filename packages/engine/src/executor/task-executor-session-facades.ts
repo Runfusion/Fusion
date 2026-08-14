@@ -12,7 +12,7 @@ import { getTaskCompletionBlockerForStore } from "../execution/task-completion.j
 import { buildWorkflowFailureScopeGuard } from "./workflow-failure-scope-guard.js";
 import { resolveAuthoritativeExternalExecutionRoute } from "./resolve-authoritative-external-execution-route.js";
 import { TaskExecutorWorktreePureFacades } from "./task-executor-worktree-pure-facades.js";
-import { runContextForTotal } from "./task-executor-state.js";
+import { runContextForTotal } from "./run-context-for.js";
 
 export abstract class TaskExecutorSessionFacades extends TaskExecutorWorktreePureFacades {
   protected addActiveWorktree(taskId: string, worktreePath: string): void { impl.addActiveWorktreeImpl(this.activeWorktrees, taskId, worktreePath); }
@@ -40,7 +40,7 @@ export abstract class TaskExecutorSessionFacades extends TaskExecutorWorktreePur
   the same `"executor"` lane id this class already stamps on its own run context and audit rows.
   */
   protected runContextFor(taskId: string, fallbackAgentId?: string | null) {
-    return runContextForTotal(this.currentRunContexts, taskId, fallbackAgentId);
+    return runContextForTotal((id) => this.currentRunContexts.get(id), taskId, fallbackAgentId);
   }
   protected safeLogEntry(taskId: string, message: string): void { impl.safeLogEntryImpl(bags.buildStoreRunContextDeps(this), taskId, message); }
   protected markPausedAborted(...args: FacadeRestArgs<typeof impl.markPausedAbortedImpl>): void { impl.markPausedAbortedImpl(bags.buildMarkPausedAbortedDeps(this), ...args); }

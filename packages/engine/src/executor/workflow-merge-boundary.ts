@@ -4,8 +4,8 @@
  * Establish durable merge-column handoff + graph-native checklist projection before merge.
  */
 import type { RunMutationContext, TaskDetail, TaskStore } from "@fusion/core";
-import { UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
-import { toRunMutationContext, type EngineRunContext } from "../util/run-audit.js";
+import type { EngineRunContext } from "../util/run-audit.js";
+import { runContextForTotal } from "./run-context-for.js";
 import { resolveCompleteColumnFor } from "./lifecycle-columns.js";
 
 export type WorkflowMergeBoundaryProof = {
@@ -116,14 +116,29 @@ export async function ensureWorkflowMergeBoundaryTask(
   converted — a hole invisible to the census, inside the file that owns the most call sites. The
   shape now mirrors the CANONICAL store arity so the widening cannot weaken the requirement.
   */
-  const runContext = deps.runContextFor(live.id);
-  const mutationContext: RunMutationContext = runContext ? toRunMutationContext(runContext) : UNATTRIBUTED_MUTATION_CONTEXT;
   const storeWithMove = deps.store as typeof deps.store & {
-    moveTask?: (id: string, column: string, options: unknown | undefined, runContext: RunMutationContext) => Promise<TaskDetail | undefined>;
+    /*
+    FNXC:Identity 2026-08-15-22:52:
+    The local structural type carries the context parameter so this move is attributed like every
+    other write in this file. It was the one call here that still used the context-free shape, so the
+    merge-boundary move audited as `system`/`unknown` while the log entries on either side of it
+    carried the real actor.
+    */
+    moveTask?: (
+      id: string,
+      column: string,
+      options?: unknown,
+      context?: RunMutationContext,
+    ) => Promise<TaskDetail | undefined>;
   };
   if (typeof storeWithMove.moveTask === "function") {
-    const moved = await storeWithMove.moveTask(live.id, targetColumn, moveOptions, mutationContext);
-    await deps.store.logEntry(live.id, `Workflow merge boundary moved task to ${targetColumn} before requesting merge`, undefined, deps.runContextFor(live.id));
+    const moved = await storeWithMove.moveTask(
+      live.id,
+      targetColumn,
+      moveOptions,
+      runContextForTotal(deps.getRunContextFor, live.id),
+    );
+    await deps.store.logEntry(live.id, `Workflow merge boundary moved task to ${targetColumn} before requesting merge`, undefined, runContextForTotal(deps.getRunContextFor, live.id));
     return moved ?? { ...live, column: targetColumn };
   }
   await deps.store.updateTask(live.id, { column: targetColumn } as Partial<TaskDetail>, deps.runContextFor(live.id));

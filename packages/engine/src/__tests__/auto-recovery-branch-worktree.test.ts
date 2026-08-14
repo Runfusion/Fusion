@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { ANY_MUTATION_CONTEXT } from "./mutation-context-matchers.js";
+import { ANY_MUTATION_CONTEXT, UNATTRIBUTED_CONTEXT_MATCHER } from "./mutation-context-matchers.js";
 import type { AutoRecoveryContext, AutoRecoveryDecision, AutoRecoveryFailure } from "../healing/auto-recovery.js";
 import { BranchWorktreeAutoRecoveryHandler } from "../auto-recovery-handlers/branch-worktree.js";
 import { RENAMED_VOCAB, lifecycleIr } from "./_workflow-vocabulary-fixture.js";
@@ -68,8 +68,8 @@ describe("BranchWorktreeAutoRecoveryHandler", () => {
     const f = createFixtures();
     branchConflictMocks.inspectBranchConflict.mockResolvedValue({ kind: "fully-subsumed", livePath: "/tmp/wt", tipSha: "abc" });
     await f.handler.issueRetry(f.failure, f.decision, f.ctx);
-    expect(f.taskStore.updateTask).toHaveBeenCalledWith("FN-4536", { branch: null, baseCommitSha: null }, ANY_MUTATION_CONTEXT);
-    expect(f.taskStore.moveTask).toHaveBeenCalledWith("FN-4536", "todo", expect.objectContaining({ moveSource: "engine", preserveWorktree: false }), ANY_MUTATION_CONTEXT);
+    expect(f.taskStore.updateTask).toHaveBeenCalledWith("FN-4536", { branch: null, baseCommitSha: null }, UNATTRIBUTED_CONTEXT_MATCHER);
+    expect(f.taskStore.moveTask).toHaveBeenCalledWith("FN-4536", "todo", expect.objectContaining({ moveSource: "engine", preserveWorktree: false }), UNATTRIBUTED_CONTEXT_MATCHER);
     expect(f.runAudit.database).toHaveBeenCalledWith(expect.objectContaining({ type: "branch-worktree:auto-requeue" }));
   });
 
@@ -95,11 +95,11 @@ describe("BranchWorktreeAutoRecoveryHandler", () => {
 
     await f.handler.issueRetry(f.failure, f.decision, f.ctx);
 
-    expect(f.taskStore.updateTask).toHaveBeenCalledWith("FN-4536", { branch: null, baseCommitSha: null }, ANY_MUTATION_CONTEXT);
+    expect(f.taskStore.updateTask).toHaveBeenCalledWith("FN-4536", { branch: null, baseCommitSha: null }, UNATTRIBUTED_CONTEXT_MATCHER);
     expect(f.taskStore.moveTask).toHaveBeenCalledWith(
       "FN-4536",
       RENAMED_VOCAB.hold,
-      expect.objectContaining({ moveSource: "engine", preserveWorktree: false }), ANY_MUTATION_CONTEXT);
+      expect.objectContaining({ moveSource: "engine", preserveWorktree: false }), UNATTRIBUTED_CONTEXT_MATCHER);
     expect(f.taskStore.moveTask).not.toHaveBeenCalledWith("FN-4536", "todo", expect.anything());
   });
 
@@ -210,7 +210,7 @@ describe("BranchWorktreeAutoRecoveryHandler", () => {
     await f.handler.issueRetry(f.failure, f.decision, f.ctx);
 
     expect(f.taskStore.updateTask).not.toHaveBeenCalled();
-    expect(f.taskStore.moveTask).toHaveBeenCalledWith("FN-4536", RENAMED_VOCAB.hold, expect.anything(), ANY_MUTATION_CONTEXT);
+    expect(f.taskStore.moveTask).toHaveBeenCalledWith("FN-4536", RENAMED_VOCAB.hold, expect.anything(), UNATTRIBUTED_CONTEXT_MATCHER);
   });
 
   it("reanchors bootstrap misbinding then requeues", async () => {
@@ -220,7 +220,7 @@ describe("BranchWorktreeAutoRecoveryHandler", () => {
     branchConflictMocks.reanchorBranchToBase.mockResolvedValue({});
     await f.handler.issueRetry(f.failure, f.decision, f.ctx);
     expect(branchConflictMocks.reanchorBranchToBase).toHaveBeenCalledTimes(1);
-    expect(f.taskStore.moveTask).toHaveBeenCalledWith("FN-4536", "todo", expect.objectContaining({ moveSource: "engine" }), ANY_MUTATION_CONTEXT);
+    expect(f.taskStore.moveTask).toHaveBeenCalledWith("FN-4536", "todo", expect.objectContaining({ moveSource: "engine" }), UNATTRIBUTED_CONTEXT_MATCHER);
     expect(f.runAudit.database).toHaveBeenCalledWith(expect.objectContaining({ type: "branch-worktree:auto-requeue", metadata: expect.objectContaining({ rationale: "bootstrap-misbinding-reanchor" }) }));
 
     // Regression: prior to the fix, the handler passed `foreignCommits: []`
@@ -247,7 +247,7 @@ describe("BranchWorktreeAutoRecoveryHandler", () => {
       error: { strandedCommits: [] },
     });
     await f.handler.issueRetry(f.failure, f.decision, f.ctx);
-    expect(f.taskStore.moveTask).toHaveBeenCalledWith("FN-4536", "todo", expect.objectContaining({ moveSource: "engine" }), ANY_MUTATION_CONTEXT);
+    expect(f.taskStore.moveTask).toHaveBeenCalledWith("FN-4536", "todo", expect.objectContaining({ moveSource: "engine" }), UNATTRIBUTED_CONTEXT_MATCHER);
     expect(f.runAudit.database).toHaveBeenCalledWith(expect.objectContaining({ type: "branch-worktree:foreign-branch-discarded" }));
     expect(f.runAudit.database).toHaveBeenCalledWith(expect.objectContaining({ type: "branch-worktree:auto-requeue", metadata: expect.objectContaining({ rationale: "live-foreign-discard-and-recreate" }) }));
   });

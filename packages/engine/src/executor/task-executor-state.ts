@@ -15,7 +15,7 @@ import type {
   ApprovalRequestStore,
   WorkspaceConfig,
 } from "@fusion/core";
-import { mutationContextForAgent } from "@fusion/core";
+
 import type { ImplementationExit } from "./implementation-exit.js";
 import type { ForeachActiveContext } from "../workflows/workflow-node-handlers.js";
 import { ModelRegistry, type AgentSession } from "@earendil-works/pi-coding-agent";
@@ -26,25 +26,6 @@ import type { PausedAbortProvenance } from "./paused-abort-provenance.js";
 import type { ActiveExecutorSessionState, TaskExecutorOptions } from "./task-executor-options.js";
 import type { WorkflowAgentCapacity } from "../agents/workflow-agent-capacity.js";
 import { invalidateWorkspaceConfigCache } from "./workspace-config-resolver.js";
-
-/** Lane id already stamped on executor run-audit rows when no assigned agent exists. */
-export const EXECUTOR_LANE_AGENT_ID = "executor";
-
-/**
- * FNXC:Identity 2026-08-15-22:52 (U18/KTD2 Stage C):
- * Total run-carrier accessor. `currentRunContexts.get` is partial; store mutations must not
- * fall through to the deprecated unattributed overload. The fallback is the same derived
- * executor-lane actor `execute()` already writes onto a live run.
- */
-export function runContextForTotal(
-  currentRunContexts: Map<string, RunMutationContext>,
-  taskId: string,
-  fallbackAgentId?: string | null,
-): RunMutationContext {
-  const live = currentRunContexts.get(taskId);
-  if (live) return live;
-  return mutationContextForAgent(fallbackAgentId ?? EXECUTOR_LANE_AGENT_ID);
-}
 
 export abstract class TaskExecutorState {
   /**

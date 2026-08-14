@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { ANY_MUTATION_CONTEXT } from "./mutation-context-matchers.js";
+import { ANY_MUTATION_CONTEXT, UNATTRIBUTED_CONTEXT_MATCHER } from "./mutation-context-matchers.js";
 import type { Agent, TaskStore, Task, TaskDetail, Settings } from "@fusion/core";
 import { applyOriginalDescription, builtinSeamPrompt, buildBootstrapPrompt, computePlanApprovalFingerprint, MAX_TASK_LIST_TEXT_CHARS, renderTriagePolicyPlaceholders, resolveAgentPrompt } from "@fusion/core";
 import {
@@ -4065,7 +4065,7 @@ describe("taskCreate tool model inheritance", () => {
           maxConcurrent: 2,
           maxWorktrees: 4,
         }),
-      }), ANY_MUTATION_CONTEXT);
+      }), UNATTRIBUTED_CONTEXT_MATCHER);
     });
 
     it("fn_task_create passes workflow_id and noCommitsExpected through to child tasks", async () => {
@@ -4119,7 +4119,7 @@ describe("taskCreate tool model inheritance", () => {
           maxConcurrent: 2,
           maxWorktrees: 4,
         }),
-      }), ANY_MUTATION_CONTEXT);
+      }), UNATTRIBUTED_CONTEXT_MATCHER);
       expect(createdSubtasksRef.current).toContain("FN-411");
     });
 
@@ -4224,7 +4224,7 @@ describe("taskCreate tool model inheritance", () => {
             maxWorktrees: 4,
           }),
         }),
-        ANY_MUTATION_CONTEXT,
+        UNATTRIBUTED_CONTEXT_MATCHER,
       );
       expect(createdSubtasksRef.current).toEqual(["FN-701", "FN-702"]);
     });

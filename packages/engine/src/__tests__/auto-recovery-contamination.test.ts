@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { ANY_MUTATION_CONTEXT } from "./mutation-context-matchers.js";
+import { ANY_MUTATION_CONTEXT, UNATTRIBUTED_CONTEXT_MATCHER } from "./mutation-context-matchers.js";
 import type { Task } from "@fusion/core";
 import { AutoRecoveryDispatcher } from "../healing/auto-recovery.js";
 import { ContaminationAutoRecoveryHandler } from "../auto-recovery-handlers/contamination.js";
@@ -27,8 +27,8 @@ describe("ContaminationAutoRecoveryHandler", () => {
     const runAudit = { database: vi.fn(), git: vi.fn(), filesystem: vi.fn() } as any;
     const handler = new ContaminationAutoRecoveryHandler({ taskStore, runAudit, repoDir: process.cwd() });
     await handler.issueRetry({ class: "branch-cross-contamination", taskId: "FN-1", pausedReason: "branch-cross-contamination", evidence: { ownCommits: 0, foreignAttributedCommits: 2 } }, { action: "retry", rationale: "mode-programmatic", auditMetadata: {}, legacyPausedReason: "x" }, { task: { ...baseTask } as Task, retryCount: 1, settings: { mode: "programmatic", maxRetries: 3 } });
-    expect(taskStore.moveTask).toHaveBeenCalledWith("FN-1", "todo", expect.objectContaining({ preserveWorktree: true }), ANY_MUTATION_CONTEXT);
-    expect(taskStore.updateTask).toHaveBeenCalledWith("FN-1", expect.objectContaining({ paused: false, pausedReason: null, error: null }), ANY_MUTATION_CONTEXT);
+    expect(taskStore.moveTask).toHaveBeenCalledWith("FN-1", "todo", expect.objectContaining({ preserveWorktree: true }), UNATTRIBUTED_CONTEXT_MATCHER);
+    expect(taskStore.updateTask).toHaveBeenCalledWith("FN-1", expect.objectContaining({ paused: false, pausedReason: null, error: null }), UNATTRIBUTED_CONTEXT_MATCHER);
     expect(runAudit.database).toHaveBeenCalledWith(expect.objectContaining({ type: "contamination:retry-issued" }));
   });
 
