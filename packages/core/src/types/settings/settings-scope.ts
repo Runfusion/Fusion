@@ -307,6 +307,13 @@ export interface VoiceInputSettings {
 }
 
 export interface GlobalSettings {
+  /**
+   * FNXC:Identity 2026-08-09-03:04:
+   * Daemon-global identity/authorization master switch. Never a project setting — see
+   * DEFAULT_GLOBAL_SETTINGS in config/settings-schema.ts for why a per-project switch would be a
+   * hole rather than a convenience. Default false; U16 owns turning it on.
+   */
+  identityEnabled?: boolean;
   /** Maximum PostgreSQL server connections for Fusion's embedded database. Applied on the next Fusion restart. */
   embeddedPostgresMaxConnections?: number;
   /**
