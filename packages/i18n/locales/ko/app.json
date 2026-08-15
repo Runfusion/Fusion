@@ -9291,7 +9291,9 @@
   },
   "worktree": {
     "unassigned": "미할당",
-    "upNext": "다음 예정"
+    "upNext": "다음 예정",
+    "workspaceRepos_one": "",
+    "workspaceRepos_other": ""
   },
   "worktrunk": {
     "assetUrl": "Asset URL",

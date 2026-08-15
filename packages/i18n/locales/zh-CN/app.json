@@ -9291,7 +9291,9 @@
   },
   "worktree": {
     "unassigned": "未分配",
-    "upNext": "下一个"
+    "upNext": "下一个",
+    "workspaceRepos_one": "",
+    "workspaceRepos_other": ""
   },
   "worktrunk": {
     "assetUrl": "资产 URL",
