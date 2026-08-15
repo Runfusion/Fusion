@@ -1212,7 +1212,10 @@ export async function reapOrphanWorktrees(
           logger: worktreePoolLog,
         });
       } catch (error) {
-        worktreePoolLog.warn(`secrets-env cleanup failed for orphan ${name}: ${error instanceof Error ? error.message : String(error)}`);
+        worktreePoolLog.warn(
+          `Preserving orphan worktree ${resolvedFull} — status or secrets cleanup failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+        continue;
       }
       rmSync(resolvedFull, { recursive: true, force: true });
       await pruneWorktreeAdminEntries({
