@@ -1125,21 +1125,30 @@ export async function removeWorktree(input: {
   }
 
   if (input.reason === RemovalReason.SelfHealingIdleSweep || input.reason === RemovalReason.PoolPrune) {
-    const { stdout: rootOutput } = await execFileAsync("git", ["-C", input.worktreePath, "rev-parse", "--show-toplevel"], {
-      cwd: input.rootDir,
-      timeout: 15_000,
-      maxBuffer: MAX_BUFFER,
-    });
-    if (resolve(rootOutput.trim()) !== resolve(input.worktreePath)) {
+    let rootOutput = "";
+    try {
+      ({ stdout: rootOutput } = await execFileAsync("git", ["-C", input.worktreePath, "rev-parse", "--show-toplevel"], {
+        cwd: input.rootDir,
+        timeout: 15_000,
+        maxBuffer: MAX_BUFFER,
+      }));
+    } catch {
+      if (input.reason === RemovalReason.SelfHealingIdleSweep) {
+        throw new Error(`refusing to remove worktree with unverifiable root: ${input.worktreePath}`);
+      }
+    }
+    if (rootOutput && resolve(rootOutput.trim()) !== resolve(input.worktreePath)) {
       throw new Error(`refusing to remove worktree with unverifiable root: ${input.worktreePath}`);
     }
-    const { stdout: statusOutput } = await execFileAsync("git", ["-C", input.worktreePath, "status", "--porcelain", "--untracked-files=all"], {
-      cwd: input.rootDir,
-      timeout: 15_000,
-      maxBuffer: MAX_BUFFER,
-    });
-    if (statusOutput.trim().length > 0) {
-      throw new Error(`refusing to remove dirty worktree: ${input.worktreePath}`);
+    if (rootOutput) {
+      const { stdout: statusOutput } = await execFileAsync("git", ["-C", input.worktreePath, "status", "--porcelain", "--untracked-files=all"], {
+        cwd: input.rootDir,
+        timeout: 15_000,
+        maxBuffer: MAX_BUFFER,
+      });
+      if (statusOutput.trim().length > 0) {
+        throw new Error(`refusing to remove dirty worktree: ${input.worktreePath}`);
+      }
     }
   }
 

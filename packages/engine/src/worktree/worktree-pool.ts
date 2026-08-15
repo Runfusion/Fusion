@@ -1188,20 +1188,23 @@ export async function reapOrphanWorktrees(
       // fall through to removal
     }
 
-    // This directory is on disk but has no valid .git entry and is not a registered
-    // worktree — it is a half-initialized / leaked orphan.  Remove it.
+    // FNXC:WorktreeCleanup 2026-08-15-13:45:
+    // A non-registered directory is removable residue unless Git proves it is
+    // an independent worktree with user changes. Git errors here are expected
+    // for dangling pointers and half-initialized worktrees.
     try {
+      let rootOutput = "";
       try {
-        // FNXC:WorktreeCleanup 2026-08-15-13:45:
-        // Preserve recovery work when cleanliness cannot be proven.
-        // A half-initialized directory without a valid Git root is only safe to
-        // remove when it contains no recovery/user files beyond its optional .git pointer.
-        const contents = readdirSync(resolvedFull, { withFileTypes: true });
-        const userEntries = contents.filter((entry) => entry.name !== ".git");
-        if (userEntries.length > 0) {
-          worktreePoolLog.warn(`Preserving orphan worktree containing files: ${resolvedFull}`);
-          continue;
-        }
+        ({ stdout: rootOutput } = await execFileAsync("git", ["-C", resolvedFull, "rev-parse", "--show-toplevel"], {
+          cwd: projectRoot,
+          timeout: 15_000,
+          maxBuffer: 10 * 1024 * 1024,
+        }));
+      } catch {
+        rootOutput = "";
+      }
+
+      if (resolve(rootOutput.trim()) === resolvedFull) {
         const { stdout: statusOutput } = await execFileAsync("git", ["-C", resolvedFull, "status", "--porcelain", "--untracked-files=all"], {
           cwd: projectRoot,
           timeout: 15_000,
@@ -1211,7 +1214,9 @@ export async function reapOrphanWorktrees(
           worktreePoolLog.warn(`Preserving orphan worktree with uncommitted changes: ${resolvedFull}`);
           continue;
         }
+      }
 
+      try {
         await cleanupSecretsEnvFile({
           worktreePath: resolvedFull,
           taskId: `orphan:${name}`,
@@ -1220,10 +1225,7 @@ export async function reapOrphanWorktrees(
           logger: worktreePoolLog,
         });
       } catch (error) {
-        worktreePoolLog.warn(
-          `Preserving orphan worktree ${resolvedFull} — status or secrets cleanup failed: ${error instanceof Error ? error.message : String(error)}`,
-        );
-        continue;
+        worktreePoolLog.warn(`secrets-env cleanup failed for orphan ${name}: ${error instanceof Error ? error.message : String(error)}`);
       }
       rmSync(resolvedFull, { recursive: true, force: true });
       await pruneWorktreeAdminEntries({
