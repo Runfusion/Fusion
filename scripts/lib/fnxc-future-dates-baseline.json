@@ -1,14 +1,1 @@
-{
-  "packages/core/src/async-stores/async-chat-store.ts": 4,
-  "packages/core/src/async-stores/async-mission-store.ts": 1,
-  "packages/core/src/chat/chat-store.ts": 1,
-  "packages/core/src/postgres/migrations/0036_chat_session_tags.sql": 2,
-  "packages/dashboard/app/App.tsx": 1,
-  "packages/dashboard/app/components/AgentDetailView.css": 1,
-  "packages/dashboard/app/components/ChatView.css": 2,
-  "packages/dashboard/app/components/TaskDetailModal.css": 1,
-  "packages/dashboard/vitest.config.ts": 1,
-  "packages/engine/src/project-engine.ts": 1,
-  "packages/engine/src/triage.ts": 2,
-  "docs/workflow-steps.md": 1
-}
+{}
