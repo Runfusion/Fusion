@@ -1138,7 +1138,7 @@ export async function removeWorktree(input: {
         maxBuffer: MAX_BUFFER,
       }));
     } catch {
-      if (input.reason === RemovalReason.SelfHealingIdleSweep || existsSync(input.worktreePath)) {
+      if (input.reason === RemovalReason.SelfHealingIdleSweep && existsSync(input.worktreePath)) {
         throw new Error(`refusing to remove worktree with unverifiable root: ${input.worktreePath}`);
       }
     }
@@ -1158,11 +1158,12 @@ export async function removeWorktree(input: {
   }
 
   const backend = resolveWorktreeBackend(input.settings, { logger, audit: input.audit });
+  const requiresDirtyRevalidation = input.reason === RemovalReason.SelfHealingIdleSweep || input.reason === RemovalReason.PoolPrune;
   const removeInput: WorktreeRemoveInput = {
     rootDir: input.rootDir,
     worktreePath: input.worktreePath,
     taskId: input.taskId,
-    force: input.force === true,
+    force: input.force === true || !requiresDirtyRevalidation,
   };
 
   if (input.force === false || typeof input.timeout === "number") {
