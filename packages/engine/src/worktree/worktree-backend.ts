@@ -920,8 +920,9 @@ export class WorktrunkWorktreeBackend implements WorktreeBackend {
 
   async remove(input: WorktreeRemoveInput): Promise<void> {
     const target = input.branch ?? input.worktreePath;
+    const args = ["remove", "--foreground", ...(input.force ? ["--force"] : []), target];
     try {
-      await this.runWorktrunk(["remove", "--foreground", target], {
+      await this.runWorktrunk(args, {
         cwd: input.rootDir,
         operation: "remove",
       });
@@ -1159,7 +1160,7 @@ export async function removeWorktree(input: {
   }
 
   const backend = resolveWorktreeBackend(input.settings, { logger, audit: input.audit });
-  const requiresDirtyRevalidation = input.reason === RemovalReason.SelfHealingIdleSweep || input.reason === RemovalReason.PoolPrune;
+  const requiresDirtyRevalidation = input.reason === RemovalReason.SelfHealingIdleSweep || (input.reason === RemovalReason.PoolPrune && !input.taskId);
   const removeInput: WorktreeRemoveInput = {
     rootDir: input.rootDir,
     worktreePath: input.worktreePath,
