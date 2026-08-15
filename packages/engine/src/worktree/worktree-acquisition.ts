@@ -4,7 +4,7 @@ import { lstat, mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile 
 import { exec } from "node:child_process";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { promisify } from "node:util";
-import {acquireWorktreePathReservation, canonicalizeWorktreePath, type RunMutationContext, type Settings, type Task, type TaskStore, type SecretsStore} from "@fusion/core";
+import { acquireWorktreePathReservation, canonicalizeWorktreePath, resolveEngineIncarnationId, resolveEngineNodeId, type RunMutationContext, type Settings, type Task, type TaskStore, type SecretsStore, type WorkspaceLeaseHandle } from "@fusion/core";
 import { generateWorktreeName, resolveTaskWorkingBranch, slugify } from "./worktree-names.js";
 import { resolveTaskWorktreePathForBackend, resolveWorktreesDir, WORKTREE_RECOVERY_DIRNAME } from "./worktree-paths.js";
 import { hydrateWorktreeDb } from "./worktree-db-hydrate.js";
@@ -116,6 +116,14 @@ export interface AcquireTaskWorktreeOptions {
   renameWorktreeDirectory?: typeof rename;
   /** Execution callers opt in; planning, review, and merge reuse remain unchanged. */
   refreshStaleBase?: boolean;
+  /*
+   * FNXC:Workspace 2026-08-15-04:28:
+   * Workspace sub-repo acquisition must never persist its per-repo path or branch in the task's
+   * singular worktree columns. Only that caller opts in; all single-repo callers retain the
+   * existing persistence contract.
+   */
+  /** Suppress singular `worktree` and `branch` persistence for workspace sub-repo acquisition. */
+  suppressSingularWorktreePersist?: boolean;
 }
 
 export interface AcquireTaskWorktreeResult {
@@ -319,6 +327,16 @@ async function pinnedWorktreeBranchMatches(rootDir: string, worktreePath: string
 
 export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Promise<AcquireTaskWorktreeResult> {
   const { task, rootDir, store, settings, pool, logger, audit, runContext, createWorktree, runConfiguredCommand, runInitCommand, taskEnv, secretsStore } = opts;
+  const persistWorktreeAssignment = async (patch: Parameters<TaskStore["updateTask"]>[1]): Promise<void> => {
+    if (!opts.suppressSingularWorktreePersist) {
+      await store.updateTask(task.id, patch);
+      return;
+    }
+    const { worktree: _worktree, branch: _branch, ...nonSingularPatch } = patch;
+    if (Object.keys(nonSingularPatch).length > 0) {
+      await store.updateTask(task.id, nonSingularPatch);
+    }
+  };
   const renameWorktreeDirectory = opts.renameWorktreeDirectory ?? rename;
   const refreshExistingWorktree = async (
     path: string,
@@ -467,7 +485,7 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
       });
       logger?.log(`${task.id}: assigned worktree is not usable; creating a fresh worktree instead: ${worktreePath}`);
       await store.logEntry(task.id, "Assigned worktree is not a registered, usable git worktree; creating a fresh worktree instead", worktreePath, runContext);
-      await store.updateTask(task.id, { worktree: null, branch: null, sessionFile: null });
+      await persistWorktreeAssignment({ worktree: null, branch: null, sessionFile: null });
       const fallbackName = generateWorktreeName(rootDir, settings);
       worktreePath = await resolveTaskWorktreePathForBackend(rootDir, fallbackName, settings, backend, branchName);
       isResume = false;
@@ -637,13 +655,13 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
      */
     if (isRepoRootPath(rootDir, created.path)) {
       await emitRepoRootReturnGuardAudit(created.path, source);
-      await store.updateTask(task.id, { worktree: null, branch: null, sessionFile: null });
+      await persistWorktreeAssignment({ worktree: null, branch: null, sessionFile: null });
       throw new RepoRootWorktreeError(task.id, rootDir, created.path, `fresh-create:${logOrigin}`);
     }
 
     worktreePath = created.path;
     branch = created.branch;
-    await store.updateTask(task.id, { worktree: created.path, branch: created.branch });
+    await persistWorktreeAssignment({ worktree: created.path, branch: created.branch });
     await audit?.git({ type: "worktree:create", target: created.path, metadata: { branch: created.branch, source: logOrigin === "return-guard" ? "acquire-return-guard" : undefined } });
     await audit?.git({ type: "branch:create", target: created.branch });
     if (created.branch !== branchName) {
@@ -719,7 +737,7 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
     await emitRepoRootReturnGuardAudit(guardedPath, source);
     logger?.warn(`${task.id}: acquisition ${source} returned repo root; clearing assignment and creating a fresh worktree`);
     await store.logEntry(task.id, "Acquisition attempted to return the project root as a task worktree; creating a fresh worktree instead", guardedPath, runContext);
-    await store.updateTask(task.id, { worktree: null, branch: null, sessionFile: null });
+    await persistWorktreeAssignment({ worktree: null, branch: null, sessionFile: null });
     const fallbackName = generateWorktreeName(rootDir, settings);
     const fallbackPath = await resolveTaskWorktreePathForBackend(rootDir, fallbackName, settings, backend, branchName);
     const created = await createWorktreeImpl(branchName, fallbackPath, task.id, freshStartPoint, allowSiblingBranchRename);
@@ -774,7 +792,7 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
         metadata: { taskId: task.id, previous: task.worktree, derived: pinnedPath, source: "acquire" },
       });
       await store.logEntry(task.id, "Re-derived task-pinned worktree path from task id", `${task.worktree} -> ${pinnedPath}`, runContext);
-      await store.updateTask(task.id, { worktree: pinnedPath });
+      await persistWorktreeAssignment({ worktree: pinnedPath });
     }
 
     const reservation = await acquireWorktreePathReservation({
@@ -826,7 +844,7 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
          * was already correct.
          */
         if (task.worktree !== pinnedPath || task.branch !== resumedBranch) {
-          await store.updateTask(task.id, { worktree: pinnedPath, branch: resumedBranch });
+          await persistWorktreeAssignment({ worktree: pinnedPath, branch: resumedBranch });
         }
         return reuseWarmWorktree(pinnedPath, resumedBranch, "existing");
       }
@@ -1057,7 +1075,7 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
           });
           acquiredFromPool = true;
           logger?.log(`Acquired worktree from pool: ${worktreePath}`);
-          await store.updateTask(task.id, { worktree: worktreePath, branch });
+          await persistWorktreeAssignment({ worktree: worktreePath, branch });
           await audit?.git({ type: "worktree:reuse", target: worktreePath, metadata: { branch, reclaimed: prepared.reclaimed } });
           if (prepared.reclaimed) {
             await store.logEntry(task.id, `Acquired reclaimed worktree from pool: ${worktreePath} (${prepared.strandedCommitCount ?? 0} commits preserved)`, undefined, runContext);
@@ -1116,7 +1134,7 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
         if (poolErr instanceof WorktreeBaseRefreshError) {
           // FNXC:WorktreeBaseRefresh 2026-08-09-03:30: Clear every durable resume binding before returning the
           // checkout to the pool. If persistence fails, retain the lease so no other task can mutate it.
-          await store.updateTask(task.id, { worktree: null, branch: null, sessionFile: null });
+          await persistWorktreeAssignment({ worktree: null, branch: null, sessionFile: null });
           pool.release(pooled, task.id);
           throw poolErr;
         }
@@ -1277,6 +1295,8 @@ export async function acquireWorkspaceRepoWorktree(
   assertInRootRepoRelPath(repoRelPath, sep, isAbsolute, normalize);
   const repoAbsPath = join(workspaceRootDir, repoRelPath);
 
+  let durableAcquireLease: WorkspaceLeaseHandle | undefined;
+
   /*
   FNXC:WorkspaceWorktree 2026-06-22-00:00:
   A remembered per-repo worktree is only reusable if it still exists and is a registered git
@@ -1307,6 +1327,39 @@ export async function acquireWorkspaceRepoWorktree(
     }
     logger?.warn(`${task.id}: remembered workspace worktree for ${repoRelPath} is missing/unusable (${existing.worktreePath}); re-acquiring`);
     await store.logEntry(task.id, `Remembered workspace worktree for ${repoRelPath} is no longer usable; re-acquiring`, existing.worktreePath, runContext);
+  }
+
+  /*
+  FNXC:Workspace 2026-08-15-08:50:
+  Registry-only acquire serialization is invisible to another engine sharing the
+  central database. Claim before the local lookup/register fast path; a durable
+  conflict (including this task on a different node incarnation) is retryable
+  busy rather than permission to overwrite another process's worktree state.
+  */
+  try {
+    const acquireWorkspaceLease = (store as Partial<TaskStore>).acquireWorkspaceLease;
+    /*
+    FNXC:Workspace 2026-08-15-08:47:
+    Production TaskStore instances always expose the durable API. Structural
+    in-memory test stores predate it and remain single-process fixtures, so they
+    retain the registry fast path; a present API that errors still fails closed.
+    */
+    if (typeof acquireWorkspaceLease === "function") {
+      const claim = await acquireWorkspaceLease.call(store, {
+        leaseKey: `repo:${repoRelPath}`,
+        kind: "acquire",
+        owner: { taskId: task.id, nodeId: resolveEngineNodeId(), incarnationId: resolveEngineIncarnationId() },
+        leaseMs: 5 * 60_000,
+      });
+      if (claim.outcome === "conflict") {
+        throw new WorkspaceRepoAcquireBusyError(repoRelPath, claim.conflict.taskId, task.id);
+      }
+      durableAcquireLease = claim.handle;
+    }
+  } catch (error) {
+    if (error instanceof WorkspaceRepoAcquireBusyError) throw error;
+    // The database is authoritative for cross-node claims; unknown must never degrade to no holder.
+    throw new WorkspaceRepoAcquireBusyError(repoRelPath, "durable-workspace-lease", task.id);
   }
 
   /*
@@ -1361,6 +1414,7 @@ export async function acquireWorkspaceRepoWorktree(
     } catch {
       // best-effort observability only — never mask the busy error
     }
+    if (durableAcquireLease) await store.releaseWorkspaceLease(durableAcquireLease).catch(() => undefined);
     throw err;
   }
   /*
@@ -1378,18 +1432,20 @@ export async function acquireWorkspaceRepoWorktree(
 
   try {
     /*
+    FNXC:Workspace 2026-08-15-04:28:
+    No persisted intermediate state may make a workspace task read as single-repo. Dashboard
+    `isWorkspaceTask`, self-healing sweeps, and executor `hadAssignedWorktree` all read this row,
+    so suppress singular persistence as well as stripping the helper's in-memory task copy.
+
     FNXC:WorkspaceWorktree 2026-06-21-19:05:
     Workspace mode acquires one worktree per sub-repo for a single task. `acquireTaskWorktree`
-    is single-repo: it reads `task.worktree`/`task.branch` to decide resume-vs-fresh and rewrites
-    those singular fields on the task row after each acquisition. Passing the live task straight
-    through means the second repo's acquisition sees the first repo's `task.worktree` (which exists
-    on disk), classifies it as a resume, and reuses repo A's worktree inside repo B — cross-repo
-    contamination. Clear the singular worktree/branch fields on the copy handed to the single-repo
-    helper so each sub-repo always gets a fresh worktree; per-repo state is tracked in
-    `task.workspaceWorktrees`, not the singular column.
+    is single-repo: it reads `task.worktree`/`task.branch` to decide resume-vs-fresh. Passing the
+    live task through means a later repo can reuse the first repo's worktree. Clear singular fields
+    on the copy so every sub-repo acquires freshly; per-repo state is `task.workspaceWorktrees`.
     */
     const result = await acquireTaskWorktree({
       task: { ...task, worktree: undefined, branch: undefined },
+      suppressSingularWorktreePersist: true,
       rootDir: repoAbsPath,
       store,
       // FNXC:Workspace 2026-07-07-08:40 (FN-7360 regression — strip shared branch overrides for per-repo start-point):
@@ -1500,33 +1556,26 @@ export async function acquireWorkspaceRepoWorktree(
     }
 
     /*
-    FNXC:Workspace 2026-06-21-22:30:
-    F5 — re-read the task fresh immediately before building the merged
-    workspaceWorktrees map. store.updateTask wholesale-replaces the map, and the
-    `task` snapshot was read earlier; two sequential acquires for DIFFERENT sub-repos
-    in one task would otherwise clobber a sibling's entry. Merging into the LATEST map
-    closes the common sequential-tool-call case. NOTE: a fully-atomic store-level
-    per-repo merge is the complete fix (it also covers truly-concurrent writes); it is
-    deferred to Phase B, which exercises multi-repo acquisition.
+    FNXC:Workspace 2026-08-15-07:51:
+    F5 Phase B is implemented by mergeWorkspaceWorktreeEntry: its advisory-locked,
+    per-key database merge retains sibling sub-repo entries across concurrent processes.
+    Do not restore a wholesale workspaceWorktrees update here; that reopens the silent
+    sibling-clobber race which leaves an on-disk worktree invisible to workspace landing.
     */
-    const latest = await store.getTask(task.id);
-    const updated: Record<string, { worktreePath: string; branch: string; baseCommitSha?: string }> = {
-      ...(latest.workspaceWorktrees ?? {}),
-      [repoRelPath]: { worktreePath: result.worktreePath, branch: result.branch, baseCommitSha },
-    };
     /*
-    FNXC:Workspace 2026-06-22-09:00:
-    F10 — reset the singular worktree/branch columns to null in the SAME write that
-    persists workspaceWorktrees. The single-repo `acquireTaskWorktree` above wrote
-    `task.worktree`/`task.branch` (the sub-repo path/branch) to the real task row;
-    clearing the in-memory copy passed in only stops the NEXT sub-repo from resuming
-    into this one's worktree — the DB row stays polluted. A non-null `task.worktree`
-    makes `isWorkspaceTask(task)` return false (its first guard), so the dashboard
-    stops rendering WorkspaceWorktreesSummary and instead shows the sub-repo branch in
-    the standard chip — the blank/wrong-card state U10 prevents. Nulling them here
-    keeps `task.worktree` null for the workspace task's whole lifetime.
+    FNXC:Workspace 2026-08-15-04:28:
+    F10 — this is the one durable acquisition-state write. The helper suppresses every earlier
+    singular assignment, so null worktree/branch are an idempotent defensive re-assertion rather
+    than cleanup after a visible pollution window. A failed write leaves the row unchanged and
+    never makes dashboard workspace rendering, self-healing, or executor dispatch read it as
+    single-repo.
     */
-    await store.updateTask(task.id, { workspaceWorktrees: updated, worktree: null, branch: null });
+    await store.mergeWorkspaceWorktreeEntry(
+      task.id,
+      repoRelPath,
+      { worktreePath: result.worktreePath, branch: result.branch, baseCommitSha },
+      { clearSingularWorktree: true },
+    );
 
     return { worktreePath: result.worktreePath, branch: result.branch, baseCommitSha, alreadyAcquired: false };
   } catch (err) {
@@ -1568,6 +1617,11 @@ export async function acquireWorkspaceRepoWorktree(
     const held = registry.lookupByPath(repoAbsPath);
     if (held && held.taskId === task.id && held.ownerKey === WORKSPACE_REPO_ACQUIRE_OWNER_KEY) {
       registry.unregisterPath(repoAbsPath);
+    }
+    if (durableAcquireLease) {
+      await store.releaseWorkspaceLease(durableAcquireLease).catch((releaseError: unknown) => {
+        logger?.warn(`${task.id}: durable workspace acquire lease release refused: ${releaseError instanceof Error ? releaseError.message : String(releaseError)}`);
+      });
     }
   }
 }

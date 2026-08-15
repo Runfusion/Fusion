@@ -1195,69 +1195,9 @@ export async function reapOrphanWorktrees(
       worktreePoolLog.debug(`reapOrphanWorktrees: ${name} has a dangling .git pointer (admin entry missing) — treating as orphan`);
     }
 
-    // An existing candidate that cannot be root-verified must never be removed recursively.
-    // A missing path is safe to prune from Git's admin registry.
-    const pathExists = existsSync(resolvedFull);
-    if (!pathExists) {
-      await pruneWorktreeAdminEntries({ rootDir: projectRoot, reason: "pool-reap-missing-orphan", target: resolvedFull, logger: worktreePoolLog }).catch(() => undefined);
-      removed++;
-      continue;
-    }
-    const orphanTaskId = `orphan:${name}`;
+    // This directory is on disk but has no valid .git entry and is not a registered
+    // worktree — it is a half-initialized / leaked orphan.  Remove it.
     try {
-      await cleanupSecretsEnvFile({
-        worktreePath: resolvedFull,
-        taskId: orphanTaskId,
-        expectedFingerprint: null,
-        filename: ".env",
-        logger: worktreePoolLog,
-      });
-    } catch (error) {
-      worktreePoolLog.warn(`secrets-env cleanup failed for orphan ${name}: ${error instanceof Error ? error.message : String(error)}`);
-      continue;
-    }
-    const userContentEntries = readdirSync(resolvedFull, { withFileTypes: true }).filter((entry) => entry.name !== ".git");
-    if (userContentEntries.length > 0) {
-      worktreePoolLog.warn(`Preserving orphan worktree with user content: ${resolvedFull}`);
-      continue;
-    }
-    try {
-      let rootOutput = "";
-      try {
-        ({ stdout: rootOutput } = await execFileAsync("git", ["-C", resolvedFull, "rev-parse", "--show-toplevel"], {
-          cwd: projectRoot,
-          timeout: 15_000,
-          maxBuffer: 10 * 1024 * 1024,
-        }));
-      } catch {
-        if (!danglingDotGit) {
-          worktreePoolLog.warn(`Preserving orphan worktree with unverifiable root: ${resolvedFull}`);
-          continue;
-        }
-        rootOutput = "";
-      }
-
-      if (rootOutput && resolve(rootOutput.trim()) !== resolvedFull) {
-        if (danglingDotGit) {
-          rootOutput = "";
-        } else {
-          worktreePoolLog.log(`reapOrphanWorktrees: removing non-worktree residue ${resolvedFull}`);
-          rootOutput = "";
-        }
-      }
-
-      if (resolve(rootOutput.trim()) === resolvedFull) {
-        const { stdout: statusOutput } = await execFileAsync("git", ["-C", resolvedFull, "status", "--porcelain", "--untracked-files=all"], {
-          cwd: projectRoot,
-          timeout: 15_000,
-          maxBuffer: 10 * 1024 * 1024,
-        });
-        if (statusOutput.trim().length > 0) {
-          worktreePoolLog.warn(`Preserving orphan worktree with uncommitted changes: ${resolvedFull}`);
-          continue;
-        }
-      }
-
       try {
         await cleanupSecretsEnvFile({
           worktreePath: resolvedFull,
