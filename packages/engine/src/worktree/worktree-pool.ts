@@ -1040,7 +1040,7 @@ export async function cleanupOrphanedWorktrees(
           rootDir,
           worktreePath,
           settings: settings ?? {},
-          reason: RemovalReason.PoolPrune,
+          reason: RemovalReason.SelfHealingIdleSweep,
         });
       } else {
         if (!isInsideWorktreesDir(rootDir, worktreePath, settings)) {
@@ -1213,9 +1213,11 @@ export async function reapOrphanWorktrees(
       }
 
       if (rootOutput && resolve(rootOutput.trim()) !== resolvedFull) {
-        if (!danglingDotGit) {
-          worktreePoolLog.warn(`Preserving orphan worktree rooted elsewhere: ${resolvedFull}`);
-          continue;
+        if (danglingDotGit) {
+          rootOutput = "";
+        } else {
+          worktreePoolLog.log(`reapOrphanWorktrees: removing non-worktree residue ${resolvedFull}`);
+          rootOutput = "";
         }
       }
 
