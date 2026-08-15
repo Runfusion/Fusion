@@ -1169,6 +1169,7 @@ export async function removeWorktree(input: {
     worktreePath: input.worktreePath,
     taskId: input.taskId,
     force: input.force === true || !requiresDirtyRevalidation,
+    allowDirtyReclaim: input.allowDirtyReclaim,
   };
 
   if (input.force === false || typeof input.timeout === "number") {
