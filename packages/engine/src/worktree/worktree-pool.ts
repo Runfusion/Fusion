@@ -1198,6 +1198,17 @@ export async function reapOrphanWorktrees(
     // This directory is on disk but has no valid .git entry and is not a registered
     // worktree — it is a half-initialized / leaked orphan.  Remove it.
     try {
+      const relativeCandidate = relative(resolve(projectRoot), resolvedFull);
+      const { stdout: statusOutput } = await execFileAsync("git", ["status", "--porcelain", "--untracked-files=all", "--", relativeCandidate], {
+        cwd: projectRoot,
+        timeout: 15_000,
+        maxBuffer: 10 * 1024 * 1024,
+      });
+      if (statusOutput.trim().length > 0) {
+        worktreePoolLog.warn(`Preserving orphan worktree with uncommitted content: ${resolvedFull}`);
+        continue;
+      }
+
       try {
         await cleanupSecretsEnvFile({
           worktreePath: resolvedFull,
