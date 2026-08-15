@@ -664,7 +664,7 @@ export class NativeWorktreeBackend implements WorktreeBackend {
       });
       return;
     } catch (error) {
-      if (/contains modified or untracked files|is dirty|contains local modifications/i.test(getErrorMessageWithStderr(error))) {
+      if (!input.force && /contains modified or untracked files|is dirty|contains local modifications/i.test(getErrorMessageWithStderr(error))) {
         throw error;
       }
       if (!isRecoverableNativeWorktreeRemoveError(error)) {
@@ -1162,6 +1162,7 @@ export async function removeWorktree(input: {
     rootDir: input.rootDir,
     worktreePath: input.worktreePath,
     taskId: input.taskId,
+    force: input.force === true,
   };
 
   if (input.force === false || typeof input.timeout === "number") {

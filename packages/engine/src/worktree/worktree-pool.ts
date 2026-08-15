@@ -1177,15 +1177,15 @@ export async function reapOrphanWorktrees(
     // git never registered). Only skip when the gitdir target actually exists; reap
     // dangling pointers like any other half-initialized orphan.
     const dotGit = join(resolvedFull, ".git");
+    const danglingDotGit = existsSync(dotGit) && dotGitPointerIsDangling(dotGit);
     if (existsSync(dotGit)) {
-      if (!dotGitPointerIsDangling(dotGit)) {
+      if (!danglingDotGit) {
         // Valid registration, a real .git dir, or a pointer we couldn't positively classify as
         // dangling — leave it; assertValidWorktreeSession handles it on the next agent start.
         worktreePoolLog.debug(`reapOrphanWorktrees: skipping ${name} (has .git entry but not in registered list — may be partially registered)`);
         continue;
       }
       worktreePoolLog.debug(`reapOrphanWorktrees: ${name} has a dangling .git pointer (admin entry missing) — treating as orphan`);
-      // fall through to removal
     }
 
     // FNXC:WorktreeCleanup 2026-08-15-13:45:
@@ -1201,6 +1201,10 @@ export async function reapOrphanWorktrees(
           maxBuffer: 10 * 1024 * 1024,
         }));
       } catch {
+        if (!danglingDotGit) {
+          worktreePoolLog.warn(`Preserving orphan worktree with unverifiable root: ${resolvedFull}`);
+          continue;
+        }
         rootOutput = "";
       }
 
