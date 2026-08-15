@@ -1194,8 +1194,17 @@ export async function reapOrphanWorktrees(
       try {
         // FNXC:WorktreeCleanup 2026-08-15-13:45:
         // Preserve recovery work when cleanliness cannot be proven.
-        const { stdout: statusOutput } = await execFileAsync("git", ["status", "--porcelain"], {
-          cwd: resolvedFull,
+        const { stdout: rootOutput } = await execFileAsync("git", ["-C", resolvedFull, "rev-parse", "--show-toplevel"], {
+          cwd: projectRoot,
+          timeout: 15_000,
+          maxBuffer: 10 * 1024 * 1024,
+        });
+        if (resolve(rootOutput.trim()) !== resolvedFull) {
+          worktreePoolLog.warn(`Preserving orphan worktree with unverifiable root: ${resolvedFull}`);
+          continue;
+        }
+        const { stdout: statusOutput } = await execFileAsync("git", ["-C", resolvedFull, "status", "--porcelain"], {
+          cwd: projectRoot,
           timeout: 15_000,
           maxBuffer: 10 * 1024 * 1024,
         });

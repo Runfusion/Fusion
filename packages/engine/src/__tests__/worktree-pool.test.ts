@@ -1246,6 +1246,11 @@ describe("reapOrphanWorktrees", () => {
       makeDirEntry(".fusion-recovery"),
       makeDirEntry("half-built"),
     ] as any);
+    mockedExecSync.mockImplementation((cmd: any) => {
+      if (String(cmd).includes("rev-parse --show-toplevel")) return "/root/.worktrees/half-built\n" as any;
+      if (String(cmd).includes("status --porcelain")) return Buffer.from("");
+      return Buffer.from("");
+    });
 
     const removed = await reapOrphanWorktrees("/root");
 
@@ -1258,7 +1263,8 @@ describe("reapOrphanWorktrees", () => {
   it("preserves a dirty half-initialized worktree", async () => {
     mockedReaddirSync.mockReturnValue([makeDirEntry("dirty-half-built")] as any);
     mockedExecSync.mockImplementation((cmd: any) => {
-      if (String(cmd) === "git status --porcelain") return " M src/file.ts\n" as any;
+      if (String(cmd).includes("rev-parse --show-toplevel")) return "/root/.worktrees/dirty-half-built\n" as any;
+      if (String(cmd).includes("status --porcelain")) return " M src/file.ts\n" as any;
       return Buffer.from("");
     });
 
@@ -1271,7 +1277,7 @@ describe("reapOrphanWorktrees", () => {
   it("preserves a half-initialized worktree when status probing fails", async () => {
     mockedReaddirSync.mockReturnValue([makeDirEntry("unverifiable-wt")] as any);
     mockedExecSync.mockImplementation((cmd: any) => {
-      if (String(cmd) === "git status --porcelain") throw new Error("status unavailable");
+      if (String(cmd).includes("rev-parse --show-toplevel")) throw new Error("status unavailable");
       return Buffer.from("");
     });
 
@@ -1287,6 +1293,11 @@ describe("reapOrphanWorktrees", () => {
   // breaks `execute`. Previously the reaper skipped on mere `.git` presence.
   it("reaps a dir with a dangling .git pointer (admin gitdir missing)", async () => {
     mockedReaddirSync.mockReturnValue([makeDirEntry("leaked-wt")] as any);
+    mockedExecSync.mockImplementation((cmd: any) => {
+      if (String(cmd).includes("rev-parse --show-toplevel")) return "/root/.worktrees/leaked-wt\n" as any;
+      if (String(cmd).includes("status --porcelain")) return Buffer.from("");
+      return Buffer.from("");
+    });
     // `.git` is a link FILE (not a dir); the worktree dir itself is a dir.
     mockedLstatSync.mockImplementation((p: any) =>
       (String(p).endsWith("/.git")
