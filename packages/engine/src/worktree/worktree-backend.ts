@@ -214,6 +214,7 @@ export interface WorktreeRemoveInput {
   worktreePath: string;
   branch?: string;
   taskId?: string;
+  force?: boolean;
 }
 
 export interface WorktreeSyncInput {
@@ -656,7 +657,7 @@ export class NativeWorktreeBackend implements WorktreeBackend {
     // FNXC:WorktreeCleanup 2026-08-15-13:45: let Git revalidate cleanliness
     // during removal so a concurrent write cannot pass a prior status probe.
     try {
-      await execAsync(`git worktree remove ${quoteShellArg(input.worktreePath)}`, {
+      await execAsync(`git worktree remove${input.force ? " --force" : ""} ${quoteShellArg(input.worktreePath)}`, {
         cwd: input.rootDir,
         encoding: "utf-8",
         timeout: REMOVE_TIMEOUT_MS,

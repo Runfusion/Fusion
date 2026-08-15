@@ -1188,9 +1188,14 @@ export async function reapOrphanWorktrees(
       worktreePoolLog.debug(`reapOrphanWorktrees: ${name} has a dangling .git pointer (admin entry missing) — treating as orphan`);
     }
 
-    // Startup reaping removes only a confirmed dangling `.git` residue or a
-    // directory whose root resolves outside this candidate; unverifiable existing
-    // paths are preserved to avoid recursive deletion of unknown contents.
+    // An existing candidate that cannot be root-verified must never be removed recursively.
+    // A missing path is safe to prune from Git's admin registry.
+    const pathExists = existsSync(resolvedFull);
+    if (!pathExists) {
+      await pruneWorktreeAdminEntries({ rootDir: projectRoot, reason: "pool-reap-missing-orphan", target: resolvedFull, logger: worktreePoolLog }).catch(() => undefined);
+      removed++;
+      continue;
+    }
     try {
       let rootOutput = "";
       try {
@@ -1205,6 +1210,13 @@ export async function reapOrphanWorktrees(
           continue;
         }
         rootOutput = "";
+      }
+
+      if (rootOutput && resolve(rootOutput.trim()) !== resolvedFull) {
+        if (!danglingDotGit) {
+          worktreePoolLog.warn(`Preserving orphan worktree rooted elsewhere: ${resolvedFull}`);
+          continue;
+        }
       }
 
       if (resolve(rootOutput.trim()) === resolvedFull) {
