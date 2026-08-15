@@ -653,8 +653,10 @@ export class NativeWorktreeBackend implements WorktreeBackend {
   }
 
   async remove(input: WorktreeRemoveInput): Promise<void> {
+    // FNXC:WorktreeCleanup 2026-08-15-13:45: let Git revalidate cleanliness
+    // during removal so a concurrent write cannot pass a prior status probe.
     try {
-      await execAsync(`git worktree remove --force ${quoteShellArg(input.worktreePath)}`, {
+      await execAsync(`git worktree remove ${quoteShellArg(input.worktreePath)}`, {
         cwd: input.rootDir,
         encoding: "utf-8",
         timeout: REMOVE_TIMEOUT_MS,
@@ -662,6 +664,9 @@ export class NativeWorktreeBackend implements WorktreeBackend {
       });
       return;
     } catch (error) {
+      if (/contains modified or untracked files|is dirty|contains local modifications/i.test(getErrorMessageWithStderr(error))) {
+        throw error;
+      }
       if (!isRecoverableNativeWorktreeRemoveError(error)) {
         throw error;
       }
