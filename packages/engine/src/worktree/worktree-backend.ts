@@ -1131,7 +1131,8 @@ export async function removeWorktree(input: {
     });
   }
 
-  if (input.reason === RemovalReason.SelfHealingIdleSweep || input.reason === RemovalReason.PoolPrune) {
+  const requiresDirtyRevalidation = input.reason === RemovalReason.SelfHealingIdleSweep || (input.reason === RemovalReason.PoolPrune && !input.taskId);
+  if (requiresDirtyRevalidation) {
     let rootOutput = "";
     try {
       ({ stdout: rootOutput } = await execFileAsync("git", ["-C", input.worktreePath, "rev-parse", "--show-toplevel"], {
@@ -1144,9 +1145,12 @@ export async function removeWorktree(input: {
         throw new Error(`refusing to remove worktree with unverifiable root: ${input.worktreePath}`);
       }
     }
-    if (rootOutput && resolve(rootOutput.trim()) !== resolve(input.worktreePath)) {
-      throw new Error(`refusing to remove worktree with unverifiable root: ${input.worktreePath}`);
-    }
+      if (rootOutput && resolve(rootOutput.trim()) !== resolve(input.worktreePath)) {
+        if (input.reason === RemovalReason.SelfHealingIdleSweep) {
+          throw new Error(`refusing to remove worktree with unverifiable root: ${input.worktreePath}`);
+        }
+        rootOutput = "";
+      }
     if (rootOutput) {
       const { stdout: statusOutput } = await execFileAsync("git", ["-C", input.worktreePath, "status", "--porcelain", "--untracked-files=all"], {
         cwd: input.rootDir,

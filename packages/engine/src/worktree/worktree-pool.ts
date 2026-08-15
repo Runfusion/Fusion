@@ -1002,6 +1002,12 @@ export async function cleanupOrphanedWorktrees(
         // changes: it may hold work-in-progress from an external tool or a
         // previously-crashed session. `git worktree remove --force` below would
         // discard it silently, and the backend's filesystem fallback would too.
+        // Never probe a missing directory; prune its stale admin entry instead.
+        if (!existsSync(worktreePath)) {
+          await pruneWorktreeAdminEntries({ rootDir, reason: "pool-cleanup-missing-orphan", target: worktreePath, logger: worktreePoolLog }).catch(() => undefined);
+          cleaned++;
+          continue;
+        }
         try {
           const { stdout: statusOutput } = await execFileAsync("git", ["status", "--porcelain", "--untracked-files=all"], {
             cwd: worktreePath,
