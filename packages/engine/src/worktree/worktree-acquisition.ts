@@ -940,7 +940,6 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
               reason: RemovalReason.PoolPrune,
               taskId: task.id,
               audit: undefined,
-              allowDirtyReclaim: true,
             });
           }
         } catch (removeErr) {
@@ -1047,7 +1046,6 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
                 reason: RemovalReason.PoolPrune,
                 taskId: task.id,
                 audit: undefined,
-                allowDirtyReclaim: true,
               });
             } catch (removeErr) {
               logger?.warn(`${task.id}: failed to remove unusable pooled worktree ${worktreePath}: ${formatError(removeErr)}`);

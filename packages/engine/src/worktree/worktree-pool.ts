@@ -1011,7 +1011,6 @@ export async function cleanupOrphanedWorktrees(
           worktreePath,
           settings: settings ?? {},
           reason: RemovalReason.SelfHealingIdleSweep,
-          allowDirtyReclaim: false,
         });
       } else {
         continue;

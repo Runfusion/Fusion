@@ -1090,7 +1090,6 @@ export async function removeWorktree(input: {
   settings: Partial<Settings>;
   reason: RemovalReason;
   taskId?: string;
-  allowDirtyReclaim?: boolean;
   audit?: RunAuditor;
   force?: boolean;
   timeout?: number;
@@ -1152,7 +1151,7 @@ export async function removeWorktree(input: {
     });
   }
 
-  const requiresDirtyRevalidation = input.reason === RemovalReason.SelfHealingIdleSweep || (input.reason === RemovalReason.PoolPrune && input.allowDirtyReclaim !== true);
+  const requiresDirtyRevalidation = input.reason === RemovalReason.SelfHealingIdleSweep || input.reason === RemovalReason.PoolPrune;
   if (requiresDirtyRevalidation) {
     let rootOutput = "";
     try {

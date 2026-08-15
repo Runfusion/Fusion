@@ -407,6 +407,25 @@ describe("acquireTaskWorktree", () => {
     );
   });
 
+  it("preserves a dirty task-pinned worktree checked out on a foreign branch", async () => {
+    const rootDir = makeRepo();
+    const pinnedPath = join(rootDir, ".worktrees", "fn-1");
+    git(rootDir, `git worktree add -b fusion/fn-foreign ${JSON.stringify(pinnedPath)} main`);
+    writeFileSync(join(pinnedPath, "recoverable.txt"), "keep me\n", "utf-8");
+    const createWorktree = vi.fn().mockResolvedValue({ path: pinnedPath, branch: "fusion/fn-1" });
+
+    await expect(acquireTaskWorktree({
+      task: { ...task, worktree: pinnedPath, branch: "fusion/fn-1" },
+      rootDir,
+      store,
+      settings: { worktreeNaming: "task-id", recycleWorktrees: false },
+      createWorktree,
+    })).rejects.toThrow(/dirty worktree/);
+
+    expect(readFileSync(join(pinnedPath, "recoverable.txt"), "utf-8")).toBe("keep me\n");
+    expect(createWorktree).not.toHaveBeenCalled();
+  });
+
   it("preserves an orphan beside an external worktree root when project recovery is cross-device", async () => {
     const rootDir = makeRepo();
     const externalWorktrees = track(mkdtempSync(join(tmpdir(), "fn-external-worktrees-")));
