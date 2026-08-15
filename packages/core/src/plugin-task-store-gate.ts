@@ -133,9 +133,24 @@ const OBJECT_INTRINSIC_MEMBERS: ReadonlySet<string> = new Set([
   "toString",
   "toLocaleString",
   "valueOf",
-  "constructor",
   "inspect",
 ]);
+
+/*
+FNXC:PluginTaskStoreGate 2026-08-14-08:40 (review finding — two ways out of the gate):
+
+`constructor` USED to be on the intrinsic list above, which handed a plugin the class itself:
+`store.constructor.prototype.deleteTask` yields the unbound method, and `.call(store, ...)` then runs
+it having never passed through the `get` trap that decides anything. That defeats the whole gate with
+one property read, so `constructor` is now classified like any other non-read member and denied.
+It was listed for `console.log(store)` ergonomics, but that path uses `toString` and
+`Symbol.toStringTag`, which still pass.
+
+The mutating traps below were simply absent. A Proxy with only a `get` trap forwards `set`,
+`defineProperty`, and `deleteProperty` straight to the target, so a plugin could overwrite a store
+method with its own function — including replacing a denied method with an undenied one — or delete
+state outright. Deny-by-default on reads means little while the object itself is writable.
+*/
 
 export interface PluginTaskStoreGateOptions {
   pluginId: string;
@@ -227,6 +242,30 @@ export function createPluginGatedTaskStore(
       const bound = (value as (...args: unknown[]) => unknown).bind(target);
       boundMethodCache.set(prop, bound);
       return bound;
+    },
+
+    /*
+    The store is READ-ONLY as an object. These throw rather than returning `false` because a silent
+    `false` is only observable in strict mode and reads as success everywhere else — a plugin that
+    monkey-patches a method would otherwise believe it succeeded while the gate quietly discarded it.
+    */
+    set(_target, prop) {
+      throw new Error(
+        `Plugin ${options.pluginId} may not assign to ${String(prop)} on the task store; ` +
+          "the gated store is read-only as an object. Call a permitted method instead.",
+      );
+    },
+    defineProperty(_target, prop) {
+      throw new Error(
+        `Plugin ${options.pluginId} may not define ${String(prop)} on the task store; ` +
+          "the gated store is read-only as an object.",
+      );
+    },
+    deleteProperty(_target, prop) {
+      throw new Error(
+        `Plugin ${options.pluginId} may not delete ${String(prop)} from the task store; ` +
+          "the gated store is read-only as an object.",
+      );
     },
   }) as TaskStore;
 }

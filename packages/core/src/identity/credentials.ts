@@ -42,6 +42,17 @@ import { randomBytes, scrypt as scryptCb, scryptSync, timingSafeEqual } from "no
  * without inviting a caller to raise `N` again without re-checking. Raising `N` without raising
  * `maxmem` in the same edit is the documented failure mode — `identity-credentials.test.ts` pins it.
  */
+/**
+ * FNXC:Identity 2026-08-14-08:40:
+ * Ceilings for cost parameters read out of a STORED hash. Deliberately above
+ * {@link PASSWORD_SCRYPT_PARAMS} so raising the real work factor does not immediately invalidate
+ * every stored row, and far below what would exhaust memory: at `N = 2^20, r = 16` scrypt wants
+ * 128 * N * r = 2 GiB, which is the largest allocation this module will ever attempt.
+ */
+const MAX_PARSED_SCRYPT_N = 1 << 20;
+const MAX_PARSED_SCRYPT_R = 16;
+const MAX_PARSED_SCRYPT_P = 4;
+
 export const PASSWORD_SCRYPT_PARAMS = {
   N: 1 << 17,
   r: 8,
@@ -99,6 +110,19 @@ function parsePasswordHash(stored: string): ParsedPasswordHash | null {
     params[key] = value;
   }
   if (!params.N || !params.r || !params.p) return null;
+  /*
+  FNXC:Identity 2026-08-14-08:40 (review finding — parsed cost parameters were unbounded):
+  `maxmem` is derived from the parameters read out of the STORED hash, so the stored string decides
+  how much memory verification allocates. Any positive integer was accepted, and scrypt needs
+  128 * N * r bytes: a row claiming `N=2^30` asks for ~128 GiB and takes the process down at login.
+  The bound is a ceiling on damage, not a policy: legitimate hashes are written at
+  PASSWORD_SCRYPT_PARAMS and only ever need to verify at or below it, while an older hash under a
+  weaker N still verifies and is re-hashed by `passwordNeedsRehash`. N must also be a power of two,
+  which scrypt requires anyway — rejecting it here turns a throw deep in the crypto call into a
+  clean "unparseable hash".
+  */
+  if (params.N > MAX_PARSED_SCRYPT_N || (params.N & (params.N - 1)) !== 0) return null;
+  if (params.r > MAX_PARSED_SCRYPT_R || params.p > MAX_PARSED_SCRYPT_P) return null;
   try {
     const salt = Buffer.from(saltPart, "base64");
     const derived = Buffer.from(hashPart, "base64");

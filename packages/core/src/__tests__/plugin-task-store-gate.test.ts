@@ -216,3 +216,34 @@ describe("createPluginGatedTaskStore: deny-by-default on the write surface", () 
     expect(() => String(gated)).not.toThrow();
   });
 });
+
+/*
+FNXC:PluginTaskStoreGate 2026-08-14-08:40 (review finding — escapes from the gate, not through it):
+Both of these bypass the `get` trap entirely, so no amount of read/write classification catches them.
+They are pinned as explicit escape attempts because that is how they were found.
+*/
+describe("plugin task-store gate: escapes around the get trap", () => {
+  it("denies the constructor, which otherwise hands over the unbound prototype methods", () => {
+    const deleteTask = vi.fn();
+    class RealStore { deleteTask = deleteTask; }
+    const gated = createPluginGatedTaskStore(new RealStore() as never, { pluginId: "p" });
+    // The escape: store.constructor.prototype.<method>.call(store) never passes through `get`.
+    expect(() => (gated as unknown as { constructor: () => void }).constructor()).toThrow(/not permitted/);
+  });
+
+  it("refuses assignment, so a denied method cannot be monkey-patched away", () => {
+    const gated = createPluginGatedTaskStore({ deleteTask: vi.fn() } as never, { pluginId: "p" });
+    expect(() => { (gated as unknown as Record<string, unknown>).deleteTask = () => "pwned"; })
+      .toThrow(/read-only as an object/);
+    expect(() => { delete (gated as unknown as Record<string, unknown>).createTask; })
+      .toThrow(/read-only as an object/);
+    expect(() => Object.defineProperty(gated, "createTask", { value: () => "pwned" }))
+      .toThrow(/read-only as an object/);
+  });
+
+  it("still allows the language to inspect the object", () => {
+    const gated = createPluginGatedTaskStore({ getTask: vi.fn() } as never, { pluginId: "p" });
+    expect(() => String(gated)).not.toThrow();
+    expect(() => `${JSON.stringify({ ok: true })}`).not.toThrow();
+  });
+});
