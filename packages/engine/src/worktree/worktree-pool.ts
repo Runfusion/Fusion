@@ -1203,7 +1203,8 @@ export async function reapOrphanWorktrees(
       removed++;
       continue;
     }
-    const contentEntries = readdirSync(resolvedFull, { withFileTypes: true }).filter((entry) => entry.name !== ".git");
+    const generatedResidue = new Set([".env", ".fusion-secrets-env.fingerprint"]);
+    const contentEntries = readdirSync(resolvedFull, { withFileTypes: true }).filter((entry) => entry.name !== ".git" && !generatedResidue.has(entry.name));
     if (contentEntries.length > 0) {
       worktreePoolLog.warn(`Preserving orphan worktree with user content: ${resolvedFull}`);
       continue;

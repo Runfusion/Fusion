@@ -215,6 +215,7 @@ export interface WorktreeRemoveInput {
   branch?: string;
   taskId?: string;
   force?: boolean;
+  allowDirtyReclaim?: boolean;
 }
 
 export interface WorktreeSyncInput {
