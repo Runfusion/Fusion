@@ -466,7 +466,11 @@ export async function cleanupSecretsEnvFile(opts: CleanupSecretsEnvFileOptions):
     // Cleanup cannot prove ownership when Git cannot answer; preserve both content and record for retry.
     return { outcome: "skipped", reason: "tracked-file" };
   }
-  await fs.unlink(path.join(opts.worktreePath, record.filename));
+  try {
+    await fs.unlink(path.join(opts.worktreePath, record.filename));
+  } catch {
+    return { outcome: "skipped", reason: "record-remove-failed" };
+  }
   try {
     await removeRecords(recordPaths);
   } catch {
