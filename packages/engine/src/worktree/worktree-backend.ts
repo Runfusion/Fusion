@@ -1,7 +1,7 @@
 import { exec, execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { access, rm } from "node:fs/promises";
-import { basename, resolve } from "node:path";
+import { basename, realpathSync, resolve } from "node:path";
 import { promisify } from "node:util";
 import type { Settings } from "@fusion/core";
 import {
@@ -1145,12 +1145,12 @@ export async function removeWorktree(input: {
         throw new Error(`refusing to remove worktree with unverifiable root: ${input.worktreePath}`);
       }
     }
-      if (rootOutput && resolve(rootOutput.trim()) !== resolve(input.worktreePath)) {
-        if (input.reason === RemovalReason.SelfHealingIdleSweep) {
-          throw new Error(`refusing to remove worktree with unverifiable root: ${input.worktreePath}`);
-        }
-        rootOutput = "";
+    if (rootOutput && realpathSync(rootOutput.trim()) !== realpathSync(input.worktreePath)) {
+      if (input.reason === RemovalReason.SelfHealingIdleSweep) {
+        throw new Error(`refusing to remove worktree with unverifiable root: ${input.worktreePath}`);
       }
+      rootOutput = "";
+    }
     if (rootOutput) {
       const { stdout: statusOutput } = await execFileAsync("git", ["-C", input.worktreePath, "status", "--porcelain", "--untracked-files=all"], {
         cwd: input.rootDir,
@@ -1164,7 +1164,6 @@ export async function removeWorktree(input: {
   }
 
   const backend = resolveWorktreeBackend(input.settings, { logger, audit: input.audit });
-  const requiresDirtyRevalidation = input.reason === RemovalReason.SelfHealingIdleSweep || (input.reason === RemovalReason.PoolPrune && !input.taskId);
   const removeInput: WorktreeRemoveInput = {
     rootDir: input.rootDir,
     worktreePath: input.worktreePath,

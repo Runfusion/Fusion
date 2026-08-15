@@ -1202,6 +1202,11 @@ export async function reapOrphanWorktrees(
       removed++;
       continue;
     }
+    const contentEntries = readdirSync(resolvedFull, { withFileTypes: true }).filter((entry) => entry.name !== ".git");
+    if (contentEntries.length > 0) {
+      worktreePoolLog.warn(`Preserving orphan worktree with user content: ${resolvedFull}`);
+      continue;
+    }
     try {
       let rootOutput = "";
       try {
