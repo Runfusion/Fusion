@@ -1199,7 +1199,7 @@ export async function reapOrphanWorktrees(
     // worktree — it is a half-initialized / leaked orphan.  Remove it.
     try {
       const relativeCandidate = relative(resolve(projectRoot), resolvedFull);
-      const { stdout: statusOutput } = await execFileAsync("git", ["status", "--porcelain", "--untracked-files=all", "--", relativeCandidate], {
+      const { stdout: statusOutput } = await execFileAsync("git", ["status", "--porcelain", "--untracked-files=all", "--ignored", "--", relativeCandidate], {
         cwd: projectRoot,
         timeout: 15_000,
         maxBuffer: 10 * 1024 * 1024,
