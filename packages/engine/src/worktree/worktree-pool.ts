@@ -997,7 +997,7 @@ export async function cleanupOrphanedWorktrees(
   for (const worktreePath of candidates) {
     try {
       if (registeredWorktrees.has(resolve(worktreePath))) {
-        // FNXC:WorktreeCleanup 2026-08-15-13:45:
+        // FNXC:WorktreeCleanup 2026-08-15-19:00:
         // Never force-remove a registered worktree that still has uncommitted
         // changes: it may hold work-in-progress from an external tool or a
         // previously-crashed session. `git worktree remove --force` below would
@@ -1203,9 +1203,10 @@ export async function reapOrphanWorktrees(
       removed++;
       continue;
     }
-    const userContentEntries = readdirSync(resolvedFull, { withFileTypes: true }).filter((entry) => entry.name !== ".git");
-    const generatedResidueEntries = userContentEntries.filter((entry) => entry.name !== ".env" && entry.name !== ".fusion-secrets-env.fingerprint");
-    if (generatedResidueEntries.length > 0) {
+      const userContentEntries = readdirSync(resolvedFull, { withFileTypes: true }).filter((entry) => entry.name !== ".git");
+      const hasUnownedEnv = userContentEntries.some((entry) => entry.name === ".env");
+      const generatedResidueEntries = userContentEntries.filter((entry) => entry.name !== ".env" && entry.name !== ".fusion-secrets-env.fingerprint");
+      if (hasUnownedEnv || generatedResidueEntries.length > 0) {
       worktreePoolLog.warn(`Preserving orphan worktree with user content: ${resolvedFull}`);
       continue;
     }
