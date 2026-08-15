@@ -1007,6 +1007,75 @@ describe("cleanupOrphanedWorktrees", () => {
     expect(removeCalls[1][0]).toContain("/root/.worktrees/orphan-2");
   });
 
+  it("preserves registered orphaned worktrees that have uncommitted changes", async () => {
+    mockedReaddirSync.mockReturnValue([
+      makeDirEntry("dirty-wt"),
+    ] as any);
+    mockedExecSync.mockImplementation((cmd: any) => {
+      if (String(cmd) === "git worktree list --porcelain") {
+        return [
+          "worktree /root",
+          "HEAD abc123",
+          "branch refs/heads/main",
+          "",
+          "worktree /root/.worktrees/dirty-wt",
+          "HEAD def456",
+          "branch refs/heads/fusion/dirty-wt",
+          "",
+        ].join("\n") as any;
+      }
+      if (String(cmd) === "git status --porcelain") {
+        return " M src/file.ts\n" as any;
+      }
+      return Buffer.from("");
+    });
+
+    const store = createMockStore([]);
+
+    const cleaned = await cleanupOrphanedWorktrees("/root", store);
+
+    expect(cleaned).toBe(0);
+    const removeCalls = mockedExecSync.mock.calls.filter(
+      (c) => typeof c[0] === "string" && (c[0] as string).includes("worktree remove"),
+    );
+    expect(removeCalls).toHaveLength(0);
+  });
+
+  it("removes registered orphaned worktrees when status probe is clean", async () => {
+    mockedReaddirSync.mockReturnValue([
+      makeDirEntry("clean-wt"),
+    ] as any);
+    mockedExecSync.mockImplementation((cmd: any) => {
+      if (String(cmd) === "git worktree list --porcelain") {
+        return [
+          "worktree /root",
+          "HEAD abc123",
+          "branch refs/heads/main",
+          "",
+          "worktree /root/.worktrees/clean-wt",
+          "HEAD def456",
+          "branch refs/heads/fusion/clean-wt",
+          "",
+        ].join("\n") as any;
+      }
+      if (String(cmd) === "git status --porcelain") {
+        return Buffer.from("");
+      }
+      return Buffer.from("");
+    });
+
+    const store = createMockStore([]);
+
+    const cleaned = await cleanupOrphanedWorktrees("/root", store);
+
+    expect(cleaned).toBe(1);
+    const removeCalls = mockedExecSync.mock.calls.filter(
+      (c) => typeof c[0] === "string" && (c[0] as string).includes("worktree remove"),
+    );
+    expect(removeCalls).toHaveLength(1);
+    expect(removeCalls[0][0]).toContain("/root/.worktrees/clean-wt");
+  });
+
   it("preserves worktrees assigned to in-progress/in-review tasks", async () => {
     mockedReaddirSync.mockReturnValue([
       makeDirEntry("active-wt"),

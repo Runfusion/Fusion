@@ -13,7 +13,20 @@ const { execSpy, existsSpy, readdirSpy } = vi.hoisted(() => ({
 
 vi.mock("node:child_process", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:child_process")>();
-  return { ...actual, exec: execSpy };
+  const { promisify } = await import("node:util");
+  const execFileSpy: any = vi.fn((file: string, args: string[] | undefined, opts: any, cb: any) => {
+    const callback = typeof opts === "function" ? opts : cb;
+    const options = typeof opts === "function" ? {} : (opts ?? {});
+    execSpy([file, ...(Array.isArray(args) ? args : [])].join(" "), options, (err: unknown, stdout: string, stderr: string) => callback(err, stdout, stderr));
+  });
+  execFileSpy[promisify.custom] = (file: string, args?: string[], opts?: unknown) =>
+    new Promise((resolve, reject) => {
+      execFileSpy(file, args, opts, (err: unknown, stdout: string, stderr: string) => {
+        if (err) reject(err);
+        else resolve({ stdout, stderr });
+      });
+    });
+  return { ...actual, exec: execSpy, execFile: execFileSpy };
 });
 
 vi.mock("node:fs", async (importOriginal) => {

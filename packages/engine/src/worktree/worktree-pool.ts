@@ -997,6 +997,28 @@ export async function cleanupOrphanedWorktrees(
   for (const worktreePath of candidates) {
     try {
       if (registeredWorktrees.has(resolve(worktreePath))) {
+        // Never force-remove a registered worktree that still has uncommitted
+        // changes: it may hold work-in-progress from an external tool or a
+        // previously-crashed session. `git worktree remove --force` below would
+        // discard it silently, and the backend's filesystem fallback would too.
+        try {
+          const { stdout: statusOutput } = await execFileAsync("git", ["status", "--porcelain"], {
+            cwd: worktreePath,
+            timeout: 15_000,
+            maxBuffer: 10 * 1024 * 1024,
+          });
+          if (statusOutput.trim().length > 0) {
+            worktreePoolLog.warn(`Preserving orphaned worktree with uncommitted changes: ${worktreePath}`);
+            continue;
+          }
+        } catch (error) {
+          // Fail closed: if we cannot prove the worktree is clean, keep it.
+          worktreePoolLog.warn(
+            `Preserving orphaned worktree ${worktreePath} — status probe failed: ${error instanceof Error ? error.message : String(error)}`,
+          );
+          continue;
+        }
+
         const orphanTaskId = `orphan:${basename(worktreePath)}`;
         try {
           await cleanupSecretsEnvFile({
