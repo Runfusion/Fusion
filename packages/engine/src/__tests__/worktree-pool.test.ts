@@ -12,7 +12,9 @@ vi.mock("node:child_process", async () => {
     const options = typeof opts === "function" ? {} : (opts ?? {});
     try {
       const out = execSyncFn(cmd, { ...options, stdio: ["pipe", "pipe", "pipe"] });
-      const stdout = out === undefined ? "" : out.toString();
+      const stdout = out === undefined || (Buffer.isBuffer(out) && out.length === 0)
+        ? (cmd.includes("rev-parse --show-toplevel") ? (cmd.match(/-C (\S+)/)?.[1] ?? "") + "\n" : "")
+        : out.toString();
       if (typeof callback === "function") callback(null, stdout, "");
     } catch (err) {
       if (typeof callback === "function") {
@@ -1024,7 +1026,7 @@ describe("cleanupOrphanedWorktrees", () => {
           "",
         ].join("\n") as any;
       }
-      if (String(cmd) === "git status --porcelain") {
+      if (String(cmd).includes("status --porcelain")) {
         return " M src/file.ts\n" as any;
       }
       return Buffer.from("");
@@ -1241,11 +1243,11 @@ describe("reapOrphanWorktrees", () => {
   });
 
   it("excludes internal containers while removing half-initialized task worktrees", async () => {
-    mockedReaddirSync.mockReturnValue([
-      makeDirEntry(".ai-merge"),
-      makeDirEntry(".fusion-recovery"),
-      makeDirEntry("half-built"),
-    ] as any);
+    mockedReaddirSync.mockImplementation((path: any) =>
+      String(path) === "/root/.worktrees"
+        ? [makeDirEntry(".ai-merge"), makeDirEntry(".fusion-recovery"), makeDirEntry("half-built")] as any
+        : [] as any,
+    );
     mockedExecSync.mockImplementation((cmd: any) => {
       if (String(cmd).includes("rev-parse --show-toplevel")) return "/root/.worktrees/half-built\n" as any;
       if (String(cmd).includes("status --porcelain")) return Buffer.from("");
@@ -1292,7 +1294,11 @@ describe("reapOrphanWorktrees", () => {
   // must be reaped — otherwise it collides with freshly generated worktree names and
   // breaks `execute`. Previously the reaper skipped on mere `.git` presence.
   it("reaps a dir with a dangling .git pointer (admin gitdir missing)", async () => {
-    mockedReaddirSync.mockReturnValue([makeDirEntry("leaked-wt")] as any);
+    mockedReaddirSync.mockImplementation((path: any) =>
+      String(path) === "/root/.worktrees"
+        ? [makeDirEntry("leaked-wt")] as any
+        : [] as any,
+    );
     mockedExecSync.mockImplementation((cmd: any) => {
       if (String(cmd).includes("rev-parse --show-toplevel")) return "/root/.worktrees/leaked-wt\n" as any;
       if (String(cmd).includes("status --porcelain")) return Buffer.from("");

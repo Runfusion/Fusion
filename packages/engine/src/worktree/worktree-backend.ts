@@ -1,4 +1,4 @@
-import { exec } from "node:child_process";
+import { exec, execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { access, rm } from "node:fs/promises";
 import { basename, resolve } from "node:path";
@@ -26,6 +26,7 @@ import {
 import { parseStaleRegistrationPath, recoverStaleRegistration } from "./worktree-stale-registration.js";
 
 const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 const NATIVE_TIMEOUT_MS = 120_000;
 const REMOVE_TIMEOUT_MS = 60_000;
 const MAX_BUFFER = 10 * 1024 * 1024;
@@ -1121,6 +1122,25 @@ export async function removeWorktree(input: {
       target: input.worktreePath,
       metadata: { taskId: active.taskId, reason: input.reason, kind: active.kind },
     });
+  }
+
+  if (input.reason === RemovalReason.SelfHealingIdleSweep || input.reason === RemovalReason.PoolPrune) {
+    const { stdout: rootOutput } = await execFileAsync("git", ["-C", input.worktreePath, "rev-parse", "--show-toplevel"], {
+      cwd: input.rootDir,
+      timeout: 15_000,
+      maxBuffer: MAX_BUFFER,
+    });
+    if (resolve(rootOutput.trim()) !== resolve(input.worktreePath)) {
+      throw new Error(`refusing to remove worktree with unverifiable root: ${input.worktreePath}`);
+    }
+    const { stdout: statusOutput } = await execFileAsync("git", ["-C", input.worktreePath, "status", "--porcelain", "--untracked-files=all"], {
+      cwd: input.rootDir,
+      timeout: 15_000,
+      maxBuffer: MAX_BUFFER,
+    });
+    if (statusOutput.trim().length > 0) {
+      throw new Error(`refusing to remove dirty worktree: ${input.worktreePath}`);
+    }
   }
 
   const backend = resolveWorktreeBackend(input.settings, { logger, audit: input.audit });

@@ -91,6 +91,10 @@ describe("reliability interactions: worktrunk worktree removal routing", () => {
         cb(null, "worktree /repo/.worktrees/fn-1\n", "");
         return;
       }
+      if (cmd.includes("rev-parse --show-toplevel")) {
+        cb(null, "/repo/.worktrees/fn-1\n", "");
+        return;
+      }
       cb(null, "", "");
     });
 
