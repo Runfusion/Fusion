@@ -666,7 +666,7 @@ export class NativeWorktreeBackend implements WorktreeBackend {
       });
       return;
     } catch (error) {
-      if (!input.force && /contains modified or untracked files|is dirty|contains local modifications/i.test(getErrorMessageWithStderr(error))) {
+      if (!input.force) {
         throw error;
       }
       if (!isRecoverableNativeWorktreeRemoveError(error)) {
