@@ -1238,7 +1238,7 @@ describe("reapOrphanWorktrees", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockRegisteredWorktrees("/root", []);
-    mockedExistsSync.mockImplementation((path) => String(path) === "/root/.worktrees");
+    mockedExistsSync.mockImplementation((path) => String(path) === "/root/.worktrees" || String(path).startsWith("/root/.worktrees/"));
     mockedLstatSync.mockReturnValue({ isDirectory: () => true, isSymbolicLink: () => false } as any);
   });
 
