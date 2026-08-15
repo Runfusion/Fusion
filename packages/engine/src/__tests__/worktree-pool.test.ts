@@ -1255,6 +1255,19 @@ describe("reapOrphanWorktrees", () => {
     expect(mockedRmSync).not.toHaveBeenCalledWith("/root/.worktrees/.fusion-recovery", expect.anything());
   });
 
+  it("preserves a dirty half-initialized worktree", async () => {
+    mockedReaddirSync.mockReturnValue([makeDirEntry("dirty-half-built")] as any);
+    mockedExecSync.mockImplementation((cmd: any) => {
+      if (String(cmd) === "git status --porcelain") return " M src/file.ts\n" as any;
+      return Buffer.from("");
+    });
+
+    const removed = await reapOrphanWorktrees("/root");
+
+    expect(removed).toBe(0);
+    expect(mockedRmSync).not.toHaveBeenCalled();
+  });
+
   // FN-6782 follow-up: a directory whose `.git` points to a missing admin entry is leak
   // residue (invisible to `git worktree list`/`prune`), not "partially registered". It
   // must be reaped — otherwise it collides with freshly generated worktree names and

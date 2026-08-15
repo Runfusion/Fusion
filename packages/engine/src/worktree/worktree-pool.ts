@@ -997,6 +997,7 @@ export async function cleanupOrphanedWorktrees(
   for (const worktreePath of candidates) {
     try {
       if (registeredWorktrees.has(resolve(worktreePath))) {
+        // FNXC:WorktreeCleanup 2026-08-15-13:45:
         // Never force-remove a registered worktree that still has uncommitted
         // changes: it may hold work-in-progress from an external tool or a
         // previously-crashed session. `git worktree remove --force` below would
@@ -1191,6 +1192,18 @@ export async function reapOrphanWorktrees(
     // worktree — it is a half-initialized / leaked orphan.  Remove it.
     try {
       try {
+        // FNXC:WorktreeCleanup 2026-08-15-13:45:
+        // Preserve recovery work when cleanliness cannot be proven.
+        const { stdout: statusOutput } = await execFileAsync("git", ["status", "--porcelain"], {
+          cwd: resolvedFull,
+          timeout: 15_000,
+          maxBuffer: 10 * 1024 * 1024,
+        });
+        if (statusOutput.trim().length > 0) {
+          worktreePoolLog.warn(`Preserving orphan worktree with uncommitted changes: ${resolvedFull}`);
+          continue;
+        }
+
         await cleanupSecretsEnvFile({
           worktreePath: resolvedFull,
           taskId: `orphan:${name}`,
