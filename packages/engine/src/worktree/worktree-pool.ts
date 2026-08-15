@@ -1203,10 +1203,21 @@ export async function reapOrphanWorktrees(
       removed++;
       continue;
     }
-      const userContentEntries = readdirSync(resolvedFull, { withFileTypes: true }).filter((entry) => entry.name !== ".git");
-      const hasUnownedEnv = userContentEntries.some((entry) => entry.name === ".env");
-      const generatedResidueEntries = userContentEntries.filter((entry) => entry.name !== ".env" && entry.name !== ".fusion-secrets-env.fingerprint");
-      if (hasUnownedEnv || generatedResidueEntries.length > 0) {
+    const orphanTaskId = `orphan:${name}`;
+    try {
+      await cleanupSecretsEnvFile({
+        worktreePath: resolvedFull,
+        taskId: orphanTaskId,
+        expectedFingerprint: null,
+        filename: ".env",
+        logger: worktreePoolLog,
+      });
+    } catch (error) {
+      worktreePoolLog.warn(`secrets-env cleanup failed for orphan ${name}: ${error instanceof Error ? error.message : String(error)}`);
+      continue;
+    }
+    const userContentEntries = readdirSync(resolvedFull, { withFileTypes: true }).filter((entry) => entry.name !== ".git");
+    if (userContentEntries.length > 0) {
       worktreePoolLog.warn(`Preserving orphan worktree with user content: ${resolvedFull}`);
       continue;
     }
