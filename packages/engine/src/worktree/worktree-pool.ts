@@ -1,1253 +1,1252 @@
-1|import { exec, execFile } from "node:child_process";
-2|import { promisify } from "node:util";
-3|import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, rmdirSync, unlinkSync } from "node:fs";
-4|import { mkdir } from "node:fs/promises";
-5|import { basename, dirname, join, relative, resolve, isAbsolute } from "node:path";
-6|import type { SecretsStore, Settings, TaskStore, WorktrunkSettings } from "@fusion/core";
-7|import { assertCleanBranchAtBase, inspectBranchConflict } from "../execution/branch-conflicts.js";
-8|import { worktreePoolLog } from "../logger.js";
-9|/*
-10|*/
-11|import { isInsideConfiguredWorktreesDir, isWorktreeContainerDir, resolveWorktreesDir } from "./worktree-paths.js";
-12|import { canonicalFusionBranchName } from "./worktree-names.js";
-13|import {
-14|  resolveWorktrunkBinary,
-15|} from "./worktrunk-installer.js";
-16|import {
-17|  RemovalReason,
-18|  removeWorktree as removeWorktreeViaBackend,
-19|  resolveWorktreeBackend as resolveWorktreeBackendViaSettings,
-20|} from "./worktree-backend.js";
-21|import { cleanupSecretsEnvFile } from "./secrets-env-writer.js";
-22|import { removeDesktopBuildArtifacts } from "./worktree-desktop-artifacts.js";
-23|import { resolveIntegrationBranch } from "../merge/integration-branch.js";
-24|import type { RunAuditor } from "../util/run-audit.js";
-25|import { pruneWorktreeAdminEntries } from "./worktree-prune.js";
-26|import { resolveWorkflowIrForTask, columnsWithFlag } from "@fusion/core";
-27|
-28|export {
-29|  NativeWorktreeBackend,
-30|  WorktrunkOperationError,
-31|  WorktrunkWorktreeBackend,
-32|  removeWorktree,
-33|  resolveWorktreeBackend,
-34|} from "./worktree-backend.js";
-35|export type { WorktreeBackend, WorktreeBackendKind } from "./worktree-backend.js";
-36|export { RemovalReason } from "./worktree-backend.js";
-37|
-38|// Re-export worktrunk installer types for convenience.
-39|export {
-40|  resolveWorktrunkBinary as resolveWorktrunkBinaryOriginal,
-41|  WorktrunkBinaryUnavailableError,
-42|  WorktrunkInstallDeniedError,
-43|  WorktrunkInstallFailedError,
-44|} from "./worktrunk-installer.js";
-45|
-46|const execAsync = promisify(exec);
-47|const execFileAsync = promisify(execFile);
-48|
-49|// ── Worktrunk binary lazy resolver ─────────────────────────────────────────────
-50|// Memoizes per (homedir, settings.binaryPath) so the resolution+install flow
-51|// runs at most once per unique settings combination per process.
-52|const _worktrunkBinaryCache = new Map<string, { binaryPath: string; resolvedAt: number }>();
-53|
-54|export async function getWorktrunkBinary(
-55|  settings: WorktrunkSettings,
-56|): Promise<{
-57|  binaryPath: string;
-58|  source: "override" | "path" | "cached" | "installed-release" | "installed-cargo";
-59|}> {
-60|  const cacheKey = `${process.env.HOME ?? ""}::${settings.binaryPath ?? ""}`;
-61|  const cached = _worktrunkBinaryCache.get(cacheKey);
-62|  if (cached) {
-63|    return { binaryPath: cached.binaryPath, source: "cached" };
-64|  }
-65|  const result = await resolveWorktrunkBinary({ settings });
-66|  _worktrunkBinaryCache.set(cacheKey, { binaryPath: result.binaryPath, resolvedAt: Date.now() });
-67|  return result;
-68|}
-69|
-70|export function clearWorktrunkBinaryCache(): void {
-71|  _worktrunkBinaryCache.clear();
-72|}
-73|
-74|export function canonicalizePath(path: string): string {
-75|  /*
-76|  FNXC:WorktreeLiveness 2026-07-15-11:55:
-77|  On macOS, /tmp is a symlink to /private/tmp. realpathSync of an existing worktrees
-78|  root yields /private/tmp/... while resolve() of a not-yet-created child stays under
-79|  /tmp/... — relative() then looks like a path escape and isInsideConfiguredWorktreesDir
-80|  falsely reports outside_worktrees_dir (restart.integration resumeOrphaned).
-81|  When the leaf is missing, realpath the nearest existing ancestor and rejoin the suffix.
-82|  */
-83|  try {
-84|    return realpathSync(path);
-85|  } catch {
-86|    let dir = resolve(path);
-87|    const suffix: string[] = [];
-88|    while (true) {
-89|      try {
-90|        return resolve(realpathSync(dir), ...suffix.reverse());
-91|      } catch {
-92|        const parent = dirname(dir);
-93|        if (parent === dir) break;
-94|        suffix.push(basename(dir));
-95|        dir = parent;
-96|      }
-97|    }
-98|    return resolve(path);
-99|  }
-100|}
-101|
-102|export function isRepoRootPath(rootDir: string, candidate: string): boolean {
-103|  return canonicalizePath(rootDir) === canonicalizePath(candidate);
-104|}
-105|
-106|function getExecStdout(result: unknown): string {
-107|  if (typeof result === "string") return result;
-108|  if (result && typeof result === "object" && "stdout" in result) {
-109|    const stdout = (result as { stdout?: unknown }).stdout;
-110|    return typeof stdout === "string" ? stdout : String(stdout ?? "");
-111|  }
-112|  return "";
-113|}
-114|
-115|function stringifyExecOutput(value: unknown): string {
-116|  if (Buffer.isBuffer(value)) return value.toString("utf-8");
-117|  return typeof value === "string" ? value : String(value ?? "");
-118|}
-119|
-120|function getExecErrorOutput(error: unknown): string {
-121|  if (!error || typeof error !== "object") return String(error ?? "");
-122|  const record = error as { stderr?: unknown; message?: unknown };
-123|  const stderr = stringifyExecOutput(record.stderr).trim();
-124|  if (stderr) return stderr;
-125|  return stringifyExecOutput(record.message).trim();
-126|}
-127|
-128|export type GitRepoDetection =
-129|  | { status: "repo" }
-130|  | { status: "not-repo"; stderr: string }
-131|  | { status: "error"; reason: "dubious-ownership" | "git-missing" | "timeout" | "unknown"; stderr: string };
-132|
-133|function classifyGitRepoDetectionError(error: unknown): GitRepoDetection {
-134|  const stderr = getExecErrorOutput(error);
-135|  const output = stderr || String(error ?? "");
-136|  const errorRecord = (error && typeof error === "object") ? error as { code?: unknown; killed?: unknown; signal?: unknown } : {};
-137|
-138|  if (/not a git repo(sitory)?/i.test(output)) {
-139|    return { status: "not-repo", stderr: output };
-140|  }
-141|
-142|  if (/detected dubious ownership/i.test(output)) {
-143|    return { status: "error", reason: "dubious-ownership", stderr: output };
-144|  }
-145|
-146|  if (errorRecord.code === "ENOENT" || /(?:spawn\s+)?ENOENT/i.test(output) || /command not found/i.test(output)) {
-147|    return { status: "error", reason: "git-missing", stderr: output };
-148|  }
-149|
-150|  if (errorRecord.code === "ETIMEDOUT" || errorRecord.killed === true || /timed out|timeout/i.test(output)) {
-151|    return { status: "error", reason: "timeout", stderr: output };
-152|  }
-153|
-154|  return { status: "error", reason: "unknown", stderr: output };
-155|}
-156|
-157|/*
-158|FNXC:Worktree 2026-07-10-00:00:
-159|FN-7799 requires Git repository detection to distinguish a positive non-repo verdict from environmental Git failures. Dubious ownership on OneDrive-backed Windows Documents paths, git-not-on-PATH, index locks, and timeouts must never be reported as "not a Git repository", because that false negative permanently blocks valid repos across engine restarts.
-160|*/
-161|export async function detectGitRepository(dir: string): Promise<GitRepoDetection> {
-162|  try {
-163|    await execAsync("git rev-parse --git-dir", {
-164|      cwd: dir,
-165|      encoding: "utf-8",
-166|      timeout: 10_000,
-167|      maxBuffer: 10 * 1024 * 1024,
-168|    });
-169|    return { status: "repo" };
-170|  } catch (err: unknown) {
-171|    const detection = classifyGitRepoDetectionError(err);
-172|    const reasonText = detection.status === "error" ? ` reason=${detection.reason}` : "";
-173|    const stderrText = detection.status === "repo" ? "" : detection.stderr;
-174|    worktreePoolLog.log(
-175|      `detectGitRepository check failed for ${dir}: status=${detection.status}${reasonText} stderr=${stderrText}`,
-176|    );
-177|    return detection;
-178|  }
-179|}
-180|
-181|export async function isGitRepository(dir: string): Promise<boolean> {
-182|  return (await detectGitRepository(dir)).status === "repo";
-183|}
-184|
-185|export async function describeRegisteredWorktrees(rootDir: string): Promise<{ rawOutput: string; canonicalized: string[] }> {
-186|  try {
-187|    const result = await execAsync("git worktree list --porcelain", {
-188|      cwd: rootDir,
-189|      encoding: "utf-8",
-190|      timeout: 10_000,
-191|      maxBuffer: 10 * 1024 * 1024,
-192|    });
-193|    const stdout = getExecStdout(result);
-194|
-195|    const canonicalized: string[] = [];
-196|    for (const line of stdout.split("\n")) {
-197|      if (line.startsWith("worktree ")) {
-198|        canonicalized.push(canonicalizePath(line.slice("worktree ".length)));
-199|      }
-200|    }
-201|
-202|    return { rawOutput: stdout, canonicalized };
-203|  } catch (err: unknown) {
-204|    const errorMessage = err instanceof Error ? err.message : String(err);
-205|    worktreePoolLog.warn(`[worktree-pool] Failed to list registered worktrees: ${errorMessage}`);
-206|    return { rawOutput: "", canonicalized: [] };
-207|  }
-208|}
-209|
-210|export async function getRegisteredWorktreePaths(rootDir: string): Promise<Set<string>> {
-211|  const { canonicalized } = await describeRegisteredWorktrees(rootDir);
-212|  return new Set(canonicalized);
-213|}
-214|
-215|export async function getRegisteredWorktreeBranchMap(rootDir: string): Promise<Map<string, string>> {
-216|  const branchMap = new Map<string, string>();
-217|  for (const entry of await getRegisteredWorktreeBranches(rootDir)) {
-218|    branchMap.set(entry.branch, entry.worktreePath);
-219|  }
-220|  return branchMap;
-221|}
-222|
-223|/**
-224| * Same source as `getRegisteredWorktreeBranchMap` but returns ALL
-225| * (branch, worktreePath) pairs rather than collapsing duplicates by branch.
-226| * Multiple worktrees can legitimately share a branch when the user has
-227| * created secondary checkouts via `git worktree add --force -b <branch>`;
-228| * callers that need to act on every such worktree (e.g. the merger's
-229| * post-advance auto-sync) must use this array form to avoid silently
-230| * skipping all but the last-iterated checkout.
-231| */
-232|export async function getRegisteredWorktreeBranches(rootDir: string): Promise<Array<{ branch: string; worktreePath: string }>> {
-233|  const { rawOutput } = await describeRegisteredWorktrees(rootDir);
-234|  const entries: Array<{ branch: string; worktreePath: string }> = [];
-235|  let currentWorktree: string | null = null;
-236|
-237|  for (const line of rawOutput.split("\n")) {
-238|    if (line.startsWith("worktree ")) {
-239|      currentWorktree = canonicalizePath(line.slice("worktree ".length));
-240|      continue;
-241|    }
-242|
-243|    if (line.startsWith("branch ") && currentWorktree) {
-244|      const branchRef = line.slice("branch ".length).trim();
-245|      const branchName = branchRef.startsWith("refs/heads/")
-246|        ? branchRef.slice("refs/heads/".length)
-247|        : branchRef;
-248|      if (branchName) {
-249|        entries.push({ branch: branchName, worktreePath: currentWorktree });
-250|      }
-251|    }
-252|  }
-253|
-254|  return entries;
-255|}
-256|
-257|export async function isRegisteredGitWorktree(rootDir: string, worktreePath: string): Promise<boolean> {
-258|  return (await getRegisteredWorktreePaths(rootDir)).has(canonicalizePath(worktreePath));
-259|}
-260|
-261|export function hasRequiredWorktreeFiles(worktreePath: string): boolean {
-262|  return existsSync(join(worktreePath, ".git"));
-263|}
-264|
-265|/*
-266|FNXC:WorktreeLiveness 2026-07-26-08:20:
-267|SYNC, NON-SPAWNING liveness probe for callers that must not run git — specifically failure/recovery
-268|paths, where spawning git to decide how to recover from a git failure is both slow and fragile.
-269|`classifyTaskWorktree` stays the canonical classifier and MUST be preferred wherever an await and a
-270|subprocess are acceptable (see docs/solutions/logic-errors/repo-root-task-worktree-requeue-loop.md
-271|→ Prevention: new worktree-liveness paths should call the shared classifier).
-272|
-273|This probe covers the classifier's filesystem gate (the path exists and carries `.git`) plus its
-274|`repo-root` gate when `rootDir` is supplied. It does NOT cover `unregistered` or
-275|`outside-work-tree`, so a directory whose `.git` pointer is stale but present still reads as usable
-276|here. Callers that treat "usable" as permission to reuse a checkout must tolerate that narrower
-277|guarantee; callers needing the full verdict must await `classifyTaskWorktree`. Keeping the fast
-278|probe HERE, beside the classifier, is what makes the difference between the two auditable instead
-279|of a duplicate check growing in an unrelated module.
-280|
-281|Pass `rootDir` whenever the caller has it. The project root is a registered git worktree carrying
-282|`.git`, so without that gate the main checkout reads as a usable TASK worktree — the FN-6861
-283|acquisition→gate→requeue loop in
-284|docs/solutions/logic-errors/repo-root-task-worktree-requeue-loop.md.
-285|*/
-286|export function hasUsableWorktreeShape(
-287|  worktreePath: string | undefined | null,
-288|  rootDir?: string,
-289|): boolean {
-290|  if (!worktreePath) return false;
-291|  // `.git` under a path that does not exist (or is a file) cannot exist either, so this single
-292|  // filesystem probe subsumes the directory-existence check.
-293|  if (!hasRequiredWorktreeFiles(worktreePath)) return false;
-294|  if (rootDir && isRepoRootPath(rootDir, worktreePath)) return false;
-295|  return true;
-296|}
-297|
-298|export async function isInsideGitWorkTree(worktreePath: string): Promise<boolean> {
-299|  try {
-300|    const result = await execAsync("git rev-parse --is-inside-work-tree", {
-301|      cwd: worktreePath,
-302|      encoding: "utf-8",
-303|    });
-304|    return getExecStdout(result).trim() === "true";
-305|  } catch (err: unknown) {
-306|    const errorMessage = err instanceof Error ? err.message : String(err);
-307|    worktreePoolLog.debug(`isInsideGitWorkTree check failed for ${worktreePath}: ${errorMessage}`);
-308|    return false;
-309|  }
-310|}
-311|
-312|export type TaskWorktreeClassification = "missing" | "incomplete" | "repo-root" | "unregistered" | "outside-work-tree";
-313|
-314|export type TaskWorktreeClassificationResult =
-315|  | { ok: true }
-316|  | { ok: false; classification: TaskWorktreeClassification; reason: string };
-317|
-318|export type NestedWorktreeRootDetectionResult =
-319|  | { reanchored: true; root: string }
-320|  | { reanchored: false; reason: string };
-321|
-322|export async function detectNestedWorktreeRoot(
-323|  rootDir: string,
-324|  worktreePath: string,
-325|  settings?: Pick<Settings, "worktreesDir">,
-326|): Promise<NestedWorktreeRootDetectionResult> {
-327|  if (!existsSync(worktreePath)) {
-328|    return { reanchored: false, reason: "worktree_missing" };
-329|  }
-330|
-331|  if (!isInsideWorktreesDir(rootDir, worktreePath, settings)) {
-332|    return { reanchored: false, reason: "worktree_outside_configured_dir" };
-333|  }
-334|
-335|  const canonicalRootDir = canonicalizePath(rootDir);
-336|  const canonicalWorktreePath = canonicalizePath(worktreePath);
-337|
-338|  let topLevelRaw = "";
-339|  try {
-340|    const result = await execAsync("git rev-parse --show-toplevel", {
-341|      cwd: worktreePath,
-342|      encoding: "utf-8",
-343|      timeout: 10_000,
-344|      maxBuffer: 1024 * 1024,
-345|    });
-346|    topLevelRaw = getExecStdout(result).trim();
-347|  } catch (error) {
-348|    return { reanchored: false, reason: `top_level_probe_failed:${error instanceof Error ? error.message : String(error)}` };
-349|  }
-350|
-351|  if (!topLevelRaw) {
-352|    return { reanchored: false, reason: "top_level_empty" };
-353|  }
-354|
-355|  const canonicalTopLevel = canonicalizePath(topLevelRaw);
-356|  if (canonicalTopLevel === canonicalWorktreePath) {
-357|    return { reanchored: false, reason: "already_at_toplevel" };
-358|  }
-359|
-360|  if (canonicalTopLevel === canonicalRootDir) {
-361|    return { reanchored: false, reason: "toplevel_is_repo_root" };
-362|  }
-363|
-364|  if (!isInsideWorktreesDir(rootDir, canonicalTopLevel, settings)) {
-365|    return { reanchored: false, reason: "toplevel_outside_configured_dir" };
-366|  }
-367|
-368|  const relFromTopLevel = relative(canonicalTopLevel, canonicalWorktreePath);
-369|  const nestedUnderTopLevel = relFromTopLevel !== "" && !relFromTopLevel.startsWith("..") && !isAbsolute(relFromTopLevel);
-370|  if (!nestedUnderTopLevel) {
-371|    return { reanchored: false, reason: "not_nested_under_toplevel" };
-372|  }
-373|
-374|  if (!await isRegisteredGitWorktree(rootDir, canonicalTopLevel)) {
-375|    return { reanchored: false, reason: "toplevel_not_registered_worktree" };
-376|  }
-377|
-378|  return { reanchored: true, root: canonicalTopLevel };
-379|}
-380|
-381|/**
-382| * Language-agnostic liveness/classification gate for task worktrees.
-383| */
-384|export async function classifyTaskWorktree(rootDir: string, worktreePath: string): Promise<TaskWorktreeClassificationResult> {
-385|  if (!existsSync(worktreePath)) {
-386|    return { ok: false, classification: "missing", reason: "worktree directory does not exist" };
-387|  }
-388|
-389|  /*
-390|   * FNXC:WorktreeLiveness 2026-06-21-11:10:
-391|   * The project root is a legitimately registered git worktree, but it is never a usable task worktree. Tasks must execute inside the configured worktrees directory, so classification rejects root-equal paths here to stop the resume↔executor-gate requeue loop observed in FN-6861/FN-6709.
-392|   */
-393|  if (isRepoRootPath(rootDir, worktreePath)) {
-394|    return { ok: false, classification: "repo-root", reason: "worktree path is the project root, not a task worktree" };
-395|  }
-396|
-397|  if (!hasRequiredWorktreeFiles(worktreePath)) {
-398|    return { ok: false, classification: "incomplete", reason: "missing .git metadata" };
-399|  }
-400|  if (!await isRegisteredGitWorktree(rootDir, worktreePath)) {
-401|    return { ok: false, classification: "unregistered", reason: "not registered in git worktree list" };
-402|  }
-403|  if (!await isInsideGitWorkTree(worktreePath)) {
-404|    return { ok: false, classification: "outside-work-tree", reason: "git rev-parse --is-inside-work-tree returned false" };
-405|  }
-406|  return { ok: true };
-407|}
-408|
-409|/**
-410| * Language-agnostic liveness gate for task worktrees.
-411| */
-412|export async function isUsableTaskWorktree(rootDir: string, worktreePath: string): Promise<boolean> {
-413|  const result = await classifyTaskWorktree(rootDir, worktreePath);
-414|  return result.ok;
-415|}
-416|
-417|export function isInsideWorktreesDir(
-418|  rootDir: string,
-419|  worktreePath: string,
-420|  settings?: Pick<Settings, "worktreesDir">,
-421|): boolean {
-422|  return isInsideConfiguredWorktreesDir(rootDir, settings, worktreePath);
-423|}
-424|
-425|export type ReclaimableWorktreePlacement =
-426|  | { kind: "ready"; path: string; relocated: boolean }
-427|  | { kind: "deferred-live"; path: string };
-428|
-429|export interface RelocateReclaimableWorktreeInput {
-430|  rootDir: string;
-431|  sourcePath: string;
-432|  targetPath: string;
-433|  taskId: string;
-434|  settings?: Pick<Settings, "worktreeNaming" | "worktreesDir" | "worktrunk">;
-435|  isPathActive: (path: string) => boolean | Promise<boolean>;
-436|}
-437|
-438|/**
-439| * Put a preserved, registered native checkout under the configured worktree
-440| * root. Worktrunk-assigned paths remain backend-owned. The exact source path
-441| * must be idle before it can move; callers treat a live result as deferred
-442| * recovery rather than invalidating a running process cwd.
-443| */
-444|export async function relocateReclaimableWorktreeIntoRoot(
-445|  input: RelocateReclaimableWorktreeInput,
-446|): Promise<ReclaimableWorktreePlacement> {
-447|  const { rootDir, sourcePath, targetPath, taskId, settings, isPathActive } = input;
-448|  if (settings?.worktrunk?.enabled === true) {
-449|    return { kind: "ready", path: sourcePath, relocated: false };
-450|  }
-451|  if (isInsideWorktreesDir(rootDir, sourcePath, settings)) {
-452|    return { kind: "ready", path: sourcePath, relocated: false };
-453|  }
-454|  if (await isPathActive(sourcePath)) {
-455|    return { kind: "deferred-live", path: sourcePath };
-456|  }
-457|  if (!isInsideWorktreesDir(rootDir, targetPath, settings)) {
-458|    throw new Error(
-459|      `Refusing to relocate ${taskId} worktree to path outside configured worktrees directory: ${targetPath}`,
-460|    );
-461|  }
-462|
-463|  let resolvedTargetPath = targetPath;
-464|  if (existsSync(resolvedTargetPath) && settings?.worktreeNaming !== "task-id") {
-465|    const taskSuffix = taskId.toLowerCase();
-466|    const candidates = [
-467|      `${targetPath}-${taskSuffix}`,
-468|      ...Array.from({ length: 5 }, (_, index) => `${targetPath}-${taskSuffix}-${index + 2}`),
-469|    ];
-470|    const available = candidates.find((candidate) => !existsSync(candidate));
-471|    if (!available) {
-472|      throw new Error(`No available relocation target for ${taskId} worktree near ${targetPath}`);
-473|    }
-474|    resolvedTargetPath = available;
-475|  }
-476|
-477|  await mkdir(dirname(resolvedTargetPath), { recursive: true });
-478|  await execFileAsync("git", ["worktree", "move", sourcePath, resolvedTargetPath], {
-479|    cwd: rootDir,
-480|    timeout: 120_000,
-481|    maxBuffer: 10 * 1024 * 1024,
-482|  });
-483|
-484|  return { kind: "ready", path: resolvedTargetPath, relocated: true };
-485|}
-486|
-487|/**
-488| * A pool of idle git worktrees that can be recycled across tasks.
-489| *
-490| * When `recycleWorktrees` is enabled, completed task worktrees are returned
-491| * to this pool instead of being deleted. New tasks acquire a warm worktree
-492| * from the pool, preserving build caches (node_modules, target/, dist/).
-493| *
-494| * The pool only tracks *idle* worktrees — those not currently assigned to
-495| * any active task. The scheduler's `maxWorktrees` setting still governs
-496| * the total number of worktrees (active + idle).
-497| *
-498| * **Lifecycle across restarts:** The pool is in-memory only, but on engine
-499| * startup it can be rehydrated from disk state via {@link rehydrate} and
-500| * {@link scanIdleWorktrees}. When `recycleWorktrees` is true, the startup
-501| * sequence scans the `.worktrees/` directory, identifies idle worktrees
-502| * (those not assigned to any active task), and bulk-loads them into the
-503| * pool. When `recycleWorktrees` is false, orphaned worktrees are cleaned
-504| * up via {@link cleanupOrphanedWorktrees}.
-505| */
-506|function deriveTaskIdFromBranch(branchName: string): string {
-507|  const match = branchName.match(/^fusion\/(fn-\d+)(?:-\d+)?(?:-[a-z0-9._-]+)*$/i);
-508|  return match ? match[1].toUpperCase() : branchName.toUpperCase();
-509|}
-510|
-511|export type PrepareForTaskResult = {
-512|  branch: string;
-513|  worktreePath: string;
-514|  reclaimed: boolean;
-515|  existingTipSha?: string;
-516|  strandedCommitCount?: number;
-517|};
-518|
-519|export type PoolInvariantPhase = "acquire" | "rehydrate" | "release";
-520|
-521|export type PoolInvariantViolation = {
-522|  path: string;
-523|  existingHolder: string;
-524|  requestingTaskId: string;
-525|  phase: PoolInvariantPhase;
-526|};
-527|
-528|export class PoolDoubleLeaseError extends Error {
-529|  constructor(
-530|    public readonly path: string,
-531|    public readonly existingHolder: string,
-532|    public readonly requestingTaskId: string,
-533|    public readonly phase: PoolInvariantPhase,
-534|  ) {
-535|    super(`Pool double lease detected for ${path}: held by ${existingHolder}, requested by ${requestingTaskId} during ${phase}`);
-536|    this.name = "PoolDoubleLeaseError";
-537|  }
-538|}
-539|
-540|export interface WorktreePoolOptions {
-541|  auditFactory?: (taskId: string) => Pick<RunAuditor, "filesystem">;
-542|  secretsStore?: Pick<SecretsStore, "listEnvExportable">;
-543|}
-544|
-545|export class WorktreePool {
-546|  private idle = new Set<string>();
-547|  private leased = new Map<string, string>();
-548|  private invariantViolationHandler?: (violation: PoolInvariantViolation) => void;
-549|
-550|  constructor(_options: WorktreePoolOptions = {}) {}
-551|
-552|  /**
-553|   * Acquire an idle worktree from the pool.
-554|   *
-555|   * Returns the absolute path of an idle worktree, or `null` if the pool
-556|   * is empty. Before returning, verifies the directory still exists on disk
-557|   * and prunes any stale entries.
-558|   */
-559|  acquire(taskId: string): string | null {
-560|    for (const path of this.idle) {
-561|      this.assertNotDoubleLeased(path, taskId, "acquire");
-562|      this.idle.delete(path);
-563|      this.leased.set(path, taskId);
-564|      if (existsSync(path)) {
-565|        return path;
-566|      }
-567|      this.leased.delete(path);
-568|      worktreePoolLog.debug(`Pruned stale entry: ${path}`);
-569|    }
-570|    return null;
-571|  }
-572|
-573|  /**
-574|   * Return a worktree to the idle pool after a task completes.
-575|   *
-576|   * The worktree directory is retained on disk with its build caches intact.
-577|   * Call this instead of `git worktree remove` when recycling is enabled.
-578|   *
-579|   * @param worktreePath — Absolute path to the worktree directory
-580|   */
-581|  release(worktreePath: string, releasingTaskId?: string): void {
-582|    const existingHolder = this.leased.get(worktreePath);
-583|    if (!existingHolder) {
-584|      worktreePoolLog.warn(`release called for non-leased worktree: ${worktreePath}`);
-585|    } else if (releasingTaskId && existingHolder !== releasingTaskId) {
-586|      this.notifyInvariantViolation({
-587|        path: worktreePath,
-588|        existingHolder,
-589|        requestingTaskId: releasingTaskId,
-590|        phase: "release",
-591|      });
-592|      worktreePoolLog.warn(
-593|        `release task mismatch for ${worktreePath}: leased holder=${existingHolder}, releasingTaskId=${releasingTaskId}`,
-594|      );
-595|    }
-596|    this.leased.delete(worktreePath);
-597|    this.idle.add(worktreePath);
-598|  }
-599|
-600|  /** Number of idle worktrees currently in the pool. */
-601|  get size(): number {
-602|    return this.idle.size;
-603|  }
-604|
-605|  /** Check whether a specific path is in the idle pool. */
-606|  has(path: string): boolean {
-607|    return this.idle.has(path);
-608|  }
-609|
-610|  setInvariantViolationHandler(handler: (violation: PoolInvariantViolation) => void): void {
-611|    this.invariantViolationHandler = handler;
-612|  }
-613|
-614|  /** @internal test-only visibility */
-615|  getLeasedPaths(): ReadonlyMap<string, string> {
-616|    return this.leased;
-617|  }
-618|
-619|  private notifyInvariantViolation(violation: PoolInvariantViolation): void {
-620|    try {
-621|      this.invariantViolationHandler?.(violation);
-622|    } catch (error) {
-623|      worktreePoolLog.warn(`Invariant violation handler failed: ${error instanceof Error ? error.message : String(error)}`);
-624|    }
-625|  }
-626|
-627|  private assertNotDoubleLeased(path: string, requestingTaskId: string, phase: PoolInvariantPhase): void {
-628|    const existingHolder = this.leased.get(path);
-629|    if (!existingHolder || existingHolder === requestingTaskId) {
-630|      return;
-631|    }
-632|    const violation: PoolInvariantViolation = { path, existingHolder, requestingTaskId, phase };
-633|    this.notifyInvariantViolation(violation);
-634|    throw new PoolDoubleLeaseError(path, existingHolder, requestingTaskId, phase);
-635|  }
-636|
-637|  /**
-638|   * Remove and return all idle worktree paths.
-639|   *
-640|   * Useful for shutdown/cleanup — the caller is responsible for
-641|   * running `git worktree remove` on each returned path.
-642|   */
-643|  drain(): string[] {
-644|    const paths = Array.from(this.idle);
-645|    this.idle.clear();
-646|    this.leased.clear();
-647|    return paths;
-648|  }
-649|
-650|  /**
-651|   * Bulk-load known idle worktree paths into the pool.
-652|   *
-653|   * Called at engine startup to restore the pool from disk state.
-654|   * Paths that no longer exist on disk are silently skipped.
-655|   *
-656|   * @param idlePaths — Absolute paths to idle worktree directories
-657|   */
-658|  rehydrate(idlePaths: string[]): void {
-659|    for (const path of idlePaths) {
-660|      if (!existsSync(path)) {
-661|        worktreePoolLog.debug(`Rehydrate skipped (not on disk): ${path}`);
-662|        continue;
-663|      }
-664|      const existingHolder = this.leased.get(path);
-665|      if (existingHolder) {
-666|        this.notifyInvariantViolation({
-667|          path,
-668|          existingHolder,
-669|          requestingTaskId: existingHolder,
-670|          phase: "rehydrate",
-671|        });
-672|        worktreePoolLog.warn(`Rehydrate skipped leased worktree ${path} (holder=${existingHolder})`);
-673|        continue;
-674|      }
-675|      this.idle.add(path);
-676|    }
-677|  }
-678|
-679|  /**
-680|   * Prepare a recycled worktree for a new task.
-681|   *
-682|   * Resets the working tree to a clean state, then creates (or force-resets)
-683|   * the task's branch based on the given start point (or `main` by default).
-684|   * This ensures the new task starts from the correct base with a clean
-685|   * working directory, while preserving untracked build caches
-686|   * (node_modules, target/, dist/). As an explicit carve-out, this
-687|   * preparation removes `packages/desktop/dist` and
-688|   * `packages/desktop/dist-electron`.
-689|   *
-690|   * Steps performed:
-691|   * 1. `git checkout -- .` — discard tracked file modifications
-692|   * 2. `git clean -fd` — remove untracked files (but not .gitignore'd caches)
-693|   * 3. Remove `packages/desktop/dist` + `packages/desktop/dist-electron` if present
-694|   * 4. `git checkout --detach <startPoint>` — move HEAD to the latest base commit
-695|   * 5. `git checkout -B <branchName> <startPoint>` — create/reset branch from start point
-696|   *
-697|   * Returns the actual branch name used. This may differ from `branchName`
-698|   * when legacy conflict recovery is explicitly enabled and generates a suffixed
-699|   * name (e.g., `fusion/fn-042-2`).
-700|   *
-701|   * @param worktreePath — Absolute path to the recycled worktree
-702|   * @param branchName — Branch name for the new task (e.g., `fusion/fn-042`)
-703|   * @param startPoint — Git ref to branch from (e.g., `fusion/fn-041`). Defaults to `main`.
-704|   * @returns The actual branch name checked out in the worktree
-705|   */
-706|  async prepareForTask(
-707|    worktreePath: string,
-708|    branchName: string,
-709|    startPoint?: string,
-710|    options?: { allowSiblingBranchRename?: boolean; repoDir?: string; requestingTaskId?: string },
-711|  ): Promise<PrepareForTaskResult> {
-712|    // Clean tracked modifications
-713|    try {
-714|      await execAsync("git checkout -- .", { cwd: worktreePath });
-715|    } catch (err: unknown) {
-716|      const errorMessage = err instanceof Error ? err.message : String(err);
-717|      worktreePoolLog.debug(`git checkout -- . failed (may be clean): ${errorMessage}`);
-718|      // May fail if worktree is already clean — that's fine
-719|    }
-720|
-721|    // Remove untracked files (but not .gitignore'd build caches)
-722|    await execAsync("git clean -fd", { cwd: worktreePath });
-723|    await removeDesktopBuildArtifacts(worktreePath, worktreePoolLog);
-724|
-725|    const base = startPoint || await resolveIntegrationBranch(options?.repoDir ?? worktreePath, undefined);
-726|    // Reject base values that would cause the new branch to inherit the
-727|    // worktree's current HEAD instead of the intended start point. Historical
-728|    // contamination ("branch: Created from HEAD") landed FN-5472's tip on
-729|    // freshly-created fn-5432/fn-5255 branches because the recycled worktree
-730|    // was still pointing at the previous occupant's commit and base silently
-731|    // collapsed onto HEAD.
-732|    const trimmedBase = base?.trim() ?? "";
-733|    if (!trimmedBase || trimmedBase.toUpperCase() === "HEAD") {
-734|      throw new Error(
-735|        `prepareForTask: refusing to create branch ${branchName} from base ${JSON.stringify(base)} (worktree=${worktreePath}, startPoint=${String(startPoint)})`,
-736|      );
-737|    }
-738|
-739|    await execAsync(`git checkout --detach ${base}`, {
-740|      cwd: worktreePath,
-741|    });
-742|
-743|    // Create or force-reset the branch from the start point (or main)
-744|    const checkoutCmd = `git checkout -B "${branchName}" ${base}`;
-745|    const resolvedBase = (await execAsync(`git rev-parse --verify "${base}^{commit}"`, { cwd: worktreePath, encoding: "utf-8" })).stdout.trim();
-746|
-747|    // Verify HEAD actually landed at the resolved base after --detach. If
-748|    // detach silently leaves HEAD elsewhere (e.g. the base ref didn't exist
-749|    // and git fell through to current HEAD), creating the branch now would
-750|    // pin it to the wrong tip — exactly the FN-5432 / FN-5255 contamination
-751|    // pattern ("branch: Created from HEAD" pointing at the previous occupant's
-752|    // tip). Only enforced when we have real SHAs to compare; mock-driven
-753|    // unit tests that return empty buffers fall through harmlessly.
-754|    if (/^[0-9a-f]{40}$/i.test(resolvedBase)) {
-755|      const detachedHead = (await execAsync("git rev-parse HEAD", { cwd: worktreePath, encoding: "utf-8" })).stdout.trim();
-756|      if (detachedHead !== resolvedBase) {
-757|        throw new Error(
-758|          `prepareForTask: post-detach HEAD ${detachedHead} does not match resolved base ${resolvedBase} (${base}) for ${branchName} — refusing to create branch`,
-759|        );
-760|      }
-761|    }
-762|    const taskId = deriveTaskIdFromBranch(branchName);
-763|    try {
-764|      await execAsync(checkoutCmd, {
-765|        cwd: worktreePath,
-766|      });
-767|      await assertCleanBranchAtBase(worktreePath, branchName, resolvedBase, taskId);
-768|      return { branch: branchName, worktreePath, reclaimed: false };
-769|    } catch (err: unknown) {
-770|      const execError = err instanceof Error ? err : new Error(String(err));
-771|      const stderr = "stderr" in execError
-772|        ? String((execError as { stderr?: unknown }).stderr ?? execError.message)
-773|        : execError.message;
-774|      const match = stderr.match(/already used by worktree at '([^']+)'/);
-775|      if (!match) {
-776|        throw err;
-777|      }
-778|
-779|      // The branch is checked out in a different worktree. Keep stale-conflict
-780|      // cleanup behavior for missing paths; otherwise either surface a typed
-781|      // conflict or, when explicitly enabled, fall back to the legacy sibling
-782|      // suffix flow.
-783|      const conflictingPath = match[1];
-784|      const repoDir = options?.repoDir ?? worktreePath;
-785|      const inspection = await inspectBranchConflict({
-786|        repoDir,
-787|        branchName,
-788|        conflictingWorktreePath: conflictingPath,
-789|        requestingTaskId: options?.requestingTaskId ?? taskId,
-790|        ownerTaskId: taskId,
-791|        startPoint: base,
-792|        integrationRef: await resolveIntegrationBranch(repoDir, undefined),
-793|      });
-794|      if (inspection.kind === "stale" || inspection.kind === "stale-resolved" || inspection.kind === "tip-already-merged") {
-795|        const backend = resolveWorktreeBackendViaSettings({}, { logger: worktreePoolLog });
-796|        await backend.prune({ rootDir: options?.repoDir ?? worktreePath });
-797|        if (inspection.kind === "tip-already-merged") {
-798|          try {
-799|            await execAsync(`git branch -D "${branchName}"`, { cwd: worktreePath });
-800|          } catch {
-801|            // best-effort
-802|          }
-803|        }
-804|        await execAsync(checkoutCmd, { cwd: worktreePath });
-805|        await assertCleanBranchAtBase(worktreePath, branchName, resolvedBase, taskId);
-806|        return { branch: branchName, worktreePath, reclaimed: false };
-807|      }
-808|
-809|      if (inspection.kind === "reclaimable") {
-810|        worktreePoolLog.log(
-811|          `reclaimed self-owned branch conflict for ${branchName}: tip=${inspection.tipSha} strandedSince${base}=${inspection.strandedCommits.length}`,
-812|        );
-813|        return {
-814|          branch: branchName,
-815|          worktreePath: inspection.livePath,
-816|          reclaimed: true,
-817|          existingTipSha: inspection.tipSha,
-818|          strandedCommitCount: inspection.strandedCommits.length,
-819|        };
-820|      }
-821|
-822|      if (inspection.kind === "fully-subsumed") {
-823|        worktreePoolLog.log(
-824|          `reclaimed fully-subsumed branch conflict for ${branchName}: tip=${inspection.tipSha} strandedSince${base}=0`,
-825|        );
-826|        return {
-827|          branch: branchName,
-828|          worktreePath: inspection.livePath,
-829|          reclaimed: true,
-830|          existingTipSha: inspection.tipSha,
-831|          strandedCommitCount: 0,
-832|        };
-833|      }
-834|
-835|      if (!options?.allowSiblingBranchRename) {
-836|        if (inspection.kind === "live-foreign") {
-837|          throw inspection.error;
-838|        }
-839|        throw new Error(`Branch ${branchName} is already in use at ${conflictingPath}`);
-840|      }
-841|
-842|      const conflictBase = branchName;
-843|      for (let suffix = 2; suffix <= 6; suffix++) {
-844|        const suffixedName = `${branchName}-${suffix}`;
-845|        const suffixedCmd = `git checkout -B "${suffixedName}" ${conflictBase}`;
-846|        try {
-847|          await execAsync(suffixedCmd, { cwd: worktreePath });
-848|          await assertCleanBranchAtBase(worktreePath, suffixedName, resolvedBase, taskId);
-849|          return { branch: suffixedName, worktreePath, reclaimed: false };
-850|        } catch (suffixErr: unknown) {
-851|          const suffixExecError = suffixErr instanceof Error ? suffixErr : new Error(String(suffixErr));
-852|          const suffixStderr = "stderr" in suffixExecError && typeof suffixExecError.stderr === "string"
-853|            ? suffixExecError.stderr.toString()
-854|            : "";
-855|          if (!suffixStderr.includes("already used by worktree")) {
-856|            throw suffixErr;
-857|          }
-858|        }
-859|      }
-860|
-861|      throw new Error(
-862|        `Cannot create branch for task: "${branchName}" and suffixes -2 through -6 are all in use by other worktrees`,
-863|      );
-864|    }
-865|  }
-866|}
-867|
-868|/**
-869| * Scan the `.worktrees/` directory to find idle worktrees that can be
-870| * loaded into the pool on startup.
-871| *
-872| * A worktree is considered "idle" if it exists on disk under
-873| * `<rootDir>/.worktrees/` but is NOT assigned (via `task.worktree`) to
-874| * any non-done task.
-875| *
-876| * @param rootDir — Project root directory (parent of `.worktrees/`)
-877| * @param store — Task store for listing tasks and their worktree assignments
-878| * @returns Absolute paths of idle worktree directories
-879| */
-880|export async function scanIdleWorktrees(
-881|  rootDir: string,
-882|  store: TaskStore,
-883|  settings?: Pick<Settings, "worktreesDir">,
-884|): Promise<string[]> {
-885|  const worktreesDir = resolveWorktreesDir(rootDir, settings);
-886|
-887|  if (!existsSync(worktreesDir)) {
-888|    return [];
-889|  }
-890|
-891|  // List all subdirectories under .worktrees/
-892|  let dirs: string[];
-893|  try {
-894|    const entries = readdirSync(worktreesDir, { withFileTypes: true });
-895|    dirs = entries
-896|      .filter((e) => e.isDirectory() && !isWorktreeContainerDir(e.name))
-897|      .map((e) => join(worktreesDir, e.name));
-898|  } catch (err: unknown) {
-899|    const errorMessage = err instanceof Error ? err.message : String(err);
-900|    worktreePoolLog.warn(`Failed to read .worktrees/ directory: ${errorMessage}`);
-901|    return [];
-902|  }
-903|
-904|  if (dirs.length === 0) {
-905|    return [];
-906|  }
-907|
-908|  const registeredWorktrees = await getRegisteredWorktreePaths(rootDir);
-909|  const registeredDirs = dirs.filter((dir) => registeredWorktrees.has(resolve(dir)));
-910|
-911|  // Find worktree paths assigned to non-done tasks (active worktrees)
-912|  const tasks = await store.listTasks({ slim: true, includeArchived: false, startupMemo: true });
-913|  const activeWorktrees = new Set<string>();
-914|  /*
-915|  FNXC:WorkflowResolvedColumns 2026-07-30-14:05 (batch-engine tail):
-916|  "Still holding its worktree" excludes tasks that have FINISHED. Keyed on the id, a renamed complete
-917|  lane kept every shipped task's worktree in the ACTIVE set, so this reclaim pass never returned it and
-918|  the board walked into worktree exhaustion — a stall whose cause is invisible from the symptom.
-919|
-920|  NOT the query-filter class: this listTasks call passes no `column`.
-921|
-922|  Resolved per TASK (each may run its own workflow) and ONLY for tasks that actually record a worktree,
-923|  with one IR cache for the pass. Unioned with the legacy id because `resolveWorkflowIrForTask` degrades
-924|  to the BUILT-IN IR rather than throwing — without the union a degraded board would hold every worktree
-925|  forever, which is this bug.
-926|  */
-927|  const reclaimIrCache = new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>();
-928|  const completeByTaskId = new Map<string, ReadonlySet<string>>();
-929|  for (const task of tasks) {
-930|    if (!task.worktree) continue;
-931|    const columns = new Set<string>(["done"]);
-932|    try {
-933|      const ir = await resolveWorkflowIrForTask(store, task.id, reclaimIrCache);
-934|      if (ir) for (const id of columnsWithFlag(ir, "complete")) columns.add(id);
-935|    } catch { /* degraded: legacy id only */ }
-936|    completeByTaskId.set(task.id, columns);
-937|  }
-938|  const isUnfinished = (task: { id: string; column: string }) =>
-939|    completeByTaskId.get(task.id)?.has(task.column) !== true;
-940|  for (const task of tasks) {
-941|    if (task.worktree && isUnfinished(task) && registeredWorktrees.has(resolve(task.worktree))) {
-942|      activeWorktrees.add(resolve(task.worktree));
-943|    } else if (task.worktree && isUnfinished(task)) {
-944|      worktreePoolLog.debug(`Ignoring task ${task.id} worktree metadata because it is not a registered git worktree: ${task.worktree}`);
-945|    }
-946|  }
-947|
-948|  // Return registered worktrees on disk that are NOT active. Unregistered
-949|  // directories are intentionally excluded here so recycle mode never adds a
-950|  // broken directory to the warm pool; cleanup handles those separately.
-951|  return registeredDirs.filter((dir) => !activeWorktrees.has(resolve(dir)));
-952|}
-953|
-954|/**
-955| * Clean up orphaned worktrees left behind from previous engine runs.
-956| *
-957| * Removes registered worktrees not assigned to unfinished tasks and empty
-958| * unregistered residue. Used on startup when `recycleWorktrees` is false.
-959| *
-960| * Failures on individual worktree removals are logged but not fatal.
-961| *
-962| * @param rootDir — Project root directory (parent of `.worktrees/`)
-963| * @param store — Task store for listing tasks and their worktree assignments
-964| * @returns Number of worktrees cleaned up
-965| */
-966|export async function cleanupOrphanedWorktrees(
-967|  rootDir: string,
-968|  store: TaskStore,
-969|  settings?: Pick<Settings, "worktreesDir">,
-970|): Promise<number> {
-971|  const worktreesDir = resolveWorktreesDir(rootDir, settings);
-972|  if (!existsSync(worktreesDir)) {
-973|    return 0;
-974|  }
-975|
-976|  const orphaned = await scanIdleWorktrees(rootDir, store, settings);
-977|  const registeredWorktrees = await getRegisteredWorktreePaths(rootDir);
-978|
-979|  let cleaned = 0;
-980|
-981|  for (const worktreePath of orphaned) {
-982|    try {
-983|      if (registeredWorktrees.has(resolve(worktreePath))) {
-984|        // FNXC:WorktreeCleanup 2026-08-15-19:00:
-985|        // Never probe a missing directory; prune its stale admin entry instead.
-986|        // The shared removal path revalidates tracked, untracked, and ignored content
-987|        // after cleaning only fingerprint-owned Fusion secrets.
-988|        if (!existsSync(worktreePath)) {
-989|          await pruneWorktreeAdminEntries({ rootDir, reason: "pool-cleanup-missing-orphan", target: worktreePath, logger: worktreePoolLog }).catch(() => undefined);
-990|          cleaned++;
-991|          continue;
-992|        }
-993|        const orphanTaskId = `orphan:${basename(worktreePath)}`;
-994|        try {
-995|          await cleanupSecretsEnvFile({
-996|            worktreePath,
-997|            taskId: orphanTaskId,
-998|            expectedFingerprint: null,
-999|            filename: ".env",
-1000|            audit: undefined,
-1001|            logger: worktreePoolLog,
-1002|          });
-1003|        } catch (error) {
-1004|          worktreePoolLog.warn(
-1005|            `secrets-env cleanup failed for registered orphan ${worktreePath}: ${error instanceof Error ? error.message : String(error)}`,
-1006|          );
-1007|        }
-1008|
-1009|        await removeWorktreeViaBackend({
-1010|          rootDir,
-1011|          worktreePath,
-1012|          settings: settings ?? {},
-1013|          reason: RemovalReason.SelfHealingIdleSweep,
-1014|          allowDirtyReclaim: false,
-1015|        });
-1016|      } else {
-1017|        continue;
-1018|      }
-1019|      worktreePoolLog.log(`Cleaned up orphaned worktree: ${worktreePath}`);
-1020|      cleaned++;
-1021|    } catch (err: unknown) {
-1022|      const errorMessage = err instanceof Error ? err.message : String(err);
-1023|      worktreePoolLog.log(`Failed to remove orphaned worktree ${worktreePath}: ${errorMessage}`);
-1024|    }
-1025|  }
-1026|
-1027|  return cleaned + await reapOrphanWorktrees(rootDir, settings);
-1028|}
-1029|
-1030|/**
-1031| * Remove "half-initialized" worktree directories — directories that exist under
-1032| * `<projectRoot>/.worktrees/` on disk but were never fully registered with git
-1033| * (i.e., `git worktree add` never completed successfully for them).
-1034| *
-1035| * This is the housekeeping path; it runs once at engine startup and is safe to
-1036| * call repeatedly.  The hot path (`assertValidWorktreeSession`) is deliberately
-1037| * left untouched.
-1038| *
-1039| * Safety invariants enforced before any removal:
-1040| * - Only removes direct children of `<projectRoot>/.worktrees/` — never the
-1041| *   project root itself, a parent, or an arbitrary path.
-1042| * - Skips symlinks (only removes real directories).
-1043| * - Never removes a directory that is a registered git worktree.
-1044| * - Never removes a directory that has a valid `.git` file pointing to an
-1045| *   existing gitdir (belt-and-suspenders: git would list it anyway, but guards
-1046| *   against stale porcelain output on broken repos).
-1047| *
-1048| * @param projectRoot - Absolute path to the project root (parent of `.worktrees/`)
-1049| * @returns Number of orphan directories removed
-1050| */
-1051|/**
-1052| * Decide whether a worktree's `.git` pointer is *dangling* — present on disk but
-1053| * referencing a `.git/worktrees/<name>` admin entry that no longer exists. A
-1054| * dangling pointer is FN-6782 leak residue: invisible to `git worktree list` /
-1055| * `prune`, yet it collides with freshly generated worktree names.
-1056| *
-1057| * Returns `true` ONLY when the pointer is confidently classifiable as dangling:
-1058| * a `gitdir: <path>` link file (relative targets resolved against the worktree
-1059| * dir) whose target is confirmed missing. Returns `false` for everything else —
-1060| * a real `.git` directory, a live gitdir target, an unparseable pointer, OR any
-1061| * read/stat failure. The conservative default matters: callers reap on `true`,
-1062| * so a transient read error (EACCES/EBUSY) on a genuinely-live worktree's `.git`
-1063| * must never be misread as dangling and force-removed.
-1064| */
-1065|function dotGitPointerIsDangling(dotGitPath: string): boolean {
-1066|  try {
-1067|    if (lstatSync(dotGitPath).isDirectory()) return false;
-1068|    const raw = readFileSync(dotGitPath, "utf8").trim();
-1069|    const match = /^gitdir:\s*(.+)$/.exec(raw);
-1070|    if (!match) return false;
-1071|    const target = match[1].trim();
-1072|    const resolved = isAbsolute(target) ? target : resolve(dirname(dotGitPath), target);
-1073|    return !existsSync(resolved);
-1074|  } catch {
-1075|    return false;
-1076|  }
-1077|}
-1078|
-1079|export async function reapOrphanWorktrees(
-1080|  projectRoot: string,
-1081|  settings?: Pick<Settings, "worktreesDir">,
-1082|): Promise<number> {
-1083|  const worktreesDir = resolveWorktreesDir(projectRoot, settings);
-1084|
-1085|  if (!existsSync(worktreesDir)) {
-1086|    return 0;
-1087|  }
-1088|
-1089|  // List direct children of .worktrees/
-1090|  let entries: { name: string; fullPath: string }[];
-1091|  try {
-1092|    entries = readdirSync(worktreesDir, { withFileTypes: true })
-1093|      .filter((e) => {
-1094|        // Only real directories — never symlinks or internal worktree containers.
-1095|        if (!e.isDirectory() || isWorktreeContainerDir(e.name)) return false;
-1096|        try {
-1097|          return lstatSync(join(worktreesDir, e.name)).isDirectory() && !lstatSync(join(worktreesDir, e.name)).isSymbolicLink();
-1098|        } catch {
-1099|          return false;
-1100|        }
-1101|      })
-1102|      .map((e) => ({ name: e.name, fullPath: join(worktreesDir, e.name) }));
-1103|  } catch (err: unknown) {
-1104|    const msg = err instanceof Error ? err.message : String(err);
-1105|    worktreePoolLog.warn(`reapOrphanWorktrees: failed to read .worktrees/ — ${msg}`);
-1106|    return 0;
-1107|  }
-1108|
-1109|  if (entries.length === 0) return 0;
-1110|
-1111|  // Get the set of paths registered with git
-1112|  const registered = await getRegisteredWorktreePaths(projectRoot);
-1113|
-1114|  let removed = 0;
-1115|  for (const { name, fullPath } of entries) {
-1116|    const resolvedFull = resolve(fullPath);
-1117|
-1118|    // Safety: only operate on paths directly under .worktrees/
-1119|    const rel = relative(resolve(worktreesDir), resolvedFull);
-1120|    if (!rel || rel.startsWith("..") || isAbsolute(rel)) {
-1121|      worktreePoolLog.warn(`reapOrphanWorktrees: skipping out-of-bounds path ${fullPath}`);
-1122|      continue;
-1123|    }
-1124|
-1125|    // Skip registered worktrees — those are managed by the normal lifecycle
-1126|    if (registered.has(resolvedFull)) {
-1127|      continue;
-1128|    }
-1129|
-1130|    // Belt-and-suspenders: skip if a .git file exists AND points to an existing gitdir.
-1131|    // This guards against races where git registered the worktree between our list
-1132|    // call and now, or against a broken repo whose porcelain is unreliable.
-1133|    //
-1134|    // FN-6782 follow-up: a *dangling* `.git` (file present, but the admin entry it
-1135|    // points to is gone) is NOT "partially registered" — it is leak residue from a
-1136|    // worktree whose admin entry was pruned while the directory survived. Such a dir
-1137|    // is invisible to `git worktree list`/`prune` yet collides with freshly generated
-1138|    // worktree names and breaks `execute` (cleanup can't `git worktree remove` a path
-1139|    // git never registered). Only skip when the gitdir target actually exists; reap
-1140|    // dangling pointers like any other half-initialized orphan.
-1141|    const dotGit = join(resolvedFull, ".git");
-1142|    const danglingDotGit = existsSync(dotGit) && dotGitPointerIsDangling(dotGit);
-1143|    if (existsSync(dotGit)) {
-1144|      if (!danglingDotGit) {
-1145|        // Valid registration, a real .git dir, or a pointer we couldn't positively classify as
-1146|        // dangling — leave it; assertValidWorktreeSession handles it on the next agent start.
-1147|        worktreePoolLog.debug(`reapOrphanWorktrees: skipping ${name} (has .git entry but not in registered list — may be partially registered)`);
-1148|        continue;
-1149|      }
-1150|      worktreePoolLog.debug(`reapOrphanWorktrees: ${name} has a dangling .git pointer (admin entry missing) — treating as orphan`);
-1151|    }
-1152|
-1153|    // FNXC:WorktreeCleanup 2026-08-15-20:40: clean Fusion-owned secret residue before removing an empty orphan.
-1154|    try {
-1155|      try {
-1156|        await cleanupSecretsEnvFile({
-1157|          worktreePath: resolvedFull,
-1158|          taskId: `orphan:${name}`,
-1159|          expectedFingerprint: null,
-1160|          filename: ".env",
-1161|          logger: worktreePoolLog,
-1162|        });
-1163|      } catch (error) {
-1164|        worktreePoolLog.warn(`secrets-env cleanup failed for orphan ${name}: ${error instanceof Error ? error.message : String(error)}`);
-1165|      }
-1166|      if (danglingDotGit) {
-1167|        const remainingEntries = readdirSync(resolvedFull);
-1168|        if (remainingEntries.some((entry) => entry !== ".git")) {
-1169|          worktreePoolLog.warn(`Preserving orphan worktree with uncommitted content: ${resolvedFull}`);
-1170|          continue;
-1171|        }
-1172|        unlinkSync(dotGit);
-1173|      }
-1174|      rmdirSync(resolvedFull);
-1175|      await pruneWorktreeAdminEntries({
-1176|        rootDir: projectRoot,
-1177|        reason: "pool-reap-orphan",
-1178|        target: resolvedFull,
-1179|        logger: worktreePoolLog,
-1180|      }).catch(() => undefined);
-1181|      worktreePoolLog.log(`reapOrphanWorktrees: removed half-initialized orphan ${name}`);
-1182|      removed++;
-1183|    } catch (err: unknown) {
-1184|      const msg = err instanceof Error ? err.message : String(err);
-1185|      worktreePoolLog.warn(`reapOrphanWorktrees: failed to remove ${name} — ${msg}`);
-1186|    }
-1187|  }
-1188|
-1189|  return removed;
-1190|}
-1191|
-1192|/** Columns where merger/finalization owns branch lifecycle. */
-1193|
-1194|/**
-1195| * Return local `fusion/*` branches not associated with any active task.
-1196| * Branches tied to merger-managed or archived tasks are excluded.
-1197| */
-1198|export async function scanOrphanedBranches(rootDir: string, store: TaskStore): Promise<string[]> {
-1199|  let allBranches: string[];
-1200|  try {
-1201|    const result = await execAsync("git branch --list 'fusion/*'", {
-1202|      cwd: rootDir,
-1203|      encoding: "utf-8",
-1204|    });
-1205|    const stdout = getExecStdout(result);
-1206|    allBranches = stdout
-1207|      .split("\n")
-1208|      .map((line) => line.trim().replace(/^\*?\s*/, ""))
-1209|      .filter((line) => line.startsWith("fusion/"));
-1210|  } catch (err: unknown) {
-1211|    const errorMessage = err instanceof Error ? err.message : String(err);
-1212|    worktreePoolLog.warn(`Failed to list fusion/* branches: ${errorMessage}`);
-1213|    return [];
-1214|  }
-1215|
-1216|  if (allBranches.length === 0) return [];
-1217|
-1218|  const tasks = await store.listTasks({ slim: true, includeArchived: false });
-1219|  /*
-1220|  FNXC:WorkflowResolvedColumns 2026-07-31-08:20 (batch-engine — census-invisible membership, #2763 class):
-1221|  A branch is "active" (and so must not be reclaimed) unless the merger owns the card or it is archived.
-1222|  Both tests were hardcoded, so on a renamed board a card in review or complete was NOT recognised as
-1223|  merger-managed and its branch was treated as reclaimable — deleting a branch out from under an in-flight
-1224|  merge. One IR cache for the pass; the predicates below stay synchronous.
-1225|  */
-1226|  const poolIrCache = new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>();
-1227|  const poolLanes = new Map<string, { managed: Set<string>; archived: Set<string> }>();
-1228|  for (const task of tasks) {
-1229|    if (poolLanes.has(task.id)) continue;
-1230|    const managed = new Set<string>(["in-review", "done"]);
-1231|    const archived = new Set<string>(["archived"]);
-1232|    try {
-1233|      const ir = await resolveWorkflowIrForTask(store, task.id, poolIrCache);
-1234|      if (ir) {
-1235|        for (const flag of ["mergeOrchestration", "mergeBlocker", "humanReview", "complete"] as const) {
-1236|          for (const id of columnsWithFlag(ir, flag)) managed.add(id);
-1237|        }
-1238|        for (const id of columnsWithFlag(ir, "archived")) archived.add(id);
-1239|      }
-1240|    } catch { /* degraded: legacy ids */ }
-1241|    poolLanes.set(task.id, { managed, archived });
-1242|  }
-1243|  const activeBranches = new Set<string>();
-1244|  for (const task of tasks) {
-1245|    if (poolLanes.get(task.id)?.managed.has(task.column) === true) continue;
-1246|    if (poolLanes.get(task.id)?.archived.has(task.column) === true) continue;
-1247|    if (task.branch) activeBranches.add(task.branch);
-1248|    activeBranches.add(canonicalFusionBranchName(task.id));
-1249|  }
-1250|
-1251|  return allBranches.filter((branch) => !activeBranches.has(branch));
-1252|}
-1253|
+import { exec, execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, rmdirSync, unlinkSync } from "node:fs";
+import { mkdir } from "node:fs/promises";
+import { basename, dirname, join, relative, resolve, isAbsolute } from "node:path";
+import type { SecretsStore, Settings, TaskStore, WorktrunkSettings } from "@fusion/core";
+import { assertCleanBranchAtBase, inspectBranchConflict } from "../execution/branch-conflicts.js";
+import { worktreePoolLog } from "../logger.js";
+/*
+*/
+import { isInsideConfiguredWorktreesDir, isWorktreeContainerDir, resolveWorktreesDir } from "./worktree-paths.js";
+import { canonicalFusionBranchName } from "./worktree-names.js";
+import {
+  resolveWorktrunkBinary,
+} from "./worktrunk-installer.js";
+import {
+  RemovalReason,
+  removeWorktree as removeWorktreeViaBackend,
+  resolveWorktreeBackend as resolveWorktreeBackendViaSettings,
+} from "./worktree-backend.js";
+import { cleanupSecretsEnvFile } from "./secrets-env-writer.js";
+import { removeDesktopBuildArtifacts } from "./worktree-desktop-artifacts.js";
+import { resolveIntegrationBranch } from "../merge/integration-branch.js";
+import type { RunAuditor } from "../util/run-audit.js";
+import { pruneWorktreeAdminEntries } from "./worktree-prune.js";
+import { resolveWorkflowIrForTask, columnsWithFlag } from "@fusion/core";
+
+export {
+  NativeWorktreeBackend,
+  WorktrunkOperationError,
+  WorktrunkWorktreeBackend,
+  removeWorktree,
+  resolveWorktreeBackend,
+} from "./worktree-backend.js";
+export type { WorktreeBackend, WorktreeBackendKind } from "./worktree-backend.js";
+export { RemovalReason } from "./worktree-backend.js";
+
+// Re-export worktrunk installer types for convenience.
+export {
+  resolveWorktrunkBinary as resolveWorktrunkBinaryOriginal,
+  WorktrunkBinaryUnavailableError,
+  WorktrunkInstallDeniedError,
+  WorktrunkInstallFailedError,
+} from "./worktrunk-installer.js";
+
+const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
+
+// ── Worktrunk binary lazy resolver ─────────────────────────────────────────────
+// Memoizes per (homedir, settings.binaryPath) so the resolution+install flow
+// runs at most once per unique settings combination per process.
+const _worktrunkBinaryCache = new Map<string, { binaryPath: string; resolvedAt: number }>();
+
+export async function getWorktrunkBinary(
+  settings: WorktrunkSettings,
+): Promise<{
+  binaryPath: string;
+  source: "override" | "path" | "cached" | "installed-release" | "installed-cargo";
+}> {
+  const cacheKey = `${process.env.HOME ?? ""}::${settings.binaryPath ?? ""}`;
+  const cached = _worktrunkBinaryCache.get(cacheKey);
+  if (cached) {
+    return { binaryPath: cached.binaryPath, source: "cached" };
+  }
+  const result = await resolveWorktrunkBinary({ settings });
+  _worktrunkBinaryCache.set(cacheKey, { binaryPath: result.binaryPath, resolvedAt: Date.now() });
+  return result;
+}
+
+export function clearWorktrunkBinaryCache(): void {
+  _worktrunkBinaryCache.clear();
+}
+
+export function canonicalizePath(path: string): string {
+  /*
+  FNXC:WorktreeLiveness 2026-07-15-11:55:
+  On macOS, /tmp is a symlink to /private/tmp. realpathSync of an existing worktrees
+  root yields /private/tmp/... while resolve() of a not-yet-created child stays under
+  /tmp/... — relative() then looks like a path escape and isInsideConfiguredWorktreesDir
+  falsely reports outside_worktrees_dir (restart.integration resumeOrphaned).
+  When the leaf is missing, realpath the nearest existing ancestor and rejoin the suffix.
+  */
+  try {
+    return realpathSync(path);
+  } catch {
+    let dir = resolve(path);
+    const suffix: string[] = [];
+    while (true) {
+      try {
+        return resolve(realpathSync(dir), ...suffix.reverse());
+      } catch {
+        const parent = dirname(dir);
+        if (parent === dir) break;
+        suffix.push(basename(dir));
+        dir = parent;
+      }
+    }
+    return resolve(path);
+  }
+}
+
+export function isRepoRootPath(rootDir: string, candidate: string): boolean {
+  return canonicalizePath(rootDir) === canonicalizePath(candidate);
+}
+
+function getExecStdout(result: unknown): string {
+  if (typeof result === "string") return result;
+  if (result && typeof result === "object" && "stdout" in result) {
+    const stdout = (result as { stdout?: unknown }).stdout;
+    return typeof stdout === "string" ? stdout : String(stdout ?? "");
+  }
+  return "";
+}
+
+function stringifyExecOutput(value: unknown): string {
+  if (Buffer.isBuffer(value)) return value.toString("utf-8");
+  return typeof value === "string" ? value : String(value ?? "");
+}
+
+function getExecErrorOutput(error: unknown): string {
+  if (!error || typeof error !== "object") return String(error ?? "");
+  const record = error as { stderr?: unknown; message?: unknown };
+  const stderr = stringifyExecOutput(record.stderr).trim();
+  if (stderr) return stderr;
+  return stringifyExecOutput(record.message).trim();
+}
+
+export type GitRepoDetection =
+  | { status: "repo" }
+  | { status: "not-repo"; stderr: string }
+  | { status: "error"; reason: "dubious-ownership" | "git-missing" | "timeout" | "unknown"; stderr: string };
+
+function classifyGitRepoDetectionError(error: unknown): GitRepoDetection {
+  const stderr = getExecErrorOutput(error);
+  const output = stderr || String(error ?? "");
+  const errorRecord = (error && typeof error === "object") ? error as { code?: unknown; killed?: unknown; signal?: unknown } : {};
+
+  if (/not a git repo(sitory)?/i.test(output)) {
+    return { status: "not-repo", stderr: output };
+  }
+
+  if (/detected dubious ownership/i.test(output)) {
+    return { status: "error", reason: "dubious-ownership", stderr: output };
+  }
+
+  if (errorRecord.code === "ENOENT" || /(?:spawn\s+)?ENOENT/i.test(output) || /command not found/i.test(output)) {
+    return { status: "error", reason: "git-missing", stderr: output };
+  }
+
+  if (errorRecord.code === "ETIMEDOUT" || errorRecord.killed === true || /timed out|timeout/i.test(output)) {
+    return { status: "error", reason: "timeout", stderr: output };
+  }
+
+  return { status: "error", reason: "unknown", stderr: output };
+}
+
+/*
+FNXC:Worktree 2026-07-10-00:00:
+FN-7799 requires Git repository detection to distinguish a positive non-repo verdict from environmental Git failures. Dubious ownership on OneDrive-backed Windows Documents paths, git-not-on-PATH, index locks, and timeouts must never be reported as "not a Git repository", because that false negative permanently blocks valid repos across engine restarts.
+*/
+export async function detectGitRepository(dir: string): Promise<GitRepoDetection> {
+  try {
+    await execAsync("git rev-parse --git-dir", {
+      cwd: dir,
+      encoding: "utf-8",
+      timeout: 10_000,
+      maxBuffer: 10 * 1024 * 1024,
+    });
+    return { status: "repo" };
+  } catch (err: unknown) {
+    const detection = classifyGitRepoDetectionError(err);
+    const reasonText = detection.status === "error" ? ` reason=${detection.reason}` : "";
+    const stderrText = detection.status === "repo" ? "" : detection.stderr;
+    worktreePoolLog.log(
+      `detectGitRepository check failed for ${dir}: status=${detection.status}${reasonText} stderr=${stderrText}`,
+    );
+    return detection;
+  }
+}
+
+export async function isGitRepository(dir: string): Promise<boolean> {
+  return (await detectGitRepository(dir)).status === "repo";
+}
+
+export async function describeRegisteredWorktrees(rootDir: string): Promise<{ rawOutput: string; canonicalized: string[] }> {
+  try {
+    const result = await execAsync("git worktree list --porcelain", {
+      cwd: rootDir,
+      encoding: "utf-8",
+      timeout: 10_000,
+      maxBuffer: 10 * 1024 * 1024,
+    });
+    const stdout = getExecStdout(result);
+
+    const canonicalized: string[] = [];
+    for (const line of stdout.split("\n")) {
+      if (line.startsWith("worktree ")) {
+        canonicalized.push(canonicalizePath(line.slice("worktree ".length)));
+      }
+    }
+
+    return { rawOutput: stdout, canonicalized };
+  } catch (err: unknown) {
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    worktreePoolLog.warn(`[worktree-pool] Failed to list registered worktrees: ${errorMessage}`);
+    return { rawOutput: "", canonicalized: [] };
+  }
+}
+
+export async function getRegisteredWorktreePaths(rootDir: string): Promise<Set<string>> {
+  const { canonicalized } = await describeRegisteredWorktrees(rootDir);
+  return new Set(canonicalized);
+}
+
+export async function getRegisteredWorktreeBranchMap(rootDir: string): Promise<Map<string, string>> {
+  const branchMap = new Map<string, string>();
+  for (const entry of await getRegisteredWorktreeBranches(rootDir)) {
+    branchMap.set(entry.branch, entry.worktreePath);
+  }
+  return branchMap;
+}
+
+/**
+ * Same source as `getRegisteredWorktreeBranchMap` but returns ALL
+ * (branch, worktreePath) pairs rather than collapsing duplicates by branch.
+ * Multiple worktrees can legitimately share a branch when the user has
+ * created secondary checkouts via `git worktree add --force -b <branch>`;
+ * callers that need to act on every such worktree (e.g. the merger's
+ * post-advance auto-sync) must use this array form to avoid silently
+ * skipping all but the last-iterated checkout.
+ */
+export async function getRegisteredWorktreeBranches(rootDir: string): Promise<Array<{ branch: string; worktreePath: string }>> {
+  const { rawOutput } = await describeRegisteredWorktrees(rootDir);
+  const entries: Array<{ branch: string; worktreePath: string }> = [];
+  let currentWorktree: string | null = null;
+
+  for (const line of rawOutput.split("\n")) {
+    if (line.startsWith("worktree ")) {
+      currentWorktree = canonicalizePath(line.slice("worktree ".length));
+      continue;
+    }
+
+    if (line.startsWith("branch ") && currentWorktree) {
+      const branchRef = line.slice("branch ".length).trim();
+      const branchName = branchRef.startsWith("refs/heads/")
+        ? branchRef.slice("refs/heads/".length)
+        : branchRef;
+      if (branchName) {
+        entries.push({ branch: branchName, worktreePath: currentWorktree });
+      }
+    }
+  }
+
+  return entries;
+}
+
+export async function isRegisteredGitWorktree(rootDir: string, worktreePath: string): Promise<boolean> {
+  return (await getRegisteredWorktreePaths(rootDir)).has(canonicalizePath(worktreePath));
+}
+
+export function hasRequiredWorktreeFiles(worktreePath: string): boolean {
+  return existsSync(join(worktreePath, ".git"));
+}
+
+/*
+FNXC:WorktreeLiveness 2026-07-26-08:20:
+SYNC, NON-SPAWNING liveness probe for callers that must not run git — specifically failure/recovery
+paths, where spawning git to decide how to recover from a git failure is both slow and fragile.
+`classifyTaskWorktree` stays the canonical classifier and MUST be preferred wherever an await and a
+subprocess are acceptable (see docs/solutions/logic-errors/repo-root-task-worktree-requeue-loop.md
+→ Prevention: new worktree-liveness paths should call the shared classifier).
+
+This probe covers the classifier's filesystem gate (the path exists and carries `.git`) plus its
+`repo-root` gate when `rootDir` is supplied. It does NOT cover `unregistered` or
+`outside-work-tree`, so a directory whose `.git` pointer is stale but present still reads as usable
+here. Callers that treat "usable" as permission to reuse a checkout must tolerate that narrower
+guarantee; callers needing the full verdict must await `classifyTaskWorktree`. Keeping the fast
+probe HERE, beside the classifier, is what makes the difference between the two auditable instead
+of a duplicate check growing in an unrelated module.
+
+Pass `rootDir` whenever the caller has it. The project root is a registered git worktree carrying
+`.git`, so without that gate the main checkout reads as a usable TASK worktree — the FN-6861
+acquisition→gate→requeue loop in
+docs/solutions/logic-errors/repo-root-task-worktree-requeue-loop.md.
+*/
+export function hasUsableWorktreeShape(
+  worktreePath: string | undefined | null,
+  rootDir?: string,
+): boolean {
+  if (!worktreePath) return false;
+  // `.git` under a path that does not exist (or is a file) cannot exist either, so this single
+  // filesystem probe subsumes the directory-existence check.
+  if (!hasRequiredWorktreeFiles(worktreePath)) return false;
+  if (rootDir && isRepoRootPath(rootDir, worktreePath)) return false;
+  return true;
+}
+
+export async function isInsideGitWorkTree(worktreePath: string): Promise<boolean> {
+  try {
+    const result = await execAsync("git rev-parse --is-inside-work-tree", {
+      cwd: worktreePath,
+      encoding: "utf-8",
+    });
+    return getExecStdout(result).trim() === "true";
+  } catch (err: unknown) {
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    worktreePoolLog.debug(`isInsideGitWorkTree check failed for ${worktreePath}: ${errorMessage}`);
+    return false;
+  }
+}
+
+export type TaskWorktreeClassification = "missing" | "incomplete" | "repo-root" | "unregistered" | "outside-work-tree";
+
+export type TaskWorktreeClassificationResult =
+  | { ok: true }
+  | { ok: false; classification: TaskWorktreeClassification; reason: string };
+
+export type NestedWorktreeRootDetectionResult =
+  | { reanchored: true; root: string }
+  | { reanchored: false; reason: string };
+
+export async function detectNestedWorktreeRoot(
+  rootDir: string,
+  worktreePath: string,
+  settings?: Pick<Settings, "worktreesDir">,
+): Promise<NestedWorktreeRootDetectionResult> {
+  if (!existsSync(worktreePath)) {
+    return { reanchored: false, reason: "worktree_missing" };
+  }
+
+  if (!isInsideWorktreesDir(rootDir, worktreePath, settings)) {
+    return { reanchored: false, reason: "worktree_outside_configured_dir" };
+  }
+
+  const canonicalRootDir = canonicalizePath(rootDir);
+  const canonicalWorktreePath = canonicalizePath(worktreePath);
+
+  let topLevelRaw = "";
+  try {
+    const result = await execAsync("git rev-parse --show-toplevel", {
+      cwd: worktreePath,
+      encoding: "utf-8",
+      timeout: 10_000,
+      maxBuffer: 1024 * 1024,
+    });
+    topLevelRaw = getExecStdout(result).trim();
+  } catch (error) {
+    return { reanchored: false, reason: `top_level_probe_failed:${error instanceof Error ? error.message : String(error)}` };
+  }
+
+  if (!topLevelRaw) {
+    return { reanchored: false, reason: "top_level_empty" };
+  }
+
+  const canonicalTopLevel = canonicalizePath(topLevelRaw);
+  if (canonicalTopLevel === canonicalWorktreePath) {
+    return { reanchored: false, reason: "already_at_toplevel" };
+  }
+
+  if (canonicalTopLevel === canonicalRootDir) {
+    return { reanchored: false, reason: "toplevel_is_repo_root" };
+  }
+
+  if (!isInsideWorktreesDir(rootDir, canonicalTopLevel, settings)) {
+    return { reanchored: false, reason: "toplevel_outside_configured_dir" };
+  }
+
+  const relFromTopLevel = relative(canonicalTopLevel, canonicalWorktreePath);
+  const nestedUnderTopLevel = relFromTopLevel !== "" && !relFromTopLevel.startsWith("..") && !isAbsolute(relFromTopLevel);
+  if (!nestedUnderTopLevel) {
+    return { reanchored: false, reason: "not_nested_under_toplevel" };
+  }
+
+  if (!await isRegisteredGitWorktree(rootDir, canonicalTopLevel)) {
+    return { reanchored: false, reason: "toplevel_not_registered_worktree" };
+  }
+
+  return { reanchored: true, root: canonicalTopLevel };
+}
+
+/**
+ * Language-agnostic liveness/classification gate for task worktrees.
+ */
+export async function classifyTaskWorktree(rootDir: string, worktreePath: string): Promise<TaskWorktreeClassificationResult> {
+  if (!existsSync(worktreePath)) {
+    return { ok: false, classification: "missing", reason: "worktree directory does not exist" };
+  }
+
+  /*
+   * FNXC:WorktreeLiveness 2026-06-21-11:10:
+   * The project root is a legitimately registered git worktree, but it is never a usable task worktree. Tasks must execute inside the configured worktrees directory, so classification rejects root-equal paths here to stop the resume↔executor-gate requeue loop observed in FN-6861/FN-6709.
+   */
+  if (isRepoRootPath(rootDir, worktreePath)) {
+    return { ok: false, classification: "repo-root", reason: "worktree path is the project root, not a task worktree" };
+  }
+
+  if (!hasRequiredWorktreeFiles(worktreePath)) {
+    return { ok: false, classification: "incomplete", reason: "missing .git metadata" };
+  }
+  if (!await isRegisteredGitWorktree(rootDir, worktreePath)) {
+    return { ok: false, classification: "unregistered", reason: "not registered in git worktree list" };
+  }
+  if (!await isInsideGitWorkTree(worktreePath)) {
+    return { ok: false, classification: "outside-work-tree", reason: "git rev-parse --is-inside-work-tree returned false" };
+  }
+  return { ok: true };
+}
+
+/**
+ * Language-agnostic liveness gate for task worktrees.
+ */
+export async function isUsableTaskWorktree(rootDir: string, worktreePath: string): Promise<boolean> {
+  const result = await classifyTaskWorktree(rootDir, worktreePath);
+  return result.ok;
+}
+
+export function isInsideWorktreesDir(
+  rootDir: string,
+  worktreePath: string,
+  settings?: Pick<Settings, "worktreesDir">,
+): boolean {
+  return isInsideConfiguredWorktreesDir(rootDir, settings, worktreePath);
+}
+
+export type ReclaimableWorktreePlacement =
+  | { kind: "ready"; path: string; relocated: boolean }
+  | { kind: "deferred-live"; path: string };
+
+export interface RelocateReclaimableWorktreeInput {
+  rootDir: string;
+  sourcePath: string;
+  targetPath: string;
+  taskId: string;
+  settings?: Pick<Settings, "worktreeNaming" | "worktreesDir" | "worktrunk">;
+  isPathActive: (path: string) => boolean | Promise<boolean>;
+}
+
+/**
+ * Put a preserved, registered native checkout under the configured worktree
+ * root. Worktrunk-assigned paths remain backend-owned. The exact source path
+ * must be idle before it can move; callers treat a live result as deferred
+ * recovery rather than invalidating a running process cwd.
+ */
+export async function relocateReclaimableWorktreeIntoRoot(
+  input: RelocateReclaimableWorktreeInput,
+): Promise<ReclaimableWorktreePlacement> {
+  const { rootDir, sourcePath, targetPath, taskId, settings, isPathActive } = input;
+  if (settings?.worktrunk?.enabled === true) {
+    return { kind: "ready", path: sourcePath, relocated: false };
+  }
+  if (isInsideWorktreesDir(rootDir, sourcePath, settings)) {
+    return { kind: "ready", path: sourcePath, relocated: false };
+  }
+  if (await isPathActive(sourcePath)) {
+    return { kind: "deferred-live", path: sourcePath };
+  }
+  if (!isInsideWorktreesDir(rootDir, targetPath, settings)) {
+    throw new Error(
+      `Refusing to relocate ${taskId} worktree to path outside configured worktrees directory: ${targetPath}`,
+    );
+  }
+
+  let resolvedTargetPath = targetPath;
+  if (existsSync(resolvedTargetPath) && settings?.worktreeNaming !== "task-id") {
+    const taskSuffix = taskId.toLowerCase();
+    const candidates = [
+      `${targetPath}-${taskSuffix}`,
+      ...Array.from({ length: 5 }, (_, index) => `${targetPath}-${taskSuffix}-${index + 2}`),
+    ];
+    const available = candidates.find((candidate) => !existsSync(candidate));
+    if (!available) {
+      throw new Error(`No available relocation target for ${taskId} worktree near ${targetPath}`);
+    }
+    resolvedTargetPath = available;
+  }
+
+  await mkdir(dirname(resolvedTargetPath), { recursive: true });
+  await execFileAsync("git", ["worktree", "move", sourcePath, resolvedTargetPath], {
+    cwd: rootDir,
+    timeout: 120_000,
+    maxBuffer: 10 * 1024 * 1024,
+  });
+
+  return { kind: "ready", path: resolvedTargetPath, relocated: true };
+}
+
+/**
+ * A pool of idle git worktrees that can be recycled across tasks.
+ *
+ * When `recycleWorktrees` is enabled, completed task worktrees are returned
+ * to this pool instead of being deleted. New tasks acquire a warm worktree
+ * from the pool, preserving build caches (node_modules, target/, dist/).
+ *
+ * The pool only tracks *idle* worktrees — those not currently assigned to
+ * any active task. The scheduler's `maxWorktrees` setting still governs
+ * the total number of worktrees (active + idle).
+ *
+ * **Lifecycle across restarts:** The pool is in-memory only, but on engine
+ * startup it can be rehydrated from disk state via {@link rehydrate} and
+ * {@link scanIdleWorktrees}. When `recycleWorktrees` is true, the startup
+ * sequence scans the `.worktrees/` directory, identifies idle worktrees
+ * (those not assigned to any active task), and bulk-loads them into the
+ * pool. When `recycleWorktrees` is false, orphaned worktrees are cleaned
+ * up via {@link cleanupOrphanedWorktrees}.
+ */
+function deriveTaskIdFromBranch(branchName: string): string {
+  const match = branchName.match(/^fusion\/(fn-\d+)(?:-\d+)?(?:-[a-z0-9._-]+)*$/i);
+  return match ? match[1].toUpperCase() : branchName.toUpperCase();
+}
+
+export type PrepareForTaskResult = {
+  branch: string;
+  worktreePath: string;
+  reclaimed: boolean;
+  existingTipSha?: string;
+  strandedCommitCount?: number;
+};
+
+export type PoolInvariantPhase = "acquire" | "rehydrate" | "release";
+
+export type PoolInvariantViolation = {
+  path: string;
+  existingHolder: string;
+  requestingTaskId: string;
+  phase: PoolInvariantPhase;
+};
+
+export class PoolDoubleLeaseError extends Error {
+  constructor(
+    public readonly path: string,
+    public readonly existingHolder: string,
+    public readonly requestingTaskId: string,
+    public readonly phase: PoolInvariantPhase,
+  ) {
+    super(`Pool double lease detected for ${path}: held by ${existingHolder}, requested by ${requestingTaskId} during ${phase}`);
+    this.name = "PoolDoubleLeaseError";
+  }
+}
+
+export interface WorktreePoolOptions {
+  auditFactory?: (taskId: string) => Pick<RunAuditor, "filesystem">;
+  secretsStore?: Pick<SecretsStore, "listEnvExportable">;
+}
+
+export class WorktreePool {
+  private idle = new Set<string>();
+  private leased = new Map<string, string>();
+  private invariantViolationHandler?: (violation: PoolInvariantViolation) => void;
+
+  constructor(_options: WorktreePoolOptions = {}) {}
+
+  /**
+   * Acquire an idle worktree from the pool.
+   *
+   * Returns the absolute path of an idle worktree, or `null` if the pool
+   * is empty. Before returning, verifies the directory still exists on disk
+   * and prunes any stale entries.
+   */
+  acquire(taskId: string): string | null {
+    for (const path of this.idle) {
+      this.assertNotDoubleLeased(path, taskId, "acquire");
+      this.idle.delete(path);
+      this.leased.set(path, taskId);
+      if (existsSync(path)) {
+        return path;
+      }
+      this.leased.delete(path);
+      worktreePoolLog.debug(`Pruned stale entry: ${path}`);
+    }
+    return null;
+  }
+
+  /**
+   * Return a worktree to the idle pool after a task completes.
+   *
+   * The worktree directory is retained on disk with its build caches intact.
+   * Call this instead of `git worktree remove` when recycling is enabled.
+   *
+   * @param worktreePath — Absolute path to the worktree directory
+   */
+  release(worktreePath: string, releasingTaskId?: string): void {
+    const existingHolder = this.leased.get(worktreePath);
+    if (!existingHolder) {
+      worktreePoolLog.warn(`release called for non-leased worktree: ${worktreePath}`);
+    } else if (releasingTaskId && existingHolder !== releasingTaskId) {
+      this.notifyInvariantViolation({
+        path: worktreePath,
+        existingHolder,
+        requestingTaskId: releasingTaskId,
+        phase: "release",
+      });
+      worktreePoolLog.warn(
+        `release task mismatch for ${worktreePath}: leased holder=${existingHolder}, releasingTaskId=${releasingTaskId}`,
+      );
+    }
+    this.leased.delete(worktreePath);
+    this.idle.add(worktreePath);
+  }
+
+  /** Number of idle worktrees currently in the pool. */
+  get size(): number {
+    return this.idle.size;
+  }
+
+  /** Check whether a specific path is in the idle pool. */
+  has(path: string): boolean {
+    return this.idle.has(path);
+  }
+
+  setInvariantViolationHandler(handler: (violation: PoolInvariantViolation) => void): void {
+    this.invariantViolationHandler = handler;
+  }
+
+  /** @internal test-only visibility */
+  getLeasedPaths(): ReadonlyMap<string, string> {
+    return this.leased;
+  }
+
+  private notifyInvariantViolation(violation: PoolInvariantViolation): void {
+    try {
+      this.invariantViolationHandler?.(violation);
+    } catch (error) {
+      worktreePoolLog.warn(`Invariant violation handler failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  private assertNotDoubleLeased(path: string, requestingTaskId: string, phase: PoolInvariantPhase): void {
+    const existingHolder = this.leased.get(path);
+    if (!existingHolder || existingHolder === requestingTaskId) {
+      return;
+    }
+    const violation: PoolInvariantViolation = { path, existingHolder, requestingTaskId, phase };
+    this.notifyInvariantViolation(violation);
+    throw new PoolDoubleLeaseError(path, existingHolder, requestingTaskId, phase);
+  }
+
+  /**
+   * Remove and return all idle worktree paths.
+   *
+   * Useful for shutdown/cleanup — the caller is responsible for
+   * running `git worktree remove` on each returned path.
+   */
+  drain(): string[] {
+    const paths = Array.from(this.idle);
+    this.idle.clear();
+    this.leased.clear();
+    return paths;
+  }
+
+  /**
+   * Bulk-load known idle worktree paths into the pool.
+   *
+   * Called at engine startup to restore the pool from disk state.
+   * Paths that no longer exist on disk are silently skipped.
+   *
+   * @param idlePaths — Absolute paths to idle worktree directories
+   */
+  rehydrate(idlePaths: string[]): void {
+    for (const path of idlePaths) {
+      if (!existsSync(path)) {
+        worktreePoolLog.debug(`Rehydrate skipped (not on disk): ${path}`);
+        continue;
+      }
+      const existingHolder = this.leased.get(path);
+      if (existingHolder) {
+        this.notifyInvariantViolation({
+          path,
+          existingHolder,
+          requestingTaskId: existingHolder,
+          phase: "rehydrate",
+        });
+        worktreePoolLog.warn(`Rehydrate skipped leased worktree ${path} (holder=${existingHolder})`);
+        continue;
+      }
+      this.idle.add(path);
+    }
+  }
+
+  /**
+   * Prepare a recycled worktree for a new task.
+   *
+   * Resets the working tree to a clean state, then creates (or force-resets)
+   * the task's branch based on the given start point (or `main` by default).
+   * This ensures the new task starts from the correct base with a clean
+   * working directory, while preserving untracked build caches
+   * (node_modules, target/, dist/). As an explicit carve-out, this
+   * preparation removes `packages/desktop/dist` and
+   * `packages/desktop/dist-electron`.
+   *
+   * Steps performed:
+   * 1. `git checkout -- .` — discard tracked file modifications
+   * 2. `git clean -fd` — remove untracked files (but not .gitignore'd caches)
+   * 3. Remove `packages/desktop/dist` + `packages/desktop/dist-electron` if present
+   * 4. `git checkout --detach <startPoint>` — move HEAD to the latest base commit
+   * 5. `git checkout -B <branchName> <startPoint>` — create/reset branch from start point
+   *
+   * Returns the actual branch name used. This may differ from `branchName`
+   * when legacy conflict recovery is explicitly enabled and generates a suffixed
+   * name (e.g., `fusion/fn-042-2`).
+   *
+   * @param worktreePath — Absolute path to the recycled worktree
+   * @param branchName — Branch name for the new task (e.g., `fusion/fn-042`)
+   * @param startPoint — Git ref to branch from (e.g., `fusion/fn-041`). Defaults to `main`.
+   * @returns The actual branch name checked out in the worktree
+   */
+  async prepareForTask(
+    worktreePath: string,
+    branchName: string,
+    startPoint?: string,
+    options?: { allowSiblingBranchRename?: boolean; repoDir?: string; requestingTaskId?: string },
+  ): Promise<PrepareForTaskResult> {
+    // Clean tracked modifications
+    try {
+      await execAsync("git checkout -- .", { cwd: worktreePath });
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      worktreePoolLog.debug(`git checkout -- . failed (may be clean): ${errorMessage}`);
+      // May fail if worktree is already clean — that's fine
+    }
+
+    // Remove untracked files (but not .gitignore'd build caches)
+    await execAsync("git clean -fd", { cwd: worktreePath });
+    await removeDesktopBuildArtifacts(worktreePath, worktreePoolLog);
+
+    const base = startPoint || await resolveIntegrationBranch(options?.repoDir ?? worktreePath, undefined);
+    // Reject base values that would cause the new branch to inherit the
+    // worktree's current HEAD instead of the intended start point. Historical
+    // contamination ("branch: Created from HEAD") landed FN-5472's tip on
+    // freshly-created fn-5432/fn-5255 branches because the recycled worktree
+    // was still pointing at the previous occupant's commit and base silently
+    // collapsed onto HEAD.
+    const trimmedBase = base?.trim() ?? "";
+    if (!trimmedBase || trimmedBase.toUpperCase() === "HEAD") {
+      throw new Error(
+        `prepareForTask: refusing to create branch ${branchName} from base ${JSON.stringify(base)} (worktree=${worktreePath}, startPoint=${String(startPoint)})`,
+      );
+    }
+
+    await execAsync(`git checkout --detach ${base}`, {
+      cwd: worktreePath,
+    });
+
+    // Create or force-reset the branch from the start point (or main)
+    const checkoutCmd = `git checkout -B "${branchName}" ${base}`;
+    const resolvedBase = (await execAsync(`git rev-parse --verify "${base}^{commit}"`, { cwd: worktreePath, encoding: "utf-8" })).stdout.trim();
+
+    // Verify HEAD actually landed at the resolved base after --detach. If
+    // detach silently leaves HEAD elsewhere (e.g. the base ref didn't exist
+    // and git fell through to current HEAD), creating the branch now would
+    // pin it to the wrong tip — exactly the FN-5432 / FN-5255 contamination
+    // pattern ("branch: Created from HEAD" pointing at the previous occupant's
+    // tip). Only enforced when we have real SHAs to compare; mock-driven
+    // unit tests that return empty buffers fall through harmlessly.
+    if (/^[0-9a-f]{40}$/i.test(resolvedBase)) {
+      const detachedHead = (await execAsync("git rev-parse HEAD", { cwd: worktreePath, encoding: "utf-8" })).stdout.trim();
+      if (detachedHead !== resolvedBase) {
+        throw new Error(
+          `prepareForTask: post-detach HEAD ${detachedHead} does not match resolved base ${resolvedBase} (${base}) for ${branchName} — refusing to create branch`,
+        );
+      }
+    }
+    const taskId = deriveTaskIdFromBranch(branchName);
+    try {
+      await execAsync(checkoutCmd, {
+        cwd: worktreePath,
+      });
+      await assertCleanBranchAtBase(worktreePath, branchName, resolvedBase, taskId);
+      return { branch: branchName, worktreePath, reclaimed: false };
+    } catch (err: unknown) {
+      const execError = err instanceof Error ? err : new Error(String(err));
+      const stderr = "stderr" in execError
+        ? String((execError as { stderr?: unknown }).stderr ?? execError.message)
+        : execError.message;
+      const match = stderr.match(/already used by worktree at '([^']+)'/);
+      if (!match) {
+        throw err;
+      }
+
+      // The branch is checked out in a different worktree. Keep stale-conflict
+      // cleanup behavior for missing paths; otherwise either surface a typed
+      // conflict or, when explicitly enabled, fall back to the legacy sibling
+      // suffix flow.
+      const conflictingPath = match[1];
+      const repoDir = options?.repoDir ?? worktreePath;
+      const inspection = await inspectBranchConflict({
+        repoDir,
+        branchName,
+        conflictingWorktreePath: conflictingPath,
+        requestingTaskId: options?.requestingTaskId ?? taskId,
+        ownerTaskId: taskId,
+        startPoint: base,
+        integrationRef: await resolveIntegrationBranch(repoDir, undefined),
+      });
+      if (inspection.kind === "stale" || inspection.kind === "stale-resolved" || inspection.kind === "tip-already-merged") {
+        const backend = resolveWorktreeBackendViaSettings({}, { logger: worktreePoolLog });
+        await backend.prune({ rootDir: options?.repoDir ?? worktreePath });
+        if (inspection.kind === "tip-already-merged") {
+          try {
+            await execAsync(`git branch -D "${branchName}"`, { cwd: worktreePath });
+          } catch {
+            // best-effort
+          }
+        }
+        await execAsync(checkoutCmd, { cwd: worktreePath });
+        await assertCleanBranchAtBase(worktreePath, branchName, resolvedBase, taskId);
+        return { branch: branchName, worktreePath, reclaimed: false };
+      }
+
+      if (inspection.kind === "reclaimable") {
+        worktreePoolLog.log(
+          `reclaimed self-owned branch conflict for ${branchName}: tip=${inspection.tipSha} strandedSince${base}=${inspection.strandedCommits.length}`,
+        );
+        return {
+          branch: branchName,
+          worktreePath: inspection.livePath,
+          reclaimed: true,
+          existingTipSha: inspection.tipSha,
+          strandedCommitCount: inspection.strandedCommits.length,
+        };
+      }
+
+      if (inspection.kind === "fully-subsumed") {
+        worktreePoolLog.log(
+          `reclaimed fully-subsumed branch conflict for ${branchName}: tip=${inspection.tipSha} strandedSince${base}=0`,
+        );
+        return {
+          branch: branchName,
+          worktreePath: inspection.livePath,
+          reclaimed: true,
+          existingTipSha: inspection.tipSha,
+          strandedCommitCount: 0,
+        };
+      }
+
+      if (!options?.allowSiblingBranchRename) {
+        if (inspection.kind === "live-foreign") {
+          throw inspection.error;
+        }
+        throw new Error(`Branch ${branchName} is already in use at ${conflictingPath}`);
+      }
+
+      const conflictBase = branchName;
+      for (let suffix = 2; suffix <= 6; suffix++) {
+        const suffixedName = `${branchName}-${suffix}`;
+        const suffixedCmd = `git checkout -B "${suffixedName}" ${conflictBase}`;
+        try {
+          await execAsync(suffixedCmd, { cwd: worktreePath });
+          await assertCleanBranchAtBase(worktreePath, suffixedName, resolvedBase, taskId);
+          return { branch: suffixedName, worktreePath, reclaimed: false };
+        } catch (suffixErr: unknown) {
+          const suffixExecError = suffixErr instanceof Error ? suffixErr : new Error(String(suffixErr));
+          const suffixStderr = "stderr" in suffixExecError && typeof suffixExecError.stderr === "string"
+            ? suffixExecError.stderr.toString()
+            : "";
+          if (!suffixStderr.includes("already used by worktree")) {
+            throw suffixErr;
+          }
+        }
+      }
+
+      throw new Error(
+        `Cannot create branch for task: "${branchName}" and suffixes -2 through -6 are all in use by other worktrees`,
+      );
+    }
+  }
+}
+
+/**
+ * Scan the `.worktrees/` directory to find idle worktrees that can be
+ * loaded into the pool on startup.
+ *
+ * A worktree is considered "idle" if it exists on disk under
+ * `<rootDir>/.worktrees/` but is NOT assigned (via `task.worktree`) to
+ * any non-done task.
+ *
+ * @param rootDir — Project root directory (parent of `.worktrees/`)
+ * @param store — Task store for listing tasks and their worktree assignments
+ * @returns Absolute paths of idle worktree directories
+ */
+export async function scanIdleWorktrees(
+  rootDir: string,
+  store: TaskStore,
+  settings?: Pick<Settings, "worktreesDir">,
+): Promise<string[]> {
+  const worktreesDir = resolveWorktreesDir(rootDir, settings);
+
+  if (!existsSync(worktreesDir)) {
+    return [];
+  }
+
+  // List all subdirectories under .worktrees/
+  let dirs: string[];
+  try {
+    const entries = readdirSync(worktreesDir, { withFileTypes: true });
+    dirs = entries
+      .filter((e) => e.isDirectory() && !isWorktreeContainerDir(e.name))
+      .map((e) => join(worktreesDir, e.name));
+  } catch (err: unknown) {
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    worktreePoolLog.warn(`Failed to read .worktrees/ directory: ${errorMessage}`);
+    return [];
+  }
+
+  if (dirs.length === 0) {
+    return [];
+  }
+
+  const registeredWorktrees = await getRegisteredWorktreePaths(rootDir);
+  const registeredDirs = dirs.filter((dir) => registeredWorktrees.has(resolve(dir)));
+
+  // Find worktree paths assigned to non-done tasks (active worktrees)
+  const tasks = await store.listTasks({ slim: true, includeArchived: false, startupMemo: true });
+  const activeWorktrees = new Set<string>();
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-14:05 (batch-engine tail):
+  "Still holding its worktree" excludes tasks that have FINISHED. Keyed on the id, a renamed complete
+  lane kept every shipped task's worktree in the ACTIVE set, so this reclaim pass never returned it and
+  the board walked into worktree exhaustion — a stall whose cause is invisible from the symptom.
+
+  NOT the query-filter class: this listTasks call passes no `column`.
+
+  Resolved per TASK (each may run its own workflow) and ONLY for tasks that actually record a worktree,
+  with one IR cache for the pass. Unioned with the legacy id because `resolveWorkflowIrForTask` degrades
+  to the BUILT-IN IR rather than throwing — without the union a degraded board would hold every worktree
+  forever, which is this bug.
+  */
+  const reclaimIrCache = new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>();
+  const completeByTaskId = new Map<string, ReadonlySet<string>>();
+  for (const task of tasks) {
+    if (!task.worktree) continue;
+    const columns = new Set<string>(["done"]);
+    try {
+      const ir = await resolveWorkflowIrForTask(store, task.id, reclaimIrCache);
+      if (ir) for (const id of columnsWithFlag(ir, "complete")) columns.add(id);
+    } catch { /* degraded: legacy id only */ }
+    completeByTaskId.set(task.id, columns);
+  }
+  const isUnfinished = (task: { id: string; column: string }) =>
+    completeByTaskId.get(task.id)?.has(task.column) !== true;
+  for (const task of tasks) {
+    if (task.worktree && isUnfinished(task) && registeredWorktrees.has(resolve(task.worktree))) {
+      activeWorktrees.add(resolve(task.worktree));
+    } else if (task.worktree && isUnfinished(task)) {
+      worktreePoolLog.debug(`Ignoring task ${task.id} worktree metadata because it is not a registered git worktree: ${task.worktree}`);
+    }
+  }
+
+  // Return registered worktrees on disk that are NOT active. Unregistered
+  // directories are intentionally excluded here so recycle mode never adds a
+  // broken directory to the warm pool; cleanup handles those separately.
+  return registeredDirs.filter((dir) => !activeWorktrees.has(resolve(dir)));
+}
+
+/**
+ * Clean up orphaned worktrees left behind from previous engine runs.
+ *
+ * Removes registered worktrees not assigned to unfinished tasks and empty
+ * unregistered residue. Used on startup when `recycleWorktrees` is false.
+ *
+ * Failures on individual worktree removals are logged but not fatal.
+ *
+ * @param rootDir — Project root directory (parent of `.worktrees/`)
+ * @param store — Task store for listing tasks and their worktree assignments
+ * @returns Number of worktrees cleaned up
+ */
+export async function cleanupOrphanedWorktrees(
+  rootDir: string,
+  store: TaskStore,
+  settings?: Pick<Settings, "worktreesDir">,
+): Promise<number> {
+  const worktreesDir = resolveWorktreesDir(rootDir, settings);
+  if (!existsSync(worktreesDir)) {
+    return 0;
+  }
+
+  const orphaned = await scanIdleWorktrees(rootDir, store, settings);
+  const registeredWorktrees = await getRegisteredWorktreePaths(rootDir);
+
+  let cleaned = 0;
+
+  for (const worktreePath of orphaned) {
+    try {
+      if (registeredWorktrees.has(resolve(worktreePath))) {
+        // FNXC:WorktreeCleanup 2026-08-15-19:00:
+        // Never probe a missing directory; prune its stale admin entry instead.
+        // The shared removal path revalidates tracked, untracked, and ignored content
+        // after cleaning only fingerprint-owned Fusion secrets.
+        if (!existsSync(worktreePath)) {
+          await pruneWorktreeAdminEntries({ rootDir, reason: "pool-cleanup-missing-orphan", target: worktreePath, logger: worktreePoolLog }).catch(() => undefined);
+          cleaned++;
+          continue;
+        }
+        const orphanTaskId = `orphan:${basename(worktreePath)}`;
+        try {
+          await cleanupSecretsEnvFile({
+            worktreePath,
+            taskId: orphanTaskId,
+            expectedFingerprint: null,
+            filename: ".env",
+            audit: undefined,
+            logger: worktreePoolLog,
+          });
+        } catch (error) {
+          worktreePoolLog.warn(
+            `secrets-env cleanup failed for registered orphan ${worktreePath}: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+
+        await removeWorktreeViaBackend({
+          rootDir,
+          worktreePath,
+          settings: settings ?? {},
+          reason: RemovalReason.SelfHealingIdleSweep,
+          allowDirtyReclaim: false,
+        });
+      } else {
+        continue;
+      }
+      worktreePoolLog.log(`Cleaned up orphaned worktree: ${worktreePath}`);
+      cleaned++;
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      worktreePoolLog.log(`Failed to remove orphaned worktree ${worktreePath}: ${errorMessage}`);
+    }
+  }
+
+  return cleaned + await reapOrphanWorktrees(rootDir, settings);
+}
+
+/**
+ * Remove "half-initialized" worktree directories — directories that exist under
+ * `<projectRoot>/.worktrees/` on disk but were never fully registered with git
+ * (i.e., `git worktree add` never completed successfully for them).
+ *
+ * This is the housekeeping path; it runs once at engine startup and is safe to
+ * call repeatedly.  The hot path (`assertValidWorktreeSession`) is deliberately
+ * left untouched.
+ *
+ * Safety invariants enforced before any removal:
+ * - Only removes direct children of `<projectRoot>/.worktrees/` — never the
+ *   project root itself, a parent, or an arbitrary path.
+ * - Skips symlinks (only removes real directories).
+ * - Never removes a directory that is a registered git worktree.
+ * - Never removes a directory that has a valid `.git` file pointing to an
+ *   existing gitdir (belt-and-suspenders: git would list it anyway, but guards
+ *   against stale porcelain output on broken repos).
+ *
+ * @param projectRoot - Absolute path to the project root (parent of `.worktrees/`)
+ * @returns Number of orphan directories removed
+ */
+/**
+ * Decide whether a worktree's `.git` pointer is *dangling* — present on disk but
+ * referencing a `.git/worktrees/<name>` admin entry that no longer exists. A
+ * dangling pointer is FN-6782 leak residue: invisible to `git worktree list` /
+ * `prune`, yet it collides with freshly generated worktree names.
+ *
+ * Returns `true` ONLY when the pointer is confidently classifiable as dangling:
+ * a `gitdir: <path>` link file (relative targets resolved against the worktree
+ * dir) whose target is confirmed missing. Returns `false` for everything else —
+ * a real `.git` directory, a live gitdir target, an unparseable pointer, OR any
+ * read/stat failure. The conservative default matters: callers reap on `true`,
+ * so a transient read error (EACCES/EBUSY) on a genuinely-live worktree's `.git`
+ * must never be misread as dangling and force-removed.
+ */
+function dotGitPointerIsDangling(dotGitPath: string): boolean {
+  try {
+    if (lstatSync(dotGitPath).isDirectory()) return false;
+    const raw = readFileSync(dotGitPath, "utf8").trim();
+    const match = /^gitdir:\s*(.+)$/.exec(raw);
+    if (!match) return false;
+    const target = match[1].trim();
+    const resolved = isAbsolute(target) ? target : resolve(dirname(dotGitPath), target);
+    return !existsSync(resolved);
+  } catch {
+    return false;
+  }
+}
+
+export async function reapOrphanWorktrees(
+  projectRoot: string,
+  settings?: Pick<Settings, "worktreesDir">,
+): Promise<number> {
+  const worktreesDir = resolveWorktreesDir(projectRoot, settings);
+
+  if (!existsSync(worktreesDir)) {
+    return 0;
+  }
+
+  // List direct children of .worktrees/
+  let entries: { name: string; fullPath: string }[];
+  try {
+    entries = readdirSync(worktreesDir, { withFileTypes: true })
+      .filter((e) => {
+        // Only real directories — never symlinks or internal worktree containers.
+        if (!e.isDirectory() || isWorktreeContainerDir(e.name)) return false;
+        try {
+          return lstatSync(join(worktreesDir, e.name)).isDirectory() && !lstatSync(join(worktreesDir, e.name)).isSymbolicLink();
+        } catch {
+          return false;
+        }
+      })
+      .map((e) => ({ name: e.name, fullPath: join(worktreesDir, e.name) }));
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    worktreePoolLog.warn(`reapOrphanWorktrees: failed to read .worktrees/ — ${msg}`);
+    return 0;
+  }
+
+  if (entries.length === 0) return 0;
+
+  // Get the set of paths registered with git
+  const registered = await getRegisteredWorktreePaths(projectRoot);
+
+  let removed = 0;
+  for (const { name, fullPath } of entries) {
+    const resolvedFull = resolve(fullPath);
+
+    // Safety: only operate on paths directly under .worktrees/
+    const rel = relative(resolve(worktreesDir), resolvedFull);
+    if (!rel || rel.startsWith("..") || isAbsolute(rel)) {
+      worktreePoolLog.warn(`reapOrphanWorktrees: skipping out-of-bounds path ${fullPath}`);
+      continue;
+    }
+
+    // Skip registered worktrees — those are managed by the normal lifecycle
+    if (registered.has(resolvedFull)) {
+      continue;
+    }
+
+    // Belt-and-suspenders: skip if a .git file exists AND points to an existing gitdir.
+    // This guards against races where git registered the worktree between our list
+    // call and now, or against a broken repo whose porcelain is unreliable.
+    //
+    // FN-6782 follow-up: a *dangling* `.git` (file present, but the admin entry it
+    // points to is gone) is NOT "partially registered" — it is leak residue from a
+    // worktree whose admin entry was pruned while the directory survived. Such a dir
+    // is invisible to `git worktree list`/`prune` yet collides with freshly generated
+    // worktree names and breaks `execute` (cleanup can't `git worktree remove` a path
+    // git never registered). Only skip when the gitdir target actually exists; reap
+    // dangling pointers like any other half-initialized orphan.
+    const dotGit = join(resolvedFull, ".git");
+    const danglingDotGit = existsSync(dotGit) && dotGitPointerIsDangling(dotGit);
+    if (existsSync(dotGit)) {
+      if (!danglingDotGit) {
+        // Valid registration, a real .git dir, or a pointer we couldn't positively classify as
+        // dangling — leave it; assertValidWorktreeSession handles it on the next agent start.
+        worktreePoolLog.debug(`reapOrphanWorktrees: skipping ${name} (has .git entry but not in registered list — may be partially registered)`);
+        continue;
+      }
+      worktreePoolLog.debug(`reapOrphanWorktrees: ${name} has a dangling .git pointer (admin entry missing) — treating as orphan`);
+    }
+
+    // FNXC:WorktreeCleanup 2026-08-15-20:40: clean Fusion-owned secret residue before removing an empty orphan.
+    try {
+      try {
+        await cleanupSecretsEnvFile({
+          worktreePath: resolvedFull,
+          taskId: `orphan:${name}`,
+          expectedFingerprint: null,
+          filename: ".env",
+          logger: worktreePoolLog,
+        });
+      } catch (error) {
+        worktreePoolLog.warn(`secrets-env cleanup failed for orphan ${name}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      if (danglingDotGit) {
+        const remainingEntries = readdirSync(resolvedFull);
+        if (remainingEntries.some((entry) => entry !== ".git")) {
+          worktreePoolLog.warn(`Preserving orphan worktree with uncommitted content: ${resolvedFull}`);
+          continue;
+        }
+        unlinkSync(dotGit);
+      }
+      rmdirSync(resolvedFull);
+      await pruneWorktreeAdminEntries({
+        rootDir: projectRoot,
+        reason: "pool-reap-orphan",
+        target: resolvedFull,
+        logger: worktreePoolLog,
+      }).catch(() => undefined);
+      worktreePoolLog.log(`reapOrphanWorktrees: removed half-initialized orphan ${name}`);
+      removed++;
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      worktreePoolLog.warn(`reapOrphanWorktrees: failed to remove ${name} — ${msg}`);
+    }
+  }
+
+  return removed;
+}
+
+/** Columns where merger/finalization owns branch lifecycle. */
+
+/**
+ * Return local `fusion/*` branches not associated with any active task.
+ * Branches tied to merger-managed or archived tasks are excluded.
+ */
+export async function scanOrphanedBranches(rootDir: string, store: TaskStore): Promise<string[]> {
+  let allBranches: string[];
+  try {
+    const result = await execAsync("git branch --list 'fusion/*'", {
+      cwd: rootDir,
+      encoding: "utf-8",
+    });
+    const stdout = getExecStdout(result);
+    allBranches = stdout
+      .split("\n")
+      .map((line) => line.trim().replace(/^\*?\s*/, ""))
+      .filter((line) => line.startsWith("fusion/"));
+  } catch (err: unknown) {
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    worktreePoolLog.warn(`Failed to list fusion/* branches: ${errorMessage}`);
+    return [];
+  }
+
+  if (allBranches.length === 0) return [];
+
+  const tasks = await store.listTasks({ slim: true, includeArchived: false });
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-08:20 (batch-engine — census-invisible membership, #2763 class):
+  A branch is "active" (and so must not be reclaimed) unless the merger owns the card or it is archived.
+  Both tests were hardcoded, so on a renamed board a card in review or complete was NOT recognised as
+  merger-managed and its branch was treated as reclaimable — deleting a branch out from under an in-flight
+  merge. One IR cache for the pass; the predicates below stay synchronous.
+  */
+  const poolIrCache = new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>();
+  const poolLanes = new Map<string, { managed: Set<string>; archived: Set<string> }>();
+  for (const task of tasks) {
+    if (poolLanes.has(task.id)) continue;
+    const managed = new Set<string>(["in-review", "done"]);
+    const archived = new Set<string>(["archived"]);
+    try {
+      const ir = await resolveWorkflowIrForTask(store, task.id, poolIrCache);
+      if (ir) {
+        for (const flag of ["mergeOrchestration", "mergeBlocker", "humanReview", "complete"] as const) {
+          for (const id of columnsWithFlag(ir, flag)) managed.add(id);
+        }
+        for (const id of columnsWithFlag(ir, "archived")) archived.add(id);
+      }
+    } catch { /* degraded: legacy ids */ }
+    poolLanes.set(task.id, { managed, archived });
+  }
+  const activeBranches = new Set<string>();
+  for (const task of tasks) {
+    if (poolLanes.get(task.id)?.managed.has(task.column) === true) continue;
+    if (poolLanes.get(task.id)?.archived.has(task.column) === true) continue;
+    if (task.branch) activeBranches.add(task.branch);
+    activeBranches.add(canonicalFusionBranchName(task.id));
+  }
+
+  return allBranches.filter((branch) => !activeBranches.has(branch));
+}
