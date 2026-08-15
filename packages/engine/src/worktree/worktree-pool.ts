@@ -1188,10 +1188,9 @@ export async function reapOrphanWorktrees(
       worktreePoolLog.debug(`reapOrphanWorktrees: ${name} has a dangling .git pointer (admin entry missing) — treating as orphan`);
     }
 
-    // FNXC:WorktreeCleanup 2026-08-15-13:45:
-    // A non-registered directory is removable residue unless Git proves it is
-    // an independent worktree with user changes. Git errors here are expected
-    // for dangling pointers and half-initialized worktrees.
+    // Startup reaping removes only a confirmed dangling `.git` residue or a
+    // directory whose root resolves outside this candidate; unverifiable existing
+    // paths are preserved to avoid recursive deletion of unknown contents.
     try {
       let rootOutput = "";
       try {

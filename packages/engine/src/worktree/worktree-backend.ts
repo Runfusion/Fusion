@@ -1138,7 +1138,7 @@ export async function removeWorktree(input: {
         maxBuffer: MAX_BUFFER,
       }));
     } catch {
-      if (input.reason === RemovalReason.SelfHealingIdleSweep) {
+      if (input.reason === RemovalReason.SelfHealingIdleSweep || existsSync(input.worktreePath)) {
         throw new Error(`refusing to remove worktree with unverifiable root: ${input.worktreePath}`);
       }
     }
