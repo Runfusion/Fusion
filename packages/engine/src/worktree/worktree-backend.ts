@@ -31,6 +31,14 @@ const NATIVE_TIMEOUT_MS = 120_000;
 const REMOVE_TIMEOUT_MS = 60_000;
 const MAX_BUFFER = 10 * 1024 * 1024;
 
+function canonicalWorktreePath(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return resolve(path);
+  }
+}
+
 
 export type WorktreeRemoveOutcome =
   | { removed: true; classification: "removed" }
@@ -1147,7 +1155,7 @@ export async function removeWorktree(input: {
         throw new Error(`refusing to remove worktree with unverifiable root: ${input.worktreePath}`);
       }
     }
-    if (rootOutput && realpathSync(rootOutput.trim()) !== realpathSync(input.worktreePath)) {
+    if (rootOutput && canonicalWorktreePath(rootOutput.trim()) !== canonicalWorktreePath(input.worktreePath)) {
       if (input.reason === RemovalReason.SelfHealingIdleSweep) {
         throw new Error(`refusing to remove worktree with unverifiable root: ${input.worktreePath}`);
       }

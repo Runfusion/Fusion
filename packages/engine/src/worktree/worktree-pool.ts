@@ -1195,20 +1195,10 @@ export async function reapOrphanWorktrees(
       worktreePoolLog.debug(`reapOrphanWorktrees: ${name} has a dangling .git pointer (admin entry missing) — treating as orphan`);
     }
 
-    // This directory is on disk but has no valid .git entry and is not a registered
+    // FNXC:WorktreeCleanup 2026-08-15-20:40: clean Fusion-owned secret residue before the ignored-content safety probe.
     // worktree — it is a half-initialized / leaked orphan.  Remove it.
     try {
       const relativeCandidate = relative(resolve(projectRoot), resolvedFull);
-      const { stdout: statusOutput } = await execFileAsync("git", ["status", "--porcelain", "--untracked-files=all", "--ignored", "--", relativeCandidate], {
-        cwd: projectRoot,
-        timeout: 15_000,
-        maxBuffer: 10 * 1024 * 1024,
-      });
-      if (statusOutput.trim().length > 0) {
-        worktreePoolLog.warn(`Preserving orphan worktree with uncommitted content: ${resolvedFull}`);
-        continue;
-      }
-
       try {
         await cleanupSecretsEnvFile({
           worktreePath: resolvedFull,
@@ -1220,6 +1210,16 @@ export async function reapOrphanWorktrees(
       } catch (error) {
         worktreePoolLog.warn(`secrets-env cleanup failed for orphan ${name}: ${error instanceof Error ? error.message : String(error)}`);
       }
+      const { stdout: statusOutput } = await execFileAsync("git", ["status", "--porcelain", "--untracked-files=all", "--ignored", "--", relativeCandidate], {
+        cwd: projectRoot,
+        timeout: 15_000,
+        maxBuffer: 10 * 1024 * 1024,
+      });
+      if (statusOutput.trim().length > 0) {
+        worktreePoolLog.warn(`Preserving orphan worktree with uncommitted content: ${resolvedFull}`);
+        continue;
+      }
+
       rmSync(resolvedFull, { recursive: true, force: true });
       await pruneWorktreeAdminEntries({
         rootDir: projectRoot,
