@@ -18,7 +18,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { isAncestorCmd, shortSha } from "../deploy-rufu-073.mjs";
+import { isAncestorCmd, shortSha, isProvenFusionDaemon, resolveRestartAction, readCmdline } from "../deploy-rufu-073.mjs";
 
 /** Run git inside the throwaway repo; throw on failure. */
 function git(repo, args) {
@@ -77,4 +77,52 @@ test("isAncestorCmd THROWS on a genuine ref error (anything other than exit 0/1)
   // "not an ancestor" case. The helper must propagate that as an error so the
   // operator sees a real failure rather than a silent "not on main".
   assert.throws(() => isAncestorCmd("git", "does-not-exist-missing-ref", "main", dir), /merge-base/);
+});
+
+/*
+FNXC:DeployRestart 2026-08-16-22:29 (RUFU-106 resolving RUFU-073 Greptile P1 #2):
+The `--restart` branch previously SIGTERMed WHICHEVER pid owned the reserved port 4040 with no
+identity check. These cases pin the identity gate: only a provably-Fusion daemon is ever signaled;
+a foreign process on the reserved port is refused (never signaled), and a gone/unreadable pid is
+skipped. `resolveRestartAction`/`isProvenFusionDaemon`/`readCmdline` are pure, so the assertions run
+without ever touching a live pid.
+*/
+test("isProvenFusionDaemon accepts only a Fusion daemon referencing the repo root + a Fusion entrypoint", () => {
+  const REPO = "/home/schindler/git/Fusion";
+  // Provably Fusion: engine/dashboard dist under the repo root...
+  assert.equal(isProvenFusionDaemon(`node ${REPO}/packages/engine/dist/cli.js serve`, REPO), true);
+  assert.equal(isProvenFusionDaemon(`node ${REPO}/packages/dashboard/dist/server.js`, REPO), true);
+  // ...even when the daemon runs from a sibling worktree of the same Fusion checkout.
+  assert.equal(isProvenFusionDaemon(`node ${REPO}/.worktrees/ruffy-073/packages/dashboard/dist/server.js`, REPO), true);
+  // Foreign / unrelated processes must NEVER pass.
+  assert.equal(isProvenFusionDaemon("node /opt/someapp/server.js --port 4040", REPO), false);
+  assert.equal(isProvenFusionDaemon("nginx: master process (port 4040)", REPO), false);
+  assert.equal(isProvenFusionDaemon("", REPO), false);
+  assert.equal(isProvenFusionDaemon(undefined, REPO), false);
+  // A Fusion-ish string that references the entrypoint but NOT the repo root is not provable.
+  assert.equal(isProvenFusionDaemon("node /elsewhere/packages/engine/dist/cli.js", REPO), false);
+});
+
+test("resolveRestartAction: skip (gone/unreadable, never signal), refuse (not proven), signal (proven)", () => {
+  const REPO = "/home/schindler/git/Fusion";
+  // "skip" branch: nothing readable to identify -> no signal ever issued.
+  assert.equal(resolveRestartAction("", REPO), "skip");
+  assert.equal(resolveRestartAction(null, REPO), "skip");
+  // "refuse" branch: a process IS present but not provably Fusion -> refused, no signal.
+  assert.equal(resolveRestartAction("node /opt/someapp/server.js --port 4040", REPO), "refuse");
+  // "signal" branch: provably the deployed Fusion daemon -> SIGTERM authorized.
+  assert.equal(resolveRestartAction(`node ${REPO}/packages/dashboard/dist/server.js`, REPO), "signal");
+});
+
+test("readCmdline: null for invalid pids, no throw", () => {
+  assert.equal(readCmdline(0), null);
+  assert.equal(readCmdline(-1), null);
+});
+
+test("readCmdline returns a non-empty string for a live process (its own pid)", () => {
+  const mine = process.pid; // this test process is guaranteed alive
+  const cmdline = readCmdline(mine);
+  assert.equal(typeof cmdline, "string");
+  assert.ok(cmdline.length > 0, "cmdline should be non-empty");
+  assert.ok(cmdline.includes("node"), `test process cmdline should mention node: "${cmdline}"`);
 });

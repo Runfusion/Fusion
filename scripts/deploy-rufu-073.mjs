@@ -23,14 +23,17 @@ STEPS:
   2. checkout main    : put the production checkout on local `main` (which contains RUFU-073).
   3. pnpm build       : rebuild packages/engine/dashboard/cli dist from main code.
   4. restart (opt-in) : stop the :4040 engine child so Fusion's supervisor respawns it from the
-                        newly-built dist. `--restart` only. Port 4040 is never force-killed outside
-                        this controlled engine re-supervision.
+                        newly-built dist. `--restart` only. Port 4040 is RESERVED: the script only
+                        SIGTERMs a pid it can PROVE is the deployed Fusion dashboard/engine daemon
+                        (cmdline references the Fusion checkout root + a Fusion entrypoint). A
+                        foreign process on :4040 is refused with a non-zero exit and never signaled;
+                        a gone/unreadable pid is skipped with a warning.
   5. AFTER baseline   : same three measures; prints PASS/FAIL vs RUFU-073 targets
                         (idx_scan growth < 30 q/s, health < 0.5s, CPU < 40%).
 */
 
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import net from "node:net";
@@ -130,6 +133,55 @@ function findEnginePid() {
   return out ? Number(out) : -1;
 }
 
+/**
+ * Pure: is `cmdline` (the pid owning the reserved port) provably the deployed Fusion
+ * dashboard/engine daemon? True ONLY when the command line references the Fusion checkout root AND a
+ * real Fusion engine/dashboard/cli entrypoint. This is the identity gate for the reserved port-4040
+ * restart: a foreign node/other process on :4040 must NEVER be signaled.
+ */
+export function isProvenFusionDaemon(cmdline, repoRoot) {
+  if (typeof cmdline !== "string" || cmdline.length === 0) return false;
+  const lower = cmdline.toLowerCase();
+  if (!repoRoot || !lower.includes(String(repoRoot).toLowerCase())) return false;
+  return [
+    ".fusion",
+    "packages/engine/dist",
+    "packages/dashboard/dist",
+    "packages/cli/dist",
+    "@runfusion/fusion",
+  ].some((marker) => lower.includes(marker));
+}
+
+/**
+ * Pure: what should the `--restart` branch do for a pid owning the reserved port?
+ *   - "skip":   no cmdline read (pid gone / unreadable) — warn, do NOT signal.
+ *   - "refuse": a process IS present but NOT provably Fusion — NEVER signal; refuse with a
+ *               non-zero exit.
+ *   - "signal": provably the deployed Fusion daemon — SIGTERM + health-wait.
+ * Making this a pure decision lets scripts/__tests__/deploy-rufu-073.test.mjs pin all three
+ * branches deterministically without ever touching a live pid.
+ */
+export function resolveRestartAction(cmdline, repoRoot) {
+  if (typeof cmdline !== "string" || cmdline.length === 0) return "skip";
+  return isProvenFusionDaemon(cmdline, repoRoot) ? "signal" : "refuse";
+}
+
+/** Best-effort read of a pid's command line via /proc (POSIX) then `ps -o args=`. Null when unreadable. */
+export function readCmdline(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return null;
+  try {
+    const data = readFileSync(`/proc/${pid}/cmdline`, "utf8");
+    if (data) return data.replace(/\u0000/g, " ").trim();
+    return null;
+  } catch {
+    try {
+      return execFileSync("ps", ["-o", "args=", "-p", String(pid)], { encoding: "utf8" }).trim() || null;
+    } catch {
+      return null;
+    }
+  }
+}
+
 async function main() {
   console.log("\n=== RUFU-073 production deploy/verify (operator-run) ===\n");
   if (DEBUG) log("debug", { REPO, PORT, PG_PORT, DO_RESTART });
@@ -164,13 +216,34 @@ async function main() {
   }
 
   // ---- Controlled restart (opt-in) ----
+  /*
+  FNXC:DeployRestart 2026-08-16-22:29 (RUFU-106 resolving RUFU-073 Greptile P1 #2):
+  Port 4040 is reserved. `--restart` must NEVER signal an unproven process: `findEnginePid()` returns
+  whichever pid owns :4040, so the previous code SIGTERMed a foreign process with no identity check.
+  Now the restart resolves the pid's cmdline and only signals when it is provably the deployed Fusion
+  dashboard/engine daemon (cmdline references the Fusion checkout root + a Fusion entrypoint); an
+  unprovable process is refused with a non-zero exit, and a gone/unreadable pid is skipped with a
+  warning — a foreign process on the reserved port is never killed.
+  */
   log(`restarting :${PORT} engine (supervisor respawn)...`);
   const enginePid = findEnginePid();
-  if (enginePid < 0) warn("no engine on :4040 to restart");
-  else {
-    // Graceful: SIGTERM the engine child; Fusion's own supervisor (FUSION_RESTART_SUPERVISED) respawns it.
-    execFileSync("bash", ["-lc", `kill -TERM ${enginePid}`]);
-    ok(`sent SIGTERM to engine pid ${enginePid}; waiting for supervisor respawn`);
+  if (enginePid < 0) {
+    warn(`no process on :${PORT} to restart — nothing to signal`);
+  } else {
+    const cmdline = readCmdline(enginePid);
+    const action = resolveRestartAction(cmdline ?? "", REPO);
+    if (action === "refuse") {
+      fail(`refusing to signal pid ${enginePid} on reserved port ${PORT}: cmdline "${cmdline ?? "unreadable"}" is not a provably-Fusion dashboard/engine daemon. Port ${PORT} is reserved — only a proven Fusion daemon may be restarted here.`);
+    }
+    if (action === "skip") {
+      warn(`could not read cmdline for pid ${enginePid}; skipping the signal (process may have exited).`);
+    }
+    if (action === "signal") {
+      // Graceful: SIGTERM the proven Fusion engine child; Fusion's own supervisor
+      // (FUSION_RESTART_SUPERVISED) respawns it from the newly-built dist.
+      execFileSync("bash", ["-lc", `kill -TERM ${enginePid}`]);
+      ok(`sent SIGTERM to proven Fusion daemon pid ${enginePid}; waiting for supervisor respawn`);
+    }
   }
   let up = false;
   for (let i = 0; i < 60; i++) { await sleep(2000); if (healthLatency() >= 0) { up = true; break; } }
