@@ -41,6 +41,8 @@ export interface CleanupSecretsEnvFileOptions {
   taskId: string;
   expectedFingerprint: string | null;
   filename: string;
+  /** Allow legacy cleanup only after the orphan reaper has positively proven a dangling gitdir. */
+  allowLegacyCleanupForDanglingGitdir?: boolean;
   audit?: Pick<RunAuditor, "filesystem">;
   logger?: { log: (m: string) => void; warn: (m: string) => void };
   /** Test seam for proving cleanup never converts metadata-removal failures into success. */
@@ -417,13 +419,16 @@ export async function cleanupSecretsEnvFile(opts: CleanupSecretsEnvFileOptions):
      * FNXC:SecretsEnvMaterialization 2026-08-08-03:23:
      * A Git worktree whose private-dir lookup fails is not an orphan. Fail closed rather than treating its
      * root record as orphan metadata, because that fallback could delete a tracked project file on a transient
-     * Git failure. Only a path with no .git entry can use legacy orphan cleanup.
+     * Git failure. Only paths without a .git entry can use legacy orphan cleanup unless the orphan reaper
+     * has already proven that the pointer's private admin entry is gone.
      */
-    try {
-      await fs.lstat(path.join(opts.worktreePath, ".git"));
-      return { outcome: "skipped", reason: "invalid-record" };
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") return { outcome: "skipped", reason: "invalid-record" };
+    if (!opts.allowLegacyCleanupForDanglingGitdir) {
+      try {
+        await fs.lstat(path.join(opts.worktreePath, ".git"));
+        return { outcome: "skipped", reason: "invalid-record" };
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") return { outcome: "skipped", reason: "invalid-record" };
+      }
     }
   }
   if (privatePath) {

@@ -1,6 +1,6 @@
 import { exec, execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, rmdirSync, unlinkSync } from "node:fs";
+import { constants, copyFileSync, existsSync, linkSync, lstatSync, readdirSync, readFileSync, realpathSync, renameSync, rmdirSync, unlinkSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve, isAbsolute } from "node:path";
 import type { SecretsStore, Settings, TaskStore, WorktrunkSettings } from "@fusion/core";
@@ -1151,12 +1151,14 @@ export async function reapOrphanWorktrees(
 
     // FNXC:WorktreeCleanup 2026-08-15-20:40: clean Fusion-owned secret residue before removing an empty orphan.
     try {
+      let dotGitStash: string | undefined;
       try {
         await cleanupSecretsEnvFile({
           worktreePath: resolvedFull,
           taskId: `orphan:${name}`,
           expectedFingerprint: null,
           filename: ".env",
+          allowLegacyCleanupForDanglingGitdir: danglingDotGit,
           logger: worktreePoolLog,
         });
       } catch (error) {
@@ -1168,9 +1170,58 @@ export async function reapOrphanWorktrees(
           worktreePoolLog.warn(`Preserving orphan worktree with uncommitted content: ${resolvedFull}`);
           continue;
         }
-        unlinkSync(dotGit);
+        // Move the dangling pointer aside instead of unlinking it: if rmdir below
+        // fails, an atomic rename/link restores the metadata without recreating it
+        // (no content or mode copy, no EEXIST or ENOSPC window). The stash sits next
+        // to the orphan so the directory itself stays empty for rmdir.
+        dotGitStash = join(dirname(resolvedFull), `.${name}.git-reap-stash-${process.pid}-${Date.now().toString(36)}`);
+        renameSync(dotGit, dotGitStash);
       }
-      rmdirSync(resolvedFull);
+      try {
+        rmdirSync(resolvedFull);
+        if (dotGitStash) {
+          try {
+            unlinkSync(dotGitStash);
+          } catch (stashError) {
+            worktreePoolLog.warn(`reapOrphanWorktrees: orphan ${name} removed but .git stash cleanup failed — ${stashError instanceof Error ? stashError.message : String(stashError)}`);
+          }
+        }
+      } catch (removeError) {
+        if (dotGitStash) {
+          try {
+            // linkSync refuses to overwrite a concurrent .git (EEXIST): that pointer
+            // is authoritative, so keep it and drop the stash. Otherwise the stash
+            // becomes the restored pointer with its original content and mode.
+            linkSync(dotGitStash, dotGit);
+            unlinkSync(dotGitStash);
+          } catch (restoreError) {
+            const restoreCode = restoreError instanceof Error && "code" in restoreError ? (restoreError as { code?: unknown }).code : undefined;
+            if (restoreCode === "EEXIST") {
+              unlinkSync(dotGitStash);
+            } else {
+              // linkSync failed for a reason other than a concurrent .git
+              // (EPERM/ENOSPC/...): the pointer exists only in the stash. Fail
+              // closed — COPYFILE_EXCL restores it without ever overwriting a
+              // .git that appears concurrently; if one does, EEXIST keeps the
+              // authoritative pointer and drops the stash.
+              try {
+                copyFileSync(dotGitStash, dotGit, constants.COPYFILE_EXCL);
+                unlinkSync(dotGitStash);
+              } catch (fallbackError) {
+                const fallbackCode = fallbackError instanceof Error && "code" in fallbackError ? (fallbackError as { code?: unknown }).code : undefined;
+                if (fallbackCode === "EEXIST") {
+                  unlinkSync(dotGitStash);
+                } else {
+                  worktreePoolLog.warn(
+                    `reapOrphanWorktrees: failed to restore .git for ${name} after removal failure — ${restoreError instanceof Error ? restoreError.message : String(restoreError)}; keeping stash for manual recovery: ${dotGitStash}`,
+                  );
+                }
+              }
+            }
+          }
+        }
+        throw removeError;
+      }
       await pruneWorktreeAdminEntries({
         rootDir: projectRoot,
         reason: "pool-reap-orphan",

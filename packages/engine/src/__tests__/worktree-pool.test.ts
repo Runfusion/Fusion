@@ -51,12 +51,16 @@ vi.mock("../worktree/worktree-desktop-artifacts.js", () => ({
 }));
 
 vi.mock("node:fs", () => ({
+  chmodSync: vi.fn(),
   existsSync: vi.fn().mockReturnValue(true),
+  linkSync: vi.fn(),
   lstatSync: vi.fn().mockReturnValue({ isDirectory: () => true, isSymbolicLink: () => false }),
   readdirSync: vi.fn().mockReturnValue([]),
   readFileSync: vi.fn().mockReturnValue(""),
+  renameSync: vi.fn(),
   rmdirSync: vi.fn(),
   unlinkSync: vi.fn(),
+  writeFileSync: vi.fn(),
 }));
 
 vi.mock("../worktree/worktree-prune.js", () => ({
@@ -78,7 +82,7 @@ import {
 import { BranchConflictError } from "../execution/branch-conflicts.js";
 import * as branchConflictModule from "../execution/branch-conflicts.js";
 import { execSync } from "node:child_process";
-import { existsSync, lstatSync, readdirSync, readFileSync, rmdirSync, unlinkSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, readFileSync, renameSync, rmdirSync, unlinkSync } from "node:fs";
 import type { Task, Column } from "@fusion/core";
 
 const mockedExecSync = vi.mocked(execSync);
@@ -87,6 +91,7 @@ const mockedLstatSync = vi.mocked(lstatSync);
 const mockedReaddirSync = vi.mocked(readdirSync);
 const mockedReadFileSync = vi.mocked(readFileSync);
 const mockedRmdirSync = vi.mocked(rmdirSync);
+const mockedRenameSync = vi.mocked(renameSync);
 const mockedUnlinkSync = vi.mocked(unlinkSync);
 const mockedPruneWorktreeAdminEntries = vi.mocked(worktreePrune.pruneWorktreeAdminEntries);
 const TEST_TASK_ID = "FN-test";
@@ -1296,7 +1301,13 @@ describe("reapOrphanWorktrees", () => {
     const removed = await reapOrphanWorktrees("/root");
 
     expect(removed).toBe(1);
-    expect(mockedUnlinkSync).toHaveBeenCalledWith("/root/.worktrees/leaked-wt/.git");
+    expect(mockedRenameSync).toHaveBeenCalledWith(
+      "/root/.worktrees/leaked-wt/.git",
+      expect.stringMatching(/^\/root\/\.worktrees\/\.leaked-wt\.git-reap-stash-\d+-[a-z0-9]+$/),
+    );
+    expect(mockedUnlinkSync).toHaveBeenCalledWith(
+      expect.stringMatching(/^\/root\/\.worktrees\/\.leaked-wt\.git-reap-stash-\d+-[a-z0-9]+$/),
+    );
     expect(mockedRmdirSync).toHaveBeenCalledWith("/root/.worktrees/leaked-wt");
   });
 

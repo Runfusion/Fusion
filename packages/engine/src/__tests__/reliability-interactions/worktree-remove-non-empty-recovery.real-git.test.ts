@@ -122,6 +122,27 @@ describe.skipIf(!hasGit)("reliability interactions: worktree remove non-empty re
     expect(await pathExists(join(worktreePath, ".env"))).toBe(true);
   });
 
+  it("rejects user-authored ignored artifacts under generated-looking paths during an idle-sweep removal", async () => {
+    const root = await setupRepo();
+    await writeFile(join(root, ".gitignore"), "dist/\n", "utf-8");
+    git(root, "git add .gitignore");
+    git(root, 'git commit -m "ignore generated directory"');
+    const worktreePath = await createWorktree(root, "fn-generated", "fusion/fn-generated");
+    const manualPath = join(worktreePath, "dist", "manual.txt");
+    await mkdir(dirname(manualPath), { recursive: true });
+    await writeFile(manualPath, "user-authored\n", "utf-8");
+
+    await expect(removeWorktree({
+      rootDir: root,
+      worktreePath,
+      settings: {},
+      reason: RemovalReason.SelfHealingIdleSweep,
+    })).rejects.toThrow(/dirty worktree/);
+
+    expect(await pathExists(manualPath)).toBe(true);
+    expect(await pathExists(worktreePath)).toBe(true);
+  });
+
   it("prunes a missing worktree registration during defensive cleanup", async () => {
     const root = await setupRepo();
     const worktreePath = await createWorktree(root, "fn-missing-pool", "fusion/fn-missing-pool");

@@ -1111,6 +1111,22 @@ describe("removeWorktree", () => {
     expect(audit.git).toHaveBeenCalledWith({ type: "worktree:worktrunk-remove", target: "/repo/.worktrees/fn-1" });
   });
 
+  it("does not force Worktrunk removal unless the caller opts in", async () => {
+    execMock.mockResolvedValue({ stdout: "", stderr: "" });
+
+    await removeWorktree({
+      rootDir: "/repo",
+      worktreePath: "/repo/.worktrees/fn-1",
+      settings: { worktrunk: { enabled: true, binaryPath: "worktrunk", onFailure: "fail" } as any },
+      reason: RemovalReason.SelfHealingReclaim,
+    });
+
+    expect(execMock).toHaveBeenCalledWith(
+      '"worktrunk" "remove" "--foreground" "/repo/.worktrees/fn-1"',
+      expect.objectContaining({ cwd: "/repo", timeout: 60000 }),
+    );
+  });
+
   it("falls back to native when worktrunk remove fails and onFailure=fallback-native", async () => {
     execMock
       .mockRejectedValueOnce(new WorktrunkOperationError({ operation: "remove", code: "worktrunk_operation_failed", stderr: "boom", exitCode: 1 }))
@@ -1129,6 +1145,30 @@ describe("removeWorktree", () => {
       expect.objectContaining({ type: "worktree:worktrunk-fallback", target: "/repo/.worktrees/fn-1" }),
     );
     expect(audit.git).toHaveBeenCalledWith({ type: "worktree:remove", target: "/repo/.worktrees/fn-1" });
+  });
+
+  it("preserves Native's implicit force on non-defensive Worktrunk fallback", async () => {
+    execMock
+      .mockRejectedValueOnce(new WorktrunkOperationError({ operation: "remove", code: "worktrunk_operation_failed", stderr: "boom", exitCode: 1 }))
+      .mockResolvedValueOnce({ stdout: "", stderr: "" });
+
+    await removeWorktree({
+      rootDir: "/repo",
+      worktreePath: "/repo/.worktrees/fn-1",
+      settings: { worktrunk: { enabled: true, binaryPath: "worktrunk", onFailure: "fallback-native" } as any },
+      reason: RemovalReason.MergerCleanup,
+    });
+
+    expect(execMock).toHaveBeenNthCalledWith(
+      1,
+      '"worktrunk" "remove" "--foreground" "/repo/.worktrees/fn-1"',
+      expect.objectContaining({ cwd: "/repo", timeout: 60000 }),
+    );
+    expect(execMock).toHaveBeenNthCalledWith(
+      2,
+      'git worktree remove --force "/repo/.worktrees/fn-1"',
+      expect.objectContaining({ cwd: "/repo", timeout: 60000 }),
+    );
   });
 
   it("rethrows worktrunk remove failure when onFailure=fail", async () => {

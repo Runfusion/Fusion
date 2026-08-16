@@ -39,7 +39,6 @@ function canonicalWorktreePath(path: string): string {
   }
 }
 
-
 export type WorktreeRemoveOutcome =
   | { removed: true; classification: "removed" }
   | {
@@ -1151,6 +1150,7 @@ export async function removeWorktree(input: {
     });
   }
 
+  const backend = resolveWorktreeBackend(input.settings, { logger, audit: input.audit });
   const requiresDirtyRevalidation = input.reason === RemovalReason.SelfHealingIdleSweep || input.reason === RemovalReason.PoolPrune;
   if (requiresDirtyRevalidation) {
     let rootOutput = "";
@@ -1174,18 +1174,19 @@ export async function removeWorktree(input: {
         timeout: 15_000,
         maxBuffer: MAX_BUFFER,
       });
-      if (statusOutput.trim().length > 0) {
+      const hasUnsafeStatus = statusOutput.trim().length > 0;
+      if (hasUnsafeStatus) {
         throw new Error(`refusing to remove dirty worktree: ${input.worktreePath}`);
       }
     }
   }
 
-  const backend = resolveWorktreeBackend(input.settings, { logger, audit: input.audit });
+  const nativeForce = input.force === true || (input.force !== false && !requiresDirtyRevalidation);
   const removeInput: WorktreeRemoveInput = {
     rootDir: input.rootDir,
     worktreePath: input.worktreePath,
     taskId: input.taskId,
-    force: input.force === true || !requiresDirtyRevalidation,
+    force: backend.kind === "native" ? nativeForce : input.force,
   };
 
   if (input.force === false || typeof input.timeout === "number") {
@@ -1224,7 +1225,7 @@ export async function removeWorktree(input: {
 
     const native = new NativeWorktreeBackend({ logger, settings: input.settings });
     try {
-      await native.remove(removeInput);
+      await native.remove({ ...removeInput, force: nativeForce });
       await input.audit?.git({ type: "worktree:remove", target: input.worktreePath });
       return { removed: true, classification: "removed" };
     } catch (nativeError) {
