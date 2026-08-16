@@ -1,6 +1,6 @@
 // @vitest-environment node
 
-import { describe, it, expect } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 
 import {
   createDomainSampler,
@@ -113,6 +113,52 @@ describe("PG query-rate sampler", () => {
     expect(family!.type).toBe("gauge");
     expect(family!.samples[0].value).toEqual(expect.any(Number));
     expect(Number.isFinite(family!.samples[0].value)).toBe(true);
+  });
+
+  /*
+  FNXC:MetricsSampler 2026-08-16 (RUFU-081 Greptile P1 #1, RUFU-106):
+  A TRANSIENT PG probe failure must never reset the sampler's baseline. Previously a null/thrown read
+  executed `previousPg = undefined`, so the next GOOD sample was treated as a first sample and reported
+  rate 0 even though queries kept flowing. This deterministic fake-timer test pins the keep-the-baseline
+  invariant: an established rate (> 0) survives a transient failure, and the subsequent successful sample
+  computes from the KEPT baseline (not 0). `Date.now()` is driveable via fake timers, so the expected
+  per-second rate is exact.
+  */
+  it("keeps the PG baseline across a transient failure — next good sample computes from the KEPT baseline, not 0", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-16T00:00:00.000Z"));
+
+    let stat: PgStats = { xactCommit: 1000, xactRollback: 0 };
+    const sampler = helper({ pgStatsReader: async () => stat });
+
+    // Baseline: first sample establishes the baseline at rate 0.
+    await sampler.samplePgRate();
+    expect(sampler.state.pgQueriesPerSecond).toBe(0);
+
+    // Advance the clock 5000ms and bump counters by 2000 -> rate 400/s.
+    vi.setSystemTime(new Date("2026-08-16T00:00:05.000Z"));
+    stat = { xactCommit: 3000, xactRollback: 0 };
+    await sampler.samplePgRate();
+    expect(sampler.state.pgQueriesPerSecond).toBe(400);
+
+    // Transient failure (reader returns null) -> baseline + last-known rate MUST HOLD.
+    vi.setSystemTime(new Date("2026-08-16T00:00:06.000Z"));
+    stat = null as unknown as PgStats;
+    await sampler.samplePgRate();
+    expect(sampler.state.pgQueriesPerSecond).toBe(400);
+
+    // Advance another 5000ms (elapsed since the KEPT baseline is 6s) and bump to 5000.
+    // Delta from the KEPT baseline (3000) over 6000ms -> 333.33/s exactly. A reset baseline
+    // would treat this as a FIRST sample and report 0; 333.33 proves the baseline was
+    // preserved through the transient failure and the rate is computed from it, not 0.
+    vi.setSystemTime(new Date("2026-08-16T00:00:11.000Z"));
+    stat = { xactCommit: 5000, xactRollback: 0 };
+    await sampler.samplePgRate();
+    expect(sampler.state.pgQueriesPerSecond).toBeCloseTo(333.33, 2);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 });
 

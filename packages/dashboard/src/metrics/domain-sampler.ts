@@ -195,8 +195,14 @@ export function createDomainSampler(init: DomainSamplerInit = {}): DomainSampler
     }
     const now = Date.now();
     if (!stats) {
-      // Keep the last-known rate (the "best-effort" degrade); first sample stays 0.
-      previousPg = undefined;
+      /*
+       * FNXC:MetricsSampler 2026-08-16 (RUFU-081 Greptile P1 #1, RUFU-106):
+       * A transient reader failure (null or thrown) must NOT reset the PG baseline. Resetting
+       * `previousPg = undefined` here made the next good sample look like a FIRST sample and
+       * report rate 0, even though real queries kept flowing. On failure we keep the last-known
+       * `previousPg` and `state.pgQueriesPerSecond`; only a successful counter read
+       * establishes/advances the baseline (a first-ever failure still leaves the rate at 0).
+       */
       return;
     }
     const currentTotal = stats.xactCommit + stats.xactRollback;
