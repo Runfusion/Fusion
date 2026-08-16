@@ -55,8 +55,11 @@ projects that composed to ~340 q/s of Drizzle SQL building.
 `resolveWorkflowIrForTaskWithProvenance(..., selectionCache?)` already accept a
 `WorkflowSelectionCache = Map<taskId, WorkflowSelection | undefined>`. The scheduler now creates a
 **fresh** selection cache at the top of each event/loop scope and threads it through every
-`resolveTaskParkedColumns` call (4th arg), plus the `emitHighOverlapFanoutWarnings` escalation sweep
-and the PR-hydration sweep:
+`resolveTaskParkedColumns(store, taskId, selectionCache?)` call. Note the argument positions differ:
+the selection cache is the **3rd argument** of `resolveTaskParkedColumns`, whereas it is the
+**4th argument** (after the optional `irCache`) of `resolveWorkflowIrForTask(store, taskId,
+irCache?, selectionCache?)`. It is also threaded through the `emitHighOverlapFanoutWarnings` escalation
+sweep and the PR-hydration sweep:
 
 - Each task's selection is read **at most once per tick** (not once per park-resolution).
 - The cache is **strictly per-call/per-pass**: a fresh Map per event/sweep, discarded at scope end.

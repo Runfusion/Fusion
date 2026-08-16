@@ -228,8 +228,10 @@ describe("RUFU-073: workflow selection read at most once per scheduler tick", ()
     await emit("task:updated", task("FN-1", { status: null, column: "in-progress" }));
     await flushAsyncHandlers();
 
-    // The planning wake read the selection synchronously, at most once for the tick.
-    expect(reads.filter((id) => id === "FN-1").length).toBeLessThanOrEqual(1);
+    // The planning wake (planning -> in-progress) is the only wake that fires, so the sync
+    // fallback must read the selection synchronously EXACTLY once — the same inflight coalescing
+    // in `resolveWorkflowIrForTaskWithProvenance` collapses concurrent reads onto one promise.
+    expect(reads.filter((id) => id === "FN-1")).toHaveLength(1);
   });
 });
 /*
