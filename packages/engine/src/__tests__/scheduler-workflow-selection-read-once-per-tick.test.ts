@@ -232,3 +232,70 @@ describe("RUFU-073: workflow selection read at most once per scheduler tick", ()
     expect(reads.filter((id) => id === "FN-1").length).toBeLessThanOrEqual(1);
   });
 });
+/*
+FNXC:WorkflowScheduling 2026-08-16 (RUFU-106, RUFU-073 surface enumeration):
+The read-once invariant is not only about the `task:updated` wake coalescing tested above — it must
+hold on EVERY cache-propagation surface that resolves parked columns for a task. The scheduler
+creates a fresh per-event selectionCache in EACH handler (`task:moved` -> `movedSelectionCache`,
+`task:deleted` -> `deletedSelectionCache`, `task:updated` -> `updatedSelectionCache`) so a single
+event can never issue more than one workflow_selection read per task. These cases pin that guarantee
+on the remaining enumerated surfaces so a future edit that drops one of the caches (falling back to
+O(n × passes)) fails loudly. Each assertion counts SELECTION READS (instrumented in the mock store),
+never cache keys — a throwing read is deliberately not cached.
+*/
+describe("RUFU-073: read-once also holds on the task:moved / task:deleted / isolated-unpause propagation surfaces", () => {
+  it("task:moved: a single move event reads the moved task's selection at most once", async () => {
+    const { store, emit, reads } = createStore();
+    createScheduler(store);
+
+    // One move (todo -> in-progress) resolves parked columns exactly once for the moved task. The
+    // fresh `movedSelectionCache` collapses any park-resolution passes for the same task into one
+    // workflow_selection read.
+    await emit("task:moved", {
+      task: task("FN-1", { column: "in-progress" }),
+      from: "todo",
+      to: "in-progress",
+      source: "user",
+      lanes: undefined,
+    });
+    await flushAsyncHandlers();
+
+    expect(reads.filter((id) => id === "FN-1")).toHaveLength(1);
+    // Nothing else was resolved in this isolated event.
+    expect(reads).toHaveLength(1);
+  });
+
+  it("task:deleted: one delete event reads the deleted task's selection at most once", async () => {
+    const { store, emit, reads } = createStore();
+    createScheduler(store);
+
+    // task:deleted resolves the deleted task's parked columns in a per-event async closure; the
+    // fresh `deletedSelectionCache` guarantees its selection is read once (when a dependent sweep
+    // also runs in the same event it shares that one read).
+    await emit("task:deleted", task("FN-1", { column: "in-progress" }));
+    await flushAsyncHandlers();
+
+    expect(reads.filter((id) => id === "FN-1")).toHaveLength(1);
+  });
+
+  it("unpause surface: an unpause transition reads the task's selection at most once, in isolation", async () => {
+    const { store, emit, reads } = createStore();
+    createScheduler(store);
+
+    // Arm ONLY the unpause tracker; the arm-only event must read nothing.
+    await emit("task:updated", task("FN-1", { paused: true, userPaused: true, column: "in-progress" }));
+    expect(reads).toHaveLength(0);
+
+    // The clearing transition fires ONLY the unpause park-resolution (the `updatedSelectionCache`
+    // is fresh per event, so it is a single read for FN-1 — not compounded with planning/approval).
+    await emit("task:updated", task("FN-1", {
+      paused: false,
+      userPaused: false,
+      column: "in-progress",
+      lastDispatchAt: "2026-01-01T00:00:00.000Z",
+    }));
+    await flushAsyncHandlers();
+
+    expect(reads.filter((id) => id === "FN-1")).toHaveLength(1);
+  });
+});
