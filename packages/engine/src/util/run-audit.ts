@@ -740,6 +740,14 @@ export type DatabaseMutationType =
    */
   | "session:grok-cli-fallback-engaged"
   /**
+   * FNXC:CliRuntimeRouting 2026-08-16-01:25:
+   * A configured cross-runtime CLI fallback engaged once after a retryable primary failure.
+   * Metadata is ids/outcomes-only: `{ sessionPurpose, primaryProvider, primaryModelId,
+   * fallbackProvider, fallbackModelId, triggerPoint, failureCategory, contextTransferred }`.
+   * It never stores the primary error or transferred conversation text.
+   */
+  | "session:cross-runtime-fallback-engaged"
+  /**
    * FNXC:AgentReflectionTelemetry 2026-06-27-00:00:
    * Agent performance reflection attempts must emit durable telemetry for every generated, skipped, or failed outcome. Metadata carries ids, trigger taxonomy, counts, and outcomes only; never persist reflection summaries, insight strings, suggested-improvement text, triggerDetail, or prompt text.
    *

@@ -3142,13 +3142,17 @@ export class Scheduler {
       }
 
       /*
-      FNXC:MissionAutoReconcile 2026-08-11-03:27:
-      Task moves must enter the reconciliation authority before title-based ownership repair. The
-      authority rejects ambiguous titles within a slice, so duplicate feature titles cannot make a
-      move attach its task to whichever unlinked feature happened to be listed first.
+      FNXC:MissionAutoReconcile 2026-08-15-23:43:
+      Reconciliation is best-effort repair. Its pre-resolution and post-resolution boundaries
+      degrade independently so either failure cannot suppress the FN-5715 mission-execution
+      completion trigger, which FN-8948 accidentally stalled.
       */
       if (task.missionId) {
-        await reconcileMissionState({ taskStore: this.store, missionStore }, { missionId: task.missionId, source: "task-move" });
+        try {
+          await reconcileMissionState({ taskStore: this.store, missionStore }, { missionId: task.missionId, source: "task-move" });
+        } catch (error) {
+          schedulerLog.warn(`Mission reconciliation failed before resolving task ${taskId}; continuing mission completion handling:`, error);
+        }
       }
       const feature = await resolveMissionFeatureForTask(missionStore, task);
       if (!feature) {
@@ -3183,7 +3187,11 @@ export class Scheduler {
       other deterministic ground-truth projection.
       */
       if (missionId !== task.missionId) {
-        await reconcileMissionState({ taskStore: this.store, missionStore }, { missionId, source: "task-move" });
+        try {
+          await reconcileMissionState({ taskStore: this.store, missionStore }, { missionId, source: "task-move" });
+        } catch (error) {
+          schedulerLog.warn(`Mission reconciliation failed after resolving task ${taskId}; continuing mission completion handling:`, error);
+        }
       }
 
       /*

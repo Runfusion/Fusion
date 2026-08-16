@@ -778,7 +778,7 @@ Mission hierarchy operations are available with the same project-scoped `Mission
 
 ## Automatic mission reconciliation
 
-The scheduler startup and self-healing maintenance passes, mission autopilot, task moves, and `fn_mission_reconcile({ id?, dryRun? })` use one idempotent reconciliation authority. `POST /api/missions/:missionId/reconcile` exposes the same pass; `dryRun: true` returns planned changes without mutation. Automatic writes are attributed to `mission-reconcile:<startup|self-healing|autopilot|task-move>` and API/tool calls retain their operator or agent actor.
+The scheduler startup and self-healing maintenance passes, mission autopilot, task moves, and `fn_mission_reconcile({ id?, dryRun? })` use one idempotent reconciliation authority. `POST /api/missions/:missionId/reconcile` exposes the same pass; `dryRun: true` returns planned changes without mutation. Task-move reconciliation is best-effort: a reconciliation failure is logged but cannot suppress the mission completion trigger or its validation loop. Automatic writes are attributed to `mission-reconcile:<startup|self-healing|autopilot|task-move>` and API/tool calls retain their operator or agent actor.
 
 ### Mission Manager reconcile control
 

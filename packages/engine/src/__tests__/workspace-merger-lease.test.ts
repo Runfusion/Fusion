@@ -336,7 +336,7 @@ describeIfGit("landWorkspaceTask — per-repo land lease (Phase C U3, KTD4)", ()
     fx.git("repo-a", `git push --force-with-lease=${dispatchRef}:${staleDispatchSha} origin ${successorDispatchSha}:${dispatchRef}`);
 
     /*
-    FNXC:WorkspaceMergeDispatch 2026-08-19-00:00:
+    FNXC:WorkspaceMergeDispatch 2026-08-15-22:55:
     A dispatch lease renewal may never run while a merge body is suspended. The resource must
     reject its atomic ref advance after a successor republishes the task fence, even when main
     still equals the predecessor's observed tip.

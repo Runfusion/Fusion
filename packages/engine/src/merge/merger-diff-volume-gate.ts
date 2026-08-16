@@ -93,7 +93,7 @@ export async function checkDiffVolume({
     if (branchNet <= minLines) continue;
 
     /*
-     * FNXC:AIMerge 2026-08-19-00:00:
+     * FNXC:AIMerge 2026-08-15-22:55:
      * The unified land has an approved commit, not staged changes; preserve the
      * legacy index read unless its clean-room range is supplied.
      */

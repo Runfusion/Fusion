@@ -536,11 +536,16 @@ describe("TaskDetailModal", () => {
       }
     });
 
-    it("renders parent task link for refinement provenance", async () => {
+    // FNXC:TaskDetailModal 2026-08-15-00:00 (slow-test trim): refinement and API-created
+    // parent-link cases shared one body; converted to it.each with both cases kept.
+    it.each([
+      ["refinement provenance", "task_refine", "FN-001", /Created via Refinement/],
+      ["API-created planning tasks", "api", "FN-PLANNER", /Created via API/],
+    ] as const)("renders parent task link for %s", async (_label, sourceType, parentId, expectedText) => {
       render(
         <TaskDetailModal
           initialTab="definition"
-          task={makeTask({ sourceType: "task_refine", sourceParentTaskId: "FN-001" })}
+          task={makeTask({ sourceType, sourceParentTaskId: parentId })}
           onClose={noop}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -550,33 +555,13 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      expect(screen.getByText(/Created via Refinement/)).toBeInTheDocument();
-      const link = screen.getByRole("button", { name: "FN-001" });
+      expect(screen.getByText(expectedText)).toBeInTheDocument();
+      const link = screen.getByRole("button", { name: parentId });
       expect(link).toBeInTheDocument();
       await userEvent.click(link);
       await waitFor(() => {
         expect(noopOpenDetail).toHaveBeenCalled();
       });
-    });
-
-    it("renders parent task link for API-created planning tasks", async () => {
-      render(
-        <TaskDetailModal
-          initialTab="definition"
-          task={makeTask({ sourceType: "api", sourceParentTaskId: "FN-PLANNER" })}
-          onClose={noop}
-          onMoveTask={noopMove}
-          onDeleteTask={noopDelete}
-          onMergeTask={noopMerge}
-          onOpenDetail={noopOpenDetail}
-          addToast={noop}
-        />,
-      );
-
-      expect(screen.getByText(/Created via API/)).toBeInTheDocument();
-      const link = screen.getByRole("button", { name: "FN-PLANNER" });
-      await userEvent.click(link);
-      await waitFor(() => expect(noopOpenDetail).toHaveBeenCalled());
     });
 
     it.each([
@@ -1015,29 +1000,9 @@ describe("TaskDetailModal", () => {
         expect(times[1]?.getAttribute("dateTime")).toBe("2026-05-11T09:00:00.000Z");
       });
 
-      it("renders short calendar date for older timestamps", () => {
-        render(
-          <TaskDetailModal
-            initialTab="definition"
-            task={makeTask({
-              sourceType: "dashboard_ui",
-              createdAt: "2026-05-01T12:00:00.000Z",
-              updatedAt: "2026-05-02T12:00:00.000Z",
-            })}
-            onClose={noop}
-            onMoveTask={noopMove}
-            onDeleteTask={noopDelete}
-            onMergeTask={noopMerge}
-            onOpenDetail={noopOpenDetail}
-            addToast={noop}
-          />,
-        );
-
-        const timestamps = screen.getByLabelText("Task timestamps");
-        expect(timestamps).toHaveTextContent("Created May 1");
-        expect(timestamps).toHaveTextContent("Updated May 2");
-      });
-
+      // FNXC:TaskDetailModal 2026-08-15-00:00 (slow-test trim): the standalone
+      // "short calendar date for older timestamps" case was one more bucket permutation of the
+      // same formatter; folded into the bucket/edge-case test below as an extra rerender.
       it("preserves byte-identical timestamp buckets and edge cases", () => {
         const { rerender } = render(
           <TaskDetailModal
@@ -1080,6 +1045,27 @@ describe("TaskDetailModal", () => {
         timestamps = screen.getByLabelText("Task timestamps");
         expect(timestamps).toHaveTextContent("Created Invalid Date");
         expect(timestamps).toHaveTextContent("Updated just now");
+
+        rerender(
+          <TaskDetailModal
+            initialTab="definition"
+            task={makeTask({
+              sourceType: "dashboard_ui",
+              createdAt: "2026-05-01T12:00:00.000Z",
+              updatedAt: "2026-05-02T12:00:00.000Z",
+            })}
+            onClose={noop}
+            onMoveTask={noopMove}
+            onDeleteTask={noopDelete}
+            onMergeTask={noopMerge}
+            onOpenDetail={noopOpenDetail}
+            addToast={noop}
+          />,
+        );
+
+        timestamps = screen.getByLabelText("Task timestamps");
+        expect(timestamps).toHaveTextContent("Created May 1");
+        expect(timestamps).toHaveTextContent("Updated May 2");
       });
     });
   });
@@ -1463,7 +1449,10 @@ describe("TaskDetailModal", () => {
     });
   });
 
-  it("styles detail-body scrollbar rules", () => {
+  // FNXC:TaskDetailModal 2026-08-15-00:00 (slow-test trim): the detail-body and
+  // agent-log-viewer scrollbar rules were two copies of the same structural CSS-string
+  // pattern; merged into one case with identical assertions.
+  it("styles detail-body and agent log viewer scrollbar rules", () => {
     const css = readDashboardStylesSource();
 
     expectBaseRule(css, ".detail-body", "scrollbar-color: var(--border) transparent;");
@@ -1472,10 +1461,6 @@ describe("TaskDetailModal", () => {
     expectBaseRule(css, ".detail-body::-webkit-scrollbar-track", "background: transparent;");
     expectBaseRule(css, ".detail-body::-webkit-scrollbar-thumb", "background: var(--border);");
     expectBaseRule(css, ".detail-body::-webkit-scrollbar-thumb:hover", "background: var(--text-muted);");
-  });
-
-  it("styles agent log viewer scroll container scrollbar rules", () => {
-    const css = readDashboardStylesSource();
 
     expectBaseRule(css, ".agent-log-viewer", "overflow: hidden;");
     expectBaseRule(css, ".agent-log-viewer-scroll", "scrollbar-color: var(--border) transparent;");
@@ -1485,8 +1470,11 @@ describe("TaskDetailModal", () => {
     expectBaseRule(css, ".agent-log-model-header", "background: var(--bg-tertiary);");
   });
 
-  it("renders markdown-body without detail-prompt class when prompt exists", () => {
-    const { container } = render(
+  // FNXC:TaskDetailModal 2026-08-15-00:00 (slow-test trim): the markdown-body class shape,
+  // heading stripping, and PROMPT.md-heading absence cases were three separate renders of the
+  // same prompt-bearing props; merged into one render with all assertions intact.
+  it("strips the leading heading and renders prompt markdown without detail-prompt class or PROMPT.md heading", () => {
+    render(
       <TaskDetailModal
         initialTab="definition"
         task={makeTask({ prompt: "# Hello\n\nSome **bold** text" })}
@@ -1494,7 +1482,7 @@ describe("TaskDetailModal", () => {
         onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
-          onOpenDetail={noopOpenDetail}
+        onOpenDetail={noopOpenDetail}
         addToast={noop}
       />,
     );
@@ -1502,25 +1490,10 @@ describe("TaskDetailModal", () => {
     const markdownDiv = document.querySelector(".markdown-body");
     expect(markdownDiv).toBeTruthy();
     expect(markdownDiv!.classList.contains("detail-prompt")).toBe(false);
-  });
-
-  it("strips the leading heading from prompt and renders remaining markdown", () => {
-    const { container } = render(
-      <TaskDetailModal
-        initialTab="definition"
-        task={makeTask({ prompt: "# Hello\n\nSome **bold** text" })}
-        onClose={noop}
-        onMoveTask={noopMove}
-        onDeleteTask={noopDelete}
-        onMergeTask={noopMerge}
-          onOpenDetail={noopOpenDetail}
-        addToast={noop}
-      />,
-    );
-
     // The leading # heading should be stripped (modal has its own header)
     expect(document.querySelector(".markdown-body h1")).toBeNull();
     expect(document.querySelector("strong")?.textContent).toBe("bold");
+    expect(screen.queryByText("PROMPT.md")).toBeNull();
   });
 
   it("renders (no prompt) with detail-prompt class when prompt is absent", () => {
@@ -1541,23 +1514,6 @@ describe("TaskDetailModal", () => {
     expect(fallback).toBeTruthy();
     expect(fallback.classList.contains("detail-prompt")).toBe(true);
     expect(fallback.classList.contains("markdown-body")).toBe(false);
-  });
-
-  it("does not render a PROMPT.md heading", () => {
-    render(
-      <TaskDetailModal
-        initialTab="definition"
-        task={makeTask({ prompt: "# Some prompt content" })}
-        onClose={noop}
-        onMoveTask={noopMove}
-        onDeleteTask={noopDelete}
-        onMergeTask={noopMerge}
-          onOpenDetail={noopOpenDetail}
-        addToast={noop}
-      />,
-    );
-
-    expect(screen.queryByText("PROMPT.md")).toBeNull();
   });
 
   it("renders Review and Comments tabs", () => {
@@ -1890,34 +1846,15 @@ describe("TaskDetailModal", () => {
   });
 
   describe("retry action uniqueness for in-review failed tasks", () => {
-    it("shows exactly one Retry button when task is in-review AND failed (in Actions dropdown)", () => {
+    // FNXC:TaskDetailModal 2026-08-15-00:00 (slow-test trim): the failed and stuck-killed
+    // in-review uniqueness cases shared one body; converted to it.each with both statuses kept.
+    it.each(["failed", "stuck-killed"] as const)(
+      "shows exactly one Retry button when task is in-review AND %s (in Actions dropdown)",
+      (status) => {
       render(
         <TaskDetailModal
           initialTab="definition"
-          task={makeTask({ column: "in-review", status: "failed" })}
-          onClose={noop}
-          onMoveTask={noopMove}
-          onDeleteTask={noopDelete}
-          onMergeTask={noopMerge}
-          onOpenDetail={noopOpenDetail}
-          onRetryTask={noopRetry}
-          addToast={noop}
-        />,
-      );
-
-      // Open Actions dropdown and check for exactly one Retry
-      const actionsBtn = screen.getByRole("button", { name: "Actions" });
-      fireEvent.click(actionsBtn);
-
-      const retryButtons = screen.getAllByRole("menuitem", { name: "Retry" });
-      expect(retryButtons).toHaveLength(1);
-    });
-
-    it("shows exactly one Retry button when task is in-review AND stuck-killed (in Actions dropdown)", () => {
-      render(
-        <TaskDetailModal
-          initialTab="definition"
-          task={makeTask({ column: "in-review", status: "stuck-killed" })}
+          task={makeTask({ column: "in-review", status })}
           onClose={noop}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -2157,11 +2094,10 @@ describe("TaskDetailModal", () => {
       expect(screen.queryByRole("menuitem", { name: "Move to In Review" })).toBeNull();
     });
 
-    // Skipped: triage column currently has multiple transitions, so the
-    // chevron arrow still renders. Re-enable once the triage transition
-    // map is reduced to a single target.
-    // Replaced with stub: original assertions deferred (see git history). Restore once underlying feature/bug work lands.
-    it("split-button renders without chevron when only one transition", () => { expect(true).toBe(true); });
+    // FNXC:TaskDetailModal 2026-08-15-00:00 (slow-test trim): the "renders without chevron
+    // when only one transition" case was a `expect(true).toBe(true)` stub (triage currently
+    // has multiple transitions, so the scenario is unreachable). Deleted rather than kept as
+    // dead weight; restore real assertions from git history once a single-transition column exists.
 
     it("clicking main button executes primary transition immediately", async () => {
       const onMoveTask = vi.fn().mockResolvedValue(undefined);
@@ -3474,35 +3410,23 @@ describe("TaskDetailModal", () => {
       expect(onMoveTask).toHaveBeenCalledWith("FN-ideas", "todo", undefined);
     }
 
-    it("moves an Ideas task to Todo from the modal at desktop width", async () => {
-      setViewport(1024);
+    // FNXC:TaskDetailModal 2026-08-15-00:00 (slow-test trim): the modal/embedded x
+    // desktop/375px matrix is deliberate surface enumeration (Standing Rule: fix the
+    // invariant across all surfaces) — all four cases are KEPT, condensed to it.each.
+    it.each([
+      ["the modal at desktop width", "modal", 1024],
+      ["the modal at 375px", "modal", 375],
+      ["embedded detail at desktop width", "embedded", 1024],
+      ["embedded detail at 375px", "embedded", 375],
+    ] as const)("moves an Ideas task to Todo from %s", async (_label, surface, width) => {
+      setViewport(width);
       const onMoveTask = vi.fn(async () => ideasTask());
       await expectIdeasMove(() => {
-        render(<TaskDetailModal initialTab="definition" task={ideasTask()} onClose={noop} onMoveTask={onMoveTask} onDeleteTask={noopDelete} onMergeTask={noopMerge} onOpenDetail={noopOpenDetail} addToast={noop} />);
-      }, onMoveTask);
-    });
-
-    it("moves an Ideas task to Todo from the modal at 375px", async () => {
-      setViewport(375);
-      const onMoveTask = vi.fn(async () => ideasTask());
-      await expectIdeasMove(() => {
-        render(<TaskDetailModal initialTab="definition" task={ideasTask()} onClose={noop} onMoveTask={onMoveTask} onDeleteTask={noopDelete} onMergeTask={noopMerge} onOpenDetail={noopOpenDetail} addToast={noop} />);
-      }, onMoveTask);
-    });
-
-    it("moves an Ideas task to Todo from embedded detail at desktop width", async () => {
-      setViewport(1024);
-      const onMoveTask = vi.fn(async () => ideasTask());
-      await expectIdeasMove(() => {
-        render(<TaskDetailContent embedded initialTab="definition" task={ideasTask()} onMoveTask={onMoveTask} onDeleteTask={noopDelete} onMergeTask={noopMerge} onOpenDetail={noopOpenDetail} addToast={noop} />);
-      }, onMoveTask);
-    });
-
-    it("moves an Ideas task to Todo from embedded detail at 375px", async () => {
-      setViewport(375);
-      const onMoveTask = vi.fn(async () => ideasTask());
-      await expectIdeasMove(() => {
-        render(<TaskDetailContent embedded initialTab="definition" task={ideasTask()} onMoveTask={onMoveTask} onDeleteTask={noopDelete} onMergeTask={noopMerge} onOpenDetail={noopOpenDetail} addToast={noop} />);
+        if (surface === "modal") {
+          render(<TaskDetailModal initialTab="definition" task={ideasTask()} onClose={noop} onMoveTask={onMoveTask} onDeleteTask={noopDelete} onMergeTask={noopMerge} onOpenDetail={noopOpenDetail} addToast={noop} />);
+        } else {
+          render(<TaskDetailContent embedded initialTab="definition" task={ideasTask()} onMoveTask={onMoveTask} onDeleteTask={noopDelete} onMergeTask={noopMerge} onOpenDetail={noopOpenDetail} addToast={noop} />);
+        }
       }, onMoveTask);
     });
 

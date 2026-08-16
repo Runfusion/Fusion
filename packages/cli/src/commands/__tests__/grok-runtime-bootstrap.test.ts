@@ -31,6 +31,29 @@ describe("Grok CLI runtime packaged bootstrap", () => {
 });
 
 /*
+ * FNXC:CursorCli 2026-08-16-04:05:
+ * FN-9093 regression guard: the Cursor provider card's Enable action only flips `useCursorCli` in settings,
+ * so without this eager bootstrap nothing ever registers fusion-plugin-cursor-runtime and every cursor-cli
+ * selection fails the runtime-routed fail-fast with "install and enable the Cursor runtime plugin".
+ * Mirrors the FN-7761 Grok guard above: the helper must run before loadAllPlugins() in each long-lived host.
+ */
+describe("Cursor CLI runtime packaged bootstrap", () => {
+  for (const command of ["serve", "daemon", "dashboard"] as const) {
+    it(`${command} eagerly ensures the bundled Cursor runtime before loading enabled plugins`, () => {
+      const source = readCommand(command);
+      const importIndex = source.indexOf("ensureBundledCursorRuntimePluginInstalled");
+      const ensureIndex = source.indexOf("ensureBundledCursorRuntimePluginInstalled(pluginStore, pluginLoader)");
+      const loadIndex = source.indexOf("pluginLoader.loadAllPlugins()");
+
+      expect(importIndex).toBeGreaterThanOrEqual(0);
+      expect(ensureIndex).toBeGreaterThanOrEqual(0);
+      expect(loadIndex).toBeGreaterThanOrEqual(0);
+      expect(ensureIndex).toBeLessThan(loadIndex);
+    });
+  }
+});
+
+/*
 FNXC:GrokCliRouting 2026-07-15-10:17:
 Hosts must pass a real engine PluginRunner (getRuntimeById) into createServer — never the bare PluginLoader. Engine-mode merge omits onMerge so server.ts derives engine.onMerge. UI-only / bare CLI leave pluginRunner undefined (dual-remediation).
 */

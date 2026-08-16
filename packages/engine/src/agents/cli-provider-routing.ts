@@ -3,7 +3,7 @@ import type { PluginRunner } from "../plugins/plugin-runner.js";
 
 export type CliProviderClassification = "registry-native" | "runtime-routed" | "non-cli" | "withheld-unsupported";
 export type CliPathPolicy = "fail-fast" | "pinned-pi-fallback" | "assert-available" | "defer-to-resolve-runtime" | "n/a";
-export type CliFallbackPolicy = "promote-to-primary" | "defer-to-runtime" | "drop-with-warning" | "none";
+export type CliFallbackPolicy = "promote-to-primary" | "defer-to-runtime" | "defer-cross-runtime" | "drop-with-warning" | "none";
 
 export interface CliProviderRouting {
   providerId: string;
@@ -70,7 +70,7 @@ export const CLI_PROVIDER_ROUTING_CENSUS: readonly CliProviderRouting[] = [
   { providerId: "grok-cli", classification: "runtime-routed", runtimeId: "grok", autoDerive: "fail-fast", guardNotApplicable: "pinned-pi-fallback", onExplicitHint: "defer-to-resolve-runtime", fallbackPolicy: "defer-to-runtime", missingRuntimeError: buildMissingGrokRuntimeError, rationale: "Visible-key, fallback-only, and explicit-hint paths intentionally preserve the shipped direct xAI/pi fallback." },
   { providerId: "hermes", classification: "runtime-routed", runtimeId: "hermes", autoDerive: "fail-fast", guardNotApplicable: "pinned-pi-fallback", onExplicitHint: "assert-available", fallbackPolicy: "drop-with-warning", missingRuntimeError: buildMissingHermesRuntimeError, rationale: "Fallback-only Hermes cannot be resolved by a healthy primary pi runtime." },
   { providerId: "claude-cli", classification: "runtime-routed", runtimeId: "claude", autoDerive: "fail-fast", guardNotApplicable: "pinned-pi-fallback", onExplicitHint: "assert-available", fallbackPolicy: "drop-with-warning", missingRuntimeError: buildMissingClaudeRuntimeError, rationale: "Fallback-only Claude CLI cannot be resolved by a healthy primary pi runtime." },
-  { providerId: "cursor-cli", classification: "runtime-routed", runtimeId: "cursor", autoDerive: "fail-fast", guardNotApplicable: "pinned-pi-fallback", onExplicitHint: "assert-available", fallbackPolicy: "drop-with-warning", missingRuntimeError: buildMissingCursorRuntimeError, rationale: "FN-9097 verified Cursor's supervised stream-json transport and session resume contract." },
+  { providerId: "cursor-cli", classification: "runtime-routed", runtimeId: "cursor", autoDerive: "fail-fast", guardNotApplicable: "pinned-pi-fallback", onExplicitHint: "assert-available", fallbackPolicy: "defer-cross-runtime", missingRuntimeError: buildMissingCursorRuntimeError, rationale: "Cursor fallback is withheld from a healthy foreign runtime and armed for a single prompt-time cross-runtime swap." },
 ] as const;
 
 export function getCliProviderRouting(providerId: string | undefined): CliProviderRouting | undefined {

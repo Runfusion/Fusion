@@ -1571,6 +1571,17 @@ export async function runImplementation(
             if (await deps.handleNonContinuableSessionError(task, false, errorMessage)) {
               return;
             }
+            /*
+            FNXC:PostDoneContinuation 2026-08-15-23:48:
+            Step-session failures must classify non-continuable transcripts in the same order as
+            single-session execution: completed work wins first; incomplete work gets the bounded
+            fresh-session retry (clearing sessionFile with recovery backoff) before this generic
+            resume sink can retain the poisoned transcript. Exhaustion clears its counters and
+            deliberately falls through to the existing sink.
+            */
+            if (await deps.handleNonContinuableSessionRetry(task, errorMessage)) {
+              return;
+            }
             executorLog.error(`✗ ${task.id} step-session execution failed:`, errorDetail);
             await deps.store.logEntry(task.id, `Step-session execution failed: ${errorMessage}`, errorStack ?? errorDetail, deps.getRunContextFor(task.id));
             await deps.store.updateTask(task.id, { status: null, error: null });

@@ -71,6 +71,7 @@ import {
   waitForSettingsModalReady,
   settingsModalUser,
   installSettingsModalEnv,
+  flushSettingsAutoSave,
 } from "./SettingsModal.test-harness";
 
 vi.mock("../../api", async (importOriginal) => {
@@ -207,6 +208,16 @@ describe("SettingsModal", () => {
     localStorage.setItem("fusion:settings:show-advanced", "true");
   });
 
+  /*
+  FNXC:SettingsModalTests 2026-08-16-04:24:
+  Every Scheduling-tab test navigates with `await screen.findByRole("button", { name: "Scheduling" })`,
+  not `getByRole` after `waitFor(fetchSettings called)`. The fetch being CALLED is a mount-time signal
+  that can precede the resolved-settings render commit, so under parallel-worker load the nav button is
+  not yet in the tree and a bare getByRole flakes (observed 2026-08-15 in a 12-file run: only the
+  floating-window shell had mounted). findByRole waits for the actual UI readiness with the default
+  timeout — a wait-mechanism fix, not a widened timeout. Nav always happens BEFORE any test arms fake
+  timers (findBy* deadlocks under vitest fake timers), so this is safe file-wide.
+  */
   describe("Scheduling overlap ignore paths", () => {
     /*
     FNXC:ExecutorToolFailureRetry 2026-08-06-15:10:
@@ -224,7 +235,7 @@ describe("SettingsModal", () => {
       await act(async () => {
         await Promise.resolve();
       });
-      await settingsModalUser.click(screen.getByRole("button", { name: "Scheduling" }));
+      await settingsModalUser.click(await screen.findByRole("button", { name: "Scheduling" }));
 
       const threshold = screen.getByLabelText("Consecutive tool failures") as HTMLInputElement;
       expect(threshold.value).toBe("1");
@@ -255,7 +266,7 @@ describe("SettingsModal", () => {
       await act(async () => {
         await Promise.resolve();
       });
-      await settingsModalUser.click(screen.getByRole("button", { name: "Scheduling" }));
+      await settingsModalUser.click(await screen.findByRole("button", { name: "Scheduling" }));
 
       expect((screen.getByLabelText("Consecutive tool failures") as HTMLInputElement).value).toBe("4");
       await settingsModalUser.click(screen.getByLabelText("Let engineer agents auto-claim backlog tasks"));
@@ -275,7 +286,7 @@ describe("SettingsModal", () => {
       renderModal();
       await waitFor(() => expect(mockFetchSettings).toHaveBeenCalled());
 
-      fireEvent.click(screen.getByRole("button", { name: "Scheduling" }));
+      fireEvent.click(await screen.findByRole("button", { name: "Scheduling" }));
 
       expect(screen.getByLabelText(/ignore hidden dot paths in overlap checks/i)).toBeChecked();
     });
@@ -290,7 +301,7 @@ describe("SettingsModal", () => {
       renderModal();
       await waitFor(() => expect(mockFetchSettings).toHaveBeenCalled());
 
-      fireEvent.click(screen.getByRole("button", { name: "Scheduling" }));
+      fireEvent.click(await screen.findByRole("button", { name: "Scheduling" }));
 
       expect(screen.getByLabelText(/ignore hidden dot paths in overlap checks/i)).not.toBeChecked();
     });
@@ -299,15 +310,16 @@ describe("SettingsModal", () => {
       renderModal();
       await waitFor(() => expect(mockFetchSettings).toHaveBeenCalled());
 
-      fireEvent.click(screen.getByRole("button", { name: "Scheduling" }));
+      fireEvent.click(await screen.findByRole("button", { name: "Scheduling" }));
 
-      await settingsModalUser.click(screen.getByLabelText(/ignore hidden dot paths in overlap checks/i));
-      await settingsModalUser.type(screen.getByPlaceholderText("docs/"), "generated/*");
+      // FNXC:SettingsModalTests 2026-08-16-03:46: flush the 500ms auto-save debounce on the fake clock instead of a real-timer waitFor (FN-2707); assertions unchanged. Fake timers must be enabled BEFORE the mutating edit so the debounce lands on the fake clock.
+      vi.useFakeTimers();
+      fireEvent.click(screen.getByLabelText(/ignore hidden dot paths in overlap checks/i));
+      fireEvent.change(screen.getByPlaceholderText("docs/"), { target: { value: "generated/*" } });
 
-
-      await waitFor(() => {
-        expect(mockUpdateSettings).toHaveBeenCalledTimes(1);
-      });
+      await flushSettingsAutoSave();
+      vi.useRealTimers();
+      expect(mockUpdateSettings).toHaveBeenCalledTimes(1);
 
       const payload = mockUpdateSettings.mock.calls[0][0];
       expect(payload.ignoreHiddenOverlapPaths).toBe(false);
@@ -324,14 +336,14 @@ describe("SettingsModal", () => {
       renderModal();
       await waitFor(() => expect(mockFetchSettings).toHaveBeenCalled());
 
-      fireEvent.click(screen.getByRole("button", { name: "Scheduling" }));
+      fireEvent.click(await screen.findByRole("button", { name: "Scheduling" }));
 
-      await settingsModalUser.click(screen.getByLabelText(/ignore hidden dot paths in overlap checks/i));
+      vi.useFakeTimers();
+      fireEvent.click(screen.getByLabelText(/ignore hidden dot paths in overlap checks/i));
 
-
-      await waitFor(() => {
-        expect(mockUpdateSettings).toHaveBeenCalledTimes(1);
-      });
+      await flushSettingsAutoSave();
+      vi.useRealTimers();
+      expect(mockUpdateSettings).toHaveBeenCalledTimes(1);
       expect(mockUpdateSettings.mock.calls[0][0].ignoreHiddenOverlapPaths).toBe(true);
     });
 
@@ -344,7 +356,7 @@ describe("SettingsModal", () => {
       renderModal();
       await waitFor(() => expect(mockFetchSettings).toHaveBeenCalled());
 
-      fireEvent.click(screen.getByRole("button", { name: "Scheduling" }));
+      fireEvent.click(await screen.findByRole("button", { name: "Scheduling" }));
 
       expect(screen.getByDisplayValue("docs/")).toBeInTheDocument();
       expect(screen.getByDisplayValue("generated/*")).toBeInTheDocument();
@@ -354,7 +366,7 @@ describe("SettingsModal", () => {
       renderModal();
       await waitFor(() => expect(mockFetchSettings).toHaveBeenCalled());
 
-      fireEvent.click(screen.getByRole("button", { name: "Scheduling" }));
+      fireEvent.click(await screen.findByRole("button", { name: "Scheduling" }));
 
       await settingsModalUser.click(screen.getByRole("button", { name: /browse path for ignored overlap entry 1/i }));
 
@@ -368,20 +380,20 @@ describe("SettingsModal", () => {
       renderModal();
       await waitFor(() => expect(mockFetchSettings).toHaveBeenCalled());
 
-      fireEvent.click(screen.getByRole("button", { name: "Scheduling" }));
+      fireEvent.click(await screen.findByRole("button", { name: "Scheduling" }));
 
-      await settingsModalUser.click(screen.getByRole("button", { name: /browse path for ignored overlap entry 1/i }));
-      await settingsModalUser.click(await screen.findByRole("button", { name: "Select README.md" }));
+      vi.useFakeTimers();
+      fireEvent.click(screen.getByRole("button", { name: /browse path for ignored overlap entry 1/i }));
+      // FNXC:SettingsModalTests 2026-08-16-03:46: the mocked FileBrowser dialog mounts synchronously on click; findBy* polling deadlocks under vitest fake timers, so query synchronously.
+      fireEvent.click(screen.getByRole("button", { name: "Select README.md" }));
 
-      await settingsModalUser.click(screen.getByRole("button", { name: /add ignored path/i }));
+      fireEvent.click(screen.getByRole("button", { name: /add ignored path/i }));
       const inputs = screen.getAllByPlaceholderText("docs/");
-      await settingsModalUser.type(inputs[1], "generated/*");
+      fireEvent.change(inputs[1], { target: { value: "generated/*" } });
 
-
-
-      await waitFor(() => {
-        expect(mockUpdateSettings).toHaveBeenCalledTimes(1);
-      });
+      await flushSettingsAutoSave();
+      vi.useRealTimers();
+      expect(mockUpdateSettings).toHaveBeenCalledTimes(1);
 
       const payload = mockUpdateSettings.mock.calls[0][0];
       expect(payload.overlapIgnorePaths).toEqual(["README.md", "generated/*"]);
@@ -396,17 +408,17 @@ describe("SettingsModal", () => {
       renderModal();
       await waitFor(() => expect(mockFetchSettings).toHaveBeenCalled());
 
-      fireEvent.click(screen.getByRole("button", { name: "Scheduling" }));
+      fireEvent.click(await screen.findByRole("button", { name: "Scheduling" }));
 
       const select = screen.getByLabelText("Heartbeat Scope Discipline") as HTMLSelectElement;
       expect(select.value).toBe("lite");
 
-      await settingsModalUser.selectOptions(select, "off");
+      vi.useFakeTimers();
+      fireEvent.change(select, { target: { value: "off" } });
 
-
-      await waitFor(() => {
-        expect(mockUpdateSettings).toHaveBeenCalledTimes(1);
-      });
+      await flushSettingsAutoSave();
+      vi.useRealTimers();
+      expect(mockUpdateSettings).toHaveBeenCalledTimes(1);
 
       const payload = mockUpdateSettings.mock.calls[0][0] as Record<string, unknown>;
       expect(payload.heartbeatScopeDiscipline).toBe("off");
@@ -425,7 +437,7 @@ describe("SettingsModal", () => {
       renderModal();
       await waitFor(() => expect(mockFetchSettings).toHaveBeenCalled());
 
-      fireEvent.click(screen.getByRole("button", { name: "Scheduling" }));
+      fireEvent.click(await screen.findByRole("button", { name: "Scheduling" }));
 
       expect((screen.getByLabelText("Let engineer agents auto-claim backlog tasks") as HTMLInputElement).checked).toBe(expectedChecked);
     });
@@ -439,16 +451,16 @@ describe("SettingsModal", () => {
       renderModal();
       await waitFor(() => expect(mockFetchSettings).toHaveBeenCalled());
 
-      fireEvent.click(screen.getByRole("button", { name: "Scheduling" }));
+      fireEvent.click(await screen.findByRole("button", { name: "Scheduling" }));
 
       const toggle = screen.getByLabelText("Let engineer agents auto-claim backlog tasks") as HTMLInputElement;
       expect(toggle.checked).toBe(false);
-      await settingsModalUser.click(toggle);
+      vi.useFakeTimers();
+      fireEvent.click(toggle);
 
-
-      await waitFor(() => {
-        expect(mockUpdateSettings).toHaveBeenCalledTimes(1);
-      });
+      await flushSettingsAutoSave();
+      vi.useRealTimers();
+      expect(mockUpdateSettings).toHaveBeenCalledTimes(1);
 
       const payload = mockUpdateSettings.mock.calls[0][0] as Record<string, unknown>;
       expect(payload.engineerBacklogAutoClaim).toBe(true);
@@ -463,16 +475,16 @@ describe("SettingsModal", () => {
       renderModal();
       await waitFor(() => expect(mockFetchSettings).toHaveBeenCalled());
 
-      fireEvent.click(screen.getByRole("button", { name: "Scheduling" }));
+      fireEvent.click(await screen.findByRole("button", { name: "Scheduling" }));
 
       const toggle = screen.getByLabelText("Let engineer agents auto-claim backlog tasks") as HTMLInputElement;
       expect(toggle.checked).toBe(true);
-      await settingsModalUser.click(toggle);
+      vi.useFakeTimers();
+      fireEvent.click(toggle);
 
-
-      await waitFor(() => {
-        expect(mockUpdateSettings).toHaveBeenCalledTimes(1);
-      });
+      await flushSettingsAutoSave();
+      vi.useRealTimers();
+      expect(mockUpdateSettings).toHaveBeenCalledTimes(1);
 
       const payload = mockUpdateSettings.mock.calls[0][0] as Record<string, unknown>;
       expect(payload.engineerBacklogAutoClaim).toBe(false);
@@ -485,7 +497,7 @@ describe("SettingsModal", () => {
       await waitFor(() => expect(mockFetchSettings).toHaveBeenCalled());
 
       // Open Scheduling section
-      fireEvent.click(screen.getByRole("button", { name: "Scheduling" }));
+      fireEvent.click(await screen.findByRole("button", { name: "Scheduling" }));
 
       const input = screen.getByLabelText("Max Concurrent Tasks") as HTMLInputElement;
       expect(input).toBeDefined();
@@ -510,7 +522,7 @@ describe("SettingsModal", () => {
       await waitFor(() => expect(mockFetchSettings).toHaveBeenCalled());
 
       // Open Scheduling section
-      fireEvent.click(screen.getByRole("button", { name: "Scheduling" }));
+      fireEvent.click(await screen.findByRole("button", { name: "Scheduling" }));
 
       const input = screen.getByLabelText("Poll Interval (ms)") as HTMLInputElement;
       expect(input).toBeDefined();
@@ -524,7 +536,7 @@ describe("SettingsModal", () => {
       renderModal();
       await waitFor(() => expect(mockFetchSettings).toHaveBeenCalled());
 
-      fireEvent.click(screen.getByRole("button", { name: "Scheduling" }));
+      fireEvent.click(await screen.findByRole("button", { name: "Scheduling" }));
 
       const input = screen.getByLabelText("Stale High Fan-out Escalation (hours)") as HTMLInputElement;
       expect(input).toBeDefined();
@@ -539,11 +551,12 @@ describe("SettingsModal", () => {
 
       fireEvent.click(screen.getByText("Worktrees"));
       const input = screen.getByLabelText("Worktrees Directory") as HTMLInputElement;
+      vi.useFakeTimers();
       fireEvent.change(input, { target: { value: "~/.fn-worktrees/{repo}" } });
 
-
-
-      await waitFor(() => expect(mockUpdateSettings).toHaveBeenCalled());
+      await flushSettingsAutoSave();
+      vi.useRealTimers();
+      expect(mockUpdateSettings).toHaveBeenCalled();
       const payload = mockUpdateSettings.mock.calls[0][0] as Record<string, unknown>;
       expect(payload.worktreesDir).toBe("~/.fn-worktrees/{repo}");
     });
@@ -562,17 +575,18 @@ describe("SettingsModal", () => {
       await waitForSettingsModalReady();
 
       expect(screen.getByDisplayValue(".env")).toBeInTheDocument();
-      await settingsModalUser.click(screen.getByRole("button", { name: "Add file" }));
+      vi.useFakeTimers();
+      fireEvent.click(screen.getByRole("button", { name: "Add file" }));
       const inputs = screen.getAllByLabelText("File to copy into new worktrees") as HTMLInputElement[];
-      await settingsModalUser.type(inputs[1], "  .env  ");
-      await settingsModalUser.click(screen.getAllByRole("button", { name: "Browse file to copy into new worktrees" })[1]);
-      expect(await screen.findByRole("dialog", { name: "Browse file to copy into new worktrees" })).toBeInTheDocument();
-      await settingsModalUser.click(screen.getByRole("button", { name: "Select README.md" }));
+      fireEvent.change(inputs[1], { target: { value: "  .env  " } });
+      fireEvent.click(screen.getAllByRole("button", { name: "Browse file to copy into new worktrees" })[1]);
+      // FNXC:SettingsModalTests 2026-08-16-03:46: the mocked FileBrowser dialog mounts synchronously on click; findBy* polling deadlocks under vitest fake timers, so query synchronously.
+      expect(screen.getByRole("dialog", { name: "Browse file to copy into new worktrees" })).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Select README.md" }));
 
-      await settingsModalUser.click(screen.getByRole("button", { name: "Add file" }));
+      fireEvent.click(screen.getByRole("button", { name: "Add file" }));
       const updatedInputs = screen.getAllByLabelText("File to copy into new worktrees") as HTMLInputElement[];
-      await settingsModalUser.type(updatedInputs[2], " README.md ");
-
+      fireEvent.change(updatedInputs[2], { target: { value: " README.md " } });
 
       /*
       FNXC:DashboardTests 2026-07-24-03:15:
@@ -581,13 +595,13 @@ describe("SettingsModal", () => {
       can land first (full-suite run 30083357210 saw calls[0] without the key).
       The exact-value assertion is unchanged.
       */
-      await waitFor(() => {
-        expect(
-          mockUpdateSettings.mock.calls.some(
-            (call) => (call[0] as Record<string, unknown>).worktreeCopyFiles !== undefined,
-          ),
-        ).toBe(true);
-      });
+      await flushSettingsAutoSave();
+      vi.useRealTimers();
+      expect(
+        mockUpdateSettings.mock.calls.some(
+          (call) => (call[0] as Record<string, unknown>).worktreeCopyFiles !== undefined,
+        ),
+      ).toBe(true);
       const payload = mockUpdateSettings.mock.calls
         .map((call) => call[0] as Record<string, unknown>)
         .find((candidate) => candidate.worktreeCopyFiles !== undefined)!;
@@ -607,10 +621,12 @@ describe("SettingsModal", () => {
       renderModal({ initialSection: "worktrees" });
       await waitForSettingsModalReady();
 
-      await settingsModalUser.click(screen.getByRole("button", { name: "Remove copied worktree file" }));
+      vi.useFakeTimers();
+      fireEvent.click(screen.getByRole("button", { name: "Remove copied worktree file" }));
 
-
-      await waitFor(() => expect(mockUpdateSettings).toHaveBeenCalled());
+      await flushSettingsAutoSave();
+      vi.useRealTimers();
+      expect(mockUpdateSettings).toHaveBeenCalled();
       const payload = mockUpdateSettings.mock.calls[0][0] as Record<string, unknown>;
       expect(payload.worktreeCopyFiles).toEqual([]);
     });
@@ -876,9 +892,12 @@ describe("SettingsModal", () => {
       renderModal({ initialSection: "worktrees" });
       await waitForSettingsModalReady();
       // FNXC:SettingsAutoSave 2026-06-22-21:52: The removed footer Save action means this persistence assertion needs a real edit; changing the path exercises the same clamp.
+      vi.useFakeTimers();
       fireEvent.change(screen.getByLabelText("Worktrunk binary path"), { target: { value: "/missing/worktrunk" } });
 
-      await waitFor(() => expect(mockUpdateSettings).toHaveBeenCalled());
+      await flushSettingsAutoSave();
+      vi.useRealTimers();
+      expect(mockUpdateSettings).toHaveBeenCalled();
       const payload = mockUpdateSettings.mock.calls[0][0] as {
         worktrunk?: { enabled?: boolean };
       };
@@ -900,16 +919,17 @@ describe("SettingsModal", () => {
       await settingsModalUser.click(screen.getByText("Worktrees"));
 
       const enabledToggle = screen.getByLabelText("Enable worktrunk integration");
-      await settingsModalUser.click(enabledToggle);
+      vi.useFakeTimers();
+      fireEvent.click(enabledToggle);
 
       const onFailureSelect = screen.getByLabelText("Worktrunk failure behavior") as HTMLSelectElement;
       if (onFailure !== "fail") {
-        await settingsModalUser.selectOptions(onFailureSelect, onFailure);
+        fireEvent.change(onFailureSelect, { target: { value: onFailure } });
       }
 
-
-
-      await waitFor(() => expect(mockUpdateSettings).toHaveBeenCalled());
+      await flushSettingsAutoSave();
+      vi.useRealTimers();
+      expect(mockUpdateSettings).toHaveBeenCalled();
       const payload = mockUpdateSettings.mock.calls[0][0] as {
         worktrunk?: { enabled?: boolean; onFailure?: string; binaryPath?: string };
       };
@@ -1326,19 +1346,17 @@ describe("SettingsModal", () => {
       });
 
       it("includes pushAfterMerge and trimmed pushRemote in the save payload", async () => {
-        await settingsModalUser.click(
+        vi.useFakeTimers();
+        fireEvent.click(
           screen.getByRole("checkbox", { name: /push to remote after merge/i }),
         );
 
         const pushRemoteInput = screen.getByLabelText("Push Remote");
-        await settingsModalUser.clear(pushRemoteInput);
-        await settingsModalUser.type(pushRemoteInput, "  upstream main  ");
+        fireEvent.change(pushRemoteInput, { target: { value: "  upstream main  " } });
 
-
-
-        await waitFor(() => {
-          expect(mockUpdateSettings).toHaveBeenCalledTimes(1);
-        });
+        await flushSettingsAutoSave();
+        vi.useRealTimers();
+        expect(mockUpdateSettings).toHaveBeenCalledTimes(1);
 
         const payload = mockUpdateSettings.mock.calls[0][0];
         expect(payload.pushAfterMerge).toBe(true);
@@ -1382,16 +1400,15 @@ describe("SettingsModal", () => {
         const pushAfterMergeToggle = await screen.findByRole("checkbox", { name: /push to remote after merge/i });
         expect(screen.getByLabelText("Push Remote")).toHaveValue("upstream main");
 
-        await settingsModalUser.click(pushAfterMergeToggle);
+        vi.useFakeTimers();
+        fireEvent.click(pushAfterMergeToggle);
 
         expect(screen.queryByLabelText("Push Remote")).not.toBeInTheDocument();
         expect(screen.queryByText("Git remote to push to")).not.toBeInTheDocument();
 
-
-
-        await waitFor(() => {
-          expect(mockUpdateSettings).toHaveBeenCalledTimes(1);
-        });
+        await flushSettingsAutoSave();
+        vi.useRealTimers();
+        expect(mockUpdateSettings).toHaveBeenCalledTimes(1);
 
         const payload = mockUpdateSettings.mock.calls[0][0] as Record<string, unknown>;
         expect(payload.pushAfterMerge).toBe(false);
@@ -1402,12 +1419,12 @@ describe("SettingsModal", () => {
         const select = screen.getByLabelText("Plan approval mode");
         expect(select).toHaveValue("workflow");
 
-        await settingsModalUser.selectOptions(select, "require-all");
+        vi.useFakeTimers();
+        fireEvent.change(select, { target: { value: "require-all" } });
 
-
-        await waitFor(() => {
-          expect(mockUpdateSettings).toHaveBeenCalledTimes(1);
-        });
+        await flushSettingsAutoSave();
+        vi.useRealTimers();
+        expect(mockUpdateSettings).toHaveBeenCalledTimes(1);
 
         const payload = mockUpdateSettings.mock.calls[0][0] as Record<string, unknown>;
         expect(payload.planApprovalMode).toBe("require-all");
@@ -1472,13 +1489,13 @@ describe("SettingsModal", () => {
       expect(authModeSelect.value).toBe("gh-cli");
       expect(screen.queryByLabelText("GitHub personal access token")).not.toBeInTheDocument();
 
-      await settingsModalUser.selectOptions(authModeSelect, "token");
-      await settingsModalUser.type(screen.getByLabelText("GitHub personal access token"), "ghp_test_token");
+      vi.useFakeTimers();
+      fireEvent.change(authModeSelect, { target: { value: "token" } });
+      fireEvent.change(screen.getByLabelText("GitHub personal access token"), { target: { value: "ghp_test_token" } });
 
-
-      await waitFor(() => {
-        expect(mockUpdateSettings).toHaveBeenCalled();
-      });
+      await flushSettingsAutoSave();
+      vi.useRealTimers();
+      expect(mockUpdateSettings).toHaveBeenCalled();
 
       const payload = mockUpdateSettings.mock.calls[0][0] as Record<string, unknown>;
       expect(payload.githubAuthMode).toBe("token");
@@ -1513,13 +1530,13 @@ describe("SettingsModal", () => {
       renderModal({ initialSection: "source-control" });
       await waitForSettingsModalReady();
 
-      await settingsModalUser.selectOptions(screen.getByLabelText("GitLab token type"), tokenType);
-      await settingsModalUser.type(screen.getByLabelText("GitLab access token"), " glpat_test_token ");
+      vi.useFakeTimers();
+      fireEvent.change(screen.getByLabelText("GitLab token type"), { target: { value: tokenType } });
+      fireEvent.change(screen.getByLabelText("GitLab access token"), { target: { value: " glpat_test_token " } });
 
-
-      await waitFor(() => {
-        expect(mockUpdateSettings).toHaveBeenCalled();
-      });
+      await flushSettingsAutoSave();
+      vi.useRealTimers();
+      expect(mockUpdateSettings).toHaveBeenCalled();
 
       const payload = mockUpdateSettings.mock.calls[0][0] as Record<string, unknown>;
       expect(payload.gitlabAuthTokenType).toBe(tokenType);
@@ -1541,13 +1558,13 @@ describe("SettingsModal", () => {
       renderModal({ initialSection: "source-control" });
       await waitForSettingsModalReady();
 
-      await settingsModalUser.clear(screen.getByLabelText("GitLab access token"));
-      await settingsModalUser.selectOptions(screen.getByLabelText("GitLab token type"), "project");
+      vi.useFakeTimers();
+      fireEvent.change(screen.getByLabelText("GitLab access token"), { target: { value: "" } });
+      fireEvent.change(screen.getByLabelText("GitLab token type"), { target: { value: "project" } });
 
-
-      await waitFor(() => {
-        expect(mockUpdateSettings).toHaveBeenCalled();
-      });
+      await flushSettingsAutoSave();
+      vi.useRealTimers();
+      expect(mockUpdateSettings).toHaveBeenCalled();
 
       const payload = mockUpdateSettings.mock.calls[0][0] as Record<string, unknown>;
       expect(payload.gitlabAuthToken).toBeNull();
@@ -1796,14 +1813,13 @@ describe("SettingsModal", () => {
       const devServerToggle = screen.getByLabelText("Dev Server") as HTMLInputElement;
       expect(devServerToggle).toBeChecked();
 
-      await settingsModalUser.click(devServerToggle);
+      vi.useFakeTimers();
+      fireEvent.click(devServerToggle);
       expect(devServerToggle).not.toBeChecked();
 
-
-
-      await waitFor(() => {
-        expect(mockUpdateGlobalSettings).toHaveBeenCalledTimes(1);
-      });
+      await flushSettingsAutoSave();
+      vi.useRealTimers();
+      expect(mockUpdateGlobalSettings).toHaveBeenCalledTimes(1);
 
       const payload = mockUpdateGlobalSettings.mock.calls[0][0];
       expect(payload.experimentalFeatures).toEqual({ devServerView: false, devServer: null });
@@ -1818,13 +1834,12 @@ describe("SettingsModal", () => {
       renderModal();
 
       await openExperimentalFeaturesSection();
-      await settingsModalUser.click(screen.getByLabelText("my-feature"));
+      vi.useFakeTimers();
+      fireEvent.click(screen.getByLabelText("my-feature"));
 
-
-
-      await waitFor(() => {
-        expect(mockUpdateGlobalSettings).toHaveBeenCalledTimes(1);
-      });
+      await flushSettingsAutoSave();
+      vi.useRealTimers();
+      expect(mockUpdateGlobalSettings).toHaveBeenCalledTimes(1);
 
       const payload = mockUpdateGlobalSettings.mock.calls[0][0];
       expect(payload.experimentalFeatures).toEqual({ "my-feature": true });
@@ -1852,13 +1867,12 @@ describe("SettingsModal", () => {
       expect(screen.queryByText(/dual-observe parity/i)).not.toBeInTheDocument();
       expect(screen.queryByText("Insights")).not.toBeInTheDocument();
 
-      await settingsModalUser.click(screen.getByLabelText("my-feature"));
+      vi.useFakeTimers();
+      fireEvent.click(screen.getByLabelText("my-feature"));
 
-
-
-      await waitFor(() => {
-        expect(mockUpdateGlobalSettings).toHaveBeenCalledTimes(1);
-      });
+      await flushSettingsAutoSave();
+      vi.useRealTimers();
+      expect(mockUpdateGlobalSettings).toHaveBeenCalledTimes(1);
 
       /*
       FNXC:SettingsExperimental 2026-06-23-21:20:
@@ -1899,14 +1913,13 @@ describe("SettingsModal", () => {
       const leftSidebarToggle = screen.getByLabelText("Left Sidebar Navigation") as HTMLInputElement;
       expect(leftSidebarToggle).toBeChecked();
 
-      await settingsModalUser.click(leftSidebarToggle);
+      vi.useFakeTimers();
+      fireEvent.click(leftSidebarToggle);
       expect(leftSidebarToggle).not.toBeChecked();
 
-
-
-      await waitFor(() => {
-        expect(mockUpdateGlobalSettings).toHaveBeenCalledTimes(1);
-      });
+      await flushSettingsAutoSave();
+      vi.useRealTimers();
+      expect(mockUpdateGlobalSettings).toHaveBeenCalledTimes(1);
 
       const payload = mockUpdateGlobalSettings.mock.calls[0][0];
       expect(payload.experimentalFeatures).toEqual({ leftSidebarNav: false });
@@ -1984,14 +1997,13 @@ describe("SettingsModal", () => {
 
       // Toggle the feature
       const checkbox = screen.getByLabelText("my-feature") as HTMLInputElement;
-      await settingsModalUser.click(checkbox);
+      vi.useFakeTimers();
+      fireEvent.click(checkbox);
 
       // Save
-
-
-      await waitFor(() => {
-        expect(mockUpdateGlobalSettings).toHaveBeenCalledTimes(1);
-      });
+      await flushSettingsAutoSave();
+      vi.useRealTimers();
+      expect(mockUpdateGlobalSettings).toHaveBeenCalledTimes(1);
 
       const payload = mockUpdateGlobalSettings.mock.calls[0][0];
       expect(payload.experimentalFeatures).toEqual({ "my-feature": true });
@@ -2038,14 +2050,13 @@ describe("SettingsModal", () => {
 
       // Toggle feature-b to true
       const checkboxB = screen.getByLabelText("feature-b") as HTMLInputElement;
-      await settingsModalUser.click(checkboxB);
+      vi.useFakeTimers();
+      fireEvent.click(checkboxB);
 
       // Save
-
-
-      await waitFor(() => {
-        expect(mockUpdateGlobalSettings).toHaveBeenCalledTimes(1);
-      });
+      await flushSettingsAutoSave();
+      vi.useRealTimers();
+      expect(mockUpdateGlobalSettings).toHaveBeenCalledTimes(1);
 
       const payload = mockUpdateGlobalSettings.mock.calls[0][0];
       expect(payload.experimentalFeatures).toEqual({ "feature-a": true, "feature-b": true });

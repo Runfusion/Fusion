@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildTaskRecommendationNoticeContent,
   buildTaskRecommendationNoticeIdempotencyKey,
   notifyOperatorOfTaskRecommendations,
   registerTaskRecommendationNoticeMailbox,
@@ -39,6 +40,8 @@ describe("task recommendation notice", () => {
         categories: ["improvement", "feature"],
       },
     });
+    expect(sent[0].input.content).toContain("Use the **Create task** button beside each recommendation");
+    expect(sent[0].input.content).toContain(`open ${task.id}'s **Recommendations** tab`);
     for (const recommendation of recommendations) {
       expect(sent[0].input.content).toContain(recommendation.title);
       expect(JSON.stringify(sent[0].input.metadata)).not.toContain(recommendation.title);
@@ -64,6 +67,10 @@ describe("task recommendation notice", () => {
     const failingStore = createStore();
     registerTaskRecommendationNoticeMailbox(failingStore as never, { sendMessageOnce: async () => { throw new Error("unavailable"); } });
     await expect(notifyOperatorOfTaskRecommendations(failingStore as never, task, recommendations, {})).resolves.toBe(false);
+  });
+
+  it("keeps the inline-action copy in the standalone content builder", () => {
+    expect(buildTaskRecommendationNoticeContent(task, recommendations)).toContain("Use the **Create task** button beside each recommendation");
   });
 
   it("dedupes equal id sets but changes keys for changed ids", () => {

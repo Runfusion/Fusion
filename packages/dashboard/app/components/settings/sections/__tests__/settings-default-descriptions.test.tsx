@@ -80,6 +80,7 @@ const SETTING_DESCRIPTION_KEYS: Record<string, string> = {
   gitlabAuthToken: "globalGeneral.gitLabAuthTokenHint",
   dismissModalsOnOutsideClick: "globalGeneral.dismissModalsByClickingOutsideHint",
   skipConfirmationDialogs: "globalGeneral.skipConfirmationDialogsHint",
+  quickAddSubmitOnEnter: "globalGeneral.quickAddSubmitOnEnterHint",
   persistAgentToolOutput: "globalGeneral.whenDisabledToolRowsAreStillLoggedBut",
   agentToolOutputMaxChars: "globalGeneral.agentToolOutputLimitHint",
   proactiveTaskChatEnabled: "globalGeneral.enableProactiveTaskChatHint",

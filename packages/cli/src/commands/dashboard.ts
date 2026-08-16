@@ -140,7 +140,7 @@ import {
 } from "./llama-cpp-extension.js";
 import { getCachedUpdateStatus, isUpdateCheckEnabled } from "../update-cache.js";
 import { resolveSelfExtension } from "./self-extension.js";
-import { ensureBundledDependencyGraphPluginInstalled, ensureBundledGrokRuntimePluginInstalled, ensureBundledPluginInstalled, isBundledPluginId } from "../plugins/bundled-plugin-install.js";
+import { ensureBundledCursorRuntimePluginInstalled, ensureBundledDependencyGraphPluginInstalled, ensureBundledGrokRuntimePluginInstalled, ensureBundledPluginInstalled, isBundledPluginId } from "../plugins/bundled-plugin-install.js";
 import { registerCustomProviders, reregisterCustomProviders } from "./custom-provider-registry.js";
 import { handleOpencodeGoApiKeySaved, syncStartupModels } from "./startup-model-sync.js";
 import { DashboardTUI, DashboardLogSink, isTTYAvailable, type SystemInfo, type GitStatus, type GitCommit, type GitCommitDetail, type GitBranch, type GitWorktree, type FileEntry, type FileReadResult, type TaskStep as TUITaskStep, type TaskLogEntry as TUITaskLogEntry, type TaskDetailData, type TaskEvent } from "./dashboard-tui/index.js";
@@ -1568,6 +1568,27 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
     } catch (err) {
       logSink.log(
         `Failed to auto-install bundled Grok CLI runtime plugin: ${err instanceof Error ? err.message : err}`,
+        "plugins",
+      );
+    }
+
+    /*
+     * FNXC:CursorCli 2026-08-16-04:05:
+     * FN-9093: the Cursor provider card's Enable action only flips `useCursorCli` in settings and never
+     * registers fusion-plugin-cursor-runtime, so `getRuntimeById("cursor")` missed and every cursor-cli
+     * selection hit the fail-fast "install and enable the Cursor runtime plugin" error after enabling.
+     * Mirror the FN-7761 Grok eager bootstrap so the Cursor runtime is loadable before chat sends.
+     */
+    try {
+      const installStatus = await ensureBundledCursorRuntimePluginInstalled(pluginStore, pluginLoader);
+      if (installStatus === "installed") {
+        logSink.log("Installed bundled Cursor CLI runtime plugin", "plugins");
+      } else if (installStatus === "missing-bundle") {
+        logSink.log("Bundled Cursor CLI runtime plugin was not found in this build", "plugins");
+      }
+    } catch (err) {
+      logSink.log(
+        `Failed to auto-install bundled Cursor CLI runtime plugin: ${err instanceof Error ? err.message : err}`,
         "plugins",
       );
     }

@@ -51,4 +51,19 @@ describe("deleteAiSession", () => {
 
     await expect(deleteAiSession("session-1")).rejects.toThrow("Failed to fetch");
   });
+
+  it("maps gateway 503 text/plain to the operator-facing unavailable message", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("no available server", {
+        status: 503,
+        headers: { "content-type": "text/plain; charset=utf-8" },
+      }),
+    );
+
+    await expect(deleteAiSession("session-1")).rejects.toMatchObject({
+      name: "ApiRequestError",
+      message: "The server is temporarily unavailable. Please try again.",
+      status: 503,
+    });
+  });
 });

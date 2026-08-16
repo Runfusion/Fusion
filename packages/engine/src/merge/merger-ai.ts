@@ -93,6 +93,7 @@ import {
   isNonFastForwardPushError,
   isRebaseInProgress,
   parsePushRemoteTarget,
+  pushWithTransientRetries,
   pushToRemoteAfterMerge,
   runMergeAdvanceAutoSync,
   syncGroupPrOnLanding,
@@ -852,7 +853,7 @@ export interface LandRepoContext {
   noCommitsExpected?: boolean;
   /** FNXC:Workspace 2026-08-15-08:36: Present only for workspace sub-repos; it fences the durable intent and remote ref advance. */
   workspaceLand?: { handle: WorkspaceLeaseHandle; repoRelPath: string; remote: string };
-  /** FNXC:WorkspaceMergeDispatch 2026-08-19-00:00: Task-level pin that fences every merge-body ref advance. */
+  /** FNXC:WorkspaceMergeDispatch 2026-08-15-22:55: Task-level pin that fences every merge-body ref advance. */
   workspaceDispatchFence?: { fenceRefName: string; fenceRefSha: string };
   store: TaskStore;
 }
@@ -1105,7 +1106,7 @@ export async function landOneRepo(
       }
 
       /*
-       * FNXC:AIMerge 2026-08-19-00:00:
+       * FNXC:AIMerge 2026-08-15-22:55:
        * This is the sole production pre-land seam: the reviewer approved the
        * clean-room squash but the integration ref has not advanced, so scope and
        * shrinkage violations can still leave every integration branch untouched.
@@ -2719,9 +2720,23 @@ export async function pushAfterMergeToRemote(input: {
   throwIfAborted(signal, taskId);
   let fastPathError: string;
   try {
-    await git(["push", remote, `${localRef}:refs/heads/${targetBranch}`], projectRootDir, { timeout: 120_000 });
+    // FNXC:MergePush 2026-08-16-02:55: Retry transient fast-path transport failures with
+    // bounded, cancellation-aware backoff; merge aborts must escape to the aborted-push audit path.
+    await pushWithTransientRetries(
+      () => git(["push", remote, `${localRef}:refs/heads/${targetBranch}`], projectRootDir, { timeout: 120_000 }),
+      {
+        taskId,
+        signal,
+        onRetry: async ({ attempt, maxRetries, delayMs, error }) => {
+          const message = `Push after merge: temporary Git transport failure; retrying in ${delayMs}ms (${attempt}/${maxRetries}): ${error}`;
+          aiMergeLog.warn(`${taskId}: ${message}`);
+          await log(message);
+        },
+      },
+    );
     return { pushed: true, remote, targetBranch };
   } catch (err: unknown) {
+    if (isMergeAbortedError(err)) throw err;
     fastPathError = getErrorMessage(err);
   }
   if (!isNonFastForwardPushError(fastPathError)) {

@@ -19,97 +19,34 @@
  * gate stays green without a running server.
  */
 
-import { describe, it, expect, afterEach } from "vitest";
-import { execSync } from "node:child_process";
+import { it, expect, beforeAll, beforeEach, afterEach, afterAll } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CentralCore } from "../../central/central-core.js";
-import { createAsyncDataLayer, type AsyncDataLayer } from "../../postgres/data-layer.js";
-
-const PG_TEST_URL_BASE =
-  process.env.FUSION_PG_TEST_URL_BASE ?? "postgresql://localhost:5432";
-const PG_AVAILABLE =
-  process.env.FUSION_PG_TEST_SKIP !== "1" && Boolean(PG_TEST_URL_BASE);
-
-const pgDescribe = PG_AVAILABLE ? describe : describe.skip;
-
-function uniqueDbName(): string {
-  return `fusion_cc_test_${process.pid}_${Math.random().toString(36).slice(2, 8)}`;
-}
+import type { AsyncDataLayer } from "../../postgres/data-layer.js";
+import {
+  pgDescribe,
+  createSharedPgTaskStoreTestHarness,
+  type SharedPgTaskStoreHarness,
+} from "../../__test-utils__/pg-test-harness.js";
 
 /*
-FNXC:PgTestAuthFix 2026-07-14-00:00:
-The inline adminExec used process.env.USER for the psql -U flag, which is 'runner' on GitHub Actions (not 'postgres'). Use the PG_TEST_URL_BASE connection string instead so credentials are always correct.
+FNXC:PgTestHarnessAdoption 2026-08-16-03:45:
+Migrated off the hand-rolled per-test CREATE DATABASE + applySchemaBaseline scaffolding
+(~3-4s of DDL per test) onto the shared PG harness: one template-cloned database per file
+with TRUNCATE-based reset per test. The database setup here was scaffolding, not the
+subject under test (CentralCore's backend-mode delegation is). Each test still constructs
+and inits its own CentralCore against the harness layer AFTER the per-test truncate, so
+init-time bootstrap (default local node) is observed per test exactly as before.
+CentralCore.close() never closes an injected layer, so the shared pool survives across
+tests. Every assertion is unchanged.
 */
-function adminExec(statement: string): void {
-  execSync(
-    `psql "${PG_TEST_URL_BASE}/postgres" -v ON_ERROR_STOP=1 -c "${statement.replace(/"/g, '\\"')}"`,
-    { stdio: "pipe", env: process.env },
-  );
-}
-
 interface TestCtx {
-  dbName: string;
   layer: AsyncDataLayer;
   central: CentralCore;
   globalDir: string;
   projectDirs: string[];
-}
-
-async function setupCtx(): Promise<TestCtx> {
-  const dbName = uniqueDbName();
-  try {
-    adminExec(`DROP DATABASE IF EXISTS "${dbName}"`);
-  } catch {
-    /* may not exist */
-  }
-  adminExec(`CREATE DATABASE "${dbName}"`);
-  const testUrl = `${PG_TEST_URL_BASE}/${dbName}`;
-  const { createConnectionSetFromUrl } = await import("../../postgres/connection.js");
-  const { applySchemaBaseline } = await import("../../postgres/schema-applier.js");
-  const { resolveBackendWithOptions } = await import("../../postgres/backend-resolver.js");
-  const backend = resolveBackendWithOptions({
-    databaseUrl: testUrl,
-    databaseMigrationUrl: testUrl,
-  });
-  const connections = await createConnectionSetFromUrl(backend, {
-    poolMax: 3,
-    connectTimeoutSeconds: 5,
-  });
-  await applySchemaBaseline(connections.migration);
-  const layer = createAsyncDataLayer(connections);
-  // Pass an explicit temp global dir so resolveGlobalDir() does not throw under VITEST.
-  const globalDir = mkdtempSync(join(tmpdir(), "kb-cc-pg-global-"));
-  const central = new CentralCore(globalDir, { asyncLayer: layer });
-  await central.init();
-  return { dbName, layer, central, globalDir, projectDirs: [] };
-}
-
-async function teardownCtx(ctx: TestCtx | null): Promise<void> {
-  if (!ctx) return;
-  try {
-    await ctx.central.close();
-  } catch {
-    /* best-effort */
-  }
-  try {
-    await ctx.layer.close();
-  } catch {
-    /* best-effort */
-  }
-  for (const dir of [...ctx.projectDirs, ctx.globalDir]) {
-    try {
-      rmSync(dir, { recursive: true, force: true });
-    } catch {
-      /* best-effort */
-    }
-  }
-  try {
-    adminExec(`DROP DATABASE IF EXISTS "${ctx.dbName}"`);
-  } catch {
-    /* best-effort */
-  }
 }
 
 function makeProjectDir(ctx: TestCtx, name: string): string {
@@ -119,22 +56,49 @@ function makeProjectDir(ctx: TestCtx, name: string): string {
 }
 
 pgDescribe("CentralCore backend mode (PostgreSQL)", () => {
-  let ctx: TestCtx | null = null;
-
-  afterEach(async () => {
-    await teardownCtx(ctx);
-    ctx = null;
+  const h: SharedPgTaskStoreHarness = createSharedPgTaskStoreTestHarness({
+    prefix: "fusion_cc_test",
   });
+  let ctx: TestCtx;
+
+  async function setupCtx(): Promise<TestCtx> {
+    const layer = h.layer();
+    // Pass an explicit temp global dir so resolveGlobalDir() does not throw under VITEST.
+    const globalDir = mkdtempSync(join(tmpdir(), "kb-cc-pg-global-"));
+    const central = new CentralCore(globalDir, { asyncLayer: layer });
+    await central.init();
+    return { layer, central, globalDir, projectDirs: [] };
+  }
+
+  beforeAll(h.beforeAll);
+  beforeEach(async () => {
+    await h.beforeEach();
+    ctx = await setupCtx();
+  });
+  afterEach(async () => {
+    try {
+      await ctx.central.close();
+    } catch {
+      /* best-effort */
+    }
+    for (const dir of [...ctx.projectDirs, ctx.globalDir]) {
+      try {
+        rmSync(dir, { recursive: true, force: true });
+      } catch {
+        /* best-effort */
+      }
+    }
+    await h.afterEach();
+  });
+  afterAll(h.afterAll);
 
   it("reports backendMode=true and does not construct SQLite CentralDatabase", async () => {
-    ctx = await setupCtx();
     expect(ctx.central.backendMode).toBe(true);
     // getDatabasePath returns the logical global dir in backend mode (no SQLite file).
     expect(ctx.central.getDatabasePath()).not.toMatch(/fusion-central\.db$/);
   });
 
   it("bootstraps a default local node on init", async () => {
-    ctx = await setupCtx();
     const nodes = await ctx.central.listNodes();
     const localNodes = nodes.filter((n) => n.type === "local");
     expect(localNodes.length).toBe(1);
@@ -142,7 +106,6 @@ pgDescribe("CentralCore backend mode (PostgreSQL)", () => {
   });
 
   it("registers, reads, and lists a project through PostgreSQL", async () => {
-    ctx = await setupCtx();
     const projectPath = makeProjectDir(ctx, "alpha");
     const created = await ctx.central.registerProject({
       name: "Alpha",
@@ -168,7 +131,6 @@ pgDescribe("CentralCore backend mode (PostgreSQL)", () => {
   });
 
   it("updates a project and reconciles stale statuses", async () => {
-    ctx = await setupCtx();
     const projectPath = makeProjectDir(ctx, "beta");
     const created = await ctx.central.registerProject({
       name: "Beta",
@@ -188,7 +150,6 @@ pgDescribe("CentralCore backend mode (PostgreSQL)", () => {
   });
 
   it("registers and updates a node through PostgreSQL", async () => {
-    ctx = await setupCtx();
     const node = await ctx.central.registerNode({
       name: "remote-1",
       type: "remote",
@@ -210,7 +171,6 @@ pgDescribe("CentralCore backend mode (PostgreSQL)", () => {
   });
 
   it("logs and reads activity through PostgreSQL", async () => {
-    ctx = await setupCtx();
     const projectPath = makeProjectDir(ctx, "gamma");
     const project = await ctx.central.registerProject({
       name: "Gamma",
@@ -236,7 +196,6 @@ pgDescribe("CentralCore backend mode (PostgreSQL)", () => {
 
 
   it("records project-node path mappings through PostgreSQL", async () => {
-    ctx = await setupCtx();
     const projectPath = makeProjectDir(ctx, "epsilon");
     const project = await ctx.central.registerProject({
       name: "Epsilon",
@@ -255,7 +214,6 @@ pgDescribe("CentralCore backend mode (PostgreSQL)", () => {
   });
 
   it("records and reads a mesh snapshot through PostgreSQL", async () => {
-    ctx = await setupCtx();
     const nodes = await ctx.central.listNodes();
     const localNode = nodes.find((n) => n.type === "local")!;
     // project_id is part of the composite PRIMARY KEY and therefore NOT NULL
@@ -280,7 +238,6 @@ pgDescribe("CentralCore backend mode (PostgreSQL)", () => {
   });
 
   it("attachBackendLayer transitions a legacy CentralCore into backend mode", async () => {
-    ctx = await setupCtx();
     // Create a fresh legacy CentralCore (no asyncLayer) then attach the layer.
     const legacy = new CentralCore(ctx.globalDir);
     expect(legacy.backendMode).toBe(false);

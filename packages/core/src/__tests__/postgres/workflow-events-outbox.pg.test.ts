@@ -30,13 +30,13 @@ Skipped when PostgreSQL is unreachable (FUSION_PG_TEST_SKIP=1) so the merge gate
 stays green without a running server — the same posture as the sibling PG suites.
 */
 
-import { describe, it, expect, afterEach } from "vitest";
-import postgres from "postgres";
-import { execSync } from "node:child_process";
-import { createAsyncDataLayer, type AsyncDataLayer } from "../../postgres/data-layer.js";
-import { createConnectionSetFromUrl } from "../../postgres/connection.js";
-import type { ResolvedBackend } from "../../postgres/backend-resolver.js";
-import { applySchemaBaseline } from "../../postgres/schema-applier.js";
+import { it, expect, beforeAll, beforeEach, afterEach, afterAll } from "vitest";
+import type { AsyncDataLayer } from "../../postgres/data-layer.js";
+import {
+  pgDescribe,
+  createSharedPgTaskStoreTestHarness,
+  type SharedPgTaskStoreHarness,
+} from "../../__test-utils__/pg-test-harness.js";
 import { insertTaskRow, readTaskRow } from "../../task-store/async/async-persistence.js";
 import * as schema from "../../postgres/schema/index.js";
 import { and, eq } from "drizzle-orm";
@@ -50,70 +50,20 @@ import {
 import { createWorkflowEventBus } from "../../workflow-events.js";
 import type { WorkflowLifecycleEvent } from "../../types/workflow-events.js";
 
-const PG_TEST_URL_BASE = process.env.FUSION_PG_TEST_URL_BASE ?? "postgresql://localhost:5432";
-const PG_AVAILABLE = process.env.FUSION_PG_TEST_SKIP !== "1" && Boolean(PG_TEST_URL_BASE);
-const pgDescribe = PG_AVAILABLE ? describe : describe.skip;
-
 const TEST_PROJECT_ID = "proj_test_u3_outbox";
 
-function uniqueDbName(): string {
-  return `fusion_u3_outbox_${process.pid}_${Math.random().toString(36).slice(2, 8)}`;
-}
-
-function adminExec(statement: string): void {
-  execSync(
-    `psql "${PG_TEST_URL_BASE}/postgres" -v ON_ERROR_STOP=1 -c "${statement.replace(/"/g, '\\"')}"`,
-    { stdio: "pipe", env: process.env },
-  );
-}
-
+/*
+FNXC:PgTestHarnessAdoption 2026-08-16-03:45:
+Migrated off the hand-rolled per-test CREATE DATABASE + applySchemaBaseline scaffolding
+(~3-4s of DDL per test) onto the shared PG harness: one template-cloned database per
+describe block with TRUNCATE-based reset per test. The database setup here was
+scaffolding — the real-PG lease predicate is the subject and still runs against real
+PostgreSQL. The harness keeps the project-BOUND layer this suite requires (an unbound
+harness runs with RLS bypassed and writes rows the bound reader cannot see), and every
+assertion is unchanged.
+*/
 interface TestCtx {
-  dbName: string;
   layer: AsyncDataLayer;
-  adminSql: ReturnType<typeof postgres>;
-}
-
-async function setupCtx(): Promise<TestCtx> {
-  const dbName = uniqueDbName();
-  try {
-    adminExec(`DROP DATABASE IF EXISTS "${dbName}"`);
-  } catch {
-    // may not exist
-  }
-  adminExec(`CREATE DATABASE "${dbName}"`);
-  const testUrl = `${PG_TEST_URL_BASE}/${dbName}`;
-  const backend: ResolvedBackend = {
-    mode: "external",
-    runtimeUrl: testUrl,
-    migrationUrl: testUrl,
-    migrationUrlOverridden: false,
-  };
-  const schemaConnections = await createConnectionSetFromUrl(backend, { poolMax: 1, connectTimeoutSeconds: 5 });
-  await applySchemaBaseline(schemaConnections.migration);
-  await schemaConnections.close();
-
-  // Bind the layer to a project, as production does — an unbound harness runs
-  // with RLS bypassed and writes rows the bound reader cannot see.
-  const connections = await createConnectionSetFromUrl(backend, {
-    poolMax: 5,
-    connectTimeoutSeconds: 5,
-    projectId: TEST_PROJECT_ID,
-  });
-  const layer = createAsyncDataLayer(connections, { projectId: TEST_PROJECT_ID });
-  const adminSql = postgres(testUrl, {
-    max: 2,
-    prepare: false,
-    onnotice: () => {},
-    connection: { "fusion.project_id": TEST_PROJECT_ID },
-  });
-  return { dbName, layer, adminSql };
-}
-
-async function teardownCtx(ctx: TestCtx | null): Promise<void> {
-  if (!ctx) return;
-  try { await ctx.layer.close(); } catch { /* closing best-effort */ }
-  try { await ctx.adminSql.end({ timeout: 5 }); } catch { /* closing best-effort */ }
-  try { adminExec(`DROP DATABASE IF EXISTS "${ctx.dbName}"`); } catch { /* dropped best-effort */ }
 }
 
 async function seedTask(ctx: TestCtx, id: string, column = "in-progress"): Promise<void> {
@@ -144,14 +94,21 @@ async function moveColumnInTransaction(tx: DbTransaction, taskId: string, column
 }
 
 pgDescribe("transactional outbox — durable follow-on work (U3 / R5)", () => {
-  let ctx: TestCtx | null = null;
-  afterEach(async () => {
-    await teardownCtx(ctx);
-    ctx = null;
+  const h: SharedPgTaskStoreHarness = createSharedPgTaskStoreTestHarness({
+    prefix: "fusion_u3_outbox",
+    projectId: TEST_PROJECT_ID,
   });
+  let ctx: TestCtx;
+
+  beforeAll(h.beforeAll);
+  beforeEach(async () => {
+    await h.beforeEach();
+    ctx = { layer: h.layer() };
+  });
+  afterEach(h.afterEach);
+  afterAll(h.afterAll);
 
   it("a work item written INSIDE the transition transaction survives a crash before the event is emitted", async () => {
-    ctx = await setupCtx();
     await seedTask(ctx, "FN-OUT-1");
 
     // The transition transaction: the COLUMN CHANGE and the durable follow-on
@@ -179,7 +136,6 @@ pgDescribe("transactional outbox — durable follow-on work (U3 / R5)", () => {
   });
 
   it("a ROLLED-BACK transition leaves no column change, no orphan work, and emits NOTHING", async () => {
-    ctx = await setupCtx();
     await seedTask(ctx, "FN-OUT-2");
 
     // The emit point sits AFTER the transaction block in moves.ts, so a throw
@@ -215,14 +171,21 @@ pgDescribe("transactional outbox — durable follow-on work (U3 / R5)", () => {
 });
 
 pgDescribe("transactional outbox — delivery is AT-LEAST-ONCE (U3 / R5)", () => {
-  let ctx: TestCtx | null = null;
-  afterEach(async () => {
-    await teardownCtx(ctx);
-    ctx = null;
+  const h: SharedPgTaskStoreHarness = createSharedPgTaskStoreTestHarness({
+    prefix: "fusion_u3_outbox_alo",
+    projectId: TEST_PROJECT_ID,
   });
+  let ctx: TestCtx;
+
+  beforeAll(h.beforeAll);
+  beforeEach(async () => {
+    await h.beforeEach();
+    ctx = { layer: h.layer() };
+  });
+  afterEach(h.afterEach);
+  afterAll(h.afterAll);
 
   it("an item whose lease EXPIRED mid-flight is re-claimable — the store redelivers", async () => {
-    ctx = await setupCtx();
     await seedTask(ctx, "FN-OUT-3");
 
     const created = await upsertWorkflowWorkItem(ctx.layer, {
@@ -250,7 +213,6 @@ pgDescribe("transactional outbox — delivery is AT-LEAST-ONCE (U3 / R5)", () =>
   });
 
   it("an IDEMPOTENT handler run twice over one redelivered item produces exactly one effect", async () => {
-    ctx = await setupCtx();
     await seedTask(ctx, "FN-OUT-4");
 
     const created = await upsertWorkflowWorkItem(ctx.layer, {
@@ -278,14 +240,21 @@ pgDescribe("transactional outbox — delivery is AT-LEAST-ONCE (U3 / R5)", () =>
 });
 
 pgDescribe("post-commit event vs. outbox — the division of labour (U3 / R5, KTD-3)", () => {
-  let ctx: TestCtx | null = null;
-  afterEach(async () => {
-    await teardownCtx(ctx);
-    ctx = null;
+  const h: SharedPgTaskStoreHarness = createSharedPgTaskStoreTestHarness({
+    prefix: "fusion_u3_outbox_evt",
+    projectId: TEST_PROJECT_ID,
   });
+  let ctx: TestCtx;
+
+  beforeAll(h.beforeAll);
+  beforeEach(async () => {
+    await h.beforeEach();
+    ctx = { layer: h.layer() };
+  });
+  afterEach(h.afterEach);
+  afterAll(h.afterAll);
 
   it("dropping every subscriber loses the REACTION but not the durable work", async () => {
-    ctx = await setupCtx();
     await seedTask(ctx, "FN-OUT-5");
 
     const bus = createWorkflowEventBus();

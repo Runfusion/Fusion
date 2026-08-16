@@ -27,58 +27,25 @@
  * gate stays green without a running server.
  */
 
-import { describe, it, expect, afterEach, vi } from "vitest";
-import { execSync } from "node:child_process";
+import { it, expect, beforeAll, beforeEach, afterEach, afterAll, vi } from "vitest";
 import { randomBytes } from "node:crypto";
-import { createAsyncDataLayer, type AsyncDataLayer } from "../../postgres/data-layer.js";
+import type { AsyncDataLayer } from "../../postgres/data-layer.js";
+import {
+  pgDescribe,
+  createSharedPgTaskStoreTestHarness,
+  type SharedPgTaskStoreHarness,
+} from "../../__test-utils__/pg-test-harness.js";
 import type { ArchivedTaskEntry } from "../../types.js";
 
-const PG_TEST_URL_BASE =
-  process.env.FUSION_PG_TEST_URL_BASE ?? "postgresql://localhost:5432";
-const PG_AVAILABLE =
-  process.env.FUSION_PG_TEST_SKIP !== "1" && Boolean(PG_TEST_URL_BASE);
-
-const pgDescribe = PG_AVAILABLE ? describe : describe.skip;
-
-function uniqueDbName(): string {
-  return `fusion_cas_test_${process.pid}_${Math.random().toString(36).slice(2, 8)}`;
-}
-
 /*
-FNXC:PgTestAuthFix 2026-07-14-00:00:
-The inline adminExec used process.env.USER for the psql -U flag, which is 'runner' on GitHub Actions (not 'postgres'). Use the PG_TEST_URL_BASE connection string instead so credentials are always correct.
+FNXC:PgTestHarnessAdoption 2026-08-16-03:45:
+Migrated off the hand-rolled per-test CREATE DATABASE + applySchemaBaseline scaffolding
+(~3-4s of DDL per test) onto the shared PG harness: one template-cloned database per file
+with TRUNCATE-based reset per test. The database setup here was scaffolding, not the
+subject under test, and every assertion is unchanged.
 */
-function adminExec(statement: string): void {
-  execSync(
-    `psql "${PG_TEST_URL_BASE}/postgres" -v ON_ERROR_STOP=1 -c "${statement.replace(/"/g, '\\"')}"`,
-    { stdio: "pipe", env: process.env },
-  );
-}
-
 interface TestCtx {
-  dbName: string;
   layer: AsyncDataLayer;
-}
-
-async function setupCtx(): Promise<TestCtx> {
-  const dbName = uniqueDbName();
-  try { adminExec(`DROP DATABASE IF EXISTS "${dbName}"`); } catch { /* may not exist */ }
-  adminExec(`CREATE DATABASE "${dbName}"`);
-  const testUrl = `${PG_TEST_URL_BASE}/${dbName}`;
-  const { createConnectionSetFromUrl } = await import("../../postgres/connection.js");
-  const { applySchemaBaseline } = await import("../../postgres/schema-applier.js");
-  const { resolveBackendWithOptions } = await import("../../postgres/backend-resolver.js");
-  const backend = resolveBackendWithOptions({ databaseUrl: testUrl, databaseMigrationUrl: testUrl });
-  const connections = await createConnectionSetFromUrl(backend, { poolMax: 3, connectTimeoutSeconds: 5 });
-  await applySchemaBaseline(connections.migration);
-  const layer = createAsyncDataLayer(connections);
-  return { dbName, layer };
-}
-
-async function teardownCtx(ctx: TestCtx | null): Promise<void> {
-  if (!ctx) return;
-  try { await ctx.layer.close(); } catch { /* best-effort */ }
-  try { adminExec(`DROP DATABASE IF EXISTS "${ctx.dbName}"`); } catch { /* best-effort */ }
 }
 
 /** A fixed 32-byte master key provider for deterministic test crypto. */
@@ -107,17 +74,22 @@ function sampleArchiveEntry(overrides: Partial<ArchivedTaskEntry> = {}): Archive
 }
 
 pgDescribe("PostgreSQL central-db / archive-db / secrets-store (U6 satellite-central-archive-db)", () => {
-  let ctx: TestCtx | null = null;
-
-  afterEach(async () => {
-    await teardownCtx(ctx);
-    ctx = null;
+  const h: SharedPgTaskStoreHarness = createSharedPgTaskStoreTestHarness({
+    prefix: "fusion_cas_test",
   });
+  let ctx: TestCtx;
+
+  beforeAll(h.beforeAll);
+  beforeEach(async () => {
+    await h.beforeEach();
+    ctx = { layer: h.layer() };
+  });
+  afterEach(h.afterEach);
+  afterAll(h.afterAll);
 
   // ── Central DB: task claims ──
 
   it("CentralDatabase: tryClaimTask creates a fresh claim, then getTaskClaim reads it back", async () => {
-    ctx = await setupCtx();
     const { tryClaimTask, getTaskClaim } = await import("../../async-stores/async-central-db.js");
     const now = new Date().toISOString();
 
@@ -143,7 +115,6 @@ pgDescribe("PostgreSQL central-db / archive-db / secrets-store (U6 satellite-cen
   });
 
   it("CentralDatabase: same-owner renewal requires matching expectedEpoch", async () => {
-    ctx = await setupCtx();
     const { tryClaimTask } = await import("../../async-stores/async-central-db.js");
     const now = () => new Date().toISOString();
 
@@ -171,7 +142,6 @@ pgDescribe("PostgreSQL central-db / archive-db / secrets-store (U6 satellite-cen
   });
 
   it("CentralDatabase: different-owner takeover requires matching expectedEpoch, else conflict", async () => {
-    ctx = await setupCtx();
     const { tryClaimTask } = await import("../../async-stores/async-central-db.js");
     const now = () => new Date().toISOString();
 
@@ -201,7 +171,6 @@ pgDescribe("PostgreSQL central-db / archive-db / secrets-store (U6 satellite-cen
   });
 
   it("CentralDatabase: renewTaskClaim and releaseTaskClaim honor ownership", async () => {
-    ctx = await setupCtx();
     const { tryClaimTask, renewTaskClaim, releaseTaskClaim, getTaskClaim } = await import("../../async-stores/async-central-db.js");
     const now = () => new Date().toISOString();
 
@@ -242,7 +211,6 @@ pgDescribe("PostgreSQL central-db / archive-db / secrets-store (U6 satellite-cen
   });
 
   it("CentralDatabase: renewTaskClaim returns not_found for an absent claim", async () => {
-    ctx = await setupCtx();
     const { renewTaskClaim } = await import("../../async-stores/async-central-db.js");
     const result = await renewTaskClaim(ctx.layer, {
       projectId: "proj-1", taskId: "FN-MISSING", nodeId: "node-a", agentId: "agent-1",
@@ -255,7 +223,6 @@ pgDescribe("PostgreSQL central-db / archive-db / secrets-store (U6 satellite-cen
   // ── Archive DB ──
 
   it("ArchiveDatabase: upsert → get → list → filterArchived → delete", async () => {
-    ctx = await setupCtx();
     const { upsertArchivedTask, getArchivedTask, listArchivedTasks, filterArchived, deleteArchivedTask, getArchivedRowCount } = await import("../../async-stores/async-archive-db.js");
     const entry = sampleArchiveEntry({ id: "FN-ARCH-1", title: "First archived", comments: [{ id: "c1", text: "note", author: "user", createdAt: "2026-01-01T00:00:00.000Z" }] });
 
@@ -282,7 +249,6 @@ pgDescribe("PostgreSQL central-db / archive-db / secrets-store (U6 satellite-cen
   });
 
   it("ArchiveDatabase: upsert replaces an existing entry on conflict", async () => {
-    ctx = await setupCtx();
     const { upsertArchivedTask, getArchivedTask } = await import("../../async-stores/async-archive-db.js");
     const entry = sampleArchiveEntry({ id: "FN-ARCH-2", title: "v1" });
     await upsertArchivedTask(ctx.layer.db, entry);
@@ -296,7 +262,6 @@ pgDescribe("PostgreSQL central-db / archive-db / secrets-store (U6 satellite-cen
   });
 
   it("ArchiveDatabase: search matches tokens across title/description/comments", async () => {
-    ctx = await setupCtx();
     const { upsertArchivedTask, searchArchivedTasks } = await import("../../async-stores/async-archive-db.js");
     await upsertArchivedTask(ctx.layer.db, sampleArchiveEntry({ id: "FN-S1", title: "Postgres migration", description: "convert sqlite", comments: [] }));
     await upsertArchivedTask(ctx.layer.db, sampleArchiveEntry({ id: "FN-S2", title: "unrelated", description: "nothing here", comments: [{ id: "c", text: "mention postgres", author: "agent", createdAt: "2026-01-01T00:00:00.000Z" }] }));
@@ -312,7 +277,6 @@ pgDescribe("PostgreSQL central-db / archive-db / secrets-store (U6 satellite-cen
   // ── SecretsStore ──
 
   it("SecretsStore: create → get → list → update → reveal → delete for project scope", async () => {
-    ctx = await setupCtx();
     const { AsyncSecretsStore } = await import("../../async-stores/async-secrets-store.js");
     const store = new AsyncSecretsStore(ctx.layer, fixedMasterKeyProvider());
 
@@ -346,7 +310,6 @@ pgDescribe("PostgreSQL central-db / archive-db / secrets-store (U6 satellite-cen
   });
 
   it("SecretsStore: global scope routes to central.secrets_global", async () => {
-    ctx = await setupCtx();
     const { AsyncSecretsStore } = await import("../../async-stores/async-secrets-store.js");
     const store = new AsyncSecretsStore(ctx.layer, fixedMasterKeyProvider());
 
@@ -363,7 +326,6 @@ pgDescribe("PostgreSQL central-db / archive-db / secrets-store (U6 satellite-cen
   });
 
   it("SecretsStore: duplicate key throws duplicate-key (unique constraint)", async () => {
-    ctx = await setupCtx();
     const { AsyncSecretsStore, SecretsStoreError } = await import("../../async-stores/async-secrets-store.js");
     const store = new AsyncSecretsStore(ctx.layer, fixedMasterKeyProvider());
 
@@ -375,7 +337,6 @@ pgDescribe("PostgreSQL central-db / archive-db / secrets-store (U6 satellite-cen
   });
 
   it("SecretsStore: re-encrypting a value on update round-trips", async () => {
-    ctx = await setupCtx();
     const { AsyncSecretsStore } = await import("../../async-stores/async-secrets-store.js");
     const store = new AsyncSecretsStore(ctx.layer, fixedMasterKeyProvider());
 
@@ -386,7 +347,6 @@ pgDescribe("PostgreSQL central-db / archive-db / secrets-store (U6 satellite-cen
   });
 
   it("SecretsStore: listEnvExportable returns project-overrides-global on key collision", async () => {
-    ctx = await setupCtx();
     const { AsyncSecretsStore } = await import("../../async-stores/async-secrets-store.js");
     const store = new AsyncSecretsStore(ctx.layer, fixedMasterKeyProvider());
 
@@ -399,7 +359,6 @@ pgDescribe("PostgreSQL central-db / archive-db / secrets-store (U6 satellite-cen
   });
 
   it("SecretsStore: deleting an absent secret throws not-found", async () => {
-    ctx = await setupCtx();
     const { AsyncSecretsStore } = await import("../../async-stores/async-secrets-store.js");
     const store = new AsyncSecretsStore(ctx.layer, fixedMasterKeyProvider());
     await expect(store.deleteSecret("nope", "project")).rejects.toMatchObject({ code: "not-found" });
@@ -410,7 +369,6 @@ pgDescribe("PostgreSQL central-db / archive-db / secrets-store (U6 satellite-cen
    * Secret audit notifications must cover create, update, read, and delete without ever including plaintext, and a failing observer must remain non-blocking so audit infrastructure cannot break credential operations.
    */
   it("SecretsStore: audit events omit plaintext and emitter failures stay non-blocking", async () => {
-    ctx = await setupCtx();
     const { AsyncSecretsStore } = await import("../../async-stores/async-secrets-store.js");
     const events: Array<Record<string, unknown>> = [];
     const store = new AsyncSecretsStore(ctx.layer, fixedMasterKeyProvider(), {

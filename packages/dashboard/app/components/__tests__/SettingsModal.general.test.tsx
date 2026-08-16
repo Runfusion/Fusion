@@ -77,6 +77,7 @@ import {
   settingsModalUser,
   expectSettingPersists,
   installSettingsModalEnv,
+  flushSettingsAutoSave,
 } from "./SettingsModal.test-harness";
 
 const mockListDiscussionCategories = vi.fn(async () => ({ categories: [] }));
@@ -225,8 +226,12 @@ describe("SettingsModal", () => {
     await waitForSettingsModalReady();
     const toggle = screen.getByLabelText("Recommendation mailbox notices");
     expect(toggle).toBeChecked();
-    await settingsModalUser.click(toggle);
-    await waitFor(() => expect(mockUpdateSettings).toHaveBeenCalled());
+    // FNXC:SettingsModalTests 2026-08-16-03:46: flush the 500ms auto-save debounce on the fake clock instead of a real-timer waitFor (FN-2707); assertions unchanged.
+    vi.useFakeTimers();
+    fireEvent.click(toggle);
+    await flushSettingsAutoSave();
+    vi.useRealTimers();
+    expect(mockUpdateSettings).toHaveBeenCalled();
     expect(mockUpdateSettings.mock.calls.at(-1)?.[0]).toMatchObject({ recommendationMailboxNoticeEnabled: false });
   });
   // Keep Advanced off by default so disclosure default/persist tests stay truthful.
@@ -1194,6 +1199,24 @@ describe("SettingsModal", () => {
       }
     });
 
+    it("saves quickAddSubmitOnEnter only via global settings payload", async () => {
+      renderModal({ initialSection: "global-general" });
+      await waitForSettingsModalReady();
+
+      vi.useFakeTimers();
+      fireEvent.click(screen.getByRole("checkbox", { name: "Press Enter to save a task in Quick Add" }));
+      await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+      expect(mockUpdateGlobalSettings).toHaveBeenCalled();
+      vi.useRealTimers();
+
+      const globalPayload = mockUpdateGlobalSettings.mock.calls[0]?.[0] as Record<string, unknown>;
+      expect(globalPayload.quickAddSubmitOnEnter).toBe(false);
+      if (mockUpdateSettings.mock.calls.length > 0) {
+        const projectPayload = mockUpdateSettings.mock.calls[0]?.[0] as Record<string, unknown>;
+        expect(projectPayload.quickAddSubmitOnEnter).toBeUndefined();
+      }
+    });
+
     it("saves persistAgentToolOutput only via global settings payload", async () => {
       renderModal({ initialSection: "global-general" });
       await waitForSettingsModalReady();
@@ -1541,11 +1564,15 @@ describe("SettingsModal", () => {
     it("persists scoped MCP edits without Save", async () => {
       renderModal({ initialSection: "mcp" });
       await waitForSettingsModalReady();
-      fireEvent.click(await screen.findByLabelText("Enable MCP servers for this scope"));
-      await waitFor(() => expect(mockUpdateSettings).toHaveBeenLastCalledWith(
+      const mcpToggle = await screen.findByLabelText("Enable MCP servers for this scope");
+      vi.useFakeTimers();
+      fireEvent.click(mcpToggle);
+      await flushSettingsAutoSave();
+      vi.useRealTimers();
+      expect(mockUpdateSettings).toHaveBeenLastCalledWith(
         expect.objectContaining({ mcpServers: expect.objectContaining({ enabled: true }) }),
         undefined,
-      ));
+      );
     });
 
     it("keeps Settings open after a persist failure and retries on the next edit", async () => {

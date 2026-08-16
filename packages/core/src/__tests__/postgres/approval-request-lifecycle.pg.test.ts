@@ -1,53 +1,21 @@
-import { describe, it, expect, afterEach } from "vitest";
-import { execSync } from "node:child_process";
-import { createAsyncDataLayer, type AsyncDataLayer } from "../../postgres/data-layer.js";
-
-const PG_TEST_URL_BASE =
-  process.env.FUSION_PG_TEST_URL_BASE ?? "postgresql://localhost:5432";
-const PG_AVAILABLE =
-  process.env.FUSION_PG_TEST_SKIP !== "1" && Boolean(PG_TEST_URL_BASE);
-
-const pgDescribe = PG_AVAILABLE ? describe : describe.skip;
-
-function uniqueDbName(): string {
-  return `fusion_sat_test_${process.pid}_${Math.random().toString(36).slice(2, 8)}`;
-}
+import { it, expect, beforeAll, beforeEach, afterEach, afterAll } from "vitest";
+import type { AsyncDataLayer } from "../../postgres/data-layer.js";
+import {
+  pgDescribe,
+  createSharedPgTaskStoreTestHarness,
+  type SharedPgTaskStoreHarness,
+} from "../../__test-utils__/pg-test-harness.js";
 
 /*
-FNXC:PgTestAuthFix 2026-07-14-00:00:
-The inline adminExec used process.env.USER for the psql -U flag, which is 'runner' on GitHub Actions (not 'postgres'). Use the PG_TEST_URL_BASE connection string instead so credentials are always correct.
+FNXC:PgTestHarnessAdoption 2026-08-16-03:45:
+Migrated off the hand-rolled per-test CREATE DATABASE + applySchemaBaseline scaffolding
+(~3-4s of DDL per test) onto the shared PG harness: one template-cloned database per file
+with TRUNCATE-based reset per test. The database setup here was scaffolding, not the
+subject under test (the approval-request transition guards are), and every assertion is
+unchanged.
 */
-function adminExec(statement: string): void {
-  execSync(
-    `psql "${PG_TEST_URL_BASE}/postgres" -v ON_ERROR_STOP=1 -c "${statement.replace(/"/g, '\\"')}"`,
-    { stdio: "pipe", env: process.env },
-  );
-}
-
 interface StoreTestCtx {
-  dbName: string;
   layer: AsyncDataLayer;
-}
-
-async function setupCtx(): Promise<StoreTestCtx> {
-  const dbName = uniqueDbName();
-  try { adminExec(`DROP DATABASE IF EXISTS "${dbName}"`); } catch { /* may not exist */ }
-  adminExec(`CREATE DATABASE "${dbName}"`);
-  const testUrl = `${PG_TEST_URL_BASE}/${dbName}`;
-  const { createConnectionSetFromUrl } = await import("../../postgres/connection.js");
-  const { applySchemaBaseline } = await import("../../postgres/schema-applier.js");
-  const { resolveBackendWithOptions } = await import("../../postgres/backend-resolver.js");
-  const backend = resolveBackendWithOptions({ databaseUrl: testUrl, databaseMigrationUrl: testUrl });
-  const connections = await createConnectionSetFromUrl(backend, { poolMax: 3, connectTimeoutSeconds: 5 });
-  await applySchemaBaseline(connections.migration);
-  const layer = createAsyncDataLayer(connections);
-  return { dbName, layer };
-}
-
-async function teardownCtx(ctx: StoreTestCtx | null): Promise<void> {
-  if (!ctx) return;
-  try { await ctx.layer.close(); } catch { /* best-effort */ }
-  try { adminExec(`DROP DATABASE IF EXISTS "${ctx.dbName}"`); } catch { /* best-effort */ }
 }
 
 /*
@@ -71,11 +39,18 @@ two concurrent transactions these tests do not create. The guard stays because t
 simply not what is verified here. Do not read a green run as proof of it.
 */
 pgDescribe("approval request lifecycle security (PostgreSQL)", () => {
-  let ctx: StoreTestCtx | null = null;
-  afterEach(async () => {
-    await teardownCtx(ctx);
-    ctx = null;
+  const h: SharedPgTaskStoreHarness = createSharedPgTaskStoreTestHarness({
+    prefix: "fusion_sat_test",
   });
+  let ctx: StoreTestCtx;
+
+  beforeAll(h.beforeAll);
+  beforeEach(async () => {
+    await h.beforeEach();
+    ctx = { layer: h.layer() };
+  });
+  afterEach(h.afterEach);
+  afterAll(h.afterAll);
 
   const REQUESTER = { actorId: "agent-1", actorType: "agent" as const, actorName: "Bot" };
   const DECIDER = { actorId: "user-1", actorType: "user" as const, actorName: "Admin" };
@@ -91,7 +66,6 @@ pgDescribe("approval request lifecycle security (PostgreSQL)", () => {
   }
 
   it("a same-verdict replay is rejected as an invalid transition", async () => {
-    ctx = await setupCtx();
     const store = await seed("apr-replay");
     await store.decideApprovalRequest(ctx.layer, "apr-replay", "approved", { actor: DECIDER });
 
@@ -101,7 +75,6 @@ pgDescribe("approval request lifecycle security (PostgreSQL)", () => {
   });
 
   it("a replay does not re-stamp decidedAt or append a duplicate audit event", async () => {
-    ctx = await setupCtx();
     const store = await seed("apr-nodup");
     const first = await store.decideApprovalRequest(ctx.layer, "apr-nodup", "approved", { actor: DECIDER });
     const auditBefore = await store.getApprovalAuditHistory(ctx.layer.db, "apr-nodup");
@@ -116,7 +89,6 @@ pgDescribe("approval request lifecycle security (PostgreSQL)", () => {
   });
 
   it("approve then deny is rejected — the first decision stands", async () => {
-    ctx = await setupCtx();
     const store = await seed("apr-flip");
     await store.decideApprovalRequest(ctx.layer, "apr-flip", "approved", { actor: DECIDER });
 
@@ -127,7 +99,6 @@ pgDescribe("approval request lifecycle security (PostgreSQL)", () => {
   });
 
   it("deciding a request that does not exist reports not-found", async () => {
-    ctx = await setupCtx();
     const store = await import("../../async-stores/async-approval-request-store.js");
 
     await expect(
@@ -136,7 +107,6 @@ pgDescribe("approval request lifecycle security (PostgreSQL)", () => {
   });
 
   it("markCompleted on a still-pending request is rejected", async () => {
-    ctx = await setupCtx();
     const store = await seed("apr-pending");
 
     await expect(
@@ -149,7 +119,6 @@ pgDescribe("approval request lifecycle security (PostgreSQL)", () => {
     The ownership check is the containment that matters: without it any caller who learned a request id
     could redeem someone else's approved grant.
     */
-    ctx = await setupCtx();
     const store = await seed("apr-owner");
     await store.decideApprovalRequest(ctx.layer, "apr-owner", "approved", { actor: DECIDER });
 

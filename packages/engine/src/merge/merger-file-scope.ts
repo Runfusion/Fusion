@@ -142,7 +142,7 @@ export class FileScopeViolationError extends Error {
 export type StagedFilesReader = (cwd: string) => Promise<string[]>;
 
 /**
- * FNXC:AIMerge 2026-08-19-00:00:
+ * FNXC:AIMerge 2026-08-15-22:55:
  * Unified AI merges approve a committed clean-room squash, so their file list
  * must be read from the approved commit range rather than the empty index.
  */

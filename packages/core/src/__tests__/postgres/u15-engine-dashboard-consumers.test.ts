@@ -21,15 +21,15 @@
  * gate stays green without a running server.
  */
 
-import { describe, it, expect, afterEach } from "vitest";
-import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
+import { describe, it, expect, beforeAll, beforeEach, afterEach, afterAll } from "vitest";
+import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { and, eq } from "drizzle-orm";
-import { execSync } from "node:child_process";
-import { createAsyncDataLayer, type AsyncDataLayer } from "../../postgres/data-layer.js";
-import { createConnectionSetFromUrl } from "../../postgres/connection.js";
-import type { ResolvedBackend } from "../../postgres/backend-resolver.js";
-import { applySchemaBaseline } from "../../postgres/schema-applier.js";
+import type { AsyncDataLayer } from "../../postgres/data-layer.js";
+import {
+  pgDescribe,
+  createSharedPgTaskStoreTestHarness,
+  type SharedPgTaskStoreHarness,
+} from "../../__test-utils__/pg-test-harness.js";
 import * as schema from "../../postgres/schema/index.js";
 import {
   recordDeploymentAsync,
@@ -51,87 +51,17 @@ import {
   reconcileSoftDeletedColumnDriftAsync,
 } from "../../task-store/async/async-self-healing.js";
 
-const PG_TEST_URL_BASE =
-  process.env.FUSION_PG_TEST_URL_BASE ?? "postgresql://localhost:5432";
-const PG_AVAILABLE =
-  process.env.FUSION_PG_TEST_SKIP !== "1" && Boolean(PG_TEST_URL_BASE);
-
-const pgDescribe = PG_AVAILABLE ? describe : describe.skip;
-
-function uniqueDbName(): string {
-  return `fusion_u15_test_${process.pid}_${Math.random().toString(36).slice(2, 8)}`;
-}
-
 /*
-FNXC:PgTestAuthFix 2026-07-14-00:00:
-The inline adminExec used process.env.USER for the psql -U flag, which is 'runner' on GitHub Actions (not 'postgres'). Use the PG_TEST_URL_BASE connection string instead so credentials are always correct.
+FNXC:PgTestHarnessAdoption 2026-08-16-03:45:
+Migrated off the hand-rolled per-test CREATE DATABASE + applySchemaBaseline scaffolding
+(~3-4s of DDL per test) onto the shared PG harness: one template-cloned database per file
+with TRUNCATE-based reset per test. The database setup here was scaffolding, not the
+subject under test (the async monitor-store and self-healing helpers are), and every
+assertion is unchanged.
 */
-function adminExec(statement: string): void {
-  execSync(
-    `psql "${PG_TEST_URL_BASE}/postgres" -v ON_ERROR_STOP=1 -c "${statement.replace(/"/g, '\\"')}"`,
-    { stdio: "pipe", env: process.env },
-  );
-}
-
 interface TestCtx {
-  dbName: string;
-  testUrl: string;
   layer: AsyncDataLayer;
-  adminSql: ReturnType<typeof postgres>;
-  adminDb: ReturnType<typeof drizzle>;
-}
-
-async function setupCtx(): Promise<TestCtx> {
-  const dbName = uniqueDbName();
-  try {
-    adminExec(`DROP DATABASE IF EXISTS "${dbName}"`);
-  } catch {
-    // may not exist
-  }
-  adminExec(`CREATE DATABASE "${dbName}"`);
-  const testUrl = `${PG_TEST_URL_BASE}/${dbName}`;
-
-  const schemaBackend: ResolvedBackend = {
-    mode: "external",
-    runtimeUrl: testUrl,
-    migrationUrl: testUrl,
-    migrationUrlOverridden: false,
-  };
-  const schemaConnections = await createConnectionSetFromUrl(schemaBackend, {
-    poolMax: 1,
-    connectTimeoutSeconds: 5,
-  });
-  await applySchemaBaseline(schemaConnections.migration);
-  await schemaConnections.close();
-
-  const connections = await createConnectionSetFromUrl(schemaBackend, {
-    poolMax: 5,
-    connectTimeoutSeconds: 5,
-  });
-  const layer = createAsyncDataLayer(connections);
-
-  const adminSql = postgres(testUrl, { max: 2, prepare: false, onnotice: () => {} });
-  const adminDb = drizzle(adminSql);
-  return { dbName, testUrl, layer, adminSql, adminDb };
-}
-
-async function teardownCtx(ctx: TestCtx | null): Promise<void> {
-  if (!ctx) return;
-  try {
-    await ctx.layer.close();
-  } catch {
-    // best-effort
-  }
-  try {
-    await ctx.adminSql.end({ timeout: 5 });
-  } catch {
-    // best-effort
-  }
-  try {
-    adminExec(`DROP DATABASE IF EXISTS "${ctx.dbName}"`);
-  } catch {
-    // best-effort
-  }
+  adminDb: PostgresJsDatabase;
 }
 
 /**
@@ -160,17 +90,22 @@ async function seedTask(
 }
 
 pgDescribe("U15 engine + dashboard consumers (PostgreSQL)", () => {
-  let ctx: TestCtx | null = null;
-
-  afterEach(async () => {
-    await teardownCtx(ctx);
-    ctx = null;
+  const h: SharedPgTaskStoreHarness = createSharedPgTaskStoreTestHarness({
+    prefix: "fusion_u15_test",
   });
+  let ctx: TestCtx;
+
+  beforeAll(h.beforeAll);
+  beforeEach(async () => {
+    await h.beforeEach();
+    ctx = { layer: h.layer(), adminDb: h.adminDb() };
+  });
+  afterEach(h.afterEach);
+  afterAll(h.afterAll);
 
   // ── Monitor store: deployments ────────────────────────────────────────────
   describe("monitor deployments", () => {
     it("records a deployment and reads it back via async Drizzle", async () => {
-      ctx = await setupCtx();
       const deployment = await recordDeploymentAsync(ctx.layer.db, {
         service: "api",
         environment: "prod",
@@ -187,7 +122,6 @@ pgDescribe("U15 engine + dashboard consumers (PostgreSQL)", () => {
     });
 
     it("is idempotent by deploymentId (upsert, not duplicate)", async () => {
-      ctx = await setupCtx();
       const first = await recordDeploymentAsync(ctx.layer.db, {
         deploymentId: "dep-1",
         status: "deployed",
@@ -208,7 +142,6 @@ pgDescribe("U15 engine + dashboard consumers (PostgreSQL)", () => {
   // ── Monitor store: incidents + storm guard ────────────────────────────────
   describe("monitor incidents + storm guard", () => {
     it("opens an incident then resolves it", async () => {
-      ctx = await setupCtx();
       const { incident, created } = await ingestIncidentSignalAsync(ctx.layer.db, {
         groupingKey: "g1",
         title: "API 500s",
@@ -234,7 +167,6 @@ pgDescribe("U15 engine + dashboard consumers (PostgreSQL)", () => {
     });
 
     it("absorbs a burst sharing one groupingKey into ONE open incident", async () => {
-      ctx = await setupCtx();
       for (let i = 0; i < 100; i += 1) {
         await ingestIncidentSignalAsync(ctx.layer.db, {
           groupingKey: "g-burst",
@@ -247,13 +179,11 @@ pgDescribe("U15 engine + dashboard consumers (PostgreSQL)", () => {
     });
 
     it("resolveIncident returns null when nothing is open", async () => {
-      ctx = await setupCtx();
       const result = await resolveIncidentAsync(ctx.layer.db, "nope");
       expect(result).toBeNull();
     });
 
     it("the atomic claim step prevents a second claim once an incident is claimed", async () => {
-      ctx = await setupCtx();
       const { incident } = await ingestIncidentSignalAsync(ctx.layer.db, {
         groupingKey: "g-claim",
         title: "Claim me",
@@ -273,7 +203,6 @@ pgDescribe("U15 engine + dashboard consumers (PostgreSQL)", () => {
     });
 
     it("releases a stranded sentinel claim back to NULL but never clobbers a real id", async () => {
-      ctx = await setupCtx();
       const { incident } = await ingestIncidentSignalAsync(ctx.layer.db, {
         groupingKey: "g-rel",
         title: "t",
@@ -294,7 +223,6 @@ pgDescribe("U15 engine + dashboard consumers (PostgreSQL)", () => {
     });
 
     it("countRecentAutoFixTasks ignores sentinel placeholders but counts real links", async () => {
-      ctx = await setupCtx();
       const { incident: a } = await ingestIncidentSignalAsync(ctx.layer.db, { groupingKey: "ga", title: "a" });
       const { incident: b } = await ingestIncidentSignalAsync(ctx.layer.db, { groupingKey: "gb", title: "b" });
       // a is only claimed (sentinel) → must NOT count.
@@ -306,7 +234,6 @@ pgDescribe("U15 engine + dashboard consumers (PostgreSQL)", () => {
     });
 
     it("decideStormGuard preserves threshold, sustained, absorb, and circuit-breaker gates", async () => {
-      ctx = await setupCtx();
       const incident = (await ingestIncidentSignalAsync(ctx.layer.db, { groupingKey: "g", title: "t" })).incident;
       const now = Date.parse("2026-06-24T10:00:00.000Z");
 
@@ -351,7 +278,6 @@ pgDescribe("U15 engine + dashboard consumers (PostgreSQL)", () => {
   // ── Self-healing: reconcileSoftDeletedColumnDrift ─────────────────────────
   describe("self-healing reconcileSoftDeletedColumnDrift", () => {
     it("reconciles soft-deleted non-archived tasks to archived and records an audit per row", async () => {
-      ctx = await setupCtx();
       const deletedAt = new Date().toISOString();
       // Soft-deleted tasks that drifted off archived.
       await seedTask(ctx, "FN-drift-1", { column: "in-review", deletedAt });
@@ -392,7 +318,6 @@ pgDescribe("U15 engine + dashboard consumers (PostgreSQL)", () => {
     });
 
     it("lists only soft-deleted non-archived candidates", async () => {
-      ctx = await setupCtx();
       const deletedAt = new Date().toISOString();
       await seedTask(ctx, "FN-d1", { column: "in-review", deletedAt });
       await seedTask(ctx, "FN-live", { column: "todo", deletedAt: null });
@@ -404,7 +329,6 @@ pgDescribe("U15 engine + dashboard consumers (PostgreSQL)", () => {
     });
 
     it("scopes drift reconciliation to the data layer project partition", async () => {
-      ctx = await setupCtx();
       const deletedAt = new Date().toISOString();
       await seedTask(ctx, "FN-shared", { column: "todo", deletedAt, projectId: "project-a" });
       await seedTask(ctx, "FN-shared", { column: "in-review", deletedAt, projectId: "project-b" });
@@ -430,7 +354,6 @@ pgDescribe("U15 engine + dashboard consumers (PostgreSQL)", () => {
     });
 
     it("returns zero reconciled when no candidates exist", async () => {
-      ctx = await setupCtx();
       await seedTask(ctx, "FN-live", { column: "todo", deletedAt: null });
       const result = await reconcileSoftDeletedColumnDriftAsync(ctx.layer, async () => {});
       expect(result.reconciled).toBe(0);

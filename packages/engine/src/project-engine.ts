@@ -4554,7 +4554,7 @@ export class ProjectEngine {
                   {
                     ...mergerOptions,
                     allowDirtyLocalCheckoutSync: settings.merger?.allowDirtyLocalCheckoutSync === true,
-                    // FNXC:WorkspaceMergeDispatch 2026-08-19-00:00:
+                    // FNXC:WorkspaceMergeDispatch 2026-08-15-22:55:
                     // Admission is not a licence to write: the per-task dispatch pin travels to
                     // every workspace ref advance so git rejects an expired predecessor even if
                     // renewal never ran and the target tip has not moved.

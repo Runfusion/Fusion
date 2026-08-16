@@ -6669,7 +6669,9 @@
       "autoUpdateAndRestart": " Atualizar e reiniciar automaticamente ",
       "autoUpdateAndRestartHelp": "Quando ativado, o Fusion instala automaticamente as atualizações disponíveis no canal de lançamento selecionado e reinicia para aplicá-las. Requer um processo supervisor pai (o padrão para `fn dashboard`); hosts iniciados com --no-supervise pulam a instalação. Padrão: desativado.",
       "channelStable": "Stable (recomendado)",
-      "channelBeta": "Beta — builds iniciais da main"
+      "channelBeta": "Beta — builds iniciais da main",
+      "quickAddSubmitOnEnter": "",
+      "quickAddSubmitOnEnterHint": ""
     },
     "notifications": {
       "accessTokenOptional": "Token de acesso (opcional)",

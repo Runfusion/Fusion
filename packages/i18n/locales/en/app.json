@@ -6140,6 +6140,8 @@
       "dismissModalsByClickingOutsideHint": " When enabled, clicking or tapping a modal backdrop closes the modal. Default: disabled, to prevent accidental dismissal. ",
       "skipConfirmationDialogs": " Skip confirmation dialogs for critical actions ",
       "skipConfirmationDialogsHint": " When enabled, destructive actions such as deleting a task or resetting progress run immediately without a prompt. Default: disabled",
+      "quickAddSubmitOnEnter": " Press Enter to save a task in Quick Add ",
+      "quickAddSubmitOnEnterHint": " Default: enabled. When disabled, Enter inserts a newline and Cmd/Ctrl+Enter saves. ",
       "releaseChannel": "Release channel",
       "releaseChannelHelp": "Stable follows official releases. Beta follows pre-releases cut from main and also picks up each stable release once it overtakes the beta. Switching back to Stable never downgrades. Default: stable.",
       "autoUpdateAndRestart": " Auto-update and restart ",

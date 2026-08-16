@@ -89,6 +89,15 @@ export interface AgentRuntimeOptions {
   tools?: "coding" | "readonly";
   /** Additional custom tools to merge with the base toolset */
   customTools?: ToolDefinition[];
+  /**
+   * Engine-owned Fusion tools that a runtime may publish through an external bridge.
+   * This must be an identity-based subset of customTools; plugin/MCP tools remain custom-only.
+   *
+   * FNXC:CursorMcpBridge 2026-08-15-23:46:
+   * Cursor must never infer Fusion ownership from an `fn_` name or a forgeable marker.
+   * The engine records provenance structurally before plugin-runtime wrappers run.
+   */
+  fusionTools?: ToolDefinition[];
   /** Per-result shared tool-output cap. `null` disables the wrapper; undefined uses the built-in default. */
   toolOutputMaxChars?: number | null;
   /** Callback for text output from the agent */

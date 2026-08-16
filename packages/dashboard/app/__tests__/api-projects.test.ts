@@ -284,6 +284,28 @@ describe("API Error Handling", () => {
 
       await expect(fetchTasks()).rejects.toThrow("API returned HTML instead of JSON");
     });
+
+    it("maps Traefik 503 text/plain to an operator-facing unavailable message", async () => {
+      globalThis.fetch = vi.fn().mockReturnValue(
+        Promise.resolve({
+          ok: false,
+          status: 503,
+          statusText: "",
+          headers: {
+            get: (name: string) =>
+              name.toLowerCase() === "content-type" ? "text/plain; charset=utf-8" : null,
+          },
+          json: () => Promise.reject(new Error("JSON parse error")),
+          text: () => Promise.resolve("no available server"),
+        } as unknown as Response),
+      );
+
+      await expect(fetchTasks()).rejects.toMatchObject({
+        name: "ApiRequestError",
+        message: "The server is temporarily unavailable. Please try again.",
+        status: 503,
+      });
+    });
   });
 
   describe("Non-JSON success responses", () => {

@@ -144,7 +144,9 @@ import {
   inferDefaultTestCommand,
   resolveTaskDiffBaseRef,
   commitOrAmendMergeWithFixes,
+  isTransientGitPushError,
   MergeAbortedError,
+  pushWithTransientRetries,
   type ConflictCategory,
 } from "../merger.js";
 import { mergerLog } from "../logger.js";
@@ -359,6 +361,135 @@ describe("push-after-merge", () => {
 
   }
 
+  // FNXC:MergePush 2026-08-16-03:39: Retry tests cover bounded transient recovery and cancellation before and during backoff across both retained push surfaces.
+  it("classifies Git transport failures without treating permission errors as transient", () => {
+    expect(isTransientGitPushError("fatal: unable to access remote: Connection reset by peer")).toBe(true);
+    expect(isTransientGitPushError("fatal: unable to access remote: Could not resolve host: git.example")).toBe(true);
+    expect(isTransientGitPushError("remote: permission denied")).toBe(false);
+  });
+
+  it("bounds transient retries and stops immediately when the merge is cancelled", async () => {
+    const transientError = Object.assign(new Error("push failed"), {
+      stderr: "fatal: unable to access remote: Connection reset by peer",
+    });
+    const exhaustedPush = vi.fn().mockRejectedValue(transientError);
+
+    await expect(pushWithTransientRetries(exhaustedPush, {
+      taskId: "FN-050",
+      retryBackoffMs: [0, 0],
+    })).rejects.toThrow("push failed");
+    expect(exhaustedPush).toHaveBeenCalledTimes(3);
+
+    const controller = new AbortController();
+    const cancelledPush = vi.fn().mockRejectedValue(transientError);
+    await expect(pushWithTransientRetries(cancelledPush, {
+      taskId: "FN-050",
+      signal: controller.signal,
+      retryBackoffMs: [10_000],
+      onRetry: () => controller.abort(),
+    })).rejects.toBeInstanceOf(MergeAbortedError);
+    expect(cancelledPush).toHaveBeenCalledTimes(1);
+  });
+
+  it("cancels while the transient retry backoff is pending", async () => {
+    vi.useFakeTimers();
+    try {
+      const transientError = Object.assign(new Error("push failed"), {
+        stderr: "fatal: unable to access remote: Connection reset by peer",
+      });
+      const controller = new AbortController();
+      const push = vi.fn().mockRejectedValue(transientError);
+      let signalBackoffStarted!: () => void;
+      const backoffStarted = new Promise<void>((resolve) => {
+        signalBackoffStarted = resolve;
+      });
+
+      const pending = pushWithTransientRetries(push, {
+        taskId: "FN-050",
+        signal: controller.signal,
+        retryBackoffMs: [10_000],
+        onRetry: signalBackoffStarted,
+      });
+      await backoffStarted;
+      await Promise.resolve();
+      expect(vi.getTimerCount()).toBe(1);
+
+      controller.abort();
+
+      await expect(pending).rejects.toBeInstanceOf(MergeAbortedError);
+      expect(push).toHaveBeenCalledTimes(1);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("retries a transient transport failure in the shared post-merge push path", async () => {
+    vi.useFakeTimers();
+    try {
+      let pushAttempts = 0;
+      mockedExecSync.mockImplementation((cmd: any) => {
+        const cmdStr = String(cmd);
+        if (cmdStr.startsWith('git pull --rebase "origin" "main"')) return Buffer.from("");
+        if (cmdStr.startsWith('git push "origin" "main"')) {
+          pushAttempts += 1;
+          if (pushAttempts === 1) {
+            throw Object.assign(new Error("push failed"), {
+              stderr: "fatal: unable to access remote: Connection reset by peer",
+            });
+          }
+          return Buffer.from("");
+        }
+        if (cmdStr.includes("git symbolic-ref --short HEAD")) return "main" as any;
+        if (cmdStr.includes("git rev-parse --verify REBASE_HEAD")) {
+          throw Object.assign(new Error("fatal: Needed a single revision"), { status: 128 });
+        }
+        return Buffer.from("");
+      });
+
+      const pending = pushToRemoteAfterMerge(createMockStore(), "/tmp/root", "FN-050", {
+        ...DEFAULT_SETTINGS,
+        pushAfterMerge: true,
+        pushRemote: "origin",
+      });
+      await vi.runAllTimersAsync();
+      const result = await pending;
+
+      expect(result).toEqual({ pushed: true });
+      expect(pushAttempts).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("propagates cancellation from the shared initial push path", async () => {
+    const controller = new AbortController();
+    let pushAttempts = 0;
+    mockedExecSync.mockImplementation((cmd: any) => {
+      const cmdStr = String(cmd);
+      if (cmdStr.startsWith('git pull --rebase "origin" "main"')) return Buffer.from("");
+      if (cmdStr.startsWith('git push "origin" "main"')) {
+        pushAttempts += 1;
+        controller.abort();
+        throw Object.assign(new Error("push failed"), {
+          stderr: "fatal: unable to access remote: Connection reset by peer",
+        });
+      }
+      if (cmdStr.includes("git symbolic-ref --short HEAD")) return "main" as any;
+      if (cmdStr.includes("git rev-parse --verify REBASE_HEAD")) {
+        throw Object.assign(new Error("fatal: Needed a single revision"), { status: 128 });
+      }
+      return Buffer.from("");
+    });
+
+    await expect(pushToRemoteAfterMerge(createMockStore(), "/tmp/root", "FN-050", {
+      ...DEFAULT_SETTINGS,
+      pushAfterMerge: true,
+      pushRemote: "origin",
+    }, { signal: controller.signal })).rejects.toBeInstanceOf(MergeAbortedError);
+    expect(pushAttempts).toBe(1);
+  });
+
   it("pushes merged result when pushAfterMerge is enabled", async () => {
     setupAiMergeExecSyncWithPush();
 
@@ -485,6 +616,51 @@ describe("push-after-merge", () => {
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-050",
       expect.stringContaining("Push to remote failed after merge"),
+      "PushToRemoteFailed",
+    );
+  });
+
+  it("records an aborted outcome when the retained merger is cancelled during push", async () => {
+    const controller = new AbortController();
+    setupAiMergeExecSyncWithPush(() => {
+      controller.abort();
+      throw Object.assign(new Error("push failed"), {
+        stderr: "fatal: unable to access remote: Connection reset by peer",
+      });
+    });
+
+    const store = createMockStore();
+    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
+      pushAfterMerge: true,
+      pushRemote: "origin",
+      mergeStrategy: "direct",
+    });
+
+    const result = await aiMergeTask(store, "/tmp/root", "FN-050", { signal: controller.signal });
+
+    expect(result.merged).toBe(true);
+    expect(result.pushedToRemote).toBe(false);
+    expect(result.pushError).toContain("aborted by shutdown signal");
+    expect(store.recordRunAuditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        domain: "git",
+        mutationType: "push:origin",
+        target: "FN-050",
+        metadata: expect.objectContaining({ outcome: "aborted" }),
+      }),
+    );
+    expect(store.recordRunAuditEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        domain: "git",
+        mutationType: "push:origin",
+        metadata: expect.objectContaining({ outcome: "failed" }),
+      }),
+    );
+    expect(store.logEntry).toHaveBeenCalledWith(
+      "FN-050",
+      expect.stringContaining("aborted by shutdown signal"),
       "PushToRemoteFailed",
     );
   });
@@ -1251,5 +1427,3 @@ describe("commitOrAmendMergeWithFixes", () => {
     expect(result).toEqual({ ok: true, reason: "branch-already-merged" });
   });
 });
-
-

@@ -6121,7 +6121,9 @@
       "agentToolOutputLimit": "",
       "agentToolOutputLimitHint": "",
       "noLimitOnAgentToolOutput": "",
-      "noLimitOnAgentToolOutputHint": ""
+      "noLimitOnAgentToolOutputHint": "",
+      "quickAddSubmitOnEnter": "",
+      "quickAddSubmitOnEnterHint": ""
     },
     "globalModels": {
       "allow": "",

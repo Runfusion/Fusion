@@ -80,7 +80,7 @@ import { wrapAuthStorageWithApiKeyProviders } from "./provider-auth.js";
 import { getPackageManagerAgentDir } from "./auth-paths.js";
 import { resolveProject } from "../project-context.js";
 import { startMigrationHoldingServer } from "./migration-holding-server.js";
-import { ensureBundledDependencyGraphPluginInstalled, ensureBundledGrokRuntimePluginInstalled } from "../plugins/bundled-plugin-install.js";
+import { ensureBundledCursorRuntimePluginInstalled, ensureBundledDependencyGraphPluginInstalled, ensureBundledGrokRuntimePluginInstalled } from "../plugins/bundled-plugin-install.js";
 import { handleOpencodeGoApiKeySaved, syncStartupModels } from "./startup-model-sync.js";
 import { registerCustomProviders, reregisterCustomProviders } from "./custom-provider-registry.js";
 import { ensureCwdProjectRegistered } from "./ensure-project-registered.js";
@@ -570,6 +570,24 @@ export async function runDaemon(opts: DaemonOptions = {}) {
     }
   } catch (err) {
     console.warn(`[plugins] Failed to auto-install bundled Grok CLI runtime plugin: ${err instanceof Error ? err.message : err}`);
+  }
+
+  /*
+   * FNXC:CursorCli 2026-08-16-04:05:
+   * FN-9093: daemon executors/reviewers/mergers resolve `cursor-cli` through the fail-fast runtime route,
+   * but nothing registered fusion-plugin-cursor-runtime (the provider Enable action only sets `useCursorCli`),
+   * so Cursor sessions failed with the missing-runtime error. Mirror the FN-7761 Grok eager bootstrap so the
+   * Cursor runtime is loaded before agent sessions are created.
+   */
+  try {
+    const installStatus = await ensureBundledCursorRuntimePluginInstalled(pluginStore, pluginLoader);
+    if (installStatus === "installed") {
+      console.log("[plugins] Installed bundled Cursor CLI runtime plugin");
+    } else if (installStatus === "missing-bundle") {
+      console.warn("[plugins] Bundled Cursor CLI runtime plugin was not found in this build");
+    }
+  } catch (err) {
+    console.warn(`[plugins] Failed to auto-install bundled Cursor CLI runtime plugin: ${err instanceof Error ? err.message : err}`);
   }
 
   // Auto-load all enabled plugins so runtime UI (NewAgentDialog, AgentDetailView)

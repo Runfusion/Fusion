@@ -4,6 +4,11 @@
  */
 
 import { withTokenHeader } from "../../auth";
+import {
+  ApiRequestError,
+  SERVER_UNAVAILABLE_MESSAGE,
+  isGatewayUnavailableStatus,
+} from "../client/client.js";
 
 // --- AI Summarization API ---
 
@@ -40,6 +45,10 @@ export async function summarizeTitle(
   const isJson = contentType.includes("application/json");
 
   if (!isJson) {
+    // FNXC:DashboardApi 2026-08-16-03:09: title summarize has its own fetch parser; gateway 5xx must match `api()`.
+    if (isGatewayUnavailableStatus(res.status)) {
+      throw new ApiRequestError(SERVER_UNAVAILABLE_MESSAGE, res.status);
+    }
     throw new Error(`API returned non-JSON response: ${bodyText.slice(0, 100)}`);
   }
 

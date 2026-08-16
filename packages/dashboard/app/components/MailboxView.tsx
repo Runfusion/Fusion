@@ -45,6 +45,7 @@ import { MailboxArtifactAttachment } from "./MailboxArtifactAttachment";
 import { MailboxRelatedWorkLink, hasRelatedTaskLink } from "./MailboxRelatedWorkLink";
 import { MailboxNativeStructureEmbeds } from "./MailboxNativeStructureEmbeds";
 import { MailboxTaskProposal } from "./MailboxTaskProposal";
+import { MailboxTaskRecommendations } from "./MailboxTaskRecommendations";
 import { MailboxKindBadge, MailboxStructuralItem, isStructuralMail } from "./MailboxStructuralItem";
 import type { ChatReportHandoff } from "./chatReportHandoff";
 import { MessageComposer, type NativeStructureCandidate } from "./MessageComposer";
@@ -1103,6 +1104,7 @@ export function MailboxView({
                   />
                   <MailboxNativeStructureEmbeds message={msg} projectId={projectId} onOpen={onOpenNativeStructure} />
                   <MailboxTaskProposal messageId={msg.id} metadata={msg.metadata} projectId={projectId} onOpenTask={onOpenTask} />
+                  <MailboxTaskRecommendations metadata={msg.metadata} projectId={projectId} onOpenTask={onOpenTask} />
                 </div>
               );
             })}
@@ -1139,6 +1141,7 @@ export function MailboxView({
             />
             <MailboxNativeStructureEmbeds message={selectedMessage} projectId={projectId} onOpen={onOpenNativeStructure} />
             <MailboxTaskProposal messageId={selectedMessage.id} metadata={selectedMessage.metadata} projectId={projectId} onOpenTask={onOpenTask} />
+            <MailboxTaskRecommendations metadata={selectedMessage.metadata} projectId={projectId} onOpenTask={onOpenTask} />
           </>
         )}
       </div>

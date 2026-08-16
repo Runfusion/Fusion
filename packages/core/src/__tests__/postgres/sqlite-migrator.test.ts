@@ -28,7 +28,6 @@ import { describe, it, expect, afterEach, beforeEach } from "vitest";
 import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { sql } from "drizzle-orm";
-import { execSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -43,6 +42,10 @@ import {
   type MigrationProgressEvent,
 } from "../../postgres/sqlite-migrator.js";
 import { applySchemaBaseline } from "../../postgres/schema-applier.js";
+import {
+  createBaselinedPgTestDatabase,
+  createEmptyPgTestDatabase,
+} from "../../__test-utils__/pg-test-harness.js";
 
 const PG_TEST_URL_BASE =
   process.env.FUSION_PG_TEST_URL_BASE ?? "postgresql://localhost:5432";
@@ -80,25 +83,13 @@ describe("SQLite migration CLI progress", () => {
   });
 });
 
-/**
- * FNXC:PostgresMigration 2026-06-24-09:05:
- * Create a uniquely-named fresh PostgreSQL database. Mirrors the
- * schema-applier test harness.
- */
-function uniqueDbName(): string {
-  return `fusion_migrate_test_${process.pid}_${Math.random().toString(36).slice(2, 8)}`;
-}
-
 /*
-FNXC:PgTestAuthFix 2026-07-14-00:00:
-The inline adminExec used process.env.USER for the psql -U flag, which is 'runner' on GitHub Actions (not 'postgres'). Use the PG_TEST_URL_BASE connection string instead so credentials are always correct.
+FNXC:PostgresMigration 2026-08-15-03:52:
+Database naming/creation/drop now lives in the shared pg-test-harness
+(createBaselinedPgTestDatabase); the former inline psql adminExec (see
+FNXC:PgTestAuthFix 2026-07-14-00:00) is gone with it, which also removes this
+file's only execSync shellout.
 */
-function adminExec(statement: string): void {
-  execSync(
-    `psql "${PG_TEST_URL_BASE}/postgres" -v ON_ERROR_STOP=1 -c "${statement.replace(/"/g, '\\"')}"`,
-    { stdio: "pipe", env: process.env },
-  );
-}
 
 /** A subset of the tasks table schema (the columns the migration tests touch). */
 const TASKS_SQLITE_DDL = `
@@ -440,24 +431,28 @@ interface TestCtx {
   sqlConn: ReturnType<typeof postgres>;
   db: ReturnType<typeof drizzle>;
   fusionDir: string;
+  dropDb: () => Promise<void>;
 }
 
+/*
+FNXC:PostgresMigration 2026-08-15-03:52:
+Slow-test fix: the per-test target used to be an EMPTY database, so every test
+paid the migrator's full internal applySchemaBaseline DDL run (~3s). Clone the
+target from the harness's run-shared golden template instead — that template IS
+the applySchemaBaseline end-state (schema + version markers), so the migrator's
+idempotent baseline call degrades to a marker-check no-op while every assertion,
+including the explicit applySchemaBaseline() calls below, sees the identical
+target state.
+*/
 async function setupCtx(): Promise<TestCtx> {
   const fusionDir = mkdtempSync(join(tmpdir(), "fusion-migrate-"));
   buildPopulatedSqliteProject(fusionDir);
   buildPopulatedSqliteArchive(fusionDir);
 
-  const dbName = uniqueDbName();
-  try {
-    adminExec(`DROP DATABASE IF EXISTS "${dbName}"`);
-  } catch {
-    // ignore
-  }
-  adminExec(`CREATE DATABASE "${dbName}"`);
-  const testUrl = `${PG_TEST_URL_BASE}/${dbName}`;
-  const sqlConn = postgres(testUrl, { max: 3, prepare: false, onnotice: () => {} });
+  const baselined = await createBaselinedPgTestDatabase("fusion_migrate_test");
+  const sqlConn = postgres(baselined.testUrl, { max: 3, prepare: false, onnotice: () => {} });
   const db = drizzle(sqlConn);
-  return { dbName, sqlConn, db, fusionDir };
+  return { dbName: baselined.dbName, sqlConn, db, fusionDir, dropDb: baselined.drop };
 }
 
 async function teardownCtx(ctx: TestCtx | null): Promise<void> {
@@ -468,7 +463,7 @@ async function teardownCtx(ctx: TestCtx | null): Promise<void> {
     // best-effort
   }
   try {
-    adminExec(`DROP DATABASE IF EXISTS "${ctx.dbName}"`);
+    await ctx.dropDb();
   } catch {
     // best-effort
   }
@@ -1876,8 +1871,18 @@ pgDescribe("SQLite-to-PostgreSQL migrator", () => {
 
   // VAL-MIGRATE-005 — dry-run reports without writing
   it("dry-run reports the plan without modifying PostgreSQL", async () => {
+    /*
+    FNXC:PostgresMigration 2026-08-15-03:52:
+    This test's contract is a PRISTINE external target (no schemas, no marker
+    table), so it cannot use the shared golden-template ctx.db whose baseline is
+    pre-applied — it provisions its own empty database.
+    */
+    const empty = await createEmptyPgTestDatabase("fusion_migrate_pristine");
+    const emptyConn = postgres(empty.testUrl, { max: 3, prepare: false, onnotice: () => {} });
+    const emptyDb = drizzle(emptyConn);
+    try {
     const report = await migrateTest(
-      ctx!.db,
+      emptyDb,
       [{ sqlitePath: join(ctx!.fusionDir, "fusion.db"), pgSchema: "project" as const }],
       { dryRun: true },
     );
@@ -1892,7 +1897,7 @@ pgDescribe("SQLite-to-PostgreSQL migrator", () => {
     FNXC:PostgresMigration 2026-07-14-23:47:
     VAL-MIGRATE-005 applies to catalog state as well as copied rows. A preview against a pristine external target must leave no schemas, tables, or migration marker behind after it reports the plan.
     */
-    const catalog = (await ctx!.db.execute(sql`
+    const catalog = (await emptyDb.execute(sql`
       SELECT
         to_regnamespace('project')::text AS project_schema,
         to_regclass('project.tasks')::text AS tasks_table,
@@ -1913,6 +1918,10 @@ pgDescribe("SQLite-to-PostgreSQL migrator", () => {
 
     // No sequences should have been bumped in dry-run.
     expect(report.sequenceBumps).toHaveLength(0);
+    } finally {
+      await emptyConn.end({ timeout: 5 }).catch(() => {});
+      await empty.drop().catch(() => {});
+    }
   });
 
   // VAL-SEARCH-002 (search_vector population) — generated column auto-populates

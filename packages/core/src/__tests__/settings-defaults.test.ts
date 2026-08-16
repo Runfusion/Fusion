@@ -291,6 +291,16 @@ describe("settings defaults invariants", () => {
     });
   });
 
+  describe("quickAddSubmitOnEnter default", () => {
+    it("defaults Quick Add Enter submission on and global-scoped only", () => {
+      expect(DEFAULT_GLOBAL_SETTINGS.quickAddSubmitOnEnter).toBe(true);
+      expect(GLOBAL_SETTINGS_KEYS).toContain("quickAddSubmitOnEnter");
+      expect("quickAddSubmitOnEnter" in DEFAULT_PROJECT_SETTINGS).toBe(false);
+      expect(PROJECT_SETTINGS_KEYS).not.toContain("quickAddSubmitOnEnter");
+      expect(isGlobalOnlySettingsKey("quickAddSubmitOnEnter")).toBe(true);
+    });
+  });
+
   describe("mergeIntegrationWorktree default", () => {
     it("defaults project settings to reuse-task-worktree", () => {
       expect(DEFAULT_PROJECT_SETTINGS.mergeIntegrationWorktree).toBe("reuse-task-worktree");

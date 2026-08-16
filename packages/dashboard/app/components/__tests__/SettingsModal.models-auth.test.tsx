@@ -77,6 +77,7 @@ import {
   settingsModalUser,
   expectSettingPersists,
   installSettingsModalEnv,
+  flushSettingsAutoSave,
 } from "./SettingsModal.test-harness";
 
 vi.mock("../../api", async (importOriginal) => {
@@ -349,8 +350,10 @@ describe("SettingsModal", () => {
       expect(screen.getByLabelText("OpenRouter HTTP-Referer")).toBeInTheDocument();
       expect(screen.getByLabelText("OpenRouter X-Title")).toBeInTheDocument();
 
-      await settingsModalUser.type(screen.getByLabelText("OpenRouter HTTP-Referer"), "https://example.app");
-      await settingsModalUser.type(screen.getByLabelText("OpenRouter X-Title"), "Example App");
+      // FNXC:SettingsModalTests 2026-08-16-03:46: flush the 500ms auto-save debounce on the fake clock instead of a real-timer waitFor (FN-2707); assertions unchanged. Fake timers must be enabled BEFORE the mutating edits so the debounce lands on the fake clock.
+      vi.useFakeTimers();
+      fireEvent.change(screen.getByLabelText("OpenRouter HTTP-Referer"), { target: { value: "https://example.app" } });
+      fireEvent.change(screen.getByLabelText("OpenRouter X-Title"), { target: { value: "Example App" } });
       fireEvent.change(screen.getByLabelText("OpenRouter supported_parameters filter"), {
         target: { value: "tools, structured_outputs" },
       });
@@ -358,14 +361,13 @@ describe("SettingsModal", () => {
       fireEvent.change(screen.getByLabelText("OpenRouter routing order"), { target: { value: "openai, anthropic" } });
       fireEvent.change(screen.getByLabelText("OpenRouter routing ignore"), { target: { value: "provider-x" } });
       fireEvent.change(screen.getByLabelText("OpenRouter routing only"), { target: { value: "provider-y" } });
-      await settingsModalUser.selectOptions(screen.getByLabelText("OpenRouter allow fallbacks"), "deny");
-      await settingsModalUser.selectOptions(screen.getByLabelText("OpenRouter routing sort"), "latency");
-      await settingsModalUser.click(screen.getByLabelText("Require parameters"));
+      fireEvent.change(screen.getByLabelText("OpenRouter allow fallbacks"), { target: { value: "deny" } });
+      fireEvent.change(screen.getByLabelText("OpenRouter routing sort"), { target: { value: "latency" } });
+      fireEvent.click(screen.getByLabelText("Require parameters"));
 
-
-      await waitFor(() => {
-        expect(mockUpdateGlobalSettings).toHaveBeenCalled();
-      });
+      await flushSettingsAutoSave();
+      vi.useRealTimers();
+      expect(mockUpdateGlobalSettings).toHaveBeenCalled();
 
       expect(mockUpdateGlobalSettings).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -443,11 +445,13 @@ describe("SettingsModal", () => {
 
       await settingsModalUser.click(screen.getByRole("button", { name: "Models · Project" }));
       await settingsModalUser.click(screen.getByLabelText("Project Default Model"));
-      await settingsModalUser.click(screen.getByText("GPT-4o"));
+      // FNXC:SettingsModalTests 2026-08-16-03:46: the picker is already open; the item click is the mutating edit, so it runs under fake timers and the 500ms auto-save debounce is flushed on the fake clock (FN-2707).
+      vi.useFakeTimers();
+      fireEvent.click(screen.getByText("GPT-4o"));
 
-      await waitFor(() => {
-        expect(mockUpdateSettings).toHaveBeenCalledTimes(1);
-      });
+      await flushSettingsAutoSave();
+      vi.useRealTimers();
+      expect(mockUpdateSettings).toHaveBeenCalledTimes(1);
 
       expect(mockUpdateSettings).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -612,10 +616,12 @@ describe("SettingsModal", () => {
       await setupWorkflowModelLaneTest();
 
       await settingsModalUser.click(screen.getByLabelText("Plan/Triage Model"));
-      await settingsModalUser.click(await screen.findByText("GPT-4o"));
-      await waitFor(() => {
-        expect(mockUpdateWorkflowSettingValues).toHaveBeenCalledWith("workflow-custom", expectedPatch, "proj-1");
-      });
+      const laneOption = await screen.findByText("GPT-4o");
+      vi.useFakeTimers();
+      fireEvent.click(laneOption);
+      await flushSettingsAutoSave();
+      vi.useRealTimers();
+      expect(mockUpdateWorkflowSettingValues).toHaveBeenCalledWith("workflow-custom", expectedPatch, "proj-1");
 
       cleanup();
       mockFetchWorkflow.mockClear();

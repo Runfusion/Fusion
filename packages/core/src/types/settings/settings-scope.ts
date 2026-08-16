@@ -353,6 +353,11 @@ export interface GlobalSettings {
    * This global operator preference defaults to false. When enabled, the dashboard skips centralized critical-action confirmations and proceeds with their primary/default choice. It must never be project-scoped so shared projects cannot force destructive actions without a prompt.
    */
   skipConfirmationDialogs?: boolean;
+  /**
+   * FNXC:QuickEntry 2026-08-16-03:15:
+   * This global-only operator keyboard preference defaults to true to preserve Enter-submits behavior. When disabled, Enter inserts a newline and Cmd/Ctrl+Enter submits; shared projects must never change an operator's keyboard behavior.
+   */
+  quickAddSubmitOnEnter?: boolean;
   /** Active UI locale (e.g. `"en"`, `"zh-CN"`, `"fr"`). One of `SUPPORTED_LOCALES`.
    *  When unset, each surface resolves the locale at runtime (browser/env
    *  detection) and falls back to `DEFAULT_LOCALE` ("en"). */
