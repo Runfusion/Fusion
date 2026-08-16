@@ -5,7 +5,9 @@ import os from "node:os";
 import path from "node:path";
 import { EventEmitter } from "node:events";
 import type { Task, TaskStore } from "@fusion/core";
-import { TaskExecutor } from "../executor.js";
+// captureBaseCommitSha was peeled off TaskExecutor into executor/worktree-git-refs.ts (wave 18);
+// it now takes the store explicitly instead of reading it from the executor instance.
+import { captureBaseCommitSha } from "../executor.js";
 
 const hasGit = spawnSync("git", ["--version"], { stdio: "pipe" }).status === 0;
 const describeIfGit = hasGit ? describe : describe.skip;
@@ -62,10 +64,9 @@ describeIfGit("captureBaseCommitSha (real git)", () => {
     }
 
     const store = createStore();
-    const executor = new TaskExecutor(store, repo);
     const audit = { git: vi.fn().mockResolvedValue(undefined) };
 
-    await (executor as any).captureBaseCommitSha(makeTask(), repo, audit, { isResume: false });
+    await captureBaseCommitSha(store, makeTask(), repo, audit, { isResume: false });
     const firstBase = (store.updateTask as any).mock.calls[0][1].baseCommitSha as string;
     expect(firstBase).toBeTruthy();
 
@@ -74,7 +75,7 @@ describeIfGit("captureBaseCommitSha (real git)", () => {
 
     // Resume of the same task: baseCommitSha must be preserved so diff math
     // stays stable across sessions (FN-4309/FN-4383).
-    await (executor as any).captureBaseCommitSha(makeTask(firstBase), repo, audit, { isResume: true });
+    await captureBaseCommitSha(store, makeTask(firstBase), repo, audit, { isResume: true });
 
     expect((store.updateTask as any).mock.calls).toHaveLength(1);
 

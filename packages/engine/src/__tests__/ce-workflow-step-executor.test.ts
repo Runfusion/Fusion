@@ -29,6 +29,13 @@ import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BUILTIN_WORKFLOWS, type WorkflowIr } from "@fusion/core";
 import "./executor-test-helpers.js";
+// captureBaseCommitSha was peeled off TaskExecutor into executor/worktree-git-refs.ts (wave 18),
+// so the old per-test `vi.spyOn(executor, "captureBaseCommitSha")` seam no longer exists.
+// Stub it at its module home; everything else in that module stays real.
+vi.mock("../executor/worktree-git-refs.js", async (importOriginal) => ({
+  ...(await importOriginal() as object),
+  captureBaseCommitSha: vi.fn().mockResolvedValue(undefined),
+}));
 import { TaskExecutor } from "../executor.js";
 import type { PluginRunner } from "../plugins/plugin-runner.js";
 import { WorkflowGraphExecutor } from "../workflows/workflow-graph-executor.js";
@@ -334,7 +341,6 @@ describe("CE workflow-step executor integration", () => {
         path: "/tmp/test/.worktrees/swift-falcon",
         branch: "fusion/fn-ce-1",
       });
-      vi.spyOn(executor as any, "captureBaseCommitSha").mockResolvedValue(undefined);
 
       const captured: { step?: any; worktreePath?: string } = {};
       vi.spyOn(executor as any, "executeWorkflowStep").mockImplementation(async (...args: any[]) => {
@@ -404,7 +410,6 @@ describe("CE workflow-step executor integration", () => {
         path: "/tmp/test/.worktrees/fresh-ce-checkout",
         branch: "fusion/fn-ce-1",
       });
-      vi.spyOn(executor as any, "captureBaseCommitSha").mockResolvedValue(undefined);
 
       const captured: { worktreePath?: string } = {};
       vi.spyOn(executor as any, "executeWorkflowStep").mockImplementation(async (...args: any[]) => {
@@ -481,7 +486,6 @@ describe("CE workflow-step executor integration", () => {
         path: "/tmp/test/.worktrees/acquired-code-review",
         branch: "fusion/fn-ce-1",
       });
-      vi.spyOn(executor as any, "captureBaseCommitSha").mockResolvedValue(undefined);
       const executeStep = vi.spyOn(executor as any, "executeWorkflowStep").mockResolvedValue({ success: true, output: "APPROVE" });
       const requirements: any[] = [];
       const codeReview = {

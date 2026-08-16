@@ -349,7 +349,9 @@ describe("workflow routing fixture", () => {
 
   it("suspends an unrouted graph run before opening an implementation session", async () => {
     const store = createMockStore();
-    const executor = new TaskExecutor(store, "/tmp/test", {});
+    // Explicit `agentStore: undefined` opts out of the harness's default routing agent store
+    // (executor-test-helpers fills it for bare constructions) so the unrouted suspend stays testable.
+    const executor = new TaskExecutor(store, "/tmp/test", { agentStore: undefined });
 
     await executor.execute({
       id: "FN-routing", title: "Routing fixture", description: "", column: "in-progress",

@@ -63,6 +63,13 @@ export abstract class TaskExecutorState {
    * `agent` is the admission-time row so session identity does not depend on a second getAgent round-trip.
    */
   protected activeWorkflowPrincipals = new Map<string, { agentId: string; nodeInstanceId: string; agent?: Agent }>();
+  /**
+   * FNXC:AgentActivityStream 2026-08-09-13:59 (restored 2026-08-15-22:15 after wave-18 shell-ification dropped it):
+   * Node-scoped routed-principal retention (`taskId\0nodeId` -> agentId) that outlives release-principal,
+   * because the graph can emit a terminal gate result AFTER the per-attempt reservation is released while
+   * the activity outbox must still attribute that gate to the exact routed principal (FN-8864).
+   */
+  protected workflowGateActivityPrincipals = new Map<string, string>();
   protected executing = new Set<string>();
   protected resumingUnpaused = new Set<string>();
   protected approvalSuspended = new Set<string>();

@@ -972,6 +972,30 @@ describe("createResolvedAgentSession", () => {
     expect(execute).not.toHaveBeenCalled();
   });
 
+  it("preserves an identity-scoped Fusion subset without trusting injected fn_* names", async () => {
+    const createSessionMock = vi.fn().mockResolvedValue({ session: { prompt: vi.fn() } });
+    resolveRuntimeMock.mockResolvedValue({
+      runtime: { id: "cursor", name: "Cursor", createSession: createSessionMock, promptWithFallback: vi.fn(), describeModel: vi.fn(() => "cursor/auto") },
+      runtimeId: "cursor",
+      wasConfigured: true,
+    });
+    const trusted = { name: "fn_task_list", description: "", parameters: {}, execute: vi.fn() } as any;
+    const injected = { name: "fn_evil", description: "", parameters: {}, execute: vi.fn() } as any;
+
+    await createResolvedAgentSession({
+      sessionPurpose: "executor",
+      cwd: "/tmp/project",
+      systemPrompt: "system",
+      customTools: [injected, trusted],
+      fusionTools: [trusted],
+    });
+
+    const passed = createSessionMock.mock.calls[0][0];
+    expect(passed.customTools.map((tool: { name: string }) => tool.name)).toEqual(["fn_evil", "fn_task_list"]);
+    expect(passed.fusionTools.map((tool: { name: string }) => tool.name)).toEqual(["fn_task_list"]);
+    expect(passed.fusionTools[0]).toBe(passed.customTools[1]);
+  });
+
   it("does not pre-wrap customTools for the pi runtime (createFnAgent owns the chain)", async () => {
     const mockSession = { prompt: vi.fn() } as any;
     const createSessionMock = vi.fn().mockResolvedValue({ session: mockSession });

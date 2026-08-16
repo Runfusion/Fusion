@@ -20,6 +20,7 @@ import {
   applyReviewSeverityGate,
   isOpenWorkflowReviewFinding,
   MAX_WORKFLOW_REVIEW_FINDINGS,
+  PLAN_REVIEW_GROUP_ID,
   finalizePlanningSegment,
   resolveExecutorFallbackModel,
   resolvePersistAgentThinkingLog,
@@ -81,6 +82,10 @@ import {
   type WorkflowStepOutcome,
 } from "./workflow-step-verdict.js";
 import { resolveDiffBaseRef } from "./worktree-git-refs.js";
+// FNXC:PlanReviewConvergence 2026-08-15-22:15: FN-8768 convergence primer + revision-key classifier (restored post-wave-18).
+import { buildGraphPlanReviewConvergenceContext, optionalStepRevisionKey } from "./optional-step-revision.js";
+// FNXC:CommandCenterActivity 2026-08-15-22:15: FN-8868 usage telemetry + session boundaries (restored post-wave-18).
+import { attachAgentUsageTelemetry, emitAgentSessionStart } from "../agents/agent-usage-telemetry.js";
 
 const execAsync = promisify(exec);
 
@@ -127,7 +132,6 @@ export async function executeWorkflowStep(
     // assumptions and proceed instead of parking on a question. Explicit opt-in
     // only (default false = board run); see runGraphCustomNode / KTD-3.
     const unattended = stepOptions?.unattended === true;
-    const isPlanReviewStep = workflowStep.id === "graph:plan-review-step" || workflowStep.name === "Plan Review";
     /*
     FNXC:WorkflowReviewFindings 2026-08-05-06:29:
     reviewKind is carried from graph synthesis (cfg.reviewKind / optional-group context) so prompt
@@ -141,6 +145,15 @@ export async function executeWorkflowStep(
       requireExternalIntegrationEvidence?: boolean;
     };
     const optionalGroupId = workflowStepMetadata.optionalGroupId;
+    /*
+    FNXC:PlanReviewConvergence 2026-08-04-06:35 (FN-8768; restored 2026-08-15-22:15 after the wave-18
+    executor.ts shell-ification dropped it): a RENAMED inner step of the canonical Plan Review optional
+    group is still Plan Review — classify by group id, not only by the default id/name.
+    */
+    const isPlanReviewStep = workflowStep.id === "graph:plan-review-step"
+      || workflowStep.name === "Plan Review"
+      || optionalGroupId === PLAN_REVIEW_GROUP_ID;
+    const planReviewRevisionKey = optionalStepRevisionKey(optionalGroupId, workflowStep.name);
     const isReviewTypeWorkflowStep =
       isPlanReviewStep
       || workflowStepMetadata.reviewCanFixInline === true
@@ -182,6 +195,11 @@ export async function executeWorkflowStep(
     }
     const workflowReviewSpecText = typeof workflowReviewSpecArtifact === "string" ? workflowReviewSpecArtifact : "";
     const planReviewSpecText = isPlanReviewStep ? workflowReviewSpecText : "";
+    // FNXC:PlanReviewConvergence 2026-08-04-06:35 (FN-8768; restored 2026-08-15-22:15): cumulative
+    // prior-feedback primer + attempt-three severity ratchet for repeat Plan Review attempts.
+    const planReviewConvergenceContext = isPlanReviewStep
+      ? buildGraphPlanReviewConvergenceContext(task, planReviewRevisionKey)
+      : "";
 
     /*
     FNXC:PlanReview 2026-07-21-16:30:
@@ -265,33 +283,41 @@ export async function executeWorkflowStep(
     const approvedContractBlock = isReviewTypeWorkflowStep && !isPlanReviewStep
       ? `
 
-  Approved Task Contract:
-  - PROMPT.md is the authoritative current contract for this review. It includes any approved planning revisions and scope decisions.
-  - The Task Description is historical input only. Do not enforce superseded requirements from the original Task Description when they conflict with PROMPT.md.
-  - Do not request behavior that PROMPT.md explicitly defers, excludes, or forbids. Review the implementation against the approved contract reproduced below.
-  - Scope exclusions do not waive security, correctness, or data-integrity defects in the approved implementation.
+Approved Task Contract:
+- PROMPT.md is the authoritative current contract for this review. It includes any approved planning revisions and scope decisions.
+- The Task Description is historical input only. Do not enforce superseded requirements from the original Task Description when they conflict with PROMPT.md.
+- Do not request behavior that PROMPT.md explicitly defers, excludes, or forbids. Review the implementation against the approved contract reproduced below.
+- Scope exclusions do not waive security, correctness, or data-integrity defects in the approved implementation.
 
-  --- BEGIN APPROVED PROMPT.md ---
-  ${workflowReviewSpecText}
-  --- END APPROVED PROMPT.md ---`
+--- BEGIN APPROVED PROMPT.md ---
+${workflowReviewSpecText}
+--- END APPROVED PROMPT.md ---`
       : "";
+    /*
+    FNXC:CodeReviewCompleteness 2026-08-04-00:20 (FN-8768 / #3327; restored 2026-08-15-22:15 after the
+    wave-18 executor.ts shell-ification regressed this block to its pre-FN-8768 wording):
+    The modified-file list is a starting scope, not a read prohibition — reviewers may read callers,
+    helpers, and tests needed to validate the change, while unrelated pre-existing issues stay out of
+    scope. Plan Review appends the convergence primer so repeat attempts stop re-raising settled blockers.
+    */
     const scopeBlock = isPlanReviewStep
       ? `Plan Review Scope:
-  - Review the task plan artifact (PROMPT.md), reproduced verbatim below, and task metadata only.
-  - The plan is embedded in this prompt — do NOT go looking for a PROMPT.md file in the worktree; it lives at the project root (\`.fusion/tasks/${task.id}/PROMPT.md\`), outside this worktree, so review the embedded copy.
-  - Do NOT judge current implementation diffs, uncommitted worktree changes, or unrelated repository changes.
-  - If the plan is internally consistent, complete, scoped, and verifiable, approve even when the worktree contains unrelated changes from another task.
+- Review the task plan artifact (PROMPT.md), reproduced verbatim below, and task metadata only.
+- The plan is embedded in this prompt — do NOT go looking for a PROMPT.md file in the worktree; it lives at the project root (\`.fusion/tasks/${task.id}/PROMPT.md\`), outside this worktree, so review the embedded copy.
+- Do NOT judge current implementation diffs, uncommitted worktree changes, or unrelated repository changes.
+- If the plan is internally consistent, complete, scoped, and verifiable, approve even when the worktree contains unrelated changes from another task.
 
-  --- BEGIN PROMPT.md ---
-  ${planReviewSpecText}
-  --- END PROMPT.md ---`
+--- BEGIN PROMPT.md ---
+${planReviewSpecText}
+--- END PROMPT.md ---${planReviewConvergenceContext ? `\n\n${planReviewConvergenceContext}` : ""}`
       : `Diff Scope (files changed by THIS task vs base):
-  ${scopeFileBlock}${diffShortstat ? `\nDiff stat: ${diffShortstat}` : ""}
+${scopeFileBlock}${diffShortstat ? `\nDiff stat: ${diffShortstat}` : ""}
 
-  CRITICAL SCOPING RULES — read before doing anything else:
-  - Review ONLY the files listed above. Do NOT analyze unmodified files or unrelated parts of the codebase.
-  - If NONE of the files in the diff scope are relevant to your review category (e.g. a UX/design reviewer with no UI/CSS/component files in scope, a security reviewer with no auth/network code in scope, an a11y reviewer with no markup changes), respond IMMEDIATELY with a single short approval line such as "No relevant changes in scope — approved." and STOP. Do not start exploring the codebase.
-  - Your wall-clock budget is short. Spending it browsing unmodified files will cause this step to time out and block merge.${approvedContractBlock}`;
+CRITICAL SCOPING RULES — read before doing anything else:
+- The modified-file list is the starting point and primary reporting scope, not a prohibition on reading code required to validate the change.
+- Read necessary callers, selectors, shared helpers, consumers, and tests outside that list when they establish production reachability, invariant coverage, or API/UI parity. Do not report unrelated pre-existing issues.
+- If NONE of the modified files are relevant to your review category, confirm that from the list and fast-bail without broad repository exploration.
+- Keep adjacent reads bounded to the changed behavior and its immediate production/test chain so the review finishes within its wall-clock budget.${approvedContractBlock}`;
 
     const latestTaskForUserComments = await deps.store.getTask(task.id).catch(() => task);
     const workflowStepUserComments = selectUserCommentsForAgentContext(latestTaskForUserComments, { limit: null });
@@ -391,7 +417,8 @@ export async function executeWorkflowStep(
   - If you find an in-scope issue you can fix safely, edit the relevant files in this same session, run the smallest relevant verification, and then return APPROVE or APPROVE_WITH_NOTES.
   - Return REVISE only when the issue is still present, cannot be safely fixed in this reviewer session, needs broader executor remediation, or needs user input.
   - Plan Review may use fn_task_prompt_write to replace the task's PROMPT.md with the complete revised plan. Do not implement product code from Plan Review.
-  - Code Review and Browser Verification may fix implementation issues inside the assigned task worktree. Report each self-fixed issue as a finding with resolution resolved-in-review; list a fixed prior-lane finding in supersededFindingIds.`
+  - Code Review and Browser Verification may fix implementation issues inside the assigned task worktree. Report each self-fixed issue as a finding with resolution resolved-in-review; list a fixed prior-lane finding in supersededFindingIds.
+  - After any inline edit, treat your own change as untrusted: re-read the fresh diff, restart the mandatory review procedure from its requirements ledger and production-reachability checks, and rerun the smallest relevant verification. Never approve solely because the local fix compiles or its narrow test passes.`
       : "";
 
     const systemPrompt = `You are a workflow step agent executing: ${workflowStep.name}
@@ -429,6 +456,8 @@ export async function executeWorkflowStep(
         deps.options.onAgentTool?.(taskId, toolName, detail);
       },
     });
+    // FNXC:CommandCenterActivity 2026-08-15-22:15: FN-8868 usage telemetry (restored post-wave-18).
+    attachAgentUsageTelemetry(agentLogger, { store: deps.store, agentId: task.assignedAgentId ?? null, taskId: task.id, nodeId: task.effectiveNodeId ?? task.nodeId ?? null, lane: "executor" });
 
     // Determine primary model and an explicit fallback. Review-type workflow
     // steps use the validator lane; ordinary workflow prompts use the executor
@@ -458,6 +487,7 @@ export async function executeWorkflowStep(
     const primaryModelId = useOverride ? workflowStep.modelId : laneModel.modelId;
     // FNXC:ProviderAuth 2026-08-01-08:39: A workflow-step model override has no paired instance selection, so only the resolved primary task lane may carry its requested credential instance. Fallback attempts must retain their provider-default behavior rather than inheriting a primary-provider identity.
     const primaryCredentialInstanceId = useOverride ? undefined : laneModel.credentialInstanceId;
+    attachAgentUsageTelemetry(agentLogger, { store: deps.store, agentId: task.assignedAgentId ?? null, taskId: task.id, nodeId: task.effectiveNodeId ?? task.nodeId ?? null, model: primaryModelId ?? null, provider: primaryProvider ?? null, lane: "executor" });
 
     const workflowFallback = isReviewTypeWorkflowStep
       ? resolveValidatorFallbackModel(settings)
@@ -656,8 +686,12 @@ export async function executeWorkflowStep(
         // Skill selection: assigned-agent / role-fallback skills, plus the step's own named skill (U1) made discoverable via additionalSkillPaths.
         ...(effectiveSkillSelection ? { skillSelection: effectiveSkillSelection } : {}),
         ...(additionalSkillPaths ? { additionalSkillPaths } : {}),
-        ...(readonlyCustomTools.allowed.length > 0 ? { customTools: readonlyCustomTools.allowed } : {}),
+        ...(readonlyCustomTools.allowed.length > 0
+          ? { customTools: readonlyCustomTools.allowed, fusionTools: readonlyCustomTools.allowed }
+          : {}),
       });
+      // FNXC:CommandCenterActivity 2026-08-15-22:15: session boundary for the workflow-step runtime session (restored post-wave-18).
+      emitAgentSessionStart({ store: deps.store, agentId: task.assignedAgentId ?? null, taskId: task.id, nodeId: task.effectiveNodeId ?? task.nodeId ?? null, model: primaryModelId ?? null, provider: primaryProvider ?? null, lane: "executor" });
 
       const workflowModelDetails = formatModelMarkerDetails(
         describeModel(session),

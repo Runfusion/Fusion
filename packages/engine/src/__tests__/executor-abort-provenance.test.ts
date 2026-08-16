@@ -21,7 +21,9 @@ accepted the old catch-all `hard-cancel`.
 */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import "./executor-test-helpers.js";
-import { TaskExecutor } from "../executor.js";
+// isBenignInReviewPauseAbort was peeled off TaskExecutor into executor/graph-resume-predicates.ts
+// (wave 18) and stays re-exported from executor.js; call the module function, not an instance method.
+import { TaskExecutor, isBenignInReviewPauseAbort } from "../executor.js";
 import { createMockStore, resetExecutorMocks } from "./executor-test-helpers.js";
 import type { TaskDetail } from "@fusion/core";
 
@@ -250,7 +252,7 @@ describe("pause-abort provenance truthfulness (KB-PROV)", () => {
           column: "in-review",
           steps: [{ name: "Implement", status: "done" }],
         });
-        const benign = (executor as any).isBenignInReviewPauseAbort(
+        const benign = isBenignInReviewPauseAbort(
           live,
           { disposition: "failed", outcome: "failure", visitedNodeIds: ["plan", "execute"], context: {} },
           provenance,
@@ -288,7 +290,7 @@ describe("pause-abort provenance truthfulness (KB-PROV)", () => {
       const { executor } = makeExecutor();
       const result = { disposition: "failed", outcome: "failure", visitedNodeIds: ["plan", "execute"], context: {} };
       const classify = (column: string, reviewLane: string) =>
-        (executor as any).isBenignInReviewPauseAbort(
+        isBenignInReviewPauseAbort(
           makeTask({ column, steps: [{ name: "Implement", status: "done" }] }),
           result,
           "engine-abort",

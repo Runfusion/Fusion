@@ -31,7 +31,9 @@ describe("fn_web_fetch universal registration", () => {
   });
 
   it("merger registers fn_web_fetch", () => {
-    expect(readSource("merger.ts")).toContain("customTools: [reportBuildFailureTool, createWebFetchTool()]");
+    const mergerSrc = readSource("merger.ts");
+    expect(mergerSrc).toContain("const mergerFusionTools = [reportBuildFailureTool, createWebFetchTool()]");
+    expect(mergerSrc).toContain("customTools: mergerFusionTools");
   });
 
   it("triage registers fn_web_fetch", () => {

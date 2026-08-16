@@ -282,12 +282,22 @@ Recommendation capture is disabled for this project (maxRecommendationsPerTask i
 At the final accepted \`fn_task_done(outcome="completed")\` checkpoint, evaluate optional, non-blocking work discovered outside this task. Send at most ${maximum} task-ready recommendations, each with a stable unique \`id\`, \`title\`, \`description\`, and \`category\`, or explicitly send \`recommendations: []\` when none genuinely qualify. Example populated payload: \`recommendations: [{ id: "follow-up-export", title: "Add task export", description: "Provide a CSV export for completed tasks.", category: "feature" }]\`. Do not fabricate filler or include required current-task work, blockers, secrets, executable commands, reasoning, or duplicate ids. Recommendations are only for completed outcomes; never send them with \`outcome="blocked"\`. Use immediate task creation/delegation only for an explicit task requirement, necessary dependency coordination, or operator direction.`;
 }
 
-function getWithheldTaskCreationGuidance(taskCreateWithheld: boolean, delegateWithheld: boolean): string {
+/*
+FNXC:TaskRecommendations 2026-08-15-22:15:
+Restored the recommendation-aware withheld-tool guidance (pre-peel executor.ts shape). The 2026-08-10
+partial restore recovered this function from a pre-FN-8850 base, so a withheld session was still pointed
+at fn_task_log instead of the completion recommendation route its validator accepts — and when capture is
+disabled the prompt must say so rather than invite an unavailable write.
+*/
+function getWithheldTaskCreationGuidance(taskCreateWithheld: boolean, delegateWithheld: boolean, maximum: number): string {
   if (!taskCreateWithheld && !delegateWithheld) return "";
   const withheld = [
     ...(taskCreateWithheld ? ["`fn_task_create`"] : []),
     ...(delegateWithheld ? ["`fn_delegate_task`"] : []),
   ].join(" and ");
+  const recommendationRoute = maximum > 0
+    ? `For optional, non-blocking discoveries, use the available completion recommendation route at accepted completion (or \`recommendations: []\` if none qualify).`
+    : "Recommendation capture is disabled, so retain non-blocking context in an honest task log or completion summary without inventing a follow-up.";
   return `## Follow-up task creation is disabled for this session
 
 This project's "Ephemeral agent follow-up tasks" policy withholds ${withheld}. ${
@@ -296,7 +306,7 @@ This project's "Ephemeral agent follow-up tasks" policy withholds ${withheld}. $
     taskCreateWithheld && delegateWithheld ? "them" : "it"
   }, and do not retry.
 
-Ignore any instruction above that tells you to file follow-up work with ${withheld}. When you find out-of-scope work, record it instead with \`fn_task_log(message="follow-up: ...")\` and include it in your \`fn_task_done\` summary so the operator sees it. If the work genuinely blocks this task, use \`fn_task_done(outcome="blocked", reason="...")\` rather than trying to create a task for it.`;
+Ignore any instruction above that tells you to file follow-up work with ${withheld}. ${recommendationRoute} If the work genuinely blocks this task, use \`fn_task_done(outcome="blocked", reason="...")\` rather than trying to create a task for it.`;
 }
 
 /** Resolve the executor system prompt from settings, falling back to the hardcoded constant. */
@@ -320,6 +330,7 @@ export function getExecutorSystemPrompt(
     getWithheldTaskCreationGuidance(
       toolAvailability?.taskCreateWithheld === true,
       toolAvailability?.delegateWithheld === true,
+      maximumRecommendations,
     ),
   ].filter((section) => section.trim());
   return sections.join("\n\n");

@@ -57,6 +57,7 @@ import {
   resolvePersistAgentThinkingLog,
   resolveTaskLifecycleColumns,
   resolveWorkflowIrForTask,
+  resolveAgentActivityAttribution,
   serializeRetryStormError,
 } from "@fusion/core";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
@@ -170,6 +171,8 @@ import {
 } from "./session-worktree-paths.js";
 import { isWorkflowStepSkillDiscoverable, mergeAdditionalSkillPaths } from "./skill-path-helpers.js";
 import { getExecutorSystemPrompt } from "./system-prompt.js";
+// FNXC:CommandCenterActivity 2026-08-15-22:15: FN-8868 usage telemetry + session boundaries (restored post-wave-18).
+import { attachAgentUsageTelemetry, emitAgentSessionStart } from "../agents/agent-usage-telemetry.js";
 import { createConfiguredCommandAbortError, createSeenSteeringIds } from "./task-predicates.js";
 import {
   accumulateTokenUsage as accumulateTokenUsageImpl,
@@ -416,6 +419,9 @@ export async function runImplementation(
       runId: syntheticRunId,
       agentId: task.assignedAgentId ?? "executor",
     });
+    // FNXC:AgentActivityStream 2026-08-09-09:09 (restored 2026-08-15-22:15 after wave-18 shell-ification dropped it):
+    // FN-8864 durable task:started activity at the implementation entry; monitoring never blocks execution.
+    try { await deps.store.recordAgentActivity({ type: "task:started", attributionClaim: resolveAgentActivityAttribution([{ id: task.assignedAgentId ?? "executor", provenance: task.assignedAgentId ? "roster" : "lane" }], "executor"), taskId: task.id, occurredAt: new Date().toISOString(), discriminator: syntheticRunId, metadata: { runId: syntheticRunId } }); } catch { /* monitoring never blocks execution */ }
 
     // Build engine run context for audit instrumentation (FN-1404)
     const engineRunContext: EngineRunContext = {
@@ -1565,6 +1571,17 @@ export async function runImplementation(
             if (await deps.handleNonContinuableSessionError(task, false, errorMessage)) {
               return;
             }
+            /*
+            FNXC:PostDoneContinuation 2026-08-15-23:48:
+            Step-session failures must classify non-continuable transcripts in the same order as
+            single-session execution: completed work wins first; incomplete work gets the bounded
+            fresh-session retry (clearing sessionFile with recovery backoff) before this generic
+            resume sink can retain the poisoned transcript. Exhaustion clears its counters and
+            deliberately falls through to the existing sink.
+            */
+            if (await deps.handleNonContinuableSessionRetry(task, errorMessage)) {
+              return;
+            }
             executorLog.error(`✗ ${task.id} step-session execution failed:`, errorDetail);
             await deps.store.logEntry(task.id, `Step-session execution failed: ${errorMessage}`, errorStack ?? errorDetail, deps.getRunContextFor(task.id));
             await deps.store.updateTask(task.id, { status: null, error: null });
@@ -1989,6 +2006,9 @@ export async function runImplementation(
           }
         },
       });
+      // FNXC:CommandCenterActivity 2026-08-09-15:06 (restored 2026-08-15-22:15 after the wave-18 peel dropped it):
+      // wire the usage-event store early so tool rows emitted before model resolution still land.
+      attachAgentUsageTelemetry(agentLogger, { store: deps.store, agentId: engineRunContext.agentId ?? null, taskId: task.id, nodeId: task.effectiveNodeId ?? task.nodeId ?? null, lane: "executor" });
 
       let agentRotationEvent: import("../credential-instance-rotation.js").RotationEvent | undefined;
       let agentRotationDeclined = false;
@@ -2041,11 +2061,14 @@ export async function runImplementation(
         // give the agent logger the context it needs to emit usage_events tool
         // rows (KTD3). nodeId is sourced from the routed/effective node, null
         // when the task has no node context.
-        agentLogger.setUsageContext({
+        attachAgentUsageTelemetry(agentLogger, {
+          store: deps.store,
           model: executorModelId ?? null,
           provider: executorProvider ?? null,
           nodeId: detail.effectiveNodeId ?? detail.nodeId ?? null,
           agentId: engineRunContext.agentId ?? null,
+          taskId: task.id,
+          lane: "executor",
         });
 
         // Determine whether we're resuming a previous session (pause/resume)
@@ -2165,6 +2188,14 @@ export async function runImplementation(
           });
           session = createdSession.session;
           sessionFile = createdSession.sessionFile;
+          /*
+          FNXC:CommandCenterActivity 2026-08-09-15:06 (restored 2026-08-15-22:15 after the wave-18 peel dropped it):
+          Reopening a persisted executor session after pause continues one logical AgentSession.
+          Emit its session boundary only for a fresh manager so resumed work cannot inflate Sessions.
+          */
+          if (!isResuming) {
+            emitAgentSessionStart({ store: deps.store, agentId: engineRunContext.agentId ?? null, taskId: task.id, nodeId: detail.effectiveNodeId ?? detail.nodeId ?? null, model: executorModelId ?? null, provider: executorProvider ?? null, lane: "executor" });
+          }
         } catch (sessionStartError) {
           if (await deps.recoverMissingWorktreeSessionStartFailure(task, worktreePath, sessionStartError, audit)) {
             return;
@@ -2617,6 +2648,8 @@ export async function runImplementation(
                   taskId: task.id,
                 });
                 retrySession = createdRetrySession.session;
+                // FNXC:CommandCenterActivity 2026-08-09-15:18 (restored 2026-08-15-22:15): a retry builds a distinct runtime session, so it needs its own boundary only after construction succeeds.
+                emitAgentSessionStart({ store: deps.store, agentId: engineRunContext.agentId ?? null, taskId: task.id, nodeId: detail.effectiveNodeId ?? detail.nodeId ?? null, model: executorModelId ?? null, provider: executorProvider ?? null, lane: "executor" });
                 await deps.captureExecutorTokenUsageBaseline(task.id, retrySession);
                 captureSessionTokenBaseline(retrySession);
                 if (createdRetrySession.sessionFile) {

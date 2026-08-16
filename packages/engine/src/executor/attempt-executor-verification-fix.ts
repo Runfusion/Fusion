@@ -15,6 +15,8 @@
 import type { Settings, Task, TaskStore } from "@fusion/core";
 import { resolveExecutorFallbackModel, resolvePersistAgentThinkingLog } from "@fusion/core";
 import { AgentLogger } from "../agents/agent-logger.js";
+// FNXC:CommandCenterActivity 2026-08-15-22:15: FN-8868 usage telemetry + session boundaries (restored post-wave-18).
+import { attachAgentUsageTelemetry, emitAgentSessionStart } from "../agents/agent-usage-telemetry.js";
 import {
   createResolvedAgentSession,
   resolveExecutorSessionModel,
@@ -82,6 +84,8 @@ export async function attemptExecutorVerificationFix(
       onAgentText: deps.onAgentText,
       onAgentTool: deps.onAgentTool,
     });
+    // FNXC:CommandCenterActivity 2026-08-15-22:15: FN-8868 usage telemetry (restored post-wave-18).
+    attachAgentUsageTelemetry(logger, { store: deps.store, agentId: task.assignedAgentId ?? null, taskId: task.id, nodeId: task.effectiveNodeId ?? task.nodeId ?? null, lane: "executor" });
 
     // Build skill selection context
     let skillContext: Awaited<ReturnType<typeof buildSessionSkillContext>> | undefined;
@@ -109,6 +113,7 @@ export async function attemptExecutorVerificationFix(
       task.credentialInstanceId,
     );
     const { provider: executorProvider, modelId: executorModelId } = executorSessionModel;
+    attachAgentUsageTelemetry(logger, { store: deps.store, agentId: task.assignedAgentId ?? null, taskId: task.id, nodeId: task.effectiveNodeId ?? task.nodeId ?? null, model: executorModelId ?? null, provider: executorProvider ?? null, lane: "executor" });
 
     const executorFallback = resolveExecutorFallbackModel(settings);
 
@@ -157,6 +162,8 @@ Do not refactor, rename broadly, or make opportunistic improvements.
       ...(skillContext?.skillSelectionContext ? { skillSelection: skillContext.skillSelectionContext } : {}),
       ...(skillContext && skillContext.additionalSkillPaths.length > 0 ? { additionalSkillPaths: skillContext.additionalSkillPaths } : {}),
     });
+    // FNXC:CommandCenterActivity 2026-08-15-22:15: session boundary for the verification-fix runtime session (restored post-wave-18).
+    emitAgentSessionStart({ store: deps.store, agentId: task.assignedAgentId ?? null, taskId: task.id, nodeId: task.effectiveNodeId ?? task.nodeId ?? null, model: executorModelId ?? null, provider: executorProvider ?? null, lane: "executor" });
 
     await deps.store.logEntry(
       task.id,

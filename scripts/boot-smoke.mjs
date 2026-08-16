@@ -166,6 +166,13 @@ async function getEphemeralPort() {
   throw new Error("could not obtain a non-reserved ephemeral port");
 }
 
+/*
+ * FNXC:TestInfrastructure 2026-08-15-22:59:
+ * FN-9105 confirmed that a single boot-smoke wall-clock sample is noisy because
+ * each run creates a cold isolated embedded-PostgreSQL home. Investigate a spike
+ * with five sequential `BOOT_SMOKE_TIMINGS=1` samples and their median; do not
+ * widen timeouts, add retries, or loosen assertions to make a one-shot number look better.
+ */
 function createPhaseTimer() {
   const timings = {};
   return {

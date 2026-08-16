@@ -113,6 +113,20 @@ export function wrapCustomToolsForPluginRuntime(
   return wrapToolsWithOutputBudget(withActionGate, { maxChars: options.toolOutputMaxChars });
 }
 
+function wrapPluginRuntimeToolOptions(
+  options: AgentRuntimeOptions,
+  logContext: { runtimeId: string; sessionPurpose: string },
+): Pick<AgentRuntimeOptions, "customTools" | "fusionTools"> {
+  const original = options.customTools;
+  const wrapped = wrapCustomToolsForPluginRuntime(original, options, logContext);
+  if (!original || !wrapped) return { customTools: wrapped, fusionTools: undefined };
+
+  const scoped = new Set(options.fusionTools ?? []);
+  const fusionTools = original.flatMap((tool, index) =>
+    scoped.has(tool) && tool.name.startsWith("fn_") && wrapped[index] ? [wrapped[index]] : []);
+  return { customTools: wrapped, fusionTools };
+}
+
 function shouldWrapCustomToolsForRuntime(runtimeId: string): boolean {
   return !RUNTIMES_WITH_INTERNAL_TOOL_GATING.has(runtimeId);
 }
@@ -976,11 +990,7 @@ export async function createResolvedAgentSession(
       ? {
           ...effectiveRuntimeOptionsWithModel,
           sessionPurpose,
-          customTools: wrapCustomToolsForPluginRuntime(
-            effectiveRuntimeOptionsWithModel.customTools,
-            effectiveRuntimeOptionsWithModel,
-            { runtimeId: resolved.runtimeId, sessionPurpose },
-          ),
+          ...wrapPluginRuntimeToolOptions(effectiveRuntimeOptionsWithModel, { runtimeId: resolved.runtimeId, sessionPurpose }),
         }
       : {
           ...effectiveRuntimeOptionsWithModel,
@@ -1107,11 +1117,7 @@ export async function createResolvedAgentSession(
       grokCreateOptions: shouldWrapCustomToolsForRuntime("grok")
         ? {
             ...grokBaseOptions,
-            customTools: wrapCustomToolsForPluginRuntime(
-              effectiveRuntimeOptionsWithModel.customTools,
-              effectiveRuntimeOptionsWithModel,
-              { runtimeId: "grok", sessionPurpose },
-            ),
+            ...wrapPluginRuntimeToolOptions(grokBaseOptions, { runtimeId: "grok", sessionPurpose }),
           }
         : grokBaseOptions,
       primaryProvider: runtimeOptions.defaultProvider,

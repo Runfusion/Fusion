@@ -43,6 +43,8 @@ export type WorkflowPrincipalBeforeNodeDeps = {
   workflowAgentCapacity: WorkflowAgentCapacity;
   activeWorkflowAuthorities: Map<string, ActiveWorkflowAuthority>;
   activeWorkflowPrincipals: Map<string, { agentId: string; nodeInstanceId: string; agent?: Agent }>;
+  /** FNXC:AgentActivityStream 2026-08-15-22:15: FN-8864 node-scoped routed-principal retention for gate attribution (restored post-wave-18). */
+  workflowGateActivityPrincipals: Map<string, string>;
   workflowCapacityAttemptIds: Set<string>;
   directWorkflowPrincipalWorkItemIds: Set<string>;
   /** Holds written for principal unavailability so terminalization can skip re-closing them. */
@@ -353,6 +355,13 @@ deps.activeWorkflowPrincipals.set(nodeTask.id, {
   agentId: routed.route.agent.id,
   nodeInstanceId,
 });
+/*
+ * FNXC:AgentActivityStream 2026-08-09-13:59 (restored 2026-08-15-22:15 after wave-18 shell-ification dropped it):
+ * Keep this node-scoped record past release-principal. The graph can emit its terminal
+ * result after the per-attempt reservation is released, while the activity outbox must
+ * still attribute that gate to this exact routed principal (FN-8864).
+ */
+deps.workflowGateActivityPrincipals.set(`${nodeTask.id}\0${node.id}`, routed.route.agent.id);
 if (durableWorkItemId) context["workflow:work-item-id"] = durableWorkItemId;
 context["workflow:principal-agent-id"] = routed.route.agent.id;
 context["workflow:principal-role"] = routed.route.role;

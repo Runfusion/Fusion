@@ -120,6 +120,10 @@ The scanner reads only these well-known paths; missing files are normal and malf
 
 Claude Desktop, Claude Code, Cursor, and Windsurf use the Claude-style `{ "mcpServers": { ... } }` shape. VS Code project config can use `{ "servers": { ... } }`; Fusion normalizes it to the same import parser before rendering candidates.
 
+## Cursor runtime task tools
+
+Cursor runtime sessions bridge Fusion `fn_*` tools through a session-scoped project `.cursor/mcp.json` stdio entry. Fusion writes an `info/exclude` block before staging the entry, retains a durable lease manifest so concurrent sessions preserve each other's server definitions, and restores a pre-existing operator config after the last lease. The initial baseline is recorded before Fusion writes config bytes; later writes use an intent journal so crash recovery can distinguish its own atomic write from an operator edit. A tracked `.cursor/mcp.json` disables the bridge. An operator edit is preserved; an unparsable operator edit quarantines the worktree, retains the exclusion, and disables staging until the JSON is repaired and `fusion-custom-tools-*` entries are removed (or the file is deleted).
+
 Sensitive discovery follows the same no-plaintext rule as manual import. If a third-party file contains inline environment values, header values, or token-like values, the API response includes only secret descriptor metadata (`field`, `key`, `suggestedKey`, `scope`) and the candidate definition uses Fusion `McpSecretRef` placeholders. The dashboard **Add** flow opens the server editor so operators choose existing Fusion secrets or create new Fusion-managed secrets; the settings blob stores only `{ secretRef, scope }` references.
 
 The dashboard uses this route:

@@ -28,7 +28,7 @@ Gate membership is the explicit allow-list in `packages/engine/vitest.config.ts`
 
 ## Weekly signal-per-second baseline
 
-Refresh and publish the weekly test velocity baseline with the canonical process in [Weekly test velocity baseline](#weekly-test-velocity-baseline). That workflow measures the merge gate, boot smoke, and changed-only test lanes; appends `scripts/test-velocity-history.json`; and publishes `docs/test-velocity-baseline.md`. Keep the trend flat or net-negative; use its slowest-file and quarantine signals to drive FN-5048 rewrites and deletion-ratchet reviews instead of adding low-signal coverage.
+Refresh and publish the weekly test velocity baseline with the canonical process in [Weekly test velocity baseline](#weekly-test-velocity-baseline). That workflow measures the merge gate, boot smoke, and changed-only test lanes; appends `scripts/test-velocity-history.json`; and publishes `docs/test-velocity-baseline.md`. Keep the trend flat or net-negative; use its slowest-file and quarantine signals to drive FN-5048 rewrites and deletion-ratchet reviews instead of adding low-signal coverage. A single boot-smoke spike is not regression evidence: follow the [FN-9105 controlled five-sample protocol](solutions/developer-experience/boot-smoke-w33-walltime-anomaly.md), with `BOOT_SMOKE_TIMINGS=1` and a median compared to 20,500 ms, before attributing or changing the boot path.
 
 **The gate's blind spot, stated honestly:** typecheck + build + boot smoke + curated suite does not run the union suite a merge creates. Logic regressions outside the curated set land non-blocking by design — that is the accepted trade: the old broad gate caught no recalled real bugs while consuming ~70% of shipping time in flake triage.
 

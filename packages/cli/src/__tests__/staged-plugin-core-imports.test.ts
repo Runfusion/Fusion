@@ -16,7 +16,7 @@ export interface CoreImportInspection {
 }
 
 /**
- * FNXC:BundledPlugins 2026-08-16-00:00:
+ * FNXC:BundledPlugins 2026-08-15-22:55:
  * Staged plugins reach core through the CLI shim in package mode, but fast builds resolve their
  * declared workspace dependency directly. Parse every legal core reference and fail closed instead
  * of regexing named imports: aliases, namespaces, dynamic calls, re-exports, and subpaths otherwise

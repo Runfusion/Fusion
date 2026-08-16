@@ -852,7 +852,7 @@ export interface LandRepoContext {
   noCommitsExpected?: boolean;
   /** FNXC:Workspace 2026-08-15-08:36: Present only for workspace sub-repos; it fences the durable intent and remote ref advance. */
   workspaceLand?: { handle: WorkspaceLeaseHandle; repoRelPath: string; remote: string };
-  /** FNXC:WorkspaceMergeDispatch 2026-08-19-00:00: Task-level pin that fences every merge-body ref advance. */
+  /** FNXC:WorkspaceMergeDispatch 2026-08-15-22:55: Task-level pin that fences every merge-body ref advance. */
   workspaceDispatchFence?: { fenceRefName: string; fenceRefSha: string };
   store: TaskStore;
 }
@@ -1105,7 +1105,7 @@ export async function landOneRepo(
       }
 
       /*
-       * FNXC:AIMerge 2026-08-19-00:00:
+       * FNXC:AIMerge 2026-08-15-22:55:
        * This is the sole production pre-land seam: the reviewer approved the
        * clean-room squash but the integration ref has not advanced, so scope and
        * shrinkage violations can still leave every integration branch untouched.

@@ -3388,7 +3388,8 @@ describe("executeHeartbeat", () => {
       */
       // fn_artifact_register/list/view, agent config/provisioning, mission hierarchy, ideation, goals/evaluations/identity,
       // task read discovery (incl. logs_read), workflow discovery/authoring, task promotion, bounded research, clarification, web fetch, memory, and fn_heartbeat_done.
-      expect(callArgs.customTools).toHaveLength(66);
+      // FN-8948 added fn_mission_reconcile and the feature-validation repair surface added fn_feature_repair_validation. Count rose 66→68; keep exact so new tools fail loudly.
+      expect(callArgs.customTools).toHaveLength(68);
       expect(callArgs.customTools!.map((tool) => tool.name)).toEqual([
         "fn_task_create",
         "fn_task_log",
@@ -3411,6 +3412,7 @@ describe("executeHeartbeat", () => {
         "fn_mission_update",
         "fn_mission_set_status",
         "fn_mission_delete",
+        "fn_mission_reconcile",
         "fn_milestone_add",
         "fn_milestone_update",
         "fn_milestone_delete",
@@ -3419,6 +3421,7 @@ describe("executeHeartbeat", () => {
         "fn_slice_delete",
         "fn_feature_add",
         "fn_feature_update",
+        "fn_feature_repair_validation",
         "fn_feature_set_status",
         "fn_feature_delete",
         "fn_feature_link_task",

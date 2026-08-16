@@ -3,6 +3,35 @@ import type { Mock } from "vitest";
 import { installTaskWorktreeIdentityGuard } from "../worktree/worktree-hooks.js";
 import type * as ReviewerModule from "../execution/reviewer.js";
 
+/*
+FNXC:EngineTests 2026-08-15-01:20:
+Graph dispatch made the agent store MANDATORY: admitWorkflowPrincipalBeforeNode (FN-8764/FN-8821,
+2026-08-07..09) fails closed with `workflow-principal-routing-unavailable:no-agent-store:<role>`
+before any model session is created, so a bare `new TaskExecutor(store, root)` never reaches
+createFnAgent and every fn_task_done/customTools capture stays undefined. Hundreds of legacy
+executor suites construct the executor bare; rather than edit each construction site, fill the
+missing agentStore at the ONE seam every such test goes through — the TaskExecutor constructor —
+with the same createWorkflowRoutingAgentStore fixture the migrated suites pass explicitly.
+An options bag that mentions `agentStore` at all (including an explicit `agentStore: undefined`)
+always wins, so suites asserting the fail-closed no-agent-store park keep that behavior by
+opting out explicitly. Mirrors the withSessionDefaults precedent below: supply only what a
+test omitted, never override what it controls.
+*/
+vi.mock("../executor.js", async (importOriginal) => {
+  const actual = (await importOriginal()) as Record<string, unknown> & {
+    TaskExecutor: new (store: unknown, rootDir: string, options?: Record<string, unknown>) => unknown;
+  };
+  class DefaultRoutedTaskExecutor extends actual.TaskExecutor {
+    constructor(store: any, rootDir: string, options: Record<string, unknown> = {}) {
+      const filled = "agentStore" in options
+        ? options
+        : { ...options, agentStore: createWorkflowRoutingAgentStore(store).agentStore };
+      super(store, rootDir, filled);
+    }
+  }
+  return { ...actual, TaskExecutor: DefaultRoutedTaskExecutor };
+});
+
 // Mock external dependencies
 vi.mock("../pi.js", () => ({
   createFnAgent: vi.fn(),

@@ -11029,6 +11029,7 @@ async function runAiAgentForCommit(params: AiAgentParams): Promise<{ success: bo
   // FNXC:Settings-MergerModel 2026-07-16-00:00: merger retries use the dedicated project fallback lane before the shared global fallback pair.
 
   const mergerFallbackModel = resolveMergerFallbackModel(settings);
+  const mergerFusionTools = [reportBuildFailureTool, createWebFetchTool()];
 
   // FN-5279: Layer 3 / merge-authoring AI runs in the resolved integration
   // root so arbiter edits land in the reused task worktree when handoff mode
@@ -11040,7 +11041,8 @@ async function runAiAgentForCommit(params: AiAgentParams): Promise<{ success: bo
     cwd: rootDir,
     systemPrompt: mergerSystemPrompt,
     tools: "coding",
-    customTools: [reportBuildFailureTool, createWebFetchTool()],
+    customTools: mergerFusionTools,
+    fusionTools: mergerFusionTools,
     onText: agentLogger.onText,
     onThinking: agentLogger.onThinking,
     onToolStart: agentLogger.onToolStart,
