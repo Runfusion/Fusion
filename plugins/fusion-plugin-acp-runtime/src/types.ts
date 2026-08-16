@@ -170,6 +170,8 @@ export interface AcpSession {
    * of each turn (FIX 1). Undefined for the bare session shell used in tests.
    */
   resetTurn?: () => void;
+  /** Awaitable bridge cleanup used by AgentRuntime.dispose; absent for bare sessions. */
+  disposeBridge?: () => Promise<void>;
   dispose(): void;
 }
 

@@ -132,7 +132,10 @@ rl.on("line", (line) => {
   if (msg.method === "tools/call") {
     const toolName = msg.params?.name;
     const args = msg.params?.arguments ?? {};
-    callBridge(toolName, msg.id, args)
+    // JSON-RPC ids are commonly numbers; coerce so the bridge threads the real
+    // request id as the toolCallId instead of falling back to a fabricated id.
+    const toolCallId = typeof msg.id === "string" ? msg.id : String(msg.id);
+    callBridge(toolName, toolCallId, args)
       .then((result) => {
         write({
           jsonrpc: "2.0",

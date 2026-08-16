@@ -134,8 +134,9 @@ describe("AcpRuntimeAdapter custom-tools bridge (FNXC:AcpCustomTools)", () => {
         return { sessionId: "bridge-test-session" };
       });
     const adapter = makeAdapter();
+    let session: AcpSession | undefined;
     try {
-      const { session } = await adapter.createSession(
+      const created = await adapter.createSession(
         makeOptions({
           customTools: [
             {
@@ -147,13 +148,21 @@ describe("AcpRuntimeAdapter custom-tools bridge (FNXC:AcpCustomTools)", () => {
           ],
         }),
       );
+      session = created.session;
       expect(captured?.mcpServers).toHaveLength(1);
       expect(captured?.mcpServers?.[0]).toMatchObject({
         name: "fusion-custom-tools",
         command: process.execPath,
       });
+      const bridgeUrl = (captured?.mcpServers?.[0] as { env?: Array<{ name: string; value: string }> }).env?.find(
+        (entry) => entry.name === "FUSION_ACP_TOOL_BRIDGE_URL",
+      )?.value;
+      expect(bridgeUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
       await adapter.dispose(session);
+      await expect(fetch(`${bridgeUrl}/tool-call`)).rejects.toThrow();
     } finally {
+      // Dispose in finally so a failed assertion cannot leak the bridge/socket.
+      if (session) await adapter.dispose(session);
       spy.mockRestore();
     }
   });

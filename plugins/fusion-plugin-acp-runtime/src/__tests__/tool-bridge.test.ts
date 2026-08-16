@@ -64,7 +64,7 @@ describe("tool-bridge", () => {
         name: "fn_heartbeat_done",
         description: "Finish heartbeat",
         parameters: { type: "object", properties: {} },
-        execute: async (toolCallId: string) => ({ text: `done:${toolCallId}` }),
+        execute: async (toolCallId: string) => ({ text: `done:${typeof toolCallId}:${toolCallId}` }),
       },
     ]);
     expect(bridge).not.toBeNull();
@@ -94,7 +94,17 @@ describe("tool-bridge", () => {
     });
     const body = (await res.json()) as { isError?: boolean; content?: Array<{ text?: string }> };
     expect(body.isError).toBe(false);
-    expect(body.content?.[0]?.text).toBe("done:call-42");
+    expect(body.content?.[0]?.text).toBe("done:string:call-42");
+
+    const numericId = await fetch(`${bridgeUrl}/tool-call`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+      body: JSON.stringify({ name: "fn_heartbeat_done", toolCallId: 42, arguments: {} }),
+    });
+    const numericBody = (await numericId.json()) as { content?: Array<{ text?: string }> };
+    // The numeric JSON-RPC id must be threaded as the real toolCallId (coerced to
+    // string), never replaced by a fabricated UUID fallback.
+    expect(numericBody.content?.[0]?.text).toBe("done:string:42");
 
     // Unknown tool → 404.
     const unknown = await fetch(`${bridgeUrl}/tool-call`, {
@@ -126,6 +136,86 @@ describe("tool-bridge", () => {
     await bridge!.dispose();
     expect(existsSync(schemaPath)).toBe(false);
   });
+
+  it("aborts and awaits an in-flight tool before disposal completes", async () => {
+    let started!: () => void;
+    const executionStarted = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    let finished = false;
+    const bridge = await startFusionToolBridge([
+      {
+        name: "fn_slow",
+        parameters: {},
+        execute: async (_id, _args, signal) => {
+          started();
+          await new Promise<void>((resolve) => {
+            if (signal?.aborted) return resolve();
+            signal?.addEventListener("abort", () => resolve(), { once: true });
+          });
+          finished = true;
+          return { text: "done" };
+        },
+      },
+    ]);
+    expect(bridge).not.toBeNull();
+    const env = bridge!.mcpServer.env;
+    const bridgeUrl = env.find((e) => e.name === "FUSION_ACP_TOOL_BRIDGE_URL")!.value;
+    const token = env.find((e) => e.name === "FUSION_ACP_TOOL_BRIDGE_TOKEN")!.value;
+    const request = fetch(`${bridgeUrl}/tool-call`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}` },
+      body: JSON.stringify({ name: "fn_slow", arguments: {} }),
+    });
+    await executionStarted;
+    let disposed = false;
+    const disposing = bridge!.dispose().then(() => {
+      disposed = true;
+    });
+    expect(disposed).toBe(false);
+    await disposing;
+    expect(finished).toBe(true);
+    await expect(request).rejects.toThrow();
+  });
+
+  it("completes disposal and removes the schema when a tool ignores abort", async () => {
+    let started!: () => void;
+    const executionStarted = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const bridge = await startFusionToolBridge([
+      {
+        name: "fn_never_settles",
+        parameters: {},
+        execute: async () => {
+          started();
+          return new Promise(() => undefined);
+        },
+      },
+    ]);
+    expect(bridge).not.toBeNull();
+    const schemaPath = bridge!.mcpServer.args[1] as string;
+    const env = bridge!.mcpServer.env;
+    const bridgeUrl = env.find((entry) => entry.name === "FUSION_ACP_TOOL_BRIDGE_URL")!.value;
+    const token = env.find((entry) => entry.name === "FUSION_ACP_TOOL_BRIDGE_TOKEN")!.value;
+    const request = fetch(`${bridgeUrl}/tool-call`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}` },
+      body: JSON.stringify({ name: "fn_never_settles", arguments: {} }),
+    });
+    // Handle the eventual socket-close rejection up front so it can never surface
+    // as an unhandled rejection while dispose drains for TOOL_DRAIN_TIMEOUT_MS.
+    const requestOutcome = request.then(
+      () => "resolved",
+      () => "rejected",
+    );
+    // Wait until the tool body is running so the execution is tracked before dispose.
+    await executionStarted;
+
+    await expect(bridge!.dispose()).resolves.toBeUndefined();
+    expect(existsSync(schemaPath)).toBe(false);
+    expect(await requestOutcome).toBe("rejected");
+  }, 10_000);
 
   it("serves the full MCP protocol from the co-located schema server", async () => {
     const directory = await mkdtemp(join(tmpdir(), "fusion-acp-mcp-smoke-"));

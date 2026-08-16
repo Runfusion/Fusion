@@ -15,6 +15,9 @@ import { randomBytes, randomUUID } from "node:crypto";
 import type { AcpMcpServerStdio } from "./types.js";
 
 const BUILT_IN_TOOL_NAMES = new Set(["read", "write", "edit", "bash", "grep", "find"]);
+// Custom tools may ignore AbortSignal; bound the drain so dispose never hangs
+// on a tool that never settles (abort already unblocks cooperative tools).
+const TOOL_DRAIN_TIMEOUT_MS = 5_000;
 
 export interface ToolLike {
   name: string;
@@ -118,6 +121,8 @@ export async function startFusionToolBridge(tools: ReadonlyArray<ToolLike> | und
   const token = randomBytes(24).toString("hex");
   const schemaPath = join(tmpdir(), `fusion-acp-mcp-schemas-${process.pid}-${randomUUID()}.json`);
   writeFileSync(schemaPath, JSON.stringify(defs));
+  const activeExecutions = new Set<Promise<void>>();
+  const activeControllers = new Set<AbortController>();
 
   const server: Server = createServer(async (req, res) => {
     if (req.method !== "POST" || req.url !== "/tool-call") {
@@ -134,9 +139,9 @@ export async function startFusionToolBridge(tools: ReadonlyArray<ToolLike> | und
     }
     let body = "";
     for await (const chunk of req) body += chunk;
-    let parsed: { name?: string; toolCallId?: string; arguments?: unknown };
+    let parsed: { name?: string; toolCallId?: string | number; arguments?: unknown };
     try {
-      parsed = JSON.parse(body || "{}") as { name?: string; toolCallId?: string; arguments?: unknown };
+      parsed = JSON.parse(body || "{}") as { name?: string; toolCallId?: string | number; arguments?: unknown };
     } catch {
       res.statusCode = 400;
       res.end(JSON.stringify({ isError: true, text: "invalid JSON body" }));
@@ -149,10 +154,22 @@ export async function startFusionToolBridge(tools: ReadonlyArray<ToolLike> | und
       res.end(JSON.stringify({ isError: true, text: `Unknown Fusion tool: ${name}` }));
       return;
     }
-    try {
-      // Thread the real MCP request id as the toolCallId so correlation,
+    const execute = tool.execute;
+    const controller = new AbortController();
+    activeControllers.add(controller);
+    const execution = (async () => {
+      try {
+        // Thread the real MCP request id as the toolCallId so correlation,
       // cancellation, and dedupe keep working (never a fabricated id).
-      const result = await tool.execute(typeof parsed.toolCallId === "string" && parsed.toolCallId ? parsed.toolCallId : `acp-mcp-${randomUUID()}`, parsed.arguments ?? {}, undefined, undefined, undefined);
+      const result = await execute(
+        (typeof parsed.toolCallId === "string" || typeof parsed.toolCallId === "number") && String(parsed.toolCallId)
+          ? String(parsed.toolCallId)
+          : `acp-mcp-${randomUUID()}`,
+        parsed.arguments ?? {},
+        controller.signal,
+        undefined,
+        undefined,
+      );
       res.statusCode = 200;
       res.setHeader("content-type", "application/json");
       res.end(
@@ -170,7 +187,12 @@ export async function startFusionToolBridge(tools: ReadonlyArray<ToolLike> | und
           content: [{ type: "text", text: err instanceof Error ? err.message : String(err) }],
         }),
       );
-    }
+      }
+    })();
+    activeExecutions.add(execution);
+    await execution;
+    activeExecutions.delete(execution);
+    activeControllers.delete(controller);
   });
 
   const address = await new Promise<{ port: number }>((resolve, reject) => {
@@ -188,7 +210,6 @@ export async function startFusionToolBridge(tools: ReadonlyArray<ToolLike> | und
 
   const bridgeUrl = `http://127.0.0.1:${address.port}`;
   let disposed = false;
-
   return {
     toolCount: defs.length,
     mcpServer: {
@@ -203,9 +224,24 @@ export async function startFusionToolBridge(tools: ReadonlyArray<ToolLike> | und
     dispose: async () => {
       if (disposed) return;
       disposed = true;
+      for (const controller of activeControllers) controller.abort();
       await new Promise<void>((resolve) => {
         server.close(() => resolve());
+        if (typeof server.closeAllConnections === "function") {
+          server.closeAllConnections();
+        }
       });
+      await Promise.allSettled(
+        [...activeExecutions].map((execution) =>
+          Promise.race([
+            execution,
+            new Promise<void>((resolve) => {
+              const timer = setTimeout(resolve, TOOL_DRAIN_TIMEOUT_MS);
+              timer.unref?.();
+            }),
+          ]),
+        ),
+      );
       try {
         unlinkSync(schemaPath);
       } catch {

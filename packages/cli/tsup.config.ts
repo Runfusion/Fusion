@@ -33,6 +33,9 @@ const RUNTIME_PLUGINS_WITH_MCP_SCHEMA_SERVER = new Set([
   "fusion-plugin-claude-runtime",
   // FNXC:OmpAcp 2026-07-14-00:05: OMP ACP ships the same bridge asset for fn_* tools.
   "fusion-plugin-omp-runtime",
+  // FNXC:AcpCustomTools 2026-08-16-00:30: generic ACP runtime ships the same
+  // bridge asset for Hermes ACP / Prime fn_* tool forwarding.
+  "fusion-plugin-acp-runtime",
 ]);
 
 const __dirname = dirname(fileURLToPath(import.meta.url));

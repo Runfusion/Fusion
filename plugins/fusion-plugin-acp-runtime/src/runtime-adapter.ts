@@ -125,6 +125,11 @@ export class AcpRuntimeAdapter implements AgentRuntime {
     }
 
     let disposed = false;
+    let bridgeDisposePromise: Promise<void> | undefined;
+    const disposeBridge = (): Promise<void> => {
+      bridgeDisposePromise ??= toolBridge?.dispose() ?? Promise.resolve();
+      return bridgeDisposePromise;
+    };
     const session: AcpSession = {
       model,
       systemPrompt: options.systemPrompt,
@@ -139,6 +144,7 @@ export class AcpRuntimeAdapter implements AgentRuntime {
       // turn that trips the per-turn output cap can't latch and suppress every
       // subsequent turn (FIX 1).
       resetTurn,
+      disposeBridge,
       dispose: () => {
         if (disposed) return;
         disposed = true;
@@ -147,7 +153,7 @@ export class AcpRuntimeAdapter implements AgentRuntime {
         cancelPending();
         // Close the loopback tool bridge so no port or schema outlives the
         // session (idempotent).
-        void toolBridge?.dispose();
+        void disposeBridge();
         connection.dispose();
       },
     };
@@ -201,6 +207,7 @@ export class AcpRuntimeAdapter implements AgentRuntime {
     if (acp.connection && acp.sessionId) {
       await cancelAcpSession(acp.connection, acp.sessionId);
     }
+    await acp.disposeBridge?.();
     session.dispose();
   }
 }
