@@ -9986,24 +9986,42 @@ export async function aiMergeTask(
         result.pushError = pushResult.error;
       }
     } catch (err: any) {
-      mergerLog.error(`${taskId}: push to remote error: ${err.message}`);
-      result.pushedToRemote = false;
-      result.pushError = err.message;
-      await audit.git({
-        type: "push:origin",
-        target: taskId,
-        metadata: {
-          integrationBranch: mergeTarget.branch,
-          remote: settings.pushRemote || "origin",
-          outcome: "failed",
-          stderrPreview: err.message,
-        },
-      }).catch(() => undefined);
-      await store.logEntry(
-        taskId,
-        `Push to remote threw after merge — task marked done anyway; local main may diverge from origin: ${err.message}`,
-        "PushToRemoteFailed",
-      ).catch(() => undefined);
+      if (err instanceof Error && err.name === "MergeAbortedError") {
+        // FNXC:MergePush 2026-08-16-03:39: The retained public merger must preserve shutdown cancellation as an aborted delivery outcome after the local merge is finalized.
+        const message = "Push after merge aborted by shutdown signal; the local merge remains finalized";
+        mergerLog.warn(`${taskId}: ${message}`);
+        result.pushedToRemote = false;
+        result.pushError = message;
+        await audit.git({
+          type: "push:origin",
+          target: taskId,
+          metadata: {
+            integrationBranch: mergeTarget.branch,
+            remote: settings.pushRemote || "origin",
+            outcome: "aborted",
+          },
+        }).catch(() => undefined);
+        await store.logEntry(taskId, message, "PushToRemoteFailed").catch(() => undefined);
+      } else {
+        mergerLog.error(`${taskId}: push to remote error: ${err.message}`);
+        result.pushedToRemote = false;
+        result.pushError = err.message;
+        await audit.git({
+          type: "push:origin",
+          target: taskId,
+          metadata: {
+            integrationBranch: mergeTarget.branch,
+            remote: settings.pushRemote || "origin",
+            outcome: "failed",
+            stderrPreview: err.message,
+          },
+        }).catch(() => undefined);
+        await store.logEntry(
+          taskId,
+          `Push to remote threw after merge — task marked done anyway; local main may diverge from origin: ${err.message}`,
+          "PushToRemoteFailed",
+        ).catch(() => undefined);
+      }
     }
   }
 

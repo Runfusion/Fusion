@@ -361,6 +361,7 @@ describe("push-after-merge", () => {
 
   }
 
+  // FNXC:MergePush 2026-08-16-03:39: Retry tests cover bounded transient recovery and cancellation before and during backoff across both retained push surfaces.
   it("classifies Git transport failures without treating permission errors as transient", () => {
     expect(isTransientGitPushError("fatal: unable to access remote: Connection reset by peer")).toBe(true);
     expect(isTransientGitPushError("fatal: unable to access remote: Could not resolve host: git.example")).toBe(true);
@@ -388,6 +389,39 @@ describe("push-after-merge", () => {
       onRetry: () => controller.abort(),
     })).rejects.toBeInstanceOf(MergeAbortedError);
     expect(cancelledPush).toHaveBeenCalledTimes(1);
+  });
+
+  it("cancels while the transient retry backoff is pending", async () => {
+    vi.useFakeTimers();
+    try {
+      const transientError = Object.assign(new Error("push failed"), {
+        stderr: "fatal: unable to access remote: Connection reset by peer",
+      });
+      const controller = new AbortController();
+      const push = vi.fn().mockRejectedValue(transientError);
+      let signalBackoffStarted!: () => void;
+      const backoffStarted = new Promise<void>((resolve) => {
+        signalBackoffStarted = resolve;
+      });
+
+      const pending = pushWithTransientRetries(push, {
+        taskId: "FN-050",
+        signal: controller.signal,
+        retryBackoffMs: [10_000],
+        onRetry: signalBackoffStarted,
+      });
+      await backoffStarted;
+      await Promise.resolve();
+      expect(vi.getTimerCount()).toBe(1);
+
+      controller.abort();
+
+      await expect(pending).rejects.toBeInstanceOf(MergeAbortedError);
+      expect(push).toHaveBeenCalledTimes(1);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("retries a transient transport failure in the shared post-merge push path", async () => {
@@ -582,6 +616,51 @@ describe("push-after-merge", () => {
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-050",
       expect.stringContaining("Push to remote failed after merge"),
+      "PushToRemoteFailed",
+    );
+  });
+
+  it("records an aborted outcome when the retained merger is cancelled during push", async () => {
+    const controller = new AbortController();
+    setupAiMergeExecSyncWithPush(() => {
+      controller.abort();
+      throw Object.assign(new Error("push failed"), {
+        stderr: "fatal: unable to access remote: Connection reset by peer",
+      });
+    });
+
+    const store = createMockStore();
+    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
+      pushAfterMerge: true,
+      pushRemote: "origin",
+      mergeStrategy: "direct",
+    });
+
+    const result = await aiMergeTask(store, "/tmp/root", "FN-050", { signal: controller.signal });
+
+    expect(result.merged).toBe(true);
+    expect(result.pushedToRemote).toBe(false);
+    expect(result.pushError).toContain("aborted by shutdown signal");
+    expect(store.recordRunAuditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        domain: "git",
+        mutationType: "push:origin",
+        target: "FN-050",
+        metadata: expect.objectContaining({ outcome: "aborted" }),
+      }),
+    );
+    expect(store.recordRunAuditEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        domain: "git",
+        mutationType: "push:origin",
+        metadata: expect.objectContaining({ outcome: "failed" }),
+      }),
+    );
+    expect(store.logEntry).toHaveBeenCalledWith(
+      "FN-050",
+      expect.stringContaining("aborted by shutdown signal"),
       "PushToRemoteFailed",
     );
   });
