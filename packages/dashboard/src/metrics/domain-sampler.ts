@@ -275,17 +275,29 @@ export function createDomainSampler(init: DomainSamplerInit = {}): DomainSampler
   function start(): void {
     if (started) return;
     started = true;
-    const arm = (key: string, intervalMs: number, fn: () => void): void => {
-      const timer = timers!.setInterval(fn, intervalMs);
+    // Per-sampler in-flight flags so a tick that fires while the previous one is
+    // still awaiting is SKIPPED: samplers never run concurrently and a slow
+    // sample never queues (RUFU-081 Greptile P1 #2, RUFU-106).
+    const inFlight = new Set<string>();
+    const arm = (key: string, intervalMs: number, run: () => Promise<void>): void => {
+      const timer = timers!.setInterval(() => {
+        /*
+         * FNXC:MetricsSampler 2026-08-16 (RUFU-081 Greptile P1 #2, RUFU-106):
+         * An async sample that outlasts its interval must never overlap the next tick. If this
+         * sampler's previous run is still awaiting, skip the tick entirely; otherwise set the flag,
+         * run the sample, and clear it in `finally` so the next interval arm is armed again.
+         */
+        if (inFlight.has(key)) return;
+        inFlight.add(key);
+        void run()
+          .catch(() => undefined)
+          .finally(() => inFlight.delete(key));
+      }, intervalMs);
       timer.unref?.();
       timersMap.set(key, timer);
     };
-    arm("pg", tick.pgMs, () => {
-      void samplePgRate().catch(() => undefined);
-    });
-    arm("domain", tick.domainMs, () => {
-      void sampleDomain().catch(() => undefined);
-    });
+    arm("pg", tick.pgMs, samplePgRate);
+    arm("domain", tick.domainMs, sampleDomain);
   }
 
   function stopTimers(): void {

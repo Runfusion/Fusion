@@ -229,3 +229,100 @@ describe("defaultPgStatsReader", () => {
     await expect(reader()).resolves.toBeNull();
   });
 });
+
+describe("overlap guard (RUFU-081 Greptile P1 #2)", () => {
+  /*
+  FNXC:MetricsSampler 2026-08-16 (RUFU-081 Greptile P1 #2, RUFU-106):
+  An async sample that outlasts its interval must never overlap the next tick of the same arm. These
+  fake-timer tests hold a reader's promise pending while a SECOND interval fires and assert the reader
+  is invoked once (the tick was skipped). Samplers therefore never run concurrently and a slow sample
+  never queues.
+  */
+  it("skips a PG tick still in flight — the pg reader is invoked at most once per completed window", async () => {
+    vi.useFakeTimers();
+    let resolveReader: (s: PgStats) => void = () => {};
+    const pending = new Promise<PgStats>((res) => {
+      resolveReader = res;
+    });
+    const reader = vi.fn(() => pending);
+    const sampler = helper({ tick: { pgMs: 5000 }, pgStatsReader: reader });
+    sampler.start();
+
+    // First window fires -> reader invoked, sample stays pending (in flight).
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(reader).toHaveBeenCalledTimes(1);
+
+    // Second window fires while tick 1 is still awaiting -> SKIPPED (reader NOT re-invoked).
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(reader).toHaveBeenCalledTimes(1);
+
+    // Resolve the in-flight sample; the `finally` clears the guard.
+    resolveReader({ xactCommit: 1000, xactRollback: 0 });
+    await vi.advanceTimersByTimeAsync(0);
+
+    // Third window: guard clear -> reader fires again, exactly once per window.
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(reader).toHaveBeenCalledTimes(2);
+
+    sampler.stopTimers();
+  });
+
+  it("skips a domain tick still in flight — the agent/store probe is invoked at most once per completed window", async () => {
+    vi.useFakeTimers();
+    let resolveCount: (n: number) => void = () => {};
+    const pendingCount = new Promise<number>((res) => {
+      resolveCount = res;
+    });
+    const countAgents = vi.fn(() => pendingCount);
+    const store = makeStore([{ column: "todo" }], 1);
+    const sampler = helper({
+      tick: { domainMs: 5000 },
+      registeredStores: () => [{ projectId: "proj-a", store }],
+      countAgentsInStore: countAgents,
+      listTasksInStore: async () => [{ column: "todo" }],
+    });
+    sampler.start();
+
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(countAgents).toHaveBeenCalledTimes(1);
+
+    // Second window fires while tick 1 still awaits countAgents -> SKIPPED.
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(countAgents).toHaveBeenCalledTimes(1);
+
+    resolveCount(1);
+    await vi.advanceTimersByTimeAsync(0);
+
+    // Guard clear -> runs again.
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(countAgents).toHaveBeenCalledTimes(2);
+
+    sampler.stopTimers();
+  });
+
+  it("still emits well-formed metric lines after the guard over an empty / non-existent store set", async () => {
+    vi.useFakeTimers();
+    // Empty registry (no registered stores) and a pg reader that resolves normally.
+    const sampler = helper({
+      tick: { pgMs: 5000, domainMs: 5000 },
+      registeredStores: () => [],
+      pgStatsReader: async () => ({ xactCommit: 10, xactRollback: 0 }),
+      countAgentsInStore: async () => 0,
+      listTasksInStore: async () => [],
+    });
+    sampler.start();
+    await vi.advanceTimersByTimeAsync(5000);
+
+    const families = sampler.buildSnapshot();
+    const pgFamily = sampleByName(families, "fusion_domain_postgres_queries_per_second");
+    expect(Number.isFinite(pgFamily!.samples[0].value)).toBe(true);
+    const projects = sampleByName(families, "fusion_domain_projects_total");
+    expect(projects!.samples[0].value).toBe(0);
+
+    sampler.stopTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+});

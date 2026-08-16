@@ -9,7 +9,7 @@ import {
   createRequestLatencyMiddleware,
   defaultPsProbe,
 } from "../runtime-sampler.js";
-import type { PsProbe } from "../runtime-sampler.js";
+import type { PsProbe, PsProbeResult } from "../runtime-sampler.js";
 import { get } from "../../test-request.js";
 
 /**
@@ -233,5 +233,74 @@ describe("process + git gauges (injected probes)", () => {
     const result = await defaultPsProbe(process.pid);
     expect(typeof result.ok).toBe("boolean");
     expect(Array.isArray(result.childCommands)).toBe(true);
+  });
+});
+
+describe("overlap guard (RUFU-081 Greptile P1 #2)", () => {
+  /*
+  FNXC:MetricsSampler 2026-08-16 (RUFU-081 Greptile P1 #2, RUFU-106):
+  An async `sampleProcessAndGit` that outlasts its arm's interval must never overlap the next tick of
+  that SAME arm. These fake-timer tests hold the `psProbe` promise pending while a second interval
+  fires and assert the probe is invoked once (the tick was skipped). The `process` and `git` arms have
+  independent guards, so neither blocks the other.
+  */
+  it("skips a process tick still in flight — the ps probe is invoked at most once per completed window", async () => {
+    vi.useFakeTimers();
+    let resolveProbe: (r: PsProbeResult) => void = () => {};
+    const pending = new Promise<PsProbeResult>((res) => {
+      resolveProbe = res;
+    });
+    const psProbe = vi.fn(() => pending);
+    const sampler = createRuntimeSampler({ tick: { processMs: 5000, gitMs: 1_000_000 }, psProbe });
+    sampler.start();
+
+    // First window fires -> probe invoked, sample stays pending (in flight).
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(psProbe).toHaveBeenCalledTimes(1);
+
+    // Second window fires while tick 1 is still awaiting -> SKIPPED (probe NOT re-invoked).
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(psProbe).toHaveBeenCalledTimes(1);
+
+    // Resolve the in-flight sample; the `finally` clears the guard.
+    resolveProbe({ ok: false, childCommands: [], reason: "probe-error" });
+    await vi.advanceTimersByTimeAsync(0);
+
+    // Guard clear -> process arm fires again, exactly once per window.
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(psProbe).toHaveBeenCalledTimes(2);
+
+    sampler.stopTimers();
+  });
+
+  it("skips a git tick still in flight — the git arm never overlaps its own in-flight sample", async () => {
+    vi.useFakeTimers();
+    let resolveProbe: (r: PsProbeResult) => void = () => {};
+    const pending = new Promise<PsProbeResult>((res) => {
+      resolveProbe = res;
+    });
+    const psProbe = vi.fn(() => pending);
+    // processMs far out, so only the git (15s) arm fires in this window.
+    const sampler = createRuntimeSampler({ tick: { processMs: 1_000_000, gitMs: 15_000 }, psProbe });
+    sampler.start();
+
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(psProbe).toHaveBeenCalledTimes(1);
+
+    // Second git window fires while the first is still awaiting -> SKIPPED.
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(psProbe).toHaveBeenCalledTimes(1);
+
+    resolveProbe({ ok: false, childCommands: [], reason: "probe-error" });
+    await vi.advanceTimersByTimeAsync(0);
+
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(psProbe).toHaveBeenCalledTimes(2);
+
+    sampler.stopTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 });

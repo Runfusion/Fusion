@@ -411,8 +411,26 @@ export function createRuntimeSampler(init: RuntimeSamplerInit = {}): RuntimeSamp
   function start(): void {
     if (started) return;
     started = true;
-    const arm = (key: string, intervalMs: number, fn: () => void): void => {
-      const timer = timers.setInterval(fn, intervalMs);
+    // Per-sampler in-flight flags (one per arm) so a process/git tick that fires
+    // while the previous one is still awaiting is SKIPPED: samplers never run
+    // concurrently and a slow sample never queues (RUFU-081 Greptile P1 #2, RUFU-106).
+    const inFlight = new Set<string>();
+    const arm = (key: string, intervalMs: number, run: () => Promise<void>): void => {
+      const timer = timers.setInterval(() => {
+        /*
+         * FNXC:MetricsSampler 2026-08-16 (RUFU-081 Greptile P1 #2, RUFU-106):
+         * An async sample that outlasts its interval must never overlap the next tick of the
+         * same arm. If this sampler's previous run is still awaiting, skip the tick; otherwise
+         * set the flag, run the sample, and clear it in `finally` so the next interval fires again.
+         */
+        if (inFlight.has(key)) return;
+        inFlight.add(key);
+        void run()
+          .catch(() => {
+            /* best-effort */
+          })
+          .finally(() => inFlight.delete(key));
+      }, intervalMs);
       // Best-effort unref; fake timers may not expose it, but default timers
       // are unref'd so a running sampler never keeps the process alive.
       timer.unref?.();
@@ -421,17 +439,10 @@ export function createRuntimeSampler(init: RuntimeSamplerInit = {}): RuntimeSamp
     arm("latency", tick.latencyMs, () => {
       // The latency "sampler" tick is a no-op marker: the useful measurements
       // already live in the ring from actual served requests.
+      return Promise.resolve();
     });
-    arm("process", tick.processMs, () => {
-      void sampleProcessAndGit().catch(() => {
-        /* best-effort */
-      });
-    });
-    arm("git", tick.gitMs, () => {
-      void sampleProcessAndGit().catch(() => {
-        /* best-effort */
-      });
-    });
+    arm("process", tick.processMs, sampleProcessAndGit);
+    arm("git", tick.gitMs, sampleProcessAndGit);
   }
 
   function stopTimers(): void {
