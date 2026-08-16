@@ -493,7 +493,11 @@ export class NtfyNotifier {
 
   notifyGridlock(event: GridlockEvent | null): void {
     if (event === null) {
-      this.lastGridlockNotificationAt = null;
+      /*
+      FNXC:Notifications 2026-08-16-16:03:
+      Detector state may flap clear between scheduler polls while the same underlying gridlock persists.
+      Keep the wall-clock cooldown so a transient clear cannot re-arm ntfy every minute.
+      */
       return;
     }
 
