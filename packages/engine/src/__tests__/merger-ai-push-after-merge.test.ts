@@ -174,6 +174,37 @@ fi
     expect(logs.some((entry) => entry.message.includes("temporary Git transport failure"))).toBe(true);
   });
 
+  it("records an aborted outcome when cancellation interrupts the unified retry backoff", async () => {
+    const { dir, originDir } = initRepoWithRemote();
+    const hookPath = join(originDir, "hooks", "pre-receive");
+    writeFileSync(hookPath, `#!/bin/sh
+echo "fatal: unable to access remote: Connection reset by peer" >&2
+exit 1
+`, { mode: 0o755 });
+    const controller = new AbortController();
+    const { store, storeMocks, logs } = makeStore();
+    storeMocks.logEntry.mockImplementation(async (_id: string, message: string, action?: string) => {
+      logs.push({ message, action });
+      if (message.includes("temporary Git transport failure")) controller.abort();
+    });
+
+    const result = await runAiMerge(store, dir, "FN-1", { manual: true, signal: controller.signal }, {
+      mergeAgent: realMergeAgent("fusion/fn-1"),
+      reviewAgent: approveReviewer(),
+    });
+
+    expect(result.pushedToRemote).toBe(false);
+    expect(result.pushError).toContain("aborted by shutdown signal");
+    expect(storeMocks.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
+      mutationType: "push:origin",
+      metadata: expect.objectContaining({ outcome: "aborted" }),
+    }));
+    expect(storeMocks.recordRunAuditEvent).not.toHaveBeenCalledWith(expect.objectContaining({
+      mutationType: "push:origin",
+      metadata: expect.objectContaining({ outcome: "failed" }),
+    }));
+  });
+
   it("rebases in a clean room and pushes when the remote has diverged (non-FF path)", async () => {
     const { dir, originDir } = initRepoWithRemote();
     // Remote moves ahead AFTER our clone: the fast-path push must reject non-FF.

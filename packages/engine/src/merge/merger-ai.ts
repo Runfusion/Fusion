@@ -2734,6 +2734,7 @@ export async function pushAfterMergeToRemote(input: {
     );
     return { pushed: true, remote, targetBranch };
   } catch (err: unknown) {
+    if (isMergeAbortedError(err)) throw err;
     fastPathError = getErrorMessage(err);
   }
   if (!isNonFastForwardPushError(fastPathError)) {
