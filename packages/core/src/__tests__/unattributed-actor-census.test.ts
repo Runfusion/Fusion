@@ -307,10 +307,26 @@ complained) and the `updateTaskCustomFields` inline widening in
 `src/routes/register-task-workflow-routes.ts`. Both now restate the canonical arity. Do not relax
 either back to quiet a caller.
 */
+/*
+FNXC:Identity 2026-08-15-06:20 — baseline raised, with the cause recorded rather than hidden.
+
++5 of this movement is a MERGE artifact, not new debt written by hand: main added store call sites to
+engine and dashboard files this branch had already converted, so the merged result carries both
+sides and the new sites land on the unattributed marker because main's callers have no actor to
+derive. They are real debt and stay countable here; they are simply not debt this branch authored.
+
++1 (core/task-store/moves.ts) is DELIBERATE and is a correction, not a regression: an evidence-free
+handoff previously used the BOOTSTRAP actor, which specifically means "a pre-enablement internal
+write". The write was always unattributed; it was merely filed under the wrong category, and this
+marker is the honest label for it.
+
+The ratchet still does its job from the new floor: it exists to make growth visible and explained,
+and raising it silently — or excluding these files — is the failure it guards against.
+*/
 const BASELINE_BY_PACKAGE: Readonly<Record<string, number>> = {
-  core: 33,
-  engine: 308,
-  dashboard: 150,
+  core: 34,
+  engine: 310,
+  dashboard: 153,
   cli: 2,
 };
 const BASELINE = Object.values(BASELINE_BY_PACKAGE).reduce((sum, n) => sum + n, 0);

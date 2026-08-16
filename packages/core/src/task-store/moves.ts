@@ -22,6 +22,7 @@ import {VALID_TRANSITIONS, COLUMNS} from "../types.js";
 import {serializeWorkflowIr} from "../workflows/workflow-ir.js";
 import {emitWorkflowLifecycleEvent} from "../workflow-events.js";
 import {actorContextForAgent} from "../identity/actor.js";
+import { UNATTRIBUTED_MUTATION_CONTEXT } from "../identity/mutation-context.js";
 import {resolveAllowedColumns, workflowHasColumn} from "../workflows/workflow-transitions.js";
 import {isBuiltinWorkflowId, getBuiltinWorkflow, resolveDefaultWorkflowIr, DEFAULT_WORKFLOW_ID} from "../workflows/builtin-workflows.js";
 import {parseWorkflowIr} from "../workflows/workflow-ir.js";
@@ -417,7 +418,17 @@ export async function handoffToReviewImpl(store: TaskStore, taskId: string, opts
           runContext: {
             runId: opts.evidence.runId ?? "unknown",
             agentId: opts.evidence.agentId ?? "system",
-            actor: actorContextForAgent(opts.evidence.agentId),
+            /*
+          FNXC:Identity 2026-08-15-06:20 (review finding — bootstrap is not "unattributed"):
+          `actorContextForAgent(undefined)` returns the BOOTSTRAP actor, whose meaning is specific:
+          a pre-enablement internal write from before identity existed. An evidence-free handoff is
+          a present-day write whose actor we simply do not know, which is what the unattributed
+          marker is for. Using bootstrap here filed today's unknown writes under a historical
+          category and made both unreadable in audit.
+          */
+          actor: opts.evidence.agentId?.trim()
+            ? actorContextForAgent(opts.evidence.agentId)
+            : UNATTRIBUTED_MUTATION_CONTEXT.actor,
           },
           ownerAgentId: opts.ownerAgentId,
           evidence: opts.evidence,

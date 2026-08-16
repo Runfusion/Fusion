@@ -300,7 +300,14 @@ async function deleteTaskBackendWithClaimResultImpl(store: TaskStore, id: string
           allowResurrection,
           githubIssueAction: options?.githubIssueAction ?? null,
           closureContext: options?.closureContext ?? null,
-          deletedBy: options?.auditContext?.agentId ?? null,
+          /*
+          FNXC:Identity 2026-08-15-06:20 (review finding — one precedence rule, not two):
+          The audit row above prefers `runContext` and falls back to `auditContext`; this field read
+          `auditContext` ONLY. When the two carried different agents, one delete produced two
+          different actors in two places, and a consumer reading the lifecycle payload disagreed with
+          the audit trail about who deleted the task. Same precedence, same answer.
+          */
+          deletedBy: options?.runContext?.agentId ?? options?.auditContext?.agentId ?? null,
         },
       });
       /*
