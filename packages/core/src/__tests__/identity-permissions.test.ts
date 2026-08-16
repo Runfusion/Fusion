@@ -305,6 +305,7 @@ describe("R17 no escalation", () => {
       grantorGrants: grantsOf({ permission: "tasks:merge", disposition: "allow" }),
       grantorKind: "human",
       targetActorId: AGENT.id,
+      targetKind: "agent",
       grants: [{ permission: "tasks:merge", disposition: "allow" }],
     });
     expect(decision).toEqual({ allowed: false, reason: "missing-roles-grant" });
@@ -318,6 +319,7 @@ describe("R17 no escalation", () => {
       ),
       grantorKind: "human",
       targetActorId: AGENT.id,
+      targetKind: "agent",
       grants: [{ permission: "tasks:merge", disposition: "allow" }],
     });
     expect(decision).toEqual({ allowed: false, reason: "grantor-lacks-permission", permission: "tasks:merge" });
@@ -331,6 +333,7 @@ describe("R17 no escalation", () => {
       ),
       grantorKind: "human",
       targetActorId: AGENT.id,
+      targetKind: "agent",
       grants: [{ permission: "tasks:merge", disposition: "allow" }],
     });
     expect(decision).toEqual({ allowed: false, reason: "grantor-disposition-narrower", permission: "tasks:merge" });
@@ -344,6 +347,7 @@ describe("R17 no escalation", () => {
       ),
       grantorKind: "human",
       targetActorId: AGENT.id,
+      targetKind: "agent",
       grants: [{ permission: "tasks:merge", disposition: "block" }],
     });
     expect(decision).toEqual({ allowed: true });
@@ -359,9 +363,52 @@ describe("R17 no escalation", () => {
         grantorGrants,
         grantorKind: "agent",
         targetActorId: AGENT.id,
+        targetKind: "agent",
+      targetKind: "agent",
         grants: [{ permission: "identity:configure", disposition: "allow" }],
       }),
     ).toEqual({ allowed: false, reason: "not-agent-grantable", permission: "identity:configure" });
+  });
+
+  /*
+  FNXC:IdentityPermissions 2026-08-15-06:20 (review finding):
+  KTD20 says no agent may ever HOLD a non-agent-grantable permission. The check tested only
+  `grantorKind`, so this exact path was open: a HUMAN who legitimately holds `roles:grant` and
+  `identity:configure` could hand `identity:configure` to an agent actor. Nothing in the grantor's
+  own authority is violated — which is why grantor-side checking alone could never catch it — and
+  `identity:configure` is the permission that turns the whole authorization system off.
+  */
+  it("refuses a HUMAN granting a non-agent-grantable permission TO an agent (KTD20, target side)", () => {
+    const grantorGrants = grantsOf(
+      { permission: "roles:grant", disposition: "allow" },
+      { permission: "identity:configure", disposition: "allow" },
+    );
+    expect(
+      evaluateGrantAuthority({
+        grantorGrants,
+        grantorKind: "human",
+        targetActorId: AGENT.id,
+        targetKind: "agent",
+        grants: [{ permission: "identity:configure", disposition: "allow" }],
+      }),
+    ).toEqual({ allowed: false, reason: "not-agent-grantable", permission: "identity:configure" });
+  });
+
+  // Positive twin: the same grant to a HUMAN target is legitimate, so the denial above is about the
+  // target being an agent and not about the fixture refusing everything.
+  it("allows that same grant when the target is a human", () => {
+    expect(
+      evaluateGrantAuthority({
+        grantorGrants: grantsOf(
+          { permission: "roles:grant", disposition: "allow" },
+          { permission: "identity:configure", disposition: "allow" },
+        ),
+        grantorKind: "human",
+        targetActorId: "actor-human-2",
+        targetKind: "human",
+        grants: [{ permission: "identity:configure", disposition: "allow" }],
+      }),
+    ).toEqual({ allowed: true });
   });
 
   it("refuses a grant to a reserved actor id", () => {
@@ -373,6 +420,7 @@ describe("R17 no escalation", () => {
         ),
         grantorKind: "human",
         targetActorId: BOOTSTRAP_ACTOR_ID,
+        targetKind: "human",
         grants: [{ permission: "tasks:merge", disposition: "allow" }],
       }),
     ).toEqual({ allowed: false, reason: "reserved-actor" });

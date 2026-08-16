@@ -221,7 +221,18 @@ export async function setActorStatus(
 
 /** Suspend an actor: retained and re-activatable, but every session, credential, and grant is revoked now. */
 export async function suspendActor(
-  layer: Pick<AsyncDataLayer, "db" | "projectId" | "transactionImmediate">,
+  /*
+  FNXC:Identity 2026-08-15-06:20 (review finding — a runtime 42501 that the type system could catch):
+  Both wrappers forward to `setActorStatus`, which needs `privilegedTransactionImmediate` because
+  migration 0060 REVOKEs write on `project.actor_role_grants` from `fusion_runtime`. That member is
+  optional on `AsyncDataLayer`, so the narrower Pick still compiled and the requirement was invisible
+  to callers — a type-checked call then failed with a permission error at revoke time instead of at
+  compile time. Naming it here makes the dependency visible where the caller reads it.
+  */
+  layer: Pick<
+    AsyncDataLayer,
+    "db" | "projectId" | "transactionImmediate" | "privilegedTransactionImmediate"
+  >,
   id: string,
   now?: string,
 ): Promise<Actor | null> {
@@ -233,7 +244,11 @@ export async function suspendActor(
  * audit rows referencing it still resolve to a display name.
  */
 export async function tombstoneActor(
-  layer: Pick<AsyncDataLayer, "db" | "projectId" | "transactionImmediate">,
+  /** Same privileged-handle requirement as {@link suspendActor}. */
+  layer: Pick<
+    AsyncDataLayer,
+    "db" | "projectId" | "transactionImmediate" | "privilegedTransactionImmediate"
+  >,
   id: string,
   now?: string,
 ): Promise<Actor | null> {

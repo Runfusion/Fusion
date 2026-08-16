@@ -2318,7 +2318,16 @@ export class AgentStore extends EventEmitter {
   async verifyApiKeyToken(token: string): Promise<AgentApiKey | null> {
     const parsed = parseToken(token, TOKEN_PREFIX.agentKey);
     if (!parsed) return null;
-    const key = await findApiKeyByLookupIdAsync(this.asyncLayer!.db, parsed.lookupId);
+    /*
+    FNXC:Identity 2026-08-15-06:20:
+    Scoped to this store's project, matching `insertApiKeyAsync` / `revokeApiKeyRowAsync` /
+    `readApiKeysAsync`. Without it a token minted in another project verified here.
+    */
+    const key = await findApiKeyByLookupIdAsync(
+      this.asyncLayer!.db,
+      parsed.lookupId,
+      this.workflowProjectId,
+    );
     if (!key || key.revokedAt || !key.secretHash) return null;
     if (!verifyTokenSecret(parsed.secret, key.secretHash)) return null;
     return key;

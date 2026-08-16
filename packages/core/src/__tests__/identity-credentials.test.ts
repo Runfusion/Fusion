@@ -87,7 +87,9 @@ describe("identity credentials: password path (KTD3)", () => {
 
   it("keeps N at or above the OWASP floor of 2^17", () => {
     expect(PASSWORD_SCRYPT_PARAMS.N).toBeGreaterThanOrEqual(1 << 17);
-    // maxmem must exceed 128 * N * r or every derivation throws before doing work.
+    // 128 * N * r is scrypt's own REQUIREMENT floor, not the factor this module allocates at:
+    // `maxmemFor` uses SCRYPT_MAXMEM_FACTOR (256) for headroom. Asserting the floor here proves the
+    // configured constant is legal at all; the factor is asserted where it is defined.
     expect(PASSWORD_SCRYPT_PARAMS.maxmem).toBeGreaterThan(
       128 * PASSWORD_SCRYPT_PARAMS.N * PASSWORD_SCRYPT_PARAMS.r,
     );

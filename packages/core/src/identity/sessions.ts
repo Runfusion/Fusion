@@ -36,7 +36,18 @@ import { mintToken, parseToken, resolveTokenHmacKey, TOKEN_PREFIX, verifyTokenSe
 
 /** A query-capable handle: either the top-level db or a transaction handle. */
 type QueryHandle = AsyncDataLayer["db"] | DbTransaction;
-type SessionLayer = Pick<AsyncDataLayer, "db">;
+/*
+FNXC:Identity 2026-08-15-06:20 (review finding — rotation was not atomic):
+Rotation REVOKES the predecessor and then INSERTS the successor. With only `db` available these ran
+as two independent statements, so a failure between them left the operator holding a revoked session
+with no replacement — and because a privilege change is exactly what triggers rotation, the failure
+mode was "role updated, user permanently logged out, no retry can recover the revoked row".
+
+`transactionImmediate` is optional so a caller passing a minimal layer (tests, a plain db handle)
+still type-checks; when it is absent the previous non-atomic behaviour is used rather than crashing,
+and when a `handle` is supplied the caller already owns the transaction.
+*/
+type SessionLayer = Pick<AsyncDataLayer, "db"> & Partial<Pick<AsyncDataLayer, "transactionImmediate">>;
 
 /** R29's split. Mirrors the `actor_sessions_kind_check` CHECK constraint — the two must not drift. */
 export type SessionKind = "human" | "agent";
@@ -416,6 +427,13 @@ export async function startSession(
   input: CreateSessionInput & { previousSessionId?: string | null },
   handle?: QueryHandle,
 ): Promise<IssuedSession> {
+  // Same atomicity requirement as rotation: revoking the predecessor and creating the successor is
+  // one operation, or a failed login leaves the caller with neither session.
+  if (!handle && input.previousSessionId && layer.transactionImmediate) {
+    return layer.transactionImmediate((tx) =>
+      startSession(layer, input, tx as QueryHandle),
+    ) as Promise<IssuedSession>;
+  }
   const nowIso = input.now ?? new Date().toISOString();
   if (input.previousSessionId) {
     await revokeSession(layer, input.previousSessionId, nowIso, handle);
@@ -444,6 +462,12 @@ export async function rotateSessionForPrivilegeChange(
   options?: { now?: string; hmacKey?: Buffer | string },
   handle?: QueryHandle,
 ): Promise<IssuedSession | null> {
+  // Own the unit of work when the caller did not: revoke+insert must not half-apply.
+  if (!handle && layer.transactionImmediate) {
+    return layer.transactionImmediate((tx) =>
+      rotateSessionForPrivilegeChange(layer, sessionId, options, tx as QueryHandle),
+    ) as Promise<IssuedSession | null>;
+  }
   const db = handle ?? layer.db;
   const existing = await getSession(layer, sessionId, handle);
   if (!existing || existing.revokedAt) return null;

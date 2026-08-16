@@ -46,8 +46,8 @@ import { randomBytes, scrypt as scryptCb, scryptSync, timingSafeEqual } from "no
  * FNXC:Identity 2026-08-14-08:40:
  * Ceilings for cost parameters read out of a STORED hash. Deliberately above
  * {@link PASSWORD_SCRYPT_PARAMS} so raising the real work factor does not immediately invalidate
- * every stored row, and far below what would exhaust memory: at `N = 2^20, r = 16` scrypt wants
- * 128 * N * r = 2 GiB, which is the largest allocation this module will ever attempt.
+ * every stored row, and far below what would exhaust memory: at `N = 2^20, r = 16` this module
+ * requests SCRYPT_MAXMEM_FACTOR * N * r = 4 GiB, which is the largest allocation it will ever attempt.
  */
 const MAX_PARSED_SCRYPT_N = 1 << 20;
 const MAX_PARSED_SCRYPT_R = 16;
@@ -137,9 +137,19 @@ function parsePasswordHash(stored: string): ParsedPasswordHash | null {
  * `maxmem` large enough for the parameters actually being used, never smaller than the configured
  * ceiling. A hash stored under a LOWER `N` than today's must still verify, and a hash stored under a
  * higher one (a downgrade of the constant) must not silently throw at verification time.
+ *
+ * FNXC:Identity 2026-08-15-06:20 (review finding — one factor, stated once):
+ * scrypt REQUIRES `maxmem > 128 * N * r`; this uses {@link SCRYPT_MAXMEM_FACTOR} (256) for headroom
+ * over that floor. The two numbers were previously scattered — the constant's own doc described
+ * 192 MiB as "the operating value" while this function returns 256 MiB for the default parameters,
+ * so `Math.max` never actually selects the constant at defaults, and a test asserted the 128 floor
+ * as though it were the implementation's factor. The factor now lives in one place and everything
+ * else refers to it.
  */
+export const SCRYPT_MAXMEM_FACTOR = 256;
+
 function maxmemFor(params: { N: number; r: number }): number {
-  return Math.max(PASSWORD_SCRYPT_PARAMS.maxmem, 256 * params.N * params.r);
+  return Math.max(PASSWORD_SCRYPT_PARAMS.maxmem, SCRYPT_MAXMEM_FACTOR * params.N * params.r);
 }
 
 function derive(password: string, salt: Buffer, params: { N: number; r: number; p: number }, keylen: number): Buffer {

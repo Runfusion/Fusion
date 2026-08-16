@@ -749,12 +749,28 @@ export async function insertApiKey(
 export async function findApiKeyByLookupId(
   handle: QueryHandle,
   lookupId: string,
+  projectId?: string,
 ): Promise<AgentApiKey | null> {
   if (!lookupId) return null;
   const rows = await handle
     .select({ data: schema.project.agentApiKeys.data })
     .from(schema.project.agentApiKeys)
-    .where(sql`${schema.project.agentApiKeys.data}->>'lookupId' = ${lookupId}`)
+    /*
+    FNXC:Identity 2026-08-15-06:20 (review finding — verification was NOT project-scoped):
+    This predicate was a bare `lookupId` equality while both siblings (`readApiKeys`,
+    `insertApiKey`) scope on `projectId`. On a shared cluster — which is the deployment the central
+    database exists for — a token minted in project A resolved against project B's store and was
+    then treated as a valid credential there, because the caller only checks the HMAC afterwards and
+    the HMAC is valid: it is the SAME key row. Scoping is what makes the token mean "valid HERE"
+    rather than "valid somewhere".
+
+    Do not rely on lookup ids being unique across projects: `limit(1)` over an unscoped, unordered
+    match would otherwise pick an arbitrary row.
+    */
+    .where(and(
+      sql`${schema.project.agentApiKeys.data}->>'lookupId' = ${lookupId}`,
+      projectScopeFor(schema.project.agentApiKeys.projectId, projectId),
+    ))
     .limit(1);
   return (rows[0]?.data as AgentApiKey | null) ?? null;
 }

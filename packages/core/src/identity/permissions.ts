@@ -727,6 +727,19 @@ export interface EvaluateGrantAuthorityInput {
   grantorGrants: ResolvedGrantSet;
   grantorKind: ActorKind;
   targetActorId: string;
+  /**
+   * FNXC:IdentityPermissions 2026-08-15-06:20 (review finding — the fleet could be GIVEN what it
+   * may not hold):
+   * The KTD20 check tested only `grantorKind`, so a HUMAN holding `roles:grant` plus a
+   * non-agent-grantable permission could hand that permission to an agent actor. The catalog says no
+   * agent may ever HOLD such a permission, not merely that no agent may pass one on — enforcing it
+   * on the grantor alone left the fleet one cooperative human away from `identity:configure`.
+   *
+   * REQUIRED, not optional: an omitted target kind silently disables the check, which is the failure
+   * this finding describes. There are no production callers yet, so a compile error is the cheapest
+   * possible time to learn a call site forgot it.
+   */
+  targetKind: ActorKind;
   /** What the grantor is trying to hand over. */
   grants: readonly PermissionGrant[];
 }
@@ -754,8 +767,12 @@ export function evaluateGrantAuthority(input: EvaluateGrantAuthorityInput): Gran
   for (const grant of input.grants) {
     const entry = getPermissionCatalogEntry(grant.permission);
     if (!entry) return { allowed: false, reason: "unknown-permission", permission: grant.permission };
-    // KTD20: a non-agent-grantable entry is closed to the fleet no matter what the grantor holds.
-    if (!entry.agentGrantable && input.grantorKind === "agent") {
+    /*
+    KTD20: a non-agent-grantable entry is closed to the fleet no matter what the grantor holds — and
+    no matter who is doing the granting. Checked on BOTH ends: an agent may not pass one on, and no
+    grantor of any kind may land one on an agent actor.
+    */
+    if (!entry.agentGrantable && (input.grantorKind === "agent" || input.targetKind === "agent")) {
       return { allowed: false, reason: "not-agent-grantable", permission: grant.permission };
     }
     const held = input.grantorGrants.permissions[grant.permission];
