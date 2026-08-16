@@ -151,6 +151,29 @@ describe("runAiMerge push-after-merge", () => {
     }));
   });
 
+  it("retries a temporary transport failure on the unified fast path", async () => {
+    const { dir, originDir } = initRepoWithRemote();
+    const hookPath = join(originDir, "hooks", "pre-receive");
+    writeFileSync(hookPath, `#!/bin/sh
+marker="$(dirname "$0")/../transient-push-once"
+if [ ! -f "$marker" ]; then
+  touch "$marker"
+  echo "fatal: unable to access remote: Connection reset by peer" >&2
+  exit 1
+fi
+`, { mode: 0o755 });
+    const { store, logs } = makeStore();
+
+    const result = await runAiMerge(store, dir, "FN-1", { manual: true }, {
+      mergeAgent: realMergeAgent("fusion/fn-1"),
+      reviewAgent: approveReviewer(),
+    });
+
+    expect(result.pushedToRemote).toBe(true);
+    expect(git(originDir, "rev-parse main")).toBe(git(dir, "rev-parse main"));
+    expect(logs.some((entry) => entry.message.includes("temporary Git transport failure"))).toBe(true);
+  });
+
   it("rebases in a clean room and pushes when the remote has diverged (non-FF path)", async () => {
     const { dir, originDir } = initRepoWithRemote();
     // Remote moves ahead AFTER our clone: the fast-path push must reject non-FF.

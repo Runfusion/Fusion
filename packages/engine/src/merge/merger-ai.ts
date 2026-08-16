@@ -93,6 +93,7 @@ import {
   isNonFastForwardPushError,
   isRebaseInProgress,
   parsePushRemoteTarget,
+  pushWithTransientRetries,
   pushToRemoteAfterMerge,
   runMergeAdvanceAutoSync,
   syncGroupPrOnLanding,
@@ -2719,7 +2720,18 @@ export async function pushAfterMergeToRemote(input: {
   throwIfAborted(signal, taskId);
   let fastPathError: string;
   try {
-    await git(["push", remote, `${localRef}:refs/heads/${targetBranch}`], projectRootDir, { timeout: 120_000 });
+    await pushWithTransientRetries(
+      () => git(["push", remote, `${localRef}:refs/heads/${targetBranch}`], projectRootDir, { timeout: 120_000 }),
+      {
+        taskId,
+        signal,
+        onRetry: async ({ attempt, maxRetries, delayMs, error }) => {
+          const message = `Push after merge: temporary Git transport failure; retrying in ${delayMs}ms (${attempt}/${maxRetries}): ${error}`;
+          aiMergeLog.warn(`${taskId}: ${message}`);
+          await log(message);
+        },
+      },
+    );
     return { pushed: true, remote, targetBranch };
   } catch (err: unknown) {
     fastPathError = getErrorMessage(err);
