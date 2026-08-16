@@ -29,9 +29,10 @@ STEPS:
                         (idx_scan growth < 30 q/s, health < 0.5s, CPU < 40%).
 */
 
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import net from "node:net";
 import process from "node:process";
 
@@ -49,10 +50,45 @@ const warn = (...a) => console.warn("!", ...a);
 const fail = (msg) => { console.error(`\n✗ ${msg}\n`); process.exit(1); };
 const sh = (cmd, opts = {}) => execFileSync("bash", ["-lc", cmd], { encoding: "utf8", stdio: ["ignore", "pipe", "inherit"], ...opts });
 
+/*
+FNXC:DeployPreflight 2026-08-16-22:29 (RUFU-106 resolving RUFU-073 Greptile P1 #1):
+The preflight broke on EVERY documented invocation: `git rev-parse short main` parsed `short` as a
+subcommand (`fatal: ambiguous argument 'short'`), and `merge-base --is-ancestor` threw via
+`execFileSync` on the not-ancestor exit code 1, so the "RUFU-073 is not on local main" failure branch
+never ran. `isAncestorCmd`/`shortSha` are the pure, testable decision helpers behind the fixed
+preflight; their temp-repo assertions live in scripts/__tests__/deploy-rufu-073.test.mjs.
+*/
+/**
+ * Pure: `git merge-base --is-ancestor <ancestor> <descendant>` -> boolean.
+ *
+ * exit 0 => true (ancestor); exit 1 => false (NOT an ancestor — the documented
+ * failure branch); any other exit (a genuine ref error) throws. This fixes the
+ * P1 preflight bug where `execFileSync` threw on the not-ancestor exit code 1,
+ * so the intended "RUFU-073 is not on local main" failure message was never
+ * reached (the ternary's "no" branch was dead).
+ */
+export function isAncestorCmd(gitBin, ancestor, descendant, cwd) {
+  const res = spawnSync(gitBin, ["merge-base", "--is-ancestor", ancestor, descendant], { cwd, encoding: "utf8" });
+  if (res.status === 0) return true;
+  if (res.status === 1) return false;
+  throw new Error(`git merge-base --is-ancestor exited ${res.status}: ${String(res.stderr ?? "").trim()}`);
+}
+
+/**
+ * Pure: the short SHA of `ref` for `gitBin` in `cwd`. Uses `--short` (the
+ * correct flag); the P1 bug ran `git rev-parse short main` which parsed `short`
+ * as a subcommand and aborted EVERY documented invocation with
+ * `fatal: ambiguous argument 'short'`.
+ */
+export function shortSha(gitBin, ref, cwd) {
+  return execFileSync(gitBin, ["rev-parse", "--short", ref], {
+    cwd, encoding: "utf8", stdio: ["ignore", "pipe", "inherit"],
+  }).trim();
+}
+
 function assertMainHasRufu073() {
-  const git = (args) => execFileSync("git", args, { encoding: "utf8", cwd: REPO, stdio: ["ignore", "pipe", "inherit"] }).trim();
-  const mainSha = git(["rev-parse", "short", "main"]);
-  const inMain = git(["merge-base", "--is-ancestor", TASK_START_COMMIT, "main"]) ? "yes" : "no";
+  const mainSha = shortSha("git", "main", REPO);
+  const inMain = isAncestorCmd("git", TASK_START_COMMIT, "main", REPO) ? "yes" : "no";
   log(`local main = ${mainSha}; RUFU-073 fix ${TASK_START_COMMIT} present in main: ${inMain}`);
   if (inMain !== "yes") fail(`RUFU-073 is not on local main — land it first (fast-forward main to the rufu branch).`);
   return mainSha;
@@ -168,4 +204,17 @@ async function main() {
   console.log(preScan >= 0 && postScan >= 0 && preScan > postScan
     ? `  PASS  idx_scan growth dropped ${preScan.toFixed(1)} -> ${postScan.toFixed(1)} q/s`
     : `  CHECK idx_scan before ${preScan < 0 ? "N/A" : preScan.toFixed(1)} -> after ${postScan < 0 ? "N/A" : postScan.toFixed(1)} q/s`);
+}
+/*
+FNXC:DeployPreflight 2026-08-16-22:29:
+Run the deploy/verify flow only when executed directly (never on import, so
+scripts/__tests__/deploy-rufu-073.test.mjs can import the pure helpers without triggering a run).
+Previously the file defined `main()` but never invoked it, so every documented invocation was a no-op
+that reached no preflight at all; this guard makes the documented invocations actually run the flow.
+*/
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  main().catch((error) => {
+    console.error(error instanceof Error ? error.stack ?? error.message : error);
+    process.exit(1);
+  });
 }
