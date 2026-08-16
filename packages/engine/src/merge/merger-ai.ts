@@ -2720,6 +2720,8 @@ export async function pushAfterMergeToRemote(input: {
   throwIfAborted(signal, taskId);
   let fastPathError: string;
   try {
+    // FNXC:MergePush 2026-08-16-02:55: Retry transient fast-path transport failures with
+    // bounded, cancellation-aware backoff; merge aborts must escape to the aborted-push audit path.
     await pushWithTransientRetries(
       () => git(["push", remote, `${localRef}:refs/heads/${targetBranch}`], projectRootDir, { timeout: 120_000 }),
       {
