@@ -116,6 +116,13 @@ export interface AgentRuntimeOptions {
   cwd: string;
   systemPrompt: string;
   tools?: "coding" | "readonly";
+  /**
+   * Engine-assembled Fusion custom tools (fn_*). ToolDefinition.execute closures
+   * only run in-process, so the ACP runtime exposes them to the agent through a
+   * loopback tool bridge registered in `session/new.mcpServers` (same pattern as
+   * the Grok runtime). Absent/empty keeps Route B's read-only ask posture.
+   */
+  customTools?: unknown;
   onText?: (text: string) => void;
   onThinking?: (text: string) => void;
   onToolStart?: (toolName: string, args?: unknown) => void;
