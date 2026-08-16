@@ -92,6 +92,7 @@ import {
 } from "./reliability-metrics.js";
 import { loadViewChunkManifest, type ViewChunkManifestEntry } from "./view-chunk-manifest.js";
 import { maybeStartOtelExporter, type OtelExporterHandle } from "./otel-exporter.js";
+import { createMetricsSampler } from "./metrics/index.js";
 import { requireAsyncLayer } from "./require-async-layer.js";
 import {
   evaluateDashboardPostgresHealth,
@@ -976,6 +977,16 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
 
   const app = express();
   app.locals.hybridExecutor = options?.hybridExecutor;
+
+  /*
+  FNXC:MetricsEndpoint 2026-08-13-16:15:
+  RUFU-081: per-server /metrics observability. The orchestrator is created with
+  no side effects here; the spawn-count hook + tick timers start only on listen
+  and stop on close (co-located with the OTLP exporter). It runs in both
+  headless and non-headless servers. Its latency-recorder middleware is mounted
+  below, before route handlers, so it times the LIVE serving path.
+  */
+  const metricsSampler = createMetricsSampler();
   const runtimeLogger = options?.runtimeLogger ?? createRuntimeLogger("server");
   const mutationRateLimit = rateLimit(RATE_LIMITS.mutation);
   const setupRateLimit = rateLimit(RATE_LIMITS.api);
@@ -1023,6 +1034,16 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
       return next(error);
     });
   });
+
+  /*
+  FNXC:MetricsEndpoint 2026-08-13-16:15:
+  RUFU-081: mount the request-latency recorder head on every request (inside
+  /api and the SPA shell, headless or not) so it measures the real HTTP serving
+  pipeline cost, including /api/health — the single best event-loop-starvation
+  indicator. It only attaches a `finish` listener and calls next(); it never
+  blocks or serializes the render path.
+  */
+  app.use(metricsSampler.middleware());
 
   // Daemon mode: bearer token authentication middleware
   // Auth is enabled when daemon option is provided OR FUSION_DAEMON_TOKEN env var is set.
@@ -1836,6 +1857,21 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
     }));
   });
 
+  /*
+  FNXC:MetricsEndpoint 2026-08-13-16:15:
+  RUFU-081: the /metrics route is mounted at the app level (NOT under /api) so
+  it is public and scrapable like the SPA shell — daemon bearer-token auth only
+  protects /api/*. This is intentional: the body is pre-read numeric gauges
+  only (no secrets, no prose), served synchronously from the sampler snapshot
+  with zero awaited I/O so a scrape can never starve the event loop or itself
+  be subject to on-demand DB/ps work. It must be mounted before the SPA
+  catch-all below so it returns Prometheus text rather than index.html.
+  */
+  app.get("/metrics", (_req, res) => {
+    res.type("text/plain; version=0.0.4; charset=utf-8");
+    res.send(metricsSampler.render());
+  });
+
   app.get("/api/engine/status", (req, res) => {
     const projectId = getProjectIdFromRequest(req);
     res.json(buildEngineStatusPayload(projectId, options));
@@ -2352,6 +2388,11 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
       });
     }
 
+    // RUFU-081: start the /metrics samplers (spawn-count hook + unref'd tick
+    // timers). Synchronous and best-effort; a failure here must never break
+    // server startup or the request pipeline.
+    metricsSampler.start();
+
     if (!providerHealthMonitor && (options?.engineManager || options?.engine)) {
       const providerHealthLogger = runtimeLogger.child("provider-health");
       providerHealthMonitor = new ProviderHealthMonitor({
@@ -2375,6 +2416,9 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
       aiSessionStore?.stopScheduledCleanup();
       otelExporter?.stop();
       otelExporter = null;
+      // RUFU-081: stop the /metrics samplers and remove the spawn hook so no
+      // timer or wrapper outlives the server on restart/test teardown.
+      metricsSampler.stop();
       providerHealthMonitor?.stop();
       providerHealthMonitor = null;
       (apiRouter as Router & { dispose?: () => void }).dispose?.();
