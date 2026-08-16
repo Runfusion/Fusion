@@ -171,7 +171,10 @@ export function readCmdline(pid) {
   if (!Number.isInteger(pid) || pid <= 0) return null;
   try {
     const data = readFileSync(`/proc/${pid}/cmdline`, "utf8");
-    if (data) return data.replace(/\u0000/g, " ").trim();
+    // Reject runtime control chars in a lint-safe way: `replaceAll` with a string pattern
+    // (not a regex literal) so the null-byte /proc/<pid>/cmdline separator is normalized to a
+    // space without tripping `no-control-regex`.
+    if (data) return data.replaceAll("\u0000", " ").trim();
     return null;
   } catch {
     try {
