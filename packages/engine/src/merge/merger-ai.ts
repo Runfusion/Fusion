@@ -2022,7 +2022,7 @@ export async function landWorkspaceTask(
     agentId: "merger",
     taskId,
     phase: "merge",
-  });
+  };
   const fence = createMergeWriteFence({
     taskId,
     signal: options.signal,
