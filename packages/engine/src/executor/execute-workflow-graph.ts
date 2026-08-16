@@ -139,7 +139,7 @@ export function clearPrincipalHoldBackoff(taskId: string): void {
  * the same write. Exported for production-shaped graph-writer tests.
  */
 export async function persistWorkflowStepResult(
-  deps: Pick<ExecuteWorkflowGraphDeps, "store" | "getRunContextFor" | "readTaskArtifact">
+  deps: Pick<ExecuteWorkflowGraphDeps, "store" | "getRunContextFor" | "runContextFor" | "readTaskArtifact">
     & Partial<Pick<ExecuteWorkflowGraphDeps, "workflowGateActivityPrincipals" | "activeWorkflowPrincipals">>,
   taskId: string,
   result: CoreWorkflowStepResult,

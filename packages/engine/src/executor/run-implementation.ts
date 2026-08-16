@@ -2187,6 +2187,8 @@ export async function runImplementation(
               agent: "executor",
               label: "executor",
               store: deps.store,
+              // FNXC:Identity 2026-08-16-05:10: the observer logs to the task; attribute it to this run.
+              runContext: runContextForTotal(deps.getRunContextFor, task.id),
               taskId: task.id,
               taskTitle: detail.title,
             }),

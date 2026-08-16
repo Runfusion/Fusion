@@ -141,7 +141,7 @@ export async function routeGraphFailureToExecutionResume(
         preserveProgress: true,
         moveSource: "engine",
         recoveryRehome: true,
-      });
+      }, deps.runContextFor(live.id));
     }
     // FNXC:ReviewLeniency 2026-07-02-02:10: clear prior terminal failure results
     // (incl. optional gate nodes like code-review) AFTER the task is in `todo`

@@ -492,7 +492,7 @@ export async function verifyWorktreeInvariants(
 }
 
 export async function emitWorktreeReanchoredAudit(
-  deps: Pick<WorktreeInvariantDeps, "store" | "getRunContextFor">,
+  deps: Pick<WorktreeInvariantDeps, "store" | "getRunContextFor" | "runContextFor">,
   taskId: string,
   fromPath: string,
   toPath: string,

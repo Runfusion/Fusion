@@ -32,6 +32,7 @@ import { finalizeProvenAutoMergeTask } from "../merge/auto-merge-finalization.js
 import { createRunAuditor, type EngineRunContext } from "../util/run-audit.js";
 import { executorLog } from "../logger.js";
 import { resolveExternalExecutionCheckoutRoute } from "../execution/external-execution-checkout.js";
+import { runContextForTotal } from "./run-context-for.js";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- mirror TaskExecutor method surface without re-typing the class
 type AnyFn = (...args: any[]) => any;
@@ -231,6 +232,8 @@ export function createAuthoritativeWorkflowPrimitivesFromExecutor(
         return await resetStepToBaseline(
           {
             store: deps.store,
+            // FNXC:Identity 2026-08-16-05:10: rewind writes attribute to the live run; dropped by the rebase.
+            runContext: runContextForTotal(deps.getRunContextFor, task.id),
             worktreePath,
             sessionRef: { current: null },
             reviewType: "code",

@@ -51,7 +51,8 @@ export type SharedWorkerToolsDeps = {
 };
 
 export function createTaskLogTool(deps: SharedWorkerToolsDeps, taskId: string): ToolDefinition {
-  return sharedCreateTaskLogTool(deps.store, taskId);
+  // FNXC:Identity 2026-08-16-05:10: the shared tool takes the run carrier; the rebase dropped the argument.
+  return sharedCreateTaskLogTool(deps.store, taskId, deps.runContextFor(taskId));
 }
 
 export function createTaskLogsReadTool(deps: SharedWorkerToolsDeps, taskId: string): ToolDefinition {

@@ -26,6 +26,11 @@ import {
 } from "./executor-constants.js";
 
 export type BranchConflictHandleDepsSource = {
+  /**
+   * FNXC:Identity 2026-08-16-05:10: the U18 total run carrier. Required by the built Deps type;
+   * the source must declare it or the projection cannot pass it through.
+   */
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   rootDir: string;
   store: TaskStore;
   getRunContextFor: (taskId: string) => EngineRunContext | undefined;
@@ -42,6 +47,7 @@ export function buildBranchConflictHandleDeps(src: BranchConflictHandleDepsSourc
     rootDir: src.rootDir,
     store: src.store,
     getRunContextFor: src.getRunContextFor,
+    runContextFor: src.runContextFor,
     findActiveWorktreeOwner: src.findActiveWorktreeOwner,
     normalizeReclaimableWorktreePath: src.normalizeReclaimableWorktreePath,
     cleanupConflictingWorktree: src.cleanupConflictingWorktree,
@@ -87,6 +93,11 @@ export function buildWorktreeCreateConflictDeps(src: WorktreeCreateConflictDepsS
 }
 
 export type WorktreeInvariantDepsSource = {
+  /**
+   * FNXC:Identity 2026-08-16-05:10: the U18 total run carrier. Required by the built Deps type;
+   * the source must declare it or the projection cannot pass it through.
+   */
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   rootDir: string;
   store: TaskStore;
   workspaceConfig: unknown | null | undefined;
@@ -103,6 +114,7 @@ export function buildWorktreeInvariantDeps(src: WorktreeInvariantDepsSource): Wo
     ensureWorkspaceConfig: src.ensureWorkspaceConfig,
     getActiveWorktreePaths: src.getActiveWorktreePaths,
     getRunContextFor: src.getRunContextFor,
+    runContextFor: src.runContextFor,
     emitWorktreeReanchoredAudit: src.emitWorktreeReanchoredAudit,
   };
   // FNXC:Workspace 2026-08-14-21:06: Workspace mode must remain live through every bag re-projection; a getter/setter preserves host writes in strict-mode callers.
@@ -115,6 +127,7 @@ export function buildNonContinuableSessionDeps(src: NonContinuableSessionDepsSou
   return {
     store: src.store,
     getRunContextFor: src.getRunContextFor,
+    runContextFor: src.runContextFor,
     resolveResumeLanes: src.resolveResumeLanes,
     persistTokenUsage: src.persistTokenUsage,
     clearCompletedTaskWatchdog: src.clearCompletedTaskWatchdog,

@@ -44,7 +44,7 @@ export type PersistTokenUsageDeps = {
 };
 
 export async function persistTaskTokenUsage(
-  deps: Pick<PersistTokenUsageDeps, "store" | "getRunContextFor">,
+  deps: Pick<PersistTokenUsageDeps, "store" | "getRunContextFor" | "runContextFor">,
   taskId: string,
   tokenUsage: TaskTokenUsage,
 ): Promise<void> {

@@ -78,7 +78,7 @@ export async function parkCompletedBlockedTask(
       preserveWorktree: true,
       moveSource: "engine",
       recoveryRehome: true,
-    });
+    }, deps.runContextFor(task.id));
   }
   await deps.store.updateTask(task.id, {
     paused: true,

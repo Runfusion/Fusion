@@ -58,7 +58,7 @@ export async function blockOuterDispatchWhenEphemeralDisabled(
         preserveResumeState: true,
         moveSource: "engine",
         recoveryRehome: true,
-      });
+      }, deps.runContextFor(liveTask.id));
     }
     await deps.store.updateTask(liveTask.id, { status: "queued" }, deps.runContextFor(liveTask.id));
     await deps.store.logEntry(

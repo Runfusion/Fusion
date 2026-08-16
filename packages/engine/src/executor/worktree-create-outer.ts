@@ -14,6 +14,7 @@ import { resolveIntegrationBranch } from "../merge/integration-branch.js";
 import { executorLog } from "../logger.js";
 import { quoteShellArg } from "./shell-quote.js";
 import { NonRetryableWorktreeError } from "./worktree-registry-helpers.js";
+import { runContextForTotal } from "./run-context-for.js";
 
 const execAsync = promisify(exec);
 
@@ -62,6 +63,12 @@ export type WorktreeOuterCreateDeps = {
   context even though `createWorktree` resolves one for its other writes. That silently sent the
   skip/fetch/success/failure breadcrumbs through `safeLog` with `runContext === undefined`.
   */
+  /**
+   * FNXC:Identity 2026-08-16-05:10: the partial run getter this bag's writes attribute through.
+   * Dropped by the rebase, which left the caller below referencing `deps.getRunContextFor` against a
+   * type that no longer declared it.
+   */
+  getRunContextFor: (taskId: string) => import("../util/run-audit.js").EngineRunContext | undefined;
   rebaseNewWorktreeOntoRemote: (
     worktreePath: string,
     branch: string,
@@ -235,7 +242,9 @@ export async function rebaseNewWorktreeOntoRemote(
   */
   const safeLog = (action: string) => {
     try {
-      void Promise.resolve(store.logEntry(taskId, action, undefined, undefined)).catch(() => undefined);
+      // FNXC:Identity 2026-08-16-05:10: the rebase replaced the carrier with `undefined`, re-opening the
+      // very finding this parameter exists to close (unattributed remote-rebase breadcrumbs).
+      void Promise.resolve(store.logEntry(taskId, action, undefined, runContext)).catch(() => undefined);
     } catch {
       // best-effort breadcrumb
     }

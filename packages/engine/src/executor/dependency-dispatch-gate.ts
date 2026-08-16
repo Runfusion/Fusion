@@ -55,7 +55,7 @@ export async function blockOuterDispatchWhenDependenciesUnmet(
       preserveResumeState: true,
       moveSource: "engine",
       recoveryRehome: true,
-    });
+    }, deps.runContextFor(liveTask.id));
   }
   /*
   FNXC:DependencyGating 2026-08-07-12:10:

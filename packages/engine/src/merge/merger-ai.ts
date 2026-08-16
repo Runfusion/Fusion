@@ -2023,6 +2023,15 @@ export async function landWorkspaceTask(
     taskId,
     phase: "merge",
   };
+  /*
+  FNXC:Identity 2026-08-16-05:10:
+  The rebase collapsed `const audit = createRunAuditor(store, {...})` into the hoisted context
+  literal above and dropped the `audit` binding, leaving 9 "Cannot find name 'audit'" errors in this
+  function while the sibling merge path (see the same hoist above `landTask`) kept its auditor.
+  Rebuilt FROM the same context, which is the point of the hoist: the run-audit stream and every
+  store mutation on this path share one run id and one actor.
+  */
+  const audit = createRunAuditor(store, mergeRunContext);
   const fence = createMergeWriteFence({
     taskId,
     signal: options.signal,
@@ -2507,12 +2516,15 @@ async function persistRepoLandedSha(
   const task = await store.getTask(taskId);
   const current = task.workspaceWorktrees?.[repoRel];
   if (!current) return;
+  // FNXC:Identity 2026-08-16-05:10: the rebase dropped the carrier here, leaving the parameter unused
+  // and this landed-sha write unattributed. Lint caught it as an unused arg; the real defect is the
+  // missing attribution.
   await store.updateTask(taskId, {
     workspaceWorktrees: {
       ...task.workspaceWorktrees,
       [repoRel]: { ...current, landedSha, landFailure: undefined, revertBoundarySha: undefined },
     },
-  });
+  }, runContext);
 }
 
 /**
@@ -2528,7 +2540,15 @@ async function finalizeWorkspaceTask(
   taskId: string,
   task: Task,
   repos: WorkspaceRepoLandResult[],
-  fence?: MergeWriteFence,
+  /*
+  FNXC:Identity 2026-08-16-05:10:
+  `fence` is written as `MergeWriteFence | undefined` rather than `fence?:` because U18 added a
+  REQUIRED `runContext` after it, and TypeScript forbids a required parameter following an optional
+  one. Keeping the positional order (rather than moving `runContext` ahead of `fence`) leaves every
+  existing call site untouched, and no caller can be omitting `fence` anyway — a required parameter
+  after it means they already pass something in that slot.
+  */
+  fence: MergeWriteFence | undefined,
   /** FNXC:Identity 2026-08-15-22:52 (U18 Stage B): the workspace land run finalizing the task. */
   runContext: RunMutationContext,
 ): Promise<boolean> {
@@ -3000,7 +3020,8 @@ async function finalizeMerged(
     fence?.assertOwned("finalization");
     worktreeRemoved = await gitOk(["worktree", "remove", "--force", task.worktree], projectRootDir);
     fence?.assertOwned("finalization");
-    await store.updateTask(taskId, { worktree: null }).catch(() => undefined, runContext);
+    // FNXC:Identity 2026-08-16-05:10: the context belongs to updateTask; a bad rebase moved it into .catch().
+    await store.updateTask(taskId, { worktree: null }, runContext).catch(() => undefined);
   }
 
   const result: MergeResult = {

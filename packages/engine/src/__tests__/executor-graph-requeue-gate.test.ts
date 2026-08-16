@@ -388,10 +388,13 @@ describe("executor graph execute self-requeue gate", () => {
       "remediation-not-scheduled",
     )).resolves.toBe(true);
 
+    // FNXC:Identity 2026-08-16-05:10: the rehome move is attributed like its siblings above; this
+    // assertion still pinned the pre-U18 three-argument shape.
     expect(store.moveTask).toHaveBeenCalledWith(
       live.id,
       "todo",
       expect.objectContaining({ preserveProgress: true, recoveryRehome: true }),
+      ANY_MUTATION_CONTEXT,
     );
   });
 

@@ -77,7 +77,7 @@ export async function recoverFailedPreMergeWorkflowStep(
         task.id,
         "Failed pre-merge step recovery not scheduled — operator task hold",
         `Reason: ${reason}`,
-        deps.getRunContextFor?.(task.id),
+        deps.runContextFor(task.id),
       );
       return false;
     }
@@ -109,7 +109,7 @@ export async function recoverFailedPreMergeWorkflowStep(
         task.id,
         "Failed pre-merge step recovery not scheduled — revision budget zero/invalid",
         `Step: ${stepName}\nAttempts: ${budget.attempts}\nMax: ${String(budget.max)}`,
-        deps.getRunContextFor?.(task.id),
+        deps.runContextFor(task.id),
       );
       return false;
     }
@@ -119,7 +119,7 @@ export async function recoverFailedPreMergeWorkflowStep(
         task.id,
         "Failed pre-merge step recovery not scheduled — revision budget exhausted",
         `Step: ${stepName}\nAttempts: ${budget.attempts}\nMax: ${String(budget.max)}`,
-        deps.getRunContextFor?.(task.id),
+        deps.runContextFor(task.id),
       );
       return false;
     }
