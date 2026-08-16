@@ -428,6 +428,34 @@ describe("push-after-merge", () => {
     }
   });
 
+  it("propagates cancellation from the shared initial push path", async () => {
+    const controller = new AbortController();
+    let pushAttempts = 0;
+    mockedExecSync.mockImplementation((cmd: any) => {
+      const cmdStr = String(cmd);
+      if (cmdStr.startsWith('git pull --rebase "origin" "main"')) return Buffer.from("");
+      if (cmdStr.startsWith('git push "origin" "main"')) {
+        pushAttempts += 1;
+        controller.abort();
+        throw Object.assign(new Error("push failed"), {
+          stderr: "fatal: unable to access remote: Connection reset by peer",
+        });
+      }
+      if (cmdStr.includes("git symbolic-ref --short HEAD")) return "main" as any;
+      if (cmdStr.includes("git rev-parse --verify REBASE_HEAD")) {
+        throw Object.assign(new Error("fatal: Needed a single revision"), { status: 128 });
+      }
+      return Buffer.from("");
+    });
+
+    await expect(pushToRemoteAfterMerge(createMockStore(), "/tmp/root", "FN-050", {
+      ...DEFAULT_SETTINGS,
+      pushAfterMerge: true,
+      pushRemote: "origin",
+    }, { signal: controller.signal })).rejects.toBeInstanceOf(MergeAbortedError);
+    expect(pushAttempts).toBe(1);
+  });
+
   it("pushes merged result when pushAfterMerge is enabled", async () => {
     setupAiMergeExecSyncWithPush();
 
@@ -1320,4 +1348,3 @@ describe("commitOrAmendMergeWithFixes", () => {
     expect(result).toEqual({ ok: true, reason: "branch-already-merged" });
   });
 });
-

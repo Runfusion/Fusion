@@ -6386,6 +6386,8 @@ export async function pushToRemoteAfterMerge(
     mergerLog.log(`${taskId}: pushed merged result to ${remote}/${branch}`);
     return { pushed: true };
   } catch (firstPushError: unknown) {
+    // FNXC:MergePush 2026-08-16-05:14: Cancellation from the shared initial push must reach the caller's aborted-push audit path instead of being recorded as a terminal delivery failure.
+    rethrowIfMergeAborted(firstPushError);
     let lastMessage = getCommandErrorMessage(firstPushError);
     mergerLog.warn(`${taskId}: initial push failed: ${lastMessage}`);
 
