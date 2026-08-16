@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { useEffect, useRef, useState } from "react";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { loadAllAppCss } from "../../test/cssFixture";
 import { CustomModelDropdown } from "../CustomModelDropdown";
@@ -58,6 +58,28 @@ describe("CustomModelDropdown", () => {
       removeEventListener: vi.fn(),
       dispatchEvent: vi.fn(),
     } as MediaQueryList));
+  });
+
+  it("stops portal touch events without stopping model option clicks", async () => {
+    const onChange = vi.fn();
+    const documentTouchStart = vi.fn();
+    const documentTouchEnd = vi.fn();
+    document.addEventListener("touchstart", documentTouchStart);
+    document.addEventListener("touchend", documentTouchEnd);
+    render(<CustomModelDropdown label="Model" value="" onChange={onChange} models={MOCK_MODELS} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Model" }));
+    const portal = await screen.findByTestId("model-combobox-portal");
+    expect(portal).toHaveAttribute("data-portal-surface", "model-menu");
+    fireEvent.touchStart(portal);
+    fireEvent.touchEnd(portal);
+    expect(documentTouchStart).not.toHaveBeenCalled();
+    expect(documentTouchEnd).not.toHaveBeenCalled();
+
+    fireEvent.click(within(portal).getByText("GPT-4o"));
+    expect(onChange).toHaveBeenCalledWith("openai/gpt-4o");
+    document.removeEventListener("touchstart", documentTouchStart);
+    document.removeEventListener("touchend", documentTouchEnd);
   });
 
   it("keeps the search wrapper background opaque to prevent list bleed-through", () => {

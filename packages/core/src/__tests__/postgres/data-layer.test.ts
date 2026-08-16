@@ -28,11 +28,8 @@
  * gate stays green without a running server.
  */
 
-import { describe, it, expect, afterEach, beforeAll } from "vitest";
-import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
+import { it, expect, beforeAll, beforeEach, afterEach, afterAll } from "vitest";
 import { sql } from "drizzle-orm";
-import { execSync } from "node:child_process";
 import {
   createAsyncDataLayer,
   recordRunAuditEvent,
@@ -42,74 +39,55 @@ import {
 } from "../../postgres/data-layer.js";
 import { createConnectionSetFromUrl } from "../../postgres/connection.js";
 import type { ResolvedBackend } from "../../postgres/backend-resolver.js";
-import { applySchemaBaseline } from "../../postgres/schema-applier.js";
 import * as schema from "../../postgres/schema/index.js";
-
-const PG_ADMIN_URL =
-  process.env.FUSION_PG_TEST_ADMIN_URL ?? "postgresql://localhost:5432/postgres";
-const PG_TEST_URL_BASE =
-  process.env.FUSION_PG_TEST_URL_BASE ?? "postgresql://localhost:5432";
-const PG_AVAILABLE =
-  process.env.FUSION_PG_TEST_SKIP !== "1" && Boolean(PG_TEST_URL_BASE);
-
-const pgDescribe = PG_AVAILABLE ? describe : describe.skip;
-
-/**
- * FNXC:AsyncDataLayer 2026-06-24-10:00:
- * Create a uniquely-named fresh database for each test so tests are hermetic
- * and never touch existing data. Mirrors the schema-applier test harness.
- */
-function uniqueDbName(): string {
-  return `fusion_data_test_${process.pid}_${Math.random().toString(36).slice(2, 8)}`;
-}
+import {
+  pgDescribe,
+  createSharedPgTaskStoreTestHarness,
+  type SharedPgTaskStoreHarness,
+} from "../../__test-utils__/pg-test-harness.js";
 
 /*
-FNXC:PgTestAuthFix 2026-07-14-00:00:
-The inline adminExec used process.env.USER for the psql -U flag, which is 'runner' on GitHub Actions (not 'postgres'). Use the PG_TEST_URL_BASE connection string instead so credentials are always correct.
+FNXC:AsyncDataLayer 2026-08-15-03:52:
+Slow-test fix: this file hand-rolled CREATE DATABASE + full applySchemaBaseline
+PER TEST (~4.6s/test, 65s for the file). The transaction primitives under test
+write only data, so each describe block now shares one golden-template database
+with the harness's per-test reset. Transaction-visibility semantics are
+unchanged: the layer pool and the harness adminDb connection remain SEPARATE
+sessions, which is what the VAL-DATA-004 concurrent-reader assertions rely on.
+The close() lifecycle test builds a PRIVATE layer against the shared database
+so closing it cannot break the harness's pooled layer for later tests.
+`ctx` keeps its original shape so test bodies stay byte-identical.
 */
-function adminExec(statement: string): void {
-  // psql via execSync for DDL that the postgres.js connection pool can't run
-  // (CREATE/DROP DATABASE cannot run inside a transaction). Short deterministic
-  // DDL — the acceptable execSync use per AGENTS.md.
-  execSync(
-    `psql "${PG_TEST_URL_BASE}/postgres" -v ON_ERROR_STOP=1 -c "${statement.replace(/"/g, '\\"')}"`,
-    { stdio: "pipe", env: process.env },
-  );
-}
-
 interface TestLayer {
-  dbName: string;
-  testUrl: string;
-  layer: AsyncDataLayer;
-  adminSql: ReturnType<typeof postgres>;
-  adminDb: ReturnType<typeof drizzle>;
+  readonly layer: AsyncDataLayer;
+  readonly adminDb: ReturnType<SharedPgTaskStoreHarness["adminDb"]>;
 }
 
-async function setupFreshLayer(): Promise<TestLayer> {
-  const dbName = uniqueDbName();
-  try {
-    adminExec(`DROP DATABASE IF EXISTS "${dbName}"`);
-  } catch {
-    // ignore — may not exist
-  }
-  adminExec(`CREATE DATABASE "${dbName}"`);
-  const testUrl = `${PG_TEST_URL_BASE}/${dbName}`;
+const h = createSharedPgTaskStoreTestHarness({ prefix: "fusion_data" });
 
-  // Apply the baseline schema so run_audit_events + tasks exist.
-  const schemaBackend: ResolvedBackend = {
-    mode: "external",
-    runtimeUrl: testUrl,
-    migrationUrl: testUrl,
-    migrationUrlOverridden: false,
+/**
+ * Register the shared-harness lifecycle inside a pgDescribe block and return a
+ * `ctx` whose `layer`/`adminDb` getters resolve live from the harness, so the
+ * original `ctx.layer` / `ctx.adminDb` test bodies read unchanged.
+ */
+function useSharedLayer(): TestLayer {
+  beforeAll(h.beforeAll);
+  beforeEach(h.beforeEach);
+  afterEach(h.afterEach);
+  afterAll(h.afterAll);
+  return {
+    get layer() {
+      return h.layer();
+    },
+    get adminDb() {
+      return h.adminDb();
+    },
   };
-  const schemaConnections = await createConnectionSetFromUrl(schemaBackend, {
-    poolMax: 1,
-    connectTimeoutSeconds: 5,
-  });
-  await applySchemaBaseline(schemaConnections.migration);
-  await schemaConnections.close();
+}
 
-  // Now build the data layer against the migrated database.
+/** Build a private AsyncDataLayer against the shared harness database. */
+async function createPrivateLayer(): Promise<AsyncDataLayer> {
+  const testUrl = h.testUrl();
   const dataBackend: ResolvedBackend = {
     mode: "external",
     runtimeUrl: testUrl,
@@ -120,32 +98,7 @@ async function setupFreshLayer(): Promise<TestLayer> {
     poolMax: 5,
     connectTimeoutSeconds: 5,
   });
-  const layer = createAsyncDataLayer(connections);
-
-  // Admin connection for direct row inspection (outside the data layer).
-  const adminSql = postgres(testUrl, { max: 2, prepare: false, onnotice: () => {} });
-  const adminDb = drizzle(adminSql);
-
-  return { dbName, testUrl, layer, adminSql, adminDb };
-}
-
-async function teardownLayer(ctx: TestLayer | null): Promise<void> {
-  if (!ctx) return;
-  try {
-    await ctx.layer.close();
-  } catch {
-    // best-effort
-  }
-  try {
-    await ctx.adminSql.end({ timeout: 5 });
-  } catch {
-    // best-effort
-  }
-  try {
-    adminExec(`DROP DATABASE IF EXISTS "${ctx.dbName}"`);
-  } catch {
-    // best-effort
-  }
+  return createAsyncDataLayer(connections);
 }
 
 /** Count rows in project.run_audit_events via the admin connection. */
@@ -168,15 +121,9 @@ async function readAuditRows(
 }
 
 pgDescribe("AsyncDataLayer: VAL-DATA-002 — transaction atomicity (commit)", () => {
-  let ctx: TestLayer | null = null;
-
-  afterEach(async () => {
-    await teardownLayer(ctx);
-    ctx = null;
-  });
+  const ctx = useSharedLayer();
 
   it("commits a multi-statement mutation with all writes visible after commit", async () => {
-    ctx = await setupFreshLayer();
     const runId = "run-commit-multi";
     const auditA: RunAuditEventInput = {
       runId,
@@ -207,7 +154,6 @@ pgDescribe("AsyncDataLayer: VAL-DATA-002 — transaction atomicity (commit)", ()
   });
 
   it("transactionImmediate with a single write commits it", async () => {
-    ctx = await setupFreshLayer();
     const runId = "run-commit-single";
     await ctx.layer.transactionImmediate(async (tx) => {
       await recordRunAuditEventWithinTransaction(tx, {
@@ -225,15 +171,9 @@ pgDescribe("AsyncDataLayer: VAL-DATA-002 — transaction atomicity (commit)", ()
 });
 
 pgDescribe("AsyncDataLayer: VAL-DATA-003 — transaction atomicity (rollback)", () => {
-  let ctx: TestLayer | null = null;
-
-  afterEach(async () => {
-    await teardownLayer(ctx);
-    ctx = null;
-  });
+  const ctx = useSharedLayer();
 
   it("rolls back all writes when the callback throws, including the audit row", async () => {
-    ctx = await setupFreshLayer();
     const runId = "run-rollback-throw";
     const before = await countAuditRows(ctx.adminDb);
     expect(before).toBe(0);
@@ -259,7 +199,6 @@ pgDescribe("AsyncDataLayer: VAL-DATA-003 — transaction atomicity (rollback)", 
   });
 
   it("rolls back when a constraint is violated mid-transaction (primary-key collision)", async () => {
-    ctx = await setupFreshLayer();
     const runId = "run-rollback-pk";
     const before = await countAuditRows(ctx.adminDb);
     expect(before).toBe(0);
@@ -313,15 +252,9 @@ pgDescribe("AsyncDataLayer: VAL-DATA-003 — transaction atomicity (rollback)", 
 });
 
 pgDescribe("AsyncDataLayer: VAL-DATA-004 — concurrent transactions do not observe partial writes", () => {
-  let ctx: TestLayer | null = null;
-
-  afterEach(async () => {
-    await teardownLayer(ctx);
-    ctx = null;
-  });
+  const ctx = useSharedLayer();
 
   it("a concurrent reader outside the writer's transaction does not see uncommitted writes", async () => {
-    ctx = await setupFreshLayer();
     const runId = "run-concurrent-iso";
 
     // Hold a transaction open with an uncommitted write, then verify a
@@ -349,7 +282,6 @@ pgDescribe("AsyncDataLayer: VAL-DATA-004 — concurrent transactions do not obse
   });
 
   it("a concurrent read via a separate pool transaction does not see uncommitted writes", async () => {
-    ctx = await setupFreshLayer();
     const runId = "run-concurrent-iso-2";
 
     // Use a barrier to coordinate: the writer holds its transaction open until
@@ -378,7 +310,6 @@ pgDescribe("AsyncDataLayer: VAL-DATA-004 — concurrent transactions do not obse
   });
 
   it("two concurrent writers both commit their own rows without cross-contamination", async () => {
-    ctx = await setupFreshLayer();
     const runA = "run-concurrent-A";
     const runB = "run-concurrent-B";
 
@@ -413,15 +344,9 @@ pgDescribe("AsyncDataLayer: VAL-DATA-004 — concurrent transactions do not obse
 });
 
 pgDescribe("AsyncDataLayer: run-audit-event-within-transaction behavior", () => {
-  let ctx: TestLayer | null = null;
-
-  afterEach(async () => {
-    await teardownLayer(ctx);
-    ctx = null;
-  });
+  const ctx = useSharedLayer();
 
   it("the standalone recordRunAuditEvent wraps the insert in its own transaction", async () => {
-    ctx = await setupFreshLayer();
     const event = await recordRunAuditEvent(ctx.layer, {
       runId: "run-standalone",
       agentId: "agent-standalone",
@@ -440,7 +365,6 @@ pgDescribe("AsyncDataLayer: run-audit-event-within-transaction behavior", () => 
   });
 
   it("records metadata as jsonb and round-trips it", async () => {
-    ctx = await setupFreshLayer();
     const metadata = { filesChanged: 5, nested: { deep: [1, 2, 3] }, flag: true };
     await recordRunAuditEvent(ctx.layer, {
       runId: "run-metadata",
@@ -459,7 +383,6 @@ pgDescribe("AsyncDataLayer: run-audit-event-within-transaction behavior", () => 
   });
 
   it("an audit row paired with a task-like mutation rolls back together", async () => {
-    ctx = await setupFreshLayer();
     const runId = "run-paired-rollback";
 
     // Simulate the atomicWriteTaskJsonWithAudit pattern: a "task mutation"
@@ -495,20 +418,13 @@ pgDescribe("AsyncDataLayer: run-audit-event-within-transaction behavior", () => 
 });
 
 pgDescribe("AsyncDataLayer: interface stability and connectivity", () => {
-  let ctx: TestLayer | null = null;
-
-  afterEach(async () => {
-    await teardownLayer(ctx);
-    ctx = null;
-  });
+  const ctx = useSharedLayer();
 
   it("ping() succeeds against a healthy backend", async () => {
-    ctx = await setupFreshLayer();
     await expect(ctx.layer.ping()).resolves.toBeUndefined();
   });
 
   it("the db member executes a raw query", async () => {
-    ctx = await setupFreshLayer();
     const result = (await ctx.layer.db.execute(
       sql`SELECT 1 AS val`,
     )) as unknown as Array<{ val: number }>;
@@ -516,26 +432,14 @@ pgDescribe("AsyncDataLayer: interface stability and connectivity", () => {
   });
 
   it("close() releases the pool without error", async () => {
-    ctx = await setupFreshLayer();
-    await expect(ctx.layer.close()).resolves.toBeUndefined();
-    // Prevent teardownLayer from double-closing.
-    const captured = ctx;
-    ctx = null;
-    // The admin connection is still ours to close.
-    try {
-      await captured!.adminSql.end({ timeout: 5 });
-    } catch {
-      // best-effort
-    }
-    try {
-      adminExec(`DROP DATABASE IF EXISTS "${captured!.dbName}"`);
-    } catch {
-      // best-effort
-    }
+    // FNXC:AsyncDataLayer 2026-08-15-03:52: close a PRIVATE layer built
+    // against the shared database — closing the harness's pooled layer would
+    // break every later test in the file.
+    const layer = await createPrivateLayer();
+    await expect(layer.close()).resolves.toBeUndefined();
   });
 
   it("exposes the stable AsyncDataLayer contract (db, transaction, transactionImmediate, ping, close)", async () => {
-    ctx = await setupFreshLayer();
     expect(typeof ctx.layer.db).toBe("object");
     expect(typeof ctx.layer.transaction).toBe("function");
     expect(typeof ctx.layer.transactionImmediate).toBe("function");

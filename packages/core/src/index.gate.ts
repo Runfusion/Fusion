@@ -62,9 +62,11 @@ export type {
 export { customProviderRegistryKey } from "./ai/custom-provider-key.js";
 export {
   ANTHROPIC_PROVIDER_ID,
+  ANTHROPIC_API_KEY_PROVIDER_ID,
   CLAUDE_SONNET_5_MODEL_ID,
   SUPPLEMENTAL_ANTHROPIC_PROVIDER_REGISTRATION,
   mergeSupplementalAnthropicModels,
+  toExecutionModelProviderId,
 } from "./ai/anthropic-models.js";
 export type { AnthropicProviderRegistration } from "./ai/anthropic-models.js";
 export {

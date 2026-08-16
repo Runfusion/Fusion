@@ -3,6 +3,8 @@ import type { Task } from "@fusion/core";
 
 const createIssueMock = vi.fn();
 const searchIssuesMock = vi.fn();
+const getIssueMock = vi.fn();
+const setIssueStateMock = vi.fn();
 const resolveAuthMock = vi.fn();
 const summarizeTitleMock = vi.fn();
 
@@ -19,6 +21,8 @@ vi.mock("../github.js", async (importOriginal) => ({
   GitHubClient: vi.fn().mockImplementation(function () { return {
     createIssue: createIssueMock,
     searchIssues: searchIssuesMock,
+    getIssue: getIssueMock,
+    setIssueState: setIssueStateMock,
   }; }),
 }));
 
@@ -163,6 +167,8 @@ describe("maybeCreateTrackingIssue", () => {
     });
     summarizeTitleMock.mockResolvedValue(null);
     searchIssuesMock.mockResolvedValue([]);
+    getIssueMock.mockResolvedValue({ state: "open" });
+    setIssueStateMock.mockResolvedValue(undefined);
   });
 
   it("returns tracking_disabled when not enabled", async () => {
@@ -227,6 +233,49 @@ describe("maybeCreateTrackingIssue", () => {
     expect(result).toEqual({ created: false, reason: "no_repo_configured" });
     expect(recordActivity).toHaveBeenCalledTimes(1);
     expect(createIssueMock).not.toHaveBeenCalled();
+  });
+
+  it("closes a newly created tracking issue when the task is already done", async () => {
+    const linkGithubIssue = vi.fn();
+    const recordActivity = vi.fn();
+    const logEntry = vi.fn();
+
+    const result = await maybeCreateTrackingIssue(buildTask({
+      title: "Already finished",
+      column: "done",
+      executionCompletedAt: "2026-08-15T04:34:26.712Z",
+      githubTracking: { enabled: true },
+    }), {
+      taskStore: { linkGithubIssue, recordActivity, logEntry } as any,
+      projectSettings: {},
+      globalSettings: { githubTrackingDefaultRepo: "o/r" } as any,
+      rootDir,
+      logger: { warn: vi.fn(), info: vi.fn() },
+    });
+
+    expect(result).toMatchObject({ created: true });
+    expect(createIssueMock).toHaveBeenCalledTimes(1);
+    expect(setIssueStateMock).toHaveBeenCalledWith("o", "r", 12, "closed", "completed");
+    expect(logEntry).toHaveBeenCalledWith("FN-1", "Closed linked GitHub tracking issue", "o/r#12");
+  });
+
+  it("does not close a tracking issue created for an in-progress task", async () => {
+    const linkGithubIssue = vi.fn();
+    const recordActivity = vi.fn();
+
+    await maybeCreateTrackingIssue(buildTask({
+      title: "Still running",
+      column: "in-progress",
+      githubTracking: { enabled: true },
+    }), {
+      taskStore: { linkGithubIssue, recordActivity } as any,
+      projectSettings: {},
+      globalSettings: { githubTrackingDefaultRepo: "o/r" } as any,
+      rootDir,
+      logger: { warn: vi.fn(), info: vi.fn() },
+    });
+
+    expect(setIssueStateMock).not.toHaveBeenCalled();
   });
 
   it("creates issue, links metadata, and records activity", async () => {

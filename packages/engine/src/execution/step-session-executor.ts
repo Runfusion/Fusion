@@ -690,7 +690,7 @@ const RETRY_DELAYS_MS = [1_000, 5_000, 15_000];
 
 /** A minimal session handle stored for termination support. */
 interface SessionHandle {
-  dispose: () => void;
+  dispose: () => void | Promise<void>;
   /** Abort the session's currently-running bash command (if any) so its
    *  detached subprocess tree — including grandchildren like vitest workers —
    *  is killed via pi-coding-agent's killProcessTree. dispose() alone only
@@ -824,7 +824,7 @@ export class StepSessionExecutor {
       stepExecLog.warn(`Failed to abort reusable primary step session: ${err}`);
     }
     try {
-      this.reusablePrimarySession.dispose();
+      await this.reusablePrimarySession.dispose();
     } catch (err) {
       stepExecLog.warn(`Failed to dispose reusable primary step session: ${err}`);
     } finally {
@@ -1039,7 +1039,8 @@ export class StepSessionExecutor {
         stepExecLog.warn(`Failed to abort bash for step ${stepIdx}: ${err}`);
       }
       try {
-        handle.dispose();
+        // FNXC:CursorMcpBridge 2026-08-15-21:20: Abort teardown stays fire-and-forget; normal step cleanup awaits disposal before git worktree cleanup, while journal reconciliation repairs a hard-abort lease.
+        void handle.dispose();
       } catch (err) {
         stepExecLog.warn(`Failed to dispose session for step ${stepIdx}: ${err}`);
       }
@@ -1428,6 +1429,16 @@ export class StepSessionExecutor {
                 ]
               : [];
 
+          const fusionTools = [
+            ...documentTools,
+            webFetchTool,
+            ...memoryTools,
+            ...taskLogTool,
+            ...taskCreateTool,
+            ...delegationTools,
+            ...messagingTools,
+          ];
+
           // Create or reuse the agent session for this attempt
           // Resolve executor model using canonical lane hierarchy:
           // 1. Task override pair (taskDetail.modelProvider + taskDetail.modelId)
@@ -1483,16 +1494,8 @@ Follow instructions precisely and avoid unrelated changes.`,
               settings,
               // FNXC:McpConfig 2026-06-25-23:02: Workflow model-node step sessions receive the same resolved, secret-materialized MCP server set as the parent executor; runtime support is still enforced inside the pi session seam without logging server contents.
               mcpServers: this.options.mcpServers,
-              customTools: [
-                ...pluginTools,
-                ...documentTools,
-                webFetchTool,
-                ...memoryTools,
-                ...taskLogTool,
-                ...taskCreateTool,
-                ...delegationTools,
-                ...messagingTools,
-              ],
+              customTools: [...pluginTools, ...fusionTools],
+              fusionTools,
               onText: (delta) => {
                 const telemetry = reusePrimarySession ? this.selectReusableTelemetry(localTelemetry) : localTelemetry;
                 telemetry.agentLogger.onText(delta);
@@ -1708,7 +1711,7 @@ Follow instructions precisely and avoid unrelated changes.`,
             this.reusableStepTelemetry = null;
           } else {
             try {
-              session?.dispose();
+              await session?.dispose();
             } catch (err: unknown) {
               const msg = err instanceof Error ? err.message : String(err);
               stepExecLog.warn(`Failed to dispose session for step ${stepIndex}: ${msg}`);

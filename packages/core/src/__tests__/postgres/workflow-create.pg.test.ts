@@ -107,7 +107,15 @@ pgTest("workflow definition create (PostgreSQL backend mode)", () => {
     const projectA = "proj_workflow_allocator_a";
     const projectB = "proj_workflow_allocator_b";
     const now = new Date().toISOString();
+    /*
+    FNXC:MultiProjectIsolation 2026-08-15-22:10:
+    FN-8998 gave workflows composite (project_id, id) identity and project-scoped reads. The
+    occupied row must therefore be stamped into project A's partition explicitly — adminDb has no
+    bound GUC, so omitting project_id would strand the row in '__legacy_unscoped__' where the bound
+    project-A read below could never prove it survived.
+    */
     await h.adminDb().insert(schema.project.workflows).values({
+      projectId: projectA,
       id: "WF-002",
       name: "project A occupied workflow",
       description: "",

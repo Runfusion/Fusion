@@ -150,9 +150,9 @@ function inRole(
  *  segments, closed on each exit. Since the pre-merge review gates moved into `in-review`, gate
  *  runtime is NOT included: the segment closes when the card crosses into review, and no new
  *  segment opens until remediation re-enters `in-progress`. Read it as "implementation time",
- *  not "wall clock from start to merge" — consumers that want the latter must use
- *  `executionStartedAt`/`executionCompletedAt`, which still span the whole run and therefore
- *  legitimately diverge from this sum.
+ *  not "wall clock from start to merge" — consumers that want the latter must use immutable
+ *  `firstExecutionAt` through `executionCompletedAt`. `executionStartedAt` is only the current
+ *  open WIP segment and is cleared as soon as that segment is banked.
  *  Deliberately NOT fixed by adding the `timing` trait to `in-review`: that column also holds the
  *  arbitrary human merge-wait, so counting it would overstate active time by hours of idle
  *  latency — a worse distortion than omitting the gate's own minutes. Attributing gate runtime
@@ -179,6 +179,14 @@ export function applyTimingEffects(ctx: DefaultWorkflowMoveContext): void {
         ? Math.max(0, segmentEndMs - segmentStartMs)
         : 0;
     task.cumulativeActiveMs = Math.max(0, task.cumulativeActiveMs ?? 0) + segmentDeltaMs;
+    /*
+    FNXC:TaskRuntimeSegments 2026-08-15-20:10:
+    A banked WIP interval is closed, so its start cannot remain as a live-segment anchor. Keeping
+    it caused every re-entry reader and later exit to recount closed work plus non-WIP idle time.
+    `firstExecutionAt` remains the immutable wall-clock anchor; entry below stamps this field only
+    for the next actual WIP segment.
+    */
+    task.executionStartedAt = undefined;
   }
   if (isWip(toColumn)) {
     task.cumulativeActiveMs ??= 0;

@@ -78,6 +78,17 @@ function isTerminalTask(task: Task, lifecycleByTaskId: LifecycleByTaskId): boole
     || task.column === (lifecycle?.archived ?? "archived");
 }
 
+function hasLinkedTrackingIssue(task: Task): boolean {
+  const issue = task.githubTracking?.issue;
+  return task.githubTracking?.enabled === true
+    && Boolean(issue?.owner && issue.repo && issue.number);
+}
+
+function compareUpdatedAtDesc(a: Task, b: Task): number {
+  const delta = (b.updatedAt ?? "").localeCompare(a.updatedAt ?? "");
+  return delta !== 0 ? delta : b.id.localeCompare(a.id);
+}
+
 /** Is this task in the ARCHIVED lane specifically (used for the FN-5577 done-heuristic)? */
 function isArchivedTask(task: Task, lifecycleByTaskId: LifecycleByTaskId): boolean {
   return task.column === (lifecycleByTaskId.get(task.id)?.archived ?? "archived");
@@ -125,14 +136,18 @@ export class GitHubTrackingReconciler {
   async reconcile(store: TaskStore): Promise<{ scanned: number; closed: number; skipped: number; errors: number }> {
     const listedTasks = await store.listTasks({ slim: true, includeArchived: true });
     const allTasks = Array.isArray(listedTasks) ? listedTasks : [];
-    const lifecycleByTaskId = await resolveLifecycleByTaskId(store, allTasks, new Map<string, WorkflowIr>(), {
-      match: (task, lifecycle) => task.column === (lifecycle?.complete ?? "done")
-        || task.column === (lifecycle?.archived ?? "archived"),
-      limit: RECONCILE_SCAN_LIMIT,
-    });
-    const tasks = allTasks
-      .filter((task) => isTerminalTask(task, lifecycleByTaskId))
-      .slice(0, RECONCILE_SCAN_LIMIT);
+    /*
+    FNXC:GithubTracking 2026-08-15-22:27:
+    This board lists thousands of terminal rows oldest-first (`createdAt ASC`). The previous
+    scan took the first 200 terminal cards — almost all untracked archived history — so a
+    recently completed tracked task (FN-9046 / FN-9054 / FN-9061, positions ~7880+) never
+    entered the close pass. Restrict to linked tracking issues, then prefer recently updated
+    rows so late-created issues are closed on the next sweep.
+    */
+    const tracked = allTasks.filter(hasLinkedTrackingIssue);
+    const newestTracked = [...tracked].sort(compareUpdatedAtDesc).slice(0, RECONCILE_SCAN_LIMIT);
+    const lifecycleByTaskId = await resolveLifecycleByTaskId(store, newestTracked, new Map<string, WorkflowIr>());
+    const tasks = newestTracked.filter((task) => isTerminalTask(task, lifecycleByTaskId));
 
     const projectSettings = ((await store.getSettings()) ?? {}) as Pick<ProjectSettings, "githubAuthMode" | "githubAuthToken">;
     const globalSettings = (await store.getGlobalSettingsStore?.()?.getSettings?.() ?? {}) as Pick<GlobalSettings, never>;

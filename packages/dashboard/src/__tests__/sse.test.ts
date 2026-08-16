@@ -52,6 +52,8 @@ function createMockStore(settings: Record<string, unknown> = {}): TaskStore {
     off: vi.fn(),
     getResearchStore: vi.fn(() => researchStore),
     getSettings: vi.fn(async () => settings),
+    // FNXC:AgentActivityStream 2026-08-15-05:10: sse.ts tails the durable agent-activity outbox via store.getAsyncLayer(); a null layer disables the tail, matching pre-PG mock stores.
+    getAsyncLayer: vi.fn(() => null),
   } as unknown as TaskStore;
 }
 
@@ -604,6 +606,7 @@ describe("createSSE client cleanup", () => {
       }),
       off: vi.fn(),
       getResearchStore: vi.fn(() => ({ on: vi.fn(), off: vi.fn() })),
+      getAsyncLayer: vi.fn(() => null),
     } as unknown as TaskStore;
 
     const baseline = getActiveSSEConnections();

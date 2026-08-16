@@ -14,6 +14,7 @@ type MetricsTask = Pick<
   | "executionStartedAt"
   | "executionCompletedAt"
   | "firstExecutionAt"
+  | "createdAt"
   | "cumulativeActiveMs"
   | "cumulativePlanningMs"
   | "planningStartedAt"
@@ -353,6 +354,7 @@ function buildTimingMetrics(
   const executionStartedMs = parseTimestampToMs(task.executionStartedAt, malformedTimestamps);
   const executionCompletedMs = parseTimestampToMs(task.executionCompletedAt, malformedTimestamps);
   const firstExecutionMs = parseTimestampToMs(task.firstExecutionAt, malformedTimestamps);
+  const createdMs = parseTimestampToMs(task.createdAt, malformedTimestamps);
   const executionStartedAt = executionStartedMs == null ? null : task.executionStartedAt ?? null;
   const executionCompletedAt = executionCompletedMs == null ? null : task.executionCompletedAt ?? null;
   const firstExecutionAt = firstExecutionMs == null ? null : task.firstExecutionAt ?? null;
@@ -380,14 +382,30 @@ function buildTimingMetrics(
   the legacy id — the documented no-metadata answer, not a floor.
   */
   const wipColumns = options.wipColumns ?? new Set(["in-progress"]);
-  const activeRuntimeMs = wipColumns.has(task.column) && executionStartedMs != null
+  const unboundedActiveRuntimeMs = wipColumns.has(task.column) && executionStartedMs != null
     ? (cumulativeActiveMs ?? 0) + Math.max(0, nowMs - executionStartedMs)
     : cumulativeActiveMs;
+  /*
+  FNXC:TaskRuntimeSegments 2026-08-15-20:34:
+  Planner metrics share the card's closed-segment contract. Execution-only values are bounded by
+  first execution, but combined totals use creation because planning legitimately starts earlier.
+  */
+  const clampToWallClockAge = (value: number, ageAnchorMs: number | null) => ageAnchorMs == null
+    ? value
+    : Math.min(value, Math.max(0, nowMs - ageAnchorMs));
+  const activeAgeAnchorMs = firstExecutionMs ?? createdMs;
+  const totalAgeAnchorMs = createdMs ?? firstExecutionMs;
+  const activeRuntimeMs = unboundedActiveRuntimeMs == null
+    ? null
+    : clampToWallClockAge(unboundedActiveRuntimeMs, activeAgeAnchorMs);
 
   const cumulativePlanningMs = optionalFiniteNumber(task.cumulativePlanningMs);
   const planningStartedMs = parseTimestampToMs(task.planningStartedAt, malformedTimestamps);
   const totalActiveMs = (activeRuntimeMs != null || cumulativePlanningMs != null || planningStartedMs != null)
-    ? (activeRuntimeMs ?? 0) + (cumulativePlanningMs ?? 0) + (planningStartedMs != null ? Math.max(0, nowMs - planningStartedMs) : 0)
+    ? clampToWallClockAge(
+      (unboundedActiveRuntimeMs ?? 0) + (cumulativePlanningMs ?? 0) + (planningStartedMs != null ? Math.max(0, nowMs - planningStartedMs) : 0),
+      totalAgeAnchorMs,
+    )
     : null;
 
   const timingEvents = extractTimingEvents(task.log);

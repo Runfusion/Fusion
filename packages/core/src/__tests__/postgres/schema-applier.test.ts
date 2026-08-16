@@ -101,6 +101,8 @@ import {
   PROJECT_OWNERSHIP_DECLARATION_DRIFT_VERSION,
   PROJECT_OWNERSHIP_DEFAULT_RECONCILIATION_VERSION,
   MESSAGE_ARCHIVE_SCHEMA_VERSION,
+  TASK_SOURCE_AGENT_INDEX_VERSION,
+  WORKSPACE_COORDINATION_LEASES_SCHEMA_VERSION,
 } from "../../postgres/schema-applier.js";
 import { ProjectPartitionRekeyError, rekeyFallbackProjectPartition } from "../../postgres/migration-stamping.js";
 import type { PluginSchemaInitHook } from "../../postgres/plugin-schema-hook.js";
@@ -135,7 +137,11 @@ describe("schema-applier: immutable migration identities", () => {
     expect(PROJECT_OWNERSHIP_DECLARATION_DRIFT_VERSION).toBe("0056");
     expect(PROJECT_OWNERSHIP_DEFAULT_RECONCILIATION_VERSION).toBe("0057");
     expect(MESSAGE_ARCHIVE_SCHEMA_VERSION).toBe("0058");
-    expect(SCHEMA_BASELINE_VERSION).toBe("0058");
+    /* FNXC:PgSchemaApplier 2026-08-15-22:10: 0059 (FN-9037 recommendation source-agent index) and
+       0060 (FN-9059 workspace coordination leases/intents) advance the baseline to 0060. */
+    expect(TASK_SOURCE_AGENT_INDEX_VERSION).toBe("0059");
+    expect(WORKSPACE_COORDINATION_LEASES_SCHEMA_VERSION).toBe("0060");
+    expect(SCHEMA_BASELINE_VERSION).toBe("0060");
   });
 
   it("keeps monitor and approval isolation assigned to version 0003", () => {
@@ -771,10 +777,11 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 final-schema parity (table counts)", 
     outbox tables; 0041 adds 4 lifecycle consumer tables; 0043 adds the durable unplanned-dispatch
     refusal marker (100 → 105); later baseline additions bring the count to 106; and 0048 adds
     GitHub check state (106 → 107); 0049 adds the agent-activity outbox and counter (→ 109);
-    0050 adds immutable lock, evidence, and report history (109 → 112); 0052 adds recall records (→ 113). Plugin tables are added separately
+    0050 adds immutable lock, evidence, and report history (109 → 112); 0052 adds recall records (→ 113);
+    0060 adds workspace coordination leases and land intents (→ 115). Plugin tables are added separately
     by the schema-init hook and are excluded here.
     */
-    expect(bySchema.project).toBe(113);
+    expect(bySchema.project).toBe(115);
     /*
     FNXC:CapacityModel 2026-07-29-08:10 (drop the cross-project cap — table half):
     17, not 18: `central.global_concurrency` is dropped by migration 0037. A fresh
@@ -1644,7 +1651,13 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
         updated_at text NOT NULL
       );
       /* FNXC:GitHubImportTranslate 2026-07-16-23:30: Later durable-task migrations run after this historical 0000 fixture, so retain their required task table surface. */
-      CREATE TABLE project.tasks (id text PRIMARY KEY);
+      /*
+      FNXC:PgSchemaApplier 2026-08-15-22:10:
+      Migration 0059 (FN-9037) builds a partial index on tasks(project_id, source_agent_id).
+      Real 0000 databases have source_agent_id (baseline since the PG cutover), so this
+      historical fixture must retain it; project_id arrives via the 0006 ownership migration.
+      */
+      CREATE TABLE project.tasks (id text PRIMARY KEY, source_agent_id text);
       /*
       FNXC:Ideation 2026-07-18-13:25:
       FN-8295 migration 0022 FKs ideation rows to missions/mission_features on (project_id, id).
@@ -1809,6 +1822,8 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
   PROJECT_OWNERSHIP_DECLARATION_DRIFT_VERSION,
       PROJECT_OWNERSHIP_DEFAULT_RECONCILIATION_VERSION,
       MESSAGE_ARCHIVE_SCHEMA_VERSION,
+      TASK_SOURCE_AGENT_INDEX_VERSION,
+      WORKSPACE_COORDINATION_LEASES_SCHEMA_VERSION,
     ]);
     expect((await applySchemaBaseline(ctx.db, { pluginHooks: [] })).applied).toBe(false);
   });
@@ -1893,6 +1908,8 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
   PROJECT_OWNERSHIP_DECLARATION_DRIFT_VERSION,
       PROJECT_OWNERSHIP_DEFAULT_RECONCILIATION_VERSION,
       MESSAGE_ARCHIVE_SCHEMA_VERSION,
+      TASK_SOURCE_AGENT_INDEX_VERSION,
+      WORKSPACE_COORDINATION_LEASES_SCHEMA_VERSION,
     ]);
   });
 
@@ -2110,6 +2127,8 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
   PROJECT_OWNERSHIP_DECLARATION_DRIFT_VERSION,
       PROJECT_OWNERSHIP_DEFAULT_RECONCILIATION_VERSION,
       MESSAGE_ARCHIVE_SCHEMA_VERSION,
+      TASK_SOURCE_AGENT_INDEX_VERSION,
+      WORKSPACE_COORDINATION_LEASES_SCHEMA_VERSION,
     ]);
   });
 
@@ -2208,6 +2227,8 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
   PROJECT_OWNERSHIP_DECLARATION_DRIFT_VERSION,
       PROJECT_OWNERSHIP_DEFAULT_RECONCILIATION_VERSION,
       MESSAGE_ARCHIVE_SCHEMA_VERSION,
+      TASK_SOURCE_AGENT_INDEX_VERSION,
+      WORKSPACE_COORDINATION_LEASES_SCHEMA_VERSION,
     ]);
   });
 
@@ -2306,6 +2327,8 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
   PROJECT_OWNERSHIP_DECLARATION_DRIFT_VERSION,
       PROJECT_OWNERSHIP_DEFAULT_RECONCILIATION_VERSION,
       MESSAGE_ARCHIVE_SCHEMA_VERSION,
+      TASK_SOURCE_AGENT_INDEX_VERSION,
+      WORKSPACE_COORDINATION_LEASES_SCHEMA_VERSION,
     ]);
   });
 });

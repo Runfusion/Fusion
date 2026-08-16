@@ -65,6 +65,35 @@ describe("GitHubTrackingReconciler", () => {
     vi.useRealTimers();
   });
 
+  it("closes a recently updated tracked done task even when older untracked terminal rows fill the scan window", async () => {
+    mockResolveGithubTrackingAuth.mockReturnValue({ ok: true, auth: { mode: "token", token: "ghp_test" } });
+    mockGetIssue.mockResolvedValue({ state: "open" });
+    const olderUntracked = Array.from({ length: RECONCILE_SCAN_LIMIT }, (_, i) => ({
+      id: `FN-old-${String(i + 1).padStart(4, "0")}`,
+      column: "archived",
+      createdAt: `2026-01-01T00:00:00.${String(i).padStart(3, "0")}Z`,
+      updatedAt: `2026-01-01T00:00:00.${String(i).padStart(3, "0")}Z`,
+    }));
+    const store = createStore({
+      listTasks: [
+        ...olderUntracked,
+        {
+          id: "FN-9061",
+          column: "done",
+          createdAt: "2026-08-15T04:05:43.525Z",
+          updatedAt: "2026-08-15T04:51:10.315Z",
+          executionCompletedAt: "2026-08-15T04:46:44.428Z",
+          githubTracking: { enabled: true, issue: { owner: "Runfusion", repo: "Fusion", number: 3458 } },
+        },
+      ],
+    });
+
+    const result = await new GitHubTrackingReconciler().reconcile(store);
+
+    expect(mockSetIssueState).toHaveBeenCalledWith("Runfusion", "Fusion", 3458, "closed", "completed");
+    expect(result.closed).toBe(1);
+  });
+
   it("closes open issues for done-column tracked tasks", async () => {
     mockResolveGithubTrackingAuth.mockReturnValue({ ok: true, auth: { mode: "token", token: "ghp_test" } });
     mockGetIssue.mockResolvedValue({ state: "open" });
@@ -107,7 +136,7 @@ describe("GitHubTrackingReconciler", () => {
     const result = await new GitHubTrackingReconciler().reconcile(store);
 
     expect(result.closed).toBe(0);
-    expect(result.skipped).toBe(3);
+    expect(result.skipped).toBe(1);
     expect(mockSetIssueState).not.toHaveBeenCalled();
   });
 
@@ -116,8 +145,8 @@ describe("GitHubTrackingReconciler", () => {
     mockGetIssue.mockRejectedValueOnce(new Error("boom"));
     mockGetIssue.mockResolvedValueOnce({ state: "open" });
     const store = createStore({ listTasks: [
-      { id: "FN-1", column: "done", githubTracking: { enabled: true, issue: { owner: "o", repo: "r", number: 1 } } },
-      { id: "FN-2", column: "done", githubTracking: { enabled: true, issue: { owner: "o", repo: "r", number: 2 } } },
+      { id: "FN-1", column: "done", updatedAt: "2026-08-15T04:51:00.000Z", githubTracking: { enabled: true, issue: { owner: "o", repo: "r", number: 1 } } },
+      { id: "FN-2", column: "done", updatedAt: "2026-08-15T04:50:00.000Z", githubTracking: { enabled: true, issue: { owner: "o", repo: "r", number: 2 } } },
     ] });
 
     const result = await new GitHubTrackingReconciler().reconcile(store);

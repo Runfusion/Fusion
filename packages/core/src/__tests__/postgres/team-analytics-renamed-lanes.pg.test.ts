@@ -32,8 +32,18 @@ const IN_RANGE = "2026-06-15T12:00:00.000Z";
 const RANGE = { from: "2026-06-01T00:00:00.000Z", to: "2026-06-30T23:59:59.999Z", now: Date.parse(IN_RANGE) };
 
 pgDescribe("team analytics under a renamed board vocabulary", () => {
+  /*
+  FNXC:MultiProjectIsolation 2026-08-15-22:10:
+  FN-8957 scoped every agent/task analytics read to `layer.projectId`. This file aggregates under
+  projectId "p1", so the harness must BIND that same project: an unbound harness writes store rows
+  under the GUC default partition ('__legacy_unscoped__' / '') and the scoped aggregate then reads
+  zero rows — an isolation false-negative, not the lane-vocabulary defect this file pins.
+  Raw adminDb seeds below carry an explicit project_id = 'p1' for the same reason (adminDb bypasses
+  the bound GUC, so column defaults would land the row in the legacy partition).
+  */
   const h: SharedPgTaskStoreHarness = createSharedPgTaskStoreTestHarness({
     prefix: "fusion_team_analytics_lanes",
+    projectId: "p1",
   });
 
   beforeAll(h.beforeAll);
@@ -71,8 +81,8 @@ pgDescribe("team analytics under a renamed board vocabulary", () => {
     const store = h.store();
     const adminDb = h.adminDb();
     await adminDb.execute(sql`
-      INSERT INTO project.agents (id, name, role, state, created_at, updated_at)
-      VALUES ('agent-1', 'Agent One', 'executor', 'idle', ${IN_RANGE}, ${IN_RANGE})`);
+      INSERT INTO project.agents (id, project_id, name, role, state, created_at, updated_at)
+      VALUES ('agent-1', 'p1', 'Agent One', 'executor', 'idle', ${IN_RANGE}, ${IN_RANGE})`);
 
     for (const [id, lane] of [["KB-DONE", completeLane], ["KB-WIP", wipLane]] as const) {
       await store.createTaskWithReservedId(

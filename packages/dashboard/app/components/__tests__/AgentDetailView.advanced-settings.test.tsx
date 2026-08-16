@@ -84,7 +84,12 @@ describe("Advanced Settings", () => {
       expect((screen.getByLabelText("Name") as HTMLInputElement).value).toBe("Interviewed Agent");
       expect((screen.getByLabelText("Title") as HTMLInputElement).value).toBe("Draft Title");
       expect((screen.getByLabelText("Icon") as HTMLInputElement).value).toBe("🧠");
-      expect((screen.getByLabelText("Role") as HTMLSelectElement).value).toBe("reviewer");
+      /*
+      FNXC:Agents 2026-08-15-22:45:
+      FN-8764 (eaadd153b1) split agent roles into a primary role plus additional workflow
+      roles, renaming this select's label from "Role" to "Primary role".
+      */
+      expect((screen.getByLabelText("Primary role") as HTMLSelectElement).value).toBe("reviewer");
     });
     expect(mockUpdateAgent).not.toHaveBeenCalled();
 
@@ -94,7 +99,9 @@ describe("Advanced Settings", () => {
         "agent-001",
         expect.objectContaining({
           name: "Interviewed Agent",
-          role: "reviewer",
+          // FNXC:Agents 2026-08-15-22:45: FN-8764 (eaadd153b1) saves the role list as `roles`
+          // (primary first) instead of a scalar `role`.
+          roles: ["reviewer"],
           title: "Draft Title",
           reportsTo: "agent-002",
           runtimeConfig: expect.objectContaining({ model: "openai/gpt-4o" }),

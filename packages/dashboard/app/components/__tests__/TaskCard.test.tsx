@@ -6582,6 +6582,33 @@ describe("TaskCard", () => {
     expect(timer?.getAttribute("title")).not.toContain("Completed");
   });
 
+  it("caps poisoned active runtime chips at task age in WIP, review, and done lanes", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-15T15:00:00.000Z"));
+    try {
+      for (const column of ["in-progress", "in-review", "done"]) {
+        const { container, unmount } = render(
+          <TaskCard
+            task={makeTask({
+              column,
+              createdAt: "2026-05-15T08:00:00.000Z",
+              cumulativeActiveMs: 4 * 24 * 60 * 60_000,
+              executionStartedAt: column === "in-progress" ? "2026-05-15T14:55:00.000Z" : undefined,
+            })}
+            onOpenDetail={noop}
+            addToast={noop}
+          />,
+        );
+
+        expect(container.querySelector(".card-time-indicator")?.textContent).toContain("7h");
+        expect(container.querySelector(".card-time-indicator")?.textContent).not.toContain("4d");
+        unmount();
+      }
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("keeps the in-review timer live from executionStartedAt when present", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-04-25T12:30:00.000Z"));

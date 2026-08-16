@@ -297,31 +297,70 @@ describe("timing, completion and in-review effects are keyed on ROLES", () => {
   });
 
   /*
-  FNXC:WorkflowResolvedColumns 2026-07-30-18:40 (#2842 review — greptile P1, "preserved segment start
-  double-counts runtime"):
-
-  THIS PINS A REAL DEFECT AND DOES NOT FIX IT. `applyTimingEffects` banks the segment on WIP EXIT but
-  never clears `executionStartedAt`, and its re-entry arm is `if (!task.executionStartedAt)` — so the
-  original start survives the round trip. Every later live-tail reader (`getTotalAgentActiveMs`, the
-  planner metrics tool, the dashboard duration displays) then computes `now - originalStart`, which
-  re-adds the banked segment PLUS all the non-WIP time in between.
-
-  NOT A RENAMED-BOARD BUG, and that is why it is pinned rather than folded into a conversion PR: the
-  case below runs the DEFAULT lineage, where every id is legacy. It is an accounting bug in core that
-  predates this program, and correcting it changes numbers on `productivity-analytics.ts` and every
-  duration display — a behaviour change that deserves its own review, not a line in a batch that says
-  it only converts vocabulary.
-
-  THE FIX, so it is not lost: clear `executionStartedAt` in the exit arm right after banking the
-  segment. The re-entry arm already re-stamps it from `columnMovedAt`, so the next segment starts at
-  the re-entry moment, which is the definition the field's own doc-comment gives.
-
-  When that lands this expectation flips from 10 to 5 minutes and this note goes with it.
+  FNXC:TaskRuntimeSegments 2026-08-15-20:10:
+  A WIP exit must close its segment by clearing `executionStartedAt`; the re-entry arm stamps the
+  next segment from `columnMovedAt`. These default-lineage checks protect the operator-visible
+  runtime invariant independently from renamed-lane conversion coverage.
   */
-  it("KNOWN DEFECT: a WIP round trip leaves the old executionStartedAt, so the live tail double-counts", () => {
+  it("reports only banked and current WIP segments after a review round trip", () => {
     const { ir, wip, review } = LINEAGES[0];
     const task = {
       id: "FN-ROUNDTRIP",
+      column: review,
+      columnMovedAt: "2026-07-30T00:05:00.000Z",
+      executionStartedAt: "2026-07-30T00:00:00.000Z",
+      firstExecutionAt: "2026-07-30T00:00:00.000Z",
+      steps: [],
+      dependencies: [],
+      workflowStepResults: [],
+    } as unknown as Task;
+
+    applyTimingEffects(makeCtx(ir, wip, review, { task }));
+    expect(task.cumulativeActiveMs).toBe(5 * 60_000);
+    expect(task.executionStartedAt).toBeUndefined();
+
+    task.column = wip;
+    task.columnMovedAt = "2026-07-30T00:15:00.000Z";
+    applyTimingEffects(makeCtx(ir, review, wip, { task }));
+    expect(task.executionStartedAt).toBe("2026-07-30T00:15:00.000Z");
+    expect(task.column).toBe(wip);
+
+    expect(getTotalAgentActiveMs(
+      task,
+      Date.parse("2026-07-30T00:20:00.000Z"),
+      { countsTowardWip: true } as never,
+    )).toBe(10 * 60_000);
+  });
+
+  it("caps historical poisoned active totals at the task wall-clock age", () => {
+    const task = {
+      column: "in-review",
+      cumulativeActiveMs: 4 * 24 * 60 * 60_000,
+      createdAt: "2026-07-30T00:00:00.000Z",
+    } as Task;
+
+    expect(getTotalAgentActiveMs(task, Date.parse("2026-07-30T07:00:00.000Z")))
+      .toBe(7 * 60 * 60_000);
+  });
+
+  it("retains planning accrued before first execution when applying the wall-clock ceiling", () => {
+    const task = {
+      column: "in-progress",
+      createdAt: "2026-07-30T09:00:00.000Z",
+      firstExecutionAt: "2026-07-30T10:00:00.000Z",
+      cumulativePlanningMs: 30 * 60_000,
+      cumulativeActiveMs: 0,
+      executionStartedAt: "2026-07-30T10:00:00.000Z",
+    } as Task;
+
+    expect(getTotalAgentActiveMs(task, Date.parse("2026-07-30T10:00:00.000Z")))
+      .toBe(30 * 60_000);
+  });
+
+  it("banks each closed WIP visit once rather than from the first visit", () => {
+    const { ir, wip, review } = LINEAGES[0];
+    const task = {
+      id: "FN-MULTI-VISIT",
       column: review,
       columnMovedAt: "2026-07-30T00:05:00.000Z",
       executionStartedAt: "2026-07-30T00:00:00.000Z",
@@ -330,24 +369,16 @@ describe("timing, completion and in-review effects are keyed on ROLES", () => {
       workflowStepResults: [],
     } as unknown as Task;
 
-    /* Exit: five minutes of work is banked. */
     applyTimingEffects(makeCtx(ir, wip, review, { task }));
-    expect(task.cumulativeActiveMs).toBe(5 * 60_000);
-
-    /* Re-entry ten minutes later. The start should move to the re-entry moment; it does not. */
     task.column = wip;
     task.columnMovedAt = "2026-07-30T00:15:00.000Z";
     applyTimingEffects(makeCtx(ir, review, wip, { task }));
-    expect(task.executionStartedAt).toBe("2026-07-30T00:00:00.000Z");
+    task.column = review;
+    task.columnMovedAt = "2026-07-30T00:18:00.000Z";
+    applyTimingEffects(makeCtx(ir, wip, review, { task }));
 
-    /*
-    The consequence, stated as the number an operator sees. At 00:20 the card has done 5 minutes of
-    banked work plus 5 minutes of live work — 10 total. `getTotalAgentActiveMs` reports 20: the banked
-    5, plus `now - 00:00` which is itself 20 minutes of wall-clock including the 10 minutes the card
-    spent in review.
-    */
-    expect(getTotalAgentActiveMs(task, Date.parse("2026-07-30T00:20:00.000Z")))
-      .toBe(5 * 60_000 + 20 * 60_000);
+    expect(task.cumulativeActiveMs).toBe(8 * 60_000);
+    expect(task.executionStartedAt).toBeUndefined();
   });
 
   it("stamps executionCompletedAt on entry to the complete lane on both lineages", () => {

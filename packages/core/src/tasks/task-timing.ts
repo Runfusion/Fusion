@@ -8,7 +8,8 @@ import { isWipColumnRole, type ColumnRoleTraitFlags } from "../column-roles.js";
  * must never be substituted for an agent session anchor.
  */
 export function getTotalAgentActiveMs(
-  task: Pick<Task, "column" | "cumulativeActiveMs" | "executionStartedAt" | "cumulativePlanningMs" | "planningStartedAt">,
+  task: Pick<Task, "column" | "cumulativeActiveMs" | "executionStartedAt" | "cumulativePlanningMs" | "planningStartedAt">
+    & Partial<Pick<Task, "firstExecutionAt" | "createdAt">>,
   nowMs: number,
   /*
   FNXC:WorkflowLifecycleColumns 2026-07-31-03:20 (batch-core feed):
@@ -29,9 +30,20 @@ export function getTotalAgentActiveMs(
   const planningBase = Math.max(0, task.cumulativePlanningMs ?? 0);
   const planningStartMs = Date.parse(task.planningStartedAt ?? "");
   const planning = planningBase + (Number.isFinite(planningStartMs) ? Math.max(0, nowMs - planningStartMs) : 0);
-  return task.cumulativeActiveMs != null || task.cumulativePlanningMs != null || Number.isFinite(executionStartMs) || Number.isFinite(planningStartMs)
-    ? execution + planning
-    : null;
+  if (task.cumulativeActiveMs == null && task.cumulativePlanningMs == null && !Number.isFinite(executionStartMs) && !Number.isFinite(planningStartMs)) {
+    return null;
+  }
+
+  /*
+  FNXC:TaskRuntimeSegments 2026-08-15-20:34:
+  Closed segments can be historically poisoned by the former sticky execution anchor. Never expose
+  their accumulated total beyond the task's real age; this display defense heals old rows while the
+  move hook prevents new poison. This total includes planning recorded before first execution, so
+  creation is the earliest durable wall-clock ceiling and must take precedence over firstExecutionAt.
+  */
+  const ageAnchorMs = Date.parse(task.createdAt ?? task.firstExecutionAt ?? "");
+  const total = execution + planning;
+  return Number.isFinite(ageAnchorMs) ? Math.min(total, Math.max(0, nowMs - ageAnchorMs)) : total;
 }
 
 export function startPlanningSegment<T extends Pick<Task, "planningStartedAt">>(task: T, nowMs = Date.now()): { planningStartedAt?: string } {

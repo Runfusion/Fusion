@@ -18,6 +18,12 @@ export interface WorkspaceLandIntent { taskId: string; repoRelPath: string; remo
  * FNXC:Workspace 2026-08-15-08:23:
  * Store reclaim and workspace self-healing share this deliberately narrow
  * terminal rule so either cannot reclaim a task the other considers live.
+ *
+ * DELIBERATE-LITERAL — narrow terminal-owner rule (FN-9059). A lease-owner row is
+ * read without its workflow context, so resolving the complete lane per-workflow
+ * here would let a resolver failure make a live owner read as terminal and allow a
+ * competing reclaim. The legacy `done` literal is the intentionally conservative
+ * shared floor for both reclaim paths.
  */
 export function isTerminalWorkspaceLeaseOwner(row: Pick<Task, "column" | "status"> | null | undefined): boolean {
   return row != null && (row.column === "done" || row.status === "failed");

@@ -46,6 +46,7 @@ import { useDiscoveredSkillsCache } from "../hooks/useDiscoveredSkillsCache";
 import { useAgentsMapCache } from "../hooks/useAgentsMapCache";
 import { useMobileKeyboard } from "../hooks/useMobileKeyboard";
 import { useMobileKeyboardViewportLock, isIOS } from "../hooks/useMobileScrollLock";
+import { useOverlayDismiss } from "../hooks/useOverlayDismiss";
 import { matchesAgentMentionFilter } from "./mentionMatching";
 import { useNavigationHistoryContext } from "../hooks/useNavigationHistory";
 import { recordResumeEvent } from "../utils/resumeInstrumentation";
@@ -438,9 +439,14 @@ function NewChatDialog({ projectId, defaultModel, defaultKind, defaultAgentId, d
 
   const isSubmitDisabled =
     chatMode === "agent" ? !selectedAgentId : !resolvedModel;
+  /*
+  FNXC:ModalDismissal 2026-08-15-12:27:
+  The model listbox is portaled to document.body and can re-anchor when a mobile keyboard opens. Pair press origin with release so a filter gesture that ends on this backdrop never closes New Chat.
+  */
+  const overlayDismiss = useOverlayDismiss(onClose, { enabled: true });
 
   return (
-    <div className="chat-new-dialog-backdrop chat-view-dialog-backdrop" onClick={onClose} role="dialog" aria-modal="true">
+    <div className="chat-new-dialog-backdrop chat-view-dialog-backdrop" {...overlayDismiss} role="dialog" aria-modal="true">
       <div className="chat-new-dialog chat-view-dialog" onClick={(e) => e.stopPropagation()}>
         <h3>{t("chat.newChatTitle", "New Chat")}</h3>
         <div className="chat-new-dialog-mode-toggle" data-testid="chat-new-dialog-mode-toggle">
@@ -536,6 +542,16 @@ function NewChatDialog({ projectId, defaultModel, defaultKind, defaultAgentId, d
 }
 
 
+/**
+ * FNXC:ModalDismissal 2026-08-15-13:11:
+ * Chat dialogs share this press-paired backdrop because a portaled model menu can re-anchor under
+ * the mobile keyboard and deliver its release or synthesized click to the backdrop. Only a gesture
+ * that starts and ends on the backdrop may dismiss its host dialog.
+ */
+function ChatDialogBackdrop({ children, onClose }: { children: React.ReactNode; onClose: () => void }) {
+  const overlayDismiss = useOverlayDismiss(onClose, { enabled: true });
+  return <div className="chat-new-dialog-backdrop chat-view-dialog-backdrop" {...overlayDismiss}>{children}</div>;
+}
 
 type CopyFeedbackState = "success" | "error" | null;
 
@@ -3805,7 +3821,7 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
 
       {/* Rename Dialog */}
       {renameDialog && (
-        <div className="chat-new-dialog-backdrop chat-view-dialog-backdrop" onClick={() => setRenameDialog(null)}>
+        <ChatDialogBackdrop onClose={() => setRenameDialog(null)}>
           <div
             className="chat-new-dialog chat-view-dialog"
             role="dialog"
@@ -3849,11 +3865,11 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
               </button>
             </div>
           </div>
-        </div>
+        </ChatDialogBackdrop>
       )}
 
       {renameTagDialog && (
-        <div className="chat-new-dialog-backdrop chat-view-dialog-backdrop" onClick={() => setRenameTagDialog(null)}>
+        <ChatDialogBackdrop onClose={() => setRenameTagDialog(null)}>
           <div className="chat-new-dialog chat-view-dialog" role="dialog" aria-modal="true" aria-labelledby="chat-rename-tag-dialog-title" onClick={(event) => event.stopPropagation()}>
             <h3 id="chat-rename-tag-dialog-title">{t("chat.renameTagTitle", "Rename tag")}</h3>
             <label className="chat-rename-label" htmlFor="chat-rename-tag-input">{t("chat.tagName", "Tag name")}</label>
@@ -3863,11 +3879,11 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
               <button className="btn btn-sm btn-primary" data-testid="chat-rename-tag-save" onClick={() => void renameTag(renameTagDialog.id, renameTagName).then(() => setRenameTagDialog(null)).catch(() => addToast(t("chat.failedToRenameTag", "Failed to rename tag"), "error"))}>{t("chat.save", "Save")}</button>
             </div>
           </div>
-        </div>
+        </ChatDialogBackdrop>
       )}
 
       {confirmDeleteTag && (
-        <div className="chat-new-dialog-backdrop chat-view-dialog-backdrop" onClick={() => setConfirmDeleteTag(null)}>
+        <ChatDialogBackdrop onClose={() => setConfirmDeleteTag(null)}>
           <div className="chat-new-dialog chat-view-dialog" role="dialog" aria-modal="true" aria-labelledby="chat-delete-tag-dialog-title" onClick={(event) => event.stopPropagation()}>
             <h3 id="chat-delete-tag-dialog-title">{t("chat.deleteTagTitle", "Delete tag?")}</h3>
             <p className="chat-view-delete-dialog-copy">{t("chat.deleteTagBody", "This removes the tag from all conversations, but does not delete conversations.")}</p>
@@ -3876,12 +3892,12 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
               <button className="btn btn-sm btn-danger" data-testid="chat-delete-tag-confirm" onClick={() => void deleteTag(confirmDeleteTag.id).then(() => setConfirmDeleteTag(null)).catch(() => addToast(t("chat.failedToDeleteTag", "Failed to delete tag"), "error"))}>{t("chat.delete", "Delete")}</button>
             </div>
           </div>
-        </div>
+        </ChatDialogBackdrop>
       )}
 
       {/* Confirm Delete Dialog */}
       {confirmDelete && (
-        <div className="chat-new-dialog-backdrop chat-view-dialog-backdrop" onClick={() => setConfirmDelete(null)}>
+        <ChatDialogBackdrop onClose={() => setConfirmDelete(null)}>
           <div className="chat-new-dialog chat-view-dialog" onClick={(e) => e.stopPropagation()}>
             <h3>{t("chat.deleteConversationTitle", "Delete Conversation?")}</h3>
             <p className="chat-view-delete-dialog-copy">
@@ -3899,11 +3915,11 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
               </button>
             </div>
           </div>
-        </div>
+        </ChatDialogBackdrop>
       )}
 
       {chatRoomsEnabled && confirmDeleteRoomId && (
-        <div className="chat-new-dialog-backdrop chat-view-dialog-backdrop" onClick={() => setConfirmDeleteRoomId(null)}>
+        <ChatDialogBackdrop onClose={() => setConfirmDeleteRoomId(null)}>
           <div className="chat-new-dialog chat-view-dialog" onClick={(e) => e.stopPropagation()}>
             <h3>{t("chat.deleteRoomTitle", "Delete Room?")}</h3>
             <p className="chat-view-delete-dialog-copy">
@@ -3930,7 +3946,7 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
               </button>
             </div>
           </div>
-        </div>
+        </ChatDialogBackdrop>
       )}
       {/* Thread */}
       {chatRoomsEnabled && chatScope === "rooms" ? (

@@ -23,8 +23,16 @@ FNXC:TaskDetailTitle 2026-08-05-19:18:
 FN-8806's acceptance evidence is real Chromium geometry across production hosts. A skipped browser
 lane can neither observe ResizeObserver delivery nor reject the original flicker, so fail discovery
 explicitly instead of allowing a green suite without this required rendering-engine regression.
+
+FNXC:TaskDetailTitle 2026-08-16-05:07:
+The hard failure applies only where the dedicated dashboard-browser-touch lane is required to run:
+CI, or an explicit FUSION_BROWSER_SMOKE_REQUIRE=1 opt-in (the same flag scripts/browser-layout-smoke.mjs
+uses for its --require-browser mode). A bare local run on a Chromium-less machine follows the sibling
+planning-browser-e2e.test.ts convention and self-gates via describe.runIf(executablePath) instead of
+failing discovery — the module-load throw was breaking unrelated local runs that merely collected this file.
 */
-if (!executablePath) {
+const browserRequired = Boolean(process.env.CI) || process.env.FUSION_BROWSER_SMOKE_REQUIRE === "1";
+if (!executablePath && browserRequired) {
   throw new Error(
     "[task-modal-touch-resize] Chromium is required for task-title stability coverage; set FUSION_BROWSER_SMOKE_BROWSER or CHROME_BIN.",
   );
@@ -164,12 +172,12 @@ Browser CDP gestures are required because jsdom cannot resolve CSS hit targets. 
 both production resize paths and sends CSS-pixel touch input through Chromium so elementFromPoint,
 pointer capture, persistence, and header-drag isolation use the same browser input path.
 */
-describe("Task modal tablet touch resize browser regression", () => {
+describe.runIf(executablePath)("Task modal tablet touch resize browser regression", () => {
   let server: ViteDevServer; let browser: Browser; let baseUrl = "";
   beforeAll(async () => {
     server = await createServer({ root: process.cwd(), server: { host: "127.0.0.1", port: 0, watch: null }, logLevel: "error" });
     await server.listen(); baseUrl = server.resolvedUrls?.local[0] ?? "";
-    browser = await chromium.launch({ executablePath, headless: true, ...(process.env.CI ? { args: ["--no-sandbox", "--disable-dev-shm-usage"] } : {}) });
+    browser = await chromium.launch({ executablePath: executablePath as string, headless: true, ...(process.env.CI ? { args: ["--no-sandbox", "--disable-dev-shm-usage"] } : {}) });
   }, 30_000);
   afterAll(async () => {
     await browser?.close();

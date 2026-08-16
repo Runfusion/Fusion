@@ -6,6 +6,7 @@
  */
 
 import { spawn } from "node:child_process";
+import { resolveHermesLaunch } from "./windows-binary-launch.js";
 
 /** Default probe timeout in milliseconds. */
 const DEFAULT_PROBE_TIMEOUT_MS = 2000;
@@ -46,7 +47,9 @@ export async function probeHermesBinary(opts?: {
       : "hermes";
   const timeoutMs = opts?.timeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS;
 
-  const resolvedPath = await tryResolveBinaryPath(binary);
+  const launch = await resolveHermesLaunch(binary, ["--version"], { env: process.env });
+  // POSIX launch resolution is intentionally a no-op; retain which for the documented reporting path.
+  const resolvedPath = launch.resolvedBinaryPath ?? await tryResolvePosixBinaryPath(binary);
 
   return new Promise<HermesBinaryStatus>((resolvePromise) => {
     const finish = (result: Omit<HermesBinaryStatus, "probeDurationMs">): void => {
@@ -55,8 +58,9 @@ export async function probeHermesBinary(opts?: {
 
     let settled = false;
 
-    const child = spawn(resolvedPath ?? binary, ["--version"], {
+    const child = spawn(launch.command, launch.args, {
       stdio: ["ignore", "pipe", "pipe"],
+      windowsVerbatimArguments: launch.windowsVerbatimArguments,
     });
 
     const timer = setTimeout(() => {
@@ -121,14 +125,11 @@ export async function probeHermesBinary(opts?: {
   });
 }
 
-/**
- * Best-effort path resolution via `which` (POSIX) or `where` (Windows).
- * Returns undefined on failure — the spawn above is the actual authority.
- */
-async function tryResolveBinaryPath(binary: string): Promise<string | undefined> {
+/** Best-effort POSIX reporting lookup; Windows resolution belongs to windows-binary-launch. */
+async function tryResolvePosixBinaryPath(binary: string): Promise<string | undefined> {
+  if (process.platform === "win32") return undefined;
   return new Promise((resolvePromise) => {
-    const which = process.platform === "win32" ? "where" : "which";
-    const child = spawn(which, [binary], { stdio: ["ignore", "pipe", "ignore"] });
+    const child = spawn("which", [binary], { stdio: ["ignore", "pipe", "ignore"] });
     let out = "";
     child.stdout?.on("data", (chunk: Buffer) => {
       out += chunk.toString("utf-8");

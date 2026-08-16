@@ -23,6 +23,8 @@ import { PendingAttachmentPreviews } from "./PendingAttachmentPreviews";
 import { getPriorityColorVar, getPriorityIcon, getPriorityLabel } from "../utils/priorityIndicator";
 import { validateQuickAddStartWorkflow, workflowSupportsQuickAddStart, resolveQuickAddStartInitialColumn, resolveQuickAddStartTargetColumn, type ValidatedQuickAddWorkflow } from "../utils/quickAddStart";
 import { computeFixedMenuPosition, getLayoutViewportSize } from "../utils/fixedMenuPosition";
+import { isInsidePortaledModelMenu } from "../utils/portalSurfaces";
+import { useQuickAddSubmitOnEnter } from "../hooks/useQuickAddSubmitOnEnter";
 
 const STORAGE_KEY = "kb-quick-entry-text";
 const ALLOWED_TASK_ATTACHMENT_TYPES = new Set([
@@ -88,6 +90,8 @@ interface QuickEntryBoxProps {
   List view renders quick-add as a COMPACT single-line input so the box isn't tall. When true, the textarea stays one line: isExpanded initializes false, focus does NOT auto-expand it, and auto-resize-to-scrollHeight is short-circuited (capped to the one-line min-height). Board/columns omit singleLine, preserving the tall 80px + auto-grow behavior. singleLine governs only textarea height, not the disclosure/controls panel (which List already collapses via defaultExpanded={false}).
   */
   singleLine?: boolean;
+  /** Explicit override of the global Enter-submit preference. */
+  submitOnEnter?: boolean;
   /**
    * Favorited provider IDs from shared app-level state.
    * When provided (alongside availableModels), the component uses these
@@ -157,8 +161,10 @@ function hasMeaningfulNodeChoice(nodes: NodeInfo[]): boolean {
   return nodes.length > 1 || nodes.some((node) => node.type !== "local");
 }
 
-export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], availableModels, onSubtaskBreakdown, workflowId, workflowOptions, defaultWorkflowId, projectId, autoExpand = true, defaultExpanded = true, singleLine = false, favoriteProviders: parentFavoriteProviders, favoriteModels: parentFavoriteModels, onToggleFavorite: parentToggleFavorite, onToggleModelFavorite: parentToggleModelFavorite, onOpenTask }: QuickEntryBoxProps) {
+export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], availableModels, onSubtaskBreakdown, workflowId, workflowOptions, defaultWorkflowId, projectId, autoExpand = true, defaultExpanded = true, singleLine = false, submitOnEnter, favoriteProviders: parentFavoriteProviders, favoriteModels: parentFavoriteModels, onToggleFavorite: parentToggleFavorite, onToggleModelFavorite: parentToggleModelFavorite, onOpenTask }: QuickEntryBoxProps) {
   const { t } = useTranslation("app");
+  const contextSubmitOnEnter = useQuickAddSubmitOnEnter();
+  const enterSubmits = submitOnEnter ?? contextSubmitOnEnter;
   const [description, setDescription] = useState(() => {
     if (typeof window !== "undefined") {
       return getScopedItem(STORAGE_KEY, projectId) || "";
@@ -584,7 +590,7 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
       const clickedInsideTrigger = modelTriggerRef.current?.contains(target);
       const clickedInsidePortal = modelMenuPortalRef.current?.contains(target);
       // Also check for clicks inside CustomModelDropdown's portaled dropdown
-      const clickedInsideCombobox = (target instanceof Element) && (target.closest?.(".model-combobox-dropdown--portal") != null);
+      const clickedInsideCombobox = isInsidePortaledModelMenu(target);
 
       if (!clickedInsideTrigger && !clickedInsidePortal && !clickedInsideCombobox) {
         setIsModelMenuOpen(false);
@@ -1024,11 +1030,23 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
           }
           return;
         }
-        // Enter without Shift submits
-        e.preventDefault();
         if (duplicateMatches || submitInFlightRef.current) {
+          e.preventDefault();
           return;
         }
+        /*
+        FNXC:QuickEntry 2026-08-16-03:15:
+        The global Quick Add option defaults on to preserve historical Enter submission. When disabled, plain Enter remains a browser newline while Cmd/Ctrl+Enter stays the explicit save accelerator.
+        */
+        if (e.metaKey || e.ctrlKey) {
+          e.preventDefault();
+          handleSubmit();
+          return;
+        }
+        if (!enterSubmits) {
+          return;
+        }
+        e.preventDefault();
         handleSubmit();
       } else if (e.key === "Escape") {
         e.preventDefault();
@@ -1099,6 +1117,7 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
       projectId,
       setIsDisclosureExpanded,
       duplicateMatches,
+      enterSubmits,
       singleLine,
     ],
   );
@@ -2410,7 +2429,7 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
                 focus for its filter input. Plain menu chrome still preserves the quick-entry focus.
                 */
                 const target = e.target as Element;
-                if (target.closest("input, textarea, select, [contenteditable], .model-combobox-dropdown--portal")) {
+                if (target.closest("input, textarea, select, [contenteditable]") || isInsidePortaledModelMenu(target)) {
                   return;
                 }
                 e.preventDefault();

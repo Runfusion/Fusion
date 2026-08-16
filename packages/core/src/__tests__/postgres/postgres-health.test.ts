@@ -17,15 +17,15 @@
  * Skipped when PostgreSQL is unreachable (FUSION_PG_TEST_SKIP=1).
  */
 
-import { describe, it, expect, afterEach } from "vitest";
-import { execSync } from "node:child_process";
-import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
+import { it, expect, afterEach } from "vitest";
 import { sql } from "drizzle-orm";
 import { createAsyncDataLayer, type AsyncDataLayer } from "../../postgres/data-layer.js";
 import { createConnectionSetFromUrl } from "../../postgres/connection.js";
 import type { ResolvedBackend } from "../../postgres/backend-resolver.js";
-import { applySchemaBaseline } from "../../postgres/schema-applier.js";
+import {
+  pgDescribe,
+  createTaskStoreForTest,
+} from "../../__test-utils__/pg-test-harness.js";
 import {
   checkPostgresHealth,
   detectSchemaDrift,
@@ -37,82 +37,37 @@ import {
 import { detectTaskIdIntegrityAnomaliesAsync } from "../../postgres/async-task-id-integrity.js";
 import { PROJECT_SCHEMA } from "../../postgres/schema/_shared.js";
 
-const PG_TEST_URL_BASE =
-  process.env.FUSION_PG_TEST_URL_BASE ?? "postgresql://localhost:5432";
-const PG_AVAILABLE =
-  process.env.FUSION_PG_TEST_SKIP !== "1" && Boolean(PG_TEST_URL_BASE);
-
-const pgDescribe = PG_AVAILABLE ? describe : describe.skip;
-
-function uniqueDbName(): string {
-  return `fusion_u8_health_${process.pid}_${Math.random().toString(36).slice(2, 8)}`;
-}
-
 /*
-FNXC:PgTestAuthFix 2026-07-14-00:00:
-The inline adminExec used process.env.USER for the psql -U flag, which is 'runner' on GitHub Actions (not 'postgres'). Use the PG_TEST_URL_BASE connection string instead so credentials are always correct.
+FNXC:PgTestHarnessAdoption 2026-08-16-03:45:
+Migrated the per-test database creation off hand-rolled CREATE DATABASE +
+applySchemaBaseline (~3-4s of DDL per test) onto the harness's template-cloned
+`createTaskStoreForTest`. This file KEEPS a private database per test on purpose: the
+schema-drift cases DROP real columns and the VACUUM cases assert whole-table row/dead-tuple
+counts, both of which would poison a file-shared database. Only the scaffolding changed —
+the harness's TaskStore init seeds config/allocator rows, so setup wipes application data
+to restore the pristine tables the original fresh databases provided. Every assertion is
+unchanged.
 */
-function adminExec(statement: string): void {
-  execSync(
-    `psql "${PG_TEST_URL_BASE}/postgres" -v ON_ERROR_STOP=1 -c "${statement.replace(/"/g, '\\"')}"`,
-    { stdio: "pipe", env: process.env },
-  );
-}
-
 interface TestCtx {
-  dbName: string;
-  testUrl: string;
   layer: AsyncDataLayer;
-  adminSql: ReturnType<typeof postgres>;
+  teardown: () => Promise<void>;
 }
 
 async function setupCtx(): Promise<TestCtx> {
-  const dbName = uniqueDbName();
-  try {
-    adminExec(`DROP DATABASE IF EXISTS "${dbName}"`);
-  } catch {
-    // may not exist
-  }
-  adminExec(`CREATE DATABASE "${dbName}"`);
-  const testUrl = `${PG_TEST_URL_BASE}/${dbName}`;
-
-  const schemaBackend: ResolvedBackend = {
-    mode: "external",
-    runtimeUrl: testUrl,
-    migrationUrl: testUrl,
-    migrationUrlOverridden: false,
-  };
-  const schemaConnections = await createConnectionSetFromUrl(schemaBackend, {
-    poolMax: 1,
-    connectTimeoutSeconds: 5,
+  const harness = await createTaskStoreForTest({
+    prefix: "fusion_u8_health",
+    copyFromGolden: true,
   });
-  await applySchemaBaseline(schemaConnections.migration);
-  await schemaConnections.close();
-
-  const connections = await createConnectionSetFromUrl(schemaBackend, {
-    poolMax: 5,
-    connectTimeoutSeconds: 5,
-  });
-  const layer = createAsyncDataLayer(connections);
-
-  const adminSql = postgres(testUrl, { max: 2, prepare: false, onnotice: () => {} });
-  return { dbName, testUrl, layer, adminSql };
+  await harness.adminDb.execute(sql`DELETE FROM project.tasks`);
+  await harness.adminDb.execute(sql`DELETE FROM project.archived_tasks`);
+  await harness.adminDb.execute(sql`DELETE FROM project.distributed_task_id_state`);
+  return { layer: harness.layer, teardown: harness.teardown };
 }
 
 async function teardownCtx(ctx: TestCtx | null): Promise<void> {
   if (!ctx) return;
   try {
-    await ctx.layer.close();
-  } catch {
-    // best-effort
-  }
-  try {
-    await ctx.adminSql.end({ timeout: 3 });
-  } catch {
-    // best-effort
-  }
-  try {
-    adminExec(`DROP DATABASE IF EXISTS "${ctx.dbName}"`);
+    await ctx.teardown();
   } catch {
     // best-effort
   }

@@ -49,6 +49,7 @@ import {
   mergeBuiltInZaiProviderModels,
   mergeSupplementalAnthropicModels,
   mergeSupplementalOpenAiCodexModels,
+  toExecutionModelProviderId,
   registerBuiltInGrokProvider,
   registerBuiltInZaiProvider,
   registerFusionSessionIdentity,
@@ -1099,6 +1100,8 @@ export interface AgentOptions {
    *  (and `skillSelection` is not), auto-constructs a SkillSelectionContext
    *  from the cwd and these names. Ignored when `skillSelection` is set. */
   skills?: string[];
+  /** Reports the one resolved session-skill summary to task-bound callers. */
+  onSkillSummary?: (summary: { availableCount: number; forcedSkillNames: string[]; unresolvedForcedSkills: Array<{ requestedName: string; reason: string }> }) => void | Promise<void>;
   /** Extra directories to scan for skills (each holding `<id>/SKILL.md`), in
    *  addition to the default cwd/agent-dir roots. Forwarded to the resource
    *  loader so callers (e.g. plugins that install skills to a private dir) can
@@ -1167,7 +1170,12 @@ function resolveConfiguredModel(
     return undefined;
   }
 
-  const model = modelRegistry.find(provider, modelId);
+  /*
+  FNXC:ProviderAuth 2026-08-15-20:57:
+  Persisted model settings from the split Anthropic authentication cards may name an auth id. pi-ai only knows the direct execution provider, so normalize before registry lookup and template fallback; never register the auth id as a provider.
+  */
+  const executionProvider = toExecutionModelProviderId(provider);
+  const model = modelRegistry.find(executionProvider, modelId);
   if (model) {
     return model;
   }
@@ -1176,15 +1184,15 @@ function resolveConfiguredModel(
   // This mirrors the pi CLI's buildFallbackModel behaviour, which accepts any
   // model ID for a configured provider (e.g. any OpenRouter model string) even
   // when it isn't in the built-in or custom model list.
-  const providerModels = modelRegistry.getAll().filter((m) => m.provider === provider);
+  const providerModels = modelRegistry.getAll().filter((m) => m.provider === executionProvider);
   if (providerModels.length > 0) {
     const baseModel = providerModels[0]!;
-    piLog.warn(`${kind} model ${provider}/${modelId} not in registry; using provider base model as template`);
+    piLog.warn(`${kind} model ${executionProvider}/${modelId} not in registry; using provider base model as template`);
     return { ...baseModel, id: modelId, name: modelId };
   }
 
   throw new Error(
-    `Configured model ${provider}/${modelId} (${kind} selection) was not found in the pi model registry. `
+    `Configured model ${executionProvider}/${modelId} (${kind} selection) was not found in the pi model registry. `
     + "If this model comes from a custom provider, verify Settings → Custom Providers (stored in ~/.fusion/settings.json) includes this provider/model, "
     + "or choose an available model from /api/models.",
   );
@@ -2475,8 +2483,10 @@ export async function createFnAgent(options: AgentOptions): Promise<AgentResult>
     };
   }
 
-  // Resolve skill selection if provided
+  // Resolve skill selection if provided. The override is also the only point
+  // that knows which forced requests survived discovery and project exclusions.
   let skillsOverrideFn: ReturnType<typeof createSkillsOverrideFromSelection> | undefined;
+  let skillSummary: { availableCount: number; forcedSkillNames: string[]; unresolvedForcedSkills: Array<{ requestedName: string; reason: string }> } | undefined;
   if (effectiveSkillSelection) {
     const selectionResult = resolveSessionSkills(effectiveSkillSelection);
     if (selectionResult.diagnostics.length > 0) {
@@ -2499,8 +2509,19 @@ export async function createFnAgent(options: AgentOptions): Promise<AgentResult>
     }
     skillsOverrideFn = createSkillsOverrideFromSelection(selectionResult, {
       requestedSkillNames: effectiveSkillSelection.requestedSkillNames,
+      forcedSkillNames: effectiveSkillSelection.forcedSkillNames,
       sessionPurpose: effectiveSkillSelection.sessionPurpose,
     });
+    const rawOverride = skillsOverrideFn;
+    skillsOverrideFn = (base) => {
+      const result = rawOverride(base);
+      skillSummary = {
+        availableCount: result.skills.length,
+        forcedSkillNames: result.resolvedForcedSkills.map((entry) => entry.skillName),
+        unresolvedForcedSkills: result.unresolvedForcedSkills,
+      };
+      return result;
+    };
   }
 
   /*
@@ -2542,10 +2563,12 @@ export async function createFnAgent(options: AgentOptions): Promise<AgentResult>
     agentDir: getFusionAgentDir(),
     settingsManager,
     systemPromptOverride: () => options.systemPromptLayers?.stable ?? options.systemPrompt,
-    appendSystemPromptOverride: () =>
-      options.systemPromptLayers?.dynamic
-        ? [options.systemPromptLayers.dynamic]
-        : [],
+    appendSystemPromptOverride: () => {
+      const dynamic = options.systemPromptLayers?.dynamic ? [options.systemPromptLayers.dynamic] : [];
+      const forced = skillSummary?.forcedSkillNames ?? [];
+      if (forced.length === 0) return dynamic;
+      return [...dynamic, `Before starting work, you are REQUIRED to read these available skills: ${forced.join(", ")}. All other available skills may be consulted on demand when relevant.`];
+    },
     ...(effectiveExtensionPaths.length > 0 ? { additionalExtensionPaths: [...effectiveExtensionPaths] } : {}),
     ...(normalizedAdditionalSkillPaths.length > 0
       ? { additionalSkillPaths: normalizedAdditionalSkillPaths }
@@ -2553,6 +2576,7 @@ export async function createFnAgent(options: AgentOptions): Promise<AgentResult>
     ...(skillsOverrideFn ? { skillsOverride: skillsOverrideFn } : {}),
   });
   await resourceLoader.reload();
+  if (skillSummary) await options.onSkillSummary?.(skillSummary);
 
   const sessionManager = options.sessionManager ?? SessionManager.inMemory();
   normalizeSessionHistoryEntries(sessionManager as unknown as SessionManagerLike);

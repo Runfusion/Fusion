@@ -61,6 +61,17 @@ describe("NewAgentDialog thinking level", () => {
     vi.clearAllMocks();
   });
 
+  it("closes for a genuine touch that begins and ends on its overlay", () => {
+    const onClose = vi.fn();
+    render(<NewAgentDialog isOpen onClose={onClose} onCreated={vi.fn()} />);
+
+    const overlay = document.querySelector(".agent-dialog-overlay") as HTMLElement;
+    fireEvent.touchStart(overlay);
+    fireEvent.touchEnd(overlay);
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
   it("uses CustomModelDropdown thinking control with concrete-only agent semantics", async () => {
     render(<NewAgentDialog isOpen onClose={vi.fn()} onCreated={vi.fn()} />);
 

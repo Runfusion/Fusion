@@ -8,9 +8,14 @@
  */
 
 import type { AgentRuntimeOptions } from "./agent-runtime.js";
-import type { SkillSelectionContext } from "../cli-runtime/skill-resolver.js";
+import {
+  createSkillsOverrideFromSelection,
+  resolveProjectRoot,
+  resolveSessionSkills,
+  type SkillSelectionContext,
+} from "../cli-runtime/skill-resolver.js";
 import type { PluginRunner } from "../plugins/plugin-runner.js";
-import type { AgentSession, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { getAgentDir, loadSkills, type AgentSession, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import {
   GROK_CLI_PROVIDER_ID,
   isGrokApiKeyFusionVisible,
@@ -27,6 +32,7 @@ import {
   resolveTaskPlanningModel,
   resolveTaskValidatorModel,
   TEST_MODE_RESOLVED,
+  toExecutionModelProviderId,
   type ResolvedModelSelection,
   type Settings,
   type ThinkingLevel,
@@ -36,7 +42,6 @@ import { createLogger } from "../logger.js";
 import {
   promptWithFallback,
   describeModel,
-  isRetryableModelSelectionError,
   wrapToolsWithActionGate,
   wrapToolsWithPermanentAgentGating,
   wrapToolsWithOutputBudget,
@@ -46,6 +51,17 @@ import {
 import type { RunAuditor } from "../util/run-audit.js";
 import { createFusionAuthStorage, resolveCredentialInstanceRef, type FusionAuthStorage } from "../auth/auth-storage.js";
 import { MockAgentRuntime } from "../providers/mock-provider.js";
+import {
+  applyCliRuntimeOptions,
+  assertExplicitCliRuntimeHint,
+  deriveCliRuntimeHint,
+  dropUnsupportedCliFallback,
+} from "./cli-provider-routing.js";
+import {
+  armDeferredCrossRuntimeFallback,
+  deferCrossRuntimeCliFallback,
+  type DeferredCrossRuntimeFallback,
+} from "./cross-runtime-fallback.js";
 
 /** Logger for agent session helpers */
 const sessionLog = createLogger("agent-session");
@@ -106,6 +122,20 @@ export function wrapCustomToolsForPluginRuntime(
   return wrapToolsWithOutputBudget(withActionGate, { maxChars: options.toolOutputMaxChars });
 }
 
+function wrapPluginRuntimeToolOptions(
+  options: AgentRuntimeOptions,
+  logContext: { runtimeId: string; sessionPurpose: string },
+): Pick<AgentRuntimeOptions, "customTools" | "fusionTools"> {
+  const original = options.customTools;
+  const wrapped = wrapCustomToolsForPluginRuntime(original, options, logContext);
+  if (!original || !wrapped) return { customTools: wrapped, fusionTools: undefined };
+
+  const scoped = new Set(options.fusionTools ?? []);
+  const fusionTools = original.flatMap((tool, index) =>
+    scoped.has(tool) && tool.name.startsWith("fn_") && wrapped[index] ? [wrapped[index]] : []);
+  return { customTools: wrapped, fusionTools };
+}
+
 function shouldWrapCustomToolsForRuntime(runtimeId: string): boolean {
   return !RUNTIMES_WITH_INTERNAL_TOOL_GATING.has(runtimeId);
 }
@@ -120,6 +150,55 @@ function extractSkillNamesFromSelection(skillSelection: SkillSelectionContext | 
     .filter((name) => name.length > 0);
 }
 
+type SkillSummary = NonNullable<AgentRuntimeOptions["onSkillSummary"]> extends (summary: infer Summary) => unknown ? Summary : never;
+
+function appendForcedSkillInstruction(systemPrompt: string, forcedSkillNames: string[]): string {
+  if (forcedSkillNames.length === 0) return systemPrompt;
+  return `${systemPrompt}\n\nBefore starting work, you are REQUIRED to read these available skills: ${forcedSkillNames.join(", ")}. All other available skills may be consulted on demand when relevant.`;
+}
+
+/*
+FNXC:SkillResolution 2026-08-16-03:52:
+Non-PI runtimes bypass pi.ts's DefaultResourceLoader, so this common runtime seam
+resolves the same final skill set before their adapters start. Only settings-approved,
+discovered forced skills are placed in the read-first instruction; unavailable intent is
+reported through the summary rather than becoming an unfulfillable prompt order.
+*/
+function resolveNonPiSkillDelivery(options: AgentRuntimeOptions): {
+  skills: string[];
+  summary: SkillSummary;
+} | undefined {
+  if (!options.skillSelection) return undefined;
+
+  const projectRootDir = resolveProjectRoot(options.skillSelection.projectRootDir);
+  const discovered = loadSkills({
+    cwd: projectRootDir,
+    agentDir: getAgentDir(),
+    skillPaths: options.additionalSkillPaths ?? [],
+    includeDefaults: true,
+  });
+  const selection = resolveSessionSkills(options.skillSelection);
+  const override = createSkillsOverrideFromSelection(selection, {
+    requestedSkillNames: options.skillSelection.requestedSkillNames,
+    forcedSkillNames: options.skillSelection.forcedSkillNames,
+    sessionPurpose: options.skillSelection.sessionPurpose,
+  });
+  const resolved = override(discovered);
+  return {
+    // FNXC:SkillResolution 2026-08-16-03:52: Ensure-present role fallback/plugin
+    // requests remain adapter-visible even if this process cannot discover their private body.
+    skills: Array.from(new Set([
+      ...resolved.skills.map((skill) => skill.name),
+      ...(options.skillSelection.requestedSkillNames ?? []),
+    ])),
+    summary: {
+      availableCount: resolved.skills.length,
+      forcedSkillNames: resolved.resolvedForcedSkills.map((skill) => skill.skillName),
+      unresolvedForcedSkills: resolved.unresolvedForcedSkills,
+    },
+  };
+}
+
 /**
  * Options for creating an agent session with runtime resolution.
  */
@@ -130,6 +209,10 @@ export interface ResolvedSessionOptions extends AgentRuntimeOptions {
   pluginRunner?: PluginRunner;
   /** Optional runtime hint from task/agent configuration */
   runtimeHint?: string;
+  /**
+   * Runtime routing conformance injects plugin availability through `pluginRunner`.
+   * The bundled Cursor adapter is executable when its plugin is registered.
+   */
   /**
    * Optional run-audit emitter; when provided, a `session:runtime-resolved`
    * database event is recorded at resolution time. No-ops when omitted to
@@ -364,139 +447,14 @@ function hasCompleteRuntimeModel(
   return Boolean(model.provider && model.modelId);
 }
 
-function stripGrokCliModelProviderPrefix(modelId: string | undefined): string | undefined {
-  const normalized = modelId?.trim();
-  if (!normalized) return normalized;
-  const grokCliPrefix = `${GROK_CLI_PROVIDER_ID}/`;
-  return normalized.startsWith(grokCliPrefix)
-    ? normalized.slice(grokCliPrefix.length)
-    : normalized;
-}
-
-const OMP_CLI_PROVIDER_ID = "omp-cli";
-
-function isOmpCliSelection(runtimeOptions: AgentRuntimeOptions): boolean {
-  return runtimeOptions.defaultProvider === OMP_CLI_PROVIDER_ID
-    || runtimeOptions.fallbackProvider === OMP_CLI_PROVIDER_ID;
-}
-
-function stripOmpCliModelProviderPrefix(modelId: string | undefined): string | undefined {
-  const normalized = modelId?.trim();
-  if (!normalized) return normalized;
-  const ompCliPrefix = `${OMP_CLI_PROVIDER_ID}/`;
-  return normalized.startsWith(ompCliPrefix)
-    ? normalized.slice(ompCliPrefix.length)
-    : normalized;
-}
+/** The deferred Grok CLI fallback is routed through the shared cross-runtime dispatcher. */
+type DeferredGrokCliFallback = DeferredCrossRuntimeFallback;
 
 /*
-FNXC:OmpAcp 2026-07-18-09:00:
-FN-8262: `omp-cli/*` models are dynamically discovered from `omp models` and are never registered in pi's execution registry, so route primary and fallback selections to the bundled `omp` ACP runtime before pi resolves a model. Test mode must short-circuit to mock without looking up OMP; an unavailable explicit `runtimeHint: "omp"` must report the OMP plugin remediation rather than pi's misleading model-not-found error.
-*/
-function buildMissingOmpRuntimeError(): Error {
-  return new Error(
-    "Oh My Pi (omp) models require the bundled OMP runtime plugin. "
-    + "Install and enable the OMP Runtime plugin (fusion-plugin-omp-runtime) and ensure the `omp` binary is installed and authenticated (`omp acp`, credentials under ~/.omp).",
-  );
-}
-
-function deriveOmpRuntimeHint(
-  runtimeOptions: AgentRuntimeOptions,
-  pluginRunner: PluginRunner | undefined,
-): string | undefined {
-  if (!isOmpCliSelection(runtimeOptions)) return undefined;
-  try {
-    if (pluginRunner?.getRuntimeById("omp")) return "omp";
-  } catch {
-    throw buildMissingOmpRuntimeError();
-  }
-  throw buildMissingOmpRuntimeError();
-}
-
-function applyOmpCliRuntimeOptions(runtimeOptions: AgentRuntimeOptions): AgentRuntimeOptions {
-  if (runtimeOptions.defaultProvider === OMP_CLI_PROVIDER_ID) {
-    return {
-      ...runtimeOptions,
-      defaultModelId: stripOmpCliModelProviderPrefix(runtimeOptions.defaultModelId),
-    };
-  }
-
-  if (runtimeOptions.fallbackProvider === OMP_CLI_PROVIDER_ID) {
-    return {
-      ...runtimeOptions,
-      defaultProvider: runtimeOptions.fallbackProvider,
-      defaultModelId: stripOmpCliModelProviderPrefix(runtimeOptions.fallbackModelId),
-      defaultThinkingLevel: runtimeOptions.fallbackThinkingLevel ?? runtimeOptions.defaultThinkingLevel,
-      fallbackProvider: undefined,
-      fallbackModelId: undefined,
-      fallbackThinkingLevel: undefined,
-    };
-  }
-
-  return runtimeOptions;
-}
-
-function buildMissingGrokRuntimeError(): Error {
-  return new Error(
-    "Grok CLI models require the bundled Grok CLI runtime when no Fusion-visible GROK_API_KEY is set. "
-    + "Install and enable the Grok CLI runtime plugin, or set GROK_API_KEY to use the direct xAI endpoint.",
-  );
-}
-
-/*
-FNXC:GrokCliRouting 2026-07-22-14:30:
-The no-visible-key Grok CLI auto-derive fires only when grok-cli is the PRIMARY provider.
-FN-7758 used to fire on a grok-cli FALLBACK too and promoted it to primary up front, which
-silently replaced a healthy configured primary (e.g. planning openai-codex/gpt-5.6-sol ran
-as grok/grok-4.5 on every triage session because the workflow's planningFallback was
-grok-cli). A fallback must never preempt a primary that has not failed; the fallback-only
-case is handled by dropGrokCliFallbackForNoVisibleKey below.
-*/
-function deriveGrokRuntimeHintForNoVisibleKey(
-  runtimeOptions: AgentRuntimeOptions,
-  pluginRunner: PluginRunner | undefined,
-): string | undefined {
-  if (runtimeOptions.defaultProvider !== GROK_CLI_PROVIDER_ID) return undefined;
-  if (isGrokApiKeyFusionVisible()) return undefined;
-  try {
-    if (pluginRunner?.getRuntimeById("grok")) return "grok";
-  } catch {
-    throw buildMissingGrokRuntimeError();
-  }
-  throw buildMissingGrokRuntimeError();
-}
-
-function applyGrokCliNoKeyRuntimeOptions(
-  runtimeOptions: AgentRuntimeOptions,
-): AgentRuntimeOptions {
-  if (runtimeOptions.defaultProvider === GROK_CLI_PROVIDER_ID) {
-    return {
-      ...runtimeOptions,
-      defaultModelId: stripGrokCliModelProviderPrefix(runtimeOptions.defaultModelId),
-    };
-  }
-
-  return runtimeOptions;
-}
-
-/** The deferred grok-cli fallback pair a session swaps to when its primary fails (see below). */
-interface DeferredGrokCliFallback {
-  /** Concrete model id for the Grok CLI runtime (provider prefix stripped). */
-  modelId: string | undefined;
-  thinkingLevel: AgentRuntimeOptions["fallbackThinkingLevel"];
-}
-
-/*
-FNXC:GrokCliRouting 2026-07-22-15:10:
-A grok-cli fallback behind a non-grok primary cannot ride pi's in-session swap without a
-Fusion-visible GROK_API_KEY: pi resolves fallback swaps through the key-requiring provider
-registry (the original FN-7758 failure mode). Instead of promoting the fallback over a
-healthy primary (the old FN-7758 behavior — it silently replaced the configured planning
-model on every session) or discarding it, DEFER it: withhold the pair from the primary
-runtime's options and, when the Grok CLI runtime plugin is available, arm a prompt-time
-swap that recreates the session on the Grok CLI runtime only after the primary actually
-fails with a retryable model-selection error. When the Grok runtime plugin is unavailable
-the pair is dropped with a warning + audit flag so the drift is operator-visible.
+FNXC:CliRuntimeRouting 2026-08-16-01:25:
+Grok deliberately does not replay prior transcript text. Its historical fallback behavior is
+kept byte-for-byte through the shared dispatcher; only Cursor opts into portable text context
+because Cursor has no cross-runtime resume token and the new contract explicitly preserves it.
 */
 function deferGrokCliFallbackForNoVisibleKey(
   runtimeOptions: AgentRuntimeOptions,
@@ -513,34 +471,23 @@ function deferGrokCliFallbackForNoVisibleKey(
     fallbackModelId: undefined,
     fallbackThinkingLevel: undefined,
   };
-  let grokRuntimeAvailable = false;
   try {
-    grokRuntimeAvailable = Boolean(pluginRunner?.getRuntimeById("grok"));
+    if (!pluginRunner?.getRuntimeById("grok")) return { options, dropped: true };
   } catch {
-    grokRuntimeAvailable = false;
-  }
-  if (!grokRuntimeAvailable) {
     return { options, dropped: true };
   }
   return {
     options,
     deferred: {
-      modelId: stripGrokCliModelProviderPrefix(runtimeOptions.fallbackModelId),
+      providerId: GROK_CLI_PROVIDER_ID,
+      runtimeId: "grok",
+      modelId: runtimeOptions.fallbackModelId?.replace(/^grok-cli\//, ""),
       thinkingLevel: runtimeOptions.fallbackThinkingLevel,
     },
     dropped: false,
   };
 }
 
-/*
-FNXC:GrokCliRouting 2026-07-22-15:10:
-Prompt-time engagement of a deferred grok-cli fallback (see deferGrokCliFallbackForNoVisibleKey).
-Wraps the session's promptWithFallback: the first retryable model-selection failure of the
-primary creates a fresh session on the Grok CLI runtime with the deferred fallback model and
-re-issues the failed prompt there; every later prompt stays on the Grok CLI session. The swap
-happens at most once, non-retryable errors propagate unchanged, and the engagement is reported
-through onFallbackModelUsed plus an ids-only `session:grok-cli-fallback-engaged` audit event.
-*/
 function armDeferredGrokCliFallback(args: {
   session: AgentSession & { promptWithFallback?: unknown };
   sessionPurpose: SessionPurpose;
@@ -554,97 +501,13 @@ function armDeferredGrokCliFallback(args: {
   taskId: string | undefined;
   taskTitle: string | undefined;
 }): void {
-  const {
-    session, sessionPurpose, pluginRunner, runAuditor, deferred, grokCreateOptions,
-    primaryProvider, primaryModelId, onFallbackModelUsed, taskId, taskTitle,
-  } = args;
-  const original = session.promptWithFallback as (prompt: string, options?: unknown) => Promise<unknown>;
-  const primaryDescription = `${primaryProvider ?? "unknown"}/${primaryModelId ?? "unknown"}`;
-  const fallbackDescription = `${GROK_CLI_PROVIDER_ID}/${deferred.modelId ?? "unknown"}`;
-  let grokSwap: { runtime: Awaited<ReturnType<typeof resolveRuntime>>["runtime"]; session: AgentSession } | undefined;
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (session as any).promptWithFallback = async (prompt: string, promptOptions?: unknown) => {
-    if (grokSwap) {
-      return grokSwap.runtime.promptWithFallback(grokSwap.session, prompt, promptOptions);
-    }
-    try {
-      return await original(prompt, promptOptions);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      if (!isRetryableModelSelectionError(message)) throw err;
-      sessionLog.warn(
-        `[${sessionPurpose}] primary "${primaryDescription}" failed retryably (${message}); engaging deferred grok-cli fallback "${fallbackDescription}" on the Grok CLI runtime`,
-      );
-      let resolvedGrok: Awaited<ReturnType<typeof resolveRuntime>>;
-      let grokSession: AgentSession;
-      try {
-        resolvedGrok = await resolveRuntime(buildRuntimeResolutionContext(sessionPurpose, pluginRunner, "grok"));
-        if (resolvedGrok.runtimeId !== "grok") throw new Error("Grok CLI runtime unavailable at swap time");
-        grokSession = (await resolvedGrok.runtime.createSession(grokCreateOptions)).session;
-      } catch (swapErr) {
-        const swapMessage = swapErr instanceof Error ? swapErr.message : String(swapErr);
-        sessionLog.warn(
-          `[${sessionPurpose}] deferred grok-cli fallback engagement failed (${swapMessage}); propagating primary failure`,
-        );
-        throw err;
-      }
-      grokSwap = { runtime: resolvedGrok.runtime, session: grokSession };
-      // Dispose the Grok CLI ACP session alongside the primary session so the
-      // swapped-in subprocess cannot outlive the session the engine tracks.
-      const disposable = session as unknown as { dispose?: () => Promise<void> | void };
-      const originalDispose = typeof disposable.dispose === "function" ? disposable.dispose.bind(session) : undefined;
-      disposable.dispose = async () => {
-        try {
-          await (grokSession as unknown as { dispose?: () => Promise<void> | void }).dispose?.();
-        } catch {
-          // best-effort: the primary session's dispose must still run
-        }
-        return originalDispose?.();
-      };
-      const normalizedFailure = message.toLowerCase();
-      const failureCategory: FallbackModelUsedPayload["failureCategory"] =
-        normalizedFailure.includes("auth")
-        || normalizedFailure.includes("api key")
-        || normalizedFailure.includes("credential")
-        || normalizedFailure.includes("401")
-        || normalizedFailure.includes("403")
-          ? "authentication"
-          : normalizedFailure.includes("rate limit") || normalizedFailure.includes("429") || normalizedFailure.includes("quota")
-            ? "rate-limit"
-            : "model-selection";
-      try {
-        await onFallbackModelUsed?.({
-          primaryModel: primaryDescription,
-          fallbackModel: fallbackDescription,
-          triggerPoint: "prompt-time",
-          taskId,
-          taskTitle,
-          timestamp: new Date().toISOString(),
-          failureCategory,
-        });
-      } catch {
-        // observer failures must not break the swapped prompt
-      }
-      try {
-        await runAuditor?.database({
-          type: "session:grok-cli-fallback-engaged",
-          target: "grok",
-          metadata: {
-            sessionPurpose,
-            primaryProvider: primaryProvider ?? null,
-            primaryModelId: primaryModelId ?? null,
-            fallbackModelId: deferred.modelId ?? null,
-            triggerPoint: "prompt-time",
-            failureCategory,
-          },
-        });
-      } catch (auditErr) {
-        sessionLog.warn(`[${sessionPurpose}] failed to record session:grok-cli-fallback-engaged audit: ${String(auditErr)}`);
-      }
-      return grokSwap.runtime.promptWithFallback(grokSwap.session, prompt, promptOptions);
-    }
-  };
+  armDeferredCrossRuntimeFallback({
+    ...args,
+    createOptions: args.grokCreateOptions,
+    auditEventType: "session:grok-cli-fallback-engaged",
+    preserveConversationContext: false,
+    engagementLabel: "grok-cli",
+  });
 }
 
 function pickSettingsThenRuntimeModel(
@@ -879,11 +742,20 @@ export async function createResolvedAgentSession(
   options: ResolvedSessionOptions,
 ): Promise<ResolvedSessionResult> {
   const { sessionPurpose, pluginRunner, runtimeHint, runAuditor, settings, authStorage: injectedAuthStorage, credentialInstanceId: requestedCredentialInstanceId, ...runtimeOptionsRaw } = options;
+  /*
+  FNXC:ProviderAuth 2026-08-15-20:57:
+  This shared session seam receives persisted task, lane, and agent selections from every runtime. Convert Anthropic auth-card ids before credential-instance lookup and runtime creation, so pi-ai receives only `anthropic` while Fusion auth storage still resolves its subscription material through that execution id.
+  */
+  const executionRuntimeOptions = {
+    ...runtimeOptionsRaw,
+    ...(runtimeOptionsRaw.defaultProvider ? { defaultProvider: toExecutionModelProviderId(runtimeOptionsRaw.defaultProvider) } : {}),
+    ...(runtimeOptionsRaw.fallbackProvider ? { fallbackProvider: toExecutionModelProviderId(runtimeOptionsRaw.fallbackProvider) } : {}),
+  };
   let credentialResolution: ReturnType<typeof resolveCredentialInstanceRef> | undefined;
   if (requestedCredentialInstanceId) {
     try {
       const storage = injectedAuthStorage ?? createFusionAuthStorage();
-      credentialResolution = resolveCredentialInstanceRef(storage, runtimeOptionsRaw.defaultProvider ?? "", requestedCredentialInstanceId);
+      credentialResolution = resolveCredentialInstanceRef(storage, executionRuntimeOptions.defaultProvider ?? "", requestedCredentialInstanceId);
     } catch (error) {
       /*
       FNXC:ProviderAuth 2026-08-03-17:35:
@@ -896,7 +768,7 @@ export async function createResolvedAgentSession(
       */
       if ((error as Error).name === "CredentialInstanceResolutionError") {
         sessionLog.warn(
-          `[${sessionPurpose}] credential instance "${requestedCredentialInstanceId}" for provider "${runtimeOptionsRaw.defaultProvider ?? ""}" unresolved; continuing with legacy provider auth (custom provider apiKey / unscoped default)`,
+          `[${sessionPurpose}] credential instance "${requestedCredentialInstanceId}" for provider "${executionRuntimeOptions.defaultProvider ?? ""}" unresolved; continuing with legacy provider auth (custom provider apiKey / unscoped default)`,
         );
       } else {
         sessionLog.warn(`[${sessionPurpose}] credential instance resolution unavailable; using provider default`);
@@ -919,9 +791,9 @@ export async function createResolvedAgentSession(
     );
   }
 
-  const skillNamesFromSelection = extractSkillNamesFromSelection(runtimeOptionsRaw.skillSelection);
-  const mergedSkillNames = runtimeOptionsRaw.skills && runtimeOptionsRaw.skills.length > 0
-    ? runtimeOptionsRaw.skills
+  const skillNamesFromSelection = extractSkillNamesFromSelection(executionRuntimeOptions.skillSelection);
+  const mergedSkillNames = executionRuntimeOptions.skills && executionRuntimeOptions.skills.length > 0
+    ? executionRuntimeOptions.skills
     : skillNamesFromSelection;
 
   /*
@@ -936,9 +808,9 @@ export async function createResolvedAgentSession(
   the finite default, custom cap, or explicit no-limit sentinel interpretation.
   */
   const runtimeOptions: AgentRuntimeOptions = {
-    ...runtimeOptionsRaw,
-    toolOutputMaxChars: runtimeOptionsRaw.toolOutputMaxChars !== undefined
-      ? runtimeOptionsRaw.toolOutputMaxChars
+    ...executionRuntimeOptions,
+    toolOutputMaxChars: executionRuntimeOptions.toolOutputMaxChars !== undefined
+      ? executionRuntimeOptions.toolOutputMaxChars
       : resolveAgentToolOutputMaxChars(settings ?? {}),
     ...(mergedSkillNames.length > 0 ? { skills: mergedSkillNames } : {}),
     ...(credentialResolution ? {
@@ -980,37 +852,56 @@ export async function createResolvedAgentSession(
   FNXC:GrokCliRouting 2026-07-09-23:05:
   FN-7761 closes the packaged serve/daemon/dashboard gap: if grok-cli is selected and no Fusion-visible key exists, this seam must never silently fall through to the key-requiring pi/openai-completions runtime when the Grok plugin was not pre-installed. The hosts eagerly install/load the bundled runtime; if that genuinely fails, throw an operator-actionable error naming the two supported remediations.
   */
-  const autoGrokRuntimeHint = !useMockRuntime && !runtimeHint
-    ? deriveGrokRuntimeHintForNoVisibleKey(runtimeOptions, pluginRunner)
+  const autoCliRuntimeHint = !useMockRuntime && !runtimeHint
+    ? deriveCliRuntimeHint({
+      runtimeOptions,
+      pluginRunner,
+      grokApiKeyVisible: isGrokApiKeyFusionVisible(),
+    })
     : undefined;
-  const autoOmpRuntimeHint = !useMockRuntime && !runtimeHint
-    ? deriveOmpRuntimeHint(runtimeOptions, pluginRunner)
-    : undefined;
-  const effectiveRuntimeHint = autoGrokRuntimeHint ?? autoOmpRuntimeHint ?? runtimeHint;
-  const usesOmpRuntime = effectiveRuntimeHint === "omp" && isOmpCliSelection(runtimeOptions);
-  if (usesOmpRuntime) {
-    // resolveRuntime intentionally falls back to pi for an unavailable hint; OMP
-    // selections must fail here instead so pi never attempts registry resolution.
-    deriveOmpRuntimeHint(runtimeOptions, pluginRunner);
+  const effectiveRuntimeHint = autoCliRuntimeHint ?? runtimeHint;
+  if (!useMockRuntime) {
+    // Explicit CLI hints with assert-available policy must pre-empt resolveRuntime's pi fallback.
+    assertExplicitCliRuntimeHint({ runtimeHint, runtimeOptions, pluginRunner });
   }
+  const usesAutoGrokRuntime = autoCliRuntimeHint === "grok" && runtimeOptions.defaultProvider === GROK_CLI_PROVIDER_ID;
   /*
   FNXC:GrokCliRouting 2026-07-22-15:10:
   When only the fallback is grok-cli with no visible key (and the session is not explicitly
   hinted onto the Grok runtime), withhold the pair from the primary runtime and arm a
   prompt-time swap to the Grok CLI runtime instead of preempting the configured primary.
   */
-  const grokFallbackDeferral = !useMockRuntime && !autoGrokRuntimeHint && effectiveRuntimeHint !== "grok"
+  const grokFallbackDeferral = !useMockRuntime && !usesAutoGrokRuntime && effectiveRuntimeHint !== "grok"
     ? deferGrokCliFallbackForNoVisibleKey(effectiveRuntimeOptions, pluginRunner)
     : { options: effectiveRuntimeOptions, dropped: false as const };
-  const effectiveRuntimeOptionsWithModel: AgentRuntimeOptions = autoGrokRuntimeHint
-    ? applyGrokCliNoKeyRuntimeOptions(effectiveRuntimeOptions)
-    : usesOmpRuntime
-      ? applyOmpCliRuntimeOptions(grokFallbackDeferral.options)
-      : grokFallbackDeferral.options;
+  const crossRuntimeFallbackDeferral = !useMockRuntime && !("deferred" in grokFallbackDeferral)
+    && effectiveRuntimeHint !== "cursor"
+    ? deferCrossRuntimeCliFallback(grokFallbackDeferral.options, pluginRunner)
+    : { options: grokFallbackDeferral.options, dropped: false as const };
+  const droppedCliFallback = dropUnsupportedCliFallback(crossRuntimeFallbackDeferral.options);
+  const effectiveRuntimeOptionsWithModel = applyCliRuntimeOptions(
+    droppedCliFallback.options,
+    effectiveRuntimeHint,
+  );
   const deferredGrokFallback = "deferred" in grokFallbackDeferral ? grokFallbackDeferral.deferred : undefined;
-  if (grokFallbackDeferral.dropped) {
+  const deferredCrossRuntimeFallback = "deferred" in crossRuntimeFallbackDeferral
+    ? crossRuntimeFallbackDeferral.deferred
+    : undefined;
+  if (droppedCliFallback.droppedProvider) {
+    sessionLog.warn(
+      `[${sessionPurpose}] configured ${droppedCliFallback.droppedProvider} fallback "${runtimeOptions.fallbackModelId ?? "unknown"}" dropped: primary "${runtimeOptions.defaultProvider}/${runtimeOptions.defaultModelId}" is unchanged because the fallback requires its own CLI runtime.`,
+    );
+  } else if (grokFallbackDeferral.dropped) {
     sessionLog.warn(
       `[${sessionPurpose}] configured grok-cli fallback "${runtimeOptions.fallbackModelId ?? "unknown"}" dropped: no Fusion-visible GROK_API_KEY and the Grok CLI runtime plugin is unavailable; primary "${runtimeOptions.defaultProvider}/${runtimeOptions.defaultModelId}" is unchanged. Install/enable the Grok CLI runtime plugin or set GROK_API_KEY.`,
+    );
+  } else if (crossRuntimeFallbackDeferral.dropped) {
+    sessionLog.warn(
+      `[${sessionPurpose}] configured ${runtimeOptions.fallbackProvider ?? "cross-runtime"} fallback "${runtimeOptions.fallbackModelId ?? "unknown"}" dropped: its runtime plugin is unavailable; primary "${runtimeOptions.defaultProvider}/${runtimeOptions.defaultModelId}" is unchanged.`,
+    );
+  } else if (deferredCrossRuntimeFallback) {
+    sessionLog.debug(
+      `[${sessionPurpose}] ${deferredCrossRuntimeFallback.providerId} fallback "${deferredCrossRuntimeFallback.modelId ?? "unknown"}" deferred to the ${deferredCrossRuntimeFallback.runtimeId} runtime: it engages only if primary "${runtimeOptions.defaultProvider}/${runtimeOptions.defaultModelId}" fails with a retryable model error.`,
     );
   } else if (deferredGrokFallback) {
     /*
@@ -1053,19 +944,39 @@ export async function createResolvedAgentSession(
   FNXC:MergeQueue 2026-07-15-11:08:
   Always forward sessionPurpose into runtime.createSession so pi host-extension policy can suppress dual-store fn_* tools on merger sessions (FN-7956 hang: wedged fn_task_show).
   */
+  const nonPiSkillDelivery = resolved.runtimeId === "pi"
+    ? undefined
+    : resolveNonPiSkillDelivery(effectiveRuntimeOptionsWithModel);
+  const baseSessionCreateOptions: AgentRuntimeOptions = nonPiSkillDelivery
+    ? {
+        ...effectiveRuntimeOptionsWithModel,
+        // Non-PI adapters receive the final availability set, never raw forced intent.
+        skills: nonPiSkillDelivery.skills,
+        systemPrompt: appendForcedSkillInstruction(
+          effectiveRuntimeOptionsWithModel.systemPrompt,
+          nonPiSkillDelivery.summary.forcedSkillNames,
+        ),
+        ...(effectiveRuntimeOptionsWithModel.systemPromptLayers ? {
+          systemPromptLayers: {
+            ...effectiveRuntimeOptionsWithModel.systemPromptLayers,
+            dynamic: appendForcedSkillInstruction(
+              effectiveRuntimeOptionsWithModel.systemPromptLayers.dynamic,
+              nonPiSkillDelivery.summary.forcedSkillNames,
+            ),
+          },
+        } : {}),
+      }
+    : effectiveRuntimeOptionsWithModel;
+  if (nonPiSkillDelivery) await baseSessionCreateOptions.onSkillSummary?.(nonPiSkillDelivery.summary);
   const sessionCreateOptions: AgentRuntimeOptions =
     shouldWrapCustomToolsForRuntime(resolved.runtimeId)
       ? {
-          ...effectiveRuntimeOptionsWithModel,
+          ...baseSessionCreateOptions,
           sessionPurpose,
-          customTools: wrapCustomToolsForPluginRuntime(
-            effectiveRuntimeOptionsWithModel.customTools,
-            effectiveRuntimeOptionsWithModel,
-            { runtimeId: resolved.runtimeId, sessionPurpose },
-          ),
+          ...wrapPluginRuntimeToolOptions(baseSessionCreateOptions, { runtimeId: resolved.runtimeId, sessionPurpose }),
         }
       : {
-          ...effectiveRuntimeOptionsWithModel,
+          ...baseSessionCreateOptions,
           sessionPurpose,
         };
   const result = await resolved.runtime.createSession(sessionCreateOptions);
@@ -1108,6 +1019,8 @@ export async function createResolvedAgentSession(
         testModeActive,
         ...(grokFallbackDeferral.dropped ? { grokCliFallbackDropped: true } : {}),
         ...(deferredGrokFallback ? { grokCliFallbackDeferred: true } : {}),
+        ...(crossRuntimeFallbackDeferral.dropped ? { crossRuntimeFallbackDropped: true } : {}),
+        ...(deferredCrossRuntimeFallback ? { crossRuntimeFallbackDeferred: true } : {}),
         ...(noModelResolved ? { noModelResolved: true, runtimeBuiltInFallbackModel } : {}),
         ...(credentialResolution?.ref.instanceId ? { credentialInstanceId: credentialResolution.ref.instanceId } : {}),
         ...(credentialResolution?.missing ? {
@@ -1131,11 +1044,13 @@ export async function createResolvedAgentSession(
             }
           : {}),
         ...(effectiveRuntimeHint ? { runtimeHint: effectiveRuntimeHint } : {}),
-        ...(autoGrokRuntimeHint ? { reason: "grok-cli-no-visible-key" } : {}),
-        ...(autoOmpRuntimeHint ? { reason: "omp-cli-runtime" } : {}),
+        ...(autoCliRuntimeHint === "grok" ? { reason: "grok-cli-no-visible-key" } : {}),
+        ...(autoCliRuntimeHint === "omp" ? { reason: "omp-cli-runtime" } : {}),
         ...(grokFallbackDeferral.dropped ? { reason: "grok-cli-fallback-dropped-no-visible-key" } : {}),
         ...(deferredGrokFallback ? { reason: "grok-cli-fallback-deferred-no-visible-key" } : {}),
-        ...(!autoGrokRuntimeHint && !autoOmpRuntimeHint && !grokFallbackDeferral.dropped && !deferredGrokFallback && "fallbackReason" in resolved && resolved.fallbackReason ? { reason: resolved.fallbackReason } : {}),
+        ...(crossRuntimeFallbackDeferral.dropped ? { reason: "cross-runtime-fallback-dropped-runtime-unavailable" } : {}),
+        ...(deferredCrossRuntimeFallback ? { reason: "cross-runtime-fallback-deferred" } : {}),
+        ...(!autoCliRuntimeHint && !grokFallbackDeferral.dropped && !deferredGrokFallback && !crossRuntimeFallbackDeferral.dropped && !deferredCrossRuntimeFallback && "fallbackReason" in resolved && resolved.fallbackReason ? { reason: resolved.fallbackReason } : {}),
       },
     });
   } catch (err) {
@@ -1189,11 +1104,7 @@ export async function createResolvedAgentSession(
       grokCreateOptions: shouldWrapCustomToolsForRuntime("grok")
         ? {
             ...grokBaseOptions,
-            customTools: wrapCustomToolsForPluginRuntime(
-              effectiveRuntimeOptionsWithModel.customTools,
-              effectiveRuntimeOptionsWithModel,
-              { runtimeId: "grok", sessionPurpose },
-            ),
+            ...wrapPluginRuntimeToolOptions(grokBaseOptions, { runtimeId: "grok", sessionPurpose }),
           }
         : grokBaseOptions,
       primaryProvider: runtimeOptions.defaultProvider,
@@ -1201,6 +1112,36 @@ export async function createResolvedAgentSession(
       onFallbackModelUsed: runtimeOptions.onFallbackModelUsed,
       taskId: runtimeOptions.taskId,
       taskTitle: runtimeOptions.taskTitle,
+    });
+  }
+
+  if (deferredCrossRuntimeFallback) {
+    const fallbackBaseOptions: AgentRuntimeOptions = {
+      ...effectiveRuntimeOptionsWithModel,
+      sessionPurpose,
+      defaultProvider: deferredCrossRuntimeFallback.providerId,
+      defaultModelId: deferredCrossRuntimeFallback.modelId,
+      defaultThinkingLevel: deferredCrossRuntimeFallback.thinkingLevel ?? effectiveRuntimeOptionsWithModel.defaultThinkingLevel,
+    };
+    armDeferredCrossRuntimeFallback({
+      session,
+      sessionPurpose,
+      pluginRunner,
+      runAuditor,
+      deferred: deferredCrossRuntimeFallback,
+      createOptions: shouldWrapCustomToolsForRuntime(deferredCrossRuntimeFallback.runtimeId)
+        ? {
+            ...fallbackBaseOptions,
+            ...wrapPluginRuntimeToolOptions(fallbackBaseOptions, { runtimeId: deferredCrossRuntimeFallback.runtimeId, sessionPurpose }),
+          }
+        : fallbackBaseOptions,
+      primaryProvider: runtimeOptions.defaultProvider,
+      primaryModelId: runtimeOptions.defaultModelId,
+      onFallbackModelUsed: runtimeOptions.onFallbackModelUsed,
+      taskId: runtimeOptions.taskId,
+      taskTitle: runtimeOptions.taskTitle,
+      auditEventType: "session:cross-runtime-fallback-engaged",
+      preserveConversationContext: true,
     });
   }
 

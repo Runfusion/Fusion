@@ -453,19 +453,33 @@ describe("one lane snapshot per recovery, across every classifier", () => {
      (PR #2703 review) — its eligibility check and its review branch each resolved independently. */
   const SELF_CONTAINED = ["handleNonContinuableSessionError"];
 
+  /*
+  FNXC:CodeOrganization 2026-08-15-19:10 (executor peels):
+  Every classifier moved out of the TaskExecutor class body into its own executor/ free-function
+  module (`export async function <name>(`). The scan follows the peel: find the one module that
+  declares the function and bound its body by the next top-level `export` declaration — the same
+  wrong-window hazard the `private ` bound guarded against, now at module granularity.
+  */
+  const CLASSIFIER_MODULES: Record<string, string> = {
+    isRetryableBenignMergePauseAbort: "is-retryable-benign-merge-pause-abort.ts",
+    isBenignManualMergeHoldPauseAbort: "is-benign-manual-merge-hold-pause-abort.ts",
+    handleStaleInReviewPlanPauseAbortReplay: "handle-stale-in-review-plan-pause-abort-replay.ts",
+    handleStaleInReviewParsePauseAbortReplay: "handle-stale-in-review-parse-pause-abort-replay.ts",
+    isReentrantPausedAbortedInFlightNode: "is-reentrant-paused-aborted-in-flight-node.ts",
+    routeUnusableWorktreeGraphFailureToRecovery: "route-unusable-worktree-graph-failure-to-recovery.ts",
+    routeGraphFailureToExecutionResume: "route-graph-failure-to-execution-resume.ts",
+    handleNonContinuableSessionError: "non-continuable-session.ts",
+  };
+
   async function methodBody(name: string): Promise<string> {
     const { readFile } = await import("node:fs/promises");
-    const source = await readFile(new URL("../executor.ts", import.meta.url), "utf8");
+    const module = CLASSIFIER_MODULES[name];
+    expect(module, `${name} has no mapped executor/ module — update this test, do not delete it`).toBeDefined();
+    const source = await readFile(new URL(`../executor/${module}`, import.meta.url), "utf8");
     const code = source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
-    const start = code.indexOf(`private async ${name}(`);
+    const start = code.indexOf(`export async function ${name}(`);
     expect(start, `${name} not found — update this test, do not delete it`).toBeGreaterThan(-1);
-    /*
-    Bounded by the next `private ` declaration of ANY kind. My first version bounded on the next member of
-    the same list, so the last entry's window ran to EOF and it accused a method of a call living 1200 lines
-    away. A ratchet with the wrong window accuses the wrong function — worse than no ratchet, because the
-    "fix" lands on code that was already correct.
-    */
-    const next = code.indexOf("\n  private ", start + 1);
+    const next = code.indexOf("\nexport ", start + 1);
     return code.slice(start, next === -1 ? code.length : next);
   }
 

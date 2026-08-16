@@ -23,15 +23,14 @@
  * gate stays green without a running server.
  */
 
-import { describe, it, expect, afterEach } from "vitest";
-import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
+import { it, expect, beforeAll, beforeEach, afterEach, afterAll } from "vitest";
 import { sql, eq } from "drizzle-orm";
-import { execSync } from "node:child_process";
-import { createAsyncDataLayer, type AsyncDataLayer } from "../../postgres/data-layer.js";
-import { createConnectionSetFromUrl } from "../../postgres/connection.js";
-import type { ResolvedBackend } from "../../postgres/backend-resolver.js";
-import { applySchemaBaseline } from "../../postgres/schema-applier.js";
+import type { AsyncDataLayer } from "../../postgres/data-layer.js";
+import {
+  pgDescribe,
+  createSharedPgTaskStoreTestHarness,
+  type SharedPgTaskStoreHarness,
+} from "../../__test-utils__/pg-test-harness.js";
 import * as schema from "../../postgres/schema/index.js";
 import { insertTaskRow } from "../../task-store/async/async-persistence.js";
 import {
@@ -45,89 +44,17 @@ import {
 import { upsertArchivedTaskEntry } from "../../task-store/async/async-archive-lineage.js";
 import type { ArchivedTaskEntry } from "../../types.js";
 
-const PG_TEST_URL_BASE =
-  process.env.FUSION_PG_TEST_URL_BASE ?? "postgresql://localhost:5432";
-const PG_AVAILABLE =
-  process.env.FUSION_PG_TEST_SKIP !== "1" && Boolean(PG_TEST_URL_BASE);
-
-const pgDescribe = PG_AVAILABLE ? describe : describe.skip;
-
-function uniqueDbName(): string {
-  return `fusion_fts_test_${process.pid}_${Math.random().toString(36).slice(2, 8)}`;
-}
-
 /*
-FNXC:PgTestAuthFix 2026-07-14-00:00:
-The inline adminExec used process.env.USER for the psql -U flag, which is 'runner' on GitHub Actions (not 'postgres'). Use the PG_TEST_URL_BASE connection string instead so credentials are always correct.
+FNXC:PgTestHarnessAdoption 2026-08-16-03:45:
+Migrated off the hand-rolled per-test CREATE DATABASE + applySchemaBaseline scaffolding
+(~3-4s of DDL per test) onto the shared PG harness: one template-cloned database per file
+with TRUNCATE-based reset per test. The database setup here was scaffolding, not the
+subject under test (the tsvector/GIN search path is), and every assertion is unchanged.
+The DROP INDEX / REINDEX cases re-create the same index state they mutate, so they stay
+safe on a per-file shared database.
 */
-function adminExec(statement: string): void {
-  execSync(
-    `psql "${PG_TEST_URL_BASE}/postgres" -v ON_ERROR_STOP=1 -c "${statement.replace(/"/g, '\\"')}"`,
-    { stdio: "pipe", env: process.env },
-  );
-}
-
 interface TestCtx {
-  dbName: string;
-  testUrl: string;
   layer: AsyncDataLayer;
-  adminSql: ReturnType<typeof postgres>;
-}
-
-async function setupCtx(): Promise<TestCtx> {
-  const dbName = uniqueDbName();
-  try {
-    adminExec(`DROP DATABASE IF EXISTS "${dbName}"`);
-  } catch {
-    // may not exist
-  }
-  adminExec(`CREATE DATABASE "${dbName}"`);
-  const testUrl = `${PG_TEST_URL_BASE}/${dbName}`;
-
-  const schemaBackend: ResolvedBackend = {
-    mode: "external",
-    runtimeUrl: testUrl,
-    migrationUrl: testUrl,
-    migrationUrlOverridden: false,
-  };
-  const schemaConnections = await createConnectionSetFromUrl(schemaBackend, {
-    poolMax: 1,
-    connectTimeoutSeconds: 5,
-  });
-  await applySchemaBaseline(schemaConnections.migration);
-  await schemaConnections.close();
-
-  const connections = await createConnectionSetFromUrl(schemaBackend, {
-    poolMax: 5,
-    connectTimeoutSeconds: 5,
-  });
-  const layer = createAsyncDataLayer(connections);
-
-  const adminSql = postgres(testUrl, { max: 2, prepare: false, onnotice: () => {} });
-  // Keep a reference so TS doesn't flag unused; adminSql is used for teardown
-  // via end() and direct diagnostic queries.
-  void drizzle(adminSql);
-
-  return { dbName, testUrl, layer, adminSql };
-}
-
-async function teardownCtx(ctx: TestCtx | null): Promise<void> {
-  if (!ctx) return;
-  try {
-    await ctx.layer.close();
-  } catch {
-    // best-effort
-  }
-  try {
-    await ctx.adminSql.end({ timeout: 5 });
-  } catch {
-    // best-effort
-  }
-  try {
-    adminExec(`DROP DATABASE IF EXISTS "${ctx.dbName}"`);
-  } catch {
-    // best-effort
-  }
 }
 
 /** A minimal task record with the NOT NULL columns filled. */
@@ -162,17 +89,22 @@ function resultIds(rows: Record<string, unknown>[]): string[] {
 }
 
 pgDescribe("fts-replacement: tsvector/GIN full-text search (PostgreSQL)", () => {
-  let ctx: TestCtx | null = null;
-
-  afterEach(async () => {
-    await teardownCtx(ctx);
-    ctx = null;
+  const h: SharedPgTaskStoreHarness = createSharedPgTaskStoreTestHarness({
+    prefix: "fusion_fts_test",
   });
+  let ctx: TestCtx;
+
+  beforeAll(h.beforeAll);
+  beforeEach(async () => {
+    await h.beforeEach();
+    ctx = { layer: h.layer() };
+  });
+  afterEach(h.afterEach);
+  afterAll(h.afterAll);
 
   // ── VAL-SEARCH-001: Search parity with FTS5 baseline (row membership) ──
 
   it("returns the same row membership as the FTS5 baseline for representative queries (VAL-SEARCH-001)", async () => {
-    ctx = await setupCtx();
     // Seed tasks with distinct searchable text.
     await insertTask(ctx.layer, "FTS-001", { title: "database migration guide" });
     await insertTask(ctx.layer, "FTS-002", { title: "frontend redesign" });
@@ -199,7 +131,6 @@ pgDescribe("fts-replacement: tsvector/GIN full-text search (PostgreSQL)", () => 
   });
 
   it("matches terms across id, title, description, and comments columns (VAL-SEARCH-001)", async () => {
-    ctx = await setupCtx();
     await insertTask(ctx.layer, "SEARCH-ID-1", { title: "alpha" });
     await insertTask(ctx.layer, "PLAIN-002", { title: "beta", comments: [{ text: "gamma delta notes" }] });
 
@@ -216,7 +147,6 @@ pgDescribe("fts-replacement: tsvector/GIN full-text search (PostgreSQL)", () => 
   // Prefix matching regression test: "frob" must find "frobnicator" (FTS5 * parity).
   // to_tsquery with :* suffix reproduces FTS5's `${token}*` prefix token.
   it("prefix matching: partial token finds longer indexed term (VAL-SEARCH-001)", async () => {
-    ctx = await setupCtx();
     await insertTask(ctx.layer, "PREFIX-001", { title: "frobnicator setup" });
     await insertTask(ctx.layer, "PREFIX-002", { title: "database tuning" });
 
@@ -233,7 +163,6 @@ pgDescribe("fts-replacement: tsvector/GIN full-text search (PostgreSQL)", () => 
   // ── VAL-SEARCH-002: tsvector sync-on-write (insert) ──
 
   it("newly inserted task is immediately searchable without explicit reindex (VAL-SEARCH-002)", async () => {
-    ctx = await setupCtx();
     // No tasks exist yet.
     const before = await searchTasksTsvector(ctx.layer.db, "freshly");
     expect(before).toEqual([]);
@@ -247,7 +176,6 @@ pgDescribe("fts-replacement: tsvector/GIN full-text search (PostgreSQL)", () => 
   // ── VAL-SEARCH-003: tsvector sync-on-write (update) ──
 
   it("updated task text fields are reflected in search immediately (VAL-SEARCH-003)", async () => {
-    ctx = await setupCtx();
     await insertTask(ctx.layer, "UPD-001", { title: "original title" });
 
     // "renamed" not present initially.
@@ -274,7 +202,6 @@ pgDescribe("fts-replacement: tsvector/GIN full-text search (PostgreSQL)", () => 
   // ── VAL-SEARCH-004: tsvector sync-on-write (delete) ──
 
   it("soft-deleted task no longer appears in live search (VAL-SEARCH-004)", async () => {
-    ctx = await setupCtx();
     await insertTask(ctx.layer, "DEL-001", { title: "to be deleted searchable" });
     await insertTask(ctx.layer, "DEL-002", { title: "to be deleted keeper" });
 
@@ -294,7 +221,6 @@ pgDescribe("fts-replacement: tsvector/GIN full-text search (PostgreSQL)", () => 
   });
 
   it("hard-deleted task row is gone from search (VAL-SEARCH-004)", async () => {
-    ctx = await setupCtx();
     await insertTask(ctx.layer, "HARD-001", { title: "hard delete target" });
 
     const before = await searchTasksTsvector(ctx.layer.db, "target");
@@ -311,7 +237,6 @@ pgDescribe("fts-replacement: tsvector/GIN full-text search (PostgreSQL)", () => 
   // ── VAL-SEARCH-005: Archive search parity ──
 
   it("archived-task search returns matching rows via tsvector (VAL-SEARCH-005)", async () => {
-    ctx = await setupCtx();
     const baseEntry = (id: string, title: string, description: string) =>
       ({
         id,
@@ -343,7 +268,6 @@ pgDescribe("fts-replacement: tsvector/GIN full-text search (PostgreSQL)", () => 
   // ── VAL-SEARCH-006: Non-text mutation does not regenerate tsvector ──
 
   it("a mutation touching only non-text columns leaves search_vector unchanged (VAL-SEARCH-006)", async () => {
-    ctx = await setupCtx();
     await insertTask(ctx.layer, "VEC-001", { title: "stable title text" });
 
     // Read the initial search_vector value.
@@ -365,7 +289,6 @@ pgDescribe("fts-replacement: tsvector/GIN full-text search (PostgreSQL)", () => 
   });
 
   it("a mutation touching a text column DOES regenerate the tsvector (VAL-SEARCH-006 inverse)", async () => {
-    ctx = await setupCtx();
     await insertTask(ctx.layer, "VEC-002", { title: "before change" });
 
     const svBefore = await readTaskSearchVector(ctx.layer.db, "VEC-002");
@@ -385,7 +308,6 @@ pgDescribe("fts-replacement: tsvector/GIN full-text search (PostgreSQL)", () => 
   // ── VAL-SEARCH-007: Index rebuild restores search ──
 
   it("REINDEX on the GIN index restores correct search without data loss (VAL-SEARCH-007)", async () => {
-    ctx = await setupCtx();
     await insertTask(ctx.layer, "RIDX-001", { title: "reindex probe alpha" });
     await insertTask(ctx.layer, "RIDX-002", { title: "reindex probe beta" });
 
@@ -412,7 +334,6 @@ pgDescribe("fts-replacement: tsvector/GIN full-text search (PostgreSQL)", () => 
   });
 
   it("DROP + re-CREATE the GIN index restores search (VAL-SEARCH-007 alternate)", async () => {
-    ctx = await setupCtx();
     await insertTask(ctx.layer, "DROP-001", { title: "drop recreate search" });
 
     // Drop the index (simulating corruption/missing index).
@@ -430,7 +351,6 @@ pgDescribe("fts-replacement: tsvector/GIN full-text search (PostgreSQL)", () => 
   // ── Helpers / edge cases ──
 
   it("empty and whitespace queries return no results (no crash)", async () => {
-    ctx = await setupCtx();
     await insertTask(ctx.layer, "EDGE-001", { title: "something" });
 
     expect(await searchTasksTsvector(ctx.layer.db, "")).toEqual([]);
@@ -449,7 +369,6 @@ pgDescribe("fts-replacement: tsvector/GIN full-text search (PostgreSQL)", () => 
   });
 
   it("includeArchived=false excludes archived tasks from search", async () => {
-    ctx = await setupCtx();
     await insertTask(ctx.layer, "ARCH-001", { title: "archived filter target", column: "archived" });
     await insertTask(ctx.layer, "LIVE-001", { title: "archived filter target", column: "todo" });
 

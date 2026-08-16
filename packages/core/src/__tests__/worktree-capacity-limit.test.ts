@@ -126,16 +126,50 @@ describe("worktrees-off is structural: no unaudited maxWorktrees bound", () => {
     scheduler executor gate. These are intentional admission readers (or aliases of resolveWorktreeCapacityLimit),
     not raw second gates that bypass OFF mode.
     */
+    /*
+    FNXC:WorktreeCapacity 2026-08-15-22:05:
+    Wave-18 executor pure peels (#3317) moved the child-spawn budget out of executor.ts verbatim;
+    the entry follows the code so the ratchet keeps naming the SAME audited bound, not a new one.
+    */
     {
-      file: "packages/engine/src/executor.ts",
-      expr: "heldWorktrees + this.totalSpawnedCount > spawnMaxWorktrees",
+      file: "packages/engine/src/executor/create-spawn-agent-tool.ts",
+      expr: "heldWorktrees + deps.getTotalSpawnedCount() > spawnMaxWorktrees",
       reason:
-        "Child-spawn worktree budget: spawnMaxWorktrees aliases settings.maxWorktrees ?? 4; the block "
-        + "is skipped when the resolved value is non-finite (worktrees-off / unset).",
+        "Child-spawn worktree budget (moved from executor.ts by the wave-18 executor peel): "
+        + "spawnMaxWorktrees aliases settings.maxWorktrees ?? 4; the block is skipped when the "
+        + "resolved value is non-finite (worktrees-off / unset).",
+    },
+    /*
+    FNXC:WorktreeCapacity 2026-08-15-22:05:
+    Merge-claim and direct workflow-continuation admission (FN-9059-era) read the shared live-task
+    ceiling through resolveActiveTaskCapacityLimit, which returns plain maxConcurrent when
+    resolveWorktreeCapacityLimit yields null, so OFF mode never binds on worktrees. The alias-hop
+    scan flags the `limit` comparison because the resolver call names maxWorktrees inline.
+    */
+    {
+      file: "packages/engine/src/project-engine.ts",
+      expr: "if (snapshot.count >= limit) {",
+      reason:
+        "Merge-claim capacity defer: `limit` is resolveActiveTaskCapacityLimit's result, which is "
+        + "maxConcurrent alone when worktrees are OFF — an intentional admission reader of the "
+        + "sanctioned resolver, not a second raw gate.",
     },
     {
-      file: "packages/engine/src/scheduler.ts",
-      expr: "maxWorktrees !== null && maxWorktrees <= maxConcurrent",
+      file: "packages/engine/src/runtimes/in-process-runtime.ts",
+      expr: "if (snapshot.count >= limit) {",
+      reason:
+        "Direct workflow-continuation capacity defer: same resolveActiveTaskCapacityLimit alias as "
+        + "the project-engine merge defer; OFF mode resolves to maxConcurrent only.",
+    },
+    {
+      /*
+      FNXC:WorktreeCapacity 2026-08-15-22:05:
+      The discriminator moved from scheduler.ts into the shared concurrency helper
+      (formatAdmissionCapacityQueuedReason) during the admission-reason unification; same audited
+      logic, new home.
+      */
+      file: "packages/engine/src/concurrency/concurrency.ts",
+      expr: "worktreeLimit !== null && worktreeLimit <= params.maxConcurrent",
       reason:
         "Binding-gate discriminator after resolveWorktreeCapacityLimit: null means worktrees are not a "
         + "capacity dimension, so this arm cannot bind in OFF mode.",

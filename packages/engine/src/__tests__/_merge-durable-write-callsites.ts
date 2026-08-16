@@ -300,6 +300,26 @@ const STORE_METHOD_CLASSIFICATION: Record<string, Omit<SurfaceClassification, "m
   recordRunAuditEvent: { kind: "writer", reason: "persists task-associated run audit state" },
   updateTask: { kind: "writer", reason: "persists task row mutations" },
   upsertTaskCommitAssociation: { kind: "writer", reason: "persists task commit association" },
+  /*
+  FNXC:MergeReliability 2026-08-16-05:28:
+  FN-9059 workspace coordination surface. Lease acquire/renew/release/reclaim/reconcile and
+  fence-ref recording mutate `workspaceCoordinationLeases`; land-intent record/resolve mutate the
+  write-ahead intent rows; mergeWorkspaceWorktreeEntry persists workspace worktree entries; and
+  withValidWorkspaceLease runs caller mutations transactionally under a validated lease fence.
+  An orphaned merge body reaching any of these would mutate coordination state it no longer owns.
+  */
+  acquireWorkspaceLease: { kind: "writer", reason: "persists workspace coordination lease state" },
+  mergeWorkspaceWorktreeEntry: { kind: "writer", reason: "persists workspace worktree entry state" },
+  reclaimWorkspaceLease: { kind: "writer", reason: "persists workspace coordination lease state" },
+  reconcileExpiredWorkspaceLeases: { kind: "writer", reason: "persists workspace coordination lease state" },
+  recordWorkspaceLandIntent: { kind: "writer", reason: "persists workspace land write-ahead intent state" },
+  recordWorkspaceLeaseFenceRef: { kind: "writer", reason: "persists workspace coordination lease state" },
+  releaseStaleWorkspaceLeasesForNode: { kind: "writer", reason: "persists workspace coordination lease state" },
+  releaseWorkspaceLease: { kind: "writer", reason: "persists workspace coordination lease state" },
+  renewWorkspaceLease: { kind: "writer", reason: "persists workspace coordination lease state" },
+  resolveOrphanedWorkspaceLandIntent: { kind: "writer", reason: "persists workspace land write-ahead intent state" },
+  resolveWorkspaceLandIntent: { kind: "writer", reason: "persists workspace land write-ahead intent state" },
+  withValidWorkspaceLease: { kind: "writer", reason: "runs caller mutations transactionally under a validated workspace lease fence" },
 };
 const NON_WRITER_REASONS: Record<string, string> = Object.fromEntries([
   "__invokeHandoffMergeQueueFailureInjectorForTesting",
@@ -417,6 +437,7 @@ const NON_WRITER_REASONS: Record<string, string> = Object.fromEntries([
   "findOpenRevertTaskForSource",
   "findRecentTasksByContentFingerprint",
   "findRecentTasksBySourceParentTaskId",
+  "findTaskByProposalClaimId",
   "finishTaskVerificationRequest",
   "flushAgentLogBuffer",
   "fts5Available",
@@ -537,6 +558,7 @@ const NON_WRITER_REASONS: Record<string, string> = Object.fromEntries([
   "insertTaskWithFtsRecovery",
   "insertWorkflowDefinitionSync",
   "inspectSymbolLockConflicts",
+  "inspectWorkspaceLeases",
   "invalidateConfigCacheAfterMigration",
   "invokeTaskCreatedHook",
   "isActiveWorkflowWorkItemState",
@@ -564,12 +586,15 @@ const NON_WRITER_REASONS: Record<string, string> = Object.fromEntries([
   "listDueWorkflowWorkItems",
   "listGoalCitations",
   "listLegacyAutoMergeStampCandidates",
+  "listPendingWorkspaceLandIntents",
   "listPrThreadStates",
   "listSpecDriftReports",
   "listSpecLocks",
   "listStrandedRefinements",
+  "listTaskRecommendations",
   "listTasks",
   "listTasksByBranchGroup",
+  "listTasksBySourceLineage",
   "listTasksForGithubTrackingReconcile",
   "listTasksForGitlabTrackingReconcile",
   "listTasksModifiedSince",
@@ -789,6 +814,7 @@ const NON_WRITER_REASONS: Record<string, string> = Object.fromEntries([
   "upsertTaskDocument",
   "upsertTaskWithFtsRecovery",
   "upsertWorkflowWorkItem",
+  "validateWorkspaceLeaseFence",
   "walCheckpoint",
   "watch",
   "withConfigLock",

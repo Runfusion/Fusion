@@ -24,7 +24,13 @@ pgDescribe("project ownership runtime scope", () => {
   const h: SharedPgTaskStoreHarness = createSharedPgTaskStoreTestHarness({
     prefix: "fusion_project_ownership_runtime_scope",
   });
-  const now = "2026-08-12T14:15:00.000Z";
+  /*
+  FNXC:MultiProjectIsolation 2026-08-15-22:10:
+  Real wall-clock, not a literal: `decideApprovalRequest` rejects a pending request older than
+  APPROVAL_REQUEST_PENDING_TTL_MS against Date.now(), so a hardcoded seed date expired the day
+  after this file was written and turned the whole isolation case into a time bomb.
+  */
+  const now = new Date().toISOString();
   const bind = (projectId: string): AsyncDataLayer => ({ ...h.layer(), projectId });
 
   beforeAll(h.beforeAll);

@@ -451,9 +451,18 @@ export async function runGraphCustomNode(
     // sets FUSION_HEADLESS=1 only when this is explicitly true.
     const unattended = deps.graphUnattendedRuns.has(live.id);
 
+    /*
+     * FNXC:WorkflowAgentRouting 2026-08-15-23:41:
+     * FN-8764/FN-8821 routing selects a principal before graph execution. Wave-18
+     * peel #3317 dropped the handoff to prompt sessions; FN-9108 restores it.
+     * Non-string context is unrouted so untrusted graph values cannot become IDs.
+     */
+    const principalAgentId = typeof graphContext?.["workflow:principal-agent-id"] === "string"
+      ? graphContext["workflow:principal-agent-id"]
+      : undefined;
     let outcome: WorkflowStepOutcome = mode === "script"
       ? await deps.executeScriptWorkflowStep(live, step, worktreePath, settings, nodeEnv)
-      : await deps.executeWorkflowStep(live, step, worktreePath, settings, nodeEnv, { unattended });
+      : await deps.executeWorkflowStep(live, step, worktreePath, settings, nodeEnv, { unattended, principalAgentId });
     /*
      * FNXC:WorkflowReviewFindings 2026-08-05-06:29:
      * Script nodes retain their exit-code verdict semantics, but an explicitly classified review

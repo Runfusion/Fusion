@@ -5,6 +5,7 @@ import { THINKING_LEVELS } from "@fusion/core";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import type { ModelInfo } from "../api";
 import { FN_AGENT_ID } from "../hooks/useChat";
+import { isInsidePortaledModelMenu } from "../utils/portalSurfaces";
 
 /*
 FNXC:Chat-ThinkingLevel 2026-07-12-19:30:
@@ -84,21 +85,27 @@ export function ChatThinkingLevelControl({
 
   useEffect(() => {
     if (!open) return;
-    const handlePointerDown = (event: PointerEvent) => {
+    const handleOutsidePress = (event: PointerEvent | TouchEvent) => {
       const target = event.target;
       if (!(target instanceof Node)) return;
       /*
       FNXC:Chat-ModelSwitch 2026-07-12-22:35:
       FN-7916: CustomModelDropdown renders its option list in a document.body portal outside rootRef. Treat that portaled menu as inside this popup so tablet/touch pointerdown does not dismiss the brain popup before the option onClick can persist the model selection.
+
+      FNXC:ModelDropdown 2026-08-15-12:27:
+      Use the shared portal predicate for pointer and touch origins. Mobile outside-close handlers can receive touchstart before a re-anchored menu's synthesized click lands on the popup backdrop.
       */
       const clickedInsideRoot = rootRef.current?.contains(target);
-      const clickedInsidePortaledModelMenu = target instanceof Element && Boolean(target.closest(".model-combobox-dropdown--portal"));
-      if (!clickedInsideRoot && !clickedInsidePortaledModelMenu) {
+      if (!clickedInsideRoot && !isInsidePortaledModelMenu(target)) {
         setOpen(false);
       }
     };
-    document.addEventListener("pointerdown", handlePointerDown);
-    return () => document.removeEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("pointerdown", handleOutsidePress);
+    document.addEventListener("touchstart", handleOutsidePress);
+    return () => {
+      document.removeEventListener("pointerdown", handleOutsidePress);
+      document.removeEventListener("touchstart", handleOutsidePress);
+    };
   }, [open]);
 
   // Close the popup whenever the underlying level or target changes out from under us

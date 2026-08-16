@@ -43,6 +43,7 @@ import * as updateCheckModule from "../update-check.js";
 import { __setAgentReflectionServiceForTests } from "../routes/register-agent-reflection-rating-routes.js";
 import { parseGitHubCopilotDeviceCode } from "../routes/register-auth-routes.js";
 import { createAuthMiddleware } from "../auth-middleware.js";
+import { __resetModelRegistryRefreshCacheForTests } from "../model-registry-refresh-cache.js";
 
 // Mock @fusion/core for gh CLI auth checks
 const mockCentralListProjects = vi.fn().mockResolvedValue([]);
@@ -577,6 +578,7 @@ describe("GET /models", () => {
         getAvailable: vi.fn().mockReturnValue([
           { id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5", provider: "anthropic", reasoning: true, contextWindow: 200000 },
           { id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5 OAuth", provider: "anthropic-subscription", reasoning: true, contextWindow: 200000 },
+          { id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5 API Key", provider: "anthropic-api-key", reasoning: true, contextWindow: 200000 },
           { id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5 (CLI)", provider: "pi-claude-cli", reasoning: true, contextWindow: 200000 },
           { id: "claude-sonnet-5", name: "Claude Sonnet 5 (CLI)", provider: "pi-claude-cli", reasoning: true, contextWindow: 1_000_000 },
           { id: "claude-sonnet-5", name: "Claude Sonnet 5 Duplicate (CLI)", provider: "pi-claude-cli", reasoning: true, contextWindow: 1_000_000 },
@@ -658,6 +660,7 @@ describe("GET /models", () => {
         expect(providers).toContain("anthropic");
         expect(providers).toContain("pi-claude-cli");
         expect(providers).not.toContain("anthropic-subscription");
+        expect(providers).not.toContain("anthropic-api-key");
         const cliSonnetFiveRows = res.body.models.filter((m: { provider: string; id: string }) => m.provider === "pi-claude-cli" && m.id === "claude-sonnet-5");
         expect(cliSonnetFiveRows).toHaveLength(1);
       });
@@ -3489,6 +3492,7 @@ describe("POST /auth/api-key", () => {
   beforeEach(() => {
     store = createMockStore();
     authStorage = createMockAuthStorage();
+    __resetModelRegistryRefreshCacheForTests();
   });
 
   function buildApp(options?: {
@@ -3638,24 +3642,34 @@ describe("POST /auth/api-key", () => {
     expect(res.body.error).toContain("not supported");
   });
 
-  it("runs post-save refresh hook and model registry refresh for opencode-go", async () => {
+  it("runs post-save refresh hook and invalidates the model registry cache for opencode-go", async () => {
     const onApiKeySaved = vi.fn().mockResolvedValue({ registeredCount: 3, reason: "no-models-from-cli" });
-    const modelRegistry = { refresh: vi.fn(), getAvailable: vi.fn().mockReturnValue([]) } as unknown as ModelRegistryLike;
+    const modelRegistry = {
+      refresh: vi.fn(async () => undefined),
+      getAvailable: vi.fn().mockReturnValue([]),
+    } as unknown as ModelRegistryLike;
     (authStorage.getApiKeyProviders as ReturnType<typeof vi.fn>).mockReturnValue([
       { id: "openrouter", name: "OpenRouter" },
       { id: "opencode-go", name: "Opencode (Go)" },
     ]);
+    const app = buildApp({ onApiKeySaved, modelRegistry });
 
-    const res = await REQUEST(buildApp({ onApiKeySaved, modelRegistry }), "POST", "/api/auth/api-key", JSON.stringify({
+    await GET(app, "/api/models");
+    expect(modelRegistry.refresh).toHaveBeenCalledOnce();
+
+    const res = await REQUEST(app, "POST", "/api/auth/api-key", JSON.stringify({
       provider: "opencode-go",
       apiKey: "sk-test",
     }), { "Content-Type": "application/json" });
 
     expect(res.status).toBe(200);
     expect(onApiKeySaved).toHaveBeenCalledWith("opencode-go");
-    expect(modelRegistry.refresh).toHaveBeenCalled();
+    expect(modelRegistry.refresh).toHaveBeenCalledOnce();
     expect(res.body.modelsRefreshed).toBe(3);
     expect(res.body.refreshReason).toBe("no-models-from-cli");
+
+    await GET(app, "/api/models");
+    expect(modelRegistry.refresh).toHaveBeenCalledTimes(2);
   });
 
   it("returns success when post-save refresh hook throws", async () => {

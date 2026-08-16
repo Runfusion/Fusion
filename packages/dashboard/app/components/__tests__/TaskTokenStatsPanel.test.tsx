@@ -224,6 +224,33 @@ describe("TaskTokenStatsPanel", () => {
     }
   });
 
+  it("caps poisoned total execution time at task age", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-15T15:00:00.000Z"));
+    try {
+      render(
+        <TaskTokenStatsPanel
+          loading={false}
+          tokenUsage={undefined}
+          task={makeTask({
+            column: "in-review",
+            createdAt: "2026-05-15T08:00:00.000Z",
+            cumulativeActiveMs: 4 * 24 * 60 * 60_000,
+            executionStartedAt: undefined,
+            workflowStepResults: [],
+            log: [],
+          })}
+        />,
+      );
+
+      const metric = screen.getByText("Total execution time").closest(".task-token-stats-panel__metric");
+      expect(metric).toHaveTextContent("420m 0s");
+      expect(metric).not.toHaveTextContent("4d");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("does not double count workflow runtime when timedExecutionMs is present", () => {
     render(
       <TaskTokenStatsPanel

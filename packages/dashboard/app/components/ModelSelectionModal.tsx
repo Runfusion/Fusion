@@ -7,6 +7,7 @@ import { applyPresetToSelection } from "../utils/modelPresets";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import { Brain, X } from "lucide-react";
 import { LoadingSpinner } from "./LoadingSpinner";
+import { useOverlayDismiss } from "../hooks/useOverlayDismiss";
 
 const PRESET_OPTION_SEPARATOR = "──────────";
 
@@ -130,15 +131,11 @@ export function ModelSelectionModal({
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [isOpen, onClose]);
 
-  // Handle overlay click
-  const handleOverlayClick = useCallback(
-    (event: React.MouseEvent) => {
-      if (event.target === event.currentTarget) {
-        onClose();
-      }
-    },
-    [onClose],
-  );
+  /*
+  FNXC:ModalDismissal 2026-08-15-12:27:
+  Model controls render their listbox through document.body. Pair overlay press and release so a re-anchored portal gesture cannot be mistaken for a backdrop click.
+  */
+  const overlayDismiss = useOverlayDismiss(onClose, { enabled: true });
 
   const showPresets = !!(presets && presets.length > 0 && onPresetChange);
   const selectedPreset = presets?.find((p) => p.id === selectedPresetId);
@@ -209,7 +206,7 @@ export function ModelSelectionModal({
   const hasMergerOverride = Boolean(mergerValue);
 
   return (
-    <div className="modal-overlay open" onClick={handleOverlayClick} role="dialog" aria-modal="true" data-testid="model-selection-modal">
+    <div className="modal-overlay open" {...overlayDismiss} role="dialog" aria-modal="true" data-testid="model-selection-modal">
       <div className="modal modal-lg">
         <div className="modal-header">
           <div className="detail-title-row">

@@ -90,7 +90,19 @@ function sourceRoots(base: string = REPO_ROOT): string[] {
  * means a second owner now writes the claim, which is the FN-8504 shape. If that
  * is genuinely intended, the justification belongs beside the new entry.
  */
-const PLANNING_CLAIM_WRITERS = ["packages/engine/src/triage.ts"];
+/*
+FNXC:PlanningClaimSingleWriter 2026-08-15-19:10 (FN-8998, d9a0ed7837):
+`self-healing.ts` is a SECOND intended writer, added by FN-8998's planning-lock
+reentry fix: `recordPlanningHandoffTransportFailure` RE-asserts `status: "planning"`
+(plus retry bookkeeping) on a card whose canonical planning handoff hit a transport
+failure, so the retry sweep can pick it up instead of stalling the lock. It is not a
+fresh claim by a second planner: the write goes through `updateTaskAtomic` with an
+`isTaskStillInPlanningStage(live)` re-check, the same guarded CAS shape the
+"planning-stage-guarded helper" assertion below demands of triage, so it cannot
+stamp `planning` onto a card the scheduler already advanced (the FN-7977/FN-8361 bug
+this ratchet exists to prevent).
+*/
+const PLANNING_CLAIM_WRITERS = ["packages/engine/src/self-healing.ts", "packages/engine/src/triage.ts"];
 
 /**
  * Modules permitted to BIND the planning literal to a constant.

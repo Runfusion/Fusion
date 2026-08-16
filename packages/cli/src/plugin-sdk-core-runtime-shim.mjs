@@ -18,8 +18,16 @@ import * as postgresSchema from "../../core/src/postgres/schema/index.js";
  * FN-8762 also needs AgentStore for create-task-from-item routes. A second import/export of the same binding broke lint (no-redeclare) and esbuild ("already been declared") after main merged two parallel shim fixes — keep a single AgentStore re-export.
  */
 import { AgentStore } from "../../core/src/agents/agent-store.js";
+/*
+ * FNXC:BundledPlugins 2026-08-15-18:48:
+ * Staged ACP runtime plugins redact captured process output through @fusion/core. The full-package
+ * alias resolves that bare import here, while fast builds require each plugin declaration; retain
+ * this re-export so both paths package the same process-supervision-adjacent core boundary.
+ */
+import { redactSecrets } from "../../core/src/secrets/redact-secrets.js";
+import { getErrorMessage } from "../../core/src/process/error-message.js";
 
-export { AgentStore, postgresSchema };
+export { AgentStore, postgresSchema, redactSecrets, getErrorMessage };
 
 /*
  * FNXC:BundledPlugins 2026-07-31-09:55:

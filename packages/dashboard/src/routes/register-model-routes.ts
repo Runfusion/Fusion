@@ -1,7 +1,7 @@
 import { access, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { customProviderRegistryKey, mergeSupplementalAnthropicModels, mergeSupplementalOpenAiCodexModels, resolvePlanningSettingsModel } from "@fusion/core";
+import { customProviderRegistryKey, mergeSupplementalAnthropicModels, mergeSupplementalOpenAiCodexModels, resolvePlanningSettingsModel, toExecutionModelProviderId, ANTHROPIC_API_KEY_PROVIDER_ID, ANTHROPIC_PROVIDER_ID, ANTHROPIC_SUBSCRIPTION_PROVIDER_ID } from "@fusion/core";
 import type { CustomProvider } from "@fusion/core";
 import { ApiError } from "../api-error.js";
 import { getCursorPickerModels, CURSOR_PICKER_PROVIDER_ID } from "../cursor-model-cache.js";
@@ -12,10 +12,6 @@ import { getHermesPickerModels, HERMES_PICKER_PROVIDER_ID } from "../hermes-mode
 import { refreshModelRegistryForRequest } from "../model-registry-refresh-cache.js";
 import type { AuthStorageLike } from "../routes.js";
 import type { ApiRouteRegistrar } from "./types.js";
-
-const ANTHROPIC_PROVIDER_ID = "anthropic";
-const ANTHROPIC_API_KEY_PROVIDER_ID = "anthropic-api-key";
-const ANTHROPIC_SUBSCRIPTION_PROVIDER_ID = "anthropic-subscription";
 
 /**
  * Read provider names from Fusion's own auth stores (primary + legacy .pi).
@@ -34,7 +30,7 @@ function isRawAnthropicApiKeyCredential(credential: unknown): boolean {
 }
 
 function toModelProviderId(providerId: string): string {
-  return providerId === ANTHROPIC_API_KEY_PROVIDER_ID ? ANTHROPIC_PROVIDER_ID : providerId;
+  return toExecutionModelProviderId(providerId);
 }
 
 function addAuthStorageConfiguredProviders(authStorage: AuthStorageLike | undefined, providers: Set<string>): void {
@@ -359,6 +355,12 @@ export const registerModelRoutes: ApiRouteRegistrar = (ctx) => {
         reasoning: m.reasoning,
         contextWindow: m.contextWindow,
       }));
+
+      /*
+      FNXC:ProviderAuth 2026-08-15-20:57:
+      A registry/plugin may emit a credential-card row despite Fusion never registering it as an execution provider. Drop Anthropic auth ids rather than normalizing catalog rows: only the built-in `anthropic` row is selectable and can safely reach pi-ai.
+      */
+      models = models.filter((model) => model.provider !== ANTHROPIC_SUBSCRIPTION_PROVIDER_ID && model.provider !== ANTHROPIC_API_KEY_PROVIDER_ID);
 
       /*
        * FNXC:ModelCatalog 2026-07-01-12:02:

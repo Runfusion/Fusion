@@ -11,38 +11,11 @@
  * one chunk once the process exits.
  */
 
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import os from "node:os";
-import path, { sep as PATH_SEP } from "node:path";
-
-/**
- * On Windows, `spawn("hermes", ...)` won't find `hermes.cmd`/`.bat` shims —
- * Node doesn't honor PATHEXT. We resolve via `where` (which does) and spawn
- * the absolute path instead. No-op on POSIX. Cached per process.
- */
-const resolvedBinaryCache = new Map<string, string>();
-
-function resolveBinaryForSpawn(binary: string): string {
-  if (process.platform !== "win32") return binary;
-  if (binary.includes(PATH_SEP) || binary.includes("/") || /\.[a-z]{2,4}$/i.test(binary)) {
-    return binary;
-  }
-  const cached = resolvedBinaryCache.get(binary);
-  if (cached) return cached;
-  try {
-    const result = spawnSync("where", [binary], { encoding: "utf-8" });
-    if (result.status === 0) {
-      const first = (result.stdout ?? "").trim().split(/\r?\n/)[0];
-      if (first?.length) {
-        resolvedBinaryCache.set(binary, first);
-        return first;
-      }
-    }
-  } catch {
-    // fall through
-  }
-  return binary;
-}
+import path from "node:path";
+import { superviseSpawn } from "@fusion/core";
+import { resolveHermesLaunch } from "./windows-binary-launch.js";
 
 /** ANSI escape code stripping regex. */
 // eslint-disable-next-line no-control-regex -- ANSI escapes are control chars by definition
@@ -161,15 +134,19 @@ export async function listHermesProfiles(opts?: {
   binaryPath?: string;
   timeoutMs?: number;
 }): Promise<HermesProfileSummary[]> {
-  const binary = resolveBinaryForSpawn(opts?.binaryPath ?? "hermes");
+  const binary = opts?.binaryPath ?? "hermes";
   const timeoutMs = opts?.timeoutMs ?? 5_000;
+  const spawnEnv = { ...process.env };
+  const launch = await resolveHermesLaunch(binary, ["profile", "list"], { env: spawnEnv });
 
   return new Promise<HermesProfileSummary[]>((resolve, reject) => {
     let settled = false;
 
-    const child = spawn(binary, ["profile", "list"], {
+    // Profile listing is short and fully awaited; only prompt turns need parent-death supervision.
+    const child = spawn(launch.command, launch.args, {
       stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env },
+      env: spawnEnv,
+      windowsVerbatimArguments: launch.windowsVerbatimArguments,
     });
 
     const timer = setTimeout(() => {
@@ -374,26 +351,33 @@ export async function invokeHermesCli(
   signal?: AbortSignal,
 ): Promise<HermesCliResult> {
   const args = buildHermesArgs(prompt, settings, resumeSessionId);
-  const binary = resolveBinaryForSpawn(settings.binaryPath);
+  const spawnEnv: NodeJS.ProcessEnv = { ...process.env, PYTHONUNBUFFERED: "1" };
+  if (settings.profile) {
+    spawnEnv.HERMES_HOME = hermesProfileHome(settings.profile);
+  }
+  const launch = await resolveHermesLaunch(settings.binaryPath, args, { env: spawnEnv });
 
   return new Promise<HermesCliResult>((resolve, reject) => {
     let settled = false;
-
-    const spawnEnv: NodeJS.ProcessEnv = { ...process.env, PYTHONUNBUFFERED: "1" };
-    if (settings.profile) {
-      spawnEnv.HERMES_HOME = hermesProfileHome(settings.profile);
-    }
-
-    const child = spawn(binary, args, {
+    /*
+    FNXC:HermesCli 2026-08-15-15:46:
+    The plugin owns its timeout message, so the supervisor lifetime is only a shutdown backstop.
+    Setting it equal to the CLI timeout would let its close event hide the operator-visible timeout error.
+    */
+    const supervised = superviseSpawn(launch.command, launch.args, {
       stdio: ["ignore", "pipe", "pipe"],
       env: spawnEnv,
+      windowsVerbatimArguments: launch.windowsVerbatimArguments,
+      maxLifetimeMs: settings.cliTimeoutMs + 2_100,
+      killGraceMs: 2_000,
     });
+    const child = supervised.child;
 
     const hardKillTimer = setTimeout(() => {
       if (settled) return;
       settled = true;
       try {
-        child.kill("SIGKILL");
+        supervised.kill("SIGKILL");
       } catch {
         // already gone
       }
@@ -406,7 +390,7 @@ export async function invokeHermesCli(
       settled = true;
       clearTimeout(hardKillTimer);
       try {
-        child.kill("SIGTERM");
+        supervised.kill("SIGTERM");
       } catch {
         // already gone
       }

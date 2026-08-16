@@ -103,6 +103,7 @@ const mockFetchOrgTree = vi.mocked((apiModule as any).fetchOrgTree);
 const mockFetchAgentStats = vi.mocked((apiModule as any).fetchAgentStats);
 const mockFetchSettings = vi.mocked((apiModule as any).fetchSettings);
 const mockUpdateSettings = vi.mocked((apiModule as any).updateSettings);
+const mockFetchDiscoveredSkills = vi.mocked(apiModule.fetchDiscoveredSkills);
 const mockClipboardWriteText = vi.fn();
 const mockResizeObserverObserve = vi.fn();
 const mockResizeObserverDisconnect = vi.fn();
@@ -255,6 +256,22 @@ describe("AgentsView", () => {
       });
     });
 
+    it("marks list-card stored skills as forced while preserving availability", async () => {
+      mockFetchAgents.mockResolvedValueOnce([
+        { ...mockAgents[0], id: "agent-skills", metadata: { skills: ["skill-auto"] } },
+      ]);
+      mockFetchAgentStats.mockResolvedValueOnce({ total: 1, byState: {}, byRole: {} });
+      mockFetchDiscoveredSkills.mockResolvedValueOnce([
+        { id: "skill-auto", name: "Auto", relativePath: "skills/auto/SKILL.md", enabled: true },
+      ] as any);
+
+      renderView(<AgentsView addToast={mockAddToast} />);
+
+      const badge = await screen.findByText("skill-auto");
+      expect(badge).toHaveAttribute("data-skill-state", "auto-available");
+      expect(badge).toHaveTextContent("Forced");
+    });
+
     it("formats skill badge labels from SKILL.md paths", async () => {
       mockFetchAgents.mockResolvedValueOnce([
         {
@@ -274,7 +291,7 @@ describe("AgentsView", () => {
         expect(screen.getByText("review")).toBeInTheDocument();
       });
       expect(screen.queryByText("auto::skills/../../.agents/skills/review/SKILL.md")).toBeNull();
-      expect(screen.getByText("review")).toHaveAttribute("title", "auto::skills/../../.agents/skills/review/SKILL.md");
+      expect(screen.getByText("review")).toHaveAttribute("title", expect.stringContaining("auto::skills/../../.agents/skills/review/SKILL.md"));
     });
 
     it("renders model and runtime labels on list-view agent cards", async () => {

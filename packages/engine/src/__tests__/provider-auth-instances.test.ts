@@ -62,4 +62,37 @@ describe("DashboardAuthStorage instance facade", () => {
     expect(credentials.has("default")).toBe(false);
     expect(defaultId).toBe("acct-first");
   });
+
+  /*
+  FNXC:ProviderAuth 2026-08-15-21:46:
+  Regression for GitHub #3462: instance-scoped Anthropic subscription login must reach the
+  upstream runtime as `anthropic` and persist the OAuth result under the `anthropic-subscription`
+  storage row. Passing the storage row id to the runtime login fails with
+  `Unknown provider: anthropic-subscription` because pi never registers that id as a provider.
+  */
+  it("routes Anthropic subscription instance login through the upstream anthropic provider", async () => {
+    const rows = new Map<string, { type: string; key?: string; expires?: number }>();
+    const storage = {
+      ...storageFixture(),
+      login: vi.fn(async (providerId: string) => {
+        rows.set(providerId, { type: "oauth", expires: Date.now() + 60_000 });
+      }),
+      get: vi.fn((providerId: string) => rows.get(providerId)),
+      set: vi.fn(async (providerId: string, credential: { type: string }) => {
+        rows.set(providerId, credential as never);
+      }),
+      remove: vi.fn(async (providerId: string) => { rows.delete(providerId); }),
+      getDefaultInstance: vi.fn(() => undefined),
+      getInstance: vi.fn(() => undefined),
+      setInstance: vi.fn(),
+    };
+    const facade = wrapAuthStorageWithApiKeyProviders(storage as unknown as FusionAuthStorage, {} as ModelRegistry);
+    await facade.loginInstance?.({ providerId: "anthropic", instanceId: "default" }, {} as never);
+    expect(storage.login).toHaveBeenCalledTimes(1);
+    expect(storage.login.mock.calls[0]?.[0]).toBe("anthropic");
+    expect(storage.setInstance).toHaveBeenCalledWith(
+      { providerId: "anthropic-subscription", instanceId: "default" },
+      expect.objectContaining({ type: "oauth" }),
+    );
+  });
 });

@@ -4,9 +4,19 @@ import { EventEmitter } from "node:events";
 
 // ── Mock node:child_process before imports that use it ─────────────────────
 
-const { mockSpawn } = vi.hoisted(() => ({ mockSpawn: vi.fn() }));
+const { mockSpawn, mockSuperviseSpawn } = vi.hoisted(() => ({
+  mockSpawn: vi.fn(),
+  mockSuperviseSpawn: vi.fn(),
+}));
 
 vi.mock("node:child_process", () => ({ spawn: mockSpawn }));
+vi.mock("@fusion/core", () => ({
+  superviseSpawn: (command: string, args: string[], options: Record<string, unknown>) => {
+    mockSuperviseSpawn(command, args, options);
+    const child = mockSpawn(command, args, options);
+    return { child, kill: (signal: NodeJS.Signals) => child.kill(signal) };
+  },
+}));
 
 import {
   buildHermesArgs,
@@ -16,8 +26,19 @@ import {
   resolveCliSettings,
 } from "../cli-spawn.js";
 import type { HermesCliSettings } from "../cli-spawn.js";
+import { __resetHermesLaunchCacheForTests } from "../windows-binary-launch.js";
 
 // ── Helpers ────────────────────────────────────────────────────────────────
+
+function flushAsync(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
+}
+
+function setPlatform(platform: NodeJS.Platform): () => void {
+  const descriptor = Object.getOwnPropertyDescriptor(process, "platform");
+  Object.defineProperty(process, "platform", { value: platform, configurable: true });
+  return () => Object.defineProperty(process, "platform", descriptor!);
+}
 
 function defaultSettings(overrides: Partial<HermesCliSettings> = {}): HermesCliSettings {
   return {
@@ -248,6 +269,88 @@ describe("parseHermesOutput", () => {
 describe("invokeHermesCli", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    __resetHermesLaunchCacheForTests();
+  });
+
+  it("launches a Windows .cmd prompt turn through cmd.exe with escaped prompt data", async () => {
+    const restorePlatform = setPlatform("win32");
+    try {
+      const whereChild = makeFakeChild();
+      const turnChild = makeFakeChild();
+      mockSpawn.mockReturnValueOnce(whereChild.child).mockReturnValueOnce(turnChild.child);
+
+      const prompt = 'hi" & calc.exe';
+      const promise = invokeHermesCli(prompt, defaultSettings());
+      await flushAsync();
+      whereChild.emitStdout("C:\\shims\\hermes.cmd\r\n");
+      whereChild.emitClose(0);
+      await flushAsync();
+
+      expect(mockSuperviseSpawn).toHaveBeenCalledOnce();
+      const [command, args, options] = mockSpawn.mock.calls[1]!;
+      expect(command).toBe("cmd.exe");
+      expect(args.slice(0, 3)).toEqual(["/d", "/s", "/c"]);
+      expect(args[3]).toContain("C:\\shims\\hermes.cmd");
+      expect(args[3]).toContain('hi\\" ^& calc.exe');
+      expect(options.windowsVerbatimArguments).toBe(true);
+
+      turnChild.emitStdout(fakeHermesOutput("ok"));
+      turnChild.emitClose(0);
+      await expect(promise).resolves.toMatchObject({ body: "ok" });
+    } finally {
+      restorePlatform();
+    }
+  });
+
+  it("reuses Windows path lookup without replaying a prior prompt command line", async () => {
+    const restorePlatform = setPlatform("win32");
+    try {
+      const whereChild = makeFakeChild();
+      const firstTurn = makeFakeChild();
+      const secondTurn = makeFakeChild();
+      mockSpawn
+        .mockReturnValueOnce(whereChild.child)
+        .mockReturnValueOnce(firstTurn.child)
+        .mockReturnValueOnce(secondTurn.child);
+
+      const first = invokeHermesCli("first prompt", defaultSettings());
+      await flushAsync();
+      whereChild.emitStdout("C:\\shims\\hermes.cmd\n");
+      whereChild.emitClose(0);
+      await flushAsync();
+      firstTurn.emitStdout(fakeHermesOutput("first"));
+      firstTurn.emitClose(0);
+      await first;
+
+      const second = invokeHermesCli("second prompt", defaultSettings());
+      await flushAsync();
+      secondTurn.emitStdout(fakeHermesOutput("second"));
+      secondTurn.emitClose(0);
+      await second;
+
+      expect(mockSpawn).toHaveBeenCalledTimes(3);
+      expect(mockSpawn.mock.calls[1]![1][3]).toContain("first prompt");
+      expect(mockSpawn.mock.calls[2]![1][3]).toContain("second prompt");
+      expect(mockSpawn.mock.calls[2]![1][3]).not.toContain("first prompt");
+    } finally {
+      restorePlatform();
+    }
+  });
+
+  it("keeps plugin timeout ownership above the supervisor backstop", async () => {
+    vi.useFakeTimers();
+    try {
+      const { child, kill } = makeFakeChild();
+      mockSpawn.mockReturnValue(child);
+      const promise = invokeHermesCli("hi", defaultSettings({ cliTimeoutMs: 10 }));
+      const timedOut = expect(promise).rejects.toThrow("hermes: process timed out after 10ms");
+      await vi.advanceTimersByTimeAsync(10);
+      await timedOut;
+      expect(kill).toHaveBeenCalledWith("SIGKILL");
+      expect(mockSuperviseSpawn.mock.calls[0]![2].maxLifetimeMs).toBeGreaterThan(10);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("first call passes correct args and no --resume", async () => {
@@ -256,6 +359,7 @@ describe("invokeHermesCli", () => {
 
     const PROMPT = "what is typescript?";
     const promise = invokeHermesCli(PROMPT, defaultSettings());
+    await flushAsync();
 
     emitStdout(fakeHermesOutput("TypeScript is a language."));
     emitClose(0);
@@ -275,6 +379,7 @@ describe("invokeHermesCli", () => {
     mockSpawn.mockReturnValue(child);
 
     const promise = invokeHermesCli("hello again", defaultSettings(), "20260427_120000_abcd12");
+    await flushAsync();
 
     emitStdout(fakeHermesOutput("Hi there!"));
     emitClose(0);
@@ -291,6 +396,7 @@ describe("invokeHermesCli", () => {
     mockSpawn.mockReturnValue(child);
 
     const promise = invokeHermesCli("hi", defaultSettings());
+    await flushAsync();
     emitStdout("Hello!\nsession_id: 20260427_120000_abcd12\n");
     emitClose(0);
 
@@ -303,6 +409,7 @@ describe("invokeHermesCli", () => {
     mockSpawn.mockReturnValue(child);
 
     const promise = invokeHermesCli("hi", defaultSettings());
+    await flushAsync();
     emitStdout("partial output");
     emitStderr("fatal error from hermes");
     emitClose(1);
@@ -315,6 +422,7 @@ describe("invokeHermesCli", () => {
     mockSpawn.mockReturnValue(child);
 
     const promise = invokeHermesCli("hi", defaultSettings());
+    await flushAsync();
     emitStdout("Some output without session id line");
     emitClose(0);
 
@@ -333,6 +441,7 @@ describe("invokeHermesCli", () => {
     });
 
     const promise = invokeHermesCli("test", settings);
+    await flushAsync();
     emitStdout(fakeHermesOutput("ok"));
     emitClose(0);
 
@@ -352,6 +461,7 @@ describe("invokeHermesCli", () => {
     mockSpawn.mockReturnValue(child);
 
     const promise = invokeHermesCli("hi", defaultSettings());
+    await flushAsync();
     const err = Object.assign(new Error("not found"), { code: "ENOENT" });
     emitError(err);
 
@@ -364,6 +474,7 @@ describe("invokeHermesCli", () => {
 
     const ac = new AbortController();
     const promise = invokeHermesCli("hi", defaultSettings(), undefined, ac.signal);
+    await flushAsync();
 
     // Abort before any output arrives.
     ac.abort();
@@ -379,6 +490,27 @@ describe("invokeHermesCli", () => {
 describe("listHermesProfiles", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    __resetHermesLaunchCacheForTests();
+  });
+
+  it("launches a Windows .cmd profile shim through cmd.exe", async () => {
+    const restorePlatform = setPlatform("win32");
+    try {
+      const whereChild = makeFakeChild();
+      const profileChild = makeFakeChild();
+      mockSpawn.mockReturnValueOnce(whereChild.child).mockReturnValueOnce(profileChild.child);
+      const promise = listHermesProfiles();
+      await flushAsync();
+      whereChild.emitStdout("C:\\shims\\hermes.cmd\n");
+      whereChild.emitClose(0);
+      await flushAsync();
+      expect(mockSpawn.mock.calls[1]![0]).toBe("cmd.exe");
+      expect(mockSpawn.mock.calls[1]![1].slice(0, 3)).toEqual(["/d", "/s", "/c"]);
+      profileChild.emitClose(0);
+      await expect(promise).resolves.toEqual([]);
+    } finally {
+      restorePlatform();
+    }
   });
 
   const SAMPLE_OUTPUT = [
@@ -392,6 +524,7 @@ describe("listHermesProfiles", () => {
     mockSpawn.mockReturnValue(child);
 
     const promise = listHermesProfiles();
+    await flushAsync();
     emitStdout(SAMPLE_OUTPUT);
     emitClose(0);
 
@@ -418,6 +551,7 @@ describe("listHermesProfiles", () => {
     ].join("\n") + "\n";
 
     const promise = listHermesProfiles();
+    await flushAsync();
     emitStdout(multiOutput);
     emitClose(0);
 
@@ -436,6 +570,7 @@ describe("listHermesProfiles", () => {
     mockSpawn.mockReturnValue(child);
 
     const promise = listHermesProfiles({ binaryPath: "/no/such/hermes" });
+    await flushAsync();
     const err = Object.assign(new Error("not found"), { code: "ENOENT" });
     emitError(err);
 
@@ -447,6 +582,7 @@ describe("listHermesProfiles", () => {
     mockSpawn.mockReturnValue(child);
 
     const promise = listHermesProfiles();
+    await flushAsync();
     emitStdout("");
     emitStderr("unknown subcommand");
     emitClose(2);
@@ -459,6 +595,7 @@ describe("listHermesProfiles", () => {
     mockSpawn.mockReturnValue(child);
 
     const promise = listHermesProfiles({ binaryPath: "/custom/hermes" });
+    await flushAsync();
     emitStdout(SAMPLE_OUTPUT);
     emitClose(0);
 

@@ -1,118 +1,33 @@
-# Cursor CLI Contract (FN-3396 Step 0)
-
-Date: 2026-05-07
 
 <!--
-FNXC:CursorCli 2026-07-08-00:00:
-The original FN-3396 preflight assumed model discovery via JSON-flagged subcommand variants with a plain-text fallback, and stated no auth-status command was confirmed. FN-7697 captured and shipped the real `cursor-agent` CLI contract: model discovery is `cursor-agent models` (plain text `id - Label` lines, no JSON flag) and authentication is derived from `cursor-agent status --format json` (`isAuthenticated`). This doc was corrected on 2026-07-08 to match the verified contract; see FN-7697 for the implementation.
+FNXC:CursorCli 2026-08-15-21:17:
+Cursor MCP support is enabled only after the CLI contract is observed: project config resolution,
+tool-name prefix, MCP approval semantics, and negotiated protocol. Fusion stages its config only
+for that verified session contract; it never assumes a fallback CLI flag or config location.
 -->
 
-**Update history:** 2026-07-08 — corrected the model-discovery and auth-status contract from FN-3396's assumed `--json` commands to the verified `cursor-agent models` / `cursor-agent status --format json` contract captured and implemented in FN-7697.
+## Cross-runtime fallback
 
-## Research method
+When a non-Cursor primary model has a configured `cursor-cli` fallback, Fusion withholds that pair from the primary runtime and arms it only when the Cursor runtime plugin is registered. The first retryable model-selection failure creates one Cursor session, re-issues the failed prompt there, and routes all later prompts through that replacement; non-retryable failures and swap-time failures preserve the original primary error. Disposing the primary session also disposes the replacement.
 
-- Local runtime inspection in the task environment (`which`, direct command execution).
-- Local binary wrapper inspection (`cursor`, `cursor-agent` launch scripts and install layout).
-- Bounded `fn_research_run` was attempted but failed in this environment with: `table research_runs has no column named projectId`.
+Cursor has no cross-runtime resume token. On the first swapped prompt only, Fusion can prepend a clearly labeled, non-authoritative text-only transcript from the primary session: at most the last 10 turns, 2,000 characters per turn, and 12,000 characters total. Tool and thinking blocks are excluded; missing or malformed session state transfers nothing and leaves the prompt unchanged. If the Cursor runtime plugin is unavailable or cannot be looked up, Fusion keeps the primary runtime and drops the fallback with a warning instead of crashing.
 
-## Confirmed invocation and binary detection
+A successful handoff emits `session:cross-runtime-fallback-engaged`. Its metadata is ids/outcomes-only (`sessionPurpose`, primary/fallback provider and model ids, trigger point, failure category, and whether context transferred); it never records error prose or transcript text.
 
-- **Primary executable aliases found on PATH:**
-  - `cursor`
-  - `cursor-agent`
-- **Not found on PATH:**
-  - `cursor-cli`
-- `cursor` is a wrapper that can delegate to agent mode and emits a targeted message when IDE install is missing.
-- `cursor-agent` is the direct CLI runtime entrypoint and is symlinked to a versioned install under:
-  - `~/.local/share/cursor-agent/versions/<version>/cursor-agent`
+## MCP staging and cleanup
 
-### Detection strategy
+Fusion creates a unique `fusion-custom-tools-<uuid>` server key per Cursor session. The `.cursor/.fusion-mcp-state.json` manifest retains the complete `{ command, args, env }` entry for every lease, allowing one process to recompose a peer process's live entry. Operator content is taken from current bytes; Fusion content is taken from that manifest.
 
-1. If the global `cursorCliBinaryPath` setting is a non-empty string, probe that configured binary first.
-2. Probe `cursor-agent` from PATH.
-3. Probe `cursor` from PATH.
-4. Deduplicate candidates when the configured value is exactly `cursor-agent` or `cursor`.
-5. Persist the resolved path and executable name in probe results.
-6. Report explicit failure reason when neither exists.
+Before staging in a git worktree, Fusion writes its marker block to `info/exclude`, then creates `.cursor/` and its lock directory. The marker covers `mcp.json`, the state record, and the lock so step-boundary `git add -A` cannot capture session files. The first stage persists the byte-exact baseline before it writes config bytes. Later changes journal the intended output before atomic config replacement, then promote the record, so a crash can resolve either the intended or previous byte sequence without mistaking Fusion output for an operator edit.
 
-### Manual binary path override
+A tracked `.cursor/mcp.json` is refused. Byte-different operator edits are preserved rather than restored over. If an operator edit makes the file unparsable, Fusion quarantines the worktree: no process writes that config, the exclusion remains, and further staging is refused. Reconciliation clears the quarantine only after the config is deleted or has valid JSON with no `fusion-custom-tools-*` keys.
 
-<!--
-FNXC:CursorCli 2026-07-02-00:00:
-Operators can set a global Cursor CLI binary path when PATH discovery resolves the wrong shim. The override is optional and must never remove the cursor-agent/cursor fallback probes.
--->
+### Worktree safety protocol
 
-Settings → Authentication → Cursor CLI exposes an optional binary path field. Leave it blank to use PATH auto-detection. When populated, Fusion validates the configured path by running the same `--version` probe used for status/enable, saves it only if that configured candidate itself succeeds, and then uses it for status, enable validation, and Cursor model discovery before falling back to PATH candidates.
+The lease manifest records each `serverEntry` as `{ command, args, env? }`; entries are always recomposed from the durable manifest while non-Fusion content comes from the current on-disk JSON. A peer can therefore dispose without dropping another process's bridge. The first stage commits the raw baseline before its first config write. Every subsequent mutation writes `pending { kind, raw, seq }`, atomically replaces the config, then promotes the pending record. Recovery compares bytes against the pending result and last confirmed result: match pending promotes, match prior discards, and any other bytes latch an operator edit.
 
-If the configured path fails during ordinary status/model-discovery probes but a PATH candidate succeeds, Fusion remains usable and reports the PATH candidate as the effective `binaryPath`; bounded diagnostics include the configured-path failure. If saving a new non-empty override fails or only succeeds via PATH fallback, the Settings save returns a 400 diagnostic and does not persist the path.
+Bootstrap is deliberately outside the main lock because that lock lives in `.cursor/`: resolve git shape, serialize the `info/exclude` marker under the git-dir bootstrap lock, observe/create `.cursor/` with an `EEXIST`-safe ownership observation, then acquire the main lock. On final cleanup the inverse is used: the exclusion marker is the last in-lock removal, the main lock is released immediately, and only then may Fusion make one non-recursive `rmdir` attempt. A failed `rmdir` is a benign peer/operator race and is retried only by a later reconciliation.
 
-Windows paths with spaces, for example `C:\Users\A User\AppData\Roaming\npm\cursor-agent.cmd`, are treated as one operator-provided string. Users should not quote or split the path in the UI.
+Lock owners persist PID, hostname, and acquisition time. Contenders retry briefly and may reclaim only a dead same-host owner or an expired critical-section TTL. Leases heartbeat independently for long turns. The synchronous process-exit backstop makes one free-lock attempt only; it never bootstraps, takes over a stale lock, or writes when a peer owns the lock. Reconciliation is the crash-recovery owner.
 
-### Windows PATH shim invocation
-
-<!--
-FNXC:CursorCli 2026-07-02-00:00:
-Windows Cursor installs may publish `cursor-agent.cmd`, `cursor.cmd`, or equivalent `.bat` shims on PATH; Fusion must invoke Cursor probe and discovery commands through the Windows shell so Node can execute those wrappers.
-Unix and macOS stay direct-spawned to avoid broadening shell semantics beyond the platform that requires it.
--->
-
-On Windows, `cursor-agent`, `cursor`, and manual override paths can resolve to `.cmd` / `.bat` wrappers rather than native executables. Node.js direct `spawn(binary, args)` does not execute those wrappers reliably; Fusion's Cursor command runner therefore sets shell execution only when `process.platform === "win32"`.
-
-The Windows shell-backed path applies to every Cursor CLI command Fusion currently runs through the shared runner:
-
-- Configured binary / `cursor-agent --version` / `cursor --version` probe attempts.
-- Auth-status probe against the effective probe-selected binary: `cursor-agent status --format json`.
-- Model discovery against the effective probe-selected binary: `cursor-agent models` (plain text, no `--json` flag).
-
-Non-Windows probes and discovery continue to use direct spawn. Spawn errors such as `ENOENT` or `EACCES` are included in the unavailable probe reason in bounded diagnostic form so a working terminal command is distinguishable from known Cursor runtime/auth states; Fusion does not dump PATH, environment variables, or unbounded stdout/stderr.
-
-## Confirmed error/auth/runtime signals
-
-Observed command behavior in this environment:
-
-- `cursor --help` (without IDE install):
-  - `Error: No Cursor IDE installation found. Use 'cursor agent' or 'agent' to run the agent.`
-- `cursor-agent --help` and `cursor agent --help` (with locked keychain):
-  - `Error: Your macOS login keychain is locked.`
-  - `Run security unlock-keychain and try again.`
-
-### Auth/readiness implications
-
-- Keychain-locked is a distinct, expected failure mode and must be surfaced as an auth/runtime-blocked state (not as unknown crash).
-- Missing IDE install is a distinct expected failure mode from missing binary.
-
-## Structured output and model discovery
-
-- **Confirmed:** `cursor-agent models` is the model-list command. Output is plain text — passing an unsupported JSON output flag (e.g. appending `--json` to the `models` subcommand) fails with `error: unknown option '--json'`.
-- Output shape: an `Available models` header line, a blank line, then one model per line formatted as `<id> - <Label>` (e.g. `auto - Auto (default)`, `claude-4.5-sonnet - Sonnet 4.5`), followed by a trailing tip line: `Tip: use --model <id> (or /model <id> in interactive mode) to switch.`.
-- Empty-account state: `No models available for this account.` (no model lines follow).
-- `cursor-agent --list-models` exists but is unreliable — it can report "No models available for this account." even while the CLI is authenticated with models available. Prefer `cursor-agent models`.
-
-### Model discovery parsing strategy (implemented)
-
-1. Run `cursor-agent models` (or the effective probe-selected binary) with a short timeout.
-2. Split stdout into lines; extract the bare model id as the segment before the first ` - ` on each line.
-3. Filter out the `Available models` header, the trailing `Tip:` line, the `No models available for this account.` empty-state line, and blank lines.
-4. Normalize and dedupe the remaining ids into the discovered model set.
-5. If the command is unavailable or fails, return an empty discovered set with a machine-readable reason; host surfaces Cursor models only when provider readiness + discovery usability conditions are met.
-
-### Authentication / status
-
-- **Confirmed:** authentication state is derived from `cursor-agent status --format json` (alias `whoami`), which returns a JSON object with `isAuthenticated` (boolean), plus `status`, `hasAccessToken`, and `userInfo`.
-- Use `isAuthenticated` as the auth signal instead of treating a successful `--version` probe as a proxy for readiness. `--version` remains the availability/version probe (bare version string), separate from auth.
-- Keychain-locked and missing-IDE-install remain distinct expected failure modes on top of this (see "Confirmed error/auth/runtime signals" above) — a locked keychain or missing IDE surfaces as its own runtime-blocked state rather than folding into `isAuthenticated: false`.
-
-## Provider ID decision
-
-- Use **`cursor-cli`** as the provider ID.
-- Rationale: aligns with task requirement; no conflicting provider ID observed in current codebase scan.
-
-## Contract freeze for FN-3396 (superseded by the verified contract below)
-
-The original FN-3396 preflight treated the following as canonical pending stronger evidence:
-
-- Binary candidates: `cursor-agent`, `cursor`.
-- Expected failure states include: missing binary, missing IDE installation, keychain locked, unauthenticated/not-ready CLI.
-- Model discovery must be dynamic-first with resilient fallback and no hardcoded static catalog by default.
-
-Binary candidates and expected failure states above remain accurate. The dynamic-first/no-static-catalog principle also still holds, but the specific commands are now confirmed rather than assumed — see "Structured output and model discovery" and "Windows PATH shim invocation" above for the verified `cursor-agent models` / `cursor-agent status --format json` contract that replaces the earlier `--json`-flag guesswork.
+When quarantine is held, `.fusion-mcp-state.json` remains as the durable record and the Fusion `info/exclude` block is intentionally retained so leftover bridge entries cannot be swept by `git add -A`. To recover, repair the JSON and remove every `fusion-custom-tools-*` entry, or delete the config; a later Cursor session clears the record and exclusion automatically. A merely parseable file that still has a Fusion key remains quarantined.

@@ -1,11 +1,12 @@
 /* FNXC:StructuralMail 2026-08-09-09:09: Reports and approval references need a compact structural treatment without changing ordinary mail. */
+/* FNXC:StructuralMail 2026-08-16-05:07: FN-8872 referenced undefined --space-2xs, which invalidated the badge padding to 0. --space-2xs is intentionally undefined (see space-token-defined.test.ts); use the established calc(var(--space-xs) / 2) half-step for the compact block padding instead. */
 .mailbox-kind-badge {
   border-radius: var(--radius-sm);
   display: inline-flex;
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-medium);
   margin-inline-start: var(--space-xs);
-  padding: var(--space-2xs) var(--space-xs);
+  padding: calc(var(--space-xs) / 2) var(--space-xs);
 }
 
 .mailbox-kind-badge--report {

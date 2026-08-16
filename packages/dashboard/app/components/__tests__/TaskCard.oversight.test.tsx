@@ -102,6 +102,22 @@ function makeTask(overrides: Partial<Task> = {}): Task {
 
 const noop = () => {};
 
+/*
+FNXC:PlannerOversight 2026-08-15-22:10:
+FN-8826 (1f5c44ac71) intentionally restored an always-on WIP lifecycle badge for
+empty-status cards in WIP lanes, so `card-header-badges` now legitimately mounts
+on the stale-snapshot fixtures below. The oversight invariant these tests guard is
+narrower: the header wrapper must never contain an overseer eye element while the
+effective oversight level is off/unresolved/inherited-default. Assert that instead
+of wrapper absence.
+*/
+function expectHeaderBadgesFreeOfOverseerEye() {
+  const header = screen.queryByTestId("card-header-badges");
+  if (header) {
+    expect(header.querySelector(".card-planner-overseer-state")).toBeNull();
+  }
+}
+
 function renderCard(
   overrides: Partial<Task> = {},
   cardProps: {
@@ -272,14 +288,14 @@ describe("TaskCard workflow-effective oversight level (FN-7516 code-review fix)"
     // unresolved on first render. The stale runtime snapshot must not leak an
     // Eye badge or header wrapper before the configured-off response arrives.
     expect(screen.queryByTestId("planner-overseer-state-badge")).toBeNull();
-    expect(screen.queryByTestId("card-header-badges")).toBeNull();
+    expectHeaderBadgesFreeOfOverseerEye();
 
     await waitFor(() => {
       expect(fetchWorkflowSettingValues).toHaveBeenCalledWith(`wf-stale-snapshot-off-${column}`, undefined);
     });
     await waitFor(() => {
       expect(screen.queryByTestId("planner-overseer-state-badge")).toBeNull();
-      expect(screen.queryByTestId("card-header-badges")).toBeNull();
+      expectHeaderBadgesFreeOfOverseerEye();
     });
   });
 
@@ -425,13 +441,13 @@ describe("TaskCard selected-workflow oversight identity (FN-8251)", () => {
     renderCard(staleSnapshot(column), { planningWorkflowId: " selected-workflow-off ", projectId: "project-8251" });
 
     expect(screen.queryByTestId("planner-overseer-state-badge")).toBeNull();
-    expect(screen.queryByTestId("card-header-badges")).toBeNull();
+    expectHeaderBadgesFreeOfOverseerEye();
     await waitFor(() => {
       expect(fetchWorkflowSettingValues).toHaveBeenCalledWith("selected-workflow-off", "project-8251");
     });
     await waitFor(() => {
       expect(screen.queryByTestId("planner-overseer-state-badge")).toBeNull();
-      expect(screen.queryByTestId("card-header-badges")).toBeNull();
+      expectHeaderBadgesFreeOfOverseerEye();
     });
   });
 
@@ -447,13 +463,13 @@ describe("TaskCard selected-workflow oversight identity (FN-8251)", () => {
     // The selected workflow's declaration default is not a meaningful oversight
     // configuration, so a stale runtime snapshot cannot create an eye or shell.
     expect(screen.queryByTestId("planner-overseer-state-badge")).toBeNull();
-    expect(screen.queryByTestId("card-header-badges")).toBeNull();
+    expectHeaderBadgesFreeOfOverseerEye();
     await waitFor(() => {
       expect(fetchWorkflowSettingValues).toHaveBeenCalledWith(`selected-inherited-default-${column}`, "project-8255");
     });
     await waitFor(() => {
       expect(screen.queryByTestId("planner-overseer-state-badge")).toBeNull();
-      expect(screen.queryByTestId("card-header-badges")).toBeNull();
+      expectHeaderBadgesFreeOfOverseerEye();
     });
   });
 
@@ -475,12 +491,12 @@ describe("TaskCard selected-workflow oversight identity (FN-8251)", () => {
     });
 
     expect(screen.queryByTestId("planner-overseer-state-badge")).toBeNull();
-    expect(screen.queryByTestId("card-header-badges")).toBeNull();
+    expectHeaderBadgesFreeOfOverseerEye();
     await waitFor(() => {
       expect(fetchWorkflowSettingValues).toHaveBeenCalledWith("aggregate-inherited-default", undefined);
     });
     expect(screen.queryByTestId("planner-overseer-state-badge")).toBeNull();
-    expect(screen.queryByTestId("card-header-badges")).toBeNull();
+    expectHeaderBadgesFreeOfOverseerEye();
     expect(container.querySelector(".card-planner-overseer-state[title][aria-label]")).toBeNull();
   });
 
@@ -495,7 +511,7 @@ describe("TaskCard selected-workflow oversight identity (FN-8251)", () => {
     await waitFor(() => expect(fetchWorkflowSettingValues).toHaveBeenCalled());
     await waitFor(() => {
       expect(screen.queryByTestId("planner-overseer-state-badge")).toBeNull();
-      expect(screen.queryByTestId("card-header-badges")).toBeNull();
+      expectHeaderBadgesFreeOfOverseerEye();
       expect(screen.queryByLabelText(/overseer/i)).toBeNull();
     });
   });
@@ -503,7 +519,7 @@ describe("TaskCard selected-workflow oversight identity (FN-8251)", () => {
   it("fails closed without workflow identity but keeps a valid active task override authoritative", () => {
     const { rerender } = renderCard(staleSnapshot("in-progress"));
     expect(screen.queryByTestId("planner-overseer-state-badge")).toBeNull();
-    expect(screen.queryByTestId("card-header-badges")).toBeNull();
+    expectHeaderBadgesFreeOfOverseerEye();
 
     rerender(
       <TaskCard
@@ -575,7 +591,7 @@ describe("TaskCard selected-workflow oversight identity (FN-8251)", () => {
     await waitFor(() => expect(fetchWorkflowSettingValues).toHaveBeenCalledTimes(2));
     await waitFor(() => {
       expect(screen.queryByTestId("planner-overseer-state-badge")).toBeNull();
-      expect(screen.queryByTestId("card-header-badges")).toBeNull();
+      expectHeaderBadgesFreeOfOverseerEye();
       expect(container.querySelector(".card-planner-overseer-state[title][aria-label]")).toBeNull();
     });
   });
@@ -596,12 +612,12 @@ describe("TaskCard selected-workflow oversight identity (FN-8251)", () => {
     act(() => notifyWorkflowSettingValuesUpdated(workflowId, "project-cache-fix"));
 
     expect(screen.queryByTestId("planner-overseer-state-badge")).toBeNull();
-    expect(screen.queryByTestId("card-header-badges")).toBeNull();
+    expectHeaderBadgesFreeOfOverseerEye();
     expect(container.querySelector(".card-planner-overseer-state[title][aria-label]")).toBeNull();
     await waitFor(() => expect(fetchWorkflowSettingValues).toHaveBeenCalledTimes(2));
     await waitFor(() => {
       expect(screen.queryByTestId("planner-overseer-state-badge")).toBeNull();
-      expect(screen.queryByTestId("card-header-badges")).toBeNull();
+      expectHeaderBadgesFreeOfOverseerEye();
     });
   });
 
@@ -626,7 +642,7 @@ describe("TaskCard selected-workflow oversight identity (FN-8251)", () => {
       resolveActive?.({ stored: { plannerOversightLevel: "steer" }, effective: { plannerOversightLevel: "steer" }, orphaned: [] });
     });
     expect(screen.queryByTestId("planner-overseer-state-badge")).toBeNull();
-    expect(screen.queryByTestId("card-header-badges")).toBeNull();
+    expectHeaderBadgesFreeOfOverseerEye();
   });
 
   it("hides the eye synchronously when an active selected workflow changes to an unresolved off workflow", async () => {
@@ -661,7 +677,7 @@ describe("TaskCard selected-workflow oversight identity (FN-8251)", () => {
     expect(screen.queryByTestId("planner-overseer-state-badge")).toBeNull();
     await waitFor(() => expect(fetchWorkflowSettingValues).toHaveBeenCalledWith("mobile-inherited-default", undefined));
     expect(screen.queryByTestId("planner-overseer-state-badge")).toBeNull();
-    expect(screen.queryByTestId("card-header-badges")).toBeNull();
+    expectHeaderBadgesFreeOfOverseerEye();
     expect(container.querySelector(".card-planner-overseer-state[title][aria-label]")).toBeNull();
   });
 });

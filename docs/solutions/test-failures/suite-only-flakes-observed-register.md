@@ -136,3 +136,37 @@ FN-8928 evicted the file from the blocking gate under the AGENTS.md gate rule; d
 | targeted file with dot reporter | **afterAll hook timed out** at 15s; 61 tests passed |
 
 The timeout occurred after all test assertions and is unrelated to FN-8979's canonical mission-blocker contract. This file retains substantial coverage, so this first observation is recorded rather than quarantined. A second sighting requires the normal file-level quarantine decision.
+
+## 8. Planning Mode duplicate-response generation reconciliation
+
+- **File:** `packages/dashboard/app/components/__tests__/PlanningModeModal.planning-flow.test.tsx`
+- **Exact test:** `PlanningModeModal sequential flow > silently reconciles duplicate-response generation conflicts on 'mobile' with 'a durable next question'` (the `'desktop'` row of the same parametrized case failed once earlier the same day under a contaminated run).
+- **Observed tree/SHA:** `main` at `8ee2ace2c1` (dashboard bare-run repair batch).
+- **Observed frequency:** one clean sighting — solo standard-lane run (`node scripts/run-quality-tests.mjs`, lane `app:backfill-3`) on a quiet machine; the earlier `'desktop'`-row failure ran concurrently with a full bare vitest run and live peer-session edits to planning API files, so it is recorded as context, not as an independent clean sighting.
+
+| run | result |
+|---|---|
+| solo standard lane (quiet machine) | **1 failed** (`'mobile'` row) / rest of lane passed |
+| targeted file run immediately after | 58/58 passed |
+| earlier busy-machine standard lane | **1 failed** (`'desktop'` row); targeted rerun 58/58 passed |
+
+This file now carries THREE distinct register/ledger histories (entries 4 and 5 above plus this one) and one prior FN-8936 stabilization. Under the AGENTS.md repeated-quarantine rule this is a subsystem product-race smell: the duplicate-response generation reconciliation path (FN-8756 banner suppression / duplicate-generation dedup) should be investigated as a product race rather than stabilized a fourth time. Filed as a Fusion task; a second clean sighting of this exact test is an ordinary on-sight quarantine.
+
+**Resolved 2026-08-16 (FN-9116): Product race.** `handleSubmitResponse` caught a duplicate response-generation rejection, awaited `fetchAiSession(sessionId)`, then wrote its old session snapshot after a newer writer could already own the UI. The fix captures the response load and turn epochs before the response await, so an A → B → A reload cannot let the old A response adopt the new A load epoch. Every reconciliation/fallback write drops when a newer load, response, stream event, or recovery transition owns the view.
+
+Crucially, an accepted SSE `onError` is a turn boundary only after stale-event rejection. Its recovery captures that turn token across fetch and auto-retry awaits; a later response cannot be overwritten by an old reconnect, retry failure, or permanent error, and reconciliation from the errored turn cannot overwrite the recovery. The loading-poll error path now also claims its recovery turn *before* auto-retry: a successful retry returns early, so claiming afterward had left a held reconciliation authorized to overwrite recovery loading state.
+
+FN-9116 adds deterministic ordering coverage for desktop and mobile rows across durable-question, result-only plan-review, generating snapshots, A → B → A reload/rejection, `onError`-before-reconciliation, `onError` recovery losing ownership to a later response, and loading-poll recovery landing before a held reconciliation. The non-duplicate actionable-error assertions remain intact and passing. Response actions now settle hydration and query the live control before dispatch, removing the detached hydration-node test seam without changing product semantics.
+
+- **Resolved tree/SHA:** `d5f29bbdbc` (FN-9116 worktree; final documentation commit follows).
+
+| verification | result |
+|---|---|
+| targeted planning-flow file ×3 | **passed** (76 tests each run) |
+| shared-helper sibling suites ×1 | **passed** |
+| `app:backfill-3` run 1 | **passed** (5,693 tests) |
+| `app:backfill-3` run 2 | **passed** (5,693 tests) |
+| `app:backfill-3` run 3 | **passed** (5,693 tests) |
+| `pnpm lint`, `pnpm verify:fast`, `pnpm build` | **passed** |
+
+The flake is structurally removed rather than stabilized: every hydration/recovery writer now has an ownership boundary before it can overwrite a newer turn. This is a published behavior fix, so FN-9116 includes a patch changeset.

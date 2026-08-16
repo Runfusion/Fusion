@@ -6114,7 +6114,7 @@ export default interface Resources {
         "whenEnabledFusionChecksOpenAndClosedIssues": " When enabled, Fusion checks open and closed issues in the target repo for likely duplicates (using File Scope paths and key symptoms) before creating a new tracking issue. Uncheck to always create a new issue. Default: enabled. ",
         "whenEnabledImportedGitHubIssuesUseTheirSource": "When enabled, GitHub issue imports become tracked tasks that adopt the source issue. This does not turn GitHub tracking on for ordinary new tasks. Default: disabled.",
         "workflowsOrChangelogModeWhenContributorsShouldUpdate": " workflows, or changelog mode when contributors should update an existing changelog file. Default: off. ",
-        "workspaceModeHint": "When enabled, the project root is treated as a workspace containing multiple git sub-repos. Tasks run per-sub-repo and no git repo is created at the root. Disable for single-repo projects. No default — unset (disabled)."
+        "workspaceModeHint": "Enabling detects git sub-repositories and requires at least one; it creates .fusion/workspace.json. Disabling removes .fusion/workspace.json and returns to single-repo mode. No default — unset (disabled)."
       },
       "globalGeneral": {
         "agentToolOutputLimit": " Agent tool-output limit ",
@@ -6150,6 +6150,8 @@ export default interface Resources {
         "onStartupOncePerServerLaunch": "On startup — once per server launch",
         "ownerRepo": "owner/repo",
         "projectsInheritThisValueWhenTheyDoNot": "Projects inherit this value when they do not set a project default tracking repo. No default — unset.",
+        "quickAddSubmitOnEnter": " Press Enter to save a task in Quick Add ",
+        "quickAddSubmitOnEnterHint": " Default: enabled. When disabled, Enter inserts a newline and Cmd/Ctrl+Enter saves. ",
         "releaseChannel": "Release channel",
         "releaseChannelHelp": "Stable follows official releases. Beta follows pre-releases cut from main and also picks up each stable release once it overtakes the beta. Switching back to Stable never downgrades. Default: stable.",
         "reportRoadmapDedupeEnabled": "Global public-roadmap deduplication",

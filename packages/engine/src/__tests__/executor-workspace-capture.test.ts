@@ -29,6 +29,9 @@ function createStore(overrides: Partial<Record<string, unknown>> = {}): TaskStor
     logEntry: vi.fn().mockResolvedValue(undefined),
     getSettings: vi.fn().mockResolvedValue({ autoMerge: false }),
     getRunContextFor: vi.fn(),
+    // verifyWorktreeInvariants resolves the live external-execution route through store.getTask
+    // (FNXC:ExternalExecutionCheckout 2026-08-09-23:53); undefined falls back to the passed task.
+    getTask: vi.fn().mockResolvedValue(undefined),
     on: emitter.on.bind(emitter),
     ...overrides,
   }) as unknown as TaskStore & EventEmitter;
@@ -209,10 +212,26 @@ describeIfGit("U1 KTD2 — verifyWorktreeInvariants iterates per worktree, prese
     expect(result.expected).toBe(BRANCH);
   });
 
-  it("regression: a zero-acquire workspace task (empty map) verifies vacuously → {ok:true}", async () => {
+  /*
+  FN-9060 (ebd345da0f) intentionally replaced the old vacuous {ok:true} for an UNPROVEN zero-acquire
+  workspace map: completion verification and per-repo review now classify the empty map through the
+  shared classifyWorkspaceZeroAcquire predicate, so an unproven empty map fails closed as no_commits
+  and only proven commit-free work (noCommitsExpected / no-op sentinel / prompt-derived eligibility)
+  verifies clean. Assert both halves of that contract.
+  */
+  it("regression (FN-9060): an UNPROVEN zero-acquire workspace task (empty map) fails closed as no_commits", async () => {
     fx = await createWorkspaceFixture();
     const executor = workspaceExecutor(fx);
     const task = makeTask(TASK_ID, { branch: BRANCH, workspaceWorktrees: {} });
+    const result = await (executor as any).verifyWorktreeInvariants(task);
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("no_commits");
+  });
+
+  it("regression (FN-9060): a PROVEN commit-free zero-acquire workspace task (noCommitsExpected) verifies clean", async () => {
+    fx = await createWorkspaceFixture();
+    const executor = workspaceExecutor(fx);
+    const task = makeTask(TASK_ID, { branch: BRANCH, workspaceWorktrees: {}, noCommitsExpected: true });
     const result = await (executor as any).verifyWorktreeInvariants(task);
     expect(result).toEqual({ ok: true });
   });

@@ -144,6 +144,8 @@ export function buildExecuteWorkflowGraphDeps(host: any): any {
       "graphRethinkNarrations", "graphRouting", "graphSeamGoverningNodeId", "graphSeamSkillName",
       "graphSeamThinkingLevel", "graphStepActiveContext", "graphStepRunOnce", "graphStepSessionPinned",
       "graphToolFailureRunCursors", "graphUnattendedRuns", "outerConcurrencyClaims",
+      // FNXC:AgentActivityStream 2026-08-15-22:15: FN-8864 gate-attribution retention map (restored post-wave-18).
+      "workflowGateActivityPrincipals",
     ]),
     ...facadeMethods(host, [
       "getRunContextFor", "advanceNoMergeWorkflowToCompleteColumn", "applyGraphRethinkReset",
@@ -163,9 +165,14 @@ export function buildHandleGraphFailureDeps(host: any): any {
     store: host.store,
     rootDir: host.rootDir,
     options: host.options as { stuckTaskDetector?: { untrackTask?: (taskId: string) => void }; [k: string]: unknown },
+    // FNXC:WorkflowLifecycle 2026-08-15-22:15: liveness surfaces for the transient-resume fire-time guard
+    // (restored post-wave-18 — the peel replaced the guarded scheduled retry with an unguarded execute()).
+    processWideGraphRouting: host.constructor.processWideGraphRouting as Set<string>,
     ...facadeFields(host, [
       "activeWorktrees", "completionFinalizedTaskIds", "graphExecuteSelfRequeued",
       "graphToolFailureRunCursors", "pausedAborted", "pausedAbortProvenance", "userCanceledTaskIds",
+      "executing", "resumingUnpaused", "activeSessions", "activeStepExecutors",
+      "activeWorkflowStepSessions", "activeCliTaskSessions", "activeWorkflowGraphAbortControllers",
     ]),
     ...facadeMethods(host, [
       "getRunContextFor", "clearCompletedTaskWatchdog", "clearPausedAborted", "execute",
@@ -1343,7 +1350,12 @@ export function buildRouteResetParsePinMismatchToRetryDeps(host: any): any {
 export function buildCreateWorktreeFacadeDeps(host: any, tryCreateWorktree: any): any {
   return buildCreateWorktreeDeps(
     host,
-    { maxWorktreeRetries: MAX_WORKTREE_RETRIES, worktreeRetryDelaysMs: [...WORKTREE_RETRY_DELAYS] },
+    /*
+    FNXC:CodeOrganization 2026-08-15-22:15: pre-peel executor.ts read `this.MAX_WORKTREE_RETRIES`
+    (a private instance field), so an instance-level override was part of the contract (tests pin it
+    to 1 to keep retry-exhaustion paths fast). Honor that override before the module constant.
+    */
+    { maxWorktreeRetries: (host as { MAX_WORKTREE_RETRIES?: number }).MAX_WORKTREE_RETRIES ?? MAX_WORKTREE_RETRIES, worktreeRetryDelaysMs: [...WORKTREE_RETRY_DELAYS] },
     tryCreateWorktree,
   );
 }

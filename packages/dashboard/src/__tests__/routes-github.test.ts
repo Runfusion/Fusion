@@ -234,6 +234,19 @@ function createMockStore(overrides: Partial<TaskStore> = {}): TaskStore {
     moveTask: vi.fn(),
     updateTask: vi.fn(),
     withPlanningLifecycleLock: vi.fn(async (_id, fn) => await fn()),
+    // FNXC:SpecLockApproval 2026-08-15-05:10: approve-plan now locks the approved PROMPT.md and publishes a drift report inside the planning fence; mock both seams so route contracts stay isolated from spec-lock persistence.
+    lockCurrentPlanWhilePlanningLocked: vi.fn().mockResolvedValue(undefined),
+    reconcileSpecDriftWhilePlanningLocked: vi.fn().mockResolvedValue(undefined),
+    /*
+    FNXC:PlanApprovalDispatch 2026-08-15-05:10:
+    The engine mock's resumeApprovedPlanReviewHandoff defaults to the REAL implementation, which
+    seeds a runnable Plan Review continuation through these store writers after approval. Provide
+    the empty/no-op continuation surface so route unit tests exercise the genuine handoff instead
+    of exploding with "store.listWorkflowWorkItemsForTask is not a function".
+    */
+    listWorkflowWorkItemsForTask: vi.fn().mockResolvedValue([]),
+    seedStrandedPlanReviewContinuation: vi.fn(async () => ({ seeded: true, workItemId: "mock-plan-review-continuation" })),
+    replaceActiveTaskWorkflowContinuation: vi.fn(async (input: Record<string, unknown>) => ({ ...input, id: "mock-plan-review-continuation" })),
     deleteTask: vi.fn(),
     mergeTask: vi.fn(),
     archiveTask: vi.fn(),
@@ -2647,15 +2660,30 @@ describe("POST /tasks/:id/spec/rebuild", () => {
 
 describe("POST /tasks/:id/approve-plan", () => {
   let store: TaskStore;
+  let approvalRoot: string;
 
   beforeEach(() => {
+    /*
+    FNXC:SpecLockApproval 2026-08-15-05:10:
+    Approval is a release boundary — an unreadable PROMPT.md is now a 409 (the route refuses to
+    approve without creating the immutable spec lock). The mock root must therefore carry a real
+    on-disk PROMPT.md for the fixture task, matching production where an awaiting-approval card
+    always has its spec materialized.
+    */
+    approvalRoot = mkdtempSync(join(tmpdir(), "kb-dashboard-approve-plan-root-"));
+    mkdirSync(join(approvalRoot, ".fusion", "tasks", "FN-001"), { recursive: true });
+    writeFileSync(join(approvalRoot, ".fusion", "tasks", "FN-001", "PROMPT.md"), "# Task: FN-001\n\nPlan body.\n");
     store = createMockStore({
       getTask: vi.fn(),
       moveTask: vi.fn(),
       updateTask: vi.fn(),
       logEntry: vi.fn().mockResolvedValue(undefined),
-      getRootDir: vi.fn().mockReturnValue("/fake/root"),
+      getRootDir: vi.fn().mockReturnValue(approvalRoot),
     });
+  });
+
+  afterEach(() => {
+    rmSync(approvalRoot, { recursive: true, force: true });
   });
 
   function buildApp() {
@@ -2816,9 +2844,14 @@ describe("POST /tasks/:id/approve-plan", () => {
     expect(res.status).toBe(200);
     expect(store.logEntry).toHaveBeenCalledWith("FN-001", "Plan approved by user");
     expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo");
+    /*
+    FNXC:SpecLockApproval 2026-08-15-05:10:
+    A readable PROMPT.md is now mandatory at approval (unreadable is a 409), so the persisted
+    patch always carries the real fingerprint hash of the approved on-disk plan — never null.
+    */
     expect(store.updateTask).toHaveBeenCalledWith("FN-001", {
       status: null,
-      approvedPlanFingerprint: null,
+      approvedPlanFingerprint: expect.stringMatching(/^[0-9a-f]{64}$/),
     });
     expect(res.body.column).toBe("todo");
     expect(res.body.status).toBeUndefined();

@@ -21,6 +21,8 @@ export type {
 
 // Re-export for backward compatibility (tests import from executor.ts)
 export { summarizeToolArgs } from "../agents/agent-logger.js";
+// FNXC:AgentActivityStream 2026-08-15-22:15: FN-8864 claim helper restored post-wave-18 (see workflow-gate-activity.ts).
+export { resolveWorkflowGateActivityClaim } from "./workflow-gate-activity.js";
 export {
   createAgentCreateTool,
   createAgentDeleteTool,

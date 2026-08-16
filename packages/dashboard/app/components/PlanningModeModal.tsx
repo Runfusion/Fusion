@@ -614,9 +614,15 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   mutate the newly selected session, while successful progress still resets the three-attempt budget.
   */
   const planningAutoRetryAttemptRef = useRef(0);
-  const planningAutoRetryOwnerRef = useRef<{ sessionId: string; token: symbol } | null>(null);
-  const startPlanningAutoRetryRef = useRef<(sessionId: string) => Promise<boolean>>(async () => false);
+  const planningAutoRetryOwnerRef = useRef<{ sessionId: string; token: symbol; ownsTurn?: () => boolean } | null>(null);
+  const startPlanningAutoRetryRef = useRef<(sessionId: string, ownsTurn?: () => boolean) => Promise<boolean>>(async () => false);
   const planningSessionLoadEpochRef = useRef(0);
+  /*
+  FNXC:PlanningTurnReconciliation 2026-08-16-06:22:
+  Same-session streamed durable turns and response submissions can supersede a pending
+  reconciliation without changing session identity. This epoch lets their newer writer win.
+  */
+  const planningTurnEpochRef = useRef(0);
   /*
   FNXC:PlanningMode 2026-07-02-07:56:
   Refine Further is a single-flight completed-summary turn. Guard synchronously with a ref so duplicate click, touch, or keyboard activations cannot submit a second refine request or close the active stream with a generation-in-progress error before React renders the disabled state.
@@ -1261,11 +1267,22 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     const tick = async () => {
       const sessionId = currentSessionIdRef.current;
       if (!sessionId) return;
+      /*
+      FNXC:PlanningTurnReconciliation 2026-08-16-07:57:
+      A loading poll may resolve after an accepted SSE question, response submission, or newer
+      session load has claimed the same session. Fence the fetch at launch so its stale snapshot
+      cannot advance the turn epoch and overwrite the newer question, summary, or recovery state.
+      */
+      const pollTurnEpoch = planningTurnEpochRef.current;
+      const pollLoadEpoch = planningSessionLoadEpochRef.current;
       try {
         const session = await fetchAiSession(sessionId);
         if (cancelled || !session) return;
         if (currentSessionIdRef.current !== sessionId) return;
+        if (planningSessionLoadEpochRef.current !== pollLoadEpoch) return;
+        if (planningTurnEpochRef.current !== pollTurnEpoch) return;
         if (session.status === "awaiting_input" && !session.currentQuestion && session.result) {
+          planningTurnEpochRef.current += 1;
           // Recover a legacy or partially persisted plan when its question event was missed.
           // New sequential turns normally settle with both result and currentQuestion.
           resetPlanningAutoRetryBudget();
@@ -1281,6 +1298,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
           setView({ type: "plan_review", session: { sessionId, currentQuestion: null, summary }, summary });
           setStreamingOutput("");
         } else if (session.status === "awaiting_input" && session.currentQuestion) {
+          planningTurnEpochRef.current += 1;
           /*
           FNXC:PlanningTurnReconciliation 2026-07-20-10:36:
           Missed SSE recovery must hydrate the server's entire interview turn together. Keeping
@@ -1308,6 +1326,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
           });
           setStreamingOutput("");
         } else if (session.status === "complete" && session.result) {
+          planningTurnEpochRef.current += 1;
           const resume = resolveCompletePlanningResume(session);
           if (resume.kind === "unrecoverable") {
             setView({
@@ -1322,9 +1341,23 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
           setStreamingOutput("");
         } else if (session.status === "error") {
           const errorMessage = session.error || t("planning.sessionFailed2", "Session failed");
-          const handled = await startPlanningAutoRetryRef.current(sessionId);
+          /*
+          FNXC:PlanningTurnReconciliation 2026-08-16-07:19:
+          A loading-poll error starts a recovery turn before auto-retry awaits. A successful retry
+          returns early, so claiming afterward left a pending duplicate-response reconciliation
+          authorized to overwrite recovery's loading state. The poll's turn owns both retry and
+          terminal-error writes; a newer question, response, stream recovery, or session switch
+          invalidates this predicate before either path can mutate the view.
+          */
+          const recoveryTurnEpoch = ++planningTurnEpochRef.current;
+          const recoveryLoadEpoch = planningSessionLoadEpochRef.current;
+          const pollRecoveryStillOwnsTurn = () => !cancelled
+            && currentSessionIdRef.current === sessionId
+            && planningSessionLoadEpochRef.current === recoveryLoadEpoch
+            && planningTurnEpochRef.current === recoveryTurnEpoch;
+          const handled = await startPlanningAutoRetryRef.current(sessionId, pollRecoveryStillOwnsTurn);
           if (handled) return;
-          if (cancelled || currentSessionIdRef.current !== sessionId) return;
+          if (!pollRecoveryStillOwnsTurn()) return;
           /*
           FNXC:PlanningRetry 2026-07-13-00:05:
           Mirror the SSE onError terminal-error transition here: when this poll is the one that
@@ -1509,6 +1542,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
           passive stream catch-up event that overwrites a newer awaiting-input question.
           */
           if (isAnsweredQuestion && editingQuestionIdRef.current !== normalizedQuestion.id) return;
+          planningTurnEpochRef.current += 1;
           setIsRetrying(false);
           resetPlanningAutoRetryBudget();
           setIsRefiningSummary(false);
@@ -1539,6 +1573,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
         },
         onSummary: (summary) => {
           if (isStaleEvent()) return;
+          planningTurnEpochRef.current += 1;
           const normalizedSummary = normalizePlanningSummary(summary);
           setIsRetrying(false);
           resetPlanningAutoRetryBudget();
@@ -1578,6 +1613,20 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
         },
         onError: (message) => {
           if (isStaleEvent()) return;
+          /*
+          FNXC:PlanningTurnReconciliation 2026-08-16-06:45:
+          An accepted stream error starts recovery for the current turn, whether it reconnects,
+          auto-retries, or renders a permanent error. Its turn token remains authoritative across
+          recovery awaits, so a later response cannot be replaced by an older recovery either.
+          Advance only after stale-event rejection so a delayed duplicate-response reconciliation
+          from the errored turn cannot overwrite recovery, while an obsolete stream cannot
+          invalidate the live turn.
+          */
+          const recoveryTurnEpoch = ++planningTurnEpochRef.current;
+          const recoveryLoadEpoch = planningSessionLoadEpochRef.current;
+          const recoveryStillOwnsTurn = () => currentSessionIdRef.current === sessionId
+            && planningSessionLoadEpochRef.current === recoveryLoadEpoch
+            && planningTurnEpochRef.current === recoveryTurnEpoch;
           const errorMessage = message || t("planning.sessionFailed", "Session failed while contacting the AI.");
 
           // A single transient stream error (e.g. tab was backgrounded long
@@ -1588,7 +1637,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
           (async () => {
             try {
               const session = await fetchAiSession(sessionId);
-              if (isStaleEvent()) return;
+              if (!recoveryStillOwnsTurn()) return;
               if (
                 session &&
                 (session.status === "generating" || session.status === "awaiting_input")
@@ -1599,7 +1648,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
             } catch {
               // fall through to error view below
             }
-            if (isStaleEvent()) return;
+            if (!recoveryStillOwnsTurn()) return;
 
             /*
             FNXC:PlanningRetry 2026-07-21-10:00:
@@ -1607,9 +1656,10 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
             Returning to Planning must use the same bounded, single-flight retry path as a live
             turn so tab suspension or navigation never turns a resumable session into an error UI.
             */
-            if (await startPlanningAutoRetryRef.current(sessionId)) {
+            if (await startPlanningAutoRetryRef.current(sessionId, recoveryStillOwnsTurn)) {
               return;
             }
+            if (!recoveryStillOwnsTurn()) return;
             setIsRetrying(false);
             setIsAutoRetrying(false);
             setIsRefiningSummary(false);
@@ -1647,7 +1697,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   const startPlanningRetry = useCallback(
     async (
       retryTarget: { sessionId: string; currentQuestion: PlanningQuestion | null; summary: PlanningSummary | null },
-      options: { auto: boolean; retryToken?: symbol },
+      options: { auto: boolean; retryToken?: symbol; ownsTurn?: () => boolean },
     ) => {
       setError(null);
       setIsRetrying(!options.auto);
@@ -1664,7 +1714,8 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
         await retryPlanningSession(retryTarget.sessionId, projectId);
       } catch (err) {
         const retryStillOwnsSession = () => currentSessionIdRef.current === retryTarget.sessionId
-          && (!options.auto || planningAutoRetryOwnerRef.current?.token === options.retryToken);
+          && (!options.auto || planningAutoRetryOwnerRef.current?.token === options.retryToken)
+          && (options.ownsTurn?.() ?? true);
         if (!retryStillOwnsSession()) return;
 
         let retryError: unknown = err;
@@ -1779,14 +1830,15 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
           A rejected automatic attempt has settled before its bounded successor is queued, so
           release only its matching token first. The successor can then acquire ownership, while
           duplicate SSE/poll reports still coalesce only during a genuinely pending invocation;
-          a stale callback cannot clear a newer session's owner.
+          a stale callback cannot clear a newer session's owner. Preserve a recovery's turn
+          predicate into the queued successor because another turn can land before its microtask.
           */
           if (options.retryToken && planningAutoRetryOwnerRef.current?.token === options.retryToken) {
             planningAutoRetryOwnerRef.current = null;
           }
           queueMicrotask(() => {
             if (currentSessionIdRef.current === retryTarget.sessionId) {
-              void startPlanningAutoRetryRef.current(retryTarget.sessionId);
+              void startPlanningAutoRetryRef.current(retryTarget.sessionId, options.ownsTurn);
             }
           });
           return;
@@ -1812,9 +1864,15 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   );
 
   const startPlanningAutoRetry = useCallback(
-    async (sessionId: string) => {
-      if (planningAutoRetryOwnerRef.current?.sessionId === sessionId) {
-        return true;
+    async (sessionId: string, ownsTurn?: () => boolean) => {
+      if (!(ownsTurn?.() ?? true)) return false;
+      const existingOwner = planningAutoRetryOwnerRef.current;
+      if (existingOwner?.sessionId === sessionId) {
+        if (!existingOwner.ownsTurn || existingOwner.ownsTurn()) return true;
+        // FNXC:PlanningTurnReconciliation 2026-08-16-07:19: An invalidated recovery
+        // attempt cannot satisfy a newer error's recovery. Release its token so the current
+        // turn starts the bounded retry that its caller is waiting to observe.
+        planningAutoRetryOwnerRef.current = null;
       }
       if (viewRef.current.type === "error") return false;
       // FNXC:PlanningRetry 2026-07-22-21:00: budget is per-session and survives remounts.
@@ -1828,12 +1886,12 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
       const retryToken = Symbol(`planning-auto-retry:${sessionId}:${attempt}`);
       planningAutoRetryAttemptsBySession.set(sessionId, attempt);
       planningAutoRetryAttemptRef.current = attempt;
-      planningAutoRetryOwnerRef.current = { sessionId, token: retryToken };
+      planningAutoRetryOwnerRef.current = { sessionId, token: retryToken, ownsTurn };
       setAutoRetryAttempt(attempt);
       setIsAutoRetrying(true);
       await startPlanningRetry(
         { sessionId, currentQuestion: null, summary: null },
-        { auto: true, retryToken },
+        { auto: true, retryToken, ownsTurn }
       );
       return true;
     },
@@ -2809,6 +2867,8 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
       }
 
       setError(null);
+      const responseTurnEpoch = ++planningTurnEpochRef.current;
+      const responseLoadEpoch = planningSessionLoadEpochRef.current;
       // Capture before clearing state: the edit branch rewrites this exact history row while
       // the server preserves the other answers and generates the appended next question.
       const submittedEditingQuestionId = editingQuestionId;
@@ -2872,14 +2932,21 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
       } catch (err) {
         const errorMessage = getErrorMessage(err) || t("planning.failedSubmitResponse", "Failed to submit response");
         const isDuplicateResponseConflict = isDuplicateResponseGenerationConflict(err);
+        const reconciliationStillOwnsTurn = () => currentSessionIdRef.current === sessionId
+          && planningSessionLoadEpochRef.current === responseLoadEpoch
+          && planningTurnEpochRef.current === responseTurnEpoch;
         /*
-        FNXC:PlanningTurnReconciliation 2026-07-20-10:36:
-        A rejected HTTP response is ambiguous: the server may have accepted the answer before
-        the connection failed. Rehydrate durable state before restoring the form. If it was not
-        accepted, roll back the optimistic answer so history and the active question still agree.
+        FNXC:PlanningTurnReconciliation 2026-08-16-06:22:
+        A rejected response may have been durably accepted, so reconciliation rehydrates before
+        rolling back optimism. Its snapshot loses to a newer session load, reset/stop, response
+        submission, or same-session streamed question/summary. Capture both ownership epochs
+        before the response await: an A → B → A reload must not let the old A response adopt the
+        new load epoch. A delayed refresh must then write nothing, or an old durable snapshot can
+        replace the question, history, summary, and error state that the newer turn already owns.
         */
         try {
           const persisted = await fetchAiSession(sessionId);
+          if (!reconciliationStillOwnsTurn()) return;
           if (persisted?.status === "awaiting_input" && !persisted.currentQuestion && persisted.result) {
             const history = parseConversationHistory(persisted.conversationHistory);
             const summary = normalizePlanningSummary(JSON.parse(persisted.result) as PlanningSummary);
@@ -2922,8 +2989,10 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
             return;
           }
         } catch {
+          if (!reconciliationStillOwnsTurn()) return;
           // Fall back to the known pre-submit turn and remove its optimistic answer.
         }
+        if (!reconciliationStillOwnsTurn()) return;
         conversationHistoryRef.current = historyBeforeSubmit;
         setConversationHistory(historyBeforeSubmit);
         setError(errorMessage);

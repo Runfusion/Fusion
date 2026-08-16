@@ -108,7 +108,13 @@ export function isTaskAwaitingPlanning(
   FNXC:DuplicateIntake 2026-08-01-19:24:
   A duplicate-only PROMPT is unplanned for execution — badge and triage must agree with
   scheduler filesystem validation so the card shows "Queued to plan", not Ready.
+
+  FNXC:DuplicateIntake 2026-08-15-22:10:
+  `task.title` is a REQUIRED argument here, not an optional nicety: FN-8840 recognizes an exact
+  `DUPLICATE: <ID>` redirect declared in the task TITLE even when PROMPT.md carries a real plan.
+  A refactor once dropped the argument and title-only redirects silently read as executable
+  ("Ready") on the badge/triage surface — do not remove it again.
   */
-  if (isDuplicateRedirectOnlyPrompt(promptContent)) return true;
+  if (isDuplicateRedirectOnlyPrompt(promptContent, task.title)) return true;
   return isUnplannedSeedPrompt(promptContent, task.id, task.title, task.description);
 }

@@ -521,18 +521,18 @@ export function CustomModelDropdown({
   /*
   FNXC:ModelDropdown 2026-08-12-21:56:
   Every dashboard host must treat the document.body model-menu portal as inside its model control. Stop native pointer and mouse events at the portal boundary before document-level outside-close listeners run, so provider collapse/expand remains interactive on desktop and mobile without requiring each consumer to duplicate the portal exemption.
+
+  FNXC:ModelDropdown 2026-08-15-12:27:
+  Mobile hosts may close from touchstart before a virtual-keyboard re-anchor sends the synthesized click to a backdrop. Stop touchstart and touchend too, but never click: React option and favorite handlers dispatch through this body portal.
   */
   useEffect(() => {
     const dropdown = dropdownRef.current;
     if (!dropdown) return;
 
     const stopPortalOutsideClose = (event: Event) => event.stopPropagation();
-    dropdown.addEventListener("pointerdown", stopPortalOutsideClose);
-    dropdown.addEventListener("mousedown", stopPortalOutsideClose);
-    return () => {
-      dropdown.removeEventListener("pointerdown", stopPortalOutsideClose);
-      dropdown.removeEventListener("mousedown", stopPortalOutsideClose);
-    };
+    const events = ["pointerdown", "mousedown", "touchstart", "touchend"] as const;
+    events.forEach((eventName) => dropdown.addEventListener(eventName, stopPortalOutsideClose));
+    return () => events.forEach((eventName) => dropdown.removeEventListener(eventName, stopPortalOutsideClose));
   }, [dropdownPosition, isOpen]);
 
   // Keyboard navigation
@@ -660,6 +660,7 @@ export function CustomModelDropdown({
       className="model-combobox-dropdown model-combobox-dropdown--portal"
       role="listbox"
       data-testid="model-combobox-portal"
+      data-portal-surface="model-menu"
       data-menu-width={menuWidth}
       onKeyDown={handleKeyDown}
       style={{

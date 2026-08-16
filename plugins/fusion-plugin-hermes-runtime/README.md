@@ -29,6 +29,10 @@ After install, run `hermes login` (or `hermes auth`) to configure a provider. Th
 
 Verify with `hermes --version`.
 
+## Windows binary resolution
+
+On Windows, `binaryPath` / `HERMES_BIN` can point to an absolute `.cmd` or `.bat` shim. Fusion launches these shims through `cmd.exe /d /s /c` with escaped arguments, rather than relying on an unsafe blanket shell. PATH lookup chooses the first matching directory and then its PATHEXT-preferred executable; results are cached per PATH/PATHEXT, while misses are retried after a short TTL. Probe results continue to report the selected Hermes executable path (not `cmd.exe`) on every platform.
+
 ## Fusion skill auto-install
 
 When the Hermes runtime plugin loads, it attempts to auto-install/mirror Fusion's bundled `fusion` skill into the active Hermes profile skill directory:

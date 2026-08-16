@@ -1,234 +1,30 @@
 /* === Skill Multiselect === */
 /*
-FNXC:AgentSettingsTheming 2026-07-23-13:01:
-Skills can be empty, loading, populated, all selected, or disabled inside Agent Settings. Keep its select, chips, and removable actions on dashboard tokens so these states remain legible in every theme without changing selection or duplicate-prevention behavior.
+FNXC:AgentSettingsTheming 2026-08-16-04:27:
+Skills can be loading, error, empty, no-match, populated, all-selected, or disabled in Agent Settings. Keep the filter, checkbox list, chips, and removable actions token-based so all states remain legible in every theme.
 */
-.skill-multiselect {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-sm);
-  color: var(--text);
-}
-
-.skill-multiselect-label {
-  font-size: var(--font-size-sm);
-  font-weight: 500;
-  color: var(--text-muted);
-}
-
-.skill-multiselect-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-xs);
-}
-
-.skill-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-xs);
-  padding: calc(var(--space-xs) * 0.5) calc(var(--space-sm) - var(--space-xs) * 0.5);
-  background: var(--surface-muted);
-  color: var(--text);
-  border: var(--btn-border-width) solid var(--border-subtle);
-  border-radius: var(--radius-sm);
-  font-size: var(--font-size-xs);
-  line-height: var(--line-height-tight);
-}
-
-.skill-chip-name {
-  max-width: calc(var(--space-xl) * 6 + var(--space-md));
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.skill-chip-remove {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: calc(var(--space-md) + var(--space-xs));
-  height: calc(var(--space-md) + var(--space-xs));
-  padding: 0;
-  background: transparent;
-  border: var(--btn-border-width) solid transparent;
-  border-radius: var(--radius-sm);
-  color: var(--text-muted);
-  font-size: var(--font-size-sm);
-  line-height: var(--line-height-tight);
-  cursor: pointer;
-  transition: color var(--transition-fast), background var(--transition-fast), border-color var(--transition-fast), box-shadow var(--transition-fast);
-}
-
-.skill-chip-remove:hover:not(:disabled) {
-  color: var(--text);
-  background: var(--surface-hover);
-  border-color: var(--border);
-}
-
-.skill-chip-remove:focus-visible {
-  outline: none;
-  color: var(--text);
-  border-color: var(--todo);
-  box-shadow: var(--focus-ring-strong);
-}
-
-.skill-chip-remove:disabled {
-  opacity: var(--opacity-disabled, 0.6);
-  color: var(--text-muted);
-  cursor: not-allowed;
-}
-
-.skill-multiselect-add {
-  min-height: calc(var(--space-xl) + var(--space-sm));
-}
-
-.skill-multiselect-loading,
-.skill-multiselect-empty {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-xs);
-  font-size: var(--font-size-sm);
-  color: var(--text-muted);
-  padding: var(--space-xs) 0;
-}
-
-.skill-multiselect-dropdown {
-  width: 100%;
-  background: var(--surface);
-  color: var(--text);
-  border-color: var(--border);
-  font-size: var(--font-size-sm);
-}
-
-.skill-multiselect-dropdown:hover:not(:disabled) {
-  border-color: var(--text-muted);
-}
-
-.skill-multiselect-dropdown:focus-visible {
-  outline: none;
-  border-color: var(--todo);
-  box-shadow: var(--focus-ring-strong);
-}
-
-.skill-multiselect-dropdown:disabled {
-  opacity: var(--opacity-disabled, 0.6);
-  color: var(--text-muted);
-  cursor: not-allowed;
-}
-
-.agent-dialog-skills-hint {
-  margin-top: var(--space-xs);
-  font-size: var(--font-size-xs);
-}
-
-/* Skill badge row for Dashboard tab */
-.skill-badge-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-xs);
-}
-
-.skill-badge {
-  display: inline-block;
-  padding: calc(var(--space-xs) * 0.5) calc(var(--space-sm) - var(--space-xs) * 0.5);
-  background: var(--bg-tertiary);
-  color: var(--text-muted);
-  border-radius: var(--radius-sm);
-  font-size: var(--font-size-xs);
-  line-height: var(--line-height-tight);
-}
-
-.badge-skill {
-  background: var(--bg-tertiary);
-  color: var(--text-muted);
-}
-
-.agent-board-skills {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-xs);
-  padding: var(--space-xs) var(--space-sm);
-}
-
-.skill-badge-sm,
-.agent-tree__skill {
-  display: inline-block;
-  padding: calc(var(--space-xs) * 0.25) calc(var(--space-sm) - var(--space-xs) * 0.75);
-  background: var(--bg-tertiary);
-  color: var(--text-muted);
-  border-radius: var(--radius-sm);
-  font-size: var(--font-size-2xs);
-  line-height: var(--line-height-tight);
-}
-
-.skill-badge-extra {
-  background: var(--bg-secondary);
-}
-
-.agent-tree__skill {
-  margin-left: calc(var(--space-sm) - var(--space-xs) * 0.5);
-}
-
-.org-chart-node__skill {
-  display: inline-block;
-  padding: calc(var(--space-xs) * 0.25) calc(var(--space-sm) - var(--space-xs) * 0.75);
-  background: var(--bg-tertiary);
-  color: var(--text-muted);
-  border-radius: var(--radius-sm);
-  font-size: var(--font-size-2xs);
-  line-height: var(--line-height-tight);
-}
-
-.divider {
-  color: var(--border);
-}
-
-.text-muted,
-.text-secondary {
-  color: var(--text-muted);
-}
-
-.link {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-xs);
-  color: var(--todo);
-  text-decoration: none;
-}
-
-.link:hover {
-  text-decoration: underline;
-}
-
-@media (max-width: 768px) {
-  .skill-multiselect,
-  .skill-multiselect-add,
-  .skill-multiselect-dropdown,
-  .skill-multiselect-chips {
-    width: 100%;
-  }
-
-  .skill-multiselect-chips {
-    gap: var(--space-xs);
-  }
-
-  .skill-chip {
-    max-width: 100%;
-  }
-
-  .skill-chip-remove {
-    min-width: calc(var(--space-lg) + var(--space-xs));
-    min-height: calc(var(--space-lg) + var(--space-xs));
-  }
-}
-
-@media (max-width: 480px) {
-  .skill-multiselect {
-    gap: var(--space-xs);
-  }
-
-  .skill-chip {
-    width: 100%;
-    justify-content: space-between;
-  }
-}
+.skill-multiselect { display: flex; flex-direction: column; gap: var(--space-sm); color: var(--text); }
+.skill-multiselect-label { font-size: var(--font-size-sm); font-weight: 500; color: var(--text-muted); }
+.skill-multiselect-chips { display: flex; flex-wrap: wrap; gap: var(--space-xs); }
+.skill-chip { display: inline-flex; align-items: center; gap: var(--space-xs); padding: calc(var(--space-xs) * .5) calc(var(--space-sm) - var(--space-xs) * .5); background: var(--surface-muted); color: var(--text); border: var(--btn-border-width) solid var(--border-subtle); border-radius: var(--radius-sm); font-size: var(--font-size-xs); line-height: var(--line-height-tight); }
+.skill-chip-name { max-width: calc(var(--space-xl) * 6 + var(--space-md)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.skill-chip-remove { display: inline-flex; align-items: center; justify-content: center; width: calc(var(--space-md) + var(--space-xs)); height: calc(var(--space-md) + var(--space-xs)); padding: 0; background: transparent; border: var(--btn-border-width) solid transparent; border-radius: var(--radius-sm); color: var(--text-muted); font-size: var(--font-size-sm); cursor: pointer; }
+.skill-chip-remove:hover:not(:disabled) { color: var(--text); background: var(--surface-hover); border-color: var(--border); }
+.skill-chip-remove:focus-visible, .skill-multiselect-filter:focus-visible { outline: none; border-color: var(--todo); box-shadow: var(--focus-ring-strong); }
+.skill-chip-remove:disabled { opacity: var(--opacity-disabled, .6); cursor: not-allowed; }
+.skill-multiselect-filter { width: 100%; }
+.skill-multiselect-list { display: flex; flex-direction: column; max-height: calc(var(--space-xl) * 12); overflow: auto; border: var(--btn-border-width) solid var(--border); border-radius: var(--radius-md); }
+.skill-multiselect-option { display: flex; align-items: center; gap: var(--space-sm); min-height: calc(var(--space-xl) + var(--space-lg)); padding: var(--space-sm); cursor: pointer; border-bottom: var(--btn-border-width) solid var(--border-subtle); }
+.skill-multiselect-option:last-child { border-bottom: 0; }
+.skill-multiselect-option:has(input:disabled) { cursor: not-allowed; opacity: var(--opacity-disabled, .6); }
+.skill-multiselect-option__content { display: flex; flex: 1; flex-direction: column; min-width: 0; }
+.skill-multiselect-option__path { overflow: hidden; color: var(--text-muted); font-size: var(--font-size-xs); text-overflow: ellipsis; white-space: nowrap; }
+.skill-state-marker { color: var(--text-muted); font-size: var(--font-size-xs); white-space: nowrap; }
+.skill-state-marker[data-skill-state="disabled"] { color: var(--color-warning); }
+.skill-state-marker[data-skill-state="unknown"] { color: var(--color-error); }
+.skill-state-marker--forced { color: var(--todo); }
+.skill-multiselect-loading, .skill-multiselect-empty, .skill-multiselect-no-matches, .skill-multiselect-all-selected, .skill-multiselect-error { display: inline-flex; align-items: center; gap: var(--space-xs); color: var(--text-muted); font-size: var(--font-size-sm); padding: var(--space-xs) 0; }
+.skill-multiselect-error { color: var(--color-error); }
+.badge-skill { background: var(--bg-tertiary); color: var(--text-muted); }
+@media (max-width: 768px) { .skill-multiselect, .skill-multiselect-chips, .skill-multiselect-filter, .skill-multiselect-list { width: 100%; } .skill-multiselect-option { min-height: calc(var(--space-xl) + var(--space-xl)); } .skill-chip-remove { min-width: calc(var(--space-lg) + var(--space-xs)); min-height: calc(var(--space-lg) + var(--space-xs)); } }
+@media (max-width: 480px) { .skill-multiselect { gap: var(--space-xs); } .skill-chip { width: 100%; justify-content: space-between; } .skill-multiselect-option { align-items: flex-start; flex-wrap: wrap; } }

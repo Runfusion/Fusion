@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   BranchConflictError,
-  DiffVolumeRegressionError,
   MergeAbortedError,
   SquashAuditError,
   type SquashAuditFindings,
@@ -36,10 +35,6 @@ describe("engine public api barrel", () => {
         startPoint: "main",
         recommendedAction: "Rebase the task branch.",
       }),
-    },
-    {
-      name: "DiffVolumeRegressionError",
-      ctor: () => new DiffVolumeRegressionError([]),
     },
     {
       name: "MergeAbortedError",

@@ -14,13 +14,16 @@ the engine copy is asserted by reading the source file directly.
 */
 const CARVEOUT_MARKER = "Exception — pending approval.";
 
+// FNXC:ExecutorPrompt 2026-08-15-19:10: package code organization waves moved
+// EXECUTOR_SYSTEM_PROMPT out of the thin executor.ts shell into
+// executor/system-prompt.ts, and core's agent-prompts.ts into agents/.
 function readExecutorSourcePrompt(): string {
-  const executorTsPath = fileURLToPath(new URL("../executor.ts", import.meta.url));
+  const executorTsPath = fileURLToPath(new URL("../executor/system-prompt.ts", import.meta.url));
   return readFileSync(executorTsPath, "utf8");
 }
 
 function readAgentPromptsSource(): string {
-  const agentPromptsTsPath = fileURLToPath(new URL("../../../core/src/agent-prompts.ts", import.meta.url));
+  const agentPromptsTsPath = fileURLToPath(new URL("../../../core/src/agents/agent-prompts.ts", import.meta.url));
   return readFileSync(agentPromptsTsPath, "utf8");
 }
 

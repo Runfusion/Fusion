@@ -237,9 +237,19 @@ function mergeTypedSkillCommands(
   FNXC:ChatSkills 2026-06-17-18:16:
   The advertised chat `/skill:{name}` command must request that skill for the model-loop session while keeping execution settings authoritative; this merge only adds requested names to the existing skill-selection context so the resolver still filters disabled or excluded skills.
   */
+  /*
+  FNXC:ChatSkills 2026-08-16-04:04:
+  GitHub #1422 makes agent metadata skills forced read-first intent, while
+  `/skill:` only ensures availability. Preserve the base forced channel when a
+  typed command rebuilds selection so chat and room responders keep the shared
+  resolved-only prompt instruction.
+  */
   return {
     projectRootDir: baseSkillSelection?.projectRootDir ?? projectRootDir,
     requestedSkillNames,
+    ...(baseSkillSelection?.forcedSkillNames?.length
+      ? { forcedSkillNames: baseSkillSelection.forcedSkillNames }
+      : {}),
     sessionPurpose: baseSkillSelection?.sessionPurpose ?? sessionPurpose,
   };
 }

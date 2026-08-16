@@ -1,6 +1,6 @@
 {
   "name": "@fusion-plugin-examples/agent-browser",
-  "version": "0.1.55",
+  "version": "0.1.56-beta.0",
   "type": "module",
   "description": "Agent Browser runtime and prompt/skill/workflow contributions for Fusion",
   "private": true,

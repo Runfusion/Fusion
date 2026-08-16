@@ -10,8 +10,36 @@ Settings modal so account controls stay reachable without introducing a second c
 .auth-pending-instance-field { display: flex; flex: 1 1 var(--space-2xl); flex-direction: column; gap: var(--space-xs); }
 .auth-pending-instance-label { color: var(--text-muted); font-size: var(--font-size-xs); font-weight: 600; }
 .auth-instance-row > span { flex: 1; min-width: 0; }
+
+/*
+FNXC:ProviderAuth 2026-08-15-22:08:
+OAuth loginError is a durable card banner, not an inline hint. A wrapping block
+with a defined width keeps the Anthropic expiry sentence inside the provider
+card on a phone-width Settings modal; an inline <small> sized the actions
+flex item to min-content and painted a broken per-line border past the card.
+Inset matches .auth-provider-header so Login and the banner share one edge.
+*/
+.auth-provider-login-error {
+  display: block;
+  box-sizing: border-box;
+  width: auto;
+  max-width: 100%;
+  min-width: 0;
+  margin: 0 var(--space-md) var(--space-sm);
+  padding: var(--space-sm);
+  border: 1px solid var(--color-error);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-error) 10%, transparent);
+  color: var(--color-error);
+  font-size: var(--font-size-xs);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
 @media (max-width: 768px) {
   .auth-instance-row, .auth-instance-pending { align-items: stretch; }
   .auth-instance-row > .btn, .auth-instance-pending > .btn { flex: 1; }
   .auth-pending-instance-field { flex-basis: 100%; }
+  .auth-provider-login-error { margin-inline: var(--space-sm); }
 }

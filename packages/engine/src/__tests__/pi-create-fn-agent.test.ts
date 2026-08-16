@@ -2390,6 +2390,31 @@ describe("createFnAgent", () => {
     }));
   });
 
+  it("self-heals stale subscription auth-id selections onto the direct Anthropic provider", async () => {
+    authStorageGetMock.mockImplementation((provider: string) => provider === "anthropic-subscription"
+      ? { type: "oauth", access: "subscription-access-token", refresh: "refresh", expires: Date.now() + 3_600_000 }
+      : undefined);
+    authStorageHasAuthMock.mockImplementation((provider: string) => provider === "anthropic-subscription");
+    getAllMock.mockReturnValue([{ provider: "anthropic", id: "claude-opus-4-8", name: "Claude Opus 4.8" }]);
+    findMock.mockImplementation((provider: string, modelId: string) => provider === "anthropic"
+      ? { provider, id: modelId }
+      : undefined);
+
+    const { createFnAgent } = await import("../pi.js");
+    await expect(createFnAgent({
+      cwd: "/tmp",
+      systemPrompt: "test",
+      tools: "readonly",
+      defaultProvider: "anthropic-subscription",
+      defaultModelId: "claude-opus-4-8",
+    })).resolves.toBeDefined();
+
+    expect(createAgentSessionMock).toHaveBeenCalledWith(expect.objectContaining({
+      model: { provider: "anthropic", id: "claude-opus-4-8" },
+    }));
+    expect(registerProviderMock).not.toHaveBeenCalledWith("anthropic-subscription", expect.anything());
+  });
+
   it("keeps explicit Claude CLI selections on the Claude CLI provider", async () => {
     authStorageGetApiKeyMock.mockResolvedValue(undefined);
     findMock.mockImplementation((provider: string, modelId: string) => ({ provider, id: modelId }));

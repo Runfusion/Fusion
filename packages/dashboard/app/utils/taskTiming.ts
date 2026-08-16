@@ -94,8 +94,20 @@ export function getEndToEndDurationMs(
   return Math.max(0, endMs - startedMs);
 }
 
+/*
+FNXC:TaskRuntimeSegments 2026-08-15-20:34:
+The card and detail panel must cap legacy cumulative values at a durable wall-clock age. Execution-
+only values use first execution, while totals that include pre-execution planning use task creation.
+This is a reader-only guard for rows written before closed WIP segments cleared their anchor.
+*/
+function clampRuntimeToWallClock(totalMs: number, ageAnchor: string | undefined, nowMs: number): number {
+  const ageAnchorMs = parseTimestampToMs(ageAnchor);
+  return ageAnchorMs == null ? totalMs : Math.min(totalMs, Math.max(0, nowMs - ageAnchorMs));
+}
+
 export function getActiveRuntimeMs(
-  task: Pick<Task, "column" | "cumulativeActiveMs" | "executionStartedAt" | "columnMovedAt">,
+  task: Pick<Task, "column" | "cumulativeActiveMs" | "executionStartedAt" | "columnMovedAt">
+    & Partial<Pick<Task, "firstExecutionAt" | "createdAt">>,
   nowMs: number,
   /*
   FNXC:WorkflowLifecycleColumns 2026-07-31-10:10:
@@ -120,12 +132,12 @@ export function getActiveRuntimeMs(
   if (isWipColumnRole(columnFlags, task.column)) {
     const startedMs = parseTimestampToMs(task.executionStartedAt);
     if (startedMs != null) {
-      return base + Math.max(0, nowMs - startedMs);
+      return clampRuntimeToWallClock(base + Math.max(0, nowMs - startedMs), task.firstExecutionAt ?? task.createdAt, nowMs);
     }
   }
 
   if (persisted != null) {
-    return Math.max(0, persisted);
+    return clampRuntimeToWallClock(Math.max(0, persisted), task.firstExecutionAt ?? task.createdAt, nowMs);
   }
 
   return null;
@@ -134,7 +146,8 @@ export function getActiveRuntimeMs(
 /** FNXC:TaskTiming 2026-07-20-10:00: rendered task totals include planning AI
  * segments while getActiveRuntimeMs intentionally remains execution-only. */
 export function getTotalAgentActiveMs(
-  task: Pick<Task, "column" | "cumulativeActiveMs" | "executionStartedAt" | "cumulativePlanningMs" | "planningStartedAt">,
+  task: Pick<Task, "column" | "cumulativeActiveMs" | "executionStartedAt" | "cumulativePlanningMs" | "planningStartedAt">
+    & Partial<Pick<Task, "firstExecutionAt" | "createdAt">>,
   nowMs: number,
   /** Resolved trait flags for the card's column; omitted keeps the legacy id. */
   columnFlags?: ColumnRoleFlags,
@@ -142,9 +155,10 @@ export function getTotalAgentActiveMs(
   const execution = getActiveRuntimeMs(task as never, nowMs, columnFlags) ?? 0;
   const planningStart = parseTimestampToMs(task.planningStartedAt);
   const planning = Math.max(0, task.cumulativePlanningMs ?? 0) + (planningStart != null ? Math.max(0, nowMs - planningStart) : 0);
-  return task.cumulativeActiveMs != null || task.cumulativePlanningMs != null || (isWipColumnRole(columnFlags, task.column) && parseTimestampToMs(task.executionStartedAt) != null) || planningStart != null
-    ? execution + planning
-    : null;
+  if (task.cumulativeActiveMs == null && task.cumulativePlanningMs == null && !(isWipColumnRole(columnFlags, task.column) && parseTimestampToMs(task.executionStartedAt) != null) && planningStart == null) {
+    return null;
+  }
+  return clampRuntimeToWallClock(execution + planning, task.createdAt ?? task.firstExecutionAt, nowMs);
 }
 
 export function getWallClockSinceFirstExecutionMs(

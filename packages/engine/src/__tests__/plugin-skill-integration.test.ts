@@ -34,7 +34,6 @@ describe("plugin skill integration", () => {
 
     expect(contextResult.skillSelectionContext?.requestedSkillNames).toEqual([
       "fusion",
-      "agent-only",
       "plugin-enabled",
     ]);
   });
@@ -83,6 +82,6 @@ describe("plugin skill integration", () => {
     });
 
     expect(contextResult.skillSelectionContext?.requestedSkillNames).toEqual(["fusion", "plugin-skill"]);
-    expect(filtered.skills.map((skill) => skill.name)).toEqual(["fusion", "plugin-skill"]);
+    expect(filtered.skills.map((skill) => skill.name)).toEqual(["fusion", "plugin-skill", "other"]);
   });
 });

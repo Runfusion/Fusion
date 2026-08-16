@@ -57,6 +57,19 @@ async function clickProceedAfterHydration() {
   fireEvent.click(screen.getByRole("button", { name: "Proceed with plan" }));
 }
 
+/*
+FNXC:PlanningTurnReconciliation 2026-08-16-07:19:
+Resume hydration can replace the selected answer control before the user advances the interview.
+Settle and re-query the live control so ordering tests exercise the response/reconciliation race,
+not a detached DOM node that a user could never activate.
+*/
+async function selectResponseAfterHydration(label: string) {
+  await screen.findByLabelText(label);
+  await act(async () => {});
+  fireEvent.click(screen.getByLabelText(label));
+  fireEvent.click(screen.getByRole("button", { name: "Next" }));
+}
+
 describe("PlanningModeModal sequential flow", () => {
   beforeEach(() => {
     vi.useRealTimers();
@@ -258,6 +271,129 @@ describe("PlanningModeModal sequential flow", () => {
     expect(mockConnectPlanningStream.mock.calls.at(-1)?.[0]).toBe("session-b");
     expect(mockConnectPlanningStream.mock.calls.filter(([sessionId]) => sessionId === "session-b")).toHaveLength(connectionCountForB);
     expect(screen.queryByText("session-a stream failed")).toBeNull();
+  });
+
+  it.each(["desktop", "mobile"] as const)("does not let delayed duplicate reconciliation overwrite loading-poll recovery on %s", async (viewport) => {
+    mockViewportMode.mockReturnValue(viewport);
+    const sessionId = `poll-recovery-${viewport}`;
+    const submittedQuestion = {
+      id: "q-submitted",
+      type: "single_select",
+      question: "Which poll recovery owns this turn?",
+      options: [{ id: "secure", label: "Secure defaults" }],
+    };
+    const intervalSpy = vi.spyOn(globalThis, "setInterval");
+    let resolveReconciliation!: (session: Record<string, unknown>) => void;
+    let fetchCount = 0;
+    mockFetchAiSession.mockImplementation(() => {
+      fetchCount += 1;
+      if (fetchCount === 1) {
+        return Promise.resolve({
+          ...base,
+          id: sessionId,
+          status: "awaiting_input",
+          currentQuestion: JSON.stringify(submittedQuestion),
+          result: JSON.stringify(summaryWithRefinements),
+          inputPayload: "{}",
+        });
+      }
+      if (fetchCount === 2) {
+        return new Promise((resolve) => { resolveReconciliation = resolve; });
+      }
+      return Promise.resolve({
+        ...base,
+        id: sessionId,
+        status: "error",
+        error: "Poll recovery owns this turn",
+        currentQuestion: null,
+        result: JSON.stringify(summaryWithRefinements),
+        inputPayload: "{}",
+      });
+    });
+    mockRespondToPlanning.mockRejectedValue(new Error("Generation already in progress for this response"));
+
+    renderSession(sessionId);
+    await selectResponseAfterHydration("Secure defaults");
+    await waitFor(() => expect(fetchCount).toBe(2));
+
+    const poll = intervalSpy.mock.calls.find(([, delay]) => delay === 8000)?.[0];
+    expect(poll).toBeTypeOf("function");
+    await act(async () => {
+      await (poll as () => Promise<void>)();
+    });
+    expect(mockRetryPlanningSession).toHaveBeenCalledWith(sessionId, "project-1");
+
+    await act(async () => {
+      resolveReconciliation({
+        ...base,
+        id: sessionId,
+        status: "awaiting_input",
+        currentQuestion: JSON.stringify({ id: "q-stale", type: "text", question: "What did stale reconciliation ask?" }),
+        result: JSON.stringify(summaryWithRefinements),
+        inputPayload: "{}",
+      });
+      await Promise.resolve();
+    });
+
+    expect(screen.queryByText("What did stale reconciliation ask?")).toBeNull();
+    expect(screen.queryByText("Generation already in progress for this response")).toBeNull();
+  });
+
+  it.each(["desktop", "mobile"] as const)("keeps a newer streamed question when an older loading poll resolves on %s", async (viewport) => {
+    mockViewportMode.mockReturnValue(viewport);
+    const sessionId = `stale-loading-poll-${viewport}`;
+    const intervalSpy = vi.spyOn(globalThis, "setInterval");
+    const streamedQuestion = {
+      id: "q-streamed",
+      type: "text",
+      question: "What did the current streamed turn ask?",
+    };
+    let resolvePoll!: (session: Record<string, unknown>) => void;
+    let fetchCount = 0;
+    mockFetchAiSession.mockImplementation(() => {
+      fetchCount += 1;
+      if (fetchCount === 1) {
+        return Promise.resolve({
+          ...base,
+          id: sessionId,
+          status: "generating",
+          currentQuestion: null,
+          result: JSON.stringify(summaryWithRefinements),
+          inputPayload: JSON.stringify({ generationPurpose: "plan_update" }),
+        });
+      }
+      return new Promise((resolve) => { resolvePoll = resolve; });
+    });
+
+    renderSession(sessionId);
+    await waitFor(() => expect(mockConnectPlanningStream).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(intervalSpy.mock.calls.some(([, delay]) => delay === 8000)).toBe(true));
+    const poll = intervalSpy.mock.calls.find(([, delay]) => delay === 8000)?.[0];
+    expect(poll).toBeTypeOf("function");
+    let pendingPoll!: Promise<void>;
+    act(() => {
+      pendingPoll = (poll as () => Promise<void>)();
+    });
+    await waitFor(() => expect(fetchCount).toBe(2));
+
+    const handlers = mockConnectPlanningStream.mock.calls[0]?.[2];
+    act(() => handlers?.onQuestion?.(streamedQuestion));
+    expect(await screen.findByText("What did the current streamed turn ask?")).toBeInTheDocument();
+
+    await act(async () => {
+      resolvePoll({
+        ...base,
+        id: sessionId,
+        status: "awaiting_input",
+        currentQuestion: JSON.stringify({ id: "q-stale-poll", type: "text", question: "What did the stale loading poll ask?" }),
+        result: JSON.stringify(summaryWithRefinements),
+        inputPayload: "{}",
+      });
+      await pendingPoll;
+    });
+
+    expect(screen.getByText("What did the current streamed turn ask?")).toBeInTheDocument();
+    expect(screen.queryByText("What did the stale loading poll ask?")).toBeNull();
   });
 
   it("automatically retries a resumed error discovered by the loading poll", async () => {
@@ -1043,7 +1179,11 @@ describe("PlanningModeModal sequential flow", () => {
 
     renderSession();
     fireEvent.click(await screen.findByLabelText("Secure defaults"));
-    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Next" }));
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(mockRespondToPlanning).toHaveBeenCalledTimes(1));
 
     if (status === "awaiting_input") {
       expect(await screen.findByText("What should the durable session ask next?")).toBeInTheDocument();
@@ -1052,6 +1192,363 @@ describe("PlanningModeModal sequential flow", () => {
     }
     expect(screen.queryByText("Generation already in progress for this response")).toBeNull();
     expect(document.querySelector(".planning-error")).toBeNull();
+  });
+
+  it.each([
+    { viewport: "desktop", persistedStatus: "awaiting_input", label: "a durable question" },
+    { viewport: "mobile", persistedStatus: "awaiting_input", label: "a durable question" },
+    { viewport: "desktop", persistedStatus: "plan_review", label: "a durable plan review" },
+    { viewport: "mobile", persistedStatus: "plan_review", label: "a durable plan review" },
+    { viewport: "desktop", persistedStatus: "generating", label: "generation progress" },
+    { viewport: "mobile", persistedStatus: "generating", label: "generation progress" },
+  ] as const)("keeps the newer session when delayed duplicate reconciliation returns $label on $viewport", async ({ viewport, persistedStatus }) => {
+    mockViewportMode.mockReturnValue(viewport);
+    const submittedQuestion = {
+      id: "q-submitted",
+      type: "single_select",
+      question: "Which outcome matters most?",
+      options: [{ id: "secure", label: "Secure defaults" }],
+    };
+    const staleQuestion = {
+      id: "q-stale",
+      type: "text",
+      question: "What did the stale session ask?",
+    };
+    const currentQuestion = {
+      id: "q-current",
+      type: "text",
+      question: "What should the current session ask?",
+    };
+    let resolveStaleSession!: (session: Record<string, unknown>) => void;
+    let sessionAReads = 0;
+    mockFetchAiSession.mockImplementation((sessionId: string) => {
+      if (sessionId === "session-a") {
+        sessionAReads += 1;
+        if (sessionAReads === 1) {
+          return Promise.resolve({
+            ...base,
+            id: sessionId,
+            status: "awaiting_input",
+            currentQuestion: JSON.stringify(submittedQuestion),
+            result: JSON.stringify(summaryWithRefinements),
+            inputPayload: "{}",
+          });
+        }
+        return new Promise((resolve) => {
+          resolveStaleSession = resolve;
+        });
+      }
+      return Promise.resolve({
+        ...base,
+        id: sessionId,
+        status: "awaiting_input",
+        currentQuestion: JSON.stringify(currentQuestion),
+        result: JSON.stringify(summaryWithRefinements),
+        inputPayload: "{}",
+      });
+    });
+    mockRespondToPlanning.mockRejectedValue(new Error("Generation already in progress for this response"));
+
+    const props = { isOpen: true, onClose: vi.fn(), onTaskCreated: vi.fn(), onTasksCreated: vi.fn(), tasks: mockTasks, projectId: "project-1" };
+    const { rerender } = render(<PlanningModeModal {...props} resumeSessionId="session-a" />);
+    fireEvent.click(await screen.findByLabelText("Secure defaults"));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Next" }));
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(sessionAReads).toBe(2));
+
+    rerender(<PlanningModeModal {...props} resumeSessionId="session-b" />);
+    expect(await screen.findByText("What should the current session ask?")).toBeInTheDocument();
+
+    const staleSession = {
+      ...base,
+      id: "session-a",
+      status: persistedStatus === "generating" ? "generating" : "awaiting_input",
+      currentQuestion: persistedStatus === "awaiting_input" ? JSON.stringify(staleQuestion) : null,
+      result: JSON.stringify(summaryWithRefinements),
+      inputPayload: JSON.stringify({ generationPurpose: "plan_update" }),
+    };
+    if (persistedStatus === "plan_review") {
+      staleSession.currentQuestion = null;
+    }
+    await act(async () => {
+      resolveStaleSession(staleSession);
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText("What should the current session ask?")).toBeInTheDocument();
+    expect(screen.queryByText("What did the stale session ask?")).toBeNull();
+    if (persistedStatus === "generating") {
+      expect(screen.queryByText("Generating plan…")).toBeNull();
+    }
+    expect(screen.queryByText("Generation already in progress for this response")).toBeNull();
+  });
+
+  it.each(["desktop", "mobile"] as const)("keeps a newer streamed question when delayed duplicate reconciliation resolves on %s", async (viewport) => {
+    mockViewportMode.mockReturnValue(viewport);
+    const submittedQuestion = {
+      id: "q-submitted",
+      type: "single_select",
+      question: "Which outcome matters most?",
+      options: [{ id: "secure", label: "Secure defaults" }],
+    };
+    const streamedQuestion = {
+      id: "q-streamed",
+      type: "text",
+      question: "What did the newer streamed turn ask?",
+    };
+    let resolveStaleSession!: (session: Record<string, unknown>) => void;
+    let sessionReads = 0;
+    mockFetchAiSession.mockImplementation(() => {
+      sessionReads += 1;
+      if (sessionReads === 1) {
+        return Promise.resolve({
+          ...base,
+          status: "awaiting_input",
+          currentQuestion: JSON.stringify(submittedQuestion),
+          result: JSON.stringify(summaryWithRefinements),
+          inputPayload: "{}",
+        });
+      }
+      return new Promise((resolve) => {
+        resolveStaleSession = resolve;
+      });
+    });
+    mockRespondToPlanning.mockRejectedValue(new Error("Generation already in progress for this response"));
+
+    renderSession();
+    fireEvent.click(await screen.findByLabelText("Secure defaults"));
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    await waitFor(() => expect(sessionReads).toBe(2));
+    await waitFor(() => expect(mockConnectPlanningStream).toHaveBeenCalledWith("session-1", "project-1", expect.any(Object)));
+
+    const handlers = mockConnectPlanningStream.mock.calls.at(-1)?.[2];
+    act(() => handlers?.onQuestion?.(streamedQuestion));
+    expect(await screen.findByText("What did the newer streamed turn ask?")).toBeInTheDocument();
+
+    await act(async () => {
+      resolveStaleSession({
+        ...base,
+        status: "generating",
+        currentQuestion: null,
+        result: JSON.stringify(summaryWithRefinements),
+        inputPayload: JSON.stringify({ generationPurpose: "plan_update" }),
+      });
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText("What did the newer streamed turn ask?")).toBeInTheDocument();
+    expect(screen.queryByText("Generating plan…")).toBeNull();
+    expect(screen.queryByText("Generation already in progress for this response")).toBeNull();
+  });
+
+  it.each([
+    { viewport: "desktop", recovery: "reconnect" },
+    { viewport: "mobile", recovery: "reconnect" },
+    { viewport: "desktop", recovery: "permanent-error" },
+    { viewport: "mobile", recovery: "permanent-error" },
+  ] as const)("keeps $recovery stream-error recovery when stale duplicate reconciliation resolves on $viewport", async ({ viewport, recovery }) => {
+    mockViewportMode.mockReturnValue(viewport);
+    const sessionId = `duplicate-stream-${viewport}-${recovery}`;
+    const submittedQuestion = {
+      id: "q-submitted",
+      type: "single_select",
+      question: "Which recovery should win?",
+      options: [{ id: "secure", label: "Secure defaults" }],
+    };
+    let resolveReconciliation!: (session: Record<string, unknown>) => void;
+    let fetchCount = 0;
+    mockFetchAiSession.mockImplementation(() => {
+      fetchCount += 1;
+      if (fetchCount === 1) {
+        return Promise.resolve({
+          ...base,
+          id: sessionId,
+          status: "awaiting_input",
+          currentQuestion: JSON.stringify(submittedQuestion),
+          result: JSON.stringify(summaryWithRefinements),
+          inputPayload: "{}",
+        });
+      }
+      if (fetchCount === 2) {
+        return new Promise((resolve) => {
+          resolveReconciliation = resolve;
+        });
+      }
+      return Promise.resolve(recovery === "reconnect"
+        ? {
+            ...base,
+            id: sessionId,
+            status: "generating",
+            currentQuestion: null,
+            result: JSON.stringify(summaryWithRefinements),
+            inputPayload: JSON.stringify({ generationPurpose: "plan_update" }),
+          }
+        : null);
+    });
+    mockRespondToPlanning.mockRejectedValue(new Error("Generation already in progress for this response"));
+    if (recovery === "permanent-error") {
+      mockRetryPlanningSession.mockRejectedValue(new Error("Recovery could not continue"));
+    }
+
+    renderSession(sessionId);
+    fireEvent.click(await screen.findByLabelText("Secure defaults"));
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    await waitFor(() => expect(fetchCount).toBe(2));
+
+    await act(async () => {
+      mockConnectPlanningStream.mock.calls[0]?.[2]?.onError?.("The planning stream failed");
+      await Promise.resolve();
+    });
+    if (recovery === "reconnect") {
+      await waitFor(() => expect(mockConnectPlanningStream).toHaveBeenCalledTimes(2));
+    } else {
+      expect(await screen.findByText("Recovery could not continue")).toBeInTheDocument();
+    }
+
+    await act(async () => {
+      resolveReconciliation({
+        ...base,
+        id: sessionId,
+        status: "awaiting_input",
+        currentQuestion: JSON.stringify({ id: "q-stale", type: "text", question: "What did stale reconciliation ask?" }),
+        result: JSON.stringify(summaryWithRefinements),
+        inputPayload: "{}",
+      });
+      await Promise.resolve();
+    });
+
+    expect(screen.queryByText("What did stale reconciliation ask?")).toBeNull();
+    if (recovery === "reconnect") {
+      expect(mockConnectPlanningStream).toHaveBeenCalledTimes(2);
+      expect(screen.queryByText("The planning stream failed")).toBeNull();
+    } else {
+      expect(screen.getByText("Recovery could not continue")).toBeInTheDocument();
+    }
+  });
+
+  it.each(["desktop", "mobile"] as const)("does not let a rejected response adopt a reloaded session epoch on %s", async (viewport) => {
+    mockViewportMode.mockReturnValue(viewport);
+    const submittedQuestion = {
+      id: "q-submitted",
+      type: "single_select",
+      question: "Which session owns this answer?",
+      options: [{ id: "secure", label: "Secure defaults" }],
+    };
+    let rejectResponse!: (error: Error) => void;
+    let resolveStaleReconciliation!: (session: Record<string, unknown>) => void;
+    let sessionACalls = 0;
+    mockFetchAiSession.mockImplementation((id: string) => {
+      if (id === "session-b") {
+        return Promise.resolve({
+          ...base,
+          id,
+          status: "awaiting_input",
+          currentQuestion: JSON.stringify({ id: "q-b", type: "text", question: "What did session B ask?" }),
+          result: JSON.stringify(summaryWithRefinements),
+          inputPayload: "{}",
+        });
+      }
+      sessionACalls += 1;
+      if (sessionACalls === 3) {
+        return new Promise((resolve) => { resolveStaleReconciliation = resolve; });
+      }
+      return Promise.resolve({
+        ...base,
+        id: "session-a",
+        status: "awaiting_input",
+        currentQuestion: JSON.stringify(sessionACalls === 1
+          ? submittedQuestion
+          : { id: "q-reloaded", type: "text", question: "What did the reloaded session A ask?" }),
+        result: JSON.stringify(summaryWithRefinements),
+        inputPayload: "{}",
+      });
+    });
+    mockRespondToPlanning.mockReturnValue(new Promise((_resolve, reject) => { rejectResponse = reject; }));
+    const props = { isOpen: true, onClose: vi.fn(), onTaskCreated: vi.fn(), onTasksCreated: vi.fn(), tasks: mockTasks, projectId: "project-1" };
+    const { rerender } = render(<PlanningModeModal {...props} resumeSessionId="session-a" />);
+
+    fireEvent.click(await screen.findByLabelText("Secure defaults"));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Next" }));
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(mockRespondToPlanning).toHaveBeenCalledTimes(1));
+    rerender(<PlanningModeModal {...props} resumeSessionId="session-b" />);
+    expect(await screen.findByText("What did session B ask?")).toBeInTheDocument();
+    rerender(<PlanningModeModal {...props} resumeSessionId="session-a" />);
+    expect(await screen.findByText("What did the reloaded session A ask?")).toBeInTheDocument();
+
+    await act(async () => {
+      rejectResponse(new Error("Generation already in progress for this response"));
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(sessionACalls).toBe(3));
+    await act(async () => {
+      resolveStaleReconciliation({
+        ...base,
+        id: "session-a",
+        status: "awaiting_input",
+        currentQuestion: JSON.stringify({ id: "q-stale", type: "text", question: "What did stale reconciliation ask?" }),
+        result: JSON.stringify(summaryWithRefinements),
+        inputPayload: "{}",
+      });
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText("What did the reloaded session A ask?")).toBeInTheDocument();
+    expect(screen.queryByText("What did stale reconciliation ask?")).toBeNull();
+  });
+
+  it.each(["desktop", "mobile"] as const)("does not let an older stream-error recovery reconnect over a later response on %s", async (viewport) => {
+    mockViewportMode.mockReturnValue(viewport);
+    const submittedQuestion = {
+      id: "q-submitted",
+      type: "single_select",
+      question: "Which response wins after stream recovery?",
+      options: [{ id: "secure", label: "Secure defaults" }],
+    };
+    let resolveRecovery!: (session: Record<string, unknown>) => void;
+    let fetchCount = 0;
+    mockFetchAiSession.mockImplementation(() => {
+      fetchCount += 1;
+      if (fetchCount === 1) {
+        return Promise.resolve({
+          ...base,
+          status: "generating",
+          currentQuestion: null,
+          result: JSON.stringify(summaryWithRefinements),
+          inputPayload: JSON.stringify({ generationPurpose: "plan_update" }),
+        });
+      }
+      return new Promise((resolve) => { resolveRecovery = resolve; });
+    });
+    mockRespondToPlanning.mockReturnValue(new Promise(() => undefined));
+
+    renderSession();
+    await waitFor(() => expect(mockConnectPlanningStream).toHaveBeenCalledTimes(1));
+    const handlers = mockConnectPlanningStream.mock.calls[0]?.[2];
+    act(() => handlers?.onQuestion?.(submittedQuestion));
+    expect(await screen.findByLabelText("Secure defaults")).toBeInTheDocument();
+    handlers?.onError?.("The old stream failed");
+    await waitFor(() => expect(fetchCount).toBe(2));
+    fireEvent.click(screen.getByLabelText("Secure defaults"));
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    const connectionCountAfterResponse = mockConnectPlanningStream.mock.calls.length;
+    await act(async () => {
+      resolveRecovery({
+        ...base,
+        status: "generating",
+        currentQuestion: null,
+        result: JSON.stringify(summaryWithRefinements),
+        inputPayload: JSON.stringify({ generationPurpose: "plan_update" }),
+      });
+      await Promise.resolve();
+    });
+
+    expect(mockConnectPlanningStream).toHaveBeenCalledTimes(connectionCountAfterResponse);
+    expect(screen.queryByText("The old stream failed")).toBeNull();
   });
 
   it("retains an actionable response error after durable question reconciliation", async () => {
@@ -1081,8 +1578,7 @@ describe("PlanningModeModal sequential flow", () => {
     });
 
     renderSession();
-    fireEvent.click(await screen.findByLabelText("Secure defaults"));
-    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    await selectResponseAfterHydration("Secure defaults");
 
     expect(await screen.findByText("What should the durable session ask next?")).toBeInTheDocument();
     expect(screen.getByText("Response submission timed out")).toBeInTheDocument();

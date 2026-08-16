@@ -142,7 +142,14 @@ describe("workflow-native built-in workflow settings", () => {
     const movedIds = new Set(BUILTIN_MOVED_WORKFLOW_SETTINGS.map((setting) => setting.id));
     const movedKeyIds = new Set(MOVED_SETTINGS_KEYS);
 
+    /*
+    FNXC:MemoryAgent 2026-08-15-22:10:
+    FN-8932 declares memory consolidation workflow-native (it resolves through the default workflow
+    on a no-task heartbeat, like patrol), so it belongs in this catalog and stays out of
+    moved/project settings like every other key asserted below.
+    */
     expect(BUILTIN_OVERSIGHT_SETTINGS.map((setting) => setting.id)).toEqual([
+      "memoryConsolidationEnabled",
       "plannerOversightLevel",
       "plannerOversightNotificationLevel",
       "plannerOverseerExecutorStuckAfterMs",
@@ -156,7 +163,13 @@ describe("workflow-native built-in workflow settings", () => {
       type: "boolean",
       default: false,
     });
-    const oversight = BUILTIN_OVERSIGHT_SETTINGS[0];
+    /* FNXC:MemoryAgent 2026-08-15-22:10: resolve by id, not position — FN-8932 prepended
+       memoryConsolidationEnabled to this catalog and positional reads silently drifted. */
+    const memoryConsolidation = BUILTIN_OVERSIGHT_SETTINGS.find((s) => s.id === "memoryConsolidationEnabled");
+    expect(memoryConsolidation).toMatchObject({ type: "boolean", default: true });
+    expect(movedIds.has("memoryConsolidationEnabled")).toBe(false);
+    expect(movedKeyIds.has("memoryConsolidationEnabled")).toBe(false);
+    const oversight = BUILTIN_OVERSIGHT_SETTINGS.find((s) => s.id === "plannerOversightLevel")!;
     expect(oversight).toMatchObject({
       type: "enum",
       default: "autonomous",
@@ -180,7 +193,7 @@ describe("workflow-native built-in workflow settings", () => {
       "plannerOversightLevel should not be in MOVED_SETTINGS_KEYS",
     ).toBe(false);
 
-    const notificationLevel = BUILTIN_OVERSIGHT_SETTINGS[1];
+    const notificationLevel = BUILTIN_OVERSIGHT_SETTINGS.find((s) => s.id === "plannerOversightNotificationLevel")!;
     expect(notificationLevel).toMatchObject({
       id: "plannerOversightNotificationLevel",
       type: "enum",
@@ -213,7 +226,7 @@ describe("workflow-native built-in workflow settings", () => {
 
     // FN-7743: executor-stall recovery threshold, declared alongside the other
     // workflow-native oversight settings.
-    const executorStuckAfterMs = BUILTIN_OVERSIGHT_SETTINGS[2];
+    const executorStuckAfterMs = BUILTIN_OVERSIGHT_SETTINGS.find((s) => s.id === "plannerOverseerExecutorStuckAfterMs")!;
     expect(executorStuckAfterMs).toMatchObject({
       id: "plannerOverseerExecutorStuckAfterMs",
       type: "number",
@@ -232,7 +245,7 @@ describe("workflow-native built-in workflow settings", () => {
       "plannerOverseerExecutorStuckAfterMs should not be in MOVED_SETTINGS_KEYS",
     ).toBe(false);
 
-    const heartbeatPatrol = BUILTIN_OVERSIGHT_SETTINGS[6];
+    const heartbeatPatrol = BUILTIN_OVERSIGHT_SETTINGS.find((s) => s.id === "plannerHeartbeatPatrolEnabled")!;
     expect(heartbeatPatrol).toMatchObject({
       id: "plannerHeartbeatPatrolEnabled",
       type: "boolean",

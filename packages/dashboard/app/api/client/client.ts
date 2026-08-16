@@ -26,9 +26,51 @@ export class ApiRequestError extends Error {
   }
 }
 
+/*
+FNXC:DashboardApi 2026-08-16-03:09:
+Planning Retry showed the raw fetch diagnostic "API returned text/plain; charset=utf-8 instead of JSON
+for /api/planning/:id/retry ... (503 ) Response: no available server". Fusion never emits that body —
+it is a reverse-proxy 502/503/504 (Traefik's exact phrase is "no available server") when no healthy
+backend is in the pool. Operators need a retryable unavailable message, not a content-type dump.
+The same parse path is shared by every dashboard `api()` caller, so classify here rather than only in
+the Planning banner.
+*/
+export const SERVER_UNAVAILABLE_MESSAGE =
+  "The server is temporarily unavailable. Please try again.";
+
+export function isGatewayUnavailableStatus(status: number): boolean {
+  return status === 502 || status === 503 || status === 504;
+}
+
 export function looksLikeHtml(body: string): boolean {
   const trimmed = body.trim();
   return trimmed.startsWith("<!DOCTYPE") || trimmed.startsWith("<html") || trimmed.startsWith("<HTML");
+}
+
+export function errorFromUnparseableApiResponse(args: {
+  url: string;
+  status: number;
+  statusText: string;
+  contentType: string;
+  bodyText: string;
+}): Error {
+  if (isGatewayUnavailableStatus(args.status)) {
+    return new ApiRequestError(SERVER_UNAVAILABLE_MESSAGE, args.status);
+  }
+
+  const isHtml = args.contentType.includes("text/html") || looksLikeHtml(args.bodyText);
+  if (isHtml) {
+    return new Error(
+      `API returned HTML instead of JSON for ${args.url}. ` +
+      `The endpoint may not be properly configured. (${args.status} ${args.statusText})`
+    );
+  }
+
+  const preview = args.bodyText.length > 160 ? `${args.bodyText.slice(0, 160)}...` : args.bodyText;
+  return new Error(
+    `API returned ${args.contentType || "an unknown content type"} instead of JSON for ${args.url}. ` +
+    `(${args.status} ${args.statusText})${preview ? ` Response: ${preview}` : ""}`
+  );
 }
 
 export function buildApiUrl(path: string): string {
@@ -95,27 +137,24 @@ export async function api<T = unknown>(path: string, opts: RequestInit = {}): Pr
   const contentType = res.headers.get("content-type") ?? "";
   const bodyText = await res.text();
   const isJson = contentType.includes("application/json");
-  const isHtml = contentType.includes("text/html") || looksLikeHtml(bodyText);
-
-  if (isHtml) {
-    throw new Error(
-      `API returned HTML instead of JSON for ${url}. ` +
-      `The endpoint may not be properly configured. (${res.status} ${res.statusText})`
-    );
-  }
 
   if (!isJson) {
-    const preview = bodyText.length > 160 ? `${bodyText.slice(0, 160)}...` : bodyText;
-    throw new Error(
-      `API returned ${contentType || "an unknown content type"} instead of JSON for ${url}. ` +
-      `(${res.status} ${res.statusText})${preview ? ` Response: ${preview}` : ""}`
-    );
+    throw errorFromUnparseableApiResponse({
+      url,
+      status: res.status,
+      statusText: res.statusText,
+      contentType,
+      bodyText,
+    });
   }
 
   let data: unknown;
   try {
     data = bodyText ? JSON.parse(bodyText) : null;
   } catch {
+    if (isGatewayUnavailableStatus(res.status)) {
+      throw new ApiRequestError(SERVER_UNAVAILABLE_MESSAGE, res.status);
+    }
     throw new Error(
       `API returned invalid JSON for ${url}. (${res.status} ${res.statusText})`
     );

@@ -158,12 +158,28 @@ export async function createPgLayer(): Promise<PgLayerFixture> {
     runtimeUrl: testUrl,
     migrationUrl: testUrl,
     migrationUrlOverridden: false,
+    /*
+    This helper creates its own local postmaster endpoint, making it the test equivalent of a
+    lifecycle-proven direct session transport (mirrors core pg-test-harness, FNXC:PlanningDependencyReseed
+    2026-08-04-00:54). Without it, every hold-column task mutation that routes through the planning
+    lifecycle advisory lock throws `Planning lifecycle lock transport unavailable: direct-session-unavailable`
+    and the self-healing sweeps under test silently recover 0 rows.
+    */
+    directSessionUrl: testUrl,
+    directSessionProvenance: "migration-override",
   };
   const schemaConn = await createConnectionSetFromUrl(backend, { poolMax: 1, connectTimeoutSeconds: 5 });
   await applySchemaBaseline(schemaConn.migration);
   await schemaConn.close();
-  const connections = await createConnectionSetFromUrl(backend, { poolMax: 5, connectTimeoutSeconds: 5 });
-  const layer = createAsyncDataLayer(connections);
+  /*
+  FN-8764 built-in workflow-owner provisioning during AgentStore.init() requires a bound
+  asyncLayer.projectId (the project-scoped advisory lock hashes it), so the reliability layer
+  binds one explicitly — mirroring the CLI extension harness rather than the project-agnostic
+  core default.
+  */
+  const projectId = dbName;
+  const connections = await createConnectionSetFromUrl(backend, { poolMax: 5, connectTimeoutSeconds: 5, projectId });
+  const layer = createAsyncDataLayer(connections, { projectId });
   return {
     layer,
     dbName,

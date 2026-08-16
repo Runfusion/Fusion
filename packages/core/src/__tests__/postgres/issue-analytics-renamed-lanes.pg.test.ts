@@ -30,8 +30,16 @@ const IN_RANGE = "2026-06-15T12:00:00.000Z";
 const RANGE = { from: "2026-06-01T00:00:00.000Z", to: "2026-06-30T23:59:59.999Z" };
 
 pgDescribe("issue analytics under a renamed board vocabulary", () => {
+  /*
+  FNXC:MultiProjectIsolation 2026-08-15-22:10:
+  FN-8957 scoped analytics task reads to `layer.projectId`. This file aggregates under projectId
+  "p1", so the harness binds the same project: an unbound harness writes store rows under the GUC
+  default partition and the scoped aggregate reads zero rows — an isolation false-negative, not the
+  lane-vocabulary defect this file pins.
+  */
   const h: SharedPgTaskStoreHarness = createSharedPgTaskStoreTestHarness({
     prefix: "fusion_issue_analytics_lanes",
+    projectId: "p1",
   });
 
   beforeAll(h.beforeAll);

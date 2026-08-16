@@ -81,6 +81,13 @@ function createStore(task: Task, settingsOverrides: Record<string, unknown> = {}
   });
   (emitter as any).appendAgentLog = vi.fn().mockResolvedValue(undefined);
   (emitter as any).getGoalStore = vi.fn().mockReturnValue({ listGoals: vi.fn().mockReturnValue([]) });
+  /*
+  FNXC:EngineTests 2026-08-15-23:48:
+  Graph principal admission (FN-8764/FN-8821) reads store.getRootDir() before it creates a
+  session. Keep this fixture production-shaped so the test reaches non-continuable handling
+  instead of terminally parking at steps#0:step-execute on a missing store method.
+  */
+  (emitter as any).getRootDir = vi.fn().mockReturnValue("/tmp/test");
   (emitter as any).getFusionDir = vi.fn().mockReturnValue("/tmp/test/.fusion");
   (emitter as any).clearStaleExecutionStartBranchReferences = vi.fn().mockReturnValue([]);
   (emitter as any).listWorkflowSteps = vi.fn().mockResolvedValue([]);
@@ -169,6 +176,13 @@ function createSelfHealingStore(tasks: Task[], settingsOverrides: Record<string,
   (emitter as any).recordRunAuditEvent = vi.fn().mockImplementation(async (event: any) => {
     audits.push(event);
   });
+  /*
+  FNXC:EngineTests 2026-08-15-23:48:
+  Graph principal admission (FN-8764/FN-8821) reads store.getRootDir() before it creates a
+  session. Self-healing fixtures retain the same TaskStore shape to prevent an admission
+  exception from making executor-session coverage vacuous.
+  */
+  (emitter as any).getRootDir = vi.fn().mockReturnValue("/tmp/test");
   // FNXC:EngineTests 2026-07-17-06:30: graph tool-failure cursor reads getAgentLogCount at execute entry.
   (emitter as any).getAgentLogCount = vi.fn().mockResolvedValue(0);
   (emitter as any).getAgentLogs = vi.fn().mockResolvedValue([]);
@@ -250,7 +264,13 @@ describe("FN-5866 reliability interactions: post-done continuation no wedge", ()
       throw new Error("Cannot continue from message role: assistant");
     });
 
-    const executor = new TaskExecutor(store, "/tmp/test", { onComplete, onError, agentStore: { getAgent: vi.fn().mockResolvedValue(null) } as any });
+    /*
+    FNXC:EngineTests 2026-08-15-23:48:
+    Let executor-test-helpers supply its routing agent store. Principal admission requires
+    agentStore.listAgents() before a step session exists; the legacy getAgent-only bag holds
+    this case at workflow-principal-role-pool-exhausted and makes the continuation assertion vacuous.
+    */
+    const executor = new TaskExecutor(store, "/tmp/test", { onComplete, onError });
     await executor.execute(task);
 
     // Pre-fix root cause: the post-done step-session catch in executor.ts marked
@@ -296,6 +316,32 @@ describe("FN-5866 reliability interactions: post-done continuation no wedge", ()
     expect(onError).not.toHaveBeenCalled();
     // FNXC:PostDoneContinuation 2026-07-16-11:57: Incomplete assistant-last transcripts use the dedicated stale-continuation recovery lane. Assert its fresh-session retry action rather than conflating it with the completed-work suppression path.
     expect((task.log ?? []).some((entry: any) => entry.action.includes("Detected stale assistant-continuation session — fresh-session retry"))).toBe(true);
+  });
+
+  it("requeues incomplete step-session work with a fresh session when the session is not continuable", async () => {
+    const task = makeTask({
+      id: "FN-9106-STEP-SESSION-INCOMPLETE",
+      steps: [{ name: "Implement", status: "in-progress" as const }],
+      sessionFile: "/tmp/test/.fusion/sessions/FN-9106-STEP-SESSION-INCOMPLETE.json",
+    });
+    const store = createStore(task, { runStepsInNewSessions: true });
+    const onError = vi.fn();
+
+    mockExecuteAll.mockRejectedValue(new Error("Cannot continue from message role: assistant"));
+
+    const executor = new TaskExecutor(store, "/tmp/test", { onError });
+    await executor.execute(task);
+
+    expect(task.column).toBe("todo");
+    expect(task.status).toBeUndefined();
+    expect(task.error).toBeUndefined();
+    expect(task.sessionFile).toBeNull();
+    expect(task.recoveryRetryCount).toBe(1);
+    expect(task.nextRecoveryAt).toEqual(expect.any(String));
+    expect(store.moveTask).toHaveBeenCalledWith(task.id, "todo", { preserveResumeState: true });
+    expect(store.handoffToReview).not.toHaveBeenCalled();
+    expect(onError).not.toHaveBeenCalled();
+    expect((task.log ?? []).some((entry: any) => entry.action.includes("Non-continuable session — fresh-session retry"))).toBe(true);
   });
 
   it("self-heals already wedged post-done non-continuable failures back to clean in-review", async () => {

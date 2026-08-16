@@ -3,17 +3,23 @@ import type { MissionFeature, MissionStore, TaskStore } from "@fusion/core";
 import { Scheduler } from "../../scheduler.js";
 import { MissionExecutionLoop } from "../../missions/mission-execution-loop.js";
 
-function makeTaskStore(taskColumn: "done" | "archived" | "in-progress" = "done") {
+function makeTaskStore(
+  taskColumn: "done" | "archived" | "in-progress" = "done",
+  overrides: Record<string, unknown> = {},
+) {
+  const task = {
+    id: "FN-001",
+    title: "Mission task",
+    description: "desc",
+    column: taskColumn,
+    status: taskColumn === "in-progress" ? "in-progress" : "done",
+    sliceId: "SL-001",
+    log: [],
+    ...overrides,
+  };
   return {
-    getTask: vi.fn(async (taskId: string) => ({
-      id: taskId,
-      title: "Mission task",
-      description: "desc",
-      column: taskColumn,
-      status: taskColumn === "in-progress" ? "in-progress" : "done",
-      sliceId: "SL-001",
-      log: [],
-    })),
+    getTask: vi.fn(async () => task),
+    listTasks: vi.fn(async () => [task]),
     getRootDir: vi.fn(() => "/test/project"),
     getSettings: vi.fn(async () => ({})),
     on: vi.fn(),
@@ -69,6 +75,12 @@ describe("FN-5715 reliability: mission validation trigger gap", () => {
     const feature = makeFeature();
     const missionStore = {
       getFeatureByTaskId: vi.fn(() => feature),
+      getMission: vi.fn(async () => ({ id: "M-001", status: "active" })),
+      getMissionWithHierarchy: vi.fn(async () => ({
+        id: "M-001",
+        status: "active",
+        milestones: [{ id: "MS-001", slices: [{ id: "SL-001", features: [feature] }] }],
+      })),
       listAssertionsForFeature: vi.fn(() => []),
       reconcileSupersededGeneratedFixFeatures: vi.fn(async () => ({ supersededCount: 0, featureIds: [] as string[] })),
       listFeatures: vi.fn(async () => [feature]),
@@ -77,7 +89,7 @@ describe("FN-5715 reliability: mission validation trigger gap", () => {
       getMilestone: vi.fn(() => ({ id: "MS-001", missionId: "M-001" })),
     } as unknown as MissionStore;
 
-    const scheduler = new Scheduler(makeTaskStore("done"), {
+    const scheduler = new Scheduler(makeTaskStore("done", { missionId: "M-001" }), {
       missionStore,
       missionExecutionLoop: {
         isRunning: vi.fn(() => true),
@@ -88,7 +100,11 @@ describe("FN-5715 reliability: mission validation trigger gap", () => {
 
     await (scheduler as any).handleMissionTaskMove("FN-001", "done");
 
-    expect(missionStore.updateFeatureStatus).toHaveBeenCalledWith("F-001", "done");
+    expect(missionStore.updateFeatureStatus).toHaveBeenCalledWith(
+      "F-001",
+      "done",
+      expect.objectContaining({ actor: expect.anything() }),
+    );
   });
 
   it("recovers implementing features whose task is already done at startup", async () => {

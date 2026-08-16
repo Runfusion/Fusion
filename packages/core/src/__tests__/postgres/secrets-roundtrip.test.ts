@@ -26,96 +26,30 @@
  * gate stays green without a running server.
  */
 
-import { describe, it, expect, afterEach } from "vitest";
-import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
+import { it, expect, beforeAll, beforeEach, afterEach, afterAll } from "vitest";
+import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { eq } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 import { randomBytes } from "node:crypto";
-import { execSync } from "node:child_process";
 import { createSecretCipher } from "../../secrets/secrets-crypto.js";
 import * as schema from "../../postgres/schema/index.js";
-
-const PG_ADMIN_URL =
-  process.env.FUSION_PG_TEST_ADMIN_URL ?? "postgresql://localhost:5432/postgres";
-const PG_TEST_URL_BASE =
-  process.env.FUSION_PG_TEST_URL_BASE ?? "postgresql://localhost:5432";
-const PG_AVAILABLE =
-  process.env.FUSION_PG_TEST_SKIP !== "1" && Boolean(PG_TEST_URL_BASE);
-
-const pgDescribe = PG_AVAILABLE ? describe : describe.skip;
-
-/**
- * FNXC:SecretsStore 2026-06-24-12:00:
- * Create a uniquely-named fresh database for each test so tests are hermetic
- * and never touch existing data. Mirrors the data-layer / schema-applier test
- * harness (CREATE/DROP DATABASE cannot run inside a transaction, so psql via
- * execSync is the acceptable short-DDL use per AGENTS.md).
- */
-function uniqueDbName(): string {
-  return `fusion_secret_test_${process.pid}_${Math.random().toString(36).slice(2, 8)}`;
-}
+import {
+  pgDescribe,
+  createSharedPgTaskStoreTestHarness,
+  type SharedPgTaskStoreHarness,
+} from "../../__test-utils__/pg-test-harness.js";
 
 /*
-FNXC:PgTestAuthFix 2026-07-14-00:00:
-The inline adminExec used process.env.USER for the psql -U flag, which is 'runner' on GitHub Actions (not 'postgres'). Use the PG_TEST_URL_BASE connection string instead so credentials are always correct.
+FNXC:PgTestHarnessAdoption 2026-08-16-03:45:
+Migrated off the hand-rolled per-test CREATE DATABASE + applySchemaBaseline scaffolding
+(~3-4s of DDL per test) onto the shared PG harness: one template-cloned database per file
+with TRUNCATE-based reset per test. The database setup here was scaffolding, not the
+subject under test (the bytea encrypt → INSERT → SELECT → decrypt cycle is), and every
+assertion is unchanged. `db` is the harness's raw admin Drizzle connection, matching the
+direct-connection semantics the original per-test databases used.
 */
-function adminExec(statement: string): void {
-  execSync(
-    `psql "${PG_TEST_URL_BASE}/postgres" -v ON_ERROR_STOP=1 -c "${statement.replace(/"/g, '\\"')}"`,
-    { stdio: "pipe", env: process.env },
-  );
-}
-
 interface SecretTestCtx {
-  dbName: string;
-  testUrl: string;
-  adminSql: ReturnType<typeof postgres>;
-  db: ReturnType<typeof drizzle>;
-}
-
-async function setupCtx(): Promise<SecretTestCtx> {
-  const dbName = uniqueDbName();
-  try {
-    adminExec(`DROP DATABASE IF EXISTS "${dbName}"`);
-  } catch {
-    // may not exist
-  }
-  adminExec(`CREATE DATABASE "${dbName}"`);
-  const testUrl = `${PG_TEST_URL_BASE}/${dbName}`;
-
-  // Apply the baseline schema so secrets + secrets_global exist.
-  const { createConnectionSetFromUrl } = await import("../../postgres/connection.js");
-  const { applySchemaBaseline } = await import("../../postgres/schema-applier.js");
-  const { resolveBackendWithOptions } = await import("../../postgres/backend-resolver.js");
-  const backend = resolveBackendWithOptions({
-    databaseUrl: testUrl,
-    databaseMigrationUrl: testUrl,
-  });
-  const connections = await createConnectionSetFromUrl(backend, {
-    poolMax: 1,
-    connectTimeoutSeconds: 5,
-  });
-  await applySchemaBaseline(connections.migration);
-  await connections.close();
-
-  const adminSql = postgres(testUrl, { max: 3, prepare: false, onnotice: () => {} });
-  const db = drizzle(adminSql);
-  return { dbName, testUrl, adminSql, db };
-}
-
-async function teardownCtx(ctx: SecretTestCtx | null): Promise<void> {
-  if (!ctx) return;
-  try {
-    await ctx.adminSql.end({ timeout: 5 });
-  } catch {
-    // best-effort
-  }
-  try {
-    adminExec(`DROP DATABASE IF EXISTS "${ctx.dbName}"`);
-  } catch {
-    // best-effort
-  }
+  db: PostgresJsDatabase;
 }
 
 /** A fixed 32-byte master key provider for deterministic test crypto. */
@@ -124,15 +58,20 @@ function fixedMasterKeyProvider(key: Buffer = randomBytes(32)): () => Promise<Bu
 }
 
 pgDescribe("PostgreSQL secrets round-trip (VAL-CROSS-011)", () => {
-  let ctx: SecretTestCtx | null = null;
-
-  afterEach(async () => {
-    await teardownCtx(ctx);
-    ctx = null;
+  const h: SharedPgTaskStoreHarness = createSharedPgTaskStoreTestHarness({
+    prefix: "fusion_secret_test",
   });
+  let ctx: SecretTestCtx;
+
+  beforeAll(h.beforeAll);
+  beforeEach(async () => {
+    await h.beforeEach();
+    ctx = { db: h.adminDb() };
+  });
+  afterEach(h.afterEach);
+  afterAll(h.afterAll);
 
   it("round-trips a project-scoped secret through project.secrets bytea columns", async () => {
-    ctx = await setupCtx();
     const cipher = createSecretCipher(fixedMasterKeyProvider());
     const plaintext = "super-secret-api-key-12345";
     const encrypted = await cipher.encrypt(plaintext);
@@ -180,7 +119,6 @@ pgDescribe("PostgreSQL secrets round-trip (VAL-CROSS-011)", () => {
   });
 
   it("round-trips a global-scoped secret through central.secrets_global bytea columns", async () => {
-    ctx = await setupCtx();
     const cipher = createSecretCipher(fixedMasterKeyProvider());
     const plaintext = "global-secret-token-XYZ";
     const encrypted = await cipher.encrypt(plaintext);
@@ -222,7 +160,6 @@ pgDescribe("PostgreSQL secrets round-trip (VAL-CROSS-011)", () => {
   });
 
   it("preserves ciphertext integrity across a re-read (tamper detection via GCM auth tag)", async () => {
-    ctx = await setupCtx();
     const cipher = createSecretCipher(fixedMasterKeyProvider());
     const plaintext = "integrity-check-value";
     const encrypted = await cipher.encrypt(plaintext);
@@ -266,7 +203,6 @@ pgDescribe("PostgreSQL secrets round-trip (VAL-CROSS-011)", () => {
   });
 
   it("enforces the access_policy CHECK constraint on project.secrets", async () => {
-    ctx = await setupCtx();
     const cipher = createSecretCipher(fixedMasterKeyProvider());
     const encrypted = await cipher.encrypt("v");
 
@@ -306,7 +242,6 @@ pgDescribe("PostgreSQL secrets round-trip (VAL-CROSS-011)", () => {
   });
 
   it("enforces key uniqueness on project.secrets", async () => {
-    ctx = await setupCtx();
     const cipher = createSecretCipher(fixedMasterKeyProvider());
     const encrypted = await cipher.encrypt("v");
 

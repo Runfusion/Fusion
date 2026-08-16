@@ -34,17 +34,18 @@ describe("useOverlayDismiss", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it("ignores compatibility mouse sequence immediately after touch", () => {
+  it("closes on touch while ignoring its compatibility mouse sequence", () => {
     const onClose = vi.fn();
     const { getByTestId } = render(<OverlayHarness onClose={onClose} enabled />);
     const overlay = getByTestId("overlay");
 
     fireEvent.touchStart(overlay);
     fireEvent.touchEnd(overlay);
+    expect(onClose).toHaveBeenCalledTimes(1);
+
     fireEvent.mouseDown(overlay);
     fireEvent.mouseUp(overlay);
-
-    expect(onClose).toHaveBeenCalledTimes(0);
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 
   it("does not close when mouse starts inside modal and ends on overlay", () => {

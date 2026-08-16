@@ -215,7 +215,8 @@ describe("ModelSelectionModal", () => {
     renderModelSelectionModal({ onClose });
 
     const overlay = screen.getByTestId("model-selection-modal");
-    fireEvent.click(overlay);
+    fireEvent.mouseDown(overlay);
+    fireEvent.mouseUp(overlay);
 
     expect(onClose).toHaveBeenCalled();
   });

@@ -142,18 +142,16 @@ export function wrapAuthStorageWithApiKeyProviders(
     return legacySubscription;
   };
 
-  return {
-    reload: () => mergedAuthStorage.reload(),
-    getOAuthProviders: () =>
-      mergedAuthStorage
-        .getOAuthProviders()
-        .map((provider) => provider.id === ANTHROPIC_STORAGE_PROVIDER_ID
-          ? ({ id: ANTHROPIC_STORAGE_PROVIDER_ID, name: "Anthropic Subscription" })
-          : ({ id: provider.id, name: provider.name })),
-    hasAuth: (provider) => provider === ANTHROPIC_STORAGE_PROVIDER_ID || provider === ANTHROPIC_SUBSCRIPTION_STORAGE_PROVIDER_ID
-      ? Boolean(getAnthropicSubscriptionCredential())
-      : mergedAuthStorage.hasAuth(provider),
-    login: async (providerId, callbacks) => {
+  /*
+  FNXC:ProviderAuth 2026-08-15-21:46:
+  This is the ONLY seam allowed to start an OAuth login: it maps the split Anthropic ids
+  (`anthropic` / `anthropic-subscription`) onto the upstream `anthropic` runtime login before
+  relocating the credential to the subscription storage row. Instance-scoped login must reuse it —
+  calling `mergedAuthStorage.login("anthropic-subscription", ...)` directly reaches
+  `ModelRuntime.login` with a storage-only id pi does not register and fails with
+  `Unknown provider: anthropic-subscription` (GitHub #3462).
+  */
+  const login = async (providerId: string, callbacks: LoginCallbacks): Promise<void> => {
       if (providerId !== ANTHROPIC_STORAGE_PROVIDER_ID && providerId !== ANTHROPIC_SUBSCRIPTION_STORAGE_PROVIDER_ID) {
         await mergedAuthStorage.login(
           providerId,
@@ -181,7 +179,20 @@ export function wrapAuthStorageWithApiKeyProviders(
           await authStorage.remove(ANTHROPIC_STORAGE_PROVIDER_ID);
         }
       }
-    },
+  };
+
+  return {
+    reload: () => mergedAuthStorage.reload(),
+    getOAuthProviders: () =>
+      mergedAuthStorage
+        .getOAuthProviders()
+        .map((provider) => provider.id === ANTHROPIC_STORAGE_PROVIDER_ID
+          ? ({ id: ANTHROPIC_STORAGE_PROVIDER_ID, name: "Anthropic Subscription" })
+          : ({ id: provider.id, name: provider.name })),
+    hasAuth: (provider) => provider === ANTHROPIC_STORAGE_PROVIDER_ID || provider === ANTHROPIC_SUBSCRIPTION_STORAGE_PROVIDER_ID
+      ? Boolean(getAnthropicSubscriptionCredential())
+      : mergedAuthStorage.hasAuth(provider),
+    login,
     logout: async (provider) => {
       if (provider !== ANTHROPIC_STORAGE_PROVIDER_ID && provider !== ANTHROPIC_SUBSCRIPTION_STORAGE_PROVIDER_ID) {
         await mergedAuthStorage.logout(provider);
@@ -294,8 +305,16 @@ export function wrapAuthStorageWithApiKeyProviders(
       The runtime OAuth adapter only accepts a bare provider and therefore writes its resolved
       default slot. Capture and restore that slot around the login before persisting the result to
       the requested instance, so adding or reauthorizing an account never repoints its credential.
+
+      FNXC:ProviderAuth 2026-08-15-21:46:
+      Instance login must go through the Anthropic-aware `login` seam above, never raw
+      `mergedAuthStorage.login(providerId, ...)`: for the subscription card `providerId` here is the
+      storage row id `anthropic-subscription`, which pi's ModelRuntime does not register as a
+      provider, so the raw call failed every dashboard subscription login with
+      `Unknown provider: anthropic-subscription` (GitHub #3462) once the Authentication cards began
+      passing an explicit credential-instance id.
       */
-      await mergedAuthStorage.login(providerId, callbacks);
+      await login(providerId, callbacks);
       const credential = mergedAuthStorage.get(providerId);
       if (!credential) return;
       await mergedAuthStorage.setInstance(target, { ...credential, ...(label ? { label } : {}) });

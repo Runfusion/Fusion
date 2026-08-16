@@ -75,6 +75,8 @@ function buildApp(input: { task: Task; activeMergeTaskId?: string | null; staleM
     getSettingsFast: async () => ({}),
     getRootDir: () => "/tmp/does-not-exist",
     listTasks: async () => [input.task],
+    // FNXC:TaskWedgeNotifications 2026-08-15-05:10: dashboard Retry now clears the spent generic-terminal auto-recovery budget before mutating task state; the fixture must expose the seam or every retry 500s.
+    resetTerminalFailureAutoRecoveryBudget: async () => {},
   } as unknown as TaskStore;
 
   const runtimeLogger = { warn: vi.fn(), error: vi.fn(), log: vi.fn() };

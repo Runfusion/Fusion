@@ -2,10 +2,10 @@ import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("node:child_process", () => ({ spawn: vi.fn() }));
+vi.mock("node:child_process", () => ({ spawn: vi.fn(), spawnSync: vi.fn() }));
 
-import { spawn } from "node:child_process";
-import { runCursorCommand } from "../cli-spawn.js";
+import { spawn, spawnSync } from "node:child_process";
+import { assertCmdBoundarySafe, quoteCmdArgument, resolvePowerShellExecutable, runCursorCommand } from "../cli-spawn.js";
 
 function mockPlatform(platform: NodeJS.Platform) {
   return vi.spyOn(process, "platform", "get").mockReturnValue(platform);
@@ -99,5 +99,24 @@ describe("runCursorCommand", () => {
 
     child.emit("close", 0);
     await expect(resultPromise).resolves.toMatchObject({ code: 124 });
+  });
+});
+
+describe("cmd boundary validation", () => {
+  it("falls back to Windows PowerShell when pwsh is not resolvable", () => {
+    vi.mocked(spawnSync).mockReturnValue({ status: 1, stdout: "" } as never);
+    expect(resolvePowerShellExecutable()).toBe("powershell.exe");
+    vi.mocked(spawnSync).mockReturnValue({ status: 0, stdout: "C:\\Program Files\\PowerShell\\7\\pwsh.exe\n" } as never);
+    expect(resolvePowerShellExecutable()).toBe("pwsh.exe");
+  });
+
+  it("allows Cursor bracketed parameterized model identifiers", () => {
+    const model = "claude-opus-4-8[context=1m,effort=high]";
+    expect(() => assertCmdBoundarySafe(model)).not.toThrow();
+    expect(quoteCmdArgument(model)).toBe(`"${model}"`);
+  });
+
+  it("rejects cmd control characters rather than escaping them", () => {
+    expect(() => assertCmdBoundarySafe("model&payload")).toThrow(/&/);
   });
 });

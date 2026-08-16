@@ -54,6 +54,46 @@ describe("taskTiming helpers", () => {
     expect(getActiveRuntimeMs({ column: "in-progress", cumulativeActiveMs: undefined, executionStartedAt: undefined, columnMovedAt: undefined }, t0)).toBeNull();
   });
 
+  it("caps a poisoned cumulative total at the task wall-clock age", () => {
+    const createdAt = "2026-05-15T08:00:00.000Z";
+    const nowMs = Date.parse("2026-05-15T15:00:00.000Z");
+    const task = {
+      column: "in-review",
+      cumulativeActiveMs: 4 * 24 * 60 * 60_000,
+      executionStartedAt: undefined,
+      createdAt,
+    };
+
+    expect(getActiveRuntimeMs(task, nowMs)).toBe(7 * 60 * 60_000);
+    expect(getTotalAgentActiveMs({ ...task, cumulativePlanningMs: 0, planningStartedAt: undefined }, nowMs))
+      .toBe(7 * 60 * 60_000);
+  });
+
+  it("retains planning accrued before first execution when applying the wall-clock ceiling", () => {
+    const nowMs = Date.parse("2026-05-15T10:00:00.000Z");
+    expect(getTotalAgentActiveMs({
+      column: "in-progress",
+      createdAt: "2026-05-15T09:00:00.000Z",
+      firstExecutionAt: "2026-05-15T10:00:00.000Z",
+      cumulativeActiveMs: 0,
+      executionStartedAt: "2026-05-15T10:00:00.000Z",
+      cumulativePlanningMs: 30 * 60_000,
+      planningStartedAt: undefined,
+    }, nowMs)).toBe(30 * 60_000);
+  });
+
+  it("counts only the banked and current segments after a WIP round trip", () => {
+    const nowMs = Date.parse("2026-05-15T08:20:00.000Z");
+    expect(getTotalAgentActiveMs({
+      column: "in-progress",
+      cumulativeActiveMs: 5 * 60_000,
+      executionStartedAt: "2026-05-15T08:15:00.000Z",
+      cumulativePlanningMs: undefined,
+      planningStartedAt: undefined,
+      firstExecutionAt: "2026-05-15T08:00:00.000Z",
+    }, nowMs)).toBe(10 * 60_000);
+  });
+
   it("returns wall-clock runtime since first execution", () => {
     const wallClock = getWallClockSinceFirstExecutionMs(
       "2026-05-15T08:42:00.000Z",

@@ -116,8 +116,12 @@ describe("merge-node paused-abort retry classification (FN-6735)", () => {
   });
 
   it("allows shared-branch-group local integration to retry even when global autoMerge is off", async () => {
+    // FN-8823 (3dd824d04e): under project auto-merge Off, a shared-branch member is HELD unless its
+    // task explicitly opts in with autoMerge: true (see AGENTS.md "autoMerge: false callout"). The
+    // invariant this test guards — shared local integration retries under global Off — now requires
+    // that explicit member opt-in; an undefined member autoMerge is fenced by design.
     const { store, task, executor, mergeRequester } = makeHarness({
-      autoMerge: undefined,
+      autoMerge: true,
       branchContext: { groupId: "BG-6735", source: "mission", assignmentMode: "shared" },
     }, { autoMerge: false });
 

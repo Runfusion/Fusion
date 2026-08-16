@@ -14,8 +14,8 @@ const REPO_ROOT = resolve(__dirname, "../../../..");
 const ENGINE_ROOT = join(REPO_ROOT, "packages/engine/src");
 
 const DROP_BRIDGES = {
-  "packages/engine/src/hybrid-executor.ts": "HybridExecutor",
-  "packages/engine/src/project-manager.ts": "ProjectManager",
+  "packages/engine/src/concurrency/hybrid-executor.ts": "HybridExecutor",
+  "packages/engine/src/project/project-manager.ts": "ProjectManager",
   "packages/engine/src/runtimes/child-process-runtime.ts": "ChildProcessRuntime",
   "packages/engine/src/runtimes/in-process-runtime.ts": "InProcessRuntime",
   "packages/engine/src/runtimes/remote-node-runtime.ts": "RemoteNodeRuntime",
@@ -67,6 +67,9 @@ describe("engine task:updated emit surface", () => {
       taskStore: inProcessUpstream,
       recordActivity: () => undefined,
       config: { projectId: "project" },
+      // FNXC:WorkflowEvents 2026-08-15-19:10: the real task:updated registration now runs FN-7608-style approval-hold bookkeeping before re-emitting; the fixture supplies the sets so the actual forwarding body executes unchanged.
+      approvalHeldTaskIds: new Set<string>(),
+      approvalReleasedTaskIds: new Set<string>(),
     });
     (InProcessRuntime.prototype as any).setupEventForwarding.call(inProcess);
 

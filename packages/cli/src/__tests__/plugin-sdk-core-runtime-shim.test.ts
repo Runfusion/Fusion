@@ -38,13 +38,13 @@ describe("plugin SDK core runtime shim supervision", () => {
     expect(AgentStore).toBeTypeOf("function");
   });
 
-  it("bundles and loads the Todo plugin through the production core alias", async () => {
-    const tempRoot = mkdtempSync(join(tmpdir(), "fusion-todo-plugin-bundle-"));
-    const destDir = join(tempRoot, "fusion-plugin-todos");
+  async function expectBundledPluginLoads(pluginId: string) {
+    const tempRoot = mkdtempSync(join(tmpdir(), `fusion-${pluginId}-bundle-`));
+    const destDir = join(tempRoot, pluginId);
     try {
       await bundlePluginEntry({
-        pluginId: "fusion-plugin-todos",
-        srcDir: join(workspaceRoot, "plugins", "fusion-plugin-todos"),
+        pluginId,
+        srcDir: join(workspaceRoot, "plugins", pluginId),
         destDir,
       });
 
@@ -53,11 +53,19 @@ describe("plugin SDK core runtime shim supervision", () => {
         /(?:from\s+|import\s*(?:\(\s*)?|require\s*\(\s*)["']@fusion\//,
       );
       const plugin = await import(pathToFileURL(bundledPath).href);
-      expect(plugin.default.manifest.id).toBe("fusion-plugin-todos");
+      expect(plugin.default.manifest.id).toBe(pluginId);
     } finally {
       stopEsbuild();
       rmSync(tempRoot, { recursive: true, force: true });
     }
+  }
+
+  it("bundles and loads the Todo plugin through the production core alias", async () => {
+    await expectBundledPluginLoads("fusion-plugin-todos");
+  });
+
+  it("bundles and loads the Cursor runtime through the production core alias", async () => {
+    await expectBundledPluginLoads("fusion-plugin-cursor-runtime");
   });
 
   it("absorbs child spawn errors without throwing", () => {
@@ -67,6 +75,26 @@ describe("plugin SDK core runtime shim supervision", () => {
     superviseSpawn("missing-command");
 
     expect(() => child.emit("error", new Error("ENOENT"))).not.toThrow();
+  });
+
+  it("keeps Cursor's non-finite lifetime supervised until explicit cancellation", async () => {
+    const child = new FakeChild();
+    mocks.spawn.mockReturnValue(child);
+    const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
+
+    const supervised = superviseSpawn("cursor-agent", ["--print"], {
+      shell: false,
+      maxLifetimeMs: Number.POSITIVE_INFINITY,
+    });
+    expect(mocks.spawn).toHaveBeenCalledWith("cursor-agent", ["--print"], expect.objectContaining({ shell: false }));
+    expect(setTimeoutSpy).not.toHaveBeenCalled();
+    expect(supervised.pid).toBe(child.pid);
+    expect(supervised.child).toBe(child);
+
+    child.emit("close", 0, "SIGTERM");
+    await expect(supervised.waitExit()).resolves.toEqual({ code: 0, signal: "SIGTERM" });
+    supervised.kill();
+    expect(child.kill).not.toHaveBeenCalled();
   });
 
   it("unrefs escalation timers and never SIGKILLs a closed child", () => {

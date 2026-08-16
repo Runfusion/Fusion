@@ -1786,7 +1786,8 @@ Agent Settings composes native inputs, buttons, editors, and portaled controls. 
     width: 100%;
   }
 
-  .skill-multiselect-dropdown,
+  .skill-multiselect-filter,
+  .skill-multiselect-list,
   .skill-multiselect-chips {
     width: 100%;
   }
@@ -2457,3 +2458,7 @@ the tab into endless page scroll.
 .memory-consolidation-history__row--completed strong { color: var(--color-success); }
 .memory-consolidation-history__row--skipped strong { color: var(--color-warning); }
 .memory-consolidation-history__row--failed strong { color: var(--color-error); }
+
+/* FNXC:AgentSkillsUI 2026-08-16-04:27: Agent badges carry availability text so forced stored IDs do not imply delivery. */
+.dashboard-summary-skill-badge[data-skill-state="disabled"] { border-color: var(--color-warning); }
+.dashboard-summary-skill-badge[data-skill-state="unknown"] { border-color: var(--color-error); }

@@ -3,6 +3,10 @@ import { describeModel, formatModelMarkerDetails, compactSessionContext, COMPACT
 import { createAgentSession, ModelRegistry, ModelRuntime, type AgentSession } from "@earendil-works/pi-coding-agent";
 import { piLog } from "../logger.js";
 
+const { resourceLoaderOptions } = vi.hoisted(() => ({
+  resourceLoaderOptions: { current: undefined as Record<string, unknown> | undefined },
+}));
+
 // Mock skill resolver functions - define inside factory to avoid hoisting issues
 vi.mock("../cli-runtime/skill-resolver.js", () => {
   const resolveSessionSkillsMock = vi.fn();
@@ -43,7 +47,8 @@ vi.mock("@earendil-works/pi-coding-agent", () => ({
   createFindTool: vi.fn(() => ({ name: "find" })),
   createLsTool: vi.fn(() => ({ name: "ls" })),
   createExtensionRuntime: vi.fn(),
-  DefaultResourceLoader: vi.fn().mockImplementation(function () {
+  DefaultResourceLoader: vi.fn().mockImplementation(function (options: Record<string, unknown>) {
+    resourceLoaderOptions.current = options;
     return {
       reload: vi.fn().mockResolvedValue(undefined),
       skillsOverride: undefined,
@@ -361,9 +366,12 @@ describe("createFnAgent skills parameter", () => {
       diagnostics: [],
       filterActive: true,
     });
+    resourceLoaderOptions.current = undefined;
     mockCreateSkillsOverride.mockReturnValue(() => ({
       skills: [],
       diagnostics: [],
+      resolvedForcedSkills: [],
+      unresolvedForcedSkills: [],
     }));
   });
 
@@ -372,6 +380,31 @@ describe("createFnAgent skills parameter", () => {
     piWarnSpy.mockRestore();
     piErrorSpy.mockRestore();
     vi.clearAllMocks();
+  });
+
+  it("injects only resolved forced skills through the shared resource-loader prompt seam (FN-9114)", async () => {
+    mockCreateSkillsOverride.mockReturnValue(() => ({
+      skills: [], diagnostics: [],
+      resolvedForcedSkills: [{ requestedName: "alpha", skillName: "alpha" }],
+      unresolvedForcedSkills: [
+        { requestedName: "delta", reason: "disabled-by-settings" },
+        { requestedName: "missing", reason: "not-found" },
+      ],
+    }));
+    await createFnAgent({
+      cwd: "/test/project", systemPrompt: "Test",
+      systemPromptLayers: { stable: "Stable", dynamic: "Executor context" },
+      skillSelection: {
+        projectRootDir: "/test/project", sessionPurpose: "executor",
+        forcedSkillNames: ["alpha", "delta", "missing"],
+      },
+    });
+    const override = resourceLoaderOptions.current?.skillsOverride as ((base: { skills: []; diagnostics: [] }) => unknown) | undefined;
+    override?.({ skills: [], diagnostics: [] });
+    const append = resourceLoaderOptions.current?.appendSystemPromptOverride as (() => string[]) | undefined;
+    expect(append?.().join("\n")).toContain("REQUIRED to read these available skills: alpha");
+    expect(append?.().join("\n")).not.toContain("delta");
+    expect(append?.().join("\n")).not.toContain("missing");
   });
 
   it("skills parameter auto-derives SkillSelectionContext", async () => {

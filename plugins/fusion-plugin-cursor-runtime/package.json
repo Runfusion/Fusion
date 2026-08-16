@@ -1,6 +1,6 @@
 {
   "name": "@fusion-plugin-examples/cursor-runtime",
-  "version": "0.1.54",
+  "version": "0.1.55-beta.0",
   "type": "module",
   "description": "Cursor CLI runtime plugin for Fusion",
   "keywords": [
@@ -22,10 +22,11 @@
   },
   "private": true,
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && node -e \"require('node:fs').copyFileSync('src/mcp-schema-server.cjs','dist/mcp-schema-server.cjs')\"",
     "test": "vitest run --silent=passed-only --reporter=dot"
   },
   "dependencies": {
+    "@fusion/core": "workspace:*",
     "@fusion/plugin-sdk": "workspace:*"
   },
   "peerDependencies": {

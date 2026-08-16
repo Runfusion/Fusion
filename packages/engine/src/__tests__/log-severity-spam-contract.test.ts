@@ -63,7 +63,7 @@ describe("log severity spam contract (source)", () => {
 
   it("all type=info skill diagnostics (Requested skill listings and not-found) route to debug", () => {
     const pi = readSrc("pi.ts");
-    const resolver = readSrc("skill-resolver.ts");
+    const resolver = readSrc("cli-runtime/skill-resolver.ts");
     expect(pi).toMatch(/else if \(diag\.type === "info"\) piLog\.debug\(msg\)/);
     expect(resolver).toMatch(/isSkillInfoDiagnostic/);
     expect(resolver).toMatch(/else if \(isSkillInfoDiagnostic\(diag\)\) piLog\.debug\(msg\)/);
@@ -71,7 +71,7 @@ describe("log severity spam contract (source)", () => {
   });
 
   it("activity-recorded heartbeats and periodic stuck poll use debug", () => {
-    const src = readSrc("stuck-task-detector.ts");
+    const src = readSrc("healing/stuck-task-detector.ts");
     expect(src).toMatch(/stuckLog\.debug\(\s*`Activity recorded for/);
     expect(src).toMatch(/stuckLog\.debug\("Running periodic stuck task check \(polling\)"\)/);
     expect(src).not.toMatch(/stuckLog\.log\(\s*`Activity recorded for/);
@@ -86,26 +86,26 @@ describe("log severity spam contract (source)", () => {
   });
 
   it("cron multi-scope skip chatter uses debug; execute stays on log", () => {
-    const src = readSrc("cron-runner.ts");
+    const src = readSrc("scheduling/cron-runner.ts");
     expect(src).toMatch(/log\.debug\(`Skipping \$\{schedule\.name\}[\s\S]*already executed from another scope/);
     expect(src).toMatch(/log\.debug\(`Skipping \$\{schedule\.name\}[\s\S]*claim lost to another poller/);
     expect(src).toMatch(/log\.log\(`Executing \$\{schedule\.name\}/);
   });
 
   it("plugin skill contribution/merge chatter uses debug", () => {
-    const src = readSrc("session-skill-context.ts");
+    const src = readSrc("cli-runtime/session-skill-context.ts");
     expect(src).toMatch(/piLog\.debug\(`\[skills\] Plugin \$\{pluginId\} contributes skill:/);
     expect(src).toMatch(/piLog\.debug\(\s*`\[skills\] Merged \$\{appendedPluginNames\.length\}/);
   });
 
   it("hold-release capacity race uses debug like deferred-no-slot", () => {
-    const src = readSrc("hold-release.ts");
+    const src = readSrc("execution/hold-release.ts");
     expect(src).toMatch(/schedulerLog\.debug\(`Hold release for \$\{task\.id\} rejected on capacity/);
     expect(src).toMatch(/schedulerLog\.debug\(`Hold release for \$\{task\.id\} deferred — no reservable slot/);
   });
 
   it("routine-scheduler re-entrance and pause no-ops use debug", () => {
-    const src = readSrc("routine-scheduler.ts");
+    const src = readSrc("scheduling/routine-scheduler.ts");
     expect(src).toMatch(/logger\.debug\("Tick already in progress, skipping"\)/);
     expect(src).toMatch(/logger\.debug\(\s*`Paused: globalPause=/);
     expect(src).not.toMatch(/logger\.log\("Tick already in progress, skipping"\)/);
@@ -113,7 +113,7 @@ describe("log severity spam contract (source)", () => {
   });
 
   it("peer-exchange zero-work sync cycle uses debug; non-zero/error stay on log", () => {
-    const src = readSrc("peer-exchange-service.ts");
+    const src = readSrc("project/peer-exchange-service.ts");
     expect(src).toMatch(/peerExchangeLog\.debug\(`Starting sync with \$\{onlineRemoteNodes\.length\} peers`\)/);
     expect(src).toMatch(/peerExchangeLog\.debug\(\s*`Sync complete: \$\{onlineRemoteNodes\.length\} peers synced\./);
     // Non-zero discovery path and error summary remain log
@@ -135,15 +135,15 @@ describe("log severity spam contract (source)", () => {
   exclusions, zero-recovery no-ops, and metrics JSON must stay off default info/warn.
   */
   it("session setup, track bookkeeping, skill exclusion, and zero-recovery stay debug-gated", () => {
-    const session = readSrc("agent-session-helpers.ts");
-    const stuck = readSrc("stuck-task-detector.ts");
+    const session = readSrc("agents/agent-session-helpers.ts");
+    const stuck = readSrc("healing/stuck-task-detector.ts");
     const triage = readSrc("triage.ts");
-    const resolver = readSrc("skill-resolver.ts");
+    const resolver = readSrc("cli-runtime/skill-resolver.ts");
     const selfHealing = readSrc("self-healing.ts");
-    const mission = readSrc("mission-execution-loop.ts");
+    const mission = readSrc("missions/mission-execution-loop.ts");
     const runtime = readSrc("runtimes/in-process-runtime.ts");
-    const tokenUsage = readSrc("session-token-usage.ts");
-    const executor = readSrc("executor.ts");
+    const tokenUsage = readSrc("execution/session-token-usage.ts");
+    const executor = readSrc("executor/persist-token-usage.ts");
 
     expect(session).toMatch(/sessionLog\.debug\(\s*`\[\$\{sessionPurpose\}\] grok-cli fallback/);
     expect(session).toMatch(/sessionLog\.debug\(\s*`\[\$\{sessionPurpose\}\] Using runtime/);
@@ -178,7 +178,7 @@ describe("log severity spam contract (source)", () => {
 
   it("self-healing no-action/skip, worktree-pool probes, and ntfy bookkeeping use debug", () => {
     const sh = readSrc("self-healing.ts");
-    const wt = readSrc("worktree-pool.ts");
+    const wt = readSrc("worktree/worktree-pool.ts");
     const ntfy = readSrc("notification/ntfy-provider.ts");
     const notify = readSrc("notification/notification-service.ts");
     expect(sh).toMatch(/log\.debug\(`\[\$\{stage\}\] \$\{task\.id\}: triple-proof not satisfied — no action/);
@@ -192,7 +192,7 @@ describe("log severity spam contract (source)", () => {
   });
 
   it("pi session-purpose runtime routing and skip bookkeeping uses debug", () => {
-    const runtime = readSrc("runtime-resolution.ts");
+    const runtime = readSrc("execution/runtime-resolution.ts");
     const pi = readSrc("pi.ts");
     expect(runtime).toMatch(/runtimeLog\.debug\(`\[\$\{sessionPurpose\}\] No runtime hint configured/);
     expect(runtime).toMatch(/runtimeLog\.debug\(`\[\$\{sessionPurpose\}\] Runtime hint is "pi\/default"/);
@@ -203,8 +203,8 @@ describe("log severity spam contract (source)", () => {
   });
 
   it("checkpoint bookkeeping (self-improve + RETHINK rewind) uses debug", () => {
-    const improve = readSrc("agent-self-improve.ts");
-    const step = readSrc("step-runner.ts");
+    const improve = readSrc("agents/agent-self-improve.ts");
+    const step = readSrc("execution/step-runner.ts");
     expect(improve).toMatch(/selfImproveLog\.debug\(`Recorded self-improve checkpoint for/);
     expect(step).toMatch(/executorLog\.debug\(`\$\{taskId\}: RETHINK — session rewound to checkpoint/);
     expect(step).toMatch(/executorLog\.debug\(`\$\{taskId\}: RETHINK — no session checkpoint for step/);
@@ -213,7 +213,7 @@ describe("log severity spam contract (source)", () => {
 
   it("merger intermediate plumbing uses debug; outcomes stay at log", () => {
     const merger = readSrc("merger.ts");
-    const conflict = readSrc("merger-conflict-resolution.ts");
+    const conflict = readSrc("merge/merger-conflict-resolution.ts");
     expect(conflict).toMatch(/mergerLog\.debug\(`Auto-resolved \$\{filePath\} using --ours`\)/);
     expect(merger).toMatch(/mergerLog\.debug\(`\$\{taskId\}: merge details stored/);
     expect(merger).toMatch(/mergerLog\.debug\(`\$\{taskId\}: git pull --rebase succeeded/);
@@ -225,8 +225,8 @@ describe("log severity spam contract (source)", () => {
   });
 
   it("foreach step skip/rework and per-step success use debug", () => {
-    const foreach = readSrc("workflow-graph-foreach.ts");
-    const exec = readSrc("executor.ts");
+    const foreach = readSrc("workflows/workflow-graph-foreach.ts");
+    const exec = readSrc("executor/run-implementation.ts");
     expect(foreach).toMatch(/schedulerLog\.debug\(\s*`foreach \$\{foreachNode\.id\} for task \$\{env\.task\.id\}: skipping step/);
     expect(foreach).toMatch(/schedulerLog\.debug\(\s*`foreach \$\{foreachNode\.id\} step \$\{inst\.stepIndex\}: integration-conflict/);
     expect(foreach).not.toMatch(/schedulerLog\.log\(\s*`foreach \$\{foreachNode\.id\} for task/);
@@ -235,21 +235,25 @@ describe("log severity spam contract (source)", () => {
   });
 
   it("executor high-frequency dispatch/session bookkeeping uses debug", () => {
-    const src = readSrc("executor.ts");
-    expect(src).toMatch(/executorLog\.debug\(`TaskExecutor constructed/);
-    expect(src).toMatch(/executorLog\.debug\(`execute\(\) called for \$\{task\.id\} \(claimed=/);
-    expect(src).toMatch(/executorLog\.debug\(`\$\{task\.id\}: worktree ready at/);
-    expect(src).toMatch(/executorLog\.debug\(`\$\{task\.id\}: session registered/);
-    expect(src).toMatch(/executorLog\.debug\(`\$\{task\.id\}: calling promptWithFallback/);
-    expect(src).toMatch(/executorLog\.debug\(`\[workflow-graph\] \$\{event\.type\}/);
-    expect(src).toMatch(/executorLog\.debug\(`\[workflow-column-boundary\]/);
+    // FNXC:EngineDiagnostics 2026-08-15-19:10: executor.ts peels (package code organization waves) moved these call sites into executor/ modules; anchors verified moved, not duplicated.
+    const impl = readSrc("executor/run-implementation.ts");
+    const lifecycle = readSrc("executor/wire-executor-lifecycle.ts");
+    const graph = readSrc("executor/execute-workflow-graph.ts");
+    const boundary = readSrc("executor/build-column-boundary-hooks.ts");
+    expect(lifecycle).toMatch(/executorLog\.debug\(`TaskExecutor constructed/);
+    expect(impl).toMatch(/executorLog\.debug\(`execute\(\) called for \$\{task\.id\} \(claimed=/);
+    expect(impl).toMatch(/executorLog\.debug\(`\$\{task\.id\}: worktree ready at/);
+    expect(impl).toMatch(/executorLog\.debug\(`\$\{task\.id\}: session registered/);
+    expect(impl).toMatch(/executorLog\.debug\(`\$\{task\.id\}: calling promptWithFallback/);
+    expect(graph).toMatch(/executorLog\.debug\(`\[workflow-graph\] \$\{event\.type\}/);
+    expect(boundary).toMatch(/executorLog\.debug\(`\[workflow-column-boundary\]/);
     // Lifecycle outcomes stay at log
-    expect(src).toMatch(/executorLog\.log\(`Starting \$\{task\.id\}:/);
-    expect(src).not.toMatch(/executorLog\.log\(`execute\(\) called for \$\{task\.id\} \(claimed=/);
+    expect(impl).toMatch(/executorLog\.log\(`Starting \$\{task\.id\}:/);
+    expect(impl).not.toMatch(/executorLog\.log\(`execute\(\) called for \$\{task\.id\} \(claimed=/);
   });
 
   it("MCP server connected success chatter uses logger.debug", () => {
-    const src = readSrc("mcp-session-tools.ts");
+    const src = readSrc("mcp/mcp-session-tools.ts");
     expect(src).toMatch(/opts\.logger\.debug\(connectMsg\)/);
     expect(src).toMatch(/MCP server connected for pi session/);
     // Must not route the success line only through log without preferring debug.
@@ -257,10 +261,10 @@ describe("log severity spam contract (source)", () => {
   });
 
   it("fn_run_verification and green verification result paths use debug", () => {
-    const tool = readSrc("run-verification-tool.ts");
-    const utils = readSrc("verification-utils.ts");
-    const stuck = readSrc("stuck-task-detector.ts");
-    const exec = readSrc("executor.ts");
+    const tool = readSrc("execution/run-verification-tool.ts");
+    const utils = readSrc("execution/verification-utils.ts");
+    const stuck = readSrc("healing/stuck-task-detector.ts");
+    const exec = readSrc("executor/deterministic-verification.ts");
     expect(tool).toMatch(/executorLog\.debug\(\s*`\[fn_run_verification\] command quiet for/);
     expect(tool).toMatch(/\(log\.debug \?\? log\.info\)\(/);
     expect(tool).toMatch(/if \(result\.success\) \{\s*\(log\.debug \?\? log\.info\)\(/);
@@ -285,10 +289,14 @@ describe("log severity spam contract (source)", () => {
   it("busy-board lifecycle noise stays debug-gated; starts and creates stay log", () => {
     const scheduler = readSrc("scheduler.ts");
     const runtime = readSrc("runtimes/in-process-runtime.ts");
-    const exec = readSrc("executor.ts");
+    // FNXC:EngineDiagnostics 2026-08-15-19:10: executor.ts peels split these anchors across executor/ modules.
+    const execImpl = readSrc("executor/run-implementation.ts");
+    const execWorktreeCreate = readSrc("executor/worktree-create-conflict.ts");
+    const execGitRefs = readSrc("executor/worktree-git-refs.ts");
+    const execNodeWorktree = readSrc("executor/ensure-graph-custom-node-worktree.ts");
     const heartbeat = readSrc("agent-heartbeat.ts");
-    const autoClaim = readSrc("auto-claim-snapshot.ts");
-    const worktree = readSrc("worktree-acquisition.ts");
+    const autoClaim = readSrc("scheduling/auto-claim-snapshot.ts");
+    const worktree = readSrc("worktree/worktree-acquisition.ts");
 
     expect(scheduler).toMatch(/schedulerLog\.debug\(`No linked feature found for task/);
     expect(scheduler).toMatch(/schedulerLog\.debug\("Task created — triggering scheduling"\)/);
@@ -300,12 +308,12 @@ describe("log severity spam contract (source)", () => {
     expect(runtime).toMatch(/runtimeLog\.debug\(`Started executing task \$\{task\.id\} in \$\{worktreePath\}`\)/);
     expect(runtime).not.toMatch(/runtimeLog\.log\(`Scheduled task \$\{task\.id\}`\)/);
 
-    expect(exec).toMatch(/executorLog\.log\(`Starting \$\{task\.id\}:/);
-    expect(exec).toMatch(/executorLog\.log\(`Worktree created:/);
-    expect(exec).toMatch(/executorLog\.debug\(`\$\{task\.id\}: executor runtime env injected/);
-    expect(exec).toMatch(/executorLog\.debug\(`\$\{task\.id\}: captured baseCommitSha/);
-    expect(exec).toMatch(/executorLog\.debug\(`\$\{task\.id\}: workflow node '\$\{nodeId\}' acquired worktree/);
-    expect(exec).not.toMatch(/executorLog\.log\(`\$\{task\.id\}: executor runtime env injected/);
+    expect(execImpl).toMatch(/executorLog\.log\(`Starting \$\{task\.id\}:/);
+    expect(execWorktreeCreate).toMatch(/executorLog\.log\(`Worktree created:/);
+    expect(execImpl).toMatch(/executorLog\.debug\(`\$\{task\.id\}: executor runtime env injected/);
+    expect(execGitRefs).toMatch(/executorLog\.debug\(`\$\{task\.id\}: captured baseCommitSha/);
+    expect(execNodeWorktree).toMatch(/executorLog\.debug\(`\$\{task\.id\}: workflow node '\$\{nodeId\}' acquired worktree/);
+    expect(execImpl).not.toMatch(/executorLog\.log\(`\$\{task\.id\}: executor runtime env injected/);
 
     expect(heartbeat).toMatch(/heartbeatLog\.debug\(`Assignment trigger skipped for \$\{agent\.id\} \(ephemeral\/internal\)`\)/);
     expect(heartbeat).not.toMatch(/heartbeatLog\.log\(`Assignment trigger skipped for \$\{agent\.id\} \(ephemeral\/internal\)`\)/);

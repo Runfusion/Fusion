@@ -175,7 +175,8 @@ describe("desktop release workflow wiring", () => {
       expect(workflow).toContain("build-android:");
       expect(workflow).toContain("runs-on: ubuntu-latest");
       // FNXC:AndroidRelease 2026-08-03-02:01: Dependabot bumped setup-java to v5.6.0 (#3303); pin the live major so release wiring stays green.
-      expect(workflow).toContain("actions/setup-java@v5.6.0");
+      // FNXC:AndroidRelease 2026-08-15-15:10: Dependabot bumped setup-java to v5.7.0 (763003c9b0, #3367) and the exact-patch pin broke again. Assert the major only — the contract is "setup-java v5 provisions the JDK", not a specific patch release Dependabot rotates weekly.
+      expect(workflow).toMatch(/actions\/setup-java@v5(\.\d+(\.\d+)?)?\b/);
       // FNXC:AndroidRelease 2026-07-01-19:52: Capacitor 7 @capacitor/android compiles with JavaVersion.VERSION_21, so the Android release Gradle build must provision JDK 21 (JDK 17 fails with `invalid source release: 21`). Assert the intended JDK here.
       expect(workflow).toContain('java-version: "21"');
       expect(workflow).toContain("pnpm --filter @fusion/mobile cap add android");

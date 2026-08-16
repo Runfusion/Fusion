@@ -2,7 +2,8 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import type { TaskDetail } from "@fusion/core";
 import "../executor-test-helpers.js";
 import { PLAN_REVIEW_PROVIDER_FAILURE_HOLD_VALUE } from "../../workflows/workflow-graph-executor.js";
-import { TaskExecutor } from "../../executor.js";
+// graphFailureValue was peeled off TaskExecutor into executor/graph-failure-pure.ts (wave 18); use the re-exported free function.
+import { TaskExecutor, graphFailureValue } from "../../executor.js";
 import { activeSessionRegistry } from "../../agents/active-session-registry.js";
 import {
   createMockStore,
@@ -80,8 +81,7 @@ describe("graphFailureValue optional-group materialized ids", () => {
   });
 
   it("prefers the group's published value for a `group::template` failed node", () => {
-    const executor = new TaskExecutor(createMockStore(), "/tmp/test");
-    const value = (executor as any).graphFailureValue({
+    const value = graphFailureValue({
       visitedNodeIds: ["plan-review", "plan-review::plan-review-step"],
       context: {
         "node:plan-review:value": PLAN_REVIEW_PROVIDER_FAILURE_HOLD_VALUE,
@@ -92,8 +92,7 @@ describe("graphFailureValue optional-group materialized ids", () => {
   });
 
   it("falls back to the unqualified template value when the group has none", () => {
-    const executor = new TaskExecutor(createMockStore(), "/tmp/test");
-    const value = (executor as any).graphFailureValue({
+    const value = graphFailureValue({
       visitedNodeIds: ["plan-review::plan-review-step"],
       context: { "node:plan-review-step:value": "exception" },
     });
@@ -101,8 +100,7 @@ describe("graphFailureValue optional-group materialized ids", () => {
   });
 
   it("keeps resolving foreach `#` instance ids through the container key", () => {
-    const executor = new TaskExecutor(createMockStore(), "/tmp/test");
-    const value = (executor as any).graphFailureValue({
+    const value = graphFailureValue({
       visitedNodeIds: ["steps#0:step-execute"],
       context: { "node:steps:value": "awaiting-user-input" },
     });

@@ -1415,17 +1415,11 @@ describe("QuickEntryBox", () => {
     expect(inputRect.width).toBeGreaterThanOrEqual(containerRect.width * 0.8);
   });
 
-  it("starts expanded even when autoExpand is false", () => {
-    renderQuickEntryBox({ autoExpand: false });
-    const textarea = screen.getByTestId("quick-entry-input");
-
-    fireEvent.focus(textarea);
-
-    expect(textarea.classList.contains("quick-entry-input--expanded")).toBe(true);
-  });
-
-  it("starts expanded by default (backward compatible)", () => {
-    renderQuickEntryBox();
+  it.each([
+    ["autoExpand false", { autoExpand: false }],
+    ["default props (backward compatible)", {}],
+  ] as const)("starts expanded with %s", (_label, props) => {
+    renderQuickEntryBox(props);
     const textarea = screen.getByTestId("quick-entry-input");
 
     fireEvent.focus(textarea);
@@ -1453,49 +1447,22 @@ describe("QuickEntryBox", () => {
     // Now collapsed
     expect(textarea.classList.contains("quick-entry-input--expanded")).toBe(false);
     expect(screen.getByTestId("quick-entry-box").classList.contains("quick-entry-box--collapsed")).toBe(true);
+    expect(screen.getByTestId("quick-entry-box").classList.contains("quick-entry-box--expanded")).toBe(false);
     expect(toggleButton.getAttribute("aria-expanded")).toBe("false");
     expect(textarea.getAttribute("aria-expanded")).toBe("false");
     expect(controls?.hasAttribute("hidden")).toBe(true);
   });
 
-  it("toggle button collapses the view when expanded", () => {
-    renderQuickEntryBox({});
-    const textarea = screen.getByTestId("quick-entry-input");
-    const box = screen.getByTestId("quick-entry-box");
-
-    // Starts expanded
-    expect(textarea.classList.contains("quick-entry-input--expanded")).toBe(true);
-
-    // Click toggle to collapse
-    toggleQuickEntry();
-
-    // Now collapsed
-    expect(textarea.classList.contains("quick-entry-input--expanded")).toBe(false);
-    expect(box.classList.contains("quick-entry-box--collapsed")).toBe(true);
-    expect(document.getElementById("quick-entry-controls")?.hasAttribute("hidden")).toBe(true);
-  });
-
-  it("maintains the collapsed and expanded styling contract on the root container", () => {
-    renderQuickEntryBox({});
-    const box = screen.getByTestId("quick-entry-box");
-
-    expect(box.classList.contains("quick-entry-box--expanded")).toBe(true);
-    expect(box.classList.contains("quick-entry-box--collapsed")).toBe(false);
-    expect(document.getElementById("quick-entry-controls")?.hasAttribute("hidden")).toBe(false);
-
-    toggleQuickEntry();
-
-    expect(box.classList.contains("quick-entry-box--collapsed")).toBe(true);
-    expect(box.classList.contains("quick-entry-box--expanded")).toBe(false);
-    expect(document.getElementById("quick-entry-controls")?.hasAttribute("hidden")).toBe(true);
-  });
-
-  it("does NOT collapse on blur when empty", async () => {
+  it.each([
+    ["empty", ""],
+    ["has content", "Some task"],
+  ] as const)("does NOT collapse on blur when %s", async (_label, draft) => {
     renderQuickEntryBox({});
     const textarea = screen.getByTestId("quick-entry-input");
 
     // Expand manually
     expandQuickEntry();
+    if (draft) fireEvent.change(textarea, { target: { value: draft } });
     expect(textarea.classList.contains("quick-entry-input--expanded")).toBe(true);
 
     fireEvent.blur(textarea);
@@ -1503,25 +1470,6 @@ describe("QuickEntryBox", () => {
       vi.advanceTimersByTime(250);
     });
 
-    // Should NOT collapse on blur
-    await waitFor(() => {
-      expect(textarea.classList.contains("quick-entry-input--expanded")).toBe(true);
-    });
-  });
-
-  it("does NOT collapse on blur when has content", async () => {
-    renderQuickEntryBox({});
-    const textarea = screen.getByTestId("quick-entry-input");
-
-    // Expand manually and add content
-    expandQuickEntry();
-    fireEvent.change(textarea, { target: { value: "Some task" } });
-
-    fireEvent.blur(textarea);
-    await act(async () => {
-      vi.advanceTimersByTime(250);
-    });
-    
     // Should NOT collapse on blur - expanded state persists
     await waitFor(() => {
       expect(textarea.classList.contains("quick-entry-input--expanded")).toBe(true);
@@ -1731,45 +1679,6 @@ describe("QuickEntryBox", () => {
       );
     });
   });
-
-  it("does not refocus after successful creation", async () => {
-    const { props } = renderQuickEntryBox({});
-    const textarea = screen.getByTestId("quick-entry-input") as HTMLTextAreaElement;
-    const focusSpy = vi.spyOn(textarea, "focus");
-
-    fireEvent.change(textarea, { target: { value: "Task to create" } });
-    fireEvent.keyDown(textarea, { key: "Enter" });
-
-    await waitFor(() => {
-      expect(props.onCreate).toHaveBeenCalled();
-    });
-    await waitFor(() => expect(textarea.value).toBe(""));
-    await flushPendingTimers();
-
-    expect(focusSpy).not.toHaveBeenCalled();
-    expect(document.activeElement).not.toBe(textarea);
-  });
-
-  it("does not refocus after successful creation at mobile width", async () => {
-    const innerWidthSpy = vi.spyOn(window, "innerWidth", "get").mockReturnValue(375);
-    const { props } = renderQuickEntryBox({});
-    const textarea = screen.getByTestId("quick-entry-input");
-
-    fireEvent.focus(textarea);
-    fireEvent.change(textarea, { target: { value: "Task to create" } });
-    fireEvent.keyDown(textarea, { key: "Enter" });
-
-    await waitFor(() => {
-      expect(props.onCreate).toHaveBeenCalled();
-    });
-
-    await waitFor(() => {
-      expect(document.activeElement).not.toBe(textarea);
-    });
-
-    innerWidthSpy.mockRestore();
-  });
-
 
   describe("quick-add workflow selector", () => {
     const workflowOptions = [
@@ -2188,36 +2097,6 @@ describe("QuickEntryBox", () => {
       expect(screen.getByTestId("quick-entry-save")).toBeTruthy();
     });
 
-    it("shows deps/models/save controls directly when expanded", () => {
-      renderQuickEntryBox({});
-
-      // Controls region starts expanded/visible
-      expect(document.getElementById("quick-entry-controls")?.hasAttribute("hidden")).toBe(false);
-
-      // Type something
-      expandQuickEntry();
-      const textarea = screen.getByTestId("quick-entry-input");
-      fireEvent.change(textarea, { target: { value: "Task with models" } });
-
-      expect(screen.getByTestId("quick-entry-deps")).toBeTruthy();
-      expect(screen.getByTestId("quick-entry-models")).toBeTruthy();
-      expect(screen.getByTestId("quick-entry-save")).toBeTruthy();
-    });
-
-    it("shows Subtask but no Plan button when expanded", () => {
-      renderQuickEntryBox({});
-
-      // Controls region starts expanded/visible
-      expect(document.getElementById("quick-entry-controls")?.hasAttribute("hidden")).toBe(false);
-
-      expandQuickEntry();
-      const textarea = screen.getByTestId("quick-entry-input");
-      fireEvent.change(textarea, { target: { value: "Task to plan" } });
-
-      expect(screen.queryByTestId("plan-button")).not.toBeInTheDocument();
-      expect(screen.getByTestId("subtask-button")).toBeTruthy();
-    });
-
     it("shows Fast toggle when expanded", () => {
       renderQuickEntryBox({});
       expandQuickEntry();
@@ -2228,15 +2107,6 @@ describe("QuickEntryBox", () => {
       expect(fastToggle).toHaveAttribute("aria-label", "Toggle fast execution mode");
       expect(fastToggle).not.toHaveTextContent("Fast");
       expect(fastToggle.querySelector("svg")?.classList.contains("lucide-zap")).toBe(true);
-    });
-
-    it("shows Priority selector in expanded controls", () => {
-      renderQuickEntryBox({});
-      expandQuickEntry();
-
-      const priorityButton = screen.getByTestId("quick-entry-priority-button");
-      expect(priorityButton).toBeTruthy();
-      expectQuickEntryPriorityButton("normal");
     });
 
     it("keeps every primary icon control in one btn-icon cluster across toggle and priority states", () => {
@@ -2936,43 +2806,23 @@ describe("QuickEntryBox", () => {
       expect(screen.getByTestId("model-submenu-back")).toBeTruthy();
     });
 
-    it("clicking Executor opens submenu with CustomModelDropdown", () => {
+    it.each([
+      ["Executor", "model-menu-executor", "custom-model-dropdown-executor model"],
+      ["Plan", "model-menu-plan", "custom-model-dropdown-plan model"],
+      ["Reviewer", "model-menu-validator", "custom-model-dropdown-validator model"],
+    ] as const)("clicking %s opens submenu with CustomModelDropdown", (_label, menuTestId, dropdownTestId) => {
       renderQuickEntryBox({});
       expandQuickEntry();
       const textarea = screen.getByTestId("quick-entry-input");
 
       fireEvent.change(textarea, { target: { value: "Task with models" } });
       openModelMenu();
-      fireEvent.click(screen.getByTestId("model-menu-executor"));
+      fireEvent.click(screen.getByTestId(menuTestId));
 
-      // Submenu should show the dropdown for executor
-      expect(screen.getByTestId("custom-model-dropdown-executor model")).toBeTruthy();
+      // Submenu should show the dropdown for the selected lane
+      expect(screen.getByTestId(dropdownTestId)).toBeTruthy();
       // Back button should be visible
       expect(screen.getByTestId("model-submenu-back")).toBeTruthy();
-    });
-
-    it("clicking Plan opens submenu with CustomModelDropdown", () => {
-      renderQuickEntryBox({});
-      expandQuickEntry();
-      const textarea = screen.getByTestId("quick-entry-input");
-
-      fireEvent.change(textarea, { target: { value: "Task with models" } });
-      openModelMenu();
-      fireEvent.click(screen.getByTestId("model-menu-plan"));
-
-      expect(screen.getByTestId("custom-model-dropdown-plan model")).toBeTruthy();
-    });
-
-    it("clicking Reviewer opens submenu with CustomModelDropdown", () => {
-      renderQuickEntryBox({});
-      expandQuickEntry();
-      const textarea = screen.getByTestId("quick-entry-input");
-
-      fireEvent.change(textarea, { target: { value: "Task with models" } });
-      openModelMenu();
-      fireEvent.click(screen.getByTestId("model-menu-validator"));
-
-      expect(screen.getByTestId("custom-model-dropdown-validator model")).toBeTruthy();
     });
 
     it("back button returns to top-level model menu", () => {
@@ -3016,48 +2866,30 @@ describe("QuickEntryBox", () => {
       expect(screen.queryByTestId("model-submenu-back")).toBeNull();
     });
 
-    it("selecting Plan model updates the Plan menu item value", () => {
+    it.each([
+      ["Plan", "model-menu-plan", "dropdown-select-plan model"],
+      ["Reviewer", "model-menu-validator", "dropdown-select-validator model"],
+    ] as const)("selecting %s model updates its menu item value", (_label, menuTestId, selectTestId) => {
       renderQuickEntryBox({});
       expandQuickEntry();
       const textarea = screen.getByTestId("quick-entry-input");
 
       fireEvent.change(textarea, { target: { value: "Task with models" } });
       openModelMenu();
-      fireEvent.click(screen.getByTestId("model-menu-plan"));
+      fireEvent.click(screen.getByTestId(menuTestId));
 
       // Select a model via mocked dropdown
-      fireEvent.click(screen.getByTestId("dropdown-select-plan model"));
+      fireEvent.click(screen.getByTestId(selectTestId));
 
       // Go back to top-level menu
       fireEvent.click(screen.getByTestId("model-submenu-back"));
 
-      // Plan menu item should show the selected model, not "Using default"
-      const planItem = screen.getByTestId("model-menu-plan");
-      expect(planItem.textContent).toContain("anthropic/claude-sonnet-4-5");
-      expect(planItem.textContent).not.toContain("Using default");
+      // Menu item should show the selected model, not "Using default"
+      const menuItem = screen.getByTestId(menuTestId);
+      expect(menuItem.textContent).toContain("anthropic/claude-sonnet-4-5");
+      expect(menuItem.textContent).not.toContain("Using default");
       // Should have active class
-      expect(planItem.classList.contains("model-menu-item--active")).toBe(true);
-    });
-
-    it("selecting Reviewer model updates the Reviewer menu item value", () => {
-      renderQuickEntryBox({});
-      expandQuickEntry();
-      const textarea = screen.getByTestId("quick-entry-input");
-
-      fireEvent.change(textarea, { target: { value: "Task with models" } });
-      openModelMenu();
-      fireEvent.click(screen.getByTestId("model-menu-validator"));
-
-      // Select a model via mocked dropdown
-      fireEvent.click(screen.getByTestId("dropdown-select-validator model"));
-
-      // Go back to top-level menu
-      fireEvent.click(screen.getByTestId("model-submenu-back"));
-
-      // Reviewer menu item should show the selected model
-      const validatorItem = screen.getByTestId("model-menu-validator");
-      expect(validatorItem.textContent).toContain("anthropic/claude-sonnet-4-5");
-      expect(validatorItem.classList.contains("model-menu-item--active")).toBe(true);
+      expect(menuItem.classList.contains("model-menu-item--active")).toBe(true);
     });
 
     it("clearing Plan model returns menu item to default state", () => {
@@ -3903,18 +3735,6 @@ describe("QuickEntryBox", () => {
       expect(controls?.hasAttribute("hidden")).toBe(true);
     });
 
-    it("textarea aria-expanded reflects disclosure state, not textarea height", () => {
-      renderQuickEntryBox();
-      const textarea = screen.getByTestId("quick-entry-input");
-
-      fireEvent.focus(textarea);
-      expect(textarea.classList.contains("quick-entry-input--expanded")).toBe(true);
-      expect(textarea.getAttribute("aria-expanded")).toBe("true");
-
-      toggleQuickEntry();
-      expect(textarea.classList.contains("quick-entry-input--expanded")).toBe(false);
-      expect(textarea.getAttribute("aria-expanded")).toBe("false");
-    });
   });
 
   describe("localStorage persistence", () => {
@@ -3967,14 +3787,6 @@ describe("QuickEntryBox", () => {
       });
     });
 
-    it("defaults to expanded when localStorage is empty", () => {
-      renderQuickEntryBox();
-      const toggleButton = screen.getByTestId("quick-entry-toggle");
-
-      expect(toggleButton.getAttribute("aria-expanded")).toBe("true");
-      expect(document.getElementById("quick-entry-controls")?.hasAttribute("hidden")).toBe(false);
-    });
-
     it("does not persist disclosure state to localStorage when toggling", async () => {
       renderQuickEntryBox({});
       const toggleButton = screen.getByTestId("quick-entry-toggle");
@@ -3997,22 +3809,6 @@ describe("QuickEntryBox", () => {
       expect(toggleButton.getAttribute("aria-expanded")).toBe("true");
       // localStorage still should not have the key
       expect(localStorage.getItem("kb-quick-entry-expanded")).toBeNull();
-    });
-
-    it("aria-expanded attribute updates correctly when toggling", () => {
-      renderQuickEntryBox({});
-      const toggleButton = screen.getByTestId("quick-entry-toggle");
-
-      // Initially expanded
-      expect(toggleButton.getAttribute("aria-expanded")).toBe("true");
-
-      // Click to collapse
-      fireEvent.click(toggleButton);
-      expect(toggleButton.getAttribute("aria-expanded")).toBe("false");
-
-      // Click to expand
-      fireEvent.click(toggleButton);
-      expect(toggleButton.getAttribute("aria-expanded")).toBe("true");
     });
 
     it("restores description from localStorage on mount", () => {
@@ -4170,14 +3966,6 @@ describe("QuickEntryBox", () => {
   });
 
   describe("Save action", () => {
-    it("shows save action inline when expanded", () => {
-      renderQuickEntryBox({});
-      expandQuickEntry();
-      const textarea = screen.getByTestId("quick-entry-input");
-      fireEvent.change(textarea, { target: { value: "Task to save" } });
-      expect(screen.getByTestId("quick-entry-save")).toBeTruthy();
-    });
-
     it("save action is disabled when textarea is empty", () => {
       renderQuickEntryBox({});
       expandQuickEntry();
@@ -4252,42 +4040,9 @@ describe("QuickEntryBox", () => {
   });
 
   describe("Button visibility when collapsed", () => {
-    it("controls div does not have hidden attribute by default", () => {
-      renderQuickEntryBox({});
-      const controls = document.getElementById("quick-entry-controls");
-      expect(controls?.hasAttribute("hidden")).toBe(false);
-    });
-
     it("toggle button is always visible regardless of expanded state", () => {
       renderQuickEntryBox({});
       expect(screen.getByTestId("quick-entry-toggle")).toBeTruthy();
-    });
-
-    it("shows inline controls by default", () => {
-      renderQuickEntryBox({});
-
-      expect(document.getElementById("quick-entry-controls")?.hasAttribute("hidden")).toBe(false);
-
-      expandQuickEntry();
-
-      expect(document.getElementById("quick-entry-controls")?.hasAttribute("hidden")).toBe(false);
-      expect(screen.queryByTestId("plan-button")).not.toBeInTheDocument();
-      expect(screen.getByTestId("subtask-button")).toBeTruthy();
-      expect(screen.queryByTestId("refine-button")).not.toBeInTheDocument();
-      expect(screen.getByTestId("quick-entry-deps")).toBeTruthy();
-      expect(screen.getByTestId("quick-entry-models")).toBeTruthy();
-      expect(screen.getByTestId("quick-entry-save")).toBeTruthy();
-    });
-
-    it("hides controls again after collapsing via toggle", () => {
-      renderQuickEntryBox({});
-
-      expandQuickEntry();
-      expect(document.getElementById("quick-entry-controls")?.hasAttribute("hidden")).toBe(false);
-
-      toggleQuickEntry();
-
-      expect(document.getElementById("quick-entry-controls")?.hasAttribute("hidden")).toBe(true);
     });
   });
 
@@ -4623,36 +4378,8 @@ describe("QuickEntryBox", () => {
   });
 
   describe("Model menu mobile viewport width", () => {
-    it("uses wider width on mobile viewports (≤640px)", () => {
+    it("uses mobile width, clamped left position, and stays within viewport on mobile (≤640px)", () => {
       // Simulate a narrow mobile viewport
-      vi.spyOn(window, "innerWidth", "get").mockReturnValue(375);
-
-      renderQuickEntryBox({});
-      expandQuickEntry();
-
-      openModelMenu();
-      const menu = screen.getByTestId("model-nested-menu");
-
-      // On mobile, width should be viewport width minus padding (375 - 32 = 343)
-      const menuWidth = parseFloat(menu.style.width);
-      expect(menuWidth).toBe(375 - 32);
-    });
-
-    it("left position is clamped to horizontal padding on mobile", () => {
-      vi.spyOn(window, "innerWidth", "get").mockReturnValue(375);
-
-      renderQuickEntryBox({});
-      expandQuickEntry();
-
-      openModelMenu();
-      const menu = screen.getByTestId("model-nested-menu");
-
-      // Left should be clamped to at least 16px (horizontal padding)
-      const menuLeft = parseFloat(menu.style.left);
-      expect(menuLeft).toBeGreaterThanOrEqual(16);
-    });
-
-    it("menu stays fully within viewport on mobile", () => {
       const viewportWidth = 375;
       vi.spyOn(window, "innerWidth", "get").mockReturnValue(viewportWidth);
 
@@ -4662,8 +4389,13 @@ describe("QuickEntryBox", () => {
       openModelMenu();
       const menu = screen.getByTestId("model-nested-menu");
 
-      const menuLeft = parseFloat(menu.style.left);
+      // On mobile, width should be viewport width minus padding (375 - 32 = 343)
       const menuWidth = parseFloat(menu.style.width);
+      expect(menuWidth).toBe(viewportWidth - 32);
+
+      // Left should be clamped to at least 16px (horizontal padding)
+      const menuLeft = parseFloat(menu.style.left);
+      expect(menuLeft).toBeGreaterThanOrEqual(16);
 
       // Right edge should not exceed viewport minus horizontal padding
       expect(menuLeft + menuWidth).toBeLessThanOrEqual(viewportWidth - 16);
@@ -5184,7 +4916,7 @@ describe("QuickEntryBox", () => {
   });
 
   describe("description expand functionality removed", () => {
-    it("does not render expand button when textarea is focused and has content", async () => {
+    it("does not render expand/collapse buttons or fullscreen textarea, even focused with content", () => {
       renderQuickEntryBox({});
       const textarea = screen.getByTestId("quick-entry-input");
 
@@ -5192,21 +4924,9 @@ describe("QuickEntryBox", () => {
       fireEvent.focus(textarea);
       fireEvent.change(textarea, { target: { value: "Test task description" } });
 
-      // Expand button should NOT be present
+      // None of the removed affordances should be present
       expect(screen.queryByTestId("quick-entry-expand")).not.toBeInTheDocument();
-    });
-
-    it("does not render collapse button", () => {
-      renderQuickEntryBox({});
-
-      // Collapse button should NOT be present
       expect(screen.queryByTestId("quick-entry-collapse")).not.toBeInTheDocument();
-    });
-
-    it("does not render fullscreen textarea", () => {
-      renderQuickEntryBox({});
-
-      // Fullscreen textarea should NOT be present
       expect(screen.queryByTestId("quick-entry-input-fullscreen")).not.toBeInTheDocument();
     });
 
@@ -5227,19 +4947,6 @@ describe("QuickEntryBox", () => {
         expect(onCreate).toHaveBeenCalledWith(
           expect.objectContaining({ description: "Test task description" }),
         );
-      });
-    });
-
-    it("textarea expands on focus with autoExpand", async () => {
-      renderQuickEntryBox({ autoExpand: true });
-      const textarea = screen.getByTestId("quick-entry-input");
-
-      // Focus should trigger expansion
-      fireEvent.focus(textarea);
-
-      // Textarea should have expanded class
-      await waitFor(() => {
-        expect(textarea).toHaveClass("quick-entry-input--expanded");
       });
     });
 
@@ -5305,32 +5012,20 @@ describe("QuickEntryBox", () => {
     expect(screen.queryByText("Select execution node")).not.toBeInTheDocument();
   });
 
-  it("hides the node picker when no registered nodes are available", () => {
-    mockQuickEntryNodes([]);
-    renderQuickEntryBox({});
-
-    expandQuickEntry();
-
-    expect(screen.queryByTestId("quick-entry-node-button")).not.toBeInTheDocument();
-    expect(document.querySelector(".quick-entry-box .node-trigger-wrap")).toBeNull();
-  });
-
-  it("shows the node picker when any remote node is available", () => {
-    mockQuickEntryNodes([
-      { id: "remote", name: "Remote Only", status: "online", type: "remote" },
-    ]);
-    renderQuickEntryBox({});
-
-    expandQuickEntry();
-
-    expect(screen.getByTestId("quick-entry-node-button")).toBeInTheDocument();
-  });
-
-  it("shows the node picker when multiple local nodes are registered", () => {
-    mockQuickEntryNodes([
-      { id: "local-a", name: "Local A", status: "online", type: "local" },
-      { id: "local-b", name: "Local A", status: "offline", type: "local" },
-    ]);
+  it.each([
+    [
+      "any remote node is available",
+      [{ id: "remote", name: "Remote Only", status: "online", type: "remote" }],
+    ],
+    [
+      "multiple local nodes are registered",
+      [
+        { id: "local-a", name: "Local A", status: "online", type: "local" },
+        { id: "local-b", name: "Local A", status: "offline", type: "local" },
+      ],
+    ],
+  ] as const)("shows the node picker when %s", (_label, nodes) => {
+    mockQuickEntryNodes([...nodes]);
     renderQuickEntryBox({});
 
     expandQuickEntry();

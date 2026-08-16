@@ -159,7 +159,7 @@ vi.mock("../../hooks/useMemoryBackendStatus", () => ({
   })),
 }));
 
-import { fetchDashboardHealth, fetchSettings, loginProvider, saveApiKey, updateSettings } from "../../api";
+import { fetchAuthStatus, fetchDashboardHealth, fetchSettings, loginProvider, saveApiKey, updateSettings } from "../../api";
 
 function setDocumentHidden(hidden: boolean): void {
   Object.defineProperty(document, "hidden", { configurable: true, value: hidden });
@@ -736,6 +736,41 @@ describe("SettingsModal mobile adaptations", () => {
     expect(saveApiKey).toHaveBeenCalledWith("anthropic-api-key", "sk-mobile");
   });
 
+  it.each([
+    ["modal", (props: { onClose: () => void; addToast: () => void }) => <SettingsModal {...props} />],
+    ["embedded", (props: { onClose: () => void; addToast: () => void }) => <SettingsView {...props} />],
+  ])("keeps the Anthropic OAuth loginError banner inside the card on mobile %s Settings", async (_surface, Surface) => {
+    mockSettingsViewport(true);
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 375 });
+    vi.mocked(fetchAuthStatus).mockResolvedValue({
+      providers: [
+        {
+          id: "anthropic-subscription",
+          name: "Anthropic Subscription",
+          authenticated: false,
+          type: "oauth",
+          expired: true,
+          loginError: "This OAuth session expired and could not be refreshed. Re-login to restore model access.",
+        },
+        { id: "anthropic-api-key", name: "Anthropic API Key", authenticated: false, type: "api_key" },
+      ],
+    } as Awaited<ReturnType<typeof fetchAuthStatus>>);
+
+    const user = userEvent.setup();
+    const { findByTestId, getByLabelText } = render(<Surface onClose={vi.fn()} addToast={vi.fn()} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await user.selectOptions(getByLabelText("Settings Section"), "authentication");
+
+    const subscriptionCard = (await findByTestId("auth-provider-icon-anthropic-subscription")).closest(".auth-provider-card") as HTMLElement;
+    const alert = within(subscriptionCard).getByRole("alert");
+    const header = subscriptionCard.querySelector(".auth-provider-header");
+    expect(alert).toHaveClass("auth-provider-login-error");
+    expect(alert).toHaveTextContent("Re-login to restore model access");
+    expect(header).not.toContainElement(alert);
+    expect(header?.nextElementSibling).toBe(alert);
+    expect(subscriptionCard.querySelector(".auth-provider-actions")).toBeTruthy();
+  });
+
   it("renders notification provider cards responsively on mobile", async () => {
     mockSettingsViewport(true);
     Object.defineProperty(window, "innerWidth", { configurable: true, value: 375 });
@@ -895,7 +930,12 @@ describe("SettingsModal mobile adaptations", () => {
     // Custom Provider cards render outside .auth-panel-body and retain their mobile gutter.
     expectMobileRule(css, ".auth-provider-card", "margin: 0 var(--space-sm) var(--space-sm);");
     expectMobileRule(css, ".auth-provider-header", "padding: var(--space-sm);");
-    expectMobileRule(css, ".auth-provider-header > div:not(.auth-provider-info):not(.auth-apikey-section)", "margin-left: auto;");
+    expectMobileRule(css, ".auth-provider-header > div:not(.auth-provider-info):not(.auth-apikey-section):not(.auth-provider-actions)", "margin-left: auto;");
+    expectMobileRule(css, ".auth-provider-header > .auth-provider-actions", "width: 100%;");
+    expectMobileRule(css, ".auth-provider-header > .auth-provider-actions", "flex-basis: 100%;");
+    expectMobileRule(css, ".auth-provider-header > .auth-provider-actions", "min-width: 0;");
+    expectMobileRule(css, ".auth-provider-header > .auth-provider-actions", "max-width: 100%;");
+    expectMobileRule(css, ".auth-provider-header > .auth-provider-actions", "margin-left: 0;");
     expectMobileRule(css, ".auth-apikey-section", "align-items: flex-end;");
     expectMobileRule(css, ".auth-apikey-input-row", "justify-content: flex-end;");
     expectMobileRule(css, ".auth-apikey-input-row .btn", "margin-left: auto;");

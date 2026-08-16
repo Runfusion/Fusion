@@ -131,6 +131,14 @@ export {
   shouldInstallComputerUseSkill,
 } from "./fusion-skill-install.js";
 export type { HermesCliSettings, HermesCliResult, HermesProfileSummary } from "./cli-spawn.js";
+export {
+  __resetHermesLaunchCacheForTests,
+  escapeWindowsShellArgument,
+  escapeWindowsShellCommand,
+  resolveHermesBinaryPath,
+  resolveHermesLaunch,
+} from "./windows-binary-launch.js";
+export type { HermesLaunchSpec } from "./windows-binary-launch.js";
 
 // Probe re-export for the dashboard's runtime-provider-probes façade.
 export { probeHermesBinary } from "./probe.js";

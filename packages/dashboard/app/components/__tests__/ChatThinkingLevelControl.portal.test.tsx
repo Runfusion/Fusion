@@ -40,6 +40,15 @@ describe("ChatThinkingLevelControl with the real CustomModelDropdown portal", ()
     await waitFor(() => expect(screen.queryByTestId("chat-thinking-popover")).not.toBeInTheDocument());
   });
 
+  it("keeps the brain popup open for touchstart inside the portaled model menu", async () => {
+    const portal = await openModelPortalWithRender({ onChangeModel: vi.fn() });
+
+    fireEvent.touchStart(portal);
+
+    expect(screen.getByTestId("chat-thinking-popover")).toBeInTheDocument();
+    expect(screen.getByTestId("model-combobox-portal")).toBeInTheDocument();
+  });
+
   it("still closes the brain popup for a genuine outside pointerdown", async () => {
     await openModelPortalWithRender({ onChangeModel: vi.fn() });
 

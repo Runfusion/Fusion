@@ -126,7 +126,9 @@ describe("workflow routing harness guards", () => {
     };
     store.getTask.mockResolvedValue(task as any);
 
-    await new TaskExecutor(store, "/tmp/test").execute(task as any);
+    // Explicit `agentStore: undefined` opts out of the harness's default routing agent store
+    // (executor-test-helpers fills it for bare constructions) so the fail-closed park stays testable.
+    await new TaskExecutor(store, "/tmp/test", { agentStore: undefined }).execute(task as any);
 
     expect(() => selectImplementationSessionCall(
       mockedCreateFnAgent.mock.calls.map(([options]) => options as { customTools?: Array<{ name?: string }> }),

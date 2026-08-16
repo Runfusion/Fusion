@@ -48,6 +48,29 @@ describe("createFusionAuthStorage", () => {
     vi.restoreAllMocks();
   });
 
+  /*
+  FNXC:ProviderAuth 2026-08-15-21:46:
+  FusionAuthStorage.login is the only seam that hands a provider id to pi's ModelRuntime.login,
+  and pi rejects Fusion's Anthropic auth-card/storage ids (`anthropic-subscription`,
+  `anthropic-api-key`) with `Unknown provider: ...` (#1857/FN-7391, FN-9101, GitHub #3462).
+  The seam must normalize them to the execution provider `anthropic` before calling pi.
+  */
+  it("normalizes Anthropic storage-only ids to the execution provider before ModelRuntime.login", async () => {
+    const authStorage = createFusionAuthStorage();
+    const runtimeLogin = vi.fn(async () => {});
+    authStorage.setModelRuntime({ login: runtimeLogin } as never);
+
+    await authStorage.login("anthropic-subscription", {});
+    await authStorage.login("anthropic-api-key", {});
+    await authStorage.login("openai-codex", {});
+
+    expect(runtimeLogin.mock.calls.map((call) => (call as unknown[])[0])).toEqual([
+      "anthropic",
+      "anthropic",
+      "openai-codex",
+    ]);
+  });
+
   it("writes to Fusion auth and reads legacy Pi auth as fallback", async () => {
     const legacyAgentDir = join(homeDir, ".pi", "agent");
     mkdirSync(legacyAgentDir, { recursive: true });

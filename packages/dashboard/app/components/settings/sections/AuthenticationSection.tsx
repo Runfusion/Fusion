@@ -274,10 +274,13 @@ export function AuthenticationSection({ auth, form, setForm }: AuthenticationSec
     };
     /*
     FNXC:ProviderAuth 2026-07-14-15:54:
-    Provider authentication failures must remain visible on the affected card. Toasts are transient and can fire while Settings is closed, so render the server's loginError beside the provider actions as the durable re-auth remediation.
+    Provider authentication failures must remain visible on the affected card. Toasts are transient and can fire while Settings is closed, so render the server's loginError as the durable re-auth remediation.
+
+    FNXC:ProviderAuth 2026-08-15-22:08:
+    The loginError used to sit inline beside Login as `<small class="form-error">`. On a narrow Settings card that flex item sized to the sentence's min-content width, so the Anthropic expiry copy overflowed the card and the leaked global `.form-error` border painted as a broken per-line box. Keep it a wrapping block under the header so the banner stays inside the card at every Settings width.
     */
     const renderProviderAuthError = (provider: AuthProvider) => provider.loginError
-        ? (<small className="form-error" role="alert">{provider.loginError}</small>)
+        ? (<p className="auth-provider-login-error" role="alert">{provider.loginError}</p>)
         : null;
     const renderApiKeySection = (provider: AuthProvider, selectedInstanceId?: string, pendingLabel?: string, isPending = false) => {
       const instanceId = selectedInstanceId ?? provider.instanceId;
@@ -356,9 +359,10 @@ export function AuthenticationSection({ auth, form, setForm }: AuthenticationSec
                       {renderAnthropicPrecedenceBadge(provider)}
                       {provider.authenticated && provider.keyHint && (<span className="auth-key-hint">{t("settings.authentication.key", "Key: ")}{provider.keyHint}</span>)}
                     </div>
-                    {provider.type !== "api_key" && !hasMultipleInstances(provider) && <div>{renderAuthenticatedOAuthActions(provider)}{renderProviderAuthError(provider)}</div>}
+                    {provider.type !== "api_key" && !hasMultipleInstances(provider) && <div className="auth-provider-actions">{renderAuthenticatedOAuthActions(provider)}</div>}
                     {providerSupportsApiKey(provider) && !hasMultipleInstances(provider) && renderApiKeySection(provider)}
                   </div>
+                  {provider.type !== "api_key" && !hasMultipleInstances(provider) && renderProviderAuthError(provider)}
                   {renderInstanceControls(provider)}
                 </div>))}
               {renderAnthropicPrecedenceRow()}
@@ -378,16 +382,17 @@ export function AuthenticationSection({ auth, form, setForm }: AuthenticationSec
                       </span>
                       {provider.keyHint && (<span className="auth-key-hint">{t("settings.authentication.key", "Key: ")}{provider.keyHint}</span>)}
                     </div>
-                    {provider.type !== "api_key" && !hasMultipleInstances(provider) && <div>{renderAvailableOAuthActions(provider)}{renderProviderAuthError(provider)}</div>}
+                    {provider.type !== "api_key" && !hasMultipleInstances(provider) && <div className="auth-provider-actions">{renderAvailableOAuthActions(provider)}</div>}
                     {providerSupportsApiKey(provider) && !hasMultipleInstances(provider) && renderApiKeySection(provider)}
                   </div>
+                  {provider.type !== "api_key" && !hasMultipleInstances(provider) && renderProviderAuthError(provider)}
                   {renderInstanceControls(provider)}
                 </div>))}
             </div>)}
         </div>)}
       {/*
       FNXC:SettingsHelp 2026-07-16-12:45:
-      The provider cards' `<small>`s stay inline: they are all live state (save progress, key errors, provider loginError, OpenCode refresh status) that must stay visible where the operator is acting. The two DESCRIPTIVE blurbs this section carried — the panel-level "changes take effect immediately" hint and the reopen-onboarding hint — moved behind the shared "?" affordance per the operator requirement that no inline description paragraphs remain in Settings.
+      Save-progress, API-key, and OpenCode refresh `<small>`s stay inline on the control they describe. Provider loginError is a wrapping block banner under the card header so a long OAuth expiry message cannot overflow the card. The two DESCRIPTIVE blurbs this section carried — the panel-level "changes take effect immediately" hint and the reopen-onboarding hint — moved behind the shared "?" affordance per the operator requirement that no inline description paragraphs remain in Settings.
       */}
       {onReopenOnboarding && (<div className="form-group" style={{ marginTop: "var(--space-md)" }}>
           <div className="settings-field-label-row">

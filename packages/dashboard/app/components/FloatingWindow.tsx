@@ -13,6 +13,7 @@ import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import { isFullScreenSheetViewport, isShortViewport, isTabletTouchViewport, useViewportMode } from "../hooks/useViewportMode";
 import { currentFloatingZ, currentTaskDetailFloatingZ, nextFloatingZ, nextTaskDetailFloatingZ } from "./floatingWindowStack";
+import { isInsidePortalSafeSurface } from "../utils/portalSurfaces";
 import "./FloatingWindow.css";
 
 /*
@@ -105,19 +106,6 @@ Z-index now comes from the SHARED `floatingWindowStack` module (`nextFloatingZ`/
 type ResizeDirection = "n" | "s" | "e" | "w" | "ne" | "nw" | "se" | "sw";
 const RESIZE_DIRECTIONS: ResizeDirection[] = ["n", "s", "e", "w", "ne", "nw", "se", "sw"];
 export const FLOATING_WINDOW_GEOMETRY_CHANGE_EVENT = "fusion:floating-window-geometry-change";
-
-const FLOATING_WINDOW_OUTSIDE_POINTER_SAFE_SURFACE_SELECTOR = [
-  ".floating-window",
-  ".modal-overlay",
-  "[role=\"dialog\"]",
-  ".model-combobox-dropdown--portal",
-  ".model-nested-menu--portal",
-  ".dep-dropdown--portal",
-  ".node-picker-dropdown--portal",
-  ".agent-picker-dropdown--portal",
-  ".priority-picker-dropdown--portal",
-  ".activity-view-menu",
-].join(", ");
 
 /*
 FNXC:ModalTouchGeometry 2026-07-27-12:00:
@@ -562,8 +550,7 @@ export function FloatingWindow({
         return;
       }
 
-      const targetElement = target instanceof Element ? target : target.parentNode instanceof Element ? target.parentNode : null;
-      if (targetElement?.closest(FLOATING_WINDOW_OUTSIDE_POINTER_SAFE_SURFACE_SELECTOR)) return;
+      if (isInsidePortalSafeSurface(target)) return;
 
       onClose();
     };

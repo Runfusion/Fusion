@@ -828,7 +828,16 @@ export async function createWorkflowDefinitionImpl(store: TaskStore, input: Work
 
         try {
           await workflowDefinitionBeforeInsertForTesting?.(id, store.backendMode);
+          /*
+          FNXC:MultiProjectIsolation 2026-08-15-22:10:
+          Stamp the bound layer's project explicitly, like the FN-8997 workflowSteps insert does.
+          FN-8998 scopes every workflow-definition READ by `layer.projectId`; leaving the INSERT to
+          the session GUC default splits the write/read authority, so a layer bound in JS over a
+          bypass connection creates a row it can never read back ('' normalizes to the GUC/legacy
+          partition via the fusion_assign_project_id trigger, preserving unbound behavior).
+          */
                     await store.asyncLayer!.db.insert(schema.project.workflows).values({
+            projectId: store.asyncLayer!.projectId?.trim() ?? "",
             id: definition.id,
             name: definition.name,
             description: definition.description,

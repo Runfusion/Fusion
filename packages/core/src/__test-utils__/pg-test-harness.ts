@@ -671,6 +671,104 @@ function ensureSchemaTemplate(): Promise<string> {
   return ready;
 }
 
+/*
+ * FNXC:PgTestTemplateDb 2026-07-17-22:34:
+ * PostgreSQL can retain a just-closed baseline connection briefly. Terminate
+ * stale template sessions immediately before copying; the module-local copy
+ * mutex ensures this never interrupts a sibling copy using the same source.
+ *
+ * FNXC:PgTestHarness 2026-07-18-17:40:
+ * Keep terminate + DROP + CREATE TEMPLATE on one maintenance session and
+ * retry the short "source database is being accessed by other users" window
+ * (seen after switching admin DDL off shell psql). Split sessions left a race
+ * where a late-closing baseline/pool client reattached between terminate and
+ * CREATE DATABASE ... TEMPLATE.
+ *
+ * FNXC:PgTestHarnessBaselinedDb 2026-08-15-03:52:
+ * Extracted from createTaskStoreForTest so createBaselinedPgTestDatabase can
+ * share the identical serialized, retried clone path.
+ */
+async function cloneDatabaseFromTemplate(dbName: string, template: string): Promise<void> {
+  await serializeTemplateCopy(async () => {
+    const maxAttempts = 5;
+    let lastError: unknown;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        await withMaintenanceSql(async (client) => {
+          await client`
+            SELECT pg_terminate_backend(pid)
+            FROM pg_stat_activity
+            WHERE datname = ${template} AND pid <> pg_backend_pid()
+          `;
+          await client.unsafe(`DROP DATABASE IF EXISTS "${dbName}" WITH (FORCE)`).catch(() => {});
+          await client.unsafe(`CREATE DATABASE "${dbName}" TEMPLATE "${template}"`);
+        });
+        lastError = undefined;
+        break;
+      } catch (error) {
+        lastError = error;
+        const message = error instanceof Error ? error.message : String(error);
+        const contended = /being accessed by other users/i.test(message);
+        if (!contended || attempt === maxAttempts) {
+          throw error;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 25 * attempt));
+      }
+    }
+    if (lastError) throw lastError;
+  });
+}
+
+/*
+FNXC:PgTestHarnessBaselinedDb 2026-08-15-03:52:
+Slow-test fix for tests that need a baselined DATABASE but no TaskStore (e.g.
+sqlite-migrator.test.ts, whose 43 integration tests each paid a fresh CREATE
+DATABASE plus a full in-migrator applySchemaBaseline DDL run — ~3.5s/test).
+Cloning from the run-shared golden template yields a database with the exact
+applySchemaBaseline end-state (schema + markers), so the migrator's own
+idempotent baseline call becomes a marker-check no-op. Callers own connections
+to the returned URL; drop() force-drops the database.
+*/
+export async function createBaselinedPgTestDatabase(prefix = "fusion_test"): Promise<{
+  readonly dbName: string;
+  readonly testUrl: string;
+  drop(): Promise<void>;
+}> {
+  const dbName = uniqueDbName(prefix);
+  const template = await ensureGoldenTemplate();
+  await cloneDatabaseFromTemplate(dbName, template);
+  return {
+    dbName,
+    testUrl: `${PG_TEST_URL_BASE}/${dbName}`,
+    drop: async () => {
+      await adminExecAsync(`DROP DATABASE IF EXISTS "${dbName}" WITH (FORCE)`);
+    },
+  };
+}
+
+/*
+FNXC:PgTestHarnessBaselinedDb 2026-08-15-03:52:
+Companion to createBaselinedPgTestDatabase for tests whose CONTRACT is a
+pristine target (e.g. VAL-MIGRATE-005: a dry-run against an external database
+must leave no schemas/tables/markers behind — pre-applied baseline would make
+that assertion vacuous). Plain CREATE DATABASE, no template, no baseline.
+*/
+export async function createEmptyPgTestDatabase(prefix = "fusion_test"): Promise<{
+  readonly dbName: string;
+  readonly testUrl: string;
+  drop(): Promise<void>;
+}> {
+  const dbName = uniqueDbName(prefix);
+  await adminExecAsync(`CREATE DATABASE "${dbName}"`);
+  return {
+    dbName,
+    testUrl: `${PG_TEST_URL_BASE}/${dbName}`,
+    drop: async () => {
+      await adminExecAsync(`DROP DATABASE IF EXISTS "${dbName}" WITH (FORCE)`);
+    },
+  };
+}
+
 /**
  * FNXC:TestMigrationTail 2026-06-24-16:00:
  * Create a fresh, isolated PostgreSQL database with the Fusion schema applied,
@@ -721,47 +819,7 @@ export async function createTaskStoreForTest(options?: {
   const template = options?.copyFromGolden
     ? await ensureGoldenTemplate()
     : await ensureSchemaTemplate();
-  await serializeTemplateCopy(async () => {
-    /*
-     * FNXC:PgTestTemplateDb 2026-07-17-22:34:
-     * PostgreSQL can retain a just-closed baseline connection briefly. Terminate
-     * stale template sessions immediately before copying; the module-local copy
-     * mutex ensures this never interrupts a sibling copy using the same source.
-     *
-     * FNXC:PgTestHarness 2026-07-18-17:40:
-     * Keep terminate + DROP + CREATE TEMPLATE on one maintenance session and
-     * retry the short "source database is being accessed by other users" window
-     * (seen after switching admin DDL off shell psql). Split sessions left a race
-     * where a late-closing baseline/pool client reattached between terminate and
-     * CREATE DATABASE ... TEMPLATE.
-     */
-    const maxAttempts = 5;
-    let lastError: unknown;
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      try {
-        await withMaintenanceSql(async (client) => {
-          await client`
-            SELECT pg_terminate_backend(pid)
-            FROM pg_stat_activity
-            WHERE datname = ${template} AND pid <> pg_backend_pid()
-          `;
-          await client.unsafe(`DROP DATABASE IF EXISTS "${dbName}" WITH (FORCE)`).catch(() => {});
-          await client.unsafe(`CREATE DATABASE "${dbName}" TEMPLATE "${template}"`);
-        });
-        lastError = undefined;
-        break;
-      } catch (error) {
-        lastError = error;
-        const message = error instanceof Error ? error.message : String(error);
-        const contended = /being accessed by other users/i.test(message);
-        if (!contended || attempt === maxAttempts) {
-          throw error;
-        }
-        await new Promise((resolve) => setTimeout(resolve, 25 * attempt));
-      }
-    }
-    if (lastError) throw lastError;
-  });
+  await cloneDatabaseFromTemplate(dbName, template);
   const testUrl = `${PG_TEST_URL_BASE}/${dbName}`;
 
   // The database already carries the full schema (copied from the template),
@@ -945,6 +1003,48 @@ const ALL_APPLICATION_TABLES = [
 ];
 const TRUNCATE_ALL_SQL = `TRUNCATE TABLE ${ALL_APPLICATION_TABLES.join(", ")} RESTART IDENTITY CASCADE`;
 
+/*
+FNXC:PgTestHarnessResetSpeed 2026-08-15-03:52:
+Slow-test fix (harness-wide): the per-test reset was a single TRUNCATE ... RESTART
+IDENTITY CASCADE over all ~110 application tables. Profiled at 163ms of the 169ms
+shared-harness beforeEach (mission-store.pg: 62 tests -> ~10s of pure TRUNCATE),
+because TRUNCATE pays a per-table constant (new relfilenode + catalog churn +
+fsync) regardless of row count — and in a typical test only a handful of tables
+hold rows. Replace it with one DO block that:
+  1. switches session_replication_role to 'replica' (transaction-local) so FK
+     triggers are inert and deletion order is irrelevant;
+  2. DELETEs only tables that actually contain rows (EXISTS probe per table is
+     ~0.05ms; empty tables are skipped entirely);
+  3. resets EVERY sequence in the three application schemas to its declared
+     start value, reproducing RESTART IDENTITY exactly (including sequences
+     advanced by insert-then-delete tests whose tables ended empty — the full
+     TRUNCATE reset those too, so the sweep must be unconditional).
+Observable semantics are identical: every application table is empty and every
+identity restarts, so ID-reuse assertions (KB-001) keep holding. The caller
+falls back to the legacy full TRUNCATE if this fast path errors (e.g. a
+non-superuser test role that may not set session_replication_role).
+*/
+const FAST_RESET_SQL = `DO $fusion_reset$
+DECLARE
+  tbl text;
+  has_rows boolean;
+BEGIN
+  PERFORM set_config('session_replication_role', 'replica', true);
+  FOREACH tbl IN ARRAY ARRAY[${ALL_APPLICATION_TABLES.map((t) => `'${t}'`).join(", ")}] LOOP
+    EXECUTE 'SELECT EXISTS(SELECT 1 FROM ' || tbl || ')' INTO has_rows;
+    IF has_rows THEN
+      EXECUTE 'DELETE FROM ' || tbl;
+    END IF;
+  END LOOP;
+  PERFORM setval(c.oid, s.seqstart, false)
+    FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    JOIN pg_sequence s ON s.seqrelid = c.oid
+    WHERE c.relkind = 'S'
+      AND n.nspname IN ('${PROJECT_SCHEMA}', '${CENTRAL_SCHEMA}', '${ARCHIVE_SCHEMA}');
+END
+$fusion_reset$`;
+
 export function createSharedPgTaskStoreTestHarness(options?: {
   readonly poolMax?: number;
   readonly prefix?: string;
@@ -1036,7 +1136,13 @@ export function createSharedPgTaskStoreTestHarness(options?: {
     beforeEach: async () => {
       if (!harness || !store) throw new Error("SharedPgTaskStoreHarness: beforeAll not called yet");
       // Wipe all application data and reset sequences in one statement.
-      await harness.adminDb.execute(sql.raw(TRUNCATE_ALL_SQL));
+      // FNXC:PgTestHarnessResetSpeed 2026-08-15-03:52: fast DELETE-based reset
+      // (see FAST_RESET_SQL) with the legacy full TRUNCATE as an error fallback.
+      try {
+        await harness.adminDb.execute(sql.raw(FAST_RESET_SQL));
+      } catch {
+        await harness.adminDb.execute(sql.raw(TRUNCATE_ALL_SQL));
+      }
       // Re-seed the singleton config row with default project settings so the
       // store sees a clean project on every test.
       const defaults = await ensureDefaults();

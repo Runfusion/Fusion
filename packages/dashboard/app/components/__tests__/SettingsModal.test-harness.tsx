@@ -1,6 +1,6 @@
 import { vi, beforeEach, afterEach, expect } from "vitest";
 import type { ComponentProps } from "react";
-import { render, screen, waitFor, cleanup, fireEvent } from "@testing-library/react";
+import { act, render, screen, waitFor, cleanup, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import fs from "fs";
 import path from "path";
@@ -244,6 +244,22 @@ export async function assertProjectModelSavePayload(provider: string, modelId: s
 
 export function forEachProvider<T>(providers: T[], fn: (provider: T) => void) {
   providers.forEach(fn);
+}
+
+/*
+FNXC:SettingsModalTests 2026-08-16-03:46:
+SettingsModal auto-saves through a real 500ms debounce (autoSaveTimerRef in SettingsModal.tsx).
+Tests that edit a control and then `waitFor(mockUpdateSettings called)` under real timers pay that
+full 500ms per save — the dominant per-test latency across the split files. The FN-2707 pattern
+instead enables fake timers BEFORE the mutating edit (so the debounce setTimeout lands on the fake
+clock; an edit made under real timers arms a real timer that fake advancement cannot fire), fires
+the edit with fireEvent, and flushes the debounce inside act. Real timers are restored per test and
+again defensively in installSettingsModalEnv's afterEach.
+*/
+export async function flushSettingsAutoSave() {
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(500);
+  });
 }
 
 /*

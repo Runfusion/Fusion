@@ -24,7 +24,7 @@ const plugin: FusionPlugin = definePlugin({
       name: "Cursor Runtime",
       version: "0.1.0",
     },
-    factory: async () => new CursorRuntimeAdapter(),
+    factory: async (ctx) => new CursorRuntimeAdapter(ctx.settings as Record<string, unknown> | undefined),
   },
   cliProviders: [
     {
@@ -53,7 +53,7 @@ const plugin: FusionPlugin = definePlugin({
       discoverModels: discoverCursorProviderModels,
       runtime: {
         runtimeId: "cursor",
-        createAdapter: async () => new CursorRuntimeAdapter(),
+        createAdapter: async (ctx) => new CursorRuntimeAdapter(ctx.settings as Record<string, unknown> | undefined),
       },
     },
   ],

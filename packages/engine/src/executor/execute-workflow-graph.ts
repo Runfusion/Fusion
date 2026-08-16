@@ -28,7 +28,9 @@ import {
   resolveWorkflowIrForTask,
   upsertWorkflowStepResult,
   applySupersededFindingIds,
+  isTerminalStepResult,
 } from "@fusion/core";
+import { resolveWorkflowGateActivityClaim } from "./workflow-gate-activity.js";
 import type { ImplementationExit } from "./implementation-exit.js";
 import type { WorkflowGraphTaskRunResult } from "../workflows/workflow-graph-task-runner.js";
 import { WorkflowGraphTaskRunner } from "../workflows/workflow-graph-task-runner.js";
@@ -78,6 +80,8 @@ export type ExecuteWorkflowGraphDeps = {
   graphStepSessionPinned: Set<string>;
   graphToolFailureRunCursors: Map<string, number>;
   graphUnattendedRuns: Set<string>;
+  /** FNXC:AgentActivityStream 2026-08-15-22:15: FN-8864 node-scoped routed-principal retention for gate attribution (restored post-wave-18). */
+  workflowGateActivityPrincipals: Map<string, string>;
   outerConcurrencyClaims: Set<string>;
   processWideGraphRouting: Set<string>;
   getRunContextFor: (taskId: string) => EngineRunContext | undefined;
@@ -134,7 +138,8 @@ export function clearPrincipalHoldBackoff(taskId: string): void {
  * the same write. Exported for production-shaped graph-writer tests.
  */
 export async function persistWorkflowStepResult(
-  deps: Pick<ExecuteWorkflowGraphDeps, "store" | "getRunContextFor" | "readTaskArtifact">,
+  deps: Pick<ExecuteWorkflowGraphDeps, "store" | "getRunContextFor" | "readTaskArtifact">
+    & Partial<Pick<ExecuteWorkflowGraphDeps, "workflowGateActivityPrincipals" | "activeWorkflowPrincipals">>,
   taskId: string,
   result: CoreWorkflowStepResult,
 ): Promise<void> {
@@ -191,8 +196,76 @@ export async function persistWorkflowStepResult(
     } else {
       await deps.store.updateTask(taskId, { workflowStepResults: existing }, deps.getRunContextFor(taskId));
     }
-  } catch {
-    // Result recording is additive visibility — never affect the graph run.
+    /*
+    FNXC:AgentActivityStream 2026-08-09-09:38 (restored 2026-08-15-22:15 after wave-18 shell-ification dropped it):
+    Terminal graph gate results are emitted at this shared persistence sink, not at individual node
+    implementations (FN-8864). Node ids are operator-authored, so metadata sanitation records unknown
+    ids as the closed `custom` enum rather than retaining prose.
+
+    FNXC:AgentActivityStream 2026-08-09-11:50:
+    Workflow `skipped` is terminal and non-blocking, so it is a passed gate for activity consumers;
+    advisory failures and failures remain failed. Preserve the exact closed status in metadata rather
+    than deriving a replacement that loses the gate outcome.
+    */
+    if (isTerminalStepResult(result)) {
+      const persistedResult = existing.find((entry) => entry.workflowStepId === result.workflowStepId) ?? resultToPersist;
+      const passed = result.status === "passed"
+        || result.status === "skipped"
+        || result.verdict === "APPROVE"
+        || result.verdict === "APPROVE_WITH_NOTES"
+        || result.verdict === "CLOSE_NO_OP";
+      try {
+        await deps.store.recordAgentActivity({
+          type: passed ? "workflow:gate-passed" : "workflow:gate-failed",
+          /*
+          FNXC:AgentActivityStream 2026-08-09-13:30:
+          A workflow gate belongs to the principal that actually ran its node. The active
+          routing fence preserves reviewer overrides and column bindings; falling back to
+          the task assignee is only for unclassified nodes that have no routed principal.
+          */
+          attributionClaim: resolveWorkflowGateActivityClaim(
+            deps.workflowGateActivityPrincipals?.get(`${taskId}\0${result.workflowStepId}`)
+              ?? deps.activeWorkflowPrincipals?.get(taskId)?.agentId,
+            live?.assignedAgentId,
+          ),
+          taskId,
+          occurredAt: result.completedAt ?? result.startedAt ?? new Date().toISOString(),
+          /*
+          FNXC:AgentActivityStream 2026-08-09-19:03:
+          `priorAttempts` is intentionally bounded, so its length cannot identify retries:
+          after the retention cap it would make later gate attempts collide and disappear.
+          A graph attempt's persisted startedAt is its natural, replay-stable identity;
+          pending→terminal updates keep that value while a new dispatch gets a new one.
+          */
+          discriminator: `${result.workflowStepId}:${result.startedAt ?? result.completedAt ?? result.status}`,
+          metadata: {
+            stepId: result.workflowStepId,
+            status: result.status,
+            attempt: persistedResult.priorAttempts?.length ?? 0,
+          },
+        });
+        /*
+        FNXC:AgentActivityStream 2026-08-09-13:59:
+        Once the terminal event is durable, discard the retained node identity so a later
+        run cannot inherit an earlier gate's routed principal.
+        */
+        deps.workflowGateActivityPrincipals?.delete(`${taskId}\0${result.workflowStepId}`);
+      } catch (error) {
+        /*
+        FNXC:AgentActivityStream 2026-08-09-13:43:
+        Activity is observability only: warn so a failed append is diagnosable, but never
+        let it change the workflow gate result or interrupt graph execution.
+        */
+        executorLog.warn(`[agent-activity] ${taskId}: failed to record workflow gate activity: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+  } catch (error) {
+    /*
+    FNXC:AgentActivityStream 2026-08-09-13:43:
+    Persisting the underlying step and its activity row is additive visibility. Log a
+    failed persistence attempt without converting an otherwise valid graph run into a failure.
+    */
+    executorLog.warn(`[agent-activity] ${taskId}: failed to persist workflow step result: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
@@ -444,6 +517,7 @@ export async function executeWorkflowGraph(
               workflowAgentCapacity: deps.workflowAgentCapacity,
               activeWorkflowAuthorities: deps.activeWorkflowAuthorities,
               activeWorkflowPrincipals: deps.activeWorkflowPrincipals,
+              workflowGateActivityPrincipals: deps.workflowGateActivityPrincipals,
               workflowCapacityAttemptIds,
               directWorkflowPrincipalWorkItemIds,
               directWorkflowPrincipalHeldWorkItemIds,
@@ -797,6 +871,10 @@ export async function executeWorkflowGraph(
       }
       deps.activeWorkflowAuthorities.delete(task.id);
       deps.activeWorkflowPrincipals.delete(task.id);
+      // FNXC:AgentActivityStream 2026-08-15-22:15: drop FN-8864 gate-attribution retention for this run (restored post-wave-18).
+      for (const key of deps.workflowGateActivityPrincipals.keys()) {
+        if (key.startsWith(`${task.id}\0`)) deps.workflowGateActivityPrincipals.delete(key);
+      }
       if (graphAbortController && deps.activeWorkflowGraphAbortControllers.get(task.id) === graphAbortController) {
         deps.activeWorkflowGraphAbortControllers.delete(task.id);
       }

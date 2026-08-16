@@ -1,3 +1,6 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { AgentRuntime } from "../agents/agent-runtime.js";
 import { resolveRuntime } from "../execution/runtime-resolution.js";
@@ -5,7 +8,15 @@ import { createResolvedAgentSession } from "../agents/agent-session-helpers.js";
 import type { PluginRunner } from "../plugins/plugin-runner.js";
 import type { PluginRuntimeRegistration } from "@fusion/core";
 
-const mockCreateFnAgent = vi.hoisted(() => vi.fn());
+const { mockCreateFnAgent, mockLoadSkills } = vi.hoisted(() => ({
+  mockCreateFnAgent: vi.fn(),
+  mockLoadSkills: vi.fn(() => ({ skills: [], diagnostics: [] })),
+}));
+
+vi.mock("@earendil-works/pi-coding-agent", () => ({
+  getAgentDir: vi.fn(() => "/tmp/fusion-agent-skills"),
+  loadSkills: mockLoadSkills,
+}));
 
 vi.mock("../logger.js", () => ({
   createLogger: vi.fn(() => ({
@@ -13,6 +24,7 @@ vi.mock("../logger.js", () => ({
     warn: vi.fn(),
     error: vi.fn(),
   })),
+  piLog: { log: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
 vi.mock("../pi.js", () => ({
@@ -198,6 +210,83 @@ describe("Hermes runtime integration via engine resolution pipeline", () => {
     expect(hermesCreateSession).toHaveBeenCalledWith(expect.objectContaining({
       skills: ["fusion"],
     }));
+  });
+
+  it("injects only resolved forced skills into a non-PI runtime prompt", async () => {
+    const projectRoot = mkdtempSync(join(tmpdir(), "fn-9114-hermes-skills-"));
+    mkdirSync(join(projectRoot, ".fusion"), { recursive: true });
+    writeFileSync(join(projectRoot, ".fusion", "settings.json"), JSON.stringify({
+      skills: ["+alpha/SKILL.md", "+beta/SKILL.md", "-delta/SKILL.md"],
+    }));
+    mockLoadSkills.mockReturnValueOnce({
+      skills: [
+        { name: "alpha", filePath: "skills/alpha/SKILL.md" },
+        { name: "beta", filePath: "skills/beta/SKILL.md" },
+        { name: "delta", filePath: "skills/delta/SKILL.md" },
+      ],
+      diagnostics: [],
+    });
+    const hermesCreateSession = vi.fn().mockResolvedValue({ session: { prompt: vi.fn() } });
+    const pluginRunner = createMockPluginRunner({ getRuntimeById: vi.fn().mockReturnValue(createHermesRegistration(() => ({
+      id: "hermes", name: "Hermes Runtime", createSession: hermesCreateSession,
+      promptWithFallback: vi.fn(), describeModel: vi.fn(),
+    }))) });
+    const onSkillSummary = vi.fn();
+
+    try {
+      await createResolvedAgentSession({
+        sessionPurpose: "executor", runtimeHint: "hermes", pluginRunner, cwd: projectRoot,
+        systemPrompt: "You are helpful",
+        skillSelection: {
+          projectRootDir: projectRoot, requestedSkillNames: ["fusion"],
+          forcedSkillNames: ["alpha", "delta", "missing"], sessionPurpose: "executor",
+        },
+        onSkillSummary,
+      });
+      expect(hermesCreateSession).toHaveBeenCalledWith(expect.objectContaining({
+        skills: expect.arrayContaining(["alpha", "beta", "fusion"]),
+        systemPrompt: expect.stringContaining("REQUIRED to read these available skills: alpha"),
+      }));
+      const prompt = hermesCreateSession.mock.calls[0]![0].systemPrompt as string;
+      expect(prompt).not.toContain("delta, missing");
+      expect(onSkillSummary).toHaveBeenCalledWith(expect.objectContaining({
+        forcedSkillNames: ["alpha"],
+        unresolvedForcedSkills: expect.arrayContaining([
+          { requestedName: "delta", reason: "disabled-by-settings" },
+          { requestedName: "missing", reason: "not-found" },
+        ]),
+      }));
+    } finally {
+      rmSync(projectRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("routes a no-hint Hermes picker selection through Hermes before pi model resolution", async () => {
+    const hermesRegistration = createHermesRegistration();
+    const pluginRunner = createMockPluginRunner({ getRuntimeById: vi.fn().mockReturnValue(hermesRegistration) });
+
+    const result = await createResolvedAgentSession({
+      sessionPurpose: "executor",
+      pluginRunner,
+      cwd: "/tmp/project",
+      systemPrompt: "Use Hermes",
+      defaultProvider: "hermes",
+      defaultModelId: "hermes/default",
+    });
+
+    expect(result.runtimeId).toBe("hermes");
+    expect(mockCreateFnAgent).not.toHaveBeenCalled();
+  });
+
+  it("reports Hermes plugin remediation when a no-hint picker selection lacks its runtime", async () => {
+    await expect(createResolvedAgentSession({
+      sessionPurpose: "executor",
+      pluginRunner: createMockPluginRunner(),
+      cwd: "/tmp/project",
+      systemPrompt: "Use Hermes",
+      defaultProvider: "hermes",
+      defaultModelId: "hermes/default",
+    })).rejects.toThrow(/Hermes CLI/);
   });
 
   it("falls back to default pi runtime when Hermes factory throws", async () => {

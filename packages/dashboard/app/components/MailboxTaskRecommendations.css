@@ -1,0 +1,9 @@
+.mailbox-task-recommendations { margin-block: var(--space-2); display: grid; gap: var(--space-2); }
+.mailbox-task-recommendations__item { display: grid; gap: var(--space-3); padding: var(--space-3); }
+.mailbox-task-recommendations__heading { display: flex; align-items: center; gap: var(--space-2); }
+.mailbox-task-recommendations__heading h3, .mailbox-task-recommendations__content p { margin: 0; }
+.mailbox-task-recommendations__heading span { border: var(--border-width) solid var(--color-border); border-radius: var(--radius-md); padding-inline: var(--space-2); background: var(--color-surface); }
+.mailbox-task-recommendations__action { display: grid; gap: var(--space-2); justify-items: start; }
+.mailbox-task-recommendations__error { color: var(--color-error); }
+.mailbox-task-recommendations__unavailable { margin-block: var(--space-2); color: var(--color-warning); }
+@media (max-width: 768px) { .mailbox-task-recommendations .btn { inline-size: 100%; } }

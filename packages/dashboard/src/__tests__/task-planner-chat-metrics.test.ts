@@ -297,6 +297,34 @@ describe("formatTaskPlannerChatMetrics: active runtime keys on the WIP role", ()
     expect(result.metrics.timing.activeRuntimeMs).toBe(360_000);
   });
 
+  it("caps poisoned active totals at first execution while retaining a live renamed segment", () => {
+    const result = formatTaskPlannerChatMetrics(makeTask({
+      column: "building",
+      firstExecutionAt: "2026-07-01T10:00:00.000Z",
+      cumulativeActiveMs: 4 * 24 * 60 * 60_000,
+      executionStartedAt: "2026-07-01T10:15:00.000Z",
+      cumulativePlanningMs: 60_000,
+      planningStartedAt: "2026-07-01T10:19:00.000Z",
+    }), { nowMs: Date.parse("2026-07-01T10:20:00.000Z"), wipColumns: new Set(["building"]) });
+
+    expect(result.metrics.timing.activeRuntimeMs).toBe(20 * 60_000);
+    expect(result.metrics.timing.totalExecutionMs).toBe(10 * 60 * 60_000 + 20 * 60_000);
+  });
+
+  it("retains planning accrued before first execution in the combined total", () => {
+    const result = formatTaskPlannerChatMetrics(makeTask({
+      column: "in-progress",
+      createdAt: "2026-07-01T09:00:00.000Z",
+      firstExecutionAt: "2026-07-01T10:00:00.000Z",
+      cumulativeActiveMs: 0,
+      executionStartedAt: "2026-07-01T10:00:00.000Z",
+      cumulativePlanningMs: 30 * 60_000,
+    }), { nowMs: Date.parse("2026-07-01T10:00:00.000Z") });
+
+    expect(result.metrics.timing.activeRuntimeMs).toBe(0);
+    expect(result.metrics.timing.totalExecutionMs).toBe(30 * 60_000);
+  });
+
   it("does NOT accrue for a card outside its board's wip lanes", () => {
     const result = formatTaskPlannerChatMetrics(runningTask("checking"), {
       ...at,

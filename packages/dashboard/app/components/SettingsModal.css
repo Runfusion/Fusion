@@ -2484,6 +2484,15 @@ Design tokens only (spacing/radius/color vars), no hardcoded px besides 0.
   color: var(--color-error);
   padding-right: 4px;
 }
+.auth-provider-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-xs);
+  min-width: 0;
+  max-width: 100%;
+  margin-left: auto;
+}
 .auth-provider-actions-row {
   display: flex;
   width: 100%;
@@ -3020,8 +3029,23 @@ The header row wraps so the badge drops below the heading on narrow widths inste
     gap: var(--space-sm);
   }
 
-  .auth-provider-header > div:not(.auth-provider-info):not(.auth-apikey-section) {
+  .auth-provider-header > div:not(.auth-provider-info):not(.auth-apikey-section):not(.auth-provider-actions) {
     margin-left: auto;
+  }
+
+  /*
+  FNXC:ProviderAuth 2026-08-15-22:08:
+  Login/Logout stay on their own header row. The actions column must take the
+  full card width and shrink below the button's min-content so a long OAuth
+  expiry banner rendered under the header cannot widen the flex item past the card.
+  */
+  .auth-provider-header > .auth-provider-actions {
+    width: 100%;
+    flex-basis: 100%;
+    min-width: 0;
+    max-width: 100%;
+    align-items: flex-start;
+    margin-left: 0;
   }
 
   .auth-provider-actions-row {

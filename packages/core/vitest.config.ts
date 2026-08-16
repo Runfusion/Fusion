@@ -16,6 +16,15 @@ const quarantinedCoreTests: string[] = [];
 export default defineConfig({
   resolve: {
     alias: {
+      /*
+      FNXC:MemoryMcp 2026-08-15-22:05:
+      Core PG tests exercise engine source (e.g. command-center activity via engine's
+      mcp-resolution.ts), which imports the Node-only `@fusion/core/mcp-builtin-servers` subpath.
+      Without this entry the bare `@fusion/core` alias below prefix-rewrites the subpath into
+      `src/index.ts/mcp-builtin-servers` and resolution fails. Mirrors engine/vitest.config.ts;
+      subpath entries must precede the bare alias.
+      */
+      "@fusion/core/mcp-builtin-servers": resolve(__dirname, "./src/config/mcp-builtin-servers.ts"),
       "@fusion/core": resolve(__dirname, "./src/index.ts"),
       "@fusion/test-utils": resolve(__dirname, "./src/__test-utils__/workspace.ts"),
       "@fusion/plugin-sdk": resolve(__dirname, "../plugin-sdk/src/index.ts"),

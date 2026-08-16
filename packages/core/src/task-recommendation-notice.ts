@@ -1,5 +1,5 @@
 /*
-FNXC:TaskRecommendations 2026-08-13-03:56:
+FNXC:TaskRecommendations 2026-08-15-22:44:
 SCOPE — notices fire only for a new, non-empty recommendation list at an ACCEPTED completion. Do
 not invoke this for a rolled-back handoff, `linkTaskRecommendation`, or the create-from-
 recommendation route: those only stamp `createdTaskId` on an existing proposal.
@@ -8,8 +8,9 @@ BEST-EFFORT + NON-BLOCKING — callers dispatch without awaiting. This is the so
 failures may be observed, and it swallows them so recommendation capture and task completion remain
 independent from mailbox availability.
 
-PROSE PLACEMENT — operator-facing prose belongs only in mailbox content. Metadata contains ids,
-enums, and counts; this module writes no run-audit prose.
+MAILBOX ACTIONS — dashboard notices now expose inline Create task controls. Operator-facing prose
+still belongs only in content; metadata remains ids, enums, and counts so the dashboard resolves
+current recommendation text and link state from the parent task rather than storing a duplicate snapshot.
 */
 
 import { createHash } from "node:crypto";
@@ -62,7 +63,7 @@ export function buildTaskRecommendationNoticeContent(
     "",
     ...recommendations.map((recommendation) => `- **${recommendation.title}** — \`${recommendation.category}\`: ${recommendation.description}`),
     "",
-    `Open ${task.id}'s **Recommendations** tab to review them. **Create task** files one through normal guarded intake.`,
+    `Use the **Create task** button beside each recommendation to file it through guarded intake. You can also open ${task.id}'s **Recommendations** tab to review them.`,
   ].join("\n");
 }
 

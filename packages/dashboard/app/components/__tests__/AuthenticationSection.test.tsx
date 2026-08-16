@@ -3,6 +3,7 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 import { useState } from "react";
 import { AuthenticationSection, type AuthenticationSectionData } from "../settings/sections/AuthenticationSection";
 import type { AuthProvider } from "../../api";
+import { loadComponentCss } from "../../test/cssFixture";
 
 vi.mock("../ProviderIcon", () => ({
   ProviderIcon: ({ provider }: { provider: string }) => <span data-testid={`mock-icon-${provider}`}>{provider}</span>,
@@ -209,8 +210,43 @@ describe("AuthenticationSection", () => {
     ]);
 
     const subscriptionCard = screen.getByTestId("auth-provider-icon-anthropic-subscription").closest(".auth-provider-card") as HTMLElement;
-    expect(within(subscriptionCard).getByRole("alert")).toHaveTextContent("expired and could not be refreshed");
+    const alert = within(subscriptionCard).getByRole("alert");
+    const header = subscriptionCard.querySelector(".auth-provider-header");
+    expect(alert).toHaveTextContent("expired and could not be refreshed");
+    expect(alert).toHaveClass("auth-provider-login-error");
+    expect(alert.tagName).toBe("P");
+    expect(header).not.toContainElement(alert);
+    expect(header?.nextElementSibling).toBe(alert);
     expect(screen.getAllByRole("alert")).toHaveLength(1);
+  });
+
+  it("keeps a connected OAuth loginError as a wrapping card banner under the header", () => {
+    renderAuthSection([
+      {
+        id: "anthropic-subscription",
+        name: "Anthropic Subscription",
+        authenticated: true,
+        type: "oauth",
+        expired: true,
+        loginError: "This OAuth session expired and could not be refreshed. Re-login to restore model access.",
+      },
+    ]);
+
+    const subscriptionCard = screen.getByTestId("auth-provider-icon-anthropic-subscription").closest(".auth-provider-card") as HTMLElement;
+    const alert = within(subscriptionCard).getByRole("alert");
+    const header = subscriptionCard.querySelector(".auth-provider-header");
+    expect(alert).toHaveClass("auth-provider-login-error");
+    expect(header).not.toContainElement(alert);
+    expect(header?.nextElementSibling).toBe(alert);
+  });
+
+  it("wraps the provider loginError banner inside the card on a narrow Settings width", () => {
+    const css = loadComponentCss("settings/sections/AuthenticationSection.css");
+    expect(css).toMatch(/\.auth-provider-login-error\s*\{[^}]*display:\s*block/);
+    expect(css).toMatch(/\.auth-provider-login-error\s*\{[^}]*max-width:\s*100%/);
+    expect(css).toMatch(/\.auth-provider-login-error\s*\{[^}]*overflow-wrap:\s*anywhere/);
+    expect(css).toMatch(/\.auth-provider-login-error\s*\{[^}]*word-break:\s*break-word/);
+    expect(css).toMatch(/@media[^{]*\(max-width:\s*768px\)[^{]*\{[\s\S]*\.auth-provider-login-error\s*\{[\s\S]*margin-inline:\s*var\(--space-sm\)/);
   });
 
   it("keeps Anthropic OAuth logout separate from a stored API key clear action", () => {

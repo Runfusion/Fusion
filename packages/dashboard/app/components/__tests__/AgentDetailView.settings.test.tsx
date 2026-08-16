@@ -48,9 +48,51 @@ import {
 } from "./AgentDetailView.test-helpers";
 import { AgentDetailView } from "../AgentDetailView";
 
+/*
+FNXC:AgentSettingsTestLatency 2026-08-15-21:10:
+FN-2707 fake-timer pattern for the Settings config autosave debounce (CONFIG_AUTOSAVE_DEBOUNCE_MS = 700ms),
+which previously ran on real timers so every autosave test paid the debounce in wall-clock time.
+Mount/navigation must stay on real timers (the floating-window shell and initial agent load hang under a
+faked scheduler), so fake timers are enabled mid-test via beginAutosaveFakeTimers() just before the field
+edit that arms the debounce, advanced inside act(), and discarded (not run) on restore so no autosave fires
+into an unmounted tree.
+RTL v16's asyncWrapper only advances fake time through a GLOBAL `jest.advanceTimersByTime` (vitest defines
+no `jest`), so without the scoped jest shim below every userEvent call deadlocks on a faked setTimeout(0).
+The shim exists only while fake timers are armed and is deleted in afterEach.
+*/
+const AUTOSAVE_DEBOUNCE_ADVANCE_MS = 750;
+
+const setupUser = () =>
+  userEvent.setup({
+    advanceTimers: (ms) => {
+      if (vi.isFakeTimers()) {
+        vi.advanceTimersByTime(ms);
+      }
+    },
+  });
+
+const beginAutosaveFakeTimers = () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "setInterval", "clearTimeout", "clearInterval"] });
+  (globalThis as any).jest = { advanceTimersByTime: (ms: number) => vi.advanceTimersByTime(ms) };
+};
+
+const advanceAutosaveDebounce = async () => {
+  await act(async () => {
+    vi.advanceTimersByTime(AUTOSAVE_DEBOUNCE_ADVANCE_MS);
+  });
+};
+
 describe("AgentDetailView — budget settings and autosave", () => {
   beforeEach(() => {
     setupAgentDetailMocks();
+  });
+
+  afterEach(() => {
+    delete (globalThis as any).jest;
+    if (vi.isFakeTimers()) {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
   });
 
 describe("Budget Settings", () => {
@@ -60,26 +102,6 @@ describe("Budget Settings", () => {
     });
     await user.click(screen.getByText("Settings"));
   };
-
-  it("renders Budget Settings section with all fields", async () => {
-    const user = userEvent.setup();
-    render(
-      <AgentDetailView
-        agentId="agent-001"
-        onClose={vi.fn()}
-        addToast={vi.fn()}
-      />
-    );
-
-    await navigateToSettings(user);
-
-    await waitFor(() => {
-      expect(screen.getByLabelText("Token Budget")).toBeInTheDocument();
-      expect(screen.getByLabelText("Usage Threshold (%)")).toBeInTheDocument();
-      expect(screen.getByLabelText("Budget Period")).toBeInTheDocument();
-      expect(screen.getByLabelText("Reset Day")).toBeInTheDocument();
-    });
-  });
 
   it("pre-fills budget fields from existing runtimeConfig.budgetConfig", async () => {
     mockFetchAgent.mockResolvedValue(createMockAgent({
@@ -93,7 +115,7 @@ describe("Budget Settings", () => {
       },
     }));
 
-    const user = userEvent.setup();
+    const user = setupUser();
     render(
       <AgentDetailView
         agentId="agent-001"
@@ -119,12 +141,14 @@ describe("Budget Settings", () => {
     });
   });
 
-  it("shows empty fields when budgetConfig is not set", async () => {
+  // FNXC:AgentSettingsTestLatency 2026-08-15-21:20: aggregate control contract — merges the former
+  // per-control field-presence test with the empty-prefill test (one mount covers both; FN-5048 trim).
+  it("renders all Budget Settings fields, empty when budgetConfig is not set", async () => {
     mockFetchAgent.mockResolvedValue(createMockAgent({
       runtimeConfig: {},
     }));
 
-    const user = userEvent.setup();
+    const user = setupUser();
     render(
       <AgentDetailView
         agentId="agent-001"
@@ -144,6 +168,8 @@ describe("Budget Settings", () => {
 
       const periodSelect = screen.getByLabelText("Budget Period") as HTMLSelectElement;
       expect(periodSelect.value).toBe("");
+
+      expect(screen.getByLabelText("Reset Day")).toBeInTheDocument();
     });
   });
 
@@ -158,7 +184,7 @@ describe("Budget Settings", () => {
     }));
     mockUpdateAgent.mockResolvedValue(createMockAgent() as any);
 
-    const user = userEvent.setup();
+    const user = setupUser();
     render(
       <AgentDetailView
         agentId="agent-001"
@@ -205,7 +231,7 @@ describe("Budget Settings", () => {
       defaultThinkingLevelOverride: "high",
     } as any);
 
-    const user = userEvent.setup();
+    const user = setupUser();
     render(<AgentDetailView agentId="agent-001" onClose={vi.fn()} addToast={vi.fn()} />);
     await navigateToSettings(user);
 
@@ -216,7 +242,7 @@ describe("Budget Settings", () => {
   it("calls updateAgent with correct budgetConfig in runtimeConfig on save", async () => {
     mockUpdateAgent.mockResolvedValue(createMockAgent() as any);
 
-    const user = userEvent.setup();
+    const user = setupUser();
     render(
       <AgentDetailView
         agentId="agent-001"
@@ -256,7 +282,7 @@ describe("Budget Settings", () => {
   it("converts usage threshold percentage to fraction when saving", async () => {
     mockUpdateAgent.mockResolvedValue(createMockAgent() as any);
 
-    const user = userEvent.setup();
+    const user = setupUser();
     render(
       <AgentDetailView
         agentId="agent-001"
@@ -292,7 +318,7 @@ describe("Budget Settings", () => {
     }));
     mockUpdateAgent.mockResolvedValue(createMockAgent() as any);
 
-    const user = userEvent.setup();
+    const user = setupUser();
     render(
       <AgentDetailView
         agentId="agent-001"
@@ -332,7 +358,7 @@ describe("Budget Settings", () => {
     }));
     mockUpdateAgent.mockResolvedValue(createMockAgent() as any);
 
-    const user = userEvent.setup();
+    const user = setupUser();
     render(
       <AgentDetailView
         agentId="agent-001"
@@ -358,85 +384,57 @@ describe("Budget Settings", () => {
     });
   });
 
-  it("shows validation error for non-numeric token budget", async () => {
-    const user = userEvent.setup();
-    render(
-      <AgentDetailView
-        agentId="agent-001"
-        onClose={vi.fn()}
-        addToast={vi.fn()}
-      />
-    );
-
-    await navigateToSettings(user);
-
-    const tokenBudgetInput = await screen.findByLabelText("Token Budget");
-    await user.clear(tokenBudgetInput);
-    await user.type(tokenBudgetInput, "abc");
-
-    await user.click(screen.getByText("Save Settings"));
-
-    await waitFor(() => {
-      expect(screen.getByText(/Token Budget.*must be a valid number/)).toBeInTheDocument();
-    });
-  });
-
-  it("shows validation error for token budget <= 0", async () => {
-    const user = userEvent.setup();
-    render(
-      <AgentDetailView
-        agentId="agent-001"
-        onClose={vi.fn()}
-        addToast={vi.fn()}
-      />
-    );
-
-    await navigateToSettings(user);
-
-    const tokenBudgetInput = await screen.findByLabelText("Token Budget");
-    await user.clear(tokenBudgetInput);
-    await user.type(tokenBudgetInput, "0");
-
-    await user.click(screen.getByText("Save Settings"));
-
-    await waitFor(() => {
-      expect(screen.getByText(/Token Budget.*must be greater than 0/)).toBeInTheDocument();
-    });
-  });
-
-  it("shows validation error for usage threshold outside 1-100 range", async () => {
-    const user = userEvent.setup();
-    render(
-      <AgentDetailView
-        agentId="agent-001"
-        onClose={vi.fn()}
-        addToast={vi.fn()}
-      />
-    );
-
-    await navigateToSettings(user);
-
-    const thresholdInput = await screen.findByLabelText("Usage Threshold (%)");
-    await user.clear(thresholdInput);
-    await user.type(thresholdInput, "150");
-
-    await user.click(screen.getByText("Save Settings"));
-
-    await waitFor(() => {
-      expect(screen.getByText(/Usage Threshold.*must be between 1 and 100/)).toBeInTheDocument();
-    });
-  });
-
-  it("shows validation error for invalid reset day with weekly period", async () => {
-    mockFetchAgent.mockResolvedValue(createMockAgent({
-      runtimeConfig: {
-        budgetConfig: {
-          budgetPeriod: "weekly",
+  // FNXC:AgentSettingsTestLatency 2026-08-15-21:20: the five per-field validation cases share one
+  // tabular skeleton (edit invalid value -> Save -> inline error); condensed to it.each with every
+  // original case preserved as a row (FN-5048 trim).
+  it.each([
+    {
+      label: "non-numeric token budget",
+      budgetPeriod: undefined,
+      field: "Token Budget",
+      value: "abc",
+      error: /Token Budget.*must be a valid number/,
+    },
+    {
+      label: "token budget <= 0",
+      budgetPeriod: undefined,
+      field: "Token Budget",
+      value: "0",
+      error: /Token Budget.*must be greater than 0/,
+    },
+    {
+      label: "usage threshold outside 1-100 range",
+      budgetPeriod: undefined,
+      field: "Usage Threshold (%)",
+      value: "150",
+      error: /Usage Threshold.*must be between 1 and 100/,
+    },
+    {
+      label: "invalid reset day with weekly period",
+      budgetPeriod: "weekly" as const,
+      field: "Reset Day",
+      value: "7", // Invalid: 7 is not in 0-6 range
+      error: /Reset Day.*must be between 0.*6.*for weekly/,
+    },
+    {
+      label: "invalid reset day with monthly period",
+      budgetPeriod: "monthly" as const,
+      field: "Reset Day",
+      value: "32", // Invalid: 32 is not in 1-31 range
+      error: /Reset Day.*must be between 1 and 31.*for monthly/,
+    },
+  ])("shows validation error for $label", async ({ budgetPeriod, field, value, error }) => {
+    if (budgetPeriod) {
+      mockFetchAgent.mockResolvedValue(createMockAgent({
+        runtimeConfig: {
+          budgetConfig: {
+            budgetPeriod,
+          },
         },
-      },
-    }));
+      }));
+    }
 
-    const user = userEvent.setup();
+    const user = setupUser();
     render(
       <AgentDetailView
         agentId="agent-001"
@@ -447,58 +445,24 @@ describe("Budget Settings", () => {
 
     await navigateToSettings(user);
 
-    // Change period to weekly
-    const periodSelect = await screen.findByLabelText("Budget Period");
-    await user.selectOptions(periodSelect, "weekly");
+    if (budgetPeriod) {
+      const periodSelect = await screen.findByLabelText("Budget Period");
+      await user.selectOptions(periodSelect, budgetPeriod);
+    }
 
-    const resetDayInput = await screen.findByLabelText("Reset Day");
-    await user.clear(resetDayInput);
-    await user.type(resetDayInput, "7"); // Invalid: 7 is not in 0-6 range
-
-    await user.click(screen.getByText("Save Settings"));
-
-    await waitFor(() => {
-      expect(screen.getByText(/Reset Day.*must be between 0.*6.*for weekly/)).toBeInTheDocument();
-    });
-  });
-
-  it("shows validation error for invalid reset day with monthly period", async () => {
-    mockFetchAgent.mockResolvedValue(createMockAgent({
-      runtimeConfig: {
-        budgetConfig: {
-          budgetPeriod: "monthly",
-        },
-      },
-    }));
-
-    const user = userEvent.setup();
-    render(
-      <AgentDetailView
-        agentId="agent-001"
-        onClose={vi.fn()}
-        addToast={vi.fn()}
-      />
-    );
-
-    await navigateToSettings(user);
-
-    // Change period to monthly
-    const periodSelect = await screen.findByLabelText("Budget Period");
-    await user.selectOptions(periodSelect, "monthly");
-
-    const resetDayInput = await screen.findByLabelText("Reset Day");
-    await user.clear(resetDayInput);
-    await user.type(resetDayInput, "32"); // Invalid: 32 is not in 1-31 range
+    const input = await screen.findByLabelText(field);
+    await user.clear(input);
+    await user.type(input, value);
 
     await user.click(screen.getByText("Save Settings"));
 
     await waitFor(() => {
-      expect(screen.getByText(/Reset Day.*must be between 1 and 31.*for monthly/)).toBeInTheDocument();
+      expect(screen.getByText(error)).toBeInTheDocument();
     });
   });
 
   it("enables Save Settings button when budget field is changed", async () => {
-    const user = userEvent.setup();
+    const user = setupUser();
     render(
       <AgentDetailView
         agentId="agent-001"
@@ -532,7 +496,7 @@ describe("Budget Settings", () => {
       nextResetAt: null,
     });
 
-    const user = userEvent.setup();
+    const user = setupUser();
     render(
       <AgentDetailView
         agentId="agent-001"
@@ -561,7 +525,7 @@ describe("Budget Settings", () => {
       nextResetAt: null,
     });
 
-    const user = userEvent.setup();
+    const user = setupUser();
     render(
       <AgentDetailView
         agentId="agent-001"
@@ -578,36 +542,9 @@ describe("Budget Settings", () => {
     });
   });
 
-  it("shows Reset Budget button when budget limit is configured", async () => {
-    // Need to mock twice: once for DashboardTab and once for ConfigTab
-    mockFetchAgentBudgetStatus.mockResolvedValue({
-      agentId: "agent-001",
-      currentUsage: 30000,
-      budgetLimit: 50000,
-      usagePercent: 60,
-      thresholdPercent: 0.8,
-      isOverBudget: false,
-      isOverThreshold: false,
-      lastResetAt: "2026-01-01T00:00:00.000Z",
-      nextResetAt: null,
-    });
-
-    const user = userEvent.setup();
-    render(
-      <AgentDetailView
-        agentId="agent-001"
-        onClose={vi.fn()}
-        addToast={vi.fn()}
-      />
-    );
-
-    await navigateToSettings(user);
-
-    await waitFor(() => {
-      expect(screen.getByText("Reset Budget Usage")).toBeInTheDocument();
-    });
-  });
-
+  // FNXC:AgentSettingsTestLatency 2026-08-15-21:20: the standalone "shows Reset Budget button when
+  // budget limit is configured" presence test was folded into the click test below, which waits for
+  // the same button under the same budget-status shape before clicking (FN-5048 trim).
   it("calls resetAgentBudget when Reset Budget button is clicked", async () => {
     const addToast = vi.fn();
     // First call (ConfigTab on mount)
@@ -635,7 +572,7 @@ describe("Budget Settings", () => {
       nextResetAt: null,
     });
 
-    const user = userEvent.setup();
+    const user = setupUser();
     render(
       <AgentDetailView
         agentId="agent-001"
@@ -670,13 +607,15 @@ describe("Config autosave", () => {
   };
 
   it("auto-saves after debounce without clicking Save Settings", async () => {
-    const user = userEvent.setup();
+    const user = setupUser();
     render(<AgentDetailView agentId="agent-001" onClose={vi.fn()} addToast={vi.fn()} />);
     await openSettings(user);
+    beginAutosaveFakeTimers();
 
     const heartbeatInput = screen.getByLabelText("Heartbeat Interval (s)");
     await user.clear(heartbeatInput);
     await user.type(heartbeatInput, "45");
+    await advanceAutosaveDebounce();
 
     await waitFor(() => {
       expect(mockUpdateAgent).toHaveBeenCalledTimes(1);
@@ -687,9 +626,10 @@ describe("Config autosave", () => {
   });
 
   it("does not autosave while validation errors are present", async () => {
-    const user = userEvent.setup();
+    const user = setupUser();
     render(<AgentDetailView agentId="agent-001" onClose={vi.fn()} addToast={vi.fn()} />);
     await openSettings(user);
+    beginAutosaveFakeTimers();
 
     const heartbeatInput = screen.getByLabelText("Heartbeat Interval (s)");
     await user.clear(heartbeatInput);
@@ -698,6 +638,7 @@ describe("Config autosave", () => {
     await waitFor(() => {
       expect(screen.getByText('"Heartbeat Interval" must be a valid number')).toBeInTheDocument();
     });
+    await advanceAutosaveDebounce();
     await waitFor(() => {
       expect(mockUpdateAgent).toHaveBeenCalledTimes(0);
     }, { timeout: 900 });
@@ -717,13 +658,15 @@ describe("Config autosave", () => {
       resolveSave = () => resolve(createMockAgent() as any);
     }));
 
-    const user = userEvent.setup();
+    const user = setupUser();
     render(<AgentDetailView agentId="agent-001" onClose={vi.fn()} addToast={vi.fn()} />);
     await openSettings(user);
+    beginAutosaveFakeTimers();
 
     const heartbeatInput = screen.getByLabelText("Heartbeat Timeout (s)");
     await user.clear(heartbeatInput);
     await user.type(heartbeatInput, "90");
+    await advanceAutosaveDebounce();
 
     await waitFor(() => {
       expect(screen.getByText("Saving changes…")).toBeInTheDocument();
@@ -736,9 +679,10 @@ describe("Config autosave", () => {
   });
 
   it("debounces rapid edits into a single autosave using latest value", async () => {
-    const user = userEvent.setup();
+    const user = setupUser();
     render(<AgentDetailView agentId="agent-001" onClose={vi.fn()} addToast={vi.fn()} />);
     await openSettings(user);
+    beginAutosaveFakeTimers();
 
     const heartbeatInput = screen.getByLabelText("Heartbeat Interval (s)");
     await user.clear(heartbeatInput);
@@ -747,6 +691,7 @@ describe("Config autosave", () => {
     await user.type(heartbeatInput, "12");
     await user.clear(heartbeatInput);
     await user.type(heartbeatInput, "123");
+    await advanceAutosaveDebounce();
 
     await waitFor(() => {
       expect(mockUpdateAgent).toHaveBeenCalledTimes(1);
@@ -761,14 +706,16 @@ describe("Config autosave", () => {
       runtimeConfig: { heartbeatScopeDiscipline: "lite" },
     }));
 
-    const user = userEvent.setup();
+    const user = setupUser();
     render(<AgentDetailView agentId="agent-001" onClose={vi.fn()} addToast={vi.fn()} />);
     await openSettings(user);
+    beginAutosaveFakeTimers();
 
     const select = screen.getByLabelText("Heartbeat Scope Discipline") as HTMLSelectElement;
     expect(select.value).toBe("lite");
 
     await user.selectOptions(select, "off");
+    await advanceAutosaveDebounce();
 
     await waitFor(() => {
       expect(mockUpdateAgent).toHaveBeenCalled();
@@ -784,12 +731,14 @@ describe("Config autosave", () => {
       runtimeConfig: { heartbeatScopeDiscipline: "strict" },
     }));
 
-    const user = userEvent.setup();
+    const user = setupUser();
     render(<AgentDetailView agentId="agent-001" onClose={vi.fn()} addToast={vi.fn()} />);
     await openSettings(user);
+    beginAutosaveFakeTimers();
 
     const select = screen.getByLabelText("Heartbeat Scope Discipline") as HTMLSelectElement;
     await user.selectOptions(select, "");
+    await advanceAutosaveDebounce();
 
     await waitFor(() => {
       expect(mockUpdateAgent).toHaveBeenCalled();
@@ -805,12 +754,14 @@ describe("Config autosave", () => {
       runtimeConfig: { heartbeatPromptTemplate: "default" },
     } as any));
 
-    const user = userEvent.setup();
+    const user = setupUser();
     render(<AgentDetailView agentId="agent-001" onClose={vi.fn()} addToast={vi.fn()} />);
     await openSettings(user);
+    beginAutosaveFakeTimers();
 
     const select = screen.getByLabelText("Heartbeat Prompt Template") as HTMLSelectElement;
     await user.selectOptions(select, "compact");
+    await advanceAutosaveDebounce();
 
     await waitFor(() => {
       expect(mockUpdateAgent).toHaveBeenCalled();
@@ -826,12 +777,14 @@ describe("Config autosave", () => {
       runtimeConfig: { heartbeatPromptTemplate: "compact" },
     } as any));
 
-    const user = userEvent.setup();
+    const user = setupUser();
     render(<AgentDetailView agentId="agent-001" onClose={vi.fn()} addToast={vi.fn()} />);
     await openSettings(user);
+    beginAutosaveFakeTimers();
 
     const select = screen.getByLabelText("Heartbeat Prompt Template") as HTMLSelectElement;
     await user.selectOptions(select, "");
+    await advanceAutosaveDebounce();
 
     await waitFor(() => {
       expect(mockUpdateAgent).toHaveBeenCalled();

@@ -218,6 +218,16 @@ guards (86 -> 89 on #2883).
 function isDependencySatisfiedWithoutWorkflowMetadata(column: string): boolean {
   return column === "done" || column === "archived" || column === "in-review";
 }
+/*
+DELIBERATE-LITERAL — legacy complete-lane fallback for the FN-9056 orphaned-workspace-worktree
+sweep (FNXC:Workspace 2026-08-15-19:10). The sweep unions the workflow-resolved complete columns
+with the legacy `done` id so a row parked under the default lifecycle before its workflow could be
+read still qualifies for the complete lane. Hoisted so the marker sits in the declaration's leading
+comments, which is where the census looks.
+*/
+function isLegacyCompleteColumnForWorkspaceTeardown(column: string): boolean {
+  return column === "done";
+}
 const worktreeMetadataReconcileLog = createLogger("worktree-metadata-reconcile");
 /*
 FNXC:EngineDiagnostics 2026-07-26-10:25:
@@ -10703,7 +10713,7 @@ const movedTask = await this.store.moveTask(task.id, completeLane);
           || this.isWorkspaceTaskLive(task).live
           || await this.options.isMergePending?.(task.id) === true
           || this.options.getActiveMergeTaskId?.() === task.id) continue;
-        if (completeColumns.has(task.column) || task.column === "done") { candidates.push({ task, lane: "complete" }); continue; }
+        if (completeColumns.has(task.column) || isLegacyCompleteColumnForWorkspaceTeardown(task.column)) { candidates.push({ task, lane: "complete" }); continue; }
         const lane: Lane | null = task.deletedAt ? "soft-deleted" : task.status === "failed" ? "failed" : null;
         if (!lane) continue;
         const touched = Math.max(Date.parse(task.columnMovedAt ?? "") || 0, Date.parse(task.updatedAt ?? "") || 0, Date.parse(task.deletedAt ?? "") || 0);

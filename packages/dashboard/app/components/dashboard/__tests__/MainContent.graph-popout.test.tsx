@@ -104,6 +104,23 @@ function mainContentProps(overrides: Partial<MainContentProps> = {}): MainConten
     handleResumeProject: vi.fn(),
     handleRemoveProject: vi.fn(),
     nodes: [],
+    /*
+    FNXC:TodoPluginEnablement 2026-08-15-22:20:
+    FN-8762 (5b2b31d2c9) gated plugin task views on the project-scoped
+    `pluginDashboardViews` roster (MainContent.isEnabledPluginTaskView), so this
+    harness must enroll the plugin views it renders or MainContent treats them as
+    disabled. The same commit removed the host `todosEnabled`/`TodoView` props.
+    */
+    pluginDashboardViews: [
+      {
+        pluginId: "fusion-plugin-dependency-graph",
+        view: { viewId: "graph", label: "Graph", componentPath: "./dashboard-view", icon: "Workflow", placement: "primary", order: 1 },
+      },
+      {
+        pluginId: "example",
+        view: { viewId: "dashboard", label: "Example", componentPath: "./dashboard-view", icon: "Workflow", placement: "overflow", order: 2 },
+      },
+    ] as MainContentProps["pluginDashboardViews"],
     graphPluginTaskView: "plugin:fusion-plugin-dependency-graph:graph",
     graphWorkflowSelection: null,
     setGraphWorkflowSelection: vi.fn(),
@@ -145,7 +162,6 @@ function mainContentProps(overrides: Partial<MainContentProps> = {}): MainConten
     memoryEnabled: true,
     goalsEnabled: true,
     handleOpenMission: vi.fn(),
-    todosEnabled: true,
     openPlanningWithInitialPlanWithNav: vi.fn(),
     ingestCreatedTasks: vi.fn(),
     nodesEnabled: true,
@@ -211,7 +227,6 @@ function mainContentProps(overrides: Partial<MainContentProps> = {}): MainConten
     ResearchView: LazyStub as MainContentProps["ResearchView"],
     SecretsView: LazyStub as MainContentProps["SecretsView"],
     SkillsView: LazyStub as MainContentProps["SkillsView"],
-    TodoView: LazyStub as MainContentProps["TodoView"],
     _AutomationsView: LazyStub as MainContentProps["_AutomationsView"],
     _ImportTasksView: LazyStub as MainContentProps["_ImportTasksView"],
     _SettingsView: LazyStub as MainContentProps["_SettingsView"],

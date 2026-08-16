@@ -3,6 +3,7 @@ import {
   computeSkillId,
   getSkillSettingState,
   parseSkillId,
+  normalizeStoredSkillPath,
   resolvePluginSkillEnabled,
 } from "../config/skill-settings.js";
 
@@ -15,6 +16,14 @@ describe("skill-settings", () => {
       relativePath: "skills/ce-plan/SKILL.md",
     });
     expect(parseSkillId("not-a-skill-id")).toBeNull();
+  });
+
+  it("keeps stored skill identity normalization and the skills/packages schema stable (FN-9114)", () => {
+    expect(normalizeStoredSkillPath("skills/review/pr/SKILL.md")).toBe("review/pr/SKILL.md");
+    expect(normalizeStoredSkillPath("review/pr")).toBe("review/pr");
+    const settings = { skills: ["+review/pr/SKILL.md"], packages: [{ source: "plugin:x", skills: ["-x/SKILL.md"] }] };
+    expect(Object.keys(settings)).toEqual(["skills", "packages"]);
+    expect(settings.packages[0]).toEqual({ source: "plugin:x", skills: ["-x/SKILL.md"] });
   });
 
   it("resolves top-level + and - skill entries by path or wildcard ID", () => {

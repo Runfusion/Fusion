@@ -20,15 +20,13 @@
  * gate stays green without a running server.
  */
 
-import { describe, it, expect, afterEach } from "vitest";
-import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
-import { sql, eq } from "drizzle-orm";
-import { execSync } from "node:child_process";
-import { createAsyncDataLayer, type AsyncDataLayer } from "../../postgres/data-layer.js";
-import { createConnectionSetFromUrl } from "../../postgres/connection.js";
-import type { ResolvedBackend } from "../../postgres/backend-resolver.js";
-import { applySchemaBaseline } from "../../postgres/schema-applier.js";
+import { it, expect, beforeAll, beforeEach, afterEach, afterAll } from "vitest";
+import { eq } from "drizzle-orm";
+import type { AsyncDataLayer } from "../../postgres/data-layer.js";
+import {
+  pgDescribe,
+  createSharedPgTaskStoreTestHarness,
+} from "../../__test-utils__/pg-test-harness.js";
 import * as schema from "../../postgres/schema/index.js";
 import { insertTaskRow, softDeleteTaskRow } from "../../task-store/async/async-persistence.js";
 import {
@@ -49,87 +47,16 @@ import {
 import { recordRunAuditEventWithinTransaction } from "../../postgres/data-layer.js";
 import type { MergeQueueRow } from "../../task-store/row-types.js";
 
-const PG_TEST_URL_BASE =
-  process.env.FUSION_PG_TEST_URL_BASE ?? "postgresql://localhost:5432";
-const PG_AVAILABLE =
-  process.env.FUSION_PG_TEST_SKIP !== "1" && Boolean(PG_TEST_URL_BASE);
-
-const pgDescribe = PG_AVAILABLE ? describe : describe.skip;
-
-function uniqueDbName(): string {
-  return `fusion_u13_test_${process.pid}_${Math.random().toString(36).slice(2, 8)}`;
-}
-
 /*
-FNXC:PgTestAuthFix 2026-07-14-00:00:
-The inline adminExec used process.env.USER for the psql -U flag, which is 'runner' on GitHub Actions (not 'postgres'). Use the PG_TEST_URL_BASE connection string instead so credentials are always correct.
+FNXC:TaskStoreLifecycle 2026-08-15-03:52:
+Slow-test fix: this file hand-rolled CREATE DATABASE + full applySchemaBaseline
+PER TEST (~4.4s/test, 70s for the file). The helpers under test write only data
+(no DDL), so the shared per-file harness (one golden-template DB + per-test
+reset) preserves isolation with the schema built once. `ctx` keeps its original
+shape so every test body is byte-identical.
 */
-function adminExec(statement: string): void {
-  execSync(
-    `psql "${PG_TEST_URL_BASE}/postgres" -v ON_ERROR_STOP=1 -c "${statement.replace(/"/g, '\\"')}"`,
-    { stdio: "pipe", env: process.env },
-  );
-}
-
 interface TestCtx {
-  dbName: string;
-  testUrl: string;
   layer: AsyncDataLayer;
-  adminSql: ReturnType<typeof postgres>;
-  adminDb: ReturnType<typeof drizzle>;
-}
-
-async function setupCtx(): Promise<TestCtx> {
-  const dbName = uniqueDbName();
-  try {
-    adminExec(`DROP DATABASE IF EXISTS "${dbName}"`);
-  } catch {
-    // may not exist
-  }
-  adminExec(`CREATE DATABASE "${dbName}"`);
-  const testUrl = `${PG_TEST_URL_BASE}/${dbName}`;
-
-  const schemaBackend: ResolvedBackend = {
-    mode: "external",
-    runtimeUrl: testUrl,
-    migrationUrl: testUrl,
-    migrationUrlOverridden: false,
-  };
-  const schemaConnections = await createConnectionSetFromUrl(schemaBackend, {
-    poolMax: 1,
-    connectTimeoutSeconds: 5,
-  });
-  await applySchemaBaseline(schemaConnections.migration);
-  await schemaConnections.close();
-
-  const connections = await createConnectionSetFromUrl(schemaBackend, {
-    poolMax: 5,
-    connectTimeoutSeconds: 5,
-  });
-  const layer = createAsyncDataLayer(connections);
-
-  const adminSql = postgres(testUrl, { max: 2, prepare: false, onnotice: () => {} });
-  const adminDb = drizzle(adminSql);
-  return { dbName, testUrl, layer, adminSql, adminDb };
-}
-
-async function teardownCtx(ctx: TestCtx | null): Promise<void> {
-  if (!ctx) return;
-  try {
-    await ctx.layer.close();
-  } catch {
-    // best-effort
-  }
-  try {
-    await ctx.adminSql.end({ timeout: 5 });
-  } catch {
-    // best-effort
-  }
-  try {
-    adminExec(`DROP DATABASE IF EXISTS "${ctx.dbName}"`);
-  } catch {
-    // best-effort
-  }
 }
 
 /** A minimal task record with the NOT NULL columns filled. */
@@ -162,17 +89,20 @@ async function seedTaskWithParent(
 }
 
 pgDescribe("U13 taskstore-lifecycle (PostgreSQL)", () => {
-  let ctx: TestCtx | null = null;
+  const h = createSharedPgTaskStoreTestHarness({ prefix: "fusion_u13" });
+  let ctx!: TestCtx;
 
-  afterEach(async () => {
-    await teardownCtx(ctx);
-    ctx = null;
+  beforeAll(h.beforeAll);
+  beforeEach(async () => {
+    await h.beforeEach();
+    ctx = { layer: h.layer() };
   });
+  afterEach(h.afterEach);
+  afterAll(h.afterAll);
 
   // ── VAL-DATA-010: Lineage-integrity gate blocks parent delete with live children ──
 
   it("findLiveLineageChildren returns live children of a parent (VAL-DATA-010)", async () => {
-    ctx = await setupCtx();
     // Parent + two live children + one archived child.
     await insertTaskRow(ctx.layer, makeMinimalTask("KB-PARENT"), { lineageId: null });
     await seedTaskWithParent(ctx.layer, "KB-CHILD-1", "KB-PARENT", "todo");
@@ -186,7 +116,6 @@ pgDescribe("U13 taskstore-lifecycle (PostgreSQL)", () => {
   });
 
   it("lineage gate blocks parent delete when live children exist (VAL-DATA-010)", async () => {
-    ctx = await setupCtx();
     await insertTaskRow(ctx.layer, makeMinimalTask("KB-PARENT"), { lineageId: null });
     await seedTaskWithParent(ctx.layer, "KB-LIVE", "KB-PARENT", "todo");
 
@@ -206,7 +135,6 @@ pgDescribe("U13 taskstore-lifecycle (PostgreSQL)", () => {
   // ── VAL-DATA-011: removeLineageReferences clears children ──
 
   it("removeLineageReferences clears lineage edges so parent can be deleted (VAL-DATA-011)", async () => {
-    ctx = await setupCtx();
     await insertTaskRow(ctx.layer, makeMinimalTask("KB-PARENT"), { lineageId: null });
     await seedTaskWithParent(ctx.layer, "KB-CHILD", "KB-PARENT", "todo");
 
@@ -247,7 +175,6 @@ pgDescribe("U13 taskstore-lifecycle (PostgreSQL)", () => {
   // ── VAL-DATA-012: Archived/soft-deleted children do not block parent delete ──
 
   it("archived children do not block parent delete (VAL-DATA-012)", async () => {
-    ctx = await setupCtx();
     await insertTaskRow(ctx.layer, makeMinimalTask("KB-PARENT"), { lineageId: null });
     // An archived child (column = 'archived' but not soft-deleted).
     await seedTaskWithParent(ctx.layer, "KB-ARCHIVED", "KB-PARENT", "archived");
@@ -267,7 +194,6 @@ pgDescribe("U13 taskstore-lifecycle (PostgreSQL)", () => {
   });
 
   it("soft-deleted children do not block parent delete (VAL-DATA-012)", async () => {
-    ctx = await setupCtx();
     await insertTaskRow(ctx.layer, makeMinimalTask("KB-PARENT"), { lineageId: null });
     // A live child that we then soft-delete.
     await seedTaskWithParent(ctx.layer, "KB-SOFTDEL", "KB-PARENT", "todo");
@@ -290,7 +216,6 @@ pgDescribe("U13 taskstore-lifecycle (PostgreSQL)", () => {
   // ── VAL-DATA-013: Handoff-to-review mergeQueue transactional invariant ──
 
   it("handoff-to-review: column move + mergeQueue insert + audit are atomic (VAL-DATA-013)", async () => {
-    ctx = await setupCtx();
     // Seed a task in a non-review column.
     await insertTaskRow(ctx.layer, makeMinimalTask("KB-HANDOFF", "in-progress"), {
       lineageId: null,
@@ -343,7 +268,6 @@ pgDescribe("U13 taskstore-lifecycle (PostgreSQL)", () => {
   });
 
   it("handoff-to-review: a failing audit rolls back the column move and queue insert (VAL-DATA-013)", async () => {
-    ctx = await setupCtx();
     await insertTaskRow(ctx.layer, makeMinimalTask("KB-ROLLBACK", "in-progress"), {
       lineageId: null,
     });
@@ -400,7 +324,6 @@ pgDescribe("U13 taskstore-lifecycle (PostgreSQL)", () => {
   // ── VAL-DATA-014: Merge-queue lease semantics ──
 
   it("merge-queue lease is acquired priority-first (urgent before normal)", async () => {
-    ctx = await setupCtx();
     // Seed three tasks in-review, enqueued at slightly different times so the
     // priority ordering is deterministic regardless of FIFO tiebreak.
     const t0 = "2026-01-01T00:00:00Z";
@@ -443,7 +366,6 @@ pgDescribe("U13 taskstore-lifecycle (PostgreSQL)", () => {
   });
 
   it("merge-queue lease is FIFO within the same priority", async () => {
-    ctx = await setupCtx();
     const t0 = "2026-01-01T00:00:00Z";
     const t1 = "2026-01-01T00:00:01Z";
     const t2 = "2026-01-01T00:00:02Z";
@@ -476,7 +398,6 @@ pgDescribe("U13 taskstore-lifecycle (PostgreSQL)", () => {
   });
 
   it("expired leases recover without incrementing attemptCount (VAL-DATA-014)", async () => {
-    ctx = await setupCtx();
     await insertTaskRow(ctx.layer, makeMinimalTask("KB-EXPIRE", "in-review"), { lineageId: null });
     await enqueueMergeQueue(ctx.layer, "KB-EXPIRE");
 
@@ -509,7 +430,6 @@ pgDescribe("U13 taskstore-lifecycle (PostgreSQL)", () => {
   });
 
   it("failure release increments attemptCount, success removes the row (VAL-DATA-014)", async () => {
-    ctx = await setupCtx();
     await insertTaskRow(ctx.layer, makeMinimalTask("KB-OK", "in-review"), { lineageId: null });
     await insertTaskRow(ctx.layer, makeMinimalTask("KB-FAIL", "in-review"), { lineageId: null });
     // Enqueue OK first so it is the queue head (FIFO within same priority).
@@ -547,7 +467,6 @@ pgDescribe("U13 taskstore-lifecycle (PostgreSQL)", () => {
   });
 
   it("release by a non-holder is rejected (ownership check)", async () => {
-    ctx = await setupCtx();
     await insertTaskRow(ctx.layer, makeMinimalTask("KB-OWN", "in-review"), { lineageId: null });
     await enqueueMergeQueue(ctx.layer, "KB-OWN");
     await acquireMergeQueueLease(ctx.layer, "worker-1", { leaseDurationMs: 60_000 });
@@ -558,7 +477,6 @@ pgDescribe("U13 taskstore-lifecycle (PostgreSQL)", () => {
   });
 
   it("cleanupStaleMergeQueueRows removes entries whose task left in-review", async () => {
-    ctx = await setupCtx();
     await insertTaskRow(ctx.layer, makeMinimalTask("KB-STALE", "in-review"), { lineageId: null });
     await enqueueMergeQueue(ctx.layer, "KB-STALE");
 
@@ -580,7 +498,6 @@ pgDescribe("U13 taskstore-lifecycle (PostgreSQL)", () => {
   });
 
   it("enqueue rejects a task not in in-review column", async () => {
-    ctx = await setupCtx();
     await insertTaskRow(ctx.layer, makeMinimalTask("KB-REJECT", "todo"), { lineageId: null });
 
     await expect(enqueueMergeQueue(ctx.layer, "KB-REJECT")).rejects.toThrow();
@@ -592,7 +509,6 @@ pgDescribe("U13 taskstore-lifecycle (PostgreSQL)", () => {
   });
 
   it("peekMergeQueue orders priority-first then FIFO", async () => {
-    ctx = await setupCtx();
     await insertTaskRow(ctx.layer, makeMinimalTask("KB-A", "in-review"), { lineageId: null });
     await insertTaskRow(ctx.layer, makeMinimalTask("KB-B", "in-review"), { lineageId: null });
     await insertTaskRow(ctx.layer, makeMinimalTask("KB-C", "in-review"), { lineageId: null });

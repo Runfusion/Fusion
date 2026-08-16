@@ -18,8 +18,8 @@ export function useModalDismissPreference(): boolean {
 
 /**
  * Returns props for a modal-overlay element that dismisses only when a real
- * overlay click happens — i.e. both mousedown AND mouseup land on the overlay
- * itself.
+ * overlay press happens — i.e. both mouse or touch start AND end land on the
+ * overlay itself.
  *
  * This avoids a subtle dismiss-during-resize bug: when a user drags the
  * native CSS `resize: both` grip from inside a modal and releases the mouse
@@ -34,8 +34,8 @@ export function useModalDismissPreference(): boolean {
 export function useOverlayDismiss(onClose: () => void, options?: { enabled?: boolean }): {
   onMouseDown: (e: React.MouseEvent) => void;
   onMouseUp: (e: React.MouseEvent) => void;
-  onTouchStart: () => void;
-  onTouchEnd: () => void;
+  onTouchStart: (e: React.TouchEvent) => void;
+  onTouchEnd: (e: React.TouchEvent) => void;
 } {
   const contextEnabled = useModalDismissPreference();
   /*
@@ -46,9 +46,21 @@ export function useOverlayDismiss(onClose: () => void, options?: { enabled?: boo
   const startedOnOverlayRef = useRef(false);
   const lastTouchAtRef = useRef(0);
 
-  const markTouch = useCallback(() => {
+  /*
+  FNXC:ModalDismissal 2026-08-15-12:43:
+  A portaled model menu can re-anchor while the mobile keyboard opens, leaving touchend on the backdrop. Touch dismissal must pair its own origin and release, then suppress compatibility mouse events without disabling genuine backdrop taps.
+  */
+  const onTouchStart = useCallback((e: React.TouchEvent) => {
     lastTouchAtRef.current = Date.now();
-  }, []);
+    startedOnOverlayRef.current = dismissEnabled && e.target === e.currentTarget;
+  }, [dismissEnabled]);
+
+  const onTouchEnd = useCallback((e: React.TouchEvent) => {
+    lastTouchAtRef.current = Date.now();
+    const shouldClose = dismissEnabled && startedOnOverlayRef.current && e.target === e.currentTarget;
+    startedOnOverlayRef.current = false;
+    if (shouldClose) onClose();
+  }, [dismissEnabled, onClose]);
 
   const onMouseDown = useCallback((e: React.MouseEvent) => {
     if (!dismissEnabled) {
@@ -89,5 +101,5 @@ export function useOverlayDismiss(onClose: () => void, options?: { enabled?: boo
     [dismissEnabled, onClose],
   );
 
-  return { onMouseDown, onMouseUp, onTouchStart: markTouch, onTouchEnd: markTouch };
+  return { onMouseDown, onMouseUp, onTouchStart, onTouchEnd };
 }

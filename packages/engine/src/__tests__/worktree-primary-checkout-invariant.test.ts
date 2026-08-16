@@ -46,7 +46,12 @@ FNXC:CodeOrganization 2026-08-03-15:20:
 U4 Slice B peels createWorktree into worktree-create-outer.ts / worktree-create-conflict.ts;
 worktree-acquisition lives under worktree/. Source-scan surfaces must follow the peels.
 */
-const executorSource = readFileSync(fileURLToPath(new URL("../executor.ts", import.meta.url)), "utf8");
+/*
+FNXC:CodeOrganization 2026-08-15-19:10:
+Later executor peel waves moved the createWorktree facade off the thin executor.ts shell into
+executor/task-executor-worktree-pure-facades.ts (one-line delegation to createWorktreeImpl).
+*/
+const executorSource = readFileSync(fileURLToPath(new URL("../executor/task-executor-worktree-pure-facades.ts", import.meta.url)), "utf8");
 const createOuterSource = readFileSync(fileURLToPath(new URL("../executor/worktree-create-outer.ts", import.meta.url)), "utf8");
 const createConflictSource = readFileSync(fileURLToPath(new URL("../executor/worktree-create-conflict.ts", import.meta.url)), "utf8");
 const acquisitionSource = readFileSync(fileURLToPath(new URL("../worktree/worktree-acquisition.ts", import.meta.url)), "utf8");
@@ -131,13 +136,20 @@ describe("TaskExecutor primary-checkout worktree invariant", () => {
     */
     const executorFacade = sourceRegion(
       executorSource,
-      "private async createWorktree(",
-      "private async removeOwnWorktreeWithReconcile(",
+      "protected async createWorktree(",
+      "disposeStoreLifecycleDisposers(",
     );
     // Full peeled modules: createWorktree is not first in worktree-create-outer.ts.
     const outerImpl = createOuterSource;
     const conflictImpl = createConflictSource;
-    const acquisition = sourceRegion(acquisitionSource, "const createWorktreeImpl = createWorktree", "const logConfiguredCopyFileResults");
+    /*
+    FNXC:CodeOrganization 2026-08-15-19:10:
+    Acquisition's creation slice was reshaped: `createWorktreeImpl` is no longer a bare alias of the
+    injected createWorktree — it now wraps `createWorktreeWithoutReservation` (which owns the
+    `backend.create(` call) with path-reservation handling. Scan from the reservation-free creator
+    so both creation surfaces stay inside the guarded region.
+    */
+    const acquisition = sourceRegion(acquisitionSource, "const createWorktreeWithoutReservation = async (", "const logConfiguredCopyFileResults");
     const mergerReacquire = sourceRegion(mergerSource, "const reacquireReuseIntegrationWorktree = async", "// 3b. Ensure rootDir is based on the resolved integration target before merging.");
 
     expect(executorFacade).toContain("createWorktreeImpl");

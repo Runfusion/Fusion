@@ -19,6 +19,7 @@ import {
   isValidProviderId,
   isValidProviderInstanceId,
   parseProviderInstanceKey,
+  toExecutionModelProviderId,
 } from "@fusion/core";
 import { ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agent";
 import type { AuthInteraction, Credential, CredentialInfo, CredentialStore } from "@earendil-works/pi-ai";
@@ -234,9 +235,21 @@ class FusionFileAuthStorage implements FusionAuthStorage {
   setModelRuntime(modelRuntime: ModelRuntime): void { this.modelRuntime = modelRuntime; }
   async login(provider: string, callbacks: unknown): Promise<void> {
     if (!this.modelRuntime) throw new Error("OAuth login requires a ModelRuntime-backed Fusion auth storage");
+    /*
+    FNXC:ProviderAuth 2026-08-15-21:46:
+    This is the ONLY seam that hands a provider id to pi's ModelRuntime.login, and pi only
+    registers execution provider ids. Fusion's Anthropic auth-card/storage ids
+    (`anthropic-subscription`, `anthropic-api-key`) are NOT pi providers, and callers have now
+    leaked them here three times (#1857/FN-7391, FN-9101, GitHub #3462 — each failing with
+    `Unknown provider: anthropic-subscription`). Normalize defensively so a future caller bug
+    degrades to a correct upstream `anthropic` login instead of a hard login failure. Callers
+    remain responsible for relocating the resulting credential to the subscription storage row
+    (see the Anthropic-aware login seam in provider-auth.ts).
+    */
+    const executionProvider = toExecutionModelProviderId(provider);
     const legacy = callbacks as { onAuth?: (info: { url: string; instructions?: string }) => void; onDeviceCode?: (info: { userCode: string; verificationUri: string; intervalSeconds?: number; expiresInSeconds?: number }) => void; onPrompt?: (prompt: { message: string; placeholder?: string; allowEmpty?: boolean }) => Promise<string>; onProgress?: (message: string) => void; signal?: AbortSignal; };
     const interaction: AuthInteraction = { signal: legacy.signal, prompt: async prompt => legacy.onPrompt?.({ message: prompt.message, placeholder: "placeholder" in prompt ? prompt.placeholder : undefined }) ?? "", notify: event => { if (event.type === "auth_url") legacy.onAuth?.({ url: event.url, instructions: event.instructions }); else if (event.type === "device_code") legacy.onDeviceCode?.(event); else if (event.type === "progress") legacy.onProgress?.(event.message); } };
-    await this.modelRuntime.login(provider, "oauth", interaction); this.reload();
+    await this.modelRuntime.login(executionProvider, "oauth", interaction); this.reload();
   }
 }
 

@@ -75,6 +75,19 @@ export type HandleGraphFailureDeps = {
   pausedAborted: Set<string>;
   pausedAbortProvenance: Map<string, PausedAbortProvenance>;
   userCanceledTaskIds: Set<string>;
+  /*
+  FNXC:WorkflowLifecycle 2026-08-15-22:15 (restored post-wave-18): liveness surfaces consumed by the
+  transient-resume scheduled retry's FIRE-TIME guard, so a retry armed before a pause/delete/move/park
+  cannot re-dispatch a task that is no longer in a safe WIP resume state.
+  */
+  executing: Set<string>;
+  resumingUnpaused: Set<string>;
+  activeSessions: Map<string, unknown>;
+  activeStepExecutors: Map<string, unknown>;
+  activeWorkflowStepSessions: Map<string, unknown>;
+  activeCliTaskSessions: Map<string, unknown>;
+  activeWorkflowGraphAbortControllers: Map<string, AbortController>;
+  processWideGraphRouting: Set<string>;
   getRunContextFor: (taskId: string) => EngineRunContext | undefined;
   clearCompletedTaskWatchdog: (taskId: string) => void;
   clearPausedAborted: (taskId: string) => void;
@@ -972,10 +985,46 @@ export async function handleGraphFailure(
             status: null,
             error: null,
           }, deps.getRunContextFor(task.id));
+          /*
+          FNXC:WorkflowLifecycle 2026-08-15-22:15 (restored post-wave-18, FN-6782 family): the scheduled
+          retry must re-read the LIVE row at fire time and re-verify it is still in a safe WIP resume
+          state. The peel had replaced this with an unguarded `execute(live)` on the stale snapshot, so a
+          task deleted/paused/moved/parked/canceled — or one that already has an active run — between arming
+          and firing would be re-dispatched anyway.
+          */
           const scheduleRetry = () => {
-            deps.execute(live).catch((err: unknown) =>
-              executorLog.error(`Failed transient graph resume retry for ${task.id}:`, err),
-            );
+            void (async () => {
+              try {
+                const resumeTask = await deps.store.getTask(task.id);
+                const resumeFailureState = resumeTask as Task & { lastError?: unknown; failureReason?: unknown };
+                if (
+                  resumeTask.deletedAt
+                  || resumeTask.paused
+                  || resumeTask.userPaused
+                  || deps.userCanceledTaskIds.has(task.id)
+                  || resumeTask.status != null
+                  || resumeTask.error != null
+                  || resumeFailureState.lastError != null
+                  || resumeFailureState.failureReason != null
+                  || resumeTask.column !== failureLanes.wip
+                  || (await resolveTerminalColumnsFor(deps.store, resumeTask.id)).includes(resumeTask.column)
+                  || deps.executing.has(task.id)
+                  || deps.activeSessions.has(task.id)
+                  || deps.activeStepExecutors.has(task.id)
+                  || deps.activeWorkflowStepSessions.has(task.id)
+                  || deps.activeCliTaskSessions.has(task.id)
+                  || deps.activeWorkflowGraphAbortControllers.has(task.id)
+                  || deps.resumingUnpaused.has(task.id)
+                  || deps.processWideGraphRouting.has(task.id)
+                ) {
+                  executorLog.debug(`${task.id}: skipping transient graph resume retry — task is no longer in a safe WIP resume state`);
+                  return;
+                }
+                await deps.execute(resumeTask);
+              } catch (err) {
+                executorLog.error(`Failed transient graph resume retry for ${task.id}:`, err);
+              }
+            })();
           };
           if (TRANSIENT_GRAPH_RESUME_RETRY_BACKOFF_MS > 0) {
             const handle = setTimeout(scheduleRetry, TRANSIENT_GRAPH_RESUME_RETRY_BACKOFF_MS);
