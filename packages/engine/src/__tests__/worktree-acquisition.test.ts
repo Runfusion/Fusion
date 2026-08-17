@@ -549,7 +549,7 @@ describe("acquireTaskWorktree", () => {
     expect(renameWorktreeDirectory).toHaveBeenCalledTimes(2);
   });
 
-  it("retains only the newest ten generated orphan directories in the primary recovery root", async () => {
+  it("retains every preserved orphan directory in the primary recovery root (no pruning of older user content)", async () => {
     const rootDir = makeRepo();
     const pinnedPath = join(rootDir, ".worktrees", "fn-1");
     const recoveryRoot = join(rootDir, ".fusion", "recovery", "worktrees");
@@ -583,14 +583,15 @@ describe("acquireTaskWorktree", () => {
       .filter((entry) => entry.isDirectory() && /^fn-\d+-[0-9a-f-]{36}$/.test(entry.name))
       .map((entry) => entry.name);
     expect(result.worktreePath).toBe(pinnedPath);
-    expect(generatedDirectories).toHaveLength(11);
+    expect(generatedDirectories).toHaveLength(12);
     expect(generatedDirectories).toContain(seeded[0]);
-    expect(generatedDirectories).not.toContain(seeded[1]);
+    expect(generatedDirectories).toContain(seeded[1]);
+    expect(readFileSync(join(recoveryRoot, seeded[1], "artifact"), "utf-8")).toBe("1\n");
     expect(existsSync(unknownPath)).toBe(true);
     expect(existsSync(generatedSymlink)).toBe(true);
   });
 
-  it("retains only the newest ten generated orphan directories in the EXDEV fallback root", async () => {
+  it("retains every preserved orphan directory in the EXDEV fallback root (no pruning of older user content)", async () => {
     const rootDir = makeRepo();
     const externalWorktrees = track(mkdtempSync(join(tmpdir(), "fn-external-retention-worktrees-")));
     const pinnedPath = join(externalWorktrees, "fn-1");
@@ -627,9 +628,10 @@ describe("acquireTaskWorktree", () => {
       .filter((entry) => entry.isDirectory() && /^fn-\d+-[0-9a-f-]{36}$/.test(entry.name))
       .map((entry) => entry.name);
     expect(result.worktreePath).toBe(pinnedPath);
-    expect(generatedDirectories).toHaveLength(11);
+    expect(generatedDirectories).toHaveLength(12);
     expect(generatedDirectories).toContain(seeded[0]);
-    expect(generatedDirectories).not.toContain(seeded[1]);
+    expect(generatedDirectories).toContain(seeded[1]);
+    expect(readFileSync(join(recoveryRoot, seeded[1], "artifact"), "utf-8")).toBe("1\n");
     expect(existsSync(unknownPath)).toBe(true);
   });
 
