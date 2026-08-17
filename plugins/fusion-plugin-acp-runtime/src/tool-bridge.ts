@@ -47,7 +47,7 @@ export interface FusionToolBridge {
 export function toolsToMcpToolDefs(tools: ReadonlyArray<ToolLike> | undefined): McpToolDef[] {
   if (!Array.isArray(tools)) return [];
   return tools
-    .filter((tool) => tool && typeof tool.name === "string" && tool.name.trim().length > 0 && !BUILT_IN_TOOL_NAMES.has(tool.name))
+    .filter((tool) => tool && typeof tool.name === "string" && tool.name.trim().length > 0 && !BUILT_IN_TOOL_NAMES.has(tool.name) && typeof tool.execute === "function")
     .map((tool) => ({
       name: tool.name,
       description: typeof tool.description === "string" ? tool.description : "",
@@ -113,7 +113,7 @@ export async function startFusionToolBridge(tools: ReadonlyArray<ToolLike> | und
 
   const byName = new Map<string, ToolLike>();
   for (const tool of tools ?? []) {
-    if (tool && typeof tool.name === "string" && typeof tool.execute === "function") {
+    if (tool && typeof tool.name === "string" && !BUILT_IN_TOOL_NAMES.has(tool.name) && typeof tool.execute === "function") {
       byName.set(tool.name, tool);
     }
   }
@@ -124,7 +124,8 @@ export async function startFusionToolBridge(tools: ReadonlyArray<ToolLike> | und
   const activeExecutions = new Set<Promise<void>>();
   const activeControllers = new Set<AbortController>();
 
-  const server: Server = createServer(async (req, res) => {
+  const server: Server = createServer((req, res) => {
+    void (async () => {
     if (req.method !== "POST" || req.url !== "/tool-call") {
       res.statusCode = 404;
       res.end(JSON.stringify({ isError: true, text: "not found" }));
@@ -174,7 +175,7 @@ export async function startFusionToolBridge(tools: ReadonlyArray<ToolLike> | und
       res.setHeader("content-type", "application/json");
       res.end(
         JSON.stringify({
-          isError: false,
+          isError: typeof result === "object" && result !== null && "isError" in result && (result as { isError?: unknown }).isError === true,
           content: [{ type: "text", text: resultToText(result) }],
         }),
       );
@@ -190,9 +191,15 @@ export async function startFusionToolBridge(tools: ReadonlyArray<ToolLike> | und
       }
     })();
     activeExecutions.add(execution);
-    await execution;
-    activeExecutions.delete(execution);
-    activeControllers.delete(controller);
+    try {
+      await execution;
+    } finally {
+      activeExecutions.delete(execution);
+      activeControllers.delete(controller);
+    }
+    })().catch(() => {
+      // Request streams and response sockets can abort independently of the handler.
+    });
   });
 
   const address = await new Promise<{ port: number }>((resolve, reject) => {

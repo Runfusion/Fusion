@@ -42,7 +42,8 @@ describe("tool-bridge", () => {
     expect(
       toolsToMcpToolDefs([
         { name: "read", description: "builtin", parameters: {} },
-        { name: "fn_task_list", description: "List tasks", parameters: { type: "object", properties: {} } },
+        { name: "fn_not_runnable", description: "missing execute", parameters: {} },
+        { name: "fn_task_list", description: "List tasks", parameters: { type: "object", properties: {} }, execute: async () => ({}) },
       ]),
     ).toEqual([
       {
@@ -51,6 +52,30 @@ describe("tool-bridge", () => {
         inputSchema: { type: "object", properties: {} },
       },
     ]);
+  });
+
+  it("preserves an isError result and its text", async () => {
+    const bridge = await startFusionToolBridge([
+      {
+        name: "fn_failed",
+        execute: async () => ({ isError: true, text: "tool failed" }),
+      },
+    ]);
+    expect(bridge).not.toBeNull();
+    const env = bridge!.mcpServer.env;
+    const bridgeUrl = env.find((entry) => entry.name === "FUSION_ACP_TOOL_BRIDGE_URL")!.value;
+    const token = env.find((entry) => entry.name === "FUSION_ACP_TOOL_BRIDGE_TOKEN")!.value;
+
+    const response = await fetch(`${bridgeUrl}/tool-call`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}` },
+      body: JSON.stringify({ name: "fn_failed", arguments: {} }),
+    });
+    expect(await response.json()).toEqual({
+      isError: true,
+      content: [{ type: "text", text: "tool failed" }],
+    });
+    await bridge!.dispose();
   });
 
   it("returns null when there are no custom tools", async () => {
@@ -123,6 +148,61 @@ describe("tool-bridge", () => {
         body: JSON.stringify({ name: "fn_heartbeat_done", arguments: {} }),
       }),
     ).rejects.toThrow();
+  });
+
+  it("does not execute built-in tools posted directly to the bridge", async () => {
+    let executions = 0;
+    const bridge = await startFusionToolBridge([
+      { name: "read", parameters: {}, execute: async () => { executions += 1; return "should not run"; } },
+      { name: "fn_allowed", parameters: {}, execute: async () => "ok" },
+    ]);
+    expect(bridge).not.toBeNull();
+    const env = bridge!.mcpServer.env;
+    const bridgeUrl = env.find((entry) => entry.name === "FUSION_ACP_TOOL_BRIDGE_URL")!.value;
+    const token = env.find((entry) => entry.name === "FUSION_ACP_TOOL_BRIDGE_TOKEN")!.value;
+    const response = await fetch(`${bridgeUrl}/tool-call`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}` },
+      body: JSON.stringify({ name: "read", arguments: {} }),
+    });
+    expect(response.status).toBe(404);
+    expect(executions).toBe(0);
+    await bridge!.dispose();
+  });
+
+  it("does not leak an unhandled rejection when a request aborts", async () => {
+    let unhandled: unknown;
+    let started!: () => void;
+    let rejectHandler!: (reason: Error) => void;
+    const handlerStarted = new Promise<void>((resolve) => { started = resolve; });
+    const handler = new Promise<never>((_resolve, reject) => { rejectHandler = reject; });
+    const onUnhandled = (reason: unknown) => { unhandled = reason; };
+    process.on("unhandledRejection", onUnhandled);
+    let bridge: Awaited<ReturnType<typeof startFusionToolBridge>> | undefined;
+    try {
+      bridge = await startFusionToolBridge([
+        { name: "fn_reject", parameters: {}, execute: async () => { started(); return handler; } },
+      ]);
+      expect(bridge).not.toBeNull();
+      const env = bridge!.mcpServer.env;
+      const bridgeUrl = env.find((entry) => entry.name === "FUSION_ACP_TOOL_BRIDGE_URL")!.value;
+      const token = env.find((entry) => entry.name === "FUSION_ACP_TOOL_BRIDGE_TOKEN")!.value;
+      const controller = new AbortController();
+      const request = fetch(`${bridgeUrl}/tool-call`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}` },
+        body: JSON.stringify({ name: "fn_reject", arguments: {} }),
+        signal: controller.signal,
+      }).catch(() => undefined);
+      await handlerStarted;
+      controller.abort();
+      rejectHandler(new Error("handler failed"));
+      await request;
+      expect(unhandled).toBeUndefined();
+    } finally {
+      await bridge?.dispose();
+      process.off("unhandledRejection", onUnhandled);
+    }
   });
 
   it("dispose is idempotent and removes the temporary schema", async () => {

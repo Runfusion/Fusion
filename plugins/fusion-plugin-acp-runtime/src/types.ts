@@ -172,6 +172,8 @@ export interface AcpSession {
   resetTurn?: () => void;
   /** Awaitable bridge cleanup used by AgentRuntime.dispose; absent for bare sessions. */
   disposeBridge?: () => Promise<void>;
+  /** Completion of the most recent direct dispose call. */
+  disposePromise?: Promise<void>;
   dispose(): void;
 }
 

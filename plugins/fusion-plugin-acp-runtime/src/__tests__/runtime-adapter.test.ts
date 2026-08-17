@@ -167,6 +167,29 @@ describe("AcpRuntimeAdapter custom-tools bridge (FNXC:AcpCustomTools)", () => {
     }
   });
 
+  it("direct session.dispose exposes completion of bridge shutdown", async () => {
+    let captured: { mcpServers?: unknown[] } | undefined;
+    const spy = vi.spyOn(provider, "newAcpSession").mockImplementation(async (_connection, opts) => {
+      captured = opts;
+      return { sessionId: "direct-dispose-session" };
+    });
+    let session: AcpSession | undefined;
+    try {
+      session = (await makeAdapter().createSession(
+        makeOptions({ customTools: [{ name: "fn_direct_dispose", execute: async () => "ok" }] }),
+      )).session as AcpSession;
+      const bridgeUrl = (captured?.mcpServers?.[0] as { env: Array<{ name: string; value: string }> })
+        .env.find((entry) => entry.name === "FUSION_ACP_TOOL_BRIDGE_URL")!.value;
+      session.dispose();
+      await expect(session.disposePromise).resolves.toBeUndefined();
+      await expect(fetch(`${bridgeUrl}/tool-call`)).rejects.toThrow();
+    } finally {
+      session?.dispose();
+      await session?.disposePromise;
+      spy.mockRestore();
+    }
+  });
+
   it("does not add a bridge when no customTools are supplied", async () => {
     let captured: { mcpServers?: unknown[] } | undefined;
     const spy = vi
