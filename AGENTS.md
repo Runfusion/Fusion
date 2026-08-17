@@ -250,10 +250,9 @@ Use `superviseSpawn(...)` from `@fusion/core` for managed child processes; do no
 4. **Already-on-main classifier applies.** Allow finalize/self-healing recovery when lineage is landed.
 5. **Contamination auto-recovery is bounded.** First pass can auto-drop upstream foreign commits; repeated/ambiguous cases escalate.
 6. **Run post-squash audit policy.** Respect `postMergeAuditMode` (`warn`/`block`/`off`) and auto-recovery stages.
-7. **Enforce pre-commit diff-volume gate.** Block suspicious shrinkage before squash commit.
-8. **Smart-prefer-main overlap guard.** Recent overlapping main commits can flip to prefer-branch.
-9. **Layer-3 scope partition.** Out-of-scope conflicts resolve to main before AI arbitration unless `task.scopeOverride=true`.
-10. **Legacy auto-prerebase is inert.** It belonged to the soft-deprecated `aiMergeTask` pipeline; unified `runAiMerge` does not use it.
+7. **Smart-prefer-main overlap guard.** Recent overlapping main commits can flip to prefer-branch.
+8. **Layer-3 scope partition.** Out-of-scope conflicts resolve to main before AI arbitration unless `task.scopeOverride=true`.
+9. **Legacy auto-prerebase is inert.** It belonged to the soft-deprecated `aiMergeTask` pipeline; unified `runAiMerge` does not use it.
 
 ### Gitignored-path guard on squash merges
 

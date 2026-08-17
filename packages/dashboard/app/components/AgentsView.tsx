@@ -27,7 +27,8 @@ import {
   HEARTBEAT_INTERVAL_PRESETS,
 } from "../utils/heartbeatIntervals";
 import { isEphemeralAgent, getErrorMessage, resolvePermanentAgentEffectiveModel, type Settings } from "@fusion/core";
-import { formatAgentSkillBadgeLabel } from "../utils/agentSkills";
+import { classifyAgentSkill, formatAgentSkillBadgeLabel } from "../utils/agentSkills";
+import { useDiscoveredSkillsCache } from "../hooks/useDiscoveredSkillsCache";
 import { isInsidePortaledModelMenu } from "../utils/portalSurfaces";
 import {
   ORG_CHART_LAYOUT_STORAGE_KEY,
@@ -396,6 +397,7 @@ function OrgChartConnectors({
 
 export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardingEnabled = false, focusAgent }: AgentsViewProps) {
   const { t } = useTranslation("app");
+  const { skills: discoveredSkills, loading: discoveredSkillsLoading, error: discoveredSkillsError } = useDiscoveredSkillsCache(projectId);
   const activitySnapshot = useAgentActivity(projectId);
   const agentRoles = getAgentRoles(t);
   const [showSystemAgents, setShowSystemAgents] = useState(false);
@@ -2162,10 +2164,11 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
                         const extraCount = skills.length - 2;
                         return (
                           <>
-                            {displaySkills.map((skillId) => (
-                              <span key={skillId} className="badge badge-skill" title={skillId}>{formatAgentSkillBadgeLabel(skillId)}</span>
-                            ))}
-                            {extraCount > 0 && <span className="badge badge-skill">+{extraCount}</span>}
+                            {displaySkills.map((skillId) => {
+                              const classification = classifyAgentSkill(skillId, discoveredSkillsLoading || discoveredSkillsError ? null : discoveredSkills, { forced: true });
+                              return <span key={skillId} className="badge badge-skill" data-skill-state={classification.state} title={`${skillId}: ${t(classification.titleKey, classification.defaultTitle)}`}>{formatAgentSkillBadgeLabel(skillId)} <span className="skill-state-marker">{t(classification.labelKey, classification.defaultLabel)}</span> <span className="skill-state-marker skill-state-marker--forced">{t("skills.forced", "Forced")}</span></span>;
+                            })}
+                            {extraCount > 0 && <span className="badge badge-skill" title={skills.slice(2).some((skillId) => ["disabled", "unknown"].includes(classifyAgentSkill(skillId, discoveredSkillsLoading || discoveredSkillsError ? null : discoveredSkills, { forced: true }).state)) ? t("skills.hiddenUnavailable", "Hidden skills include disabled or not-discovered entries") : undefined}>+{extraCount}</span>}
                           </>
                         );
                       })()}

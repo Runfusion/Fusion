@@ -105,9 +105,10 @@ describe("agent skills flow - full integration", () => {
 
     // Verify skill source and resolved names
     expect(sessionResult.skillSource).toBe("assigned-agent");
-    expect(sessionResult.resolvedSkillNames).toEqual(["review"]);
+    expect(sessionResult.resolvedSkillNames).toEqual(["fusion"]);
+    expect(sessionResult.forcedSkillNames).toEqual(["review"]);
     expect(sessionResult.skillSelectionContext).toBeDefined();
-    expect(sessionResult.skillSelectionContext?.requestedSkillNames).toEqual(["review"]);
+    expect(sessionResult.skillSelectionContext?.requestedSkillNames).toEqual(["fusion"]);
 
     // Step 5: Resolve session skills from project settings
     const resolvedSkills = resolveSessionSkills(sessionResult.skillSelectionContext!);
@@ -183,7 +184,8 @@ describe("agent skills flow - full integration", () => {
     });
 
     expect(sessionResult.skillSource).toBe("assigned-agent");
-    expect(sessionResult.resolvedSkillNames).toEqual(["review", "lint"]);
+    expect(sessionResult.resolvedSkillNames).toEqual(["fusion"]);
+    expect(sessionResult.forcedSkillNames).toEqual(["review", "lint"]);
 
     // Step 4: Resolve session skills from settings
     const resolvedSkills = resolveSessionSkills(sessionResult.skillSelectionContext!);
@@ -240,11 +242,13 @@ describe("agent skills flow - full integration", () => {
     });
 
     expect(sessionResult.skillSource).toBe("assigned-agent");
-    expect(sessionResult.skillSelectionContext?.requestedSkillNames).toEqual(["review/pr", "gamma/SKILL.md"]);
+    expect(sessionResult.skillSelectionContext?.requestedSkillNames).toEqual(["fusion"]);
+    expect(sessionResult.forcedSkillNames).toEqual(["review/pr", "gamma/SKILL.md"]);
 
     const resolvedSkills = resolveSessionSkills(sessionResult.skillSelectionContext!);
     const override = createSkillsOverrideFromSelection(resolvedSkills, {
       requestedSkillNames: sessionResult.skillSelectionContext?.requestedSkillNames,
+      forcedSkillNames: sessionResult.skillSelectionContext?.forcedSkillNames,
       sessionPurpose: sessionResult.skillSelectionContext?.sessionPurpose,
     });
 
@@ -257,7 +261,7 @@ describe("agent skills flow - full integration", () => {
       diagnostics: [],
     });
 
-    expect(result.skills.map((skill) => skill.name)).toEqual(["pr", "gamma"]);
+    expect(result.skills.map((skill) => skill.name)).toEqual(["pr", "gamma", "lint"]);
     expect(result.diagnostics.some((diagnostic) => diagnostic.message.includes("not found"))).toBe(false);
   });
 

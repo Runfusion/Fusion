@@ -289,16 +289,6 @@ import {
   type SquashAuditFindings,
 } from "./merge/merger-squash-audit.js";
 import { detectMergeOverlap, restoreBranchWinsFiles } from "./merge/merger-overlap-guard.js";
-import {
-  checkDiffVolume,
-  DiffVolumeRegressionError,
-  resolveDiffVolumeGateSettings,
-  formatDiffVolumeFindings,
-} from "./merge/merger-diff-volume-gate.js";
-export {
-  resolveDiffVolumeGateSettings,
-  formatDiffVolumeFindings,
-} from "./merge/merger-diff-volume-gate.js";
 import { detectAlreadyLandedOnMain, type AlreadyMergedDetectionStrategy } from "./merge/already-merged-detector.js";
 import { decideAutoPrerebase, probeDivergence, runAutoPrerebase } from "./merge/merger-auto-prerebase.js";
 import {
@@ -318,7 +308,6 @@ import { advanceIntegrationBranchRef, IntegrationBranchConcurrentAdvanceError } 
 import { syncWorktreeToHead, type SyncWorktreeResult } from "./worktree/worktree-ref-sync.js";
 import { appendAutoWidenedScopeToPrompt, evaluateScopeAutoWiden } from "./merge/merger-scope-auto-widen.js";
 
-export { DiffVolumeRegressionError } from "./merge/merger-diff-volume-gate.js";
 export { IntegrationBranchConcurrentAdvanceError } from "./merge/merger-ref-update-advance.js";
 
 /*
@@ -633,53 +622,6 @@ const MERGE_USER_COMMENTS_MAX_CHARS = 4000;
  */
 export const summarizeVerificationOutputLocal = summarizeVerificationOutput;
 
-
-async function resetToIntegrationTarget(rootDir: string, integrationTargetSha: string): Promise<void> {
-  await execAsync(`git reset --hard ${quoteArg(integrationTargetSha)}`, {
-    cwd: rootDir,
-    encoding: "utf-8",
-  });
-  await execAsync("git clean -fd", {
-    cwd: rootDir,
-    encoding: "utf-8",
-  });
-}
-
-async function runDiffVolumeGate(params: {
-  rootDir: string;
-  branch: string;
-  integrationTargetSha: string;
-  taskId: string;
-  settings?: Settings;
-  store?: TaskStore;
-}): Promise<void> {
-  try {
-    const gateSettings = resolveDiffVolumeGateSettings(params.settings);
-    await checkDiffVolume({
-      rootDir: params.rootDir,
-      branch: params.branch,
-      integrationTargetSha: params.integrationTargetSha,
-      minLines: gateSettings.minLines,
-      threshold: gateSettings.threshold,
-      allowlistGlobs: gateSettings.allowlistGlobs,
-      taskId: params.taskId,
-    });
-  } catch (error: unknown) {
-    if (!(error instanceof DiffVolumeRegressionError)) throw error;
-    await resetToIntegrationTarget(params.rootDir, params.integrationTargetSha);
-    const details = formatDiffVolumeFindings(error.findings);
-    if (params.store) {
-      await params.store.appendAgentLog(
-        params.taskId,
-        `Diff-volume gate blocked auto-resolved squash before commit`,
-        "tool_error",
-        details,
-        "merger",
-      );
-    }
-    throw error;
-  }
-}
 
 export async function getStagedFiles(cwd: string): Promise<string[]> {
   try {
@@ -3774,8 +3716,8 @@ export async function commitOrAmendMergeWithFixes(
   preAttemptHeadSha: string,
   authorArg: string,
   diffStat?: string,
-  settings?: Settings,
-  signal?: AbortSignal,
+  _settings?: Settings,
+  _signal?: AbortSignal,
   aiSummary?: string | null,
   aiBody?: string | null,
   aiSubject?: string | null,
@@ -4166,14 +4108,6 @@ export async function commitOrAmendMergeWithFixes(
           auditor,
         });
       }
-      await runDiffVolumeGate({
-        rootDir,
-        branch,
-        integrationTargetSha: preAttemptHeadSha,
-        taskId,
-        settings,
-        store,
-      });
       await execAsync(
         `git commit ${subjectArg} ${bodyArg}${trailerArg}${authorArg}`,
         { cwd: rootDir, env: mergerCommitEnv() },
@@ -4198,14 +4132,6 @@ export async function commitOrAmendMergeWithFixes(
         auditor,
       });
     }
-    await runDiffVolumeGate({
-      rootDir,
-      branch,
-      integrationTargetSha: preAttemptHeadSha,
-      taskId,
-      settings,
-      store,
-    });
     await execAsync(
       `git commit --amend ${subjectArg} ${bodyArg}${trailerArg}${authorArg}`,
       { cwd: rootDir, env: mergerCommitEnv() },
@@ -4216,7 +4142,7 @@ export async function commitOrAmendMergeWithFixes(
     mergerLog.log(`${taskId}: amended merge commit with verification fixes (deterministic message)`);
     return { ok: true, reason: "committed" };
   } catch (err: unknown) {
-    if (err instanceof DiffVolumeRegressionError || err instanceof FileScopeViolationError) {
+    if (err instanceof FileScopeViolationError) {
       throw err;
     }
     const errorMessage = err instanceof Error ? err.message : String(err);
@@ -8898,11 +8824,7 @@ export async function aiMergeTask(
         throw error;
       }
 
-      if (
-        error instanceof DiffVolumeRegressionError
-        || error?.name === "DiffVolumeRegressionError"
-        || error?.name === "FileScopeViolationError"
-      ) {
+      if (error?.name === "FileScopeViolationError") {
         throw error;
       }
 
@@ -10451,14 +10373,6 @@ export async function executeMergeAttempt(
               resetLabel: "file-scope invariant violation",
               auditor: params.auditor,
             });
-            await runDiffVolumeGate({
-              rootDir,
-              branch,
-              integrationTargetSha: params.preAttemptHeadSha || "HEAD",
-              taskId,
-              settings,
-              store,
-            });
             await execAsync(
               `git commit ${subjectArg} ${bodyArg}${trailerArg}${authorArg}`,
               { cwd: rootDir, env: mergerCommitEnv() },
@@ -10738,7 +10652,6 @@ export async function executeMergeAttempt(
     // verification failure anyway — there are no conflicts to resolve.
     if (
       error?.name === "VerificationError"
-      || error?.name === "DiffVolumeRegressionError"
       || error?.name === "FileScopeViolationError"
     ) {
       throw error;
@@ -10788,7 +10701,7 @@ export async function attemptWithSideStrategy(
 
     return finalizeSideStrategyAttempt(params, side, aiTracker);
   } catch (error) {
-    if (error instanceof Error && (error.name === "MergeAbortedError" || error.name === "DiffVolumeRegressionError" || error.name === "FileScopeViolationError")) {
+    if (error instanceof Error && (error.name === "MergeAbortedError" || error.name === "FileScopeViolationError")) {
       throw error;
     }
     mergerLog.error(`${taskId}: -X ${side} merge failed: ${error}`);
@@ -10829,7 +10742,7 @@ async function attemptWithMixedSideStrategy(
 
     return finalizeSideStrategyAttempt(params, strategy.defaultSide, aiTracker);
   } catch (error) {
-    if (error instanceof Error && (error.name === "MergeAbortedError" || error.name === "DiffVolumeRegressionError" || error.name === "FileScopeViolationError")) {
+    if (error instanceof Error && (error.name === "MergeAbortedError" || error.name === "FileScopeViolationError")) {
       throw error;
     }
     mergerLog.error(`${taskId}: overlap-aware merge failed: ${error}`);
@@ -10897,14 +10810,6 @@ async function finalizeSideStrategyAttempt(
     task: await store.getTask(taskId),
     resetLabel: "file-scope invariant violation",
     auditor: params.auditor,
-  });
-  await runDiffVolumeGate({
-    rootDir,
-    branch,
-    integrationTargetSha: params.preAttemptHeadSha || "HEAD",
-    taskId,
-    settings,
-    store,
   });
   await execAsync(
     `git commit ${subjectArg} ${bodyArg}${issueRefBodyArg}${trailerArg}${authorArg}`,
@@ -11005,7 +10910,6 @@ async function runAiAgentForCommit(params: AiAgentParams): Promise<{ success: bo
     testCommand,
     buildCommand,
     preMergeRebaseFallthrough,
-    preAttemptHeadSha,
   } = params;
 
   // Merge per-task effective workflow settings (U3, KTD-3) — this worker re-fetches
@@ -11331,14 +11235,6 @@ async function runAiAgentForCommit(params: AiAgentParams): Promise<{ success: bo
           aiSummary,
           aiBody: aiBody?.trim().length ? aiBody : safeBody,
           aiSubject,
-        });
-        await runDiffVolumeGate({
-          rootDir,
-          branch,
-          integrationTargetSha: preAttemptHeadSha || "HEAD",
-          taskId,
-          settings,
-          store,
         });
         await execAsync(
           `git commit ${subjectArg} ${bodyArg}${issueRefBodyArg}${trailerArg}${authorArg}`,

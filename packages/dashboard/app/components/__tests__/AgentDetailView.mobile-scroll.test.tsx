@@ -245,7 +245,9 @@ describe("AgentDetailView mobile scroll regression (FN-4231)", () => {
         expect(screen.getByLabelText("Assigned skills")).toBeInTheDocument();
         expect(screen.getByText("3 pending approvals")).toBeInTheDocument();
       } else {
-        expect(screen.getByText("Skills: —")).toBeInTheDocument();
+        const emptySkills = screen.getByTestId("agent-skills-empty");
+        expect(emptySkills).toHaveTextContent("SkillsNone");
+        expect(emptySkills).not.toHaveTextContent("—");
       }
       unmount();
       cleanup();

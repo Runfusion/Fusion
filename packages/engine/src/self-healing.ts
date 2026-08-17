@@ -624,6 +624,8 @@ type RebindOutcome =
     aheadCount: number;
     integrationBase: string;
     previousBranch: string | null;
+    /* FNXC:SelfHealingRebind 2026-08-17-20:59: true when the rebind kept `task.worktree` because the directory exists and is checked out on the rebound branch. */
+    preservedWorktree: boolean;
   }
   | {
     taskId: string;
@@ -5516,7 +5518,30 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         const withUniqueWork = existingCandidates.filter((candidate) => candidate.aheadCount > 0);
         if (withUniqueWork.length === 1) {
           const selected = withUniqueWork[0];
-          const patch: Partial<Task> = { branch: selected.branch, worktree: null as unknown as string };
+          /*
+          FNXC:SelfHealingRebind 2026-08-17-20:59:
+          A branch rebind must not discard a live checkout. Nulling `task.worktree` here made the
+          existing worktree directory invisible to `scanIdleWorktrees`' active set, so the next idle
+          sweep / cap enforcement `git worktree remove`d it — the reported "worktree lost between
+          review and in-progress" incident. Preserve the pointer when the directory still exists and
+          is checked out on the branch being rebound to; only a missing or mismatched checkout keeps
+          the legacy clear (worktree acquisition re-validates and recreates on next dispatch anyway).
+          */
+          let preservedWorktree = false;
+          if (task.worktree && existsSync(task.worktree)) {
+            try {
+              const { stdout } = await execAsync("git rev-parse --abbrev-ref HEAD", {
+                cwd: task.worktree,
+                timeout: 30_000,
+              });
+              preservedWorktree = stdout.trim() === selected.branch;
+            } catch {
+              // unreadable checkout — fall back to clearing metadata
+            }
+          }
+          const patch: Partial<Task> = preservedWorktree
+            ? { branch: selected.branch }
+            : { branch: selected.branch, worktree: null as unknown as string };
           if (!task.baseCommitSha) {
             const derivedBaseCommit = (await execAsync(
               `git merge-base ${shellQuote(integrationBase)} ${shellQuote(selected.branch)}`,
@@ -5556,6 +5581,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
               integrationBase,
               source: "auto-rebind-in-review",
               previousBranch: task.branch ?? null,
+              preservedWorktree,
             },
           });
           result.repaired++;
@@ -5566,6 +5592,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
             aheadCount: selected.aheadCount,
             integrationBase,
             previousBranch: task.branch ?? null,
+            preservedWorktree,
           });
           continue;
         }

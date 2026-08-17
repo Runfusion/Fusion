@@ -29,6 +29,7 @@ import {
   resolveTaskLifecycleColumns,
 } from "@fusion/core";
 import { Scheduler } from "../scheduler.js";
+import { registerDefaultAgentPluginRunner, unregisterDefaultAgentPluginRunner } from "../pi.js";
 import type { PrMonitor, PrComment } from "../merge/pr-monitor.js";
 import type { PrInfo } from "@fusion/core";
 import { TaskExecutor, type TaskExecutorOptions } from "../executor.js";
@@ -1123,6 +1124,17 @@ export class InProcessRuntime
         rootDir: this.config.workingDirectory,
       });
       await this.pluginRunner.init();
+      /*
+      FNXC:CliRuntimeRouting 2026-08-16-14:37:
+      Publish this project's PluginRunner as the ambient default for bare
+      `createFnAgent` callers (research providers, cron, evaluator, reflection,
+      core DI lanes, dashboard side-lanes) so their sessions route CLI-runtime
+      model selections (cursor-cli etc.) through the plugin runtime instead of
+      dying in pi's model registry. Keyed by project root; createFnAgent matches
+      the session cwd against registered roots so multi-project hosts stay
+      project-scoped.
+      */
+      registerDefaultAgentPluginRunner(this.config.workingDirectory, this.pluginRunner);
       /*
        * FNXC:PluginMcpServers 2026-07-22-12:00:
        * FN-8491 installs the sole session-facing provider on the project store.
@@ -2343,6 +2355,8 @@ export class InProcessRuntime
 
       // 8. Shutdown plugin runner
       if (this.pluginRunner) {
+        // FNXC:CliRuntimeRouting 2026-08-16-14:37: retract the ambient default runner published at init so bare createFnAgent callers never resolve a shut-down runner.
+        unregisterDefaultAgentPluginRunner(this.config.workingDirectory);
         await this.pluginRunner.shutdown();
         runtimeLog.log("PluginRunner shutdown complete");
       }

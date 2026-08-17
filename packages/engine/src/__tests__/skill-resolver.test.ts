@@ -637,7 +637,7 @@ describe("createSkillsOverrideFromSelection", () => {
         diagnostics: [],
       });
 
-      expect(result.skills.map((skill) => skill.name)).toEqual(["pr"]);
+      expect(result.skills.map((skill) => skill.name)).toEqual(["pr", "gamma"]);
       expect(result.diagnostics.some((diagnostic) => diagnostic.message.includes("not found"))).toBe(false);
     });
 
@@ -661,7 +661,7 @@ describe("createSkillsOverrideFromSelection", () => {
         diagnostics: [],
       });
 
-      expect(result.skills).toHaveLength(0);
+      expect(result.skills).toHaveLength(1);
       expect(result.diagnostics).toHaveLength(1);
       expect(result.diagnostics[0].type).toBe("info");
       expect(result.diagnostics[0].message).toContain("Requested skill 'review/absent' not found");
@@ -710,7 +710,11 @@ describe("createSkillsOverrideFromSelection", () => {
         diagnostics: [],
       };
 
-      expect(createSkillsOverrideFromSelection(selection)(base)).toBe(base);
+      expect(createSkillsOverrideFromSelection(selection)(base)).toEqual({
+        ...base,
+        resolvedForcedSkills: [],
+        unresolvedForcedSkills: [],
+      });
     });
 
     it("preserves base diagnostics alongside new diagnostics", () => {
@@ -1055,7 +1059,7 @@ describe("createSkillsOverrideFromSelection", () => {
       override({ skills: [], diagnostics: [] });
 
       expect(mockPiLog.debug).toHaveBeenCalled();
-      expect(mockPiLog.log).not.toHaveBeenCalledWith(expect.stringContaining("[skills]"));
+      expect(mockPiLog.log).toHaveBeenCalledWith(expect.stringContaining("[skills] [executor] 0 skill(s) available"));
       expect(consoleErrorSpy).not.toHaveBeenCalled();
       expect(consoleWarnSpy).not.toHaveBeenCalled();
       expect(consoleLogSpy).not.toHaveBeenCalled();
@@ -1263,5 +1267,31 @@ describe("createSkillsOverrideFromSelection", () => {
       );
       expect(disabledWarning).toBeDefined();
     });
+  });
+});
+
+describe("FN-9114 forced-vs-filter semantics (GitHub #1422)", () => {
+  beforeEach(() => { mockFiles.clear(); mockDirs.clear(); mockDirCounter.value = 0; mockPiLog.log.mockClear(); });
+  it("keeps all enabled skills for forced and default agents while resolving only available forced intent", () => {
+    const dir = createMockProjectDir({ skills: ["+alpha/SKILL.md", "+beta/SKILL.md", "+gamma/SKILL.md", "-delta/SKILL.md"] });
+    const selection = resolveSessionSkills({ projectRootDir: dir, forcedSkillNames: ["alpha", "delta", "missing"], sessionPurpose: "executor" });
+    const result = createSkillsOverrideFromSelection(selection, { forcedSkillNames: ["alpha", "delta", "missing"], sessionPurpose: "executor" })({
+      skills: ["alpha", "beta", "gamma", "delta"].map((name) => ({ name, filePath: `/tmp/skills/${name}/SKILL.md` })) as never[], diagnostics: [],
+    });
+    expect(result.skills.map((skill) => skill.name)).toEqual(["alpha", "beta", "gamma"]);
+    expect(result.resolvedForcedSkills).toEqual([{ requestedName: "alpha", skillName: "alpha" }]);
+    expect(result.unresolvedForcedSkills).toEqual([{ requestedName: "delta", reason: "disabled-by-settings" }, { requestedName: "missing", reason: "not-found" }]);
+    expect(mockPiLog.log).toHaveBeenCalledWith(expect.stringContaining("forced: [alpha]"));
+  });
+
+  it("returns empty resolution channels for an unconfigured heartbeat session", () => {
+    const result = createSkillsOverrideFromSelection(
+      resolveSessionSkills({ projectRootDir: "/no-settings", sessionPurpose: "heartbeat" }),
+      { sessionPurpose: "heartbeat" },
+    )({ skills: [{ name: "alpha", filePath: "/tmp/skills/alpha/SKILL.md" }] as never[], diagnostics: [] });
+
+    expect(result.skills.map((skill) => skill.name)).toEqual(["alpha"]);
+    expect(result.resolvedForcedSkills).toEqual([]);
+    expect(result.unresolvedForcedSkills).toEqual([]);
   });
 });

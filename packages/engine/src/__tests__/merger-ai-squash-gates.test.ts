@@ -4,7 +4,6 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FileScopeViolationError } from "../merge/merger-file-scope.js";
-import { DiffVolumeRegressionError } from "../merge/merger-diff-volume-gate.js";
 import { resolveRepoDeclaredScopeTransform } from "../merge/merger-ai-squash-gates.js";
 
 const policy = vi.hoisted(() => vi.fn());
@@ -121,21 +120,6 @@ describe("runAiMerge approved-squash gates", () => {
     if (scopeOverride) expect(store.appendAgentLog).toHaveBeenCalledWith("FN-9050", expect.stringContaining("scopeOverride"), "status", undefined, "merger");
   });
 
-  it("blocks a committed shrinkage range before main advances and emits the diff-volume audit", async () => {
-    setPolicy();
-    const dir = createRepo((root) => writeFileSync(join(root, "large.ts"), Array.from({ length: 100 }, (_, i) => `line-${i}`).join("\n") + "\n"));
-    const before = git(dir, "rev-parse main");
-    const { store } = makeStore(["large.ts"]);
-
-    await expect(runAiMerge(store, dir, "FN-9050", { manual: true }, {
-      mergeAgent: squashAgent("fusion/fn-9050", (cwd) => writeFileSync(join(cwd, "large.ts"), "kept\n")),
-      reviewAgent: approve,
-    })).rejects.toBeInstanceOf(DiffVolumeRegressionError);
-
-    expect(git(dir, "rev-parse main")).toBe(before);
-    expect(store.recordRunAuditEvent.mock.calls.some(([event]: any[]) => event.mutationType === "merge:diff-volume-blocked")).toBe(true);
-  });
-
   it("resets a recovered strict scope violation so a retry does not select it again", async () => {
     setPolicy();
     const dir = createRepo((root) => writeFileSync(join(root, "outside.txt"), "outside\n"));
@@ -161,28 +145,5 @@ describe("runAiMerge approved-squash gates", () => {
       mergeAgent: normalMerge, reviewAgent: approve,
     })).rejects.toThrow("normal merge invoked");
     expect(normalMerge).toHaveBeenCalledOnce();
-  });
-
-  it("uses the task branch, not clean-room HEAD, when recovery gates a shrinkage squash", async () => {
-    setPolicy();
-    const dir = createRepo((root) => writeFileSync(join(root, "large.ts"), Array.from({ length: 100 }, (_, i) => `line-${i}`).join("\n") + "\n"));
-    const before = git(dir, "rev-parse main");
-    const cleanRoomParent = resolveAiMergeRoot(dir);
-    mkdirSync(cleanRoomParent, { recursive: true });
-    const cleanRoom = mkdtempSync(join(cleanRoomParent, "fusion-ai-merge-fn-9050-"));
-    git(dir, `worktree add --detach ${cleanRoom} ${before}`);
-    git(cleanRoom, "merge --squash fusion/fn-9050");
-    writeFileSync(join(cleanRoom, "large.ts"), "kept\n");
-    git(cleanRoom, "add -A && git commit -q -m squash -m 'Fusion-Task-Id: FN-9050'");
-    const squashSha = git(cleanRoom, "rev-parse HEAD");
-    const { store, task } = makeStore(["large.ts"]);
-    task.log = [{ action: `AI merge review (pass 1): approved squash ${squashSha}`, timestamp: new Date().toISOString() }];
-
-    await expect(runAiMerge(store, dir, "FN-9050", { manual: true }, {
-      mergeAgent: async () => { throw new Error("recovery should not re-merge"); }, reviewAgent: approve,
-    })).rejects.toBeInstanceOf(DiffVolumeRegressionError);
-
-    expect(git(dir, "rev-parse main")).toBe(before);
-    expect(store.recordRunAuditEvent.mock.calls.some(([event]: any[]) => event.mutationType === "merge:diff-volume-blocked")).toBe(true);
   });
 });

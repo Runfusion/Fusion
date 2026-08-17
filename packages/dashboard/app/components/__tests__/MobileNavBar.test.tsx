@@ -288,19 +288,32 @@ describe("MobileNavBar", () => {
     expect(screen.getByTestId("mobile-more-item-plugin-fusion-plugin-spacing-check-wide")).toBeDefined();
   });
 
-  it("keeps Todos in the mobile More sheet and routes to the todos view", () => {
+  /*
+  FNXC:Navigation 2026-08-15-22:15:
+  FN-8762 (5b2b31d2c9) extracted Todo Lists into the bundled `fusion-plugin-todos`
+  plugin: the host `todos` More-sheet item and `experimentalFeatures.todoView` gate
+  are gone, and Todos now surfaces via `pluginDashboardViews` with overflow placement.
+  These tests keep the same coverage (More-sheet only, routing, More-tab active) in
+  the plugin form.
+  */
+  const todosPluginView = {
+    pluginId: "fusion-plugin-todos",
+    view: { viewId: "todos", label: "Todos", componentPath: "./dashboard-view", icon: "CheckSquare", placement: "overflow" as const, order: 70 },
+  };
+
+  it("keeps Todos in the mobile More sheet and routes to the todos plugin view", () => {
     const props = createDefaultProps();
     render(
       <MobileNavBar
         {...props}
-        experimentalFeatures={{ todoView: true }}
+        pluginDashboardViews={[todosPluginView]}
       />,
     );
 
     fireEvent.click(screen.getByTestId("mobile-nav-tab-more"));
-    fireEvent.click(screen.getByTestId("mobile-more-item-todos"));
+    fireEvent.click(screen.getByTestId("mobile-more-item-plugin-fusion-plugin-todos-todos"));
 
-    expect(props.onChangeView).toHaveBeenCalledWith("todos");
+    expect(props.onChangeView).toHaveBeenCalledWith("plugin:fusion-plugin-todos:todos");
   });
 
   it("Mailbox is a primary tab and is not duplicated in the More sheet", () => {
@@ -316,22 +329,22 @@ describe("MobileNavBar", () => {
     render(
       <MobileNavBar
         {...createDefaultProps()}
-        experimentalFeatures={{ todoView: true }}
+        pluginDashboardViews={[todosPluginView]}
       />,
     );
 
-    expect(screen.queryByTestId("mobile-nav-tab-todos")).toBeNull();
+    expect(screen.queryByTestId("mobile-nav-tab-plugin-fusion-plugin-todos-todos")).toBeNull();
 
     fireEvent.click(screen.getByTestId("mobile-nav-tab-more"));
-    expect(screen.getByTestId("mobile-more-item-todos")).toBeInTheDocument();
+    expect(screen.getByTestId("mobile-more-item-plugin-fusion-plugin-todos-todos")).toBeInTheDocument();
   });
 
-  it("marks the mobile More tab active for the todos view", () => {
+  it("marks the mobile More tab active for the todos plugin view", () => {
     render(
       <MobileNavBar
         {...createDefaultProps()}
-        view="todos"
-        experimentalFeatures={{ todoView: true }}
+        view="plugin:fusion-plugin-todos:todos"
+        pluginDashboardViews={[todosPluginView]}
       />,
     );
 

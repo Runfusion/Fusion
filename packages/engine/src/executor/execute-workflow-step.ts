@@ -590,6 +590,7 @@ CRITICAL SCOPING RULES — read before doing anything else:
           projectRootDir: effectiveSkillSelection?.projectRootDir ?? deps.rootDir,
           ...(effectiveSkillSelection?.sessionPurpose ? { sessionPurpose: effectiveSkillSelection.sessionPurpose } : { sessionPurpose: "executor" }),
           requestedSkillNames: mergedNames,
+          forcedSkillNames: [...new Set([...(effectiveSkillSelection?.forcedSkillNames ?? []), namespaced, bare])],
         };
       }
       const additionalSkillPaths = mergeAdditionalSkillPaths(skillContext.additionalSkillPaths, ceSkillsDir ? [ceSkillsDir] : undefined);
@@ -706,6 +707,19 @@ CRITICAL SCOPING RULES — read before doing anything else:
         // Skill selection: assigned-agent / role-fallback skills, plus the step's own named skill (U1) made discoverable via additionalSkillPaths.
         ...(effectiveSkillSelection ? { skillSelection: effectiveSkillSelection } : {}),
         ...(additionalSkillPaths ? { additionalSkillPaths } : {}),
+        // FNXC:SkillResolution 2026-08-16-03:19: Workflow steps are task-bound
+        // sessions too, so mirror the shared resolver's one-session summary into
+        // the task log; unresolved forced requests remain observable but are never
+        // presented to the model as required reading.
+        onSkillSummary: async (summary) => {
+          const unavailable = summary.unresolvedForcedSkills.length
+            ? `; forced-unavailable: [${summary.unresolvedForcedSkills.map((entry) => `${entry.requestedName} (${entry.reason})`).join(", ")}]`
+            : "";
+          await deps.store.logEntry(
+            task.id,
+            `[skills] [executor] ${summary.availableCount} skill(s) available; forced: ${summary.forcedSkillNames.length ? `[${summary.forcedSkillNames.join(", ")}]` : "none"}${unavailable}`,
+          );
+        },
         ...(readonlyCustomTools.allowed.length > 0
           ? { customTools: readonlyCustomTools.allowed, fusionTools: readonlyCustomTools.allowed }
           : {}),

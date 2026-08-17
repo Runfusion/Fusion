@@ -993,6 +993,7 @@ export async function runImplementation(
             ? { sessionPurpose: stepSessionSkillSelection.sessionPurpose }
             : { sessionPurpose: "executor" }),
           requestedSkillNames: [...new Set([...existing, graphSeamSkillName, bare])],
+          forcedSkillNames: [...new Set([...(stepSessionSkillSelection?.forcedSkillNames ?? []), graphSeamSkillName, bare])],
         };
       }
       const stepSessionAdditionalSkillPaths = mergeAdditionalSkillPaths(
@@ -2168,6 +2169,10 @@ export async function runImplementation(
             // FNXC:PluginSkills 2026-07-12-00:00: Plugin skill session delivery requires forwarding both requested names and body directories so the pi loader can discover plugin-package SKILL.md files.
             ...(skillContext.skillSelectionContext ? { skillSelection: skillContext.skillSelectionContext } : {}),
             ...(skillContext.additionalSkillPaths.length > 0 ? { additionalSkillPaths: skillContext.additionalSkillPaths } : {}),
+            onSkillSummary: async (summary) => {
+              const unavailable = summary.unresolvedForcedSkills.length ? `; forced-unavailable: [${summary.unresolvedForcedSkills.map((entry) => `${entry.requestedName} (${entry.reason})`).join(", ")}]` : "";
+              await deps.store.logEntry(task.id, `[skills] [executor] ${summary.availableCount} skill(s) available; forced: ${summary.forcedSkillNames.length ? `[${summary.forcedSkillNames.join(", ")}]` : "none"}${unavailable}`);
+            },
             // Column-agent principal alignment (plan U5, R5): action gating is
             // computed for the agent ACTUALLY RUNNING. When the governing execute
             // seam's column binds an agent that supersedes the assigned agent,

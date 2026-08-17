@@ -360,7 +360,6 @@ export {
   dropAutostashBySha,
   getAutostashDiff,
   notifyAutostashOrphans,
-  DiffVolumeRegressionError,
   MergeAbortedError,
   SquashAuditError,
   type MergerOptions,

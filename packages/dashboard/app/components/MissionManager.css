@@ -225,19 +225,23 @@ Title metric matches the shared ViewHeader (1.125rem) so the Missions header rea
   box-shadow: var(--focus-ring-strong);
 }
 
-/* Desktop split-only sidebar footer action bar for mission creation CTA. */
-.mission-manager__sidebar-footer {
+/*
+FNXC:MissionsUI 2026-08-16-14:48:
+The desktop CTA bar stays above the scrolling mission list so planning is immediately reachable.
+*/
+.mission-manager__sidebar-cta-bar {
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: var(--space-sm);
   padding: var(--space-md);
-  border-top: var(--btn-border-width) solid var(--border);
+  border-bottom: var(--btn-border-width) solid var(--border);
 }
 
 .mission-manager__sidebar-cta {
   width: 100%;
-  min-height: calc(var(--space-lg) * 2 + var(--space-xs));
+  min-height: calc(var(--space-lg) * 2 + var(--space-sm));
   justify-content: center;
   gap: var(--space-sm);
   font-size: inherit;
@@ -386,11 +390,6 @@ primary CTA while every production presentation can open the merge-aware form.
   font-size: 13px;
   line-height: 1.5;
   color: var(--text-muted);
-}
-
-.mission-manager__empty-cta {
-  margin-top: var(--space-sm);
-  gap: var(--space-sm);
 }
 
 /* ── Status Badge ── */
@@ -556,11 +555,12 @@ primary CTA while every production presentation can open the merge-aware form.
 }
 
 /*
-FNXC:MissionsMobile 2026-06-22-18:00:
-Narrow/mobile Missions puts Plan New Mission at the bottom of the list, using the same compact primary button proportions as Chat's New Chat action instead of a large top CTA.
+FNXC:MissionsUI 2026-08-16-14:48:
+Mobile Missions keeps Plan New Mission above the list for immediate reachability. The shared tokenized height matches the desktop sidebar CTA while preserving the compact button treatment.
 */
 .mission-list__primary-cta {
   width: 100%;
+  min-height: calc(var(--space-lg) * 2 + var(--space-sm));
   justify-content: center;
   gap: var(--space-sm);
 }
@@ -580,12 +580,6 @@ Narrow/mobile Missions puts Plan New Mission at the bottom of the list, using th
   font-weight: 600;
 }
 
-.mission-list__footer {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-sm);
-}
-
 .mission-list__resume-actions {
   display: flex;
   flex-wrap: wrap;
@@ -594,18 +588,18 @@ Narrow/mobile Missions puts Plan New Mission at the bottom of the list, using th
   margin-inline-start: auto;
 }
 
-.mission-list__footer-actions {
+.mission-list__header-actions {
   display: flex;
+  flex-direction: column;
   gap: var(--space-sm);
 }
 
-/* Desktop split-only: list footer actions live in sidebar header, so hide duplicated footer buttons. */
-.mission-manager__sidebar .mission-list__footer-actions {
+/*
+FNXC:MissionsUI 2026-08-16-14:48:
+Desktop owns the CTA in its sidebar bar, so the shared list header cannot duplicate it.
+*/
+.mission-manager__sidebar .mission-list__header-actions {
   display: none;
-}
-
-.mission-list__footer-actions .mission-list__manual-create-link {
-  align-self: center;
 }
 
 /* ── Inline Form Card ── */

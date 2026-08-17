@@ -317,7 +317,7 @@ async function recoverApprovedPreexistingAiMergeWorktree(
   throwIfAborted(signal, taskId);
   if (!selected.alreadyLanded) {
     if (!task) throw new Error(`AI merge task ${taskId} disappeared before recovery squash gates`);
-    await enforceAiMergeSquashGates({ store, task, taskId, mergeRoot: selected.mergeRoot, branch, tipSha: selected.tipSha, squashSha: selected.squashSha, settings, audit, log, repoRel: ctx.repoRel, repoKeys: ctx.repoKeys });
+    await enforceAiMergeSquashGates({ store, task, taskId, mergeRoot: selected.mergeRoot, branch, tipSha: selected.tipSha, squashSha: selected.squashSha, audit, log, repoRel: ctx.repoRel, repoKeys: ctx.repoKeys });
     const land = await landSquash({
       projectRootDir: repoRootDir,
       mergeRoot: selected.mergeRoot,
@@ -1113,7 +1113,7 @@ export async function landOneRepo(
        */
       const freshTask = await store.getTask(taskId);
       if (!freshTask) throw new Error(`AI merge task ${taskId} disappeared before squash gates`);
-      await enforceAiMergeSquashGates({ store, task: freshTask, taskId, mergeRoot, branch, tipSha, squashSha, settings, audit, log, repoRel: ctx.repoRel, repoKeys: ctx.repoKeys });
+      await enforceAiMergeSquashGates({ store, task: freshTask, taskId, mergeRoot, branch, tipSha, squashSha, audit, log, repoRel: ctx.repoRel, repoKeys: ctx.repoKeys });
 
       // FNXC:Workspace 2026-08-15-08:36: Persist the recovery intent before the shared ref can
       // move. A later reconciler can then settle an interrupted remote advance without re-squashing.

@@ -1664,3 +1664,7 @@ AgentsView uses the measured SVG overlay as the single connector system so paren
     justify-content: flex-start;
   }
 }
+
+/* FNXC:AgentSkillsUI 2026-08-16-04:27: List badges preserve the shared availability classification at compact widths. */
+.agent-badges .badge-skill[data-skill-state="disabled"] { border-color: var(--color-warning); }
+.agent-badges .badge-skill[data-skill-state="unknown"] { border-color: var(--color-error); }

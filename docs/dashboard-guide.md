@@ -1729,6 +1729,10 @@ The Skills view now supports the full browse-and-install loop for skills.sh entr
 
 The Skills API provides endpoints for managing execution skills. Skills are toggled via project-scoped settings in `.fusion/settings.json`. Toggle entries match the skill body’s relative path beneath `skills/` (for example, `api/api-versioning/SKILL.md`), not just its displayed name. Stale flat-layout entries such as `-api-versioning/SKILL.md` are ignored for skills that now use a categorized body path, keeping the Skills view and agent-session manifest aligned.
 
+### Agent skill configuration
+
+Agent cards show **Skills: None** when no forced skills are stored. The agent editor provides a filterable checkbox list: enabled entries are **Auto-available** to every agent, while checked entries are **Forced** so that agent reads them before work starts. Disabled and no-longer-discovered stored skills remain visible and are labeled **Disabled** or **Not discovered** on both the editor and agent badges. See [Agents](agents.md) for the execution semantics.
+
 ![Skills view](./screenshots/skills-view.png)
 
 ### GET /api/skills/discovered

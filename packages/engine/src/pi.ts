@@ -1100,6 +1100,8 @@ export interface AgentOptions {
    *  (and `skillSelection` is not), auto-constructs a SkillSelectionContext
    *  from the cwd and these names. Ignored when `skillSelection` is set. */
   skills?: string[];
+  /** Reports the one resolved session-skill summary to task-bound callers. */
+  onSkillSummary?: (summary: { availableCount: number; forcedSkillNames: string[]; unresolvedForcedSkills: Array<{ requestedName: string; reason: string }> }) => void | Promise<void>;
   /** Extra directories to scan for skills (each holding `<id>/SKILL.md`), in
    *  addition to the default cwd/agent-dir roots. Forwarded to the resource
    *  loader so callers (e.g. plugins that install skills to a private dir) can
@@ -2311,7 +2313,112 @@ function withMcpPromptOptions(promptOptions: unknown, mcpServers: ResolvedMcpSer
   return { mcpServers };
 }
 
+/*
+FNXC:CliRuntimeRouting 2026-08-16-14:37:
+`createFnAgent` is now a ROUTED entry point: it delegates to the shared
+`createResolvedAgentSession` seam (registered below via
+`registerRoutedAgentSessionFactory` to avoid a static import cycle) so every
+caller — not just chat/executor/planning — gets CLI runtime routing
+(cursor-cli/claude-cli/hermes/omp-cli/no-key grok-cli), mock/test-mode forcing,
+and `session:runtime-resolved` visibility. Bare `createFnAgent` calls used to
+pin sessions to the default pi runtime, so a CLI-runtime model selection died
+with "not found in the pi model registry" in any lane that had not been
+individually migrated to the seam (mission interview was the third such
+incident after planning's 401 and this cursor one).
+
+The raw pi implementation lives on as `createPiAgentSessionRaw`, which is what
+`DefaultPiRuntime` (execution/runtime-resolution.ts) must call — the seam
+resolves to that runtime, so routing the runtime's own bridge through the seam
+again would recurse forever. When no routed factory is registered (isolated
+unit tests importing only pi.ts), `createFnAgent` falls back to the raw path,
+preserving pre-existing test behavior.
+
+Callers without an explicit `pluginRunner` resolve one from the host-registered
+default registry (`registerDefaultAgentPluginRunner`, populated by
+InProcessRuntime at plugin-system init), keyed by project root and matched by
+session cwd prefix so multi-project hosts route each session against its own
+project's plugin set.
+*/
+type RoutedAgentSessionFactory = (options: Record<string, unknown>) => Promise<AgentResult>;
+/*
+FNXC:CliRuntimeRouting 2026-08-16-14:37:
+`var` + lazy-init on purpose: agent-session-helpers registers the factory at
+its own module load, and under the pi.ts <-> helpers import cycle that call can
+run while pi.ts is still mid-evaluation. A `let`/`const` here sits in its
+temporal dead zone during that window and made every hoisted createFnAgent
+call throw "Cannot access before initialization"; `var` is hoisted-initialized
+and the Map is created on first touch.
+*/
+// eslint-disable-next-line no-var
+var routedAgentSessionFactory: RoutedAgentSessionFactory | undefined;
+// eslint-disable-next-line no-var
+var defaultAgentPluginRunners: Map<string, unknown> | undefined;
+
+function agentPluginRunnerRegistry(): Map<string, unknown> {
+  return (defaultAgentPluginRunners ??= new Map());
+}
+
+/** Late-binding registration seam (mirrors core's `setCreateFnAgent`): agent-session-helpers registers `createResolvedAgentSession` at module load. */
+export function registerRoutedAgentSessionFactory(factory: RoutedAgentSessionFactory): void {
+  routedAgentSessionFactory = factory;
+}
+
+/** Register a host PluginRunner as the ambient default for bare `createFnAgent` callers in the project rooted at `rootDir`. */
+export function registerDefaultAgentPluginRunner(rootDir: string, pluginRunner: unknown): void {
+  agentPluginRunnerRegistry().set(rootDir, pluginRunner);
+}
+
+export function unregisterDefaultAgentPluginRunner(rootDir: string): void {
+  agentPluginRunnerRegistry().delete(rootDir);
+}
+
+/** Resolve the ambient PluginRunner for a session cwd: longest registered project-root prefix wins; a sole registered runner matches any cwd. */
+function resolveDefaultAgentPluginRunner(cwd: string | undefined): unknown {
+  const registry = agentPluginRunnerRegistry();
+  if (registry.size === 0) return undefined;
+  if (cwd) {
+    let best: { rootDir: string; runner: unknown } | undefined;
+    for (const [rootDir, runner] of registry) {
+      if ((cwd === rootDir || cwd.startsWith(`${rootDir}/`)) && (!best || rootDir.length > best.rootDir.length)) {
+        best = { rootDir, runner };
+      }
+    }
+    if (best) return best.runner;
+  }
+  if (registry.size === 1) {
+    return registry.values().next().value;
+  }
+  return undefined;
+}
+
 export async function createFnAgent(options: AgentOptions): Promise<AgentResult> {
+  /*
+  FNXC:CliRuntimeRouting 2026-08-16-14:37:
+  `__rawPiSession` is DefaultPiRuntime's re-entry marker: the seam resolves to
+  that runtime, whose bridge calls back into createFnAgent (kept as the bridge
+  target so existing tests that mock createFnAgent still intercept pi-session
+  construction). The marker short-circuits to the raw constructor instead of
+  routing again, which would recurse forever.
+  */
+  const { __rawPiSession, ...routableOptions } = options as AgentOptions & { __rawPiSession?: boolean };
+  if (!__rawPiSession && routedAgentSessionFactory) {
+    const optionsWithRouting = routableOptions as AgentOptions & { pluginRunner?: unknown; runtimeHint?: string };
+    const pluginRunner = optionsWithRouting.pluginRunner ?? resolveDefaultAgentPluginRunner(routableOptions.cwd);
+    return routedAgentSessionFactory({
+      ...routableOptions,
+      sessionPurpose: routableOptions.sessionPurpose ?? "executor",
+      ...(pluginRunner ? { pluginRunner } : {}),
+    });
+  }
+  return createPiAgentSessionRaw(routableOptions as AgentOptions);
+}
+
+/**
+ * Raw pi-runtime session construction. Internal to the runtime layer: only
+ * `DefaultPiRuntime` (and the unregistered-factory fallback above) may call
+ * this — every product lane goes through `createFnAgent`'s routed path.
+ */
+export async function createPiAgentSessionRaw(options: AgentOptions): Promise<AgentResult> {
   /*
   FNXC:EngineDiagnostics 2026-07-26-09:55:
   createFnAgent is invoked on every agent/session start (executor, triage, chat, heartbeat, etc.). The entry log is steady-state bookkeeping — debug-only (FUSION_DEBUG=pi). Failures and auth issues stay on warn/error.
@@ -2481,8 +2588,10 @@ export async function createFnAgent(options: AgentOptions): Promise<AgentResult>
     };
   }
 
-  // Resolve skill selection if provided
+  // Resolve skill selection if provided. The override is also the only point
+  // that knows which forced requests survived discovery and project exclusions.
   let skillsOverrideFn: ReturnType<typeof createSkillsOverrideFromSelection> | undefined;
+  let skillSummary: { availableCount: number; forcedSkillNames: string[]; unresolvedForcedSkills: Array<{ requestedName: string; reason: string }> } | undefined;
   if (effectiveSkillSelection) {
     const selectionResult = resolveSessionSkills(effectiveSkillSelection);
     if (selectionResult.diagnostics.length > 0) {
@@ -2505,8 +2614,19 @@ export async function createFnAgent(options: AgentOptions): Promise<AgentResult>
     }
     skillsOverrideFn = createSkillsOverrideFromSelection(selectionResult, {
       requestedSkillNames: effectiveSkillSelection.requestedSkillNames,
+      forcedSkillNames: effectiveSkillSelection.forcedSkillNames,
       sessionPurpose: effectiveSkillSelection.sessionPurpose,
     });
+    const rawOverride = skillsOverrideFn;
+    skillsOverrideFn = (base) => {
+      const result = rawOverride(base);
+      skillSummary = {
+        availableCount: result.skills.length,
+        forcedSkillNames: result.resolvedForcedSkills.map((entry) => entry.skillName),
+        unresolvedForcedSkills: result.unresolvedForcedSkills,
+      };
+      return result;
+    };
   }
 
   /*
@@ -2548,10 +2668,12 @@ export async function createFnAgent(options: AgentOptions): Promise<AgentResult>
     agentDir: getFusionAgentDir(),
     settingsManager,
     systemPromptOverride: () => options.systemPromptLayers?.stable ?? options.systemPrompt,
-    appendSystemPromptOverride: () =>
-      options.systemPromptLayers?.dynamic
-        ? [options.systemPromptLayers.dynamic]
-        : [],
+    appendSystemPromptOverride: () => {
+      const dynamic = options.systemPromptLayers?.dynamic ? [options.systemPromptLayers.dynamic] : [];
+      const forced = skillSummary?.forcedSkillNames ?? [];
+      if (forced.length === 0) return dynamic;
+      return [...dynamic, `Before starting work, you are REQUIRED to read these available skills: ${forced.join(", ")}. All other available skills may be consulted on demand when relevant.`];
+    },
     ...(effectiveExtensionPaths.length > 0 ? { additionalExtensionPaths: [...effectiveExtensionPaths] } : {}),
     ...(normalizedAdditionalSkillPaths.length > 0
       ? { additionalSkillPaths: normalizedAdditionalSkillPaths }
@@ -2559,6 +2681,7 @@ export async function createFnAgent(options: AgentOptions): Promise<AgentResult>
     ...(skillsOverrideFn ? { skillsOverride: skillsOverrideFn } : {}),
   });
   await resourceLoader.reload();
+  if (skillSummary) await options.onSkillSummary?.(skillSummary);
 
   const sessionManager = options.sessionManager ?? SessionManager.inMemory();
   normalizeSessionHistoryEntries(sessionManager as unknown as SessionManagerLike);

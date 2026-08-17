@@ -55,6 +55,7 @@ function tmpRoot() {
  * files. Stale or phantom-path entries silently degrade CI shard balancing and
  * can hide merge-gate regressions, so this guard fails before that drift lands.
  */
+
 test("committed timing snapshot is fresh, parseable, and references live test files", () => {
   const snapshotPath = path.join(REPO_ROOT, TIMINGS_SNAPSHOT_RELATIVE);
   const snapshot = JSON.parse(readFileSync(snapshotPath, "utf8"));
@@ -70,7 +71,9 @@ test("committed timing snapshot is fresh, parseable, and references live test fi
   );
 
   const recordedFiles = Object.values(snapshot.packages).flatMap((pkg) => Object.keys(pkg.files ?? {}));
-  const missingFiles = recordedFiles.filter((file) => !existsSync(path.join(REPO_ROOT, file)));
+  const missingFiles = recordedFiles.filter(
+    (file) => !existsSync(path.join(REPO_ROOT, file)),
+  );
   assert.deepEqual(missingFiles, [], `timing snapshot references missing test files:\n${missingFiles.join("\n")}`);
 
   const timings = loadPlanningTimings({ projectRoot: REPO_ROOT });

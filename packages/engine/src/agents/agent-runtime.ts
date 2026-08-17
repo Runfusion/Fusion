@@ -134,6 +134,8 @@ export interface AgentRuntimeOptions {
   sessionManager?: SessionManager;
   /** Optional skill selection context */
   skillSelection?: SkillSelectionContext;
+  /** Receives resolved skill availability after the runtime loader applies settings. */
+  onSkillSummary?: (summary: { availableCount: number; forcedSkillNames: string[]; unresolvedForcedSkills: Array<{ requestedName: string; reason: string }> }) => void | Promise<void>;
   /** Convenience: skill names to include in the session */
   skills?: string[];
   /** Extra directories to scan for skills (each holding `<id>/SKILL.md`), in

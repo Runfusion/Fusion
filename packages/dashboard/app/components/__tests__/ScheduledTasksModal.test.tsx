@@ -209,8 +209,15 @@ describe("ScheduledTasksModal", () => {
 
   it("keeps mobile Automations full-screen and hides resize handles by CSS contract", () => {
     const source = readFileSync(resolve(__dirname, "../ScriptsModal.css"), "utf8");
+    /*
+    FNXC:GitManager 2026-08-15-22:35:
+    FN-8702 (1e67e87321) moved ScriptsModal.css's standalone phone-sheet blocks from
+    `max-width: 768px` to `max-width: 767.98px` so the takeover applies only BELOW the
+    768px boundary (768px-wide tablets keep desktop geometry). The Automations
+    full-screen contract rides in that same block, so match the phone boundary.
+    */
     const mobileBlock = source
-      .match(/@media \(max-width: 768px\)\s*\{[\s\S]*?\n\}/g)
+      .match(/@media \(max-width: 767\.98px\)\s*\{[\s\S]*?\n\}/g)
       ?.find((block) => block.includes(".floating-window--automation")) ?? "";
 
     expect(mobileBlock).toContain(".floating-window--automation");

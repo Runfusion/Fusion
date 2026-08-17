@@ -9,8 +9,12 @@
  * counts; reorderMilestones/reorderSlices new order; linkGoal/unlinkGoal +
  * listGoalIdsForMission round-trip; linkFeatureToTask/unlinkFeatureFromTask;
  * addContractAssertion → listContractAssertions; startValidatorRun → getValidatorRunsByFeature;
- * computeMissionStatus reflects state; missing mission → undefined. Runs in the blocking
- * gate (test:pg-gate).
+ * computeMissionStatus reflects state; missing mission → undefined. This remains in default
+ * core discovery; `test:pg-gate` intentionally runs only its two PostgreSQL canaries.
+ *
+ * FNXC:MissionStore 2026-08-16-19:32:
+ * FN-9127 corrected the stale gate-membership claim so loaded-teardown diagnosis runs the
+ * actual default-core surface instead of implying this suite is a blocking PG-gate canary.
  */
 
 import { describe, it, expect, beforeAll, beforeEach, afterEach, afterAll, vi } from "vitest";

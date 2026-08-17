@@ -8,8 +8,8 @@ MERGE CONCURRENCY IS FIXED AT 1 AND IS NOT A SETTING.
 The capacity model is exactly two CONFIGURABLE numbers per project (total agents,
 maxWorktrees) plus this one FIXED invariant. Merge is where the irreversible work
 happens — main advances, branches are deleted, worktrees are torn down — so every
-merge-safety guard in the repo (file-scope overlap, diff-volume shrinkage,
-post-squash audit, contamination auto-recovery) is written against the assumption
+merge-safety guard in the repo (file-scope overlap, post-squash audit,
+contamination auto-recovery) is written against the assumption
 that exactly one merge is in flight per project at a time. None of them are
 concurrency-safe against a second merge advancing main underneath them.
 

@@ -4,7 +4,8 @@ import { act, render, screen, waitFor, cleanup, fireEvent } from "@testing-libra
 import userEvent from "@testing-library/user-event";
 import fs from "fs";
 import path from "path";
-import { SettingsModal } from "../SettingsModal";
+import { SettingsModal, SETTINGS_AUTOSAVE_DEBOUNCE_MS } from "../SettingsModal";
+import { SETTINGS_SECTION_METADATA } from "../../../src/shared/settings-sections";
 import { __test_clearCache as clearPluginUiSlotsCache } from "../../hooks/usePluginUiSlots";
 
 /*
@@ -141,6 +142,14 @@ export function renderModal(props: Partial<ComponentProps<typeof SettingsModal>>
   );
 }
 
+/*
+FNXC:SettingsModalTests 2026-08-17-00:20:
+Quality-lane SettingsModal files stay the dashboard's slowest CI-run tests when they remount
+Authentication and click the sidebar, and when waitFor polls at the default 50ms. Keep the
+same readiness and persist assertions; poll faster and open the target section directly.
+*/
+export const SETTINGS_MODAL_WAIT = { interval: 5, timeout: 2000 } as const;
+
 export async function waitForSettingsModalReady() {
   /*
   FNXC:DashboardTests 2026-07-18-13:35:
@@ -148,10 +157,20 @@ export async function waitForSettingsModalReady() {
   Loading… on the next paint (OAuth incomplete-toast test). Wait for Loading to clear so
   Authentication/section clicks do not race the initial settings fetch.
   */
-  await waitFor(() => expect(mockFetchSettings).toHaveBeenCalled());
+  await waitFor(() => expect(mockFetchSettings).toHaveBeenCalled(), SETTINGS_MODAL_WAIT);
   await waitFor(() => {
     expect(screen.queryByText("Loading…")).not.toBeInTheDocument();
-  });
+  }, SETTINGS_MODAL_WAIT);
+}
+
+function settingsSectionIdFromNavLabel(section: string): ComponentProps<typeof SettingsModal>["initialSection"] {
+  const match = SETTINGS_SECTION_METADATA.find(
+    (entry) => entry.label.toLowerCase() === section.toLowerCase(),
+  );
+  if (!match) {
+    throw new Error(`Unknown Settings nav label: ${section}`);
+  }
+  return match.id as ComponentProps<typeof SettingsModal>["initialSection"];
 }
 
 export async function renderModalSection(
@@ -186,9 +205,8 @@ export type PersistSettingInput = {
 };
 
 export async function expectSettingPersists({ section, label, kind, value, scope, expectedKey }: PersistSettingInput) {
-  renderModal();
+  renderModal({ initialSection: settingsSectionIdFromNavLabel(section) });
   await waitForSettingsModalReady();
-  fireEvent.click(screen.getByRole("button", { name: new RegExp(`^${section}$`, "i") }));
 
   const control = await screen.findByLabelText(label);
   if (kind === "checkbox") {
@@ -207,14 +225,14 @@ export async function expectSettingPersists({ section, label, kind, value, scope
   fireEvent.click(document.querySelector(".modal-close") as HTMLButtonElement);
 
   if (scope === "global") {
-    await waitFor(() => expect(mockUpdateGlobalSettings).toHaveBeenCalled());
+    await waitFor(() => expect(mockUpdateGlobalSettings).toHaveBeenCalled(), SETTINGS_MODAL_WAIT);
     expect(mockUpdateGlobalSettings).toHaveBeenCalledWith(
       expect.objectContaining({ [expectedKey]: value }),
     );
     return;
   }
 
-  await waitFor(() => expect(mockUpdateSettings).toHaveBeenCalled());
+  await waitFor(() => expect(mockUpdateSettings).toHaveBeenCalled(), SETTINGS_MODAL_WAIT);
   expect(mockUpdateSettings).toHaveBeenCalledWith(
     expect.objectContaining({ [expectedKey]: value }),
     undefined,
@@ -258,7 +276,7 @@ again defensively in installSettingsModalEnv's afterEach.
 */
 export async function flushSettingsAutoSave() {
   await act(async () => {
-    await vi.advanceTimersByTimeAsync(500);
+    await vi.advanceTimersByTimeAsync(SETTINGS_AUTOSAVE_DEBOUNCE_MS);
   });
 }
 

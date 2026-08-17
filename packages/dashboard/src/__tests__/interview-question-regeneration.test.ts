@@ -10,13 +10,19 @@ fresh question instead of throwing "No active question in session". A completed 
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+/*
+FNXC:MissionInterviewRuntimeResolution 2026-08-16-14:37:
+Mission and milestone/slice interviews now build sessions through the shared
+`createResolvedAgentSession` seam (so CLI-runtime model selections route to their
+runtime plugins); mock that seam with the same scripted session factory.
+*/
 vi.mock("@fusion/engine", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@fusion/engine")>();
   return {
     ...actual,
     buildSessionSkillContextSync: vi.fn(() => ({ skillSelectionContext: undefined })),
     resolveMcpServersForStore: vi.fn(async () => ({ servers: [] })),
-    createFnAgent: vi.fn(async () => ({
+    createResolvedAgentSession: vi.fn(async () => ({
       session: {
         state: { messages: [] as Array<{ role: string; content: string }> },
         prompt: vi.fn(async function (this: { state: { messages: Array<{ role: string; content: string }> } }) {

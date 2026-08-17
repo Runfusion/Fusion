@@ -5,17 +5,17 @@
 ## Latest baseline
 
 - Cycle: **2026-W33**
-- Captured at: **2026-08-13T01:59:18.032Z**
-- Timing snapshot: `scripts/test-timings.json` captured at **2026-07-24T13:09:41.412Z**
+- Captured at: **2026-08-16T06:01:44.671Z**
+- Timing snapshot: `scripts/test-timings.json` captured at **2026-08-16T06:04:55.815Z**
 - Quarantine ledger: `scripts/lib/test-quarantine.json`
 
 ## Metrics
 
 | Metric | Current | Delta vs previous |
 |---|---:|---:|
-| Merge gate wall-time (`pnpm test:gate`) | 11.0s | -3.6s |
-| Boot smoke wall-time (`pnpm smoke:boot`) | 26.7s | +8.5s |
-| Changed-only test wall-time (`pnpm test`) | 17.6s | -4.9s |
+| Merge gate wall-time (`pnpm test:gate`) | 14.0s | +3.0s |
+| Boot smoke wall-time (`pnpm smoke:boot`) | 20.4s | -6.3s |
+| Changed-only test wall-time (`pnpm test`) | 17.5s | -116ms |
 | Quarantine / flake count | 0 | 0 |
 | Deletion-due quarantines | 0 | n/a |
 
@@ -25,32 +25,32 @@
 
 ## Timing snapshot notes
 
-- Timing snapshot is 19 days old; verify slowest-file attribution before treating the table as the current culprit.
+- No stale or missing timing metadata detected in the rendered slowest-file rows.
 
 ## Slowest 20 test files
 
 | Rank | File | Package | Duration |
 |---:|---|---|---:|
-| 1 | `packages/dashboard/app/components/__tests__/SettingsModal.general.test.tsx` | @fusion/dashboard | 2m 01s |
-| 2 | `packages/dashboard/app/components/__tests__/SettingsModal.scheduling-merge.test.tsx` | @fusion/dashboard | 1m 18s |
-| 3 | `packages/core/src/__tests__/postgres/schema-applier.test.ts` | @fusion/core | 1m 06s |
-| 4 | `packages/dashboard/app/components/__tests__/SettingsModal.remote-notifications.test.tsx` | @fusion/dashboard | 55.7s |
-| 5 | `packages/dashboard/app/components/__tests__/SettingsModal.models-auth.test.tsx` | @fusion/dashboard | 53.5s |
-| 6 | `packages/dashboard/app/components/__tests__/TaskDetailModal.rendering.test.tsx` | @fusion/dashboard | 52.1s |
-| 7 | `packages/cli/src/__tests__/extension.test.ts` | @runfusion/fusion | 51.6s |
-| 8 | `packages/core/src/__tests__/postgres/sqlite-migrator.test.ts` | @fusion/core | 51.3s |
-| 9 | `packages/dashboard/app/components/__tests__/TaskDetailModal.inline-editing-and-integrations.test.tsx` | @fusion/dashboard | 39.7s |
-| 10 | `packages/dashboard/app/components/__tests__/ListView.test.tsx` | @fusion/dashboard | 38.1s |
-| 11 | `packages/dashboard/app/components/__tests__/App.test.tsx` | @fusion/dashboard | 33.1s |
-| 12 | `packages/dashboard/app/components/__tests__/WorkflowNodeEditor.test.tsx` | @fusion/dashboard | 33.1s |
-| 13 | `packages/dashboard/app/components/__tests__/AgentDetailView.advanced-settings.test.tsx` | @fusion/dashboard | 32.9s |
-| 14 | `packages/dashboard/app/components/__tests__/SecretsView.test.tsx` | @fusion/dashboard | 30.9s |
-| 15 | `packages/core/src/__tests__/postgres/taskstore-remaining.test.ts` | @fusion/core | 30.5s |
-| 16 | `packages/dashboard/app/components/__tests__/AgentPromptsManager.test.tsx` | @fusion/dashboard | 30.2s |
-| 17 | `packages/dashboard/app/components/__tests__/ChatView.core-interactions.test.tsx` | @fusion/dashboard | 29.2s |
-| 18 | `packages/dashboard/app/components/__tests__/TaskDetailModal.test.tsx` | @fusion/dashboard | 27.8s |
-| 19 | `packages/dashboard/app/components/__tests__/TaskDetailModal.definition-actions.test.tsx` | @fusion/dashboard | 27.0s |
-| 20 | `packages/engine/src/__tests__/reliability-interactions/explicit-duplicate-marker-sweep.test.ts` | @fusion/engine | 26.8s |
+| 1 | `packages/core/src/__tests__/postgres/schema-applier.test.ts` | @fusion/core | 1m 13s |
+| 2 | `packages/dashboard/src/__tests__/task-modal-touch-resize-browser.test.ts` | @fusion/dashboard | 1m 03s |
+| 3 | `packages/cli/src/__tests__/extension.test.ts` | @runfusion/fusion | 42.8s |
+| 4 | `packages/engine/src/__tests__/lifecycle-column-census.test.ts` | @fusion/engine | 42.4s |
+| 5 | `packages/engine/src/__tests__/reliability-interactions/explicit-duplicate-marker-sweep.test.ts` | @fusion/engine | 36.9s |
+| 6 | `packages/dashboard/app/components/__tests__/SettingsModal.scheduling-merge.test.tsx` | @fusion/dashboard | 30.2s |
+| 7 | `packages/cli/src/__tests__/bin.test.ts` | @runfusion/fusion | 29.3s |
+| 8 | `packages/engine/src/__tests__/merger-ai.test.ts` | @fusion/engine | 22.6s |
+| 9 | `packages/core/src/__tests__/postgres/startup-factory-integration.test.ts` | @fusion/core | 21.8s |
+| 10 | `packages/core/src/__tests__/postgres/sqlite-migrator.test.ts` | @fusion/core | 20.4s |
+| 11 | `packages/dashboard/app/components/__tests__/AgentDetailView.advanced-settings.test.tsx` | @fusion/dashboard | 20.3s |
+| 12 | `packages/engine/src/__tests__/reliability-interactions/merge-runner-spawn-enoent-prevention.test.ts` | @fusion/engine | 19.3s |
+| 13 | `packages/dashboard/app/components/__tests__/SettingsModal.remote-notifications.test.tsx` | @fusion/dashboard | 19.0s |
+| 14 | `packages/engine/src/__tests__/reliability-interactions/owning-node-unavailable-interactions.test.ts` | @fusion/engine | 18.4s |
+| 15 | `packages/dashboard/app/components/__tests__/SettingsModal.models-auth.test.tsx` | @fusion/dashboard | 18.0s |
+| 16 | `packages/dashboard/app/components/__tests__/SettingsModal.generalProject.test.tsx` | @fusion/dashboard | 17.6s |
+| 17 | `packages/dashboard/app/components/__tests__/SettingsModal.general.test.tsx` | @fusion/dashboard | 17.5s |
+| 18 | `packages/engine/src/__tests__/pi-create-fn-agent.test.ts` | @fusion/engine | 17.5s |
+| 19 | `packages/dashboard/app/components/__tests__/TaskDetailModal.rendering.test.tsx` | @fusion/dashboard | 16.6s |
+| 20 | `packages/cli/src/commands/dashboard-tui/__tests__/app.test.tsx` | @runfusion/fusion | 15.6s |
 
 ## Quarantine age buckets
 
@@ -71,16 +71,16 @@
 
 | Row | Captured at | Gate | Boot smoke | `pnpm test` | Quarantine count |
 |---|---|---:|---:|---:|---:|
-| Previous | 2026-08-04T03:10:46.073Z | 14.6s | 18.1s | 22.4s | 0 |
-| Latest | 2026-08-13T01:59:18.032Z | 11.0s | 26.7s | 17.6s | 0 |
-| Delta | — | -3.6s | +8.5s | -4.9s | 0 |
+| Previous | 2026-08-13T01:59:18.032Z | 11.0s | 26.7s | 17.6s | 0 |
+| Latest | 2026-08-16T06:01:44.671Z | 14.0s | 20.4s | 17.5s | 0 |
+| Delta | — | +3.0s | -6.3s | -116ms | 0 |
 
 _Future weekly rows append to `scripts/test-velocity-history.json`; compare the latest row against the previous row before posting to #leads._
 
 ## Post to #leads
 
 ```text
-FN-6612 weekly test velocity: gate 11.0s (-3.6s), boot smoke 26.7s (+8.5s), pnpm test 17.6s (-4.9s), quarantine ledger 0 (0). Slowest file: packages/dashboard/app/components/__tests__/SettingsModal.general.test.tsx at 2m 01s. Deletion-due quarantines: 0.
+FN-6612 weekly test velocity: gate 14.0s (+3.0s), boot smoke 20.4s (-6.3s), pnpm test 17.5s (-116ms), quarantine ledger 0 (0). Slowest file: packages/core/src/__tests__/postgres/schema-applier.test.ts at 1m 13s. Deletion-due quarantines: 0.
 ```
 
 ## How to refresh

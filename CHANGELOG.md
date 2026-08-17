@@ -2,6 +2,89 @@
 
 User-facing release notes aggregated across all packages. This file is auto-synced from each `packages/*/CHANGELOG.md` by `scripts/release.mjs` — do not edit by hand.
 
+## 0.77.0-beta.1
+
+### Highlights
+
+- CLI-runtime models like Cursor CLI now work in every AI lane, not just chat
+- Mission and milestone interviews no longer fail with "not found in the pi model registry"
+- Planning Mode stays on the current session and keeps your typed answers through a refresh
+- Create Room member picker shows accurate loading, empty, and failed states
+- Plan New Mission sits at the top of the mission list and is easier to hit
+
+### Fixed
+
+- Every AI lane now routes through runtime resolution, so a CLI-runtime model selection (for example Cursor CLI) works anywhere chat does. Mission planning and milestone/slice interviews previously errored out with a model-registry lookup failure.
+- Planning Mode stays on the current session after a stale response refresh, instead of jumping away when a duplicate response, accepted stream error, or loading poll arrives late.
+- Planning Mode preserves answers you have already typed while a session hydrates late, binding the visible question to the live planning turn.
+- The Create Room member picker no longer shows stale or misleading member state while agent data loads; loading, empty, and failed states are now distinct.
+- Plan New Mission moved from the footer to the top of the mission list and is slightly taller; the duplicate empty-state button is gone.
+
+## 0.77.0-beta.0
+
+### Highlights
+
+- Anthropic Subscription login works again instead of failing with "Unknown provider"
+- Multi-repo workspace tasks land per repo, show per-repo status, and can't double-land
+- Cursor CLI models run supervised with Fusion task tools bridged in
+- Diff-volume merge gate removed, so approved squashes aren't blocked on per-file shrinkage
+- Creating a task from an Insights recommendation is fast on large boards
+
+### Breaking
+
+- The pre-commit diff-volume merge gate is gone, along with the diff-volume threshold, minimum-lines, and allowlist settings and its audit event. File scope is still the pre-land guard, and the post-squash audit policy remains the shrinkage backstop.
+
+### New
+
+- Cursor CLI models selected in the picker now run through Fusion's supervised runtime, with Fusion task tools bridged into Cursor sessions through leased, quarantine-aware config.
+- Cursor CLI can act as a retryable fallback when another AI runtime fails mid-session.
+- Task detail shows per-repository landing status and failure detail for workspace tasks.
+- Task creation accepts per-task GitHub tracking overrides: `github_tracking`/`github_repo` on task create, and `--github`/`--no-github`/`--github-repo` on the CLI. CLI create now honors the project/global default and opens the tracking issue before the process exits.
+- Memory adds Knowledge Graph navigation and bounded path search, capped at 10 hops and 20,000 expansions.
+- Enabled skills are now available to every agent, and per-agent skills are forced reading, selected from a searchable checkbox list with clearer agent skill badges.
+- Mailbox recommendation notices can create a follow-up task directly.
+- New global Quick Add preference for Enter-to-save.
+- Memory Keeper is provisioned into projects with its heartbeat off by default.
+- Computer use requires a fresh snapshot after each action so stale element indexes can't be reused.
+
+### Fixed
+
+- Anthropic Subscription login no longer fails with "Unknown provider: anthropic-subscription", and Claude subscription model resolution resolves the same way; the login error now stays inside the Settings card on phone widths.
+- Cursor CLI models no longer fail with "install and enable the Cursor runtime plugin" after the provider is enabled, and CLI picker models route to their installed runtime with actionable failures.
+- Workspace tasks complete when changes land in only one repository, and show their sub-repo worktrees on the board instead of Unassigned.
+- Workspace repos acquired concurrently no longer lose sub-repo worktree entries, and tasks no longer flash as single-repo mid-acquisition.
+- Workspace merges no longer report success when finalization is blocked, and unsafe AI squashes are blocked before reaching integration branches.
+- Transient Git evidence failures no longer fail workspace tasks, stale task trailers no longer falsely prove a repo landed, and work re-lands after a clean revert.
+- Multi-node workspace operations no longer overlap or double-land shared repositories.
+- Workspace tasks are blocked from completing after edits to a sub-repo main checkout, and workspace projects using per-instance foreach worktrees now fail fast with an explicit diagnostic.
+- Stale workspace worktrees and safe task branches are reclaimed after terminal tasks; unarchived workspace tasks no longer retain disposed worktree state; live task worktrees are protected from CLI and agent archive cleanup.
+- Post-merge pushes retry twice with bounded backoff after temporary Git network failures; config, auth, and ref-rejection errors still fail immediately.
+- Merge verification runs tests for packages that depend on a changed package, and Quality file-scoped tests use each package's local Vitest binary.
+- Restored agent-activity telemetry, Plan Review convergence and review scoping, restart-retry safety guards, and session usage telemetry that an executor refactor had silently dropped; workflow-principal identity is threaded through prompt and review sessions again.
+- Fusion-created GitHub tracking issues close when the task is already done.
+- Planning Retry shows a clear retryable message when a gateway returns 502/503/504 instead of dumping content-type diagnostics.
+- Event streams for an unknown project return 404 instead of logging a 500, and mission triage with an unknown workflow returns 404.
+- Title-only duplicate redirects no longer show as Ready, and newly created workflows are visible to their own project.
+- Model pickers stay open while filtering, including on mobile; GitHub pull-request imports wrap readably on phones.
+- Insights list newest first.
+- Settings shows database backup inventory and automatic schedule status; recommendation settings are searchable; collapsed Command Center spacing and mailbox badge padding are fixed.
+- Voice input no longer reports a healthy speech runtime as incompatible.
+- Dashboard updates report clear outcomes when they can't install, distinguishing failed checks from no-ops.
+- Task runtime chips no longer over-count active time after review or replan round-trips.
+- Non-continuable agent sessions recover in step-session runs instead of failing the task, and mission validation resumes when a completed mission task's reconciliation fails.
+- Computer-use snapshots stay available across project directories.
+- Agent Activity no longer lists agent state-change events.
+- Corrupted knowledge-graph caches rebuild without retaining foreign artifact data.
+
+### Performance
+
+- Creating a task from an Insights recommendation no longer slows down on large boards, using indexed proposal and lineage reads.
+
+### Internal
+
+- Staged runtime plugin core helpers are validated against the CLI runtime shim so they package reliably in CLI bundles.
+- Operator-installed Hermes Windows CLI shims launch reliably under supervised spawn.
+
 ## 0.76.0
 
 ### Highlights

@@ -33,7 +33,8 @@ import { subscribeSse } from "../sse-bus";
 import { MAX_LOG_ENTRIES } from "../hooks/useAgentLogs";
 import { countLeadingGapMarkers, reconcileReconnectedEntries } from "../hooks/logStreamReconcile";
 import { DEFAULT_HEARTBEAT_INTERVAL_MS, formatHeartbeatInterval, resolveHeartbeatIntervalMs } from "../utils/heartbeatIntervals";
-import { formatAgentSkillBadgeLabel } from "../utils/agentSkills";
+import { classifyAgentSkill, formatAgentSkillBadgeLabel } from "../utils/agentSkills";
+import { useDiscoveredSkillsCache } from "../hooks/useDiscoveredSkillsCache";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import { useConfirm } from "../hooks/useConfirm";
 import { FloatingWindow } from "./FloatingWindow";
@@ -1385,6 +1386,7 @@ function DashboardTab({
   agentModelSettings: Partial<CoreSettings>;
 }) {
   const { t } = useTranslation("app");
+  const { skills: discoveredSkills, loading: discoveredSkillsLoading, error: discoveredSkillsError } = useDiscoveredSkillsCache(projectId);
   const stateStyle = STATE_COLORS[agent.state];
   const [chainOfCommand, setChainOfCommand] = useState<Agent[]>([]);
   const [isLoadingChainOfCommand, setIsLoadingChainOfCommand] = useState(true);
@@ -1483,6 +1485,7 @@ function DashboardTab({
   const recentRuns = (agent.completedRuns || []).slice(0, 5);
   const agentSkills = Array.isArray(agent.metadata?.skills) ? (agent.metadata.skills as string[]) : [];
   const selectedSkillLabel = selectedSkillId ? formatAgentSkillBadgeLabel(selectedSkillId) : null;
+  const selectedSkillClassification = selectedSkillId ? classifyAgentSkill(selectedSkillId, discoveredSkillsLoading || discoveredSkillsError ? null : discoveredSkills, { forced: true }) : null;
   const loadSkillContent = useCallback(async (skillId: string) => {
     setIsLoadingSkillContent(true);
     setSkillContentError(null);
@@ -1508,8 +1511,15 @@ function DashboardTab({
     }
 
     setSelectedSkillId(skillId);
-    void loadSkillContent(skillId);
-  }, [loadSkillContent, selectedSkillId]);
+    const classification = classifyAgentSkill(
+      skillId,
+      discoveredSkillsLoading || discoveredSkillsError ? null : discoveredSkills,
+      { forced: true },
+    );
+    if (classification.state !== "unknown") {
+      void loadSkillContent(skillId);
+    }
+  }, [discoveredSkills, discoveredSkillsError, discoveredSkillsLoading, loadSkillContent, selectedSkillId]);
 
   const isTicking = agent.state === "active" || agent.state === "running";
   const heartbeatIntervalMs = resolveHeartbeatIntervalMs(agent.runtimeConfig?.heartbeatIntervalMs);
@@ -1552,30 +1562,39 @@ function DashboardTab({
               <span className="dashboard-summary-skill-badges" role="list" aria-label={t("agents.assignedSkills", "Assigned skills")}>
                 {agentSkills.map((skillId) => {
                   const isSelected = selectedSkillId === skillId;
+                  const classification = classifyAgentSkill(skillId, discoveredSkillsLoading || discoveredSkillsError ? null : discoveredSkills, { forced: true });
+                  /*
+                   * FNXC:AgentSkills 2026-08-16-06:34:
+                   * Preserve the exact persisted agent.metadata.skills ID in the tooltip so operators can diagnose stale or undiscovered entries. Only the visible badge label is humanized by formatAgentSkillBadgeLabel.
+                   */
                   return (
                     <button
                       key={skillId}
                       type="button"
                       className={cn("badge", "badge-skill", "dashboard-summary-skill-badge", "dashboard-summary-skill-badge-btn", isSelected && "dashboard-summary-skill-badge--selected")}
-                      title={skillId}
+                      title={`${skillId}: ${t(classification.titleKey, classification.defaultTitle)}`}
+                      data-skill-state={classification.state}
                       onClick={() => handleSkillBadgeClick(skillId)}
                       aria-expanded={isSelected}
                       aria-label={t("agents.viewSkillDetails", "View details for {{skill}}", { skill: formatAgentSkillBadgeLabel(skillId) })}
                     >
-                      {formatAgentSkillBadgeLabel(skillId)}
+                      {formatAgentSkillBadgeLabel(skillId)} <span className="skill-state-marker">{t(classification.labelKey, classification.defaultLabel)}</span> <span className="skill-state-marker skill-state-marker--forced">{t("skills.forced", "Forced")}</span>
                     </button>
                   );
                 })}
               </span>
             </span>
           ) : (
-            <span>{t("agents.skillsNone", "Skills: —")}</span>
+            <span className="dashboard-summary-skills" data-testid="agent-skills-empty">
+              <span className="dashboard-summary-label">{t("agents.skills", "Skills")}</span>
+              <span>{t("agents.skillsNone", "None")}</span>
+            </span>
           )}
         </div>
         {selectedSkillId ? (
           <div className="dashboard-summary-skill-detail" data-testid="agent-skill-detail">
             <div className="dashboard-summary-skill-detail-header">
-              <span className="dashboard-summary-skill-detail-title">{selectedSkillLabel}</span>
+              <span className="dashboard-summary-skill-detail-title" data-skill-state={selectedSkillClassification?.state}>{selectedSkillLabel} {selectedSkillClassification && <><span className="skill-state-marker">{t(selectedSkillClassification.labelKey, selectedSkillClassification.defaultLabel)}</span> <span className="skill-state-marker skill-state-marker--forced">{t("skills.forced", "Forced")}</span></>}</span>
               <button
                 type="button"
                 className="btn btn-sm"
@@ -1585,7 +1604,9 @@ function DashboardTab({
                 {t("common.close", "Close")}
               </button>
             </div>
-            {isLoadingSkillContent ? (
+            {selectedSkillClassification?.state === "unknown" ? (
+              <div className="dashboard-summary-skill-detail-empty" role="status">{t(selectedSkillClassification.titleKey, selectedSkillClassification.defaultTitle)}</div>
+            ) : isLoadingSkillContent ? (
               <div className="dashboard-summary-skill-detail-loading" role="status" aria-live="polite">
                 <Loader2 size={14} className="animate-spin" />
                 {t("agents.loadingSkillContent", "Loading skill content...")}
@@ -5125,7 +5146,7 @@ function ConfigTab({
       <div className="config-section">
         <h3>{t("agents.skillsTitle", "Skills")}</h3>
         <p className="config-description">
-          {t("agents.skillsDescription", "Assign skills to this agent for specialized behavior.")}
+          {t("agents.skillsDescription", "All enabled skills can be consulted automatically by any agent. Select skills below to force this agent to read them before starting work.")}
         </p>
 
         <div className="config-fields">

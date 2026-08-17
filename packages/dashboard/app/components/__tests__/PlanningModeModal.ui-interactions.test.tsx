@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -131,6 +132,25 @@ describe("PlanningModeModal sequential layout", () => {
     fireEvent.click(screen.getByRole("radio", { name: /reduce scope/i }));
     fireEvent.click(screen.getByRole("button", { name: /^next$/i }));
     expect(onSubmit).toHaveBeenCalledWith({ direction: "scope" });
+  });
+
+  it("keeps a typed answer when same-question hydration replaces the committed response", async () => {
+    const user = userEvent.setup();
+    const question = { id: "q-late-hydration", type: "text" as const, question: "What should remain yours?" };
+    const { rerender } = render(<QuestionForm question={question} onSubmit={vi.fn()} />);
+
+    const answer = screen.getByPlaceholderText("Type your answer here...");
+    await user.type(answer, "Keep this draft");
+    expect(screen.getByRole("button", { name: "Next" })).toBeEnabled();
+
+    rerender(<QuestionForm
+      question={question}
+      initialResponse={{ "q-late-hydration": "Durable answer from a late hydration" }}
+      onSubmit={vi.fn()}
+    />);
+
+    expect(screen.getByPlaceholderText("Type your answer here...")).toHaveValue("Keep this draft");
+    expect(screen.getByRole("button", { name: "Next" })).toBeEnabled();
   });
 
   /*

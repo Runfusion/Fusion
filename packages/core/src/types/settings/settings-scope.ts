@@ -1684,12 +1684,6 @@ export interface ProjectSettings {
    *  When mode is "ai" (default), the standalone AI merge path is used and the
    *  legacy merge settings above/below it do not apply. */
   merger?: MergerSettings;
-  /** Minimum branch net line volume before the pre-commit diff-volume gate evaluates a file. Default applied at read site: 20. */
-  mergeDiffVolumeMinLines?: number;
-  /** Minimum staged/branch-net ratio required by the pre-commit diff-volume gate. Default applied at read site: 0.2. */
-  mergeDiffVolumeThreshold?: number;
-  /** Additional file globs allowlisted by the pre-commit diff-volume gate on top of generated/lockfile patterns. Default applied at read site: []. */
-  mergeDiffVolumeAllowlist?: string[];
   /**
    * FNXC:PrMergeRequiredChecks 2026-08-09-06:39:
    * Fusion honors these names independently of GitHub's isRequired flag. Empty preserves
