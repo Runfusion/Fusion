@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, utimesSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -197,6 +197,19 @@ describe("SelfHealingManager worktrees-dir sweeps", () => {
     expect(childState.execCalls.some((command) => command.includes(".ai-merge"))).toBe(false);
     expect(childState.execCalls.some((command) => command.includes(".fusion-recovery"))).toBe(false);
     expect(childState.execCalls.some((command) => command.includes("idle-wt"))).toBe(true);
+  });
+
+  it("prepares generated residue before cap enforcement removes an idle worktree", async () => {
+    const worktreesDir = join(projectRoot, ".worktrees");
+    const idle = join(worktreesDir, "idle-wt");
+    mkdirSync(join(idle, "node_modules"), { recursive: true });
+    childState.execStdout = gitWorktreeList(["idle-wt"]);
+    const { manager } = makeManager({ maxWorktrees: 0 });
+
+    await expect((manager as any).enforceWorktreeCap()).resolves.toBeUndefined();
+
+    expect(existsSync(join(idle, "node_modules"))).toBe(false);
+    expect(readdirSync(join(projectRoot, ".fusion", "recovery", "worktrees"))).toHaveLength(1);
   });
 });
 

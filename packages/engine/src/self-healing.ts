@@ -16386,6 +16386,25 @@ const movedTask = await this.store.moveTask(task.id, completeLane);
           log.debug(`[self-healing] cap-enforcement skipping ${worktreePath}: resume-eligible CLI session present`);
           continue;
         }
+        // FNXC:WorktreeCleanup 2026-08-17: cap enforcement shares the idle-sweep
+        // preparation so owned secrets and generated residue do not veto reclaim.
+        try {
+          await cleanupSecretsEnvFile({
+            worktreePath,
+            taskId: `orphan:${basename(worktreePath)}`,
+            expectedFingerprint: null,
+            filename: ".env",
+            audit: undefined,
+            logger: log,
+          });
+        } catch (error) {
+          log.warn(`[self-healing] secrets-env cleanup failed for idle worktree ${worktreePath} during cap enforcement: ${error instanceof Error ? error.message : String(error)}`);
+        }
+        try {
+          await preserveGeneratedResidue(worktreePath, this.options.rootDir, log);
+        } catch (error) {
+          log.warn(`[self-healing] generated-residue preservation failed for idle worktree ${worktreePath} during cap enforcement: ${error instanceof Error ? error.message : String(error)}`);
+        }
         try {
           await removeWorktree({
             rootDir: this.options.rootDir,
