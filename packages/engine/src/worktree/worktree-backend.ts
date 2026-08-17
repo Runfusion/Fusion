@@ -15,6 +15,7 @@ import { resolveTaskWorktreePath } from "./worktree-paths.js";
 import { inspectBareBranchCollision, inspectBranchConflict } from "../execution/branch-conflicts.js";
 import { resolveIntegrationBranch } from "../merge/integration-branch.js";
 import { formatError } from "../logger.js";
+import { preserveCorruptRegisteredRoot } from "./worktree-generated-residue.js";
 import { installTaskWorktreeIdentityGuard } from "./worktree-hooks.js";
 import { pruneWorktreeAdminEntries } from "./worktree-prune.js";
 import {
@@ -40,7 +41,7 @@ function canonicalWorktreePath(path: string): string {
 }
 
 export type WorktreeRemoveOutcome =
-  | { removed: true; classification: "removed" }
+  | { removed: true; classification: "removed"; preservedPath?: string }
   | {
       removed: false;
       harmless: true;
@@ -1152,6 +1153,7 @@ export async function removeWorktree(input: {
 
   const backend = resolveWorktreeBackend(input.settings, { logger, audit: input.audit });
   const requiresDirtyRevalidation = input.reason === RemovalReason.SelfHealingIdleSweep || input.reason === RemovalReason.PoolPrune;
+  let allowCorruptRegisteredRemoval = false;
   if (requiresDirtyRevalidation) {
     let rootOutput = "";
     try {
@@ -1162,11 +1164,45 @@ export async function removeWorktree(input: {
       }));
     } catch {
       if (existsSync(input.worktreePath)) {
-        throw new Error(`refusing to remove worktree with unverifiable root: ${input.worktreePath}`);
+        // A registered checkout can lose its `.git` metadata after an interrupted
+        // cleanup. The root probe is then impossible, but the registration still
+        // scopes the removal; let the backend prune the corrupt directory.
+        let registered = false;
+        try {
+          const { stdout } = await execAsync("git worktree list --porcelain", {
+            cwd: input.rootDir,
+            encoding: "utf-8",
+            timeout: 15_000,
+            maxBuffer: MAX_BUFFER,
+          });
+          registered = porcelainContainsWorktree(String(stdout), input.worktreePath);
+        } catch {
+          // Fail closed when registration itself cannot be verified.
+        }
+        if (!registered) {
+          throw new Error(`refusing to remove worktree with unverifiable root: ${input.worktreePath}`);
+        }
+        allowCorruptRegisteredRemoval = true;
       }
     }
     if (rootOutput && canonicalWorktreePath(rootOutput.trim()) !== canonicalWorktreePath(input.worktreePath)) {
-      throw new Error(`refusing to remove worktree with unverifiable root: ${input.worktreePath}`);
+      let registered = false;
+      try {
+        const { stdout } = await execAsync("git worktree list --porcelain", {
+          cwd: input.rootDir,
+          encoding: "utf-8",
+          timeout: 15_000,
+          maxBuffer: MAX_BUFFER,
+        });
+        registered = porcelainContainsWorktree(String(stdout), input.worktreePath);
+      } catch {
+        // Fail closed when registration itself cannot be verified.
+      }
+      if (!registered) {
+        throw new Error(`refusing to remove worktree with unverifiable root: ${input.worktreePath}`);
+      }
+      allowCorruptRegisteredRemoval = true;
+      rootOutput = "";
     }
     if (rootOutput) {
       const { stdout: statusOutput } = await execFileAsync("git", ["-C", input.worktreePath, "status", "--porcelain", "--untracked-files=all", "--ignored"], {
@@ -1186,8 +1222,35 @@ export async function removeWorktree(input: {
     rootDir: input.rootDir,
     worktreePath: input.worktreePath,
     taskId: input.taskId,
-    force: backend.kind === "native" ? nativeForce : input.force,
+    force: backend.kind === "native" ? nativeForce || allowCorruptRegisteredRemoval : input.force,
   };
+
+  if (allowCorruptRegisteredRemoval && backend.kind === "native") {
+    let preservedPath: string;
+    try {
+      preservedPath = await preserveCorruptRegisteredRoot(input.worktreePath, input.rootDir);
+    } catch (error) {
+      await input.audit?.git({
+        type: "worktree:corrupt-preserve-failed",
+        target: input.worktreePath,
+        metadata: { reason: input.reason, error: previewError(error) },
+      });
+      throw error;
+    }
+    await input.audit?.git({
+      type: "worktree:corrupt-registered-preserved",
+      target: input.worktreePath,
+      metadata: { reason: input.reason, preservedPath },
+    });
+    await pruneWorktreeAdminEntries({
+      rootDir: input.rootDir,
+      auditor: input.audit,
+      reason: "remove-corrupt-registered-worktree",
+      target: input.worktreePath,
+      logger,
+    });
+    return { removed: true, classification: "removed", preservedPath };
+  }
 
   if (input.force === false || typeof input.timeout === "number") {
     // Backwards-compatible helper signature for callers that carried raw git flags/timeouts.

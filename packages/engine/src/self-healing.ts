@@ -56,6 +56,8 @@ import {
 } from "./duplicate-marker-clear.js";
 import { mergeEffectiveSettings } from "./project/effective-settings.js";
 import { RemovalReason, classifyTaskWorktree, getRegisteredWorktreeBranchMap, getRegisteredWorktreePaths, isUsableTaskWorktree, relocateReclaimableWorktreeIntoRoot, removeWorktree, resolveWorktreeBackend, scanIdleWorktrees, scanOrphanedBranches } from "./worktree/worktree-pool.js";
+import { cleanupSecretsEnvFile } from "./worktree/secrets-env-writer.js";
+import { preserveGeneratedResidue } from "./worktree/worktree-generated-residue.js";
 import {
   isMissingWorktreeSessionStartFailure,
   isMergeActiveMissingWorktreeSessionStartFailure,
@@ -15960,6 +15962,26 @@ const movedTask = await this.store.moveTask(task.id, completeLane);
         if (this.isWorktreeResumeReserved(worktreePath)) {
           log.debug(`[self-healing] deferring idle-sweep for ${worktreePath}: resume-eligible CLI session present`);
           continue;
+        }
+        // FNXC:WorktreeCleanup 2026-08-17: the removal probe includes --ignored, so
+        // fingerprint-owned .env and generated residue (node_modules/dist) must leave
+        // the path first — cleaned/preserved, never deleted, mirroring the pool path.
+        try {
+          await cleanupSecretsEnvFile({
+            worktreePath,
+            taskId: `orphan:${basename(worktreePath)}`,
+            expectedFingerprint: null,
+            filename: ".env",
+            audit: undefined,
+            logger: log,
+          });
+        } catch (error) {
+          log.warn(`[self-healing] secrets-env cleanup failed for idle worktree ${worktreePath}: ${error instanceof Error ? error.message : String(error)}`);
+        }
+        try {
+          await preserveGeneratedResidue(worktreePath, this.options.rootDir, log);
+        } catch (error) {
+          log.warn(`[self-healing] generated-residue preservation failed for idle worktree ${worktreePath}: ${error instanceof Error ? error.message : String(error)}`);
         }
         try {
           await removeWorktree({

@@ -1,8 +1,8 @@
 import { existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, realpath, rename, stat, writeFile } from "node:fs/promises";
+import { readFile, realpath, rename, writeFile } from "node:fs/promises";
 import { exec } from "node:child_process";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { acquireWorktreePathReservation, canonicalizeWorktreePath, resolveEngineIncarnationId, resolveEngineNodeId, type RunMutationContext, type Settings, type Task, type TaskStore, type SecretsStore, type WorkspaceLeaseHandle } from "@fusion/core";
 import { generateWorktreeName, resolveTaskWorkingBranch, slugify } from "./worktree-names.js";
@@ -41,6 +41,7 @@ import {
 import type { RunAuditor } from "../util/run-audit.js";
 import { cleanupSecretsEnvFile, reconcileSecretsEnvFingerprint, writeSecretsEnvFile } from "./secrets-env-writer.js";
 import { removeDesktopBuildArtifacts } from "./worktree-desktop-artifacts.js";
+import { ensureContainedDirectory, preserveGeneratedResidue } from "./worktree-generated-residue.js";
 import { installTaskWorktreeIdentityGuard } from "./worktree-hooks.js";
 import { copyConfiguredWorktreeFiles, type WorktreeCopyFileResult } from "./worktree-copy-files.js";
 import { resolveCapturedBaseCommitSha } from "../execution/base-commit-capture.js";
@@ -70,39 +71,6 @@ async function readPersistedWorktreeBackendKind(worktreePath: string): Promise<W
     return backendKind === "native" || backendKind === "worktrunk" ? backendKind : undefined;
   } catch {
     return undefined;
-  }
-}
-
-async function removeGeneratedPinnedResidue(
-  worktreePath: string,
-  rootDir: string,
-  logger?: { warn: (m: string) => void },
-): Promise<void> {
-  for (const name of ["node_modules", "dist"] as const) {
-    const path = join(worktreePath, name);
-    if (!existsSync(path)) continue;
-    try {
-      await execAsync(`git check-ignore -q -- ${JSON.stringify(name)}`, { cwd: worktreePath });
-    } catch {
-      // Tracked or otherwise non-ignored content is user content: preserve it in
-      // place and let removeWorktree's dirty probe fail closed below.
-      continue;
-    }
-    // The directory holds only ignored content, but that may still be user-authored
-    // (files dropped under dist/). Preserve the whole directory in the worktree
-    // recovery area instead of deleting it; reclaim only needs the path free,
-    // which the rename guarantees.
-    try {
-      const canonicalRoot = await realpath(rootDir);
-      const fusionRoot = await ensureContainedDirectory(canonicalRoot, ".fusion");
-      const recoveryRoot = await ensureContainedDirectory(fusionRoot, "recovery");
-      const worktreesRecovery = await ensureContainedDirectory(recoveryRoot, "worktrees");
-      const preservedPath = join(worktreesRecovery, `residue-${randomUUID()}`);
-      await rename(path, preservedPath);
-    } catch (error) {
-      // Preserve in place on any failure; removeWorktree's dirty probe fails closed.
-      logger?.warn(`Failed to preserve generated residue at ${path}: ${formatError(error).message}`);
-    }
   }
 }
 
@@ -188,24 +156,6 @@ export class RepoRootWorktreeError extends Error {
 }
 
 const INIT_OUTCOME_MAX_CHARS = 2_000;
-
-async function ensureContainedDirectory(parentCanonicalPath: string, name: string): Promise<string> {
-  const candidate = join(parentCanonicalPath, name);
-  try {
-    await mkdir(candidate);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-  }
-  const canonicalCandidate = await realpath(candidate);
-  const candidateRelative = relative(parentCanonicalPath, canonicalCandidate);
-  if (candidateRelative === "" || candidateRelative.startsWith("..") || isAbsolute(candidateRelative)) {
-    throw new Error(`Refusing to use recovery directory outside ${parentCanonicalPath}: ${canonicalCandidate}`);
-  }
-  if (!(await stat(canonicalCandidate)).isDirectory()) {
-    throw new Error(`Refusing to use non-directory recovery path: ${canonicalCandidate}`);
-  }
-  return canonicalCandidate;
-}
 
 function configuredCommandErrorMessage(result: { spawnError?: string | Error; timedOut?: boolean; exitCode?: number | null }): string {
   if (result.spawnError) return `Failed to start command: ${result.spawnError}`;
@@ -915,7 +865,7 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
               audit: undefined,
               logger,
             });
-            await removeGeneratedPinnedResidue(pinnedPath, rootDir, logger);
+            await preserveGeneratedResidue(pinnedPath, rootDir, logger);
             await removeWorktree({
               rootDir,
               worktreePath: pinnedPath,

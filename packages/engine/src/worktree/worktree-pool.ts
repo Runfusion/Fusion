@@ -20,6 +20,7 @@ import {
 } from "./worktree-backend.js";
 import { cleanupSecretsEnvFile } from "./secrets-env-writer.js";
 import { removeDesktopBuildArtifacts } from "./worktree-desktop-artifacts.js";
+import { preserveGeneratedResidue } from "./worktree-generated-residue.js";
 import { resolveIntegrationBranch } from "../merge/integration-branch.js";
 import type { RunAuditor } from "../util/run-audit.js";
 import { pruneWorktreeAdminEntries } from "./worktree-prune.js";
@@ -1003,6 +1004,16 @@ export async function cleanupOrphanedWorktrees(
         } catch (error) {
           worktreePoolLog.warn(
             `secrets-env cleanup failed for registered orphan ${worktreePath}: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+        // FNXC:WorktreeCleanup 2026-08-17: the removal probe includes --ignored, so
+        // generated residue (node_modules/dist) must leave the path before the probe
+        // runs — preserved, never deleted, mirroring the pinned-reclaim residue policy.
+        try {
+          await preserveGeneratedResidue(worktreePath, rootDir, worktreePoolLog);
+        } catch (error) {
+          worktreePoolLog.warn(
+            `generated-residue preservation failed for registered orphan ${worktreePath}: ${error instanceof Error ? error.message : String(error)}`,
           );
         }
 
