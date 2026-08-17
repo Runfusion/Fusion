@@ -67,7 +67,7 @@ feeding each poll's outcome back into the next delay:
   `TASK_DELETED_OUTBOX_MAX_POLL_MS` (60s):
   `5s → 15s → 25s → ... → 60s` (capped).
 - **Active poll** (delivered ≥1 event): `idlePollsSinceEvent = 0`, next delay resets to the fast
-  `TASK_DELETED_OUTBOX_POLL_MS` (5s) base — so a new event mid-backoff is still delivered promptly.
+  `TASK_DELETED_OUTBOX_POLL_MS` (5s) base — so a new event mid-backoff is delivered on the next poll after the cadence resets to 5s (bounded by that next poll; not immediate, but not stuck at the 60s cap).
 - **Jitter:** `applyPollJitter` applies ±20% multiplicative jitter so the ~44 consumers de-synchronize
   and don't thunder on the same cadence; the delay never falls below the fast 5s base.
 
