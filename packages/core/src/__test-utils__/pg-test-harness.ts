@@ -43,6 +43,7 @@ import { randomUUID } from "node:crypto";
 import { Worker } from "node:worker_threads";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
+import { createPostgresDdlAdmissionGate } from "./pg-ddl-admission.js";
 import { tmpdir } from "node:os";
 import {
   createPgTeardownDiagnostics,
@@ -189,6 +190,12 @@ function computePgAvailable(): boolean {
 
 export const PG_AVAILABLE = computePgAvailable();
 
+/** Test-only observation seam for proving harness DDL remains structurally bounded. */
+export const __pgTestDdlAdmission = createPostgresDdlAdmissionGate({
+  available: () => PG_AVAILABLE,
+  urlBase: PG_TEST_URL_BASE,
+});
+
 /**
  * A conditional `describe` that runs when PG is available and skips otherwise.
  * Use this instead of bare `describe` for any test file that needs a real
@@ -300,6 +307,17 @@ function createPgStatActivityProbe(
   };
 }
 
+/**
+ * FNXC:PgTestDdlAdmission 2026-08-16-21:29:
+ * FN-9130 measured both uniform and drop-only advisory admission as worse than
+ * the recorded ungated baseline. Keep this harness helper direct: the reusable
+ * primitive remains independently tested, but its wiring is intentionally not
+ * shipped until a candidate proves it improves the loaded 12-worker lane.
+ */
+async function gatedDdl(client: ReturnType<typeof postgres>, statement: string): Promise<void> {
+  await client.unsafe(statement);
+}
+
 async function adminExecAsync(statement: string, timeoutMs = 15_000): Promise<void> {
   let timedOut = false;
   let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
@@ -317,7 +335,7 @@ async function adminExecAsync(statement: string, timeoutMs = 15_000): Promise<vo
         // Server-side cancel slightly before the JS race so PG stops the statement.
         const serverTimeoutMs = Math.max(1_000, timeoutMs - 500);
         await client.unsafe(`SET statement_timeout = ${serverTimeoutMs}`);
-        await client.unsafe(statement);
+        await gatedDdl(client, statement);
       })(),
       new Promise<never>((_, reject) => {
         timeoutHandle = setTimeout(() => {
@@ -505,14 +523,14 @@ export const __pgTestTemplateTestHooks = {
   async dropTemplate(): Promise<void> {
     const templateName = templateDbName();
     await withMaintenanceSql(async (client) => {
-      await client.unsafe(`DROP DATABASE IF EXISTS "${templateName}" WITH (FORCE)`);
+      await gatedDdl(client, `DROP DATABASE IF EXISTS "${templateName}" WITH (FORCE)`);
     });
   },
   async createHalfBuiltTemplate(): Promise<void> {
     const templateName = templateDbName();
     await withMaintenanceSql(async (client) => {
-      await client.unsafe(`DROP DATABASE IF EXISTS "${templateName}" WITH (FORCE)`);
-      await client.unsafe(`CREATE DATABASE "${templateName}"`);
+      await gatedDdl(client, `DROP DATABASE IF EXISTS "${templateName}" WITH (FORCE)`);
+      await gatedDdl(client, `CREATE DATABASE "${templateName}"`);
     });
   },
 };
@@ -606,9 +624,7 @@ function ensureGoldenTemplate(): Promise<string> {
         if (row.datname === goldenName) continue;
         const pid = parseTemplatePid(row.datname);
         if (pid !== null && isPidAlive(pid)) continue;
-        await client
-          .unsafe(`DROP DATABASE IF EXISTS "${row.datname}" WITH (FORCE)`)
-          .catch(() => {});
+        await gatedDdl(client, `DROP DATABASE IF EXISTS "${row.datname}" WITH (FORCE)`).catch(() => {});
       }
       await client.unsafe(
         `DELETE FROM ${GOLDEN_MARKER_QUALIFIED} WHERE name NOT IN (SELECT datname FROM pg_database)`,
@@ -629,9 +645,9 @@ function ensureGoldenTemplate(): Promise<string> {
         if (readyRows[0]?.ready === true) return;
 
         // Not ready (missing or half-built): rebuild from scratch under the lock.
-        await client.unsafe(`DROP DATABASE IF EXISTS "${goldenName}" WITH (FORCE)`).catch(() => {});
+        await gatedDdl(client, `DROP DATABASE IF EXISTS "${goldenName}" WITH (FORCE)`).catch(() => {});
         await client.unsafe(`DELETE FROM ${GOLDEN_MARKER_QUALIFIED} WHERE name = $1`, [goldenName]);
-        await client.unsafe(`CREATE DATABASE "${goldenName}"`);
+        await gatedDdl(client, `CREATE DATABASE "${goldenName}"`);
 
         // Apply the baseline on a separate connection to the golden database
         // while this maintenance session keeps holding the advisory lock, then
@@ -697,10 +713,8 @@ function ensureSchemaTemplate(): Promise<string> {
           FROM pg_stat_activity
           WHERE datname = ${goldenName} AND pid <> pg_backend_pid()
         `;
-        await client
-          .unsafe(`DROP DATABASE IF EXISTS "${templateName}" WITH (FORCE)`)
-          .catch(() => {});
-        await client.unsafe(`CREATE DATABASE "${templateName}" TEMPLATE "${goldenName}"`);
+        await gatedDdl(client, `DROP DATABASE IF EXISTS "${templateName}" WITH (FORCE)`).catch(() => {});
+        await gatedDdl(client, `CREATE DATABASE "${templateName}" TEMPLATE "${goldenName}"`);
       });
     });
     return templateName;
@@ -742,8 +756,8 @@ async function cloneDatabaseFromTemplate(dbName: string, template: string): Prom
             FROM pg_stat_activity
             WHERE datname = ${template} AND pid <> pg_backend_pid()
           `;
-          await client.unsafe(`DROP DATABASE IF EXISTS "${dbName}" WITH (FORCE)`).catch(() => {});
-          await client.unsafe(`CREATE DATABASE "${dbName}" TEMPLATE "${template}"`);
+          await gatedDdl(client, `DROP DATABASE IF EXISTS "${dbName}" WITH (FORCE)`).catch(() => {});
+          await gatedDdl(client, `CREATE DATABASE "${dbName}" TEMPLATE "${template}"`);
         });
         lastError = undefined;
         break;
@@ -829,6 +843,14 @@ export async function createEmptyPgTestDatabase(prefix = "fusion_test"): Promise
  *   high-core machines. Use it for shared-harness files that create a single
  *   database and do not exercise the per-module template lifecycle hooks.
  */
+/*
+FNXC:PgTestHarnessConnectionBudget 2026-08-17-02:22:
+FN-9131 leaves the experimental PostgreSQL connection budget deliberately
+unwired because loaded-lane trials regressed broadly. This harness neither
+admits a budget window nor clamps caller poolMax; a successor must prove a
+lifecycle boundary that covers only PostgreSQL participants before wiring the
+characterization primitive in pg-connection-budget.ts.
+*/
 export async function createTaskStoreForTest(options?: {
   readonly poolMax?: number;
   readonly prefix?: string;
