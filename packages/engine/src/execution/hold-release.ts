@@ -36,6 +36,15 @@
  * interleaving leaves the card held with no commit.
  */
 
+/*
+FNXC:Identity 2026-08-09-03:04 (U18/KTD2):
+Extracted helper of the unattended self-healing / scheduler sweeps, so its store writes carry
+the same MARKER as the sweeps that call it: a timer-driven repair has no session, no request,
+and no acting agent, and the only ids in scope name the SUBJECT of the write rather than its
+author. Counted by `unattributed-actor-census.test.ts`; U13 owns whether these lanes get a real
+system actor.
+*/
+import { UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 import {
   resolveColumnCapacity,
   resolveWipBudgetColumns,
@@ -978,7 +987,7 @@ export async function promoteHeldTask(
     // module's own gate do not pull the card back into the waived replan.
     if (task.status === "needs-replan" || task.status === "plan-review-unavailable") {
       try {
-        await store.updateTask(task.id, { status: null });
+        await store.updateTask(task.id, { status: null }, UNATTRIBUTED_MUTATION_CONTEXT);
         promoted = { ...task, status: undefined };
       } catch (error) {
         schedulerLog.warn(

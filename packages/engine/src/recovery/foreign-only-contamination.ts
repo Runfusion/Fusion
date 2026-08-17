@@ -1,4 +1,6 @@
 import { exec } from "node:child_process";
+/* FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage B): mutation-context constructors for this lane. */
+import { UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 import { existsSync } from "node:fs";
 import { promisify } from "node:util";
 import type { Task, TaskStore } from "@fusion/core";
@@ -83,14 +85,14 @@ export async function recoverForeignOnlyContamination(
       preserveResumeState: true,
       preserveProgress: true,
       preserveWorktree: true,
-    });
+    }, UNATTRIBUTED_MUTATION_CONTEXT);
     await deps.taskStore.updateTask(task.id, {
       recoveryRetryCount: 0,
       nextRecoveryAt: null,
       error: null,
       paused: false,
       pausedReason: null,
-    });
+    }, UNATTRIBUTED_MUTATION_CONTEXT);
     await deps.runAudit.database({
       type: "task:auto-recover-foreign-only-contamination",
       target: task.id,
@@ -121,7 +123,7 @@ export async function recoverForeignOnlyContamination(
     preserveResumeState: true,
     preserveProgress: true,
     preserveWorktree: false,
-  });
+  }, UNATTRIBUTED_MUTATION_CONTEXT);
   await deps.taskStore.updateTask(task.id, {
     recoveryRetryCount: 0,
     nextRecoveryAt: null,
@@ -132,7 +134,7 @@ export async function recoverForeignOnlyContamination(
     branch: null,
     baseCommitSha: null,
     modifiedFiles: [],
-  });
+  }, UNATTRIBUTED_MUTATION_CONTEXT);
   await deps.runAudit.database({
     type: "task:auto-recover-foreign-only-contamination",
     target: task.id,

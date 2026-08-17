@@ -89,7 +89,16 @@ export interface AcquireTaskWorktreeOptions {
   pool?: WorktreePool;
   logger?: { log: (m: string) => void; warn: (m: string) => void; debug?: (m: string) => void; error?: (m: string) => void };
   audit?: Pick<RunAuditor, "git" | "filesystem">;
-  runContext?: RunMutationContext;
+  /*
+  FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage C — required, not optional):
+  Stage B left this optional and resolved a single unattributed marker inside `acquireTaskWorktree`,
+  because `executor.ts` was the one caller that could not supply a context. Stage C threaded the
+  executor's run carrier, so every caller can — and the option is now REQUIRED. That is the whole
+  point of the staging: an optional context turns ~45 downstream writes in this file into writes an
+  unwired caller can silently leave unattributed, and only a required parameter makes that a compile
+  error instead.
+  */
+  runContext: RunMutationContext;
   runInitCommand?: boolean;
   secretsStore?: Pick<SecretsStore, "listEnvExportable">;
   createWorktree?: (
@@ -274,7 +283,8 @@ async function maybeWarnForeignTaskStartPoint(
     taskId: string;
     logger?: { warn: (m: string) => void };
     store: TaskStore;
-    runContext?: RunMutationContext;
+    /** FNXC:Identity 2026-08-09-03:04 (U18 Stage B): required — the only caller resolves it first. */
+    runContext: RunMutationContext;
   },
 ): Promise<void> {
   const { baseBranch, rootDir, worktreePath, taskId, logger, store, runContext } = input;
@@ -326,15 +336,21 @@ async function pinnedWorktreeBranchMatches(rootDir: string, worktreePath: string
 }
 
 export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Promise<AcquireTaskWorktreeResult> {
+  /*
+  FNXC:Identity 2026-08-15-22:52 (U18/KTD2 Stage C):
+  This file already threaded `runContext` end to end; what U18 changed is that the store now REFUSES
+  an absent one, and what Stage C changed is that the caller can no longer omit it. The ~45
+  downstream writes take the caller's context directly — there is no local fallback left to resolve.
+  */
   const { task, rootDir, store, settings, pool, logger, audit, runContext, createWorktree, runConfiguredCommand, runInitCommand, taskEnv, secretsStore } = opts;
   const persistWorktreeAssignment = async (patch: Parameters<TaskStore["updateTask"]>[1]): Promise<void> => {
     if (!opts.suppressSingularWorktreePersist) {
-      await store.updateTask(task.id, patch);
+      await store.updateTask(task.id, patch, runContext);
       return;
     }
     const { worktree: _worktree, branch: _branch, ...nonSingularPatch } = patch;
     if (Object.keys(nonSingularPatch).length > 0) {
-      await store.updateTask(task.id, nonSingularPatch);
+      await store.updateTask(task.id, nonSingularPatch, runContext);
     }
   };
   const renameWorktreeDirectory = opts.renameWorktreeDirectory ?? rename;
@@ -366,7 +382,7 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
     const refreshSettings = settings.worktrunk?.enabled === true
       ? { ...settings, worktrunk: { ...settings.worktrunk, enabled: false } }
       : settings;
-    const refresh = await refreshReusedWorktreeBase({ task, rootDir, worktreePath: path, store, settings: refreshSettings, audit, logger });
+    const refresh = await refreshReusedWorktreeBase({ task, rootDir, worktreePath: path, store, settings: refreshSettings, audit, logger, runContext });
     /*
     FNXC:WorktreeBaseRefresh 2026-08-09-23:49:
     A declined refresh is an unremarkable outcome, not an execution failure: the checkout is intact and the
@@ -958,7 +974,7 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
         }
       }
       // The removed worktree's session cannot resume into a fresh checkout — clear it so the executor starts clean.
-      await store.updateTask(task.id, { sessionFile: null });
+      await store.updateTask(task.id, { sessionFile: null }, runContext);
     }
 
       const created = await createWorktreeImpl(branchName, pinnedPath, task.id, freshStartPoint, allowSiblingBranchRename, true);
@@ -1178,7 +1194,8 @@ async function verifyResumeBranchNotMisbound(input: {
   store: TaskStore;
   audit?: Pick<RunAuditor, "git" | "filesystem">;
   logger?: { log?: (msg: string) => void; warn?: (msg: string) => void };
-  runContext: RunMutationContext | undefined;
+  /** FNXC:Identity 2026-08-09-03:04 (U18 Stage B): required — both callers sit below the single resolution point above. */
+  runContext: RunMutationContext;
 }): Promise<void> {
   const { worktreePath, branchName, taskId, rootDir, store, audit, logger, runContext } = input;
 
@@ -1250,7 +1267,10 @@ export interface AcquireWorkspaceRepoWorktreeOptions {
   logger?: { log: (m: string) => void; warn: (m: string) => void; error?: (m: string) => void };
   secretsStore?: Pick<SecretsStore, "listEnvExportable">;
   audit?: Pick<RunAuditor, "git" | "filesystem">;
-  runContext?: RunMutationContext;
+  /* FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage C): required for the same reason as
+     `AcquireTaskWorktreeOptions.runContext` — the sole context-less caller was
+     `fn_acquire_repo_worktree`, built by `executor.ts`, which now carries a run context. */
+  runContext: RunMutationContext;
   /** Test seam: inject the path-keyed exclusivity registry (defaults to the process singleton). */
   registry?: ActiveSessionRegistry;
   runConfiguredCommand?: AcquireTaskWorktreeOptions["runConfiguredCommand"];

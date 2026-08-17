@@ -31,7 +31,8 @@ export interface HandleFailureParams {
   task: Task;
   settings: WorktrunkSettings;
   store: Pick<TaskStore, "pauseTask" | "updateTask">;
-  runContext?: RunMutationContext;
+  /** FNXC:Identity 2026-08-09-03:04 (U18 Stage B): required — worktree acquisition resolves one before calling. */
+  runContext: RunMutationContext;
   runAudit?: Pick<RunAuditor, "git">;
   notify: (event: WorktrunkFailureNotification) => Promise<void> | void;
   nativeFallback?: () => Promise<WorktreeOperationResult>;

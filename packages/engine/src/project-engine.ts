@@ -51,7 +51,19 @@ import {
   resolveEngineIncarnationId,
   resolveEngineNodeId,
   type WorkspaceLeaseHandle,
+  mutationContextForAgent,
+  type RunMutationContext,
 } from "@fusion/core";
+/*
+FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage B):
+ProjectEngine's mutating lanes each have a real lane actor already named in their run-audit rows
+("auto-merge" for the merge drain, "planner-overseer" for the recovery handlers), so those convert by
+DERIVING from the same identity rather than marking. The marker below is imported for exactly two
+sites that have no actor at all: the operator-invoked `stopOverseerTask` entry point (U9/U11 owns the
+human actor) and the `clearStaleMergingStatuses` startup sweep (U13, same category as Stage A's
+self-healing sweeps). One-line import on purpose — a multi-line import member scores in the census.
+*/
+import { UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 import { assemblePlannerOverseerRuntimeSnapshot } from "./overseer/planner-overseer-runtime-snapshot.js";
 import { resolveIntegrationBranch } from "./merge/integration-branch.js";
 import { execFile } from "node:child_process";
@@ -121,7 +133,7 @@ import { ResearchOrchestrator } from "./research/research-orchestrator.js";
 import { ResearchRunDispatcher } from "./research/research-dispatcher.js";
 import { ResearchStepRunner } from "./research/research-step-runner.js";
 import { ResearchProviderRegistry } from "./research/provider-registry.js";
-import { createRunAuditor, generateSyntheticRunId } from "./util/run-audit.js";
+import { createRunAuditor, generateSyntheticRunId, toRunMutationContext, type EngineRunContext } from "./util/run-audit.js";
 import { finalizeProvenAutoMergeTask } from "./merge/auto-merge-finalization.js";
 import { isTransientError } from "./errors/transient-error-detector.js";
 import { classifyTransientMergeError, MAX_AUTO_MERGE_TRANSIENT_RETRIES } from "./errors/transient-merge-error-classifier.js";
@@ -1992,7 +2004,7 @@ export class ProjectEngine {
       const updatedTask = await store.updateTask(taskId, {
         plannerOversightLevel: "off",
         sessionAdvisorEnabled: false,
-      });
+      }, UNATTRIBUTED_MUTATION_CONTEXT);
       this.plannerOverseer?.clear(taskId);
       this.plannerRecoveryController?.clear(taskId);
       this.sessionAdvisor?.clear(taskId);
@@ -2208,7 +2220,7 @@ export class ProjectEngine {
             );
             await store.logEntry(
               task.id,
-              `[planner] stage=${stage} signal=retry-skipped: live session active — not bouncing to todo`,
+              `[planner] stage=${stage} signal=retry-skipped: live session active — not bouncing to todo`, undefined, mutationContextForAgent("planner-overseer", generateSyntheticRunId("planner-overseer-recovery", task.id)),
             ).catch(() => undefined);
           }
           return false;
@@ -2216,7 +2228,7 @@ export class ProjectEngine {
         // Live surface cleared — allow a fresh skip log if work goes live again later.
         this.plannerLiveRetrySkipLogDedup.delete(`${task.id}::${decision.watchedStage ?? "executor"}`);
         /* FNXC:WorkflowResolvedColumns 2026-07-30-22:20: census-invisible moveTask DESTINATION — a call argument, not a comparison. */
-        await store.moveTask(task.id, await resolveReboundTargetForTask(store, task.id), { preserveProgress: true, moveSource: "engine" } as Parameters<TaskStore["moveTask"]>[2]);
+        await store.moveTask(task.id, await resolveReboundTargetForTask(store, task.id), { preserveProgress: true, moveSource: "engine" } as Parameters<TaskStore["moveTask"]>[2], mutationContextForAgent("planner-overseer", generateSyntheticRunId("planner-overseer-recovery", task.id)));
         // FN-7551: the attempt just dispatched — record it as attemptCount + 1
         // (decision.attemptCount is the count BEFORE this dispatch).
         await this.emitOverseerInterventionSafe(() =>
@@ -3716,6 +3728,19 @@ export class ProjectEngine {
         const shadowCandidateTaskId = await this.getShadowMergeRequestCandidateId();
         const taskId = await this.pickNextMergeTaskId(store);
         if (!taskId) break;
+        /*
+        FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage B):
+        One run context per queued task, declared at the top of the drain iteration so every store
+        mutation in this pass carries the SAME run id as the pass's run-audit rows. `"auto-merge"` is
+        not invented here — it is the `agentId` this method's existing `createRunAuditor` calls
+        already use, so the audit stream and the task log now agree on who acted.
+        */
+        const autoMergeRunContext: EngineRunContext = {
+          runId: generateSyntheticRunId("auto-merge", taskId),
+          agentId: "auto-merge",
+          taskId,
+          phase: "merge",
+        };
         const shadowSettings = await store.getSettings();
         if (shadowSettings.mergeRequestContractShadowEnabled === true) {
           this.emitMergeRequestShadowDequeueParity(taskId, shadowCandidateTaskId);
@@ -3736,7 +3761,7 @@ export class ProjectEngine {
                 attemptCount: mergeRequest.attemptCount,
                 lastError: mergeRequest.lastError ?? "merge-request-running-age-cap-exhausted",
               });
-              await store.logEntry(taskId, "Merge-request retry cap reached in running state; marked merge request exhausted without executor rebound");
+              await store.logEntry(taskId, "Merge-request retry cap reached in running state; marked merge request exhausted without executor rebound", undefined, toRunMutationContext(autoMergeRunContext));
               continue;
             }
           }
@@ -3893,13 +3918,13 @@ export class ProjectEngine {
                   );
                   await store.logEntry(
                     taskId,
-                    `[FN-5627] Auto-merge fast-path refused (retry budget exhausted) — ${errorMsg}`,
+                    `[FN-5627] Auto-merge fast-path refused (retry budget exhausted) — ${errorMsg}`, undefined, toRunMutationContext(autoMergeRunContext),
                   );
                   await store.updateTask(taskId, {
                     mergeDetails: cleanedMergeDetails,
                     status: "failed",
                     error: errorMsg,
-                  });
+                  }, toRunMutationContext(autoMergeRunContext));
                   try {
                     const auditor = createRunAuditor(store, {
                       runId: generateSyntheticRunId("merger-fast-path-refused", taskId),
@@ -3948,14 +3973,14 @@ export class ProjectEngine {
                 // ntfy fired off the underlying task:failed event.
                 await store.logEntry(
                   taskId,
-                  `Auto-recovered: fast-path refused — cleared poisoned mergeDetails (commit ${shortSha} not reachable from ${integrationBranchForGate}, ${reachability.reason}). Re-enqueueing for fresh merge attempt ${nextRetries}/${maxAutoMergeRetries} [FN-5627].`,
+                  `Auto-recovered: fast-path refused — cleared poisoned mergeDetails (commit ${shortSha} not reachable from ${integrationBranchForGate}, ${reachability.reason}). Re-enqueueing for fresh merge attempt ${nextRetries}/${maxAutoMergeRetries} [FN-5627].`, undefined, toRunMutationContext(autoMergeRunContext),
                 );
                 await store.updateTask(taskId, {
                   mergeDetails: cleanedMergeDetails,
                   mergeRetries: nextRetries,
                   status: null,
                   error: null,
-                });
+                }, toRunMutationContext(autoMergeRunContext));
                 try {
                   const auditor = createRunAuditor(store, {
                     runId: generateSyntheticRunId("merger-fast-path-auto-recovered", taskId),
@@ -4019,10 +4044,10 @@ export class ProjectEngine {
                 await store.updateTask(taskId, {
                   status: "failed",
                   error: `Merge confirmed but finalization blocked: ${blockerReason}`,
-                });
+                }, toRunMutationContext(autoMergeRunContext));
                 await store.logEntry(
                   taskId,
-                  `Merge confirmed finalization blocked — ${blockerReason}. Task parked in in-review for manual completion.`,
+                  `Merge confirmed finalization blocked — ${blockerReason}. Task parked in in-review for manual completion.`, undefined, toRunMutationContext(autoMergeRunContext),
                 );
                 runtimeLog.warn(
                   `Auto-merge: ${taskId} merge-confirmed finalize blocked — ${blockerReason}`,
@@ -4040,7 +4065,7 @@ export class ProjectEngine {
                     mergeTargetBranch: routedFastPathTarget,
                     mergeTargetSource: expectedFastPathTargetSource,
                   },
-                });
+                }, toRunMutationContext(autoMergeRunContext));
                 task.mergeDetails = {
                   ...task.mergeDetails,
                   mergeTargetBranch: routedFastPathTarget,
@@ -4069,7 +4094,7 @@ export class ProjectEngine {
               );
               await store.logEntry(
                 taskId,
-                "Merge already confirmed; refreshing row and completing task (recovered from post-merge state inconsistency)",
+                "Merge already confirmed; refreshing row and completing task (recovered from post-merge state inconsistency)", undefined, toRunMutationContext(autoMergeRunContext),
               );
               const auditor = createRunAuditor(store, {
                 runId: generateSyntheticRunId("merger-fast-path-finalize", taskId),
@@ -4106,7 +4131,7 @@ export class ProjectEngine {
                 );
                 await store.logEntry(
                   taskId,
-                  `Merge confirmed finalization blocked — ${finalization.reason ?? "unknown"}. Task parked for manual completion.`,
+                  `Merge confirmed finalization blocked — ${finalization.reason ?? "unknown"}. Task parked for manual completion.`, undefined, toRunMutationContext(autoMergeRunContext),
                 );
                 continue;
               }
@@ -4130,9 +4155,9 @@ export class ProjectEngine {
             if (this.hasAutoHealableVerificationBufferFailure(task as any, maxAutoMergeRetries)) {
               await store.logEntry(
                 taskId,
-                "Auto-healing stale deterministic verification buffer failure; retrying merge verification",
+                "Auto-healing stale deterministic verification buffer failure; retrying merge verification", undefined, toRunMutationContext(autoMergeRunContext),
               );
-              await store.updateTask(taskId, { mergeRetries: 0, error: null, status: null });
+              await store.updateTask(taskId, { mergeRetries: 0, error: null, status: null }, toRunMutationContext(autoMergeRunContext));
             } else if (
               (task.mergeRetries ?? 0) >= maxAutoMergeRetries &&
 
@@ -4140,9 +4165,9 @@ export class ProjectEngine {
             ) {
               await store.logEntry(
                 taskId,
-                `Auto-merge retry cooldown elapsed (${Math.round(ProjectEngine.AUTO_MERGE_COOLDOWN_MS / 60000)}m idle); resetting retries for another attempt`,
+                `Auto-merge retry cooldown elapsed (${Math.round(ProjectEngine.AUTO_MERGE_COOLDOWN_MS / 60000)}m idle); resetting retries for another attempt`, undefined, toRunMutationContext(autoMergeRunContext),
               );
-              await store.updateTask(taskId, { mergeRetries: 0 });
+              await store.updateTask(taskId, { mergeRetries: 0 }, toRunMutationContext(autoMergeRunContext));
             }
           }
 
@@ -4654,7 +4679,7 @@ export class ProjectEngine {
             // Reset retries on success
             const latestTask = await store.getTask(taskId).catch(() => null);
             if (latestTask && (latestTask.mergeRetries ?? 0) > 0) {
-              await store.updateTask(taskId, { mergeRetries: 0 });
+              await store.updateTask(taskId, { mergeRetries: 0 }, toRunMutationContext(autoMergeRunContext));
             }
             // FNXC:Workspace 2026-06-22-05:10 (Phase C review B4): clear the in-memory busy
             // re-enqueue counter once the merge succeeds so a later unrelated contention starts fresh.
@@ -4673,6 +4698,8 @@ export class ProjectEngine {
             await this.clearAbortedMergeStamp(taskId);
             if (hasManualResolver) {
               this.rejectMergeResolvers(taskId, err instanceof Error ? err : new Error(errorMsg));
+            } else {
+              await store.updateTask(taskId, { status: null }, toRunMutationContext(autoMergeRunContext)).catch(() => undefined);
             }
             continue;
           }
@@ -4697,13 +4724,13 @@ export class ProjectEngine {
               `${hasManualResolver ? "Manual" : "Auto"}-merge blocked for ${taskId}: workspace task reached a single-repo merge path and must land per-repo via landWorkspaceTask; parking as failed (manual retry still works) without exhausting mergeRetries: ${errorMsg}`,
             );
             await store
-              .logEntry(taskId, `Merge blocked: ${errorMsg}`, "WorkspaceTaskMergeError")
+              .logEntry(taskId, `Merge blocked: ${errorMsg}`, "WorkspaceTaskMergeError", toRunMutationContext(autoMergeRunContext))
               .catch(() => undefined);
             if (hasManualResolver) {
               this.rejectMergeResolvers(taskId, err instanceof Error ? err : new Error(errorMsg));
             } else {
               await store
-                .updateTask(taskId, { status: "failed", mergeRetries: 0, error: errorMsg })
+                .updateTask(taskId, { status: "failed", mergeRetries: 0, error: errorMsg }, toRunMutationContext(autoMergeRunContext))
                 .catch(() => undefined);
             }
             continue;
@@ -4734,7 +4761,7 @@ export class ProjectEngine {
             || err instanceof WorkspaceMergeDispatchSupersededError;
           if (isWorkspaceBusyError && hasManualResolver) {
             await store
-              .logEntry(taskId, `Workspace sub-repo land busy (contention): ${errorMsg}`, "WorkspaceRepoLandBusy")
+              .logEntry(taskId, `Workspace sub-repo land busy (contention): ${errorMsg}`, "WorkspaceRepoLandBusy", toRunMutationContext(autoMergeRunContext))
               .catch(() => undefined);
             this.rejectMergeResolvers(taskId, err instanceof Error ? err : new Error(errorMsg));
             continue;
@@ -4743,13 +4770,13 @@ export class ProjectEngine {
           if (isWorkspaceBusyError && !hasManualResolver) {
             const busyCount = this.workspaceBusyReenqueues.get(taskId) ?? 0;
             await store
-              .logEntry(taskId, `Workspace sub-repo land busy (contention): ${errorMsg}`, "WorkspaceRepoLandBusy")
+              .logEntry(taskId, `Workspace sub-repo land busy (contention): ${errorMsg}`, "WorkspaceRepoLandBusy", toRunMutationContext(autoMergeRunContext))
               .catch(() => undefined);
             if (busyCount < ProjectEngine.WORKSPACE_BUSY_MAX_REENQUEUES) {
               this.workspaceBusyReenqueues.set(taskId, busyCount + 1);
               // Capped exponential backoff (B5): never exceed 60s even at the busy ceiling.
               const delayMs = Math.min(5000 * Math.pow(2, busyCount), 60_000);
-              await store.updateTask(taskId, { status: null }).catch(() => undefined);
+              await store.updateTask(taskId, { status: null }, toRunMutationContext(autoMergeRunContext)).catch(() => undefined);
               runtimeLog.log(
                 `Workspace land busy re-enqueue ${busyCount + 1}/${ProjectEngine.WORKSPACE_BUSY_MAX_REENQUEUES} for ${taskId} in ${delayMs / 1000}s (no mergeRetry consumed — pure lease contention)`,
               );
@@ -4759,7 +4786,7 @@ export class ProjectEngine {
               // failed so the cooldown sweep stops re-attempting and an operator can intervene.
               this.workspaceBusyReenqueues.delete(taskId);
               await store
-                .updateTask(taskId, { status: "failed", error: errorMsg })
+                .updateTask(taskId, { status: "failed", error: errorMsg }, toRunMutationContext(autoMergeRunContext))
                 .catch(() => undefined);
               runtimeLog.error(
                 `Auto-merge: ${taskId} workspace land busy ${ProjectEngine.WORKSPACE_BUSY_MAX_REENQUEUES} times — parked as failed (sustained sub-repo lease contention)`,
@@ -4828,11 +4855,11 @@ export class ProjectEngine {
                 .logEntry(
                   taskId,
                   `Workspace partial land — task state unreadable (DB error); parking as failed instead of scheduling a retry storm: ${errorMsg}`,
-                  "WorkspacePartialLand",
+                  "WorkspacePartialLand", toRunMutationContext(autoMergeRunContext),
                 )
                 .catch(() => undefined);
               await store
-                .updateTask(taskId, { status: "failed", error: errorMsg })
+                .updateTask(taskId, { status: "failed", error: errorMsg }, toRunMutationContext(autoMergeRunContext))
                 .catch(() => undefined);
               continue;
             }
@@ -4843,7 +4870,7 @@ export class ProjectEngine {
               { skipAutoResolveCheck: true },
             );
             await store
-              .logEntry(taskId, `Workspace partial land: ${errorMsg}`, "WorkspacePartialLand")
+              .logEntry(taskId, `Workspace partial land: ${errorMsg}`, "WorkspacePartialLand", toRunMutationContext(autoMergeRunContext))
               .catch(() => undefined);
             if (decision.shouldRetry) {
               /*
@@ -4856,14 +4883,14 @@ export class ProjectEngine {
               non-responsive DB; the cooldown sweep re-evaluates once the DB recovers.
               */
               try {
-                await store.updateTask(taskId, { mergeRetries: decision.nextRetryCount, status: null });
+                await store.updateTask(taskId, { mergeRetries: decision.nextRetryCount, status: null }, toRunMutationContext(autoMergeRunContext));
               } catch (persistErr: unknown) {
                 const pmsg = persistErr instanceof Error ? persistErr.message : String(persistErr);
                 runtimeLog.error(
                   `Auto-merge: ${taskId} workspace partial land retry NOT scheduled — mergeRetries could not be persisted (DB outage?), failing closed instead of a retry storm: ${pmsg}`,
                 );
                 await store
-                  .updateTask(taskId, { status: "failed", error: errorMsg })
+                  .updateTask(taskId, { status: "failed", error: errorMsg }, toRunMutationContext(autoMergeRunContext))
                   .catch(() => undefined);
                 continue;
               }
@@ -4878,13 +4905,13 @@ export class ProjectEngine {
               }, delayMs);
             } else {
               await store
-                .updateTask(taskId, { status: "failed", mergeRetries: decision.maxAutoMergeRetries, error: errorMsg })
+                .updateTask(taskId, { status: "failed", mergeRetries: decision.maxAutoMergeRetries, error: errorMsg }, toRunMutationContext(autoMergeRunContext))
                 .catch(() => undefined);
               await store
                 .logEntry(
                   taskId,
                   `Workspace partial land exhausted ${decision.maxAutoMergeRetries} retries — parking as failed for operator intervention (landed repos remain landed locally): ${errorMsg}`,
-                  "WorkspacePartialLand",
+                  "WorkspacePartialLand", toRunMutationContext(autoMergeRunContext),
                 )
                 .catch(() => undefined);
               runtimeLog.error(
@@ -4902,7 +4929,7 @@ export class ProjectEngine {
             .logEntry(
               taskId,
               `${hasManualResolver ? "Manual" : "Auto"}-merge failed: ${errorMsg}`,
-              err instanceof Error ? err.name : undefined,
+              err instanceof Error ? err.name : undefined, toRunMutationContext(autoMergeRunContext),
             )
             .catch((logErr: unknown) => {
               runtimeLog.warn(
@@ -4971,7 +4998,7 @@ export class ProjectEngine {
                 : null;
               const errorTail = errorMsg.length > 200 ? `${errorMsg.slice(0, 200)}…` : errorMsg;
               const message = `[verification] post-finalize verification failed for already-on-main fast-path; no action (commit=${shortSha}, error=${errorTail})`;
-              await store.logEntry(taskId, message, "VerificationError").catch(() => undefined);
+              await store.logEntry(taskId, message, "VerificationError", toRunMutationContext(autoMergeRunContext)).catch(() => undefined);
               runtimeLog.log(`Auto-merge: ${taskId} ${message}`);
               const auditor = createRunAuditor(store, {
                 runId: generateSyntheticRunId("auto-merge", taskId),
@@ -5000,7 +5027,7 @@ export class ProjectEngine {
             ) {
               const packageName = err.verificationResult.environmentFault.packageName;
               const message = `${taskId}: verification failed with environment fault (missing-workspace-entry: ${packageName}) — leaving in-review for next sweep, not incrementing verificationFailureCount`;
-              await store.logEntry(taskId, message, "VerificationError").catch(() => undefined);
+              await store.logEntry(taskId, message, "VerificationError", toRunMutationContext(autoMergeRunContext)).catch(() => undefined);
               runtimeLog.log(`Auto-merge: ${message}`);
               continue;
             }
@@ -5035,7 +5062,7 @@ export class ProjectEngine {
                     : null;
                   const errorTail = errorMsg.length > 200 ? `${errorMsg.slice(0, 200)}…` : errorMsg;
                   const message = `[verification] post-finalize VerificationError on already-done task — no action (commit=${shortSha}, cmd=${failedCommand ?? "unknown"}, exit=${exitCode ?? "unknown"}, error=${errorTail})`;
-                  await store.logEntry(taskId, message, "VerificationError").catch(() => undefined);
+                  await store.logEntry(taskId, message, "VerificationError", toRunMutationContext(autoMergeRunContext)).catch(() => undefined);
                   runtimeLog.log(`Auto-merge: ${taskId} ${message}`);
                   const auditor = createRunAuditor(store, {
                     runId: generateSyntheticRunId("auto-merge", taskId),
@@ -5060,7 +5087,7 @@ export class ProjectEngine {
                   status: "failed",
                   verificationFailureCount: nextBounces,
                   error: `Deterministic ${failedKind} verification failed ${nextBounces}× — auto-merge giving up to avoid infinite retry loop. Likely a flaky test or an unrelated regression rather than a fix this task can produce on its own; see the most recent [verification] log entries on this task for the failing command and output.`,
-                });
+                }, toRunMutationContext(autoMergeRunContext));
                 await store.addTaskComment(
                   taskId,
                   `Auto-merge giving up after ${nextBounces} verification-failure bounces. ` +
@@ -5071,7 +5098,7 @@ export class ProjectEngine {
                 await store.logEntry(
                   taskId,
                   `Auto-merge gave up after ${nextBounces} verification-failure bounces — task parked for human intervention`,
-                  "VerificationError",
+                  "VerificationError", toRunMutationContext(autoMergeRunContext),
                 );
                 runtimeLog.warn(
                   `Auto-merge: ${taskId} hit verification-failure cap (${nextBounces}/${cap}) — failed task and parked for human intervention`,
@@ -5100,7 +5127,7 @@ export class ProjectEngine {
                   : null;
                 const errorTail = errorMsg.length > 200 ? `${errorMsg.slice(0, 200)}…` : errorMsg;
                 const message = `[verification] post-finalize VerificationError on already-done task — no action (commit=${shortSha}, cmd=${failedCommand ?? "unknown"}, exit=${exitCode ?? "unknown"}, error=${errorTail})`;
-                await store.logEntry(taskId, message, "VerificationError").catch(() => undefined);
+                await store.logEntry(taskId, message, "VerificationError", toRunMutationContext(autoMergeRunContext)).catch(() => undefined);
                 runtimeLog.log(`Auto-merge: ${taskId} ${message}`);
                 const auditor = createRunAuditor(store, {
                   runId: generateSyntheticRunId("auto-merge", taskId),
@@ -5133,12 +5160,12 @@ export class ProjectEngine {
                 mergeRetries: 0,
                 error: null,
                 verificationFailureCount: nextBounces,
-              });
+              }, toRunMutationContext(autoMergeRunContext));
               /* FNXC:WorkflowResolvedColumns 2026-07-30-21:40: census-invisible moveTask DESTINATION — a call argument, not a comparison. */
-              await store.moveTask(taskId, await resolveWipTargetForTask(store, taskId));
+              await store.moveTask(taskId, await resolveWipTargetForTask(store, taskId), undefined, toRunMutationContext(autoMergeRunContext));
               await store.logEntry(
                 taskId,
-                `Deterministic ${failedKind} verification failed (${nextBounces}/${cap}) — moved back to in-progress with status=merging-fix for remediation`,
+                `Deterministic ${failedKind} verification failed (${nextBounces}/${cap}) — moved back to in-progress with status=merging-fix for remediation`, undefined, toRunMutationContext(autoMergeRunContext),
               );
               runtimeLog.log(
                 `Auto-merge: ${taskId} deterministic ${failedKind} verification failed (${nextBounces}/${cap}) — moved to in-progress with status=merging-fix`,
@@ -5172,7 +5199,7 @@ export class ProjectEngine {
               const retryDecision = shouldRetryAutoMergeConflict(currentRetries, settingsOnErr);
               if (retryDecision.shouldRetry) {
                 const newRetryCount = retryDecision.nextRetryCount;
-                await store.updateTask(taskId, { mergeRetries: newRetryCount, status: null });
+                await store.updateTask(taskId, { mergeRetries: newRetryCount, status: null }, toRunMutationContext(autoMergeRunContext));
 
                 // Exponential backoff: 5s, 10s, 20s
                 const delayMs = 5000 * Math.pow(2, currentRetries);
@@ -5219,7 +5246,7 @@ export class ProjectEngine {
                       status: "failed",
                       mergeRetries: maxAutoMergeRetriesOnErr,
                       error: `Auto-merge gave up: ${reason}. ${errorMsg}`,
-                    });
+                    }, toRunMutationContext(autoMergeRunContext));
                     await store.addTaskComment(
                       taskId,
                       `Auto-merge gave up after ${maxAutoMergeRetriesOnErr} conflict-resolution retries (${reason}). ` +
@@ -5229,7 +5256,7 @@ export class ProjectEngine {
                     await store.logEntry(
                       taskId,
                       `Auto-merge gave up after conflict retries exhausted (${reason}); task parked for human intervention`,
-                      "MergeConflictGiveUp",
+                      "MergeConflictGiveUp", toRunMutationContext(autoMergeRunContext),
                     );
                   } catch (recoveryErr) {
                     runtimeLog.error(
@@ -5250,13 +5277,13 @@ export class ProjectEngine {
                       mergeRetries: 0,
                       error: null,
                       mergeConflictBounceCount: nextBounces,
-                    });
+                    }, toRunMutationContext(autoMergeRunContext));
                     /* FNXC:WorkflowResolvedColumns 2026-07-30-21:40: census-invisible moveTask DESTINATION — a call argument, not a comparison. */
-                    await store.moveTask(taskId, await resolveWipTargetForTask(store, taskId));
+                    await store.moveTask(taskId, await resolveWipTargetForTask(store, taskId), undefined, toRunMutationContext(autoMergeRunContext));
                     await store.logEntry(
                       taskId,
                       `Auto-merge conflicts unresolved (${maxAutoMergeRetriesOnErr}/${maxAutoMergeRetriesOnErr}) — bounced to in-progress for re-rebase (bounce ${nextBounces}/${bounceCap})`,
-                      "MergeConflictBounce",
+                      "MergeConflictBounce", toRunMutationContext(autoMergeRunContext),
                     );
                     runtimeLog.log(
                       `Auto-merge: ${taskId} conflict retries exhausted — bounced to in-progress (${nextBounces}/${bounceCap})`,
@@ -5274,7 +5301,7 @@ export class ProjectEngine {
               // re-attempt; the catch-block-top logEntry already recorded the
               // failure on the task log.
               try {
-                if (await this.maybeRetryTransientMerge(store, taskId, taskOnErr, errorMsg)) {
+                if (await this.maybeRetryTransientMerge(store, taskId, taskOnErr, errorMsg, false, toRunMutationContext(autoMergeRunContext))) {
                   continue;
                 }
                 if (this.isTransientMergeRetryExhausted(taskOnErr, errorMsg)) {
@@ -5300,25 +5327,25 @@ export class ProjectEngine {
                     await store.logEntry(
                       taskId,
                       `Auto-merge transient retries exhausted (${ProjectEngine.MAX_AUTO_MERGE_TRANSIENT_RETRIES}/${ProjectEngine.MAX_AUTO_MERGE_TRANSIENT_RETRIES}); marked merge request exhausted without column rebound: ${errorMsg}`,
-                      "MergeTransientRetryExhausted",
+                      "MergeTransientRetryExhausted", toRunMutationContext(autoMergeRunContext),
                     );
                     continue;
                   }
                   await store.logEntry(
                     taskId,
                     `Auto-merge transient retries exhausted (${ProjectEngine.MAX_AUTO_MERGE_TRANSIENT_RETRIES}/${ProjectEngine.MAX_AUTO_MERGE_TRANSIENT_RETRIES}); parking task as failed: ${errorMsg}`,
-                    "MergeTransientRetryExhausted",
+                    "MergeTransientRetryExhausted", toRunMutationContext(autoMergeRunContext),
                   );
                 }
                 await store.updateTask(taskId, {
                   status: "failed",
                   mergeRetries: maxAutoMergeRetriesOnErr,
                   error: errorMsg,
-                });
+                }, toRunMutationContext(autoMergeRunContext));
                 await store.logEntry(
                   taskId,
                   `Auto-merge failed with a non-conflict error and stopped retrying: ${errorMsg}`,
-                  "MergeNonConflictFailure",
+                  "MergeNonConflictFailure", toRunMutationContext(autoMergeRunContext),
                 );
               } catch (recoveryErr) {
                 runtimeLog.error(
@@ -5354,12 +5381,12 @@ export class ProjectEngine {
                   status: "awaiting-approval",
                   error: diagnosis.message,
                   awaitingApprovalReason: "merge-blocked-by-policy",
-                });
-                await store.logEntry(taskId, `Pull-request merge blocked by policy; awaiting operator resume: ${diagnosis.message}`, "MergePolicyBlocked");
+                }, toRunMutationContext(autoMergeRunContext));
+                await store.logEntry(taskId, `Pull-request merge blocked by policy; awaiting operator resume: ${diagnosis.message}`, "MergePolicyBlocked", toRunMutationContext(autoMergeRunContext));
                 continue;
               }
               const structuredTransient = isStructuredTransientGhOutcome(diagnosis.code);
-              if (await this.maybeRetryTransientMerge(store, taskId, taskOnErr, errorMsg, structuredTransient)) {
+              if (await this.maybeRetryTransientMerge(store, taskId, taskOnErr, errorMsg, structuredTransient, toRunMutationContext(autoMergeRunContext))) {
                 continue;
               }
               /*
@@ -5392,14 +5419,14 @@ export class ProjectEngine {
                       });
                     }
                   }
-                  await store.logEntry(taskId, `Pull-request transient retries exhausted (${ProjectEngine.MAX_AUTO_MERGE_TRANSIENT_RETRIES}/${ProjectEngine.MAX_AUTO_MERGE_TRANSIENT_RETRIES}); marked merge request exhausted without consuming merge retries: ${errorMsg}`, "MergeTransientRetryExhausted");
+                  await store.logEntry(taskId, `Pull-request transient retries exhausted (${ProjectEngine.MAX_AUTO_MERGE_TRANSIENT_RETRIES}/${ProjectEngine.MAX_AUTO_MERGE_TRANSIENT_RETRIES}); marked merge request exhausted without consuming merge retries: ${errorMsg}`, "MergeTransientRetryExhausted", toRunMutationContext(autoMergeRunContext));
                   continue;
                 }
                 await store.updateTask(taskId, {
                   status: "failed",
                   error: errorMsg,
-                });
-                await store.logEntry(taskId, `Pull-request transient retries exhausted (${ProjectEngine.MAX_AUTO_MERGE_TRANSIENT_RETRIES}/${ProjectEngine.MAX_AUTO_MERGE_TRANSIENT_RETRIES}); task parked without consuming merge retries: ${errorMsg}`, "MergeTransientRetryExhausted");
+                }, toRunMutationContext(autoMergeRunContext));
+                await store.logEntry(taskId, `Pull-request transient retries exhausted (${ProjectEngine.MAX_AUTO_MERGE_TRANSIENT_RETRIES}/${ProjectEngine.MAX_AUTO_MERGE_TRANSIENT_RETRIES}); task parked without consuming merge retries: ${errorMsg}`, "MergeTransientRetryExhausted", toRunMutationContext(autoMergeRunContext));
                 continue;
               }
               if (!diagnosis.retryable) {
@@ -5407,8 +5434,8 @@ export class ProjectEngine {
                 await store.updateTask(taskId, {
                   status: "failed",
                   error: diagnosis.message,
-                });
-                await store.logEntry(taskId, `Pull-request merge failed without retry (${diagnosis.code}): ${diagnosis.message}`, "MergeNonRetryableFailure");
+                }, toRunMutationContext(autoMergeRunContext));
+                await store.logEntry(taskId, `Pull-request merge failed without retry (${diagnosis.code}): ${diagnosis.message}`, "MergeNonRetryableFailure", toRunMutationContext(autoMergeRunContext));
                 continue;
               }
               const currentRetries = taskOnErr?.mergeRetries ?? 0;
@@ -5419,8 +5446,8 @@ export class ProjectEngine {
                   status: "failed",
                   mergeRetries: nextRetries,
                   error: errorMsg,
-                });
-                await store.logEntry(taskId, `Pull-request merge retries exhausted after ${nextRetries}/${maxAutoMergeRetriesOnErr} actual failures: ${errorMsg}`, "MergeRetriesExhausted");
+                }, toRunMutationContext(autoMergeRunContext));
+                await store.logEntry(taskId, `Pull-request merge retries exhausted after ${nextRetries}/${maxAutoMergeRetriesOnErr} actual failures: ${errorMsg}`, "MergeRetriesExhausted", toRunMutationContext(autoMergeRunContext));
                 continue;
               }
               const delayMs = PR_MERGE_RETRY_BACKOFF_BASE_MS * Math.pow(2, currentRetries);
@@ -5431,12 +5458,12 @@ export class ProjectEngine {
               advance it past the timer deadline and make the queue reject its own
               scheduled retry as still early.
               */
-              await store.logEntry(taskId, `Pull-request merge retry ${nextRetries}/${maxAutoMergeRetriesOnErr} scheduled in ${delayMs / 1000}s: ${errorMsg}`, "MergeRetry");
+              await store.logEntry(taskId, `Pull-request merge retry ${nextRetries}/${maxAutoMergeRetriesOnErr} scheduled in ${delayMs / 1000}s: ${errorMsg}`, "MergeRetry", toRunMutationContext(autoMergeRunContext));
               await store.updateTask(taskId, {
                 mergeRetries: nextRetries,
                 status: null,
                 error: null,
-              });
+              }, toRunMutationContext(autoMergeRunContext));
               this.schedulePrMergeRetry(taskId, Date.now() + delayMs);
             } catch (recoveryErr) {
               runtimeLog.error(
@@ -5502,6 +5529,8 @@ export class ProjectEngine {
     taskOnErr: Task | null,
     errorMsg: string,
     structuredTransient = false,
+    /** FNXC:Identity 2026-08-15-22:52 (U18 Stage B): the drain pass that hit the transient failure. */
+    runContext?: RunMutationContext,
   ): Promise<boolean> {
     if (!taskOnErr || (!structuredTransient && !isTransientError(errorMsg) && classifyTransientMergeError(errorMsg) === null)) {
       return false;
@@ -5536,11 +5565,11 @@ export class ProjectEngine {
     await store.updateTask(taskId, {
       mergeTransientRetryCount: nextRetryCount,
       status: null,
-    });
+    }, runContext);
     await store.logEntry(
       taskId,
       `Auto-merge transient retry ${nextRetryCount}/${ProjectEngine.MAX_AUTO_MERGE_TRANSIENT_RETRIES} scheduled in ${delayMs / 1000}s: ${errorMsg}`,
-      "MergeTransientRetry",
+      "MergeTransientRetry", runContext,
     );
     runtimeLog.log(
       `Auto-merge transient retry ${nextRetryCount}/${ProjectEngine.MAX_AUTO_MERGE_TRANSIENT_RETRIES} for ${taskId} in ${delayMs / 1000}s`,
@@ -5653,7 +5682,7 @@ export class ProjectEngine {
           await store.logEntry(
             parentTaskId,
             `Auto-detected live autostash orphan ${shortSha} holding uncommitted work — preserved for manual recovery (stash label: ${record.label})`,
-            `detectedBy=${record.detectedByTaskId ?? "unknown"}; phase=${sourcePhase}; stash=${record.label}`,
+            `detectedBy=${record.detectedByTaskId ?? "unknown"}; phase=${sourcePhase}; stash=${record.label}`, mutationContextForAgent("auto-merge", generateSyntheticRunId("auto-merge", parentTaskId)),
           ).catch(() => undefined);
 
           await store.addTaskComment(
@@ -5814,7 +5843,7 @@ export class ProjectEngine {
     for (const t of tasks) {
       if (t.status && staleStatuses.has(t.status)) {
         runtimeLog.log(`Startup sweep: clearing stale '${t.status}' status on ${t.id}`);
-        await store.updateTask(t.id, { status: null });
+        await store.updateTask(t.id, { status: null }, UNATTRIBUTED_MUTATION_CONTEXT);
         // Update in-memory object so canMergeTask sees the cleared status
         (t as any).status = null;
       }

@@ -3,6 +3,8 @@
  * Used by both the merger and executor verification gates.
  */
 import type { TaskStore, AgentRole } from "@fusion/core";
+/* FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage B): mutation-context constructors for this lane. */
+import { mutationContextForAgent } from "@fusion/core";
 import { resolveSandboxBackend } from "../sandbox/index.js";
 import type { SandboxBackend, SandboxRunStreamingOptions, SandboxStreamingResult } from "../sandbox/types.js";
 import { withVerificationSlot } from "../concurrency/verification-concurrency.js";
@@ -422,6 +424,13 @@ async function runVerificationCommandUnlocked(
   const logger = log ?? { log: console.log, error: console.error, warn: console.warn };
   const label = (agentLabel ?? "merger") as AgentRole;
   /*
+  FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage B):
+  Derived, not marked: this function already resolves the acting lane for its agent-log rows
+  (`agentLabel ?? "merger"`), so the verification task-log rows are attributed to the same lane rather
+  than being the one line in the pair that says nobody ran the command.
+  */
+  const runContext = mutationContextForAgent(label);
+  /*
   FNXC:EngineDiagnostics 2026-07-26-09:33:
   Start + success lines for test/build verification fire on every green run and drown real events in the TUI. Prefer logger.debug when the caller supplies it (createLogger instances); never fall back to log for success chatter. Failures stay on error.
   */
@@ -437,7 +446,7 @@ async function runVerificationCommandUnlocked(
   }
 
   debugLog(`${taskId}: running ${type} command: ${command}`);
-  await store.logEntry(taskId, `[verification] Running ${type} command: ${command}`);
+  await store.logEntry(taskId, `[verification] Running ${type} command: ${command}`, undefined, runContext);
   await store.appendAgentLog(taskId, `Running ${type} command`, "tool", command, label);
 
   const result: VerificationCommandResult = {
@@ -490,7 +499,7 @@ async function runVerificationCommandUnlocked(
       debugLog(`${taskId}: ${type} command succeeded (exit 0, output exceeded buffer) in ${verificationDurationMs}ms`);
       await store.logEntry(
         taskId,
-        `[timing] [verification] ${type} command succeeded (exit 0, output exceeded buffer) in ${verificationDurationMs}ms`,
+        `[timing] [verification] ${type} command succeeded (exit 0, output exceeded buffer) in ${verificationDurationMs}ms`, undefined, runContext,
       );
       await store.appendAgentLog(
         taskId,
@@ -501,7 +510,7 @@ async function runVerificationCommandUnlocked(
       );
     } else {
       debugLog(`${taskId}: ${type} command succeeded in ${verificationDurationMs}ms`);
-      await store.logEntry(taskId, `[timing] [verification] ${type} command succeeded (exit 0) in ${verificationDurationMs}ms`);
+      await store.logEntry(taskId, `[timing] [verification] ${type} command succeeded (exit 0) in ${verificationDurationMs}ms`, undefined, runContext);
       await store.appendAgentLog(
         taskId,
         `${type} command succeeded (exit 0)`,
@@ -551,7 +560,7 @@ async function runVerificationCommandUnlocked(
       debugLog(`${taskId}: ${type} command succeeded (exit 0, output exceeded buffer) in ${verificationDurationMs}ms`);
       await store.logEntry(
         taskId,
-        `[timing] [verification] ${type} command succeeded (exit 0, output exceeded buffer) in ${verificationDurationMs}ms`,
+        `[timing] [verification] ${type} command succeeded (exit 0, output exceeded buffer) in ${verificationDurationMs}ms`, undefined, runContext,
       );
       await store.appendAgentLog(
         taskId,
@@ -568,7 +577,7 @@ async function runVerificationCommandUnlocked(
     logger.error(`${taskId}: ${type} command failed (exit ${result.exitCode}) in ${verificationDurationMs}ms; output captured in task log`);
     await store.logEntry(
       taskId,
-      `[timing] [verification] ${type} command failed (exit ${result.exitCode}) after ${verificationDurationMs}ms:\n${summary}`,
+      `[timing] [verification] ${type} command failed (exit ${result.exitCode}) after ${verificationDurationMs}ms:\n${summary}`, undefined, runContext,
     );
     await store.appendAgentLog(
       taskId,
