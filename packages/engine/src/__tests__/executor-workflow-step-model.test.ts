@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import "./executor-test-helpers.js";
 import { TaskExecutor } from "../executor.js";
+import { ANY_MUTATION_CONTEXT } from "./mutation-context-matchers.js";
 import {
   createMockStore,
   mockedCreateFnAgent,
@@ -465,9 +466,13 @@ describe("executor workflow-step model resolution", () => {
       },
     );
 
+    /* FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage C): the row now carries the executor run's mutation
+       context; pin it rather than matching a prefix, which would stop noticing an unattributed write. */
     expect(primary.logCalls).toContainEqual([
       "FN-MODEL-1",
       "Workflow step 'Model Step' using model: mock-provider/mock-model (thinking effort: high) (workflow step override)",
+      undefined,
+      ANY_MUTATION_CONTEXT,
     ]);
   });
 });

@@ -1,6 +1,13 @@
 // Real-git wallclock under parallel CI load; do not lower per-test timeouts
 // without re-measuring under pnpm test:full. (FN-4839)
 import { describe, it, expect, vi } from "vitest";
+/*
+FNXC:Identity 2026-08-09-03:04 (U18/KTD2):
+The self-healing sweep now passes a mutation context, so this call-arg assertion carries it too
+— left at the old arity the assertion would simply fail, and relaxing it instead would delete
+the only proof that the unattributed marker actually reaches the store.
+*/
+import { UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 import { classifyOwnedLandedEvidence } from "../../merger.js";
 // FNXC:SqliteRemoval 2026-07-14: hasPg guard added — makeReliabilityFixture requires PG after SQLite removal (VAL-REMOVAL-005).
 import { makeReliabilityFixture, hasGit, hasPg } from "./_helpers.js";
@@ -58,7 +65,7 @@ describe("no-changes-finalized reliability interactions (real git)", () => {
           noOpReason: "verification-only finalize: no branch and no owned commits",
           landedFiles: [],
         }),
-      }));
+      }), UNATTRIBUTED_MUTATION_CONTEXT);
 
       expect(
         auditSpy.mock.calls.some(([event]) =>

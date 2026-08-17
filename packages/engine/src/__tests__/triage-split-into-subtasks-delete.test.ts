@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
+import { ANY_MUTATION_CONTEXT } from "./mutation-context-matchers.js";
 import type { Settings, Task, TaskStore } from "@fusion/core";
 import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -126,7 +127,7 @@ describe("triage split/delete lineage forwarding", () => {
         agentId: "triage",
         runId: expect.stringMatching(/^triage-delete-FN-500-/),
       }),
-    }));
+    }), ANY_MUTATION_CONTEXT);
   });
 
   it("passes removeLineageReferences when split-close happens on the fallback planning path", async () => {
@@ -152,7 +153,7 @@ describe("triage split/delete lineage forwarding", () => {
         agentId: "triage",
         runId: expect.stringMatching(/^triage-delete-FN-600-/),
       }),
-    }));
+    }), ANY_MUTATION_CONTEXT);
   });
 
   it("passes removeLineageReferences on opt-in DUPLICATE delete resolution", async () => {

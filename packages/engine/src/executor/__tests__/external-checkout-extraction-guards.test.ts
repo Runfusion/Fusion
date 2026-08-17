@@ -17,7 +17,16 @@ describe("executor extraction safety guards", () => {
     const source = readSource("packages/engine/src/executor/run-implementation.ts");
 
     expect(source).toMatch(
-      /if \(!deps\.workspaceConfig && !acquisition\.isResume\) \{\n\s+await captureBaseCommitSha\(deps\.store, task, worktreePath, audit, \{ isResume: false \}\);\n\s+\}\n\n\s+if \(!deps\.workspaceConfig && !externalExecutionRoute\.configured\) \{/,
+      /*
+      FNXC:ExternalExecutionCheckout 2026-08-14-05:32:
+      The guarded invariant is the STRUCTURE — base-SHA capture sits inside the
+      `!workspaceConfig && !isResume` gate, and the external-execution gate follows it as the very
+      next statement — plus the arguments the call must receive. It was previously written as one
+      exact source line, so adding the run-attribution argument broke the guard without changing
+      anything it protects. Whitespace between the arguments is now tolerated; the ordering, the two
+      gate conditions, and their adjacency are still pinned.
+      */
+      /if \(!deps\.workspaceConfig && !acquisition\.isResume\) \{[\s\S]*?await captureBaseCommitSha\(\s*deps\.store,\s*task,\s*worktreePath,\s*audit,\s*\{ isResume: false \},[\s\S]*?\);\s*\}\s*if \(!deps\.workspaceConfig && !externalExecutionRoute\.configured\) \{/,
     );
     expect(source).toContain("if (!deps.workspaceConfig && !externalExecutionRoute.configured)");
     expect(

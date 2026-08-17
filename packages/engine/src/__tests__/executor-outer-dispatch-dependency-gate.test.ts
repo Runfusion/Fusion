@@ -9,6 +9,8 @@ import {
   registerPreHeldExecutorSlot,
 } from "../concurrency/concurrency.js";
 import { createMockStore, resetExecutorMocks } from "./executor-test-helpers.js";
+/* FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage C): the executor threads a real mutation context to every store call, so these assertions pin it rather than dropping the argument. */
+import { ANY_MUTATION_CONTEXT } from "./mutation-context-matchers.js";
 
 /*
 FNXC:DependencyGating 2026-07-16-00:00:
@@ -118,7 +120,7 @@ describe("executor outer dispatch dependency gate", () => {
       preserveWorktree: true,
       preserveResumeState: true,
       recoveryRehome: true,
-    }));
+    }), ANY_MUTATION_CONTEXT);
     expect(store.transitionQueuedEpisode).toHaveBeenCalledWith(child.id, expect.objectContaining({
       signature: "dependency:FN-PARENT",
       blockedBy: parent.id,

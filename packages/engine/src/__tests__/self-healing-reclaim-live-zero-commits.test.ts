@@ -1,4 +1,12 @@
 import { EventEmitter } from "node:events";
+/*
+FNXC:Identity 2026-08-09-03:04 (U18/KTD2):
+These call-arg assertions now include the mutation context the converted sweep passes.
+Adding it is what keeps them load-bearing: left at the old arity every
+`toHaveBeenCalledWith` here would fail, and every `.not.toHaveBeenCalledWith` would pass
+vacuously — an assertion that can no longer fail is worse than one that is red.
+*/
+import { UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { TaskStore } from "@fusion/core";
 
@@ -117,9 +125,9 @@ describe("self-healing reclaim live zero commits", () => {
     }));
     expect(execMock).toHaveBeenCalledWith("git worktree prune", expect.anything());
     expect(execMock).toHaveBeenCalledWith(expect.stringContaining("git branch -D"), expect.anything());
-    expect(store.updateTask).toHaveBeenCalledWith("FN-9001", expect.objectContaining({ worktree: null, branch: null, paused: false }));
-    expect(store.moveTask).toHaveBeenCalledWith("FN-9001", "todo", expect.objectContaining({ moveSource: "engine", preserveProgress: true, preserveResumeState: true }));
-    expect(store.logEntry).toHaveBeenCalledWith("FN-9001", expect.stringContaining("[recovery] reclaim-live-zero-commits"));
+    expect(store.updateTask).toHaveBeenCalledWith("FN-9001", expect.objectContaining({ worktree: null, branch: null, paused: false }), UNATTRIBUTED_MUTATION_CONTEXT);
+    expect(store.moveTask).toHaveBeenCalledWith("FN-9001", "todo", expect.objectContaining({ moveSource: "engine", preserveProgress: true, preserveResumeState: true }), UNATTRIBUTED_MUTATION_CONTEXT);
+    expect(store.logEntry).toHaveBeenCalledWith("FN-9001", expect.stringContaining("[recovery] reclaim-live-zero-commits"), undefined, UNATTRIBUTED_MUTATION_CONTEXT);
     expect((store as any).recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
       mutationType: "branch:auto-reclaim",
       metadata: expect.objectContaining({ phase: "reclaim-live-zero-commits" }),
@@ -146,7 +154,7 @@ describe("self-healing reclaim live zero commits", () => {
     expect(recovered).toBe(1);
     expect(execMock).not.toHaveBeenCalledWith(expect.stringContaining("git worktree remove --force"), expect.anything());
     expect(execMock).not.toHaveBeenCalledWith(expect.stringContaining("git branch -D"), expect.anything());
-    expect(store.updateTask).toHaveBeenCalledWith("FN-9001", expect.objectContaining({ worktree: "/tmp/live", branch: "fusion/fn-9001" }));
+    expect(store.updateTask).toHaveBeenCalledWith("FN-9001", expect.objectContaining({ worktree: "/tmp/live", branch: "fusion/fn-9001" }), UNATTRIBUTED_MUTATION_CONTEXT);
   });
 
   it("skips destructive fast-path when another in-progress task owns live worktree", async () => {
@@ -167,7 +175,7 @@ describe("self-healing reclaim live zero commits", () => {
 
     expect(recovered).toBe(1);
     expect(execMock).not.toHaveBeenCalledWith(expect.stringContaining("git worktree remove --force"), expect.anything());
-    expect(store.updateTask).toHaveBeenCalledWith("FN-9001", expect.objectContaining({ worktree: "/tmp/live", branch: "fusion/fn-9001" }));
+    expect(store.updateTask).toHaveBeenCalledWith("FN-9001", expect.objectContaining({ worktree: "/tmp/live", branch: "fusion/fn-9001" }), UNATTRIBUTED_MUTATION_CONTEXT);
   });
 
   it("does not run destructive fast-path for foreign branch names", async () => {
@@ -186,7 +194,7 @@ describe("self-healing reclaim live zero commits", () => {
     await manager.reclaimSelfOwnedBranchConflicts();
 
     expect(execMock).not.toHaveBeenCalledWith(expect.stringContaining("git worktree remove --force"), expect.anything());
-    expect(store.updateTask).toHaveBeenCalledWith("FN-9001", expect.objectContaining({ worktree: "/tmp/live", branch: "fusion/fn-other" }));
+    expect(store.updateTask).toHaveBeenCalledWith("FN-9001", expect.objectContaining({ worktree: "/tmp/live", branch: "fusion/fn-other" }), UNATTRIBUTED_MUTATION_CONTEXT);
   });
 
   it("parks task without corrupting branch/worktree when worktree removal fails", async () => {
@@ -210,7 +218,7 @@ describe("self-healing reclaim live zero commits", () => {
     const recovered = await manager.reclaimSelfOwnedBranchConflicts();
 
     expect(recovered).toBe(1);
-    expect(store.logEntry).toHaveBeenCalledWith("FN-9001", expect.stringContaining("reclaim-live-zero-commits failed"));
-    expect(store.updateTask).toHaveBeenCalledWith("FN-9001", expect.objectContaining({ worktree: "/tmp/live", branch: "fusion/fn-9001" }));
+    expect(store.logEntry).toHaveBeenCalledWith("FN-9001", expect.stringContaining("reclaim-live-zero-commits failed"), undefined, UNATTRIBUTED_MUTATION_CONTEXT);
+    expect(store.updateTask).toHaveBeenCalledWith("FN-9001", expect.objectContaining({ worktree: "/tmp/live", branch: "fusion/fn-9001" }), UNATTRIBUTED_MUTATION_CONTEXT);
   });
 });

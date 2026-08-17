@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { ANY_MUTATION_CONTEXT } from "./mutation-context-matchers.js";
 import { execSync, spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -252,14 +253,13 @@ describeIfGit("aiMergeTask finalize no-op unproven reproduction (real git)", () 
     expect(result.noOp).toBe(false);
     // "Verify"/"Testing" are skipped verification steps → precise reason naming them.
     expect(result.error).toContain("skipped verification step");
-    expect(store.updateTask).toHaveBeenCalledWith("FN-NO-COMMITS", expect.objectContaining({ error: expect.stringContaining("skipped verification step") }));
-    expect(store.moveTask).toHaveBeenCalledWith("FN-NO-COMMITS", "todo", expect.objectContaining({ preserveProgress: true, moveSource: "engine" }));
+    expect(store.updateTask).toHaveBeenCalledWith("FN-NO-COMMITS", expect.objectContaining({ error: expect.stringContaining("skipped verification step") }), ANY_MUTATION_CONTEXT);
+    expect(store.moveTask).toHaveBeenCalledWith("FN-NO-COMMITS", "todo", expect.objectContaining({ preserveProgress: true, moveSource: "engine" }), ANY_MUTATION_CONTEXT);
     expect(store.moveTask).not.toHaveBeenCalledWith("FN-NO-COMMITS", "done");
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-NO-COMMITS",
       expect.stringContaining("Finalize blocked (no-commits incomplete-work guard)"),
-      expect.stringContaining("legacy-no-op-classifier"),
-    );
+      expect.stringContaining("legacy-no-op-classifier"), ANY_MUTATION_CONTEXT);
     expect(store.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
       mutationType: "task:no-commits-finalize-blocked-incomplete-steps",
       target: "FN-NO-COMMITS",
@@ -300,7 +300,7 @@ describeIfGit("aiMergeTask finalize no-op unproven reproduction (real git)", () 
 
     expect(result.merged).toBe(true);
     expect(result.noOp).toBe(true);
-    expect(store.moveTask).toHaveBeenCalledWith("FN-NO-COMMITS-DONE", "done");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-NO-COMMITS-DONE", "done", undefined, ANY_MUTATION_CONTEXT);
   }, 20_000);
 
   it("FN-6461: demotes no-commits empty-own-diff fast-path before cleanup", async () => {
@@ -338,14 +338,13 @@ describeIfGit("aiMergeTask finalize no-op unproven reproduction (real git)", () 
 
     expect(result.merged).toBe(false);
     expect(result.error).toContain("done=1, incomplete=1");
-    expect(store.moveTask).toHaveBeenCalledWith("FN-EMPTY-BLOCK", "todo", expect.objectContaining({ preserveProgress: true, moveSource: "engine" }));
+    expect(store.moveTask).toHaveBeenCalledWith("FN-EMPTY-BLOCK", "todo", expect.objectContaining({ preserveProgress: true, moveSource: "engine" }), ANY_MUTATION_CONTEXT);
     expect(store.moveTask).not.toHaveBeenCalledWith("FN-EMPTY-BLOCK", "done");
     expect(git(repo, "git show-ref --verify --quiet refs/heads/fusion/fn-empty-block; echo $?")).toBe("0");
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-EMPTY-BLOCK",
       expect.stringContaining("Finalize blocked (no-commits incomplete-work guard)"),
-      expect.stringContaining("early-empty-own-diff"),
-    );
+      expect.stringContaining("early-empty-own-diff"), ANY_MUTATION_CONTEXT);
   }, 20_000);
 
   it("FN-6461: allows all-done no-commits empty-own-diff fast-path tasks", async () => {
@@ -383,7 +382,7 @@ describeIfGit("aiMergeTask finalize no-op unproven reproduction (real git)", () 
 
     expect(result.merged).toBe(true);
     expect(result.noOp).toBe(true);
-    expect(store.moveTask).toHaveBeenCalledWith("FN-EMPTY-DONE", "done");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-EMPTY-DONE", "done", undefined, ANY_MUTATION_CONTEXT);
   }, 20_000);
 
   it("blocks FN-4653 shape: foreign start-point branch with no FN-owned commits", async () => {

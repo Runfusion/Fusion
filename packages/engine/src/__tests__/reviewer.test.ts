@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { ANY_MUTATION_CONTEXT } from "./mutation-context-matchers.js";
 
 vi.mock("../pi.js", () => ({
   createFnAgent: vi.fn(),
@@ -351,8 +352,7 @@ describe("reviewStep — model settings threading", () => {
 
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-100",
-      "Reviewer using model: mock-provider/mock-model (thinking effort: high)",
-    );
+      "Reviewer using model: mock-provider/mock-model (thinking effort: high)", undefined, ANY_MUTATION_CONTEXT);
     // FNXC:AgentLog-EntryTypes 2026-07-15-11:20: the marker is a complete standalone message,
     // so it is a `status` row — `text` means "streamed delta fragment" and gets glued to its
     // neighbours with no separator.
@@ -850,8 +850,7 @@ describe("reviewStep — context-limit retry", () => {
     expect(secondRequest.match(/## User Comments/g)).toHaveLength(1);
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-4082",
-      "code review hit context limit — retrying with compacted request",
-    );
+      "code review hit context limit — retrying with compacted request", undefined, ANY_MUTATION_CONTEXT);
     expect(task.reviewerContextRetryCount).toBe(1);
   });
 
@@ -923,8 +922,7 @@ describe("reviewStep — fallback retry for terminal unavailable", () => {
     expect(mockedCreateFnAgent.mock.calls.every(([options]) => options.fallbackThinkingLevel === "xhigh")).toBe(true);
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-4092",
-      expect.stringContaining("review retry with fallback model after UNAVAILABLE verdict"),
-    );
+      expect.stringContaining("review retry with fallback model after UNAVAILABLE verdict"), undefined, ANY_MUTATION_CONTEXT);
     expect(task.reviewerFallbackRetryCount).toBe(0);
   });
 
@@ -954,7 +952,7 @@ describe("reviewStep — fallback retry for terminal unavailable", () => {
 
     expect(result.verdict).toBe("APPROVE");
     expect(mockedCreateFnAgent).toHaveBeenCalledTimes(2);
-    expect(store.updateTask).toHaveBeenCalledWith("FN-4093", { reviewerFallbackRetryCount: 0 });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-4093", { reviewerFallbackRetryCount: 0 }, ANY_MUTATION_CONTEXT);
     expect(task.reviewerFallbackRetryCount).toBe(0);
   });
 
