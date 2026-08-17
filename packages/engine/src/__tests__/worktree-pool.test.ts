@@ -82,7 +82,7 @@ import {
 import { BranchConflictError } from "../execution/branch-conflicts.js";
 import * as branchConflictModule from "../execution/branch-conflicts.js";
 import { execSync } from "node:child_process";
-import { existsSync, lstatSync, readdirSync, readFileSync, renameSync, rmdirSync, unlinkSync } from "node:fs";
+import { existsSync, linkSync, lstatSync, readdirSync, readFileSync, rmdirSync, unlinkSync } from "node:fs";
 import type { Task, Column } from "@fusion/core";
 
 const mockedExecSync = vi.mocked(execSync);
@@ -91,7 +91,7 @@ const mockedLstatSync = vi.mocked(lstatSync);
 const mockedReaddirSync = vi.mocked(readdirSync);
 const mockedReadFileSync = vi.mocked(readFileSync);
 const mockedRmdirSync = vi.mocked(rmdirSync);
-const mockedRenameSync = vi.mocked(renameSync);
+const mockedLinkSync = vi.mocked(linkSync);
 const mockedUnlinkSync = vi.mocked(unlinkSync);
 const mockedPruneWorktreeAdminEntries = vi.mocked(worktreePrune.pruneWorktreeAdminEntries);
 const TEST_TASK_ID = "FN-test";
@@ -1301,7 +1301,10 @@ describe("reapOrphanWorktrees", () => {
     const removed = await reapOrphanWorktrees("/root");
 
     expect(removed).toBe(1);
-    expect(mockedRenameSync).toHaveBeenCalledWith(
+    // Production stashes the dangling pointer with a hard link (linkSync) so a
+    // concurrent repair's pathname is never overwritten; the old renameSync mock
+    // is stale for that current primitive.
+    expect(mockedLinkSync).toHaveBeenCalledWith(
       "/root/.worktrees/leaked-wt/.git",
       expect.stringMatching(/^\/root\/\.worktrees\/\.leaked-wt\.git-reap-stash-\d+-[a-z0-9]+$/),
     );
