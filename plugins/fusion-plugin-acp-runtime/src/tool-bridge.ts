@@ -140,6 +140,11 @@ export async function startFusionToolBridge(tools: ReadonlyArray<ToolLike> | und
     }
     let body = "";
     for await (const chunk of req) body += chunk;
+    if (disposed) {
+      res.statusCode = 503;
+      res.end(JSON.stringify({ isError: true, text: "tool bridge disposed" }));
+      return;
+    }
     let parsed: { name?: string; toolCallId?: string | number; arguments?: unknown };
     try {
       parsed = JSON.parse(body || "{}") as { name?: string; toolCallId?: string | number; arguments?: unknown };
@@ -202,18 +207,29 @@ export async function startFusionToolBridge(tools: ReadonlyArray<ToolLike> | und
     });
   });
 
-  const address = await new Promise<{ port: number }>((resolve, reject) => {
-    server.once("error", reject);
-    // Bind loopback only — never expose Fusion tools on a public interface.
-    server.listen(0, "127.0.0.1", () => {
-      const addr = server.address();
-      if (!addr || typeof addr === "string") {
-        reject(new Error("tool bridge failed to bind"));
-        return;
-      }
-      resolve({ port: addr.port });
+  let address: { port: number };
+  try {
+    address = await new Promise<{ port: number }>((resolve, reject) => {
+      server.once("error", reject);
+      // Bind loopback only — never expose Fusion tools on a public interface.
+      server.listen(0, "127.0.0.1", () => {
+        const addr = server.address();
+        if (!addr || typeof addr === "string") {
+          reject(new Error("tool bridge failed to bind"));
+          return;
+        }
+        resolve({ port: addr.port });
+      });
     });
-  });
+  } catch (error) {
+    server.close();
+    try {
+      unlinkSync(schemaPath);
+    } catch {
+      // Schema cleanup is best effort after startup failure.
+    }
+    throw error;
+  }
 
   const bridgeUrl = `http://127.0.0.1:${address.port}`;
   let disposed = false;
@@ -232,12 +248,10 @@ export async function startFusionToolBridge(tools: ReadonlyArray<ToolLike> | und
       if (disposed) return;
       disposed = true;
       for (const controller of activeControllers) controller.abort();
-      await new Promise<void>((resolve) => {
-        server.close(() => resolve());
-        if (typeof server.closeAllConnections === "function") {
-          server.closeAllConnections();
-        }
-      });
+      server.close(() => undefined);
+      if (typeof server.closeAllConnections === "function") {
+        server.closeAllConnections();
+      }
       await Promise.allSettled(
         [...activeExecutions].map((execution) =>
           Promise.race([

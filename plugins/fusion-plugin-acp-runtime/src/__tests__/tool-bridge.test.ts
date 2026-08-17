@@ -1,9 +1,10 @@
 import { spawn } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
+import { Server, request as httpRequest } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { fusionToolsMcpServerPath, startFusionToolBridge, toolsToMcpToolDefs } from "../tool-bridge.js";
 
 async function mcpRequest(child: ReturnType<typeof spawn>, payload: string): Promise<Record<string, unknown>> {
@@ -38,6 +39,30 @@ async function mcpRequest(child: ReturnType<typeof spawn>, payload: string): Pro
 }
 
 describe("tool-bridge", () => {
+  it("cleans up the schema and server when startup fails", async () => {
+    const listen = vi.spyOn(Server.prototype, "listen").mockImplementation(function (this: Server, ...args: unknown[]) {
+      const callback = args.at(-1);
+      if (typeof callback === "function") queueMicrotask(callback as () => void);
+      return this;
+    });
+    const address = vi.spyOn(Server.prototype, "address").mockReturnValue(null);
+    const close = vi.spyOn(Server.prototype, "close").mockImplementation(function (this: Server, callback?: (error?: Error) => void) {
+      callback?.();
+      return this;
+    });
+    const before = new Set(readdirSync(tmpdir()).filter((name) => name.startsWith("fusion-acp-mcp-schemas-")));
+    try {
+      await expect(startFusionToolBridge([{ name: "fn_startup", execute: async () => "ok" }])).rejects.toThrow("failed to bind");
+      const after = readdirSync(tmpdir()).filter((name) => name.startsWith("fusion-acp-mcp-schemas-"));
+      expect(after.filter((name) => !before.has(name))).toEqual([]);
+      expect(close).toHaveBeenCalled();
+    } finally {
+      listen.mockRestore();
+      address.mockRestore();
+      close.mockRestore();
+    }
+  });
+
   it("filters built-ins and maps tool schemas", () => {
     expect(
       toolsToMcpToolDefs([
@@ -217,6 +242,41 @@ describe("tool-bridge", () => {
     expect(existsSync(schemaPath)).toBe(false);
   });
 
+  it("does not resume a request into tool execution after disposal", async () => {
+    const close = vi.spyOn(Server.prototype, "close").mockImplementation(function (this: Server) {
+      return this;
+    });
+    const closeAllConnections = vi.spyOn(Server.prototype, "closeAllConnections").mockImplementation(() => undefined);
+    let executions = 0;
+    const bridge = await startFusionToolBridge([
+      { name: "fn_after_dispose", parameters: {}, execute: async () => { executions += 1; return "must not run"; } },
+    ]);
+    expect(bridge).not.toBeNull();
+    const env = bridge!.mcpServer.env;
+    const bridgeUrl = new URL(env.find((entry) => entry.name === "FUSION_ACP_TOOL_BRIDGE_URL")!.value);
+    const token = env.find((entry) => entry.name === "FUSION_ACP_TOOL_BRIDGE_TOKEN")!.value;
+    const pendingResponse = new Promise<{ status: number }>((resolve, reject) => {
+      const req = httpRequest({
+        hostname: bridgeUrl.hostname,
+        port: Number(bridgeUrl.port),
+        path: "/tool-call",
+        method: "POST",
+        headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      }, (response) => resolve({ status: response.statusCode ?? 0 }));
+      req.once("error", reject);
+      req.flushHeaders();
+      void bridge!.dispose().then(() => req.end(JSON.stringify({ name: "fn_after_dispose", arguments: {} })));
+    });
+    try {
+      await expect(pendingResponse).resolves.toMatchObject({ status: 503 });
+      expect(executions).toBe(0);
+    } finally {
+      close.mockRestore();
+      closeAllConnections.mockRestore();
+      await bridge?.dispose();
+    }
+  });
+
   it("aborts and awaits an in-flight tool before disposal completes", async () => {
     let started!: () => void;
     const executionStarted = new Promise<void>((resolve) => {
@@ -256,6 +316,48 @@ describe("tool-bridge", () => {
     await disposing;
     expect(finished).toBe(true);
     await expect(request).rejects.toThrow();
+  });
+
+  it("does not wait for the server close callback before draining", async () => {
+    const close = vi.spyOn(Server.prototype, "close").mockImplementation(function (this: Server) {
+      return this;
+    });
+    const closeAllConnections = vi.spyOn(Server.prototype, "closeAllConnections").mockImplementation(() => undefined);
+    let started!: () => void;
+    const executionStarted = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const bridge = await startFusionToolBridge([
+      {
+        name: "fn_cooperative",
+        parameters: {},
+        execute: async (_id, _args, signal) => {
+          started();
+          await new Promise<void>((resolve) => signal?.addEventListener("abort", () => resolve(), { once: true }));
+          return "done";
+        },
+      },
+    ]);
+    try {
+      const env = bridge!.mcpServer.env;
+      const request = fetch(`${env.find((entry) => entry.name === "FUSION_ACP_TOOL_BRIDGE_URL")!.value}/tool-call`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${env.find((entry) => entry.name === "FUSION_ACP_TOOL_BRIDGE_TOKEN")!.value}` },
+        body: JSON.stringify({ name: "fn_cooperative", arguments: {} }),
+      });
+      await executionStarted;
+      await expect(Promise.race([
+        bridge!.dispose(),
+        new Promise((_, reject) => setTimeout(() => reject(new Error("dispose timed out")), 500)),
+      ])).resolves.toBeUndefined();
+      await request;
+      expect(close).toHaveBeenCalled();
+      expect(closeAllConnections).toHaveBeenCalled();
+    } finally {
+      close.mockRestore();
+      closeAllConnections.mockRestore();
+      await bridge?.dispose();
+    }
   });
 
   it("completes disposal and removes the schema when a tool ignores abort", async () => {
