@@ -1,3 +1,4 @@
+import { UNATTRIBUTED_CONTEXT_MATCHER } from "./mutation-context-matchers.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { TaskStore, type Task } from "@fusion/core";
 import { createTaskStoreForTest, pgDescribe } from "../../../core/src/__test-utils__/pg-test-harness.js";
@@ -80,7 +81,7 @@ describe("GitLabSourceIssueReconciler.backfillSourceIssueClosedAt", () => {
 
     expect(result).toEqual({ scanned: 1, filled: 1, skipped: 0, errors: 0, hasMore: false });
     expect(mockGetProjectIssue).toHaveBeenCalledWith("group/project", 42);
-    expect(store.updateTask as any).toHaveBeenCalledWith("FN-1", { sourceIssue: { ...task.sourceIssue, closedAt } });
+    expect(store.updateTask as any).toHaveBeenCalledWith("FN-1", { sourceIssue: { ...task.sourceIssue, closedAt } }, UNATTRIBUTED_CONTEXT_MATCHER);
   });
 
   it("uses merge request mergedAt/closedAt and skips already-filled rows", async () => {
@@ -107,7 +108,7 @@ describe("GitLabSourceIssueReconciler.backfillSourceIssueClosedAt", () => {
     expect(result).toEqual({ scanned: 1, filled: 1, skipped: 0, errors: 0, hasMore: false });
     expect(mockGetMergeRequest).toHaveBeenCalledWith("group/project", 7);
     expect(store.updateTask as any).toHaveBeenCalledTimes(1);
-    expect(store.updateTask as any).toHaveBeenCalledWith("FN-2", { sourceIssue: { ...mrTask.sourceIssue, closedAt: mergedAt } });
+    expect(store.updateTask as any).toHaveBeenCalledWith("FN-2", { sourceIssue: { ...mrTask.sourceIssue, closedAt: mergedAt } }, UNATTRIBUTED_CONTEXT_MATCHER);
   });
 
   it("skips open/unavailable resources and never fabricates closedAt", async () => {
@@ -129,7 +130,7 @@ describe("GitLabSourceIssueReconciler.backfillSourceIssueClosedAt", () => {
 
     expect(result).toEqual({ scanned: 3, filled: 0, skipped: 3, errors: 0, hasMore: false });
     expect(store.updateTask as any).not.toHaveBeenCalled();
-    expect(store.logEntry as any).toHaveBeenCalledWith("FN-6", "Skipped GitLab source issue closed-at backfill", "Linked GitLab source metadata is incomplete");
+    expect(store.logEntry as any).toHaveBeenCalledWith("FN-6", "Skipped GitLab source issue closed-at backfill", "Linked GitLab source metadata is incomplete", UNATTRIBUTED_CONTEXT_MATCHER);
   });
 
   it("logs 404 or permission failures without corrupting local metadata", async () => {
@@ -140,7 +141,7 @@ describe("GitLabSourceIssueReconciler.backfillSourceIssueClosedAt", () => {
 
     expect(result).toEqual({ scanned: 1, filled: 0, skipped: 0, errors: 1, hasMore: false });
     expect(store.updateTask as any).not.toHaveBeenCalled();
-    expect(store.logEntry as any).toHaveBeenCalledWith("FN-7", "Failed to backfill GitLab source issue closed-at", "GitLab API 404: not found");
+    expect(store.logEntry as any).toHaveBeenCalledWith("FN-7", "Failed to backfill GitLab source issue closed-at", "GitLab API 404: not found", UNATTRIBUTED_CONTEXT_MATCHER);
   });
 
   it("returns skipped rows when auth resolution fails and applies pagination", async () => {
@@ -151,7 +152,7 @@ describe("GitLabSourceIssueReconciler.backfillSourceIssueClosedAt", () => {
 
     expect(result).toEqual({ scanned: 1, filled: 0, skipped: 1, errors: 0, hasMore: true });
     expect(mockGetProjectIssue).not.toHaveBeenCalled();
-    expect(store.logEntry as any).toHaveBeenCalledWith("FN-9", "Skipped GitLab source issue closed-at backfill", "GitLab token missing");
+    expect(store.logEntry as any).toHaveBeenCalledWith("FN-9", "Skipped GitLab source issue closed-at backfill", "GitLab token missing", UNATTRIBUTED_CONTEXT_MATCHER);
   });
 
   pgDescribe("archived TaskStore rows", () => {

@@ -6,6 +6,7 @@ import type { AsyncDataLayer, LoadedPluginSchemaContract } from "@fusion/core";
 import { resolveDesktopRuntimePrimaryProject } from "./engine-runtime.js";
 import { resolveDesktopBundlePluginDirs } from "./bundled-plugin-dirs.js";
 import { resolveDesktopSystemControl } from "./local-runtime.js";
+import { DESKTOP_SERVER_HOST, getDesktopApiToken } from "./api-token.js";
 
 /*
  * FNXC:DesktopRuntime 2026-07-07-12:00:
@@ -54,6 +55,16 @@ export class DesktopLocalServerManager {
 
   getPort(): number | undefined {
     return this.runtime?.port;
+  }
+
+  /*
+  FNXC:DesktopHostAuth 2026-08-09-03:04:
+  A caller holding only the port can no longer reach `/api/*` — the server is bearer-gated. Expose
+  the process token alongside getPort() so this legacy manager stays usable, undefined while no
+  server is running so callers cannot mistake it for a live endpoint.
+  */
+  getAuthToken(): string | undefined {
+    return this.runtime ? getDesktopApiToken() : undefined;
   }
 
   async start(): Promise<DesktopLocalRuntime> {
@@ -188,6 +199,13 @@ export class DesktopLocalServerManager {
       }
 
       const app = createServer(store as never, {
+        /*
+        FNXC:DesktopHostAuth 2026-08-09-03:04:
+        Same bearer gate as the primary embedded runtime (local-runtime.ts). This legacy entrypoint
+        had the identical hole: no `daemon` token and no `noAuth`, so `/api/*` — terminal WebSocket
+        included — was unauthenticated. Both desktop paths must stay consistent.
+        */
+        daemon: { token: getDesktopApiToken() },
         ...(primaryEngine ? { engine: primaryEngine } : {}),
         engineManager,
         centralCore,
@@ -200,7 +218,13 @@ export class DesktopLocalServerManager {
         // app.relaunch(); see resolveDesktopSystemControl in local-runtime.ts.
         ...(await resolveDesktopSystemControl()),
       });
-      server = app.listen(0);
+      /*
+      FNXC:DesktopHostAuth 2026-08-09-03:04:
+      Ephemeral port, LOOPBACK ONLY — `app.listen(0)` with no host binds all interfaces. Mirrors the
+      deliberate 127.0.0.1 pin in `runDashboard` (packages/cli/src/commands/dashboard.ts), which
+      exists so the shell-capable terminal API is not reachable from the LAN.
+      */
+      server = app.listen(0, DESKTOP_SERVER_HOST);
 
       await Promise.race([
         once(server, "listening"),
