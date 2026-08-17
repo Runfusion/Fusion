@@ -38,6 +38,16 @@ export default mergeConfig(
   baseConfig,
   defineConfig({
     test: {
+      /*
+      FNXC:PgTestPreAdmission 2026-08-17-03:38:
+      FN-9139 requires the dedicated PostgreSQL config to explicitly identify
+      its participating lane. The shared setup stays inert everywhere else,
+      while plain invocations can still opt in through the same environment
+      variable without relying on this config.
+      */
+      env: {
+        FUSION_PG_TEST_SETUP_PARTICIPANT: "1",
+      },
       maxWorkers: computeMaxWorkers({ maxCap: PG_MAX_WORKERS }),
       minWorkers: 1,
     },
