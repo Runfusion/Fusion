@@ -5,6 +5,11 @@ import { computeMaxWorkers } from "./src/__test-utils__/vitest-workers";
 
 /*
 FNXC:PgTestWorkerCap 2026-07-18-18:00:
+FNXC:PgTestDdlAdmission 2026-08-16-20:30:
+FN-9130 retained the advisory primitive's deterministic coverage and reverted
+both regressive admission and deferred-reaper experiments after loaded measurements. This cap remains a
+separate gate-shape policy; keep PG_MAX_WORKERS unchanged.
+
 Dedicated vitest config for the PostgreSQL gate suite (`test:pg-gate`). The
 pg-gate runs ONLY *.pg.test.ts files, each of which builds and copies a
 per-file schema-template database (heavy CREATE/DROP DATABASE DDL that the one
