@@ -17,6 +17,7 @@ import type { EngineRunContext } from "../util/run-audit.js";
 export type DeterministicVerificationDeps = {
   store: TaskStore;
   getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
 };
 
 export async function runExecutorDeterministicVerification(
@@ -43,7 +44,7 @@ export async function runExecutorDeterministicVerification(
     task.id,
     `[verification] Running deterministic verification (${parts.join(", ")})`,
     undefined,
-    deps.getRunContextFor(task.id),
+    deps.runContextFor(task.id),
   );
 
   const result: VerificationResult = { allPassed: true };
@@ -83,7 +84,7 @@ export async function runExecutorDeterministicVerification(
     task.id,
     `[verification] Deterministic verification passed`,
     undefined,
-    deps.getRunContextFor(task.id),
+    deps.runContextFor(task.id),
   );
   return result;
 }

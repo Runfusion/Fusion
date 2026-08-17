@@ -27,6 +27,7 @@ export type PrepareGraphNodeExecutionDeps = {
   getWorkspaceConfig: () => WorkspaceConfig | null | undefined;
   setWorkspaceConfig: (config: WorkspaceConfig | null) => void;
   getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   ensureGraphCustomNodeWorktree: (
     task: TaskDetail,
     settings: Settings,
@@ -55,7 +56,7 @@ export async function prepareGraphNodeExecution(
       live.id,
       `Workflow node '${node.id}' assigned worktree is missing — reacquiring before node execution`,
       live.worktree,
-      deps.getRunContextFor(live.id),
+      deps.runContextFor(live.id),
     );
   }
   await deps.ensureGraphCustomNodeWorktree(taskForAcquisition, settings, node.id, executionCodeNode);

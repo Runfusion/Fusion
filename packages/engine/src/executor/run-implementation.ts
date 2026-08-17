@@ -65,7 +65,6 @@ import {
   isLegacyWorkspaceWorktreeLayout,
   resolveWorkspaceTaskWorktreeDir,
   resolveSandboxBackend as resolveConfiguredSandboxBackend,
-  toRunMutationContext,
 } from "@fusion/core";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
@@ -528,21 +527,21 @@ export async function runImplementation(
     // Construct run context for mutation correlation
     // Use a synthetic correlation ID: task ID + timestamp + random suffix
     const syntheticRunId = generateSyntheticRunId("exec", task.id);
-    deps.currentRunContexts.set(task.id, toRunMutationContext({
+    deps.currentRunContexts.set(task.id, {
       runId: syntheticRunId,
       agentId: task.assignedAgentId ?? "executor",
-    }));
+    });
     // FNXC:AgentActivityStream 2026-08-09-09:09 (restored 2026-08-15-22:15 after wave-18 shell-ification dropped it):
     // FN-8864 durable task:started activity at the implementation entry; monitoring never blocks execution.
     try { await deps.store.recordAgentActivity({ type: "task:started", attributionClaim: resolveAgentActivityAttribution([{ id: task.assignedAgentId ?? "executor", provenance: task.assignedAgentId ? "roster" : "lane" }], "executor"), taskId: task.id, occurredAt: new Date().toISOString(), discriminator: syntheticRunId, metadata: { runId: syntheticRunId } }); } catch { /* monitoring never blocks execution */ }
 
     // Build engine run context for audit instrumentation (FN-1404)
-    const engineRunContext: EngineRunContext = toRunMutationContext({
+    const engineRunContext: EngineRunContext = {
       runId: syntheticRunId,
       agentId: task.assignedAgentId ?? "executor",
       taskId: task.id,
       phase: "execute",
-    });
+    };
 
     // Create run auditor for TaskStore-backed audit emission (no-ops if store doesn't support it)
     const audit = createRunAuditor(deps.store, engineRunContext);
@@ -2148,7 +2147,10 @@ export async function runImplementation(
         }),
         ...createIdeationTools(deps.store),
         ...createGoalRetrievalTools(deps.store, {
-          runContext: engineRunContext,
+          runContext: {
+            runId: engineRunContext.runId,
+            agentId: engineRunContext.agentId,
+          },
           taskId: task.id,
         }),
         createWebFetchTool(),

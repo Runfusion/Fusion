@@ -14,6 +14,7 @@ import { executorLog } from "../logger.js";
 import { generateSyntheticRunId, createRunAuditor, type EngineRunContext, type RunAuditor } from "../util/run-audit.js";
 import { acquireTaskWorktree, acquireWorkspaceTaskWorktrees } from "../worktree/worktree-acquisition.js";
 import { captureBaseCommitSha } from "./worktree-git-refs.js";
+import type { WorktreePool } from "../worktree/worktree-pool.js";
 import { createConfiguredCommandAbortError } from "./task-predicates.js";
 import { resolveWorkspaceConfigOnce } from "./workspace-config-resolver.js";
 
@@ -24,6 +25,8 @@ export type EnsureGraphCustomNodeWorktreeDeps = {
   getWorkspaceConfig: () => WorkspaceConfig | null | undefined;
   setWorkspaceConfig: (config: WorkspaceConfig | null) => void;
   getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
+  pool?: WorktreePool;
   secretsStore?: Parameters<typeof acquireTaskWorktree>[0]["secretsStore"];
   createWorktree: (
     branch: string,
@@ -76,7 +79,7 @@ export async function ensureGraphCustomNodeWorktree(
         task.id,
         `Workflow node '${nodeId}' acquiring workspace checkouts for ${workspaceConfig.repos.length} configured repository(ies)`,
         undefined,
-        deps.getRunContextFor(task.id),
+        deps.runContextFor(task.id),
       );
       const workspace = await acquireWorkspaceTaskWorktrees({
         workspaceConfig,
@@ -115,7 +118,7 @@ export async function ensureGraphCustomNodeWorktree(
       task.id,
       `Workflow node '${nodeId}' requires a task worktree — acquiring worktree before node execution`,
       undefined,
-      deps.getRunContextFor(task.id),
+      deps.runContextFor(task.id),
     );
     const acquisition = await acquireTaskWorktree({
       task,
@@ -124,7 +127,7 @@ export async function ensureGraphCustomNodeWorktree(
       settings,
       logger: executorLog,
       audit,
-      runContext: deps.getRunContextFor(task.id),
+      runContext: deps.runContextFor(task.id),
       runInitCommand: true,
       createWorktree: deps.createWorktree,
       createWorktreeBackendKind: "native",
@@ -148,7 +151,20 @@ export async function ensureGraphCustomNodeWorktree(
     });
     deps.addActiveWorktree(task.id, acquisition.worktreePath);
     if (!acquisition.isResume) {
-      await captureBaseCommitSha(deps.store, task, acquisition.worktreePath, audit, { isResume: false });
+      /*
+      FNXC:Identity 2026-09-04-04:46:
+      Custom-node worktree capture is outside the implementation node, so the partial
+      `getRunContextFor` map is empty and would persist `executor`/`unknown`. Use the total
+      carrier so the graph-node actor and run id survive onto `baseCommitSha`.
+      */
+      await captureBaseCommitSha(
+        deps.store,
+        task,
+        acquisition.worktreePath,
+        audit,
+        { isResume: false },
+        deps.runContextFor(task.id),
+      );
     }
     deps.onStart?.(task, acquisition.worktreePath);
     executorLog.debug(`${task.id}: workflow node '${nodeId}' acquired worktree at ${acquisition.worktreePath}`);
@@ -159,7 +175,7 @@ export async function ensureGraphCustomNodeWorktree(
       task.id,
       `Workflow node '${nodeId}' failed to acquire task worktree: ${message}`,
       undefined,
-      deps.getRunContextFor(task.id),
+      deps.runContextFor(task.id),
     );
     throw error;
   } finally {

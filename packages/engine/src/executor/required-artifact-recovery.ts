@@ -12,6 +12,7 @@ import { resolveTerminalColumnsFor } from "./lifecycle-columns.js";
 export type RequiredArtifactRecoveryDeps = {
   store: TaskStore;
   getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   isRequiredArtifactRecoveryProtected: (task: Task) => Promise<boolean>;
   workflowLifecycleMovesInFlight: Set<string>;
 };
@@ -60,7 +61,7 @@ export async function recoverMissingRequiredArtifacts(
     nextRecoveryAt: task.nextRecoveryAt,
   });
   const attempt = decision.nextState.recoveryRetryCount ?? MAX_RECOVERY_RETRIES;
-  const context = deps.getRunContextFor(task.id);
+  const context = deps.runContextFor(task.id);
   const action = decision.shouldRetry ? "retry-in-place" : "park-failed";
 
   await emitBoundedRunAudit(deps.store, {

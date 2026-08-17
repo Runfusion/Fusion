@@ -38,8 +38,10 @@ export type WorktreeInvariantDeps = {
   store: TaskStore;
   workspaceConfig: unknown | null | undefined;
   ensureWorkspaceConfig?: () => Promise<unknown | null>;
-  getActiveWorktreePaths: (taskId: string) => string[];
   getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  /** FNXC:Identity 2026-08-15-22:52 (U18 Stage C): total carrier for store mutations. */
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
+  getActiveWorktreePaths: (taskId: string) => string[];
   emitWorktreeReanchoredAudit: (
     taskId: string,
     fromPath: string,
@@ -77,7 +79,7 @@ export async function verifyWorktreeInvariants(
     const mainCheckout = await detectWorkspaceMainCheckoutWork(
       { rootDir: deps.rootDir, settings }, task, configuredRepos, declaredScope,
     );
-    const auditor = createRunAuditor(deps.store, deps.getRunContextFor(task.id));
+    const auditor = createRunAuditor(deps.store, deps.runContextFor(task.id));
     /*
     FNXC:WorkspaceFinalization 2026-08-27-08:42:
     Uncommitted main-checkout edits arrive here as `uncommitted-only` warnings rather than
@@ -356,7 +358,7 @@ export async function verifyWorktreeInvariants(
           if (reanchor.reanchored) {
             await deps.store.updateTask(task.id, { worktree: reanchor.root });
             executorLog.log(`${task.id}: re-anchored nested task.worktree ${worktreePath} -> ${reanchor.root}`);
-            await deps.store.logEntry(task.id, `Re-anchored nested task.worktree from ${worktreePath} to ${reanchor.root}`, undefined, deps.getRunContextFor(task.id));
+            await deps.store.logEntry(task.id, `Re-anchored nested task.worktree from ${worktreePath} to ${reanchor.root}`, undefined, deps.runContextFor(task.id));
             await deps.emitWorktreeReanchoredAudit(task.id, worktreePath, reanchor.root, "verify-worktree-invariants");
             return verifyWorktreeInvariants(deps, task, reanchor.root, false, options);
           }
@@ -396,7 +398,7 @@ export async function verifyWorktreeInvariants(
           rootDir: deps.rootDir,
         });
         if (autocorrectResult.status !== "failed") {
-          const auditor = createRunAuditor(deps.store, deps.getRunContextFor(task.id));
+          const auditor = createRunAuditor(deps.store, deps.runContextFor(task.id));
           await auditor.git({
             type: "branch:auto-canonicalize-case",
             target: worktreePath,
@@ -448,7 +450,7 @@ export async function verifyWorktreeInvariants(
         task.id,
         `fn_task_done no_commits guard skipped (${noCommitEligibilityReason})`,
         undefined,
-        deps.getRunContextFor(task.id),
+        deps.runContextFor(task.id),
       );
     } catch (error) {
       executorLog.warn(
@@ -497,13 +499,13 @@ export async function verifyWorktreeInvariants(
 }
 
 export async function emitWorktreeReanchoredAudit(
-  deps: Pick<WorktreeInvariantDeps, "store" | "getRunContextFor">,
+  deps: Pick<WorktreeInvariantDeps, "store" | "getRunContextFor" | "runContextFor">,
   taskId: string,
   fromPath: string,
   toPath: string,
   source: "verify-worktree-invariants" | "executor-liveness-gate",
 ): Promise<void> {
-  const runContext = deps.getRunContextFor(taskId);
+  const runContext = deps.runContextFor(taskId);
   if (!runContext?.runId || !runContext.agentId) return;
   const auditor = createRunAuditor(deps.store, {
     runId: runContext.runId,
