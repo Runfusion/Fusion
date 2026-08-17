@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { execSync } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -424,6 +424,42 @@ describe("acquireTaskWorktree", () => {
 
     expect(readFileSync(join(pinnedPath, "recoverable.txt"), "utf-8")).toBe("keep me\n");
     expect(createWorktree).not.toHaveBeenCalled();
+  });
+
+  it("reclaims a task-pinned worktree holding only generated residue (node_modules, dist, fingerprint-owned .env)", async () => {
+    const rootDir = makeRepo();
+    writeFileSync(join(rootDir, ".gitignore"), "node_modules/\ndist/\n.env\n", "utf-8");
+    git(rootDir, "git add .gitignore");
+    git(rootDir, 'git commit -m "ignore generated residue"');
+    const pinnedPath = join(rootDir, ".worktrees", "fn-1");
+    git(rootDir, `git worktree add -b fusion/fn-foreign ${JSON.stringify(pinnedPath)} main`);
+    // Generated residue only: node_modules + dist + fingerprint-owned .env. No user content.
+    mkdirSync(join(pinnedPath, "node_modules", "pkg"), { recursive: true });
+    writeFileSync(join(pinnedPath, "node_modules", "pkg", "index.js"), "generated\n", "utf-8");
+    mkdirSync(join(pinnedPath, "dist"));
+    writeFileSync(join(pinnedPath, "dist", "bundle.js"), "generated\n", "utf-8");
+    const envBody = "SECRET=1\n";
+    const fingerprint = createHash("sha256").update(envBody).digest("hex");
+    writeFileSync(join(pinnedPath, ".env"), envBody, "utf-8");
+    writeFileSync(join(pinnedPath, ".fusion-secrets-env.fingerprint"), `${fingerprint}\n.env\n`, "utf-8");
+
+    const result = await acquireTaskWorktree({
+      task: { ...task, worktree: pinnedPath, branch: "fusion/fn-1" },
+      rootDir,
+      store,
+      settings: { worktreeNaming: "task-id", recycleWorktrees: false },
+    });
+
+    expect(result).toMatchObject({
+      worktreePath: pinnedPath,
+      branch: "fusion/fn-1",
+      source: "fresh",
+      isResume: false,
+    });
+    expect(existsSync(join(pinnedPath, ".git"))).toBe(true);
+    expect(git(rootDir, "git worktree list --porcelain")).toContain(pinnedPath);
+    expect(existsSync(join(pinnedPath, "node_modules"))).toBe(false);
+    expect(existsSync(join(pinnedPath, ".env"))).toBe(false);
   });
 
   it("preserves an orphan beside an external worktree root when project recovery is cross-device", async () => {

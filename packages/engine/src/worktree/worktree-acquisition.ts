@@ -39,7 +39,7 @@ import {
   type WorktrunkOpName,
 } from "./worktrunk-failure-handler.js";
 import type { RunAuditor } from "../util/run-audit.js";
-import { reconcileSecretsEnvFingerprint, writeSecretsEnvFile } from "./secrets-env-writer.js";
+import { cleanupSecretsEnvFile, reconcileSecretsEnvFingerprint, writeSecretsEnvFile } from "./secrets-env-writer.js";
 import { removeDesktopBuildArtifacts } from "./worktree-desktop-artifacts.js";
 import { installTaskWorktreeIdentityGuard } from "./worktree-hooks.js";
 import { copyConfiguredWorktreeFiles, type WorktreeCopyFileResult } from "./worktree-copy-files.js";
@@ -72,6 +72,19 @@ async function readPersistedWorktreeBackendKind(worktreePath: string): Promise<W
     return backendKind === "native" || backendKind === "worktrunk" ? backendKind : undefined;
   } catch {
     return undefined;
+  }
+}
+
+async function removeGeneratedPinnedResidue(worktreePath: string): Promise<void> {
+  for (const name of ["node_modules", "dist"] as const) {
+    const path = join(worktreePath, name);
+    if (!existsSync(path)) continue;
+    try {
+      await execAsync(`git check-ignore -q -- ${JSON.stringify(name)}`, { cwd: worktreePath });
+      await rm(path, { recursive: true, force: true });
+    } catch {
+      // Keep non-ignored content; removeWorktree will fail closed below.
+    }
   }
 }
 
@@ -933,6 +946,15 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
             }
             await prunePreservedOrphanDirectories(actualRecoveryRoot, logger);
           } else {
+            await cleanupSecretsEnvFile({
+              worktreePath: pinnedPath,
+              taskId: task.id,
+              expectedFingerprint: null,
+              filename: ".env",
+              audit: undefined,
+              logger,
+            });
+            await removeGeneratedPinnedResidue(pinnedPath);
             await removeWorktree({
               rootDir,
               worktreePath: pinnedPath,
