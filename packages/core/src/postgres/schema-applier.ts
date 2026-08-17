@@ -65,7 +65,8 @@ capacity-model table drop that landed while this PR was open.
 /* FNXC:MessageArchive 2026-08-12-22:14: 0058 persists non-destructive mailbox archival on upgrades. */
 /* FNXC:TaskRecommendations 2026-08-13-22:23: upgrades must install the source-agent index before duplicate intake queries it. */
 /* FNXC:WorkspaceLease 2026-08-15-12:00: the baseline ceiling must include durable coordination tables so an upgraded database is never rejected by the current binary. */
-export const SCHEMA_BASELINE_VERSION = "0060";
+/* FNXC:Identity 2026-08-15-22:52: 0061 is the identity actors schema. Main already shipped 0060 as workspace coordination leases, so identity cannot keep 0060 or upgraded DBs would skip the identity tables. */
+export const SCHEMA_BASELINE_VERSION = "0061";
 /** FNXC:SymbolLock 2026-07-20-10:00: upgrades need durable task declarations before admission resolves symbols. */
 export const TASK_DECLARED_SYMBOLS_VERSION = "0028";
 const INITIAL_SCHEMA_VERSION = "0000";
@@ -226,6 +227,18 @@ export const PROJECT_OWNERSHIP_DEFAULT_RECONCILIATION_VERSION = "0057";
 export const MESSAGE_ARCHIVE_SCHEMA_VERSION = "0058";
 export const TASK_SOURCE_AGENT_INDEX_VERSION = "0059";
 export const WORKSPACE_COORDINATION_LEASES_SCHEMA_VERSION = "0060";
+
+/**
+ * FNXC:Identity 2026-08-15-22:52:
+ * The identity schema's own immutable bookkeeping identity. Renumbered 0047 -> 0059 -> 0060 -> 0061
+ * across refreshes from main, each time because main had landed its own migration at the number this
+ * branch was holding. Two migrations sharing one identity means whichever check runs first records
+ * the version and marks the OTHER already-applied, so the identity tables would silently never be
+ * created on an upgraded database while a fresh one looked fine. A per-migration identity is
+ * immutable only once RELEASED; this one has not been. Main shipped 0060 as workspace coordination
+ * leases, so identity must be 0061.
+ */
+export const IDENTITY_ACTORS_VERSION = "0061";
 
 /** SECURITY DEFINER helper that only inserts LEGACY_ADOPTION_DRAINED_MARKER. */
 export const LEGACY_ADOPTION_DRAINED_MARKER_FUNCTION = "fusion_mark_legacy_adoption_drained";
@@ -460,6 +473,7 @@ const PROJECT_OWNERSHIP_DEFAULT_RECONCILIATION_MIGRATION_PATH = join(MIGRATIONS_
 const MESSAGE_ARCHIVE_SCHEMA_MIGRATION_PATH = join(MIGRATIONS_DIR, "0058_fn_9014_message_archive.sql");
 const TASK_SOURCE_AGENT_INDEX_MIGRATION_PATH = join(MIGRATIONS_DIR, "0059_fn_9037_tasks_source_agent_index.sql");
 const WORKSPACE_COORDINATION_LEASES_MIGRATION_PATH = join(MIGRATIONS_DIR, "0060_fn_9059_workspace_coordination_leases.sql");
+const IDENTITY_ACTORS_MIGRATION_PATH = join(MIGRATIONS_DIR, "0061_fn_identity_actors.sql");
 
 /**
  * Ensure the migration bookkeeping table exists. Lives in the public schema so
@@ -590,6 +604,7 @@ export async function applySchemaBaseline(
     const messageArchiveSchemaAlreadyApplied = applied.includes(MESSAGE_ARCHIVE_SCHEMA_VERSION);
     const taskSourceAgentIndexAlreadyApplied = applied.includes(TASK_SOURCE_AGENT_INDEX_VERSION);
     const workspaceCoordinationLeasesAlreadyApplied = applied.includes(WORKSPACE_COORDINATION_LEASES_SCHEMA_VERSION);
+    const identityActorsAlreadyApplied = applied.includes(IDENTITY_ACTORS_VERSION);
     assertBinaryNotOlderThanDatabase(applied);
     let schemaChanged = false;
 
@@ -1301,6 +1316,19 @@ export async function applySchemaBaseline(
       const migrationSql = await readFile(WORKSPACE_COORDINATION_LEASES_MIGRATION_PATH, "utf8");
       await tx.execute(sql.raw(migrationSql));
       await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${WORKSPACE_COORDINATION_LEASES_SCHEMA_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+    /*
+    FNXC:Identity 2026-08-15-22:52:
+    Identity storage is additive: it never touches the dead-looking project_auth_* tables, whose live
+    writer is the SQLite→Postgres cutover migrator (a missing target there is a fail-closed startup
+    error, so dropping them would brick legacy upgrades). Apply AFTER main's 0060 workspace leases so
+    upgraded databases that already recorded 0060 still receive the identity tables as 0061.
+    */
+    if (!identityActorsAlreadyApplied) {
+      const migrationSql = await readFile(IDENTITY_ACTORS_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${IDENTITY_ACTORS_VERSION}) ON CONFLICT (version) DO NOTHING`);
       schemaChanged = true;
     }
     return { applied: schemaChanged, pluginHooksRun: pluginHooks.length };

@@ -11,7 +11,7 @@
 import { mkdir, readFile, writeFile, readdir, unlink, rename, access, appendFile } from "node:fs/promises";
 import { constants as fsConstants, type FSWatcher } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
-import { randomUUID, randomBytes, createHash } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import type {
   Agent,
@@ -98,11 +98,19 @@ import {
   deleteTaskSession as deleteTaskSessionAsync,
   readApiKeys as readApiKeysAsync,
   insertApiKey as insertApiKeyAsync,
+  findApiKeyByLookupId as findApiKeyByLookupIdAsync,
   revokeApiKeyRow as revokeApiKeyRowAsync,
   getLastBlockedState as getLastBlockedStateAsync,
   setLastBlockedState as setLastBlockedStateAsync,
   clearLastBlockedState as clearLastBlockedStateAsync,
 } from "../async-stores/async-agent-store.js";
+/*
+FNXC:Identity 2026-08-09-03:04:
+KTD4 — API keys hash through the FAST token module, never through `identity/credentials.ts`. A key is
+presented on every request; the password KDF costs ~200ms per derivation by design.
+*/
+import { mintToken, parseToken, TOKEN_PREFIX, verifyTokenSecret } from "../identity/tokens.js";
+import { mutationContextForAgent, UNATTRIBUTED_MUTATION_CONTEXT } from "../identity/mutation-context.js";
 import { createLogger } from "../process/logger.js";
 import { FsWatchPollController } from "../process/fs-watch-poll-controller.js";
 import {
@@ -1561,7 +1569,7 @@ export class AgentStore extends EventEmitter {
 
     // Log the assignment to the task when a non-empty taskId is provided
     if (taskId && this.taskStore) {
-      await this.taskStore.logEntry(taskId, `Task assigned to agent ${agentId}`, undefined, runContext);
+      await this.taskStore.logEntry(taskId, `Task assigned to agent ${agentId}`, undefined, runContext ?? mutationContextForAgent(agentId));
     }
 
     return updated;
@@ -1693,7 +1701,7 @@ export class AgentStore extends EventEmitter {
       throw error;
     }
 
-    const claimedTask = await this.taskStore.updateTask(taskId, { assignedAgentId: agentId }, runContext);
+    const claimedTask = await this.taskStore.updateTask(taskId, { assignedAgentId: agentId }, runContext ?? mutationContextForAgent(agentId));
     await this.syncExecutionTaskLink(agentId, taskId);
 
     return { ok: true, task: claimedTask };
@@ -1807,7 +1815,7 @@ export class AgentStore extends EventEmitter {
               taskId,
               "Warning: central checkout claim succeeded but per-project mirror update failed",
               undefined,
-              runContext,
+              runContext ?? mutationContextForAgent(agentId),
             );
             const latestTask = await this.taskStore.getTask(taskId);
             if (!latestTask) {
@@ -1817,7 +1825,7 @@ export class AgentStore extends EventEmitter {
           }
         }
 
-        await this.taskStore.logEntry(taskId, `Checked out by agent ${agentId}`, undefined, runContext);
+        await this.taskStore.logEntry(taskId, `Checked out by agent ${agentId}`, undefined, runContext ?? mutationContextForAgent(agentId));
         return result.task;
       }
 
@@ -1851,7 +1859,7 @@ export class AgentStore extends EventEmitter {
         throw new CheckoutConflictError(taskId, currentHolder ?? "unknown", agentId);
       }
 
-      await this.taskStore.logEntry(taskId, `Checked out by agent ${agentId}`, undefined, runContext);
+      await this.taskStore.logEntry(taskId, `Checked out by agent ${agentId}`, undefined, runContext ?? mutationContextForAgent(agentId));
       return result.task;
     }
 
@@ -1864,7 +1872,7 @@ export class AgentStore extends EventEmitter {
       return this.taskStore.updateTask(taskId, {
         checkoutRunId: leaseContext?.runId ?? task.checkoutRunId ?? null,
         checkoutLeaseRenewedAt: nextRenewedAt,
-      });
+      }, runContext ?? mutationContextForAgent(agentId));
     }
 
     const updated = await this.taskStore.updateTask(taskId, {
@@ -1874,8 +1882,8 @@ export class AgentStore extends EventEmitter {
       checkoutRunId: leaseContext?.runId ?? null,
       checkoutLeaseRenewedAt: nextRenewedAt,
       checkoutLeaseEpoch: nextEpoch,
-    });
-    await this.taskStore.logEntry(taskId, `Checked out by agent ${agentId}`, undefined, runContext);
+    }, runContext ?? mutationContextForAgent(agentId));
+    await this.taskStore.logEntry(taskId, `Checked out by agent ${agentId}`, undefined, runContext ?? mutationContextForAgent(agentId));
     return updated;
   }
 
@@ -1915,8 +1923,8 @@ export class AgentStore extends EventEmitter {
       checkoutNodeId: null,
       checkoutRunId: null,
       checkoutLeaseRenewedAt: null,
-    });
-    await this.taskStore.logEntry(taskId, `Released by agent ${agentId}`, undefined, runContext);
+    }, runContext ?? mutationContextForAgent(agentId));
+    await this.taskStore.logEntry(taskId, `Released by agent ${agentId}`, undefined, runContext ?? mutationContextForAgent(agentId));
     return updated;
   }
 
@@ -1928,6 +1936,14 @@ export class AgentStore extends EventEmitter {
       throw new Error("TaskStore not configured for checkout operations");
     }
 
+    /*
+    FNXC:Identity 2026-08-09-03:04 (U18):
+    NOT `actorContextForAgent(...)` here, unlike every other checkout path in this file. Force-release
+    evicts a holder ON BEHALF OF someone else, and the only agent id in scope is the evicted holder's,
+    read off the task row - attributing the eviction to the agent being evicted would be a false
+    audit row. The real actor is the operator or engine lane that asked for the force-release, and it
+    arrives with U11/U13.
+    */
     const updated = await this.taskStore.updateTask(taskId, {
       checkedOutBy: null,
       checkedOutAt: null,
@@ -1935,8 +1951,8 @@ export class AgentStore extends EventEmitter {
       checkoutRunId: null,
       checkoutLeaseRenewedAt: null,
       checkoutLeaseEpoch: null,
-    });
-    await this.taskStore.logEntry(taskId, "Checkout force-released", undefined, runContext);
+    }, runContext ?? UNATTRIBUTED_MUTATION_CONTEXT);
+    await this.taskStore.logEntry(taskId, "Checkout force-released", undefined, runContext ?? UNATTRIBUTED_MUTATION_CONTEXT);
     return updated;
   }
 
@@ -2261,8 +2277,20 @@ export class AgentStore extends EventEmitter {
   }
 
   /**
-   * Create an API key for an agent.
-   * Persists only the SHA-256 token hash; plaintext token is returned once.
+   * FNXC:Identity 2026-08-09-03:04:
+   * Create an API key for an agent, in the KTD4 `fnk_lookupid_secret` format.
+   *
+   * MIGRATED, not merely reformatted. The previous mint was `randomBytes(32)` hex hashed with a bare
+   * unsalted SHA-256 — no prefix, no lookup id, no expiry — so the only possible verification was
+   * "hash the presented value and scan every row", the exact cost KTD4 exists to avoid. The entropy
+   * was never the problem; the missing lookup id was. The new shape persists a public `lookupId` and
+   * an HMAC of the secret, so {@link verifyApiKeyToken} is a single-row lookup plus a constant-time
+   * compare, and a leaked string is classifiable by its `fnk_` prefix.
+   *
+   * Hashing goes through `identity/tokens.ts` and never through `identity/credentials.ts`: a token is
+   * presented on every request and a password KDF here would cost ~200ms per call.
+   *
+   * Plaintext token is returned exactly once and never persisted.
    */
   async createApiKey(agentId: string, options?: { label?: string }): Promise<AgentApiKeyCreateResult> {
     return this.withLock(agentId, async () => {
@@ -2271,15 +2299,16 @@ export class AgentStore extends EventEmitter {
         throw new Error(`Agent ${agentId} not found`);
       }
 
-      const token = randomBytes(32).toString("hex");
-      const tokenHash = createHash("sha256").update(token).digest("hex");
+      const minted = mintToken(TOKEN_PREFIX.agentKey);
+      const token = minted.token;
       const createdAt = new Date().toISOString();
       const label = options?.label?.trim();
 
       const key: AgentApiKey = {
         id: `key-${randomUUID().slice(0, 8)}`,
         agentId,
-        tokenHash,
+        lookupId: minted.lookupId,
+        secretHash: minted.secretHash,
         createdAt,
         ...(label ? { label } : {}),
       };
@@ -2292,6 +2321,36 @@ export class AgentStore extends EventEmitter {
 
       return { key, token };
     });
+  }
+
+  /**
+   * FNXC:Identity 2026-08-09-03:04:
+   * KTD4 verification: parse, ONE lookup on the token's public `lookupId`, then a constant-time HMAC
+   * compare. A malformed or wrong-prefix value costs no query at all, and a valid lookup id paired
+   * with a wrong secret fails on the compare rather than on the lookup — so the lookup id being
+   * public leaks nothing beyond "a key with this handle exists".
+   *
+   * Returns null for revoked keys and for LEGACY pre-U6 rows: a row carrying only `tokenHash` has no
+   * lookup id, so it cannot be reached through this path by construction. That is deliberate — the
+   * alternative is reinstating the table scan this method exists to remove. Legacy keys are re-minted
+   * rather than re-verified.
+   */
+  async verifyApiKeyToken(token: string): Promise<AgentApiKey | null> {
+    const parsed = parseToken(token, TOKEN_PREFIX.agentKey);
+    if (!parsed) return null;
+    /*
+    FNXC:Identity 2026-08-15-06:20:
+    Scoped to this store's project, matching `insertApiKeyAsync` / `revokeApiKeyRowAsync` /
+    `readApiKeysAsync`. Without it a token minted in another project verified here.
+    */
+    const key = await findApiKeyByLookupIdAsync(
+      this.asyncLayer!.db,
+      parsed.lookupId,
+      this.workflowProjectId,
+    );
+    if (!key || key.revokedAt || !key.secretHash) return null;
+    if (!verifyTokenSecret(parsed.secret, key.secretHash)) return null;
+    return key;
   }
 
   /**
@@ -2362,10 +2421,16 @@ export class AgentStore extends EventEmitter {
             throw new Error(`Agent ${agentId} holds checkout for task ${task.id}; pass force=true to delete`);
           }
 
+          /*
+          FNXC:Identity 2026-08-09-03:04 (U18):
+          `agentId` here is the agent BEING DELETED, not the actor doing the deleting, so deriving
+          from it would attribute the unassignment to its own victim. The operator/API actor that
+          requested the delete arrives with U9/U11.
+          */
           await this.taskStore.updateTask(task.id, {
             assignedAgentId: options?.reassignTo ?? null,
             checkedOutBy: task.checkedOutBy === agentId ? null : undefined,
-          });
+          }, UNATTRIBUTED_MUTATION_CONTEXT);
         }
       }
 
