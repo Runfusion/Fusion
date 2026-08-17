@@ -1,4 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+/*
+FNXC:Identity 2026-08-09-03:04 (U18/KTD2):
+These call-arg assertions now include the mutation context the converted sweep passes.
+Adding it is what keeps them load-bearing: left at the old arity every
+`toHaveBeenCalledWith` here would fail, and every `.not.toHaveBeenCalledWith` would pass
+vacuously — an assertion that can no longer fail is worse than one that is red.
+*/
+import { UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 import { RoutineRunner, type RoutineRunnerOptions } from "../scheduling/routine-runner.js";
 import type {
   RoutineStore,
@@ -427,8 +435,8 @@ describe("RoutineRunner", () => {
       const result = await runner.executeRoutine("routine-task-thinking", "api");
 
       expect(result.success).toBe(true);
-      expect(createTask).toHaveBeenNthCalledWith(1, expect.objectContaining({ thinkingLevel: "high" }));
-      expect(createTask).toHaveBeenNthCalledWith(2, expect.objectContaining({ thinkingLevel: undefined }));
+      expect(createTask).toHaveBeenNthCalledWith(1, expect.objectContaining({ thinkingLevel: "high" }), undefined, UNATTRIBUTED_MUTATION_CONTEXT);
+      expect(createTask).toHaveBeenNthCalledWith(2, expect.objectContaining({ thinkingLevel: undefined }), undefined, UNATTRIBUTED_MUTATION_CONTEXT);
     });
 
     /*
@@ -462,10 +470,10 @@ describe("RoutineRunner", () => {
       expect(result.success).toBe(true);
 
       // No column at all — NOT "triage", and not a substituted "todo" either.
-      expect(createTask).toHaveBeenNthCalledWith(1, expect.objectContaining({ column: undefined }));
+      expect(createTask).toHaveBeenNthCalledWith(1, expect.objectContaining({ column: undefined }), undefined, UNATTRIBUTED_MUTATION_CONTEXT);
       expect(createTask.mock.calls[0][0].column).toBeUndefined();
       // An explicit column is still honoured.
-      expect(createTask).toHaveBeenNthCalledWith(2, expect.objectContaining({ column: "in-progress" }));
+      expect(createTask).toHaveBeenNthCalledWith(2, expect.objectContaining({ column: "in-progress" }), undefined, UNATTRIBUTED_MUTATION_CONTEXT);
     });
 
     it("cleans up inFlightExecutions map even on error", async () => {

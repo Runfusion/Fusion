@@ -15,6 +15,8 @@ import "./executor-test-helpers.js";
 import { TaskExecutor } from "../executor.js";
 import { createMockStore, mockedExec, resetExecutorMocks } from "./executor-test-helpers.js";
 import { UsageLimitPauser } from "../errors/usage-limit-detector.js";
+/* FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage C): the executor threads a real mutation context to every store call, so these assertions pin it rather than dropping the argument. */
+import { ANY_MUTATION_CONTEXT } from "./mutation-context-matchers.js";
 
 const WF = "custom:planning-only";
 
@@ -51,8 +53,8 @@ describe("dependency-abort cleanup requeues to a DECLARED column", () => {
     The failure this pins: the card was parked in a column its workflow does not declare, where
     nothing routes it onward and only a restart-time reconcile could rescue it.
     */
-    expect(store.moveTask).toHaveBeenCalledWith("FN-DEP", "todo");
-    expect(store.moveTask).not.toHaveBeenCalledWith("FN-DEP", "triage");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-DEP", "todo", undefined, ANY_MUTATION_CONTEXT);
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-DEP", "triage", undefined, ANY_MUTATION_CONTEXT);
   });
 
   /*

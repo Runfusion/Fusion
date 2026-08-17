@@ -15,6 +15,8 @@ import "./executor-test-helpers.js";
 import { TaskExecutor } from "../executor.js";
 import { createMockStore, resetExecutorMocks } from "./executor-test-helpers.js";
 import type { TaskDetail } from "@fusion/core";
+/* FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage C): the executor threads a real mutation context to every store call, so these assertions pin it rather than accepting `undefined`. */
+import { ANY_MUTATION_CONTEXT } from "./mutation-context-matchers.js";
 
 const now = "2026-07-21T22:56:00.000Z";
 
@@ -172,13 +174,13 @@ describe("handleGraphFailure execute-family live session preserve", () => {
         live.id,
         expect.stringContaining("while a live agent session is still executing"),
         undefined,
-        undefined,
+        ANY_MUTATION_CONTEXT,
       );
       // Match actual updateTask signature (run context is undefined on this path).
       expect(store.updateTask).not.toHaveBeenCalledWith(
         live.id,
         expect.objectContaining({ status: "failed" }),
-        undefined,
+        ANY_MUTATION_CONTEXT,
       );
     },
   );
@@ -207,7 +209,7 @@ describe("handleGraphFailure execute-family live session preserve", () => {
     expect(store.updateTask).toHaveBeenCalledWith(
       live.id,
       expect.objectContaining({ status: "failed", error: expect.stringContaining("merge-attempt") }),
-      undefined,
+      ANY_MUTATION_CONTEXT,
     );
   });
 });

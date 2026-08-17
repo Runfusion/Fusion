@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { ANY_MUTATION_CONTEXT } from "./mutation-context-matchers.js";
 
 // Mock external dependencies
 vi.mock("../pi.js", () => ({
@@ -1130,7 +1131,7 @@ describe("aiMergeTask — merge details collection", () => {
     expect(mergeDetailsCall).toBeUndefined();
 
     // Task should still be moved to done
-    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done", undefined, ANY_MUTATION_CONTEXT);
   });
 
   it("handles missing shortstat gracefully when show --shortstat fails", async () => {

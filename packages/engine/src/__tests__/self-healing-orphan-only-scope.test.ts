@@ -1,4 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+/*
+FNXC:Identity 2026-08-09-03:04 (U18/KTD2):
+These call-arg assertions now include the mutation context the converted sweep passes.
+Adding it is what keeps them load-bearing: left at the old arity every
+`toHaveBeenCalledWith` here would fail, and every `.not.toHaveBeenCalledWith` would pass
+vacuously — an assertion that can no longer fail is worse than one that is red.
+*/
+import { UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 
 vi.mock("node:child_process", async () => {
   const { promisify: utilPromisify } = await import("node:util");
@@ -100,11 +108,11 @@ describe("recoverOrphanOnlyScopeViolations (FN-4379 / FN-4350)", () => {
     const recovered = await manager.recoverOrphanOnlyScopeViolations();
 
     expect(recovered).toBe(1);
-    expect(store.moveTask).toHaveBeenCalledWith("FN-4350", "done");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-4350", "done", undefined, UNATTRIBUTED_MUTATION_CONTEXT);
     expect(store.updateTask).toHaveBeenCalledWith("FN-4350", expect.objectContaining({
       mergeDetails: expect.objectContaining({ mergeConfirmed: true, resolutionStrategy: "orphan-discard-no-op" }),
-    }));
-    expect(store.logEntry).toHaveBeenCalledWith("FN-4350", expect.stringContaining("Auto-finalized from in-review/paused: content proven on main"));
+    }), UNATTRIBUTED_MUTATION_CONTEXT);
+    expect(store.logEntry).toHaveBeenCalledWith("FN-4350", expect.stringContaining("Auto-finalized from in-review/paused: content proven on main"), undefined, UNATTRIBUTED_MUTATION_CONTEXT);
   });
 
   /*
@@ -151,7 +159,7 @@ describe("recoverOrphanOnlyScopeViolations (FN-4379 / FN-4350)", () => {
     });
 
     expect(await manager.recoverOrphanOnlyScopeViolations()).toBe(1);
-    expect(store.moveTask).toHaveBeenCalledWith("FN-RENAMED", "done");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-RENAMED", "done", undefined, UNATTRIBUTED_MUTATION_CONTEXT);
   });
 
   it("does NOT recover when landed commit cannot be verified (FN-4280)", async () => {

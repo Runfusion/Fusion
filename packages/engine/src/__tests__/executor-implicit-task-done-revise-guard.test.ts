@@ -3,6 +3,8 @@ import "./executor-test-helpers.js";
 import { TaskExecutor, evaluateTaskDoneRefusal } from "../executor.js";
 import { executorLog } from "../logger.js";
 import { createMockStore, mockedExecSync, resetExecutorMocks } from "./executor-test-helpers.js";
+/* FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage C): the executor threads a real mutation context to every store call, so these assertions pin it rather than dropping the argument. */
+import { ANY_MUTATION_CONTEXT } from "./mutation-context-matchers.js";
 
 function makeTask(overrides: Record<string, unknown> = {}) {
   return {
@@ -59,8 +61,8 @@ describe("FN-4946 implicit completion + REVISE verdict interaction", () => {
       paused: false,
       pausedByAgentId: null,
       sessionFile: null,
-    }));
-    expect(store.moveTask).toHaveBeenCalledWith("FN-4946-R1", "todo", { preserveProgress: true });
+    }), ANY_MUTATION_CONTEXT);
+    expect(store.moveTask).toHaveBeenCalledWith("FN-4946-R1", "todo", { preserveProgress: true }, ANY_MUTATION_CONTEXT);
     const refusalLogCall = store.logEntry.mock.calls.find(
       ([id, message]: [string, string]) => id === "FN-4946-R1" && message.includes("pending-code-review-revise"),
     );

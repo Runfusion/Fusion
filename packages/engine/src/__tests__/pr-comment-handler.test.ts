@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { ANY_MUTATION_CONTEXT } from "./mutation-context-matchers.js";
 import { PrCommentHandler } from "../merge/pr-comment-handler.js";
 import { RENAMED_VOCAB, lifecycleIr } from "./_workflow-vocabulary-fixture.js";
 import type { TaskStore, Task } from "@fusion/core";
@@ -234,9 +235,8 @@ describe("PrCommentHandler", () => {
               expect.objectContaining({ source: "github-pr", body: "Please add tests" }),
             ]),
           }),
-        }),
-      );
-      expect(mockStore.moveTask).toHaveBeenCalledWith("FN-001", "in-progress");
+        }), ANY_MUTATION_CONTEXT);
+      expect(mockStore.moveTask).toHaveBeenCalledWith("FN-001", "in-progress", undefined, ANY_MUTATION_CONTEXT);
     });
 
     /*
@@ -280,10 +280,9 @@ describe("PrCommentHandler", () => {
               expect.objectContaining({ source: "github-pr", body: "Please add tests" }),
             ]),
           }),
-        }),
-      );
+        }), ANY_MUTATION_CONTEXT);
       // ...and the card returns to THIS board's wip lane, not the legacy id.
-      expect(mockStore.moveTask).toHaveBeenCalledWith("FN-001", RENAMED_VOCAB.wip);
+      expect(mockStore.moveTask).toHaveBeenCalledWith("FN-001", RENAMED_VOCAB.wip, undefined, ANY_MUTATION_CONTEXT);
       expect(mockStore.moveTask).not.toHaveBeenCalledWith("FN-001", "in-progress");
     });
 
@@ -381,7 +380,7 @@ describe("PrCommentHandler", () => {
             prUrl: "https://github.com/owner/repo/pull/42",
           },
         },
-      });
+      }, undefined, ANY_MUTATION_CONTEXT);
       const [createArg] = (mockStore.createTask as unknown as { mock: { calls: [Record<string, unknown>][] } }).mock.calls[0];
       expect(Object.hasOwn(createArg, "column")).toBe(false);
     });

@@ -1,4 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+/*
+FNXC:Identity 2026-08-09-03:04 (U18/KTD2):
+These call-arg assertions now include the mutation context the converted sweep passes.
+Adding it is what keeps them load-bearing: left at the old arity every
+`toHaveBeenCalledWith` here would fail, and every `.not.toHaveBeenCalledWith` would pass
+vacuously — an assertion that can no longer fail is worse than one that is red.
+*/
+import { UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 import { computeInsightFingerprint, type Mission, type TaskStore } from "@fusion/core";
 import {
   UNLINKED_MISSIONS_ADVISORY_KEY,
@@ -190,6 +198,6 @@ describe("UnlinkedMissionsAdvisoryReporter", () => {
 
     await expect(reporter.report()).resolves.toEqual({ alerted: true });
     expect(store.logEntry).toHaveBeenCalledTimes(1);
-    expect(store.logEntry).toHaveBeenCalledWith("M-UNLINKED", expect.stringContaining("[unlinked-missions-advisory]"));
+    expect(store.logEntry).toHaveBeenCalledWith("M-UNLINKED", expect.stringContaining("[unlinked-missions-advisory]"), undefined, UNATTRIBUTED_MUTATION_CONTEXT);
   });
 });

@@ -23,6 +23,8 @@ import "./executor-test-helpers.js";
 import { TaskExecutor } from "../executor.js";
 import { createDefaultNodeHandlers } from "../workflows/workflow-node-handlers.js";
 import { createMockStore, resetExecutorMocks } from "./executor-test-helpers.js";
+/* FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage C): the executor threads a real mutation context to every store call, so these assertions pin it rather than accepting `undefined`. */
+import { ANY_MUTATION_CONTEXT } from "./mutation-context-matchers.js";
 
 const TASK = { id: "FN-PRIM-EXIT", column: "in-progress", steps: [], paused: false } as unknown as TaskDetail;
 
@@ -216,7 +218,7 @@ describe("compat park for graphs that do not route review-pending", () => {
     expect(store.updateTask).toHaveBeenCalledWith(
       "FN-COMPAT",
       expect.objectContaining({ status: "failed", error: expect.stringContaining("terminated with failure at node 'cleanup'") }),
-      undefined,
+      ANY_MUTATION_CONTEXT,
     );
   });
 
@@ -238,7 +240,7 @@ describe("compat park for graphs that do not route review-pending", () => {
     expect(store.updateTask).toHaveBeenCalledWith(
       "FN-COMPAT",
       expect.objectContaining({ status: "failed", error: expect.stringContaining("terminated with failure at node 'cleanup'") }),
-      undefined,
+      ANY_MUTATION_CONTEXT,
     );
   });
 });

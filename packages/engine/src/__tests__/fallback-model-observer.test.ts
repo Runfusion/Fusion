@@ -1,6 +1,11 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { createFallbackModelObserver } from "../auth/fallback-model-observer.js";
 import { notifyFallbackUsed } from "../util/notifier.js";
+import { mutationContextForAgent } from "@fusion/core";
+
+/* FNXC:Identity 2026-08-09-03:04 (U18/KTD2): a real derived context, not the marker — the point of
+   the assertion below is that the observer FORWARDS what its constructing lane supplied. */
+const runContext = mutationContextForAgent("agent-fallback-test");
 
 vi.mock("../util/notifier.js", () => ({
   notifyFallbackUsed: vi.fn().mockResolvedValue(undefined),
@@ -23,6 +28,7 @@ describe("createFallbackModelObserver", () => {
       store,
       taskId: "FN-123",
       taskTitle: "Fix Codex auth",
+      runContext,
     });
 
     await observer({
@@ -36,7 +42,10 @@ describe("createFallbackModelObserver", () => {
     const expectedMessage =
       "[fallback] executor switched from openai-codex/gpt-5.3-codex to zai/glm-5.1 (prompt-time; primary provider authentication failed)";
 
-    expect(store.logEntry).toHaveBeenCalledWith("FN-123", expectedMessage);
+    /* FNXC:Identity 2026-08-09-03:04 (U18/KTD2): the observer seam restates the required mutation
+       context and forwards the constructing lane's own — asserted here so a future change that drops
+       it back to the pre-U18 arity fails rather than silently writing unattributed. */
+    expect(store.logEntry).toHaveBeenCalledWith("FN-123", expectedMessage, undefined, runContext);
     expect(store.appendAgentLog).toHaveBeenCalledWith(
       "FN-123",
       expectedMessage,
@@ -64,6 +73,7 @@ describe("createFallbackModelObserver", () => {
       label: "triage",
       store,
       taskId: "FN-7437",
+      runContext,
     });
 
     await observer({
@@ -95,6 +105,7 @@ describe("createFallbackModelObserver", () => {
       agent: "Merger Agent",
       label: "merge verification",
       store,
+      runContext,
     });
 
     await expect(observer({

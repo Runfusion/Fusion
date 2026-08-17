@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { ANY_MUTATION_CONTEXT } from "../mutation-context-matchers.js";
 import "../executor-test-helpers.js";
 import { TaskExecutor } from "../../executor.js";
 import { createFnAgent } from "../../pi.js";
@@ -205,7 +206,7 @@ describe("reliability interactions: FN-4935 executor liveness gate", () => {
 
     // FNXC:ExecutorMoveTask 2026-07-07-08:38: FN-7229 (984e36255d) stopped parking worktree-liveness failures in review — at the retry cap the task is now marked failed in-place via updateTask(status=failed) (executor.ts:9608) instead of moveTask→in-review. `in-review` is reserved for clean completion handoffs, so assert the task is NOT moved there and IS marked failed. The worktree:incomplete-detected audit event below still carries the forensic `terminalAction: "park-in-review"` label (executor.ts:9554), which records what the gate detected, not the (changed) terminal action.
     expect(store.moveTask).not.toHaveBeenCalledWith("FN-4935-T", "in-review");
-    expect(store.updateTask).toHaveBeenCalledWith("FN-4935-T", expect.objectContaining({ status: "failed", error: expect.any(String) }));
+    expect(store.updateTask).toHaveBeenCalledWith("FN-4935-T", expect.objectContaining({ status: "failed", error: expect.any(String) }), ANY_MUTATION_CONTEXT);
     expect(events.some((event) => (event.type === "worktree:incomplete-detected" || event.mutationType === "worktree:incomplete-detected") && event.metadata?.terminalAction === "park-in-review")).toBe(true);
   });
 

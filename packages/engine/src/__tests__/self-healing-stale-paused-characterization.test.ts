@@ -30,6 +30,14 @@ pass after the migration. If the migration changes either answer, that change is
 deliberate and needs saying out loud.
 */
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
+/*
+FNXC:Identity 2026-08-09-03:04 (U18/KTD2):
+These call-arg assertions now include the mutation context the converted sweep passes.
+Adding it is what keeps them load-bearing: left at the old arity every
+`toHaveBeenCalledWith` here would fail, and every `.not.toHaveBeenCalledWith` would pass
+vacuously — an assertion that can no longer fail is worse than one that is red.
+*/
+import { UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 import type { Task, TaskStore, WorkflowIr } from "@fusion/core";
 
 import { SelfHealingManager } from "../self-healing.js";
@@ -110,7 +118,7 @@ describe("surfaceStalePausedTodos — behavior BEFORE the policy migration", () 
       const h = harness([pausedTask({ id: "FN-C" })], { stalePausedTodoThresholdMs: CUSTOMIZED_MS });
 
       expect(await h.manager.surfaceStalePausedTodos()).toBe(1);
-      expect(h.logEntry).toHaveBeenCalledWith("FN-C", expect.stringContaining("Stale paused todo surfaced"));
+      expect(h.logEntry).toHaveBeenCalledWith("FN-C", expect.stringContaining("Stale paused todo surfaced"), undefined, UNATTRIBUTED_MUTATION_CONTEXT);
     });
 
     it("does NOT surface the same card under the built-in default threshold", async () => {
@@ -141,7 +149,7 @@ describe("surfaceStalePausedTodos — behavior BEFORE the policy migration", () 
       });
 
       expect(await h.manager.surfaceStalePausedTodos()).toBe(1);
-      expect(h.logEntry).toHaveBeenCalledWith("FN-U", expect.stringContaining("Stale paused todo surfaced"));
+      expect(h.logEntry).toHaveBeenCalledWith("FN-U", expect.stringContaining("Stale paused todo surfaced"), undefined, UNATTRIBUTED_MUTATION_CONTEXT);
     });
 
     it("surfaces an automation-paused card too, so the two are not distinguished today", async () => {
