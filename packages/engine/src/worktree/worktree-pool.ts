@@ -1,6 +1,6 @@
 import { exec, execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { constants, copyFileSync, existsSync, linkSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmdirSync, unlinkSync } from "node:fs";
+import { constants, copyFileSync, existsSync, linkSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmdirSync, unlinkSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve, isAbsolute } from "node:path";
 import type { SecretsStore, Settings, TaskStore, WorktrunkSettings } from "@fusion/core";
@@ -1259,8 +1259,39 @@ export async function reapOrphanWorktrees(
         targetPath = stashedTarget
           ? (isAbsolute(stashedTarget) ? stashedTarget : resolve(dirname(dotGit), stashedTarget))
           : undefined;
-        unlinkSync(dotGit);
-        // A repair can win in the unlink window itself. Restore the pointer and
+        // The dangling verdict + inode check above predate this removal; a repair can
+        // REPLACE the `.git` PATHNAME with a pointer to a DIFFERENT, live admin between the
+        // inode check and the unlink. Unlinking the pathname would then delete the live
+        // replacement while `targetPath` (derived from the STASHED original) stays stale,
+        // and the later rmdir destroys the directory the live replacement references. Close
+        // the boundary by atomically renaming WHATEVER currently occupies the pathname to a
+        // private deletion path, then unlinking only the captured occupant. A repair that
+        // wins the freed pathname after this rename creates a fresh `.git` we never touch.
+        const dotGitDelete = join(dirname(resolvedFull), `.${name}.git-reap-del-${process.pid}-${Date.now().toString(36)}`);
+        renameSync(dotGit, dotGitDelete);
+        const capturedStat = lstatSync(dotGitDelete);
+        if (capturedStat.dev !== stashStat.dev || capturedStat.ino !== stashStat.ino) {
+          // The occupant we moved aside is a REPLACEMENT pointer (a different inode than the
+          // dangling original we stashed) — it is authoritative and points at a live admin.
+          // Restore it to the pathname and drop the now-superseded dangling stash so a stale
+          // pointer is never re-applied over the live one. The directory is preserved.
+          try {
+            linkSync(dotGitDelete, dotGit);
+            unlinkSync(dotGitDelete);
+          } catch { /* best-effort rollback of the replacement restore */ }
+          const staleStash = dotGitStash;
+          dotGitStash = undefined;
+          if (staleStash) {
+            try { unlinkSync(staleStash); } catch { /* best-effort recovery-copy cleanup */ }
+          }
+          worktreePoolLog.warn(`Preserving orphan worktree whose .git pointer was replaced by a live pointer during deletion: ${resolvedFull}`);
+          continue;
+        }
+        // Captured occupant is our dangling original — remove it. A repair that later wins
+        // the freed pathname is protected by the ENOTEMPTY + authoritative-pointer recovery
+        // in the removal/restore paths below; its live admin target is never our rmdir victim.
+        unlinkSync(dotGitDelete);
+        // A repair can win in the removal window itself. Restore the pointer and
         // preserve the worktree before the later rmdir/prune can delete its live
         // admin target.
         if (targetPath && existsSync(targetPath)) {

@@ -82,7 +82,7 @@ import {
 import { BranchConflictError } from "../execution/branch-conflicts.js";
 import * as branchConflictModule from "../execution/branch-conflicts.js";
 import { execSync } from "node:child_process";
-import { existsSync, linkSync, lstatSync, readdirSync, readFileSync, rmdirSync, unlinkSync } from "node:fs";
+import { existsSync, linkSync, lstatSync, readdirSync, readFileSync, renameSync, rmdirSync, unlinkSync } from "node:fs";
 import type { Task, Column } from "@fusion/core";
 
 const mockedExecSync = vi.mocked(execSync);
@@ -91,6 +91,7 @@ const mockedLstatSync = vi.mocked(lstatSync);
 const mockedReaddirSync = vi.mocked(readdirSync);
 const mockedReadFileSync = vi.mocked(readFileSync);
 const mockedRmdirSync = vi.mocked(rmdirSync);
+const mockedRenameSync = vi.mocked(renameSync);
 const mockedLinkSync = vi.mocked(linkSync);
 const mockedUnlinkSync = vi.mocked(unlinkSync);
 const mockedPruneWorktreeAdminEntries = vi.mocked(worktreePrune.pruneWorktreeAdminEntries);
@@ -1308,9 +1309,12 @@ describe("reapOrphanWorktrees", () => {
       "/root/.worktrees/leaked-wt/.git",
       expect.stringMatching(/^\/root\/\.worktrees\/\.leaked-wt\.git-reap-stash-\d+-[a-z0-9]+$/),
     );
-    expect(mockedUnlinkSync).toHaveBeenCalledWith(
-      expect.stringMatching(/^\/root\/\.worktrees\/\.leaked-wt\.git-reap-stash-\d+-[a-z0-9]+$/),
-    );
+    // The occupant of the `.git` pathname is moved to a private deletion path before the
+    // captured inode is removed, so a live replacement that wins the pathname is never the
+    // unlink target.
+    const deletePath = expect.stringMatching(/^\/root\/\.worktrees\/\.leaked-wt\.git-reap-del-\d+-[a-z0-9]+$/);
+    expect(mockedRenameSync).toHaveBeenCalledWith("/root/.worktrees/leaked-wt/.git", deletePath);
+    expect(mockedUnlinkSync).toHaveBeenCalledWith(deletePath);
     expect(mockedRmdirSync).toHaveBeenCalledWith("/root/.worktrees/leaked-wt");
   });
 
