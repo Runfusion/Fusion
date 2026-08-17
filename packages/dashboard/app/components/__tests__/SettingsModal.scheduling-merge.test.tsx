@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { act, cleanup, render, screen, fireEvent, waitFor, within } from "@testing-library/react";
+import { cleanup, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { EditorView } from "@codemirror/view";
 import path from "path";
 import { SettingsModal } from "../SettingsModal";
@@ -209,14 +209,11 @@ describe("SettingsModal", () => {
   });
 
   /*
-  FNXC:SettingsModalTests 2026-08-16-04:24:
-  Every Scheduling-tab test navigates with `await screen.findByRole("button", { name: "Scheduling" })`,
-  not `getByRole` after `waitFor(fetchSettings called)`. The fetch being CALLED is a mount-time signal
-  that can precede the resolved-settings render commit, so under parallel-worker load the nav button is
-  not yet in the tree and a bare getByRole flakes (observed 2026-08-15 in a 12-file run: only the
-  floating-window shell had mounted). findByRole waits for the actual UI readiness with the default
-  timeout — a wait-mechanism fix, not a widened timeout. Nav always happens BEFORE any test arms fake
-  timers (findBy* deadlocks under vitest fake timers), so this is safe file-wide.
+  FNXC:SettingsModalTests 2026-08-17-00:20:
+  Scheduling-tab tests open `initialSection: "scheduling"` instead of remounting Authentication
+  and clicking the sidebar. The 2026-08-16 findByRole nav wait existed because a fetch-called
+  signal can precede the nav-button commit; skipping that click removes the flake surface and
+  the extra section render. Tests that still need nav (proving the sidebar item exists) keep it.
   */
   describe("Scheduling overlap ignore paths", () => {
     /*
@@ -230,12 +227,8 @@ describe("SettingsModal", () => {
       mockFetchSettings.mockResolvedValue(settingsWithoutThreshold);
       mockFetchSettingsByScope.mockResolvedValue({ global: settingsWithoutThreshold, project: {} });
 
-      renderModal();
+      renderModal({ initialSection: "scheduling" });
       await waitForSettingsModalReady();
-      await act(async () => {
-        await Promise.resolve();
-      });
-      await settingsModalUser.click(await screen.findByRole("button", { name: "Scheduling" }));
 
       const threshold = screen.getByLabelText("Consecutive tool failures") as HTMLInputElement;
       expect(threshold.value).toBe("1");
@@ -261,12 +254,8 @@ describe("SettingsModal", () => {
         project: { executorToolFailureThreshold: 4, engineerBacklogAutoClaim: false },
       });
 
-      renderModal();
+      renderModal({ initialSection: "scheduling" });
       await waitForSettingsModalReady();
-      await act(async () => {
-        await Promise.resolve();
-      });
-      await settingsModalUser.click(await screen.findByRole("button", { name: "Scheduling" }));
 
       expect((screen.getByLabelText("Consecutive tool failures") as HTMLInputElement).value).toBe("4");
       await settingsModalUser.click(screen.getByLabelText("Let engineer agents auto-claim backlog tasks"));
@@ -283,10 +272,8 @@ describe("SettingsModal", () => {
       mockFetchSettings.mockResolvedValue(settingsWithoutHiddenDefault);
       mockFetchSettingsByScope.mockResolvedValue({ global: settingsWithoutHiddenDefault, project: {} });
 
-      renderModal();
-      await waitFor(() => expect(mockFetchSettings).toHaveBeenCalled());
-
-      fireEvent.click(await screen.findByRole("button", { name: "Scheduling" }));
+      renderModal({ initialSection: "scheduling" });
+      await waitForSettingsModalReady();
 
       expect(screen.getByLabelText(/ignore hidden dot paths in overlap checks/i)).toBeChecked();
     });
@@ -298,19 +285,15 @@ describe("SettingsModal", () => {
       });
       mockFetchSettingsByScope.mockResolvedValue({ global: defaultSettings, project: { ignoreHiddenOverlapPaths: false } });
 
-      renderModal();
-      await waitFor(() => expect(mockFetchSettings).toHaveBeenCalled());
-
-      fireEvent.click(await screen.findByRole("button", { name: "Scheduling" }));
+      renderModal({ initialSection: "scheduling" });
+      await waitForSettingsModalReady();
 
       expect(screen.getByLabelText(/ignore hidden dot paths in overlap checks/i)).not.toBeChecked();
     });
 
     it("sends hidden overlap filtering false without disrupting explicit ignore paths", async () => {
-      renderModal();
-      await waitFor(() => expect(mockFetchSettings).toHaveBeenCalled());
-
-      fireEvent.click(await screen.findByRole("button", { name: "Scheduling" }));
+      renderModal({ initialSection: "scheduling" });
+      await waitForSettingsModalReady();
 
       // FNXC:SettingsModalTests 2026-08-16-03:46: flush the 500ms auto-save debounce on the fake clock instead of a real-timer waitFor (FN-2707); assertions unchanged. Fake timers must be enabled BEFORE the mutating edit so the debounce lands on the fake clock.
       vi.useFakeTimers();
@@ -333,10 +316,8 @@ describe("SettingsModal", () => {
       });
       mockFetchSettingsByScope.mockResolvedValue({ global: defaultSettings, project: { ignoreHiddenOverlapPaths: false } });
 
-      renderModal();
-      await waitFor(() => expect(mockFetchSettings).toHaveBeenCalled());
-
-      fireEvent.click(await screen.findByRole("button", { name: "Scheduling" }));
+      renderModal({ initialSection: "scheduling" });
+      await waitForSettingsModalReady();
 
       vi.useFakeTimers();
       fireEvent.click(screen.getByLabelText(/ignore hidden dot paths in overlap checks/i));
@@ -353,20 +334,16 @@ describe("SettingsModal", () => {
         overlapIgnorePaths: ["docs/", "generated/*"],
       });
 
-      renderModal();
-      await waitFor(() => expect(mockFetchSettings).toHaveBeenCalled());
-
-      fireEvent.click(await screen.findByRole("button", { name: "Scheduling" }));
+      renderModal({ initialSection: "scheduling" });
+      await waitForSettingsModalReady();
 
       expect(screen.getByDisplayValue("docs/")).toBeInTheDocument();
       expect(screen.getByDisplayValue("generated/*")).toBeInTheDocument();
     });
 
     it("supports selecting ignore paths through the browse picker", async () => {
-      renderModal();
-      await waitFor(() => expect(mockFetchSettings).toHaveBeenCalled());
-
-      fireEvent.click(await screen.findByRole("button", { name: "Scheduling" }));
+      renderModal({ initialSection: "scheduling" });
+      await waitForSettingsModalReady();
 
       await settingsModalUser.click(screen.getByRole("button", { name: /browse path for ignored overlap entry 1/i }));
 
@@ -377,10 +354,8 @@ describe("SettingsModal", () => {
     });
 
     it("includes overlapIgnorePaths in save payload", async () => {
-      renderModal();
-      await waitFor(() => expect(mockFetchSettings).toHaveBeenCalled());
-
-      fireEvent.click(await screen.findByRole("button", { name: "Scheduling" }));
+      renderModal({ initialSection: "scheduling" });
+      await waitForSettingsModalReady();
 
       vi.useFakeTimers();
       fireEvent.click(screen.getByRole("button", { name: /browse path for ignored overlap entry 1/i }));
@@ -405,10 +380,8 @@ describe("SettingsModal", () => {
         heartbeatScopeDiscipline: "lite",
       });
 
-      renderModal();
-      await waitFor(() => expect(mockFetchSettings).toHaveBeenCalled());
-
-      fireEvent.click(await screen.findByRole("button", { name: "Scheduling" }));
+      renderModal({ initialSection: "scheduling" });
+      await waitForSettingsModalReady();
 
       const select = screen.getByLabelText("Heartbeat Scope Discipline") as HTMLSelectElement;
       expect(select.value).toBe("lite");
@@ -434,10 +407,8 @@ describe("SettingsModal", () => {
         ...(engineerBacklogAutoClaim === undefined ? {} : { engineerBacklogAutoClaim }),
       });
 
-      renderModal();
-      await waitFor(() => expect(mockFetchSettings).toHaveBeenCalled());
-
-      fireEvent.click(await screen.findByRole("button", { name: "Scheduling" }));
+      renderModal({ initialSection: "scheduling" });
+      await waitForSettingsModalReady();
 
       expect((screen.getByLabelText("Let engineer agents auto-claim backlog tasks") as HTMLInputElement).checked).toBe(expectedChecked);
     });
@@ -448,10 +419,8 @@ describe("SettingsModal", () => {
         engineerBacklogAutoClaim: false,
       });
 
-      renderModal();
-      await waitFor(() => expect(mockFetchSettings).toHaveBeenCalled());
-
-      fireEvent.click(await screen.findByRole("button", { name: "Scheduling" }));
+      renderModal({ initialSection: "scheduling" });
+      await waitForSettingsModalReady();
 
       const toggle = screen.getByLabelText("Let engineer agents auto-claim backlog tasks") as HTMLInputElement;
       expect(toggle.checked).toBe(false);
@@ -472,10 +441,8 @@ describe("SettingsModal", () => {
         engineerBacklogAutoClaim: true,
       });
 
-      renderModal();
-      await waitFor(() => expect(mockFetchSettings).toHaveBeenCalled());
-
-      fireEvent.click(await screen.findByRole("button", { name: "Scheduling" }));
+      renderModal({ initialSection: "scheduling" });
+      await waitForSettingsModalReady();
 
       const toggle = screen.getByLabelText("Let engineer agents auto-claim backlog tasks") as HTMLInputElement;
       expect(toggle.checked).toBe(true);
@@ -493,11 +460,8 @@ describe("SettingsModal", () => {
 
   describe("Number input clearing", () => {
     it("allows clearing maxConcurrent without leaving a stuck zero", async () => {
-      renderModal();
-      await waitFor(() => expect(mockFetchSettings).toHaveBeenCalled());
-
-      // Open Scheduling section
-      fireEvent.click(await screen.findByRole("button", { name: "Scheduling" }));
+      renderModal({ initialSection: "scheduling" });
+      await waitForSettingsModalReady();
 
       const input = screen.getByLabelText("Max Concurrent Tasks") as HTMLInputElement;
       expect(input).toBeDefined();
@@ -518,11 +482,8 @@ describe("SettingsModal", () => {
     */
 
     it("allows clearing pollIntervalMs without leaving a stuck zero", async () => {
-      renderModal();
-      await waitFor(() => expect(mockFetchSettings).toHaveBeenCalled());
-
-      // Open Scheduling section
-      fireEvent.click(await screen.findByRole("button", { name: "Scheduling" }));
+      renderModal({ initialSection: "scheduling" });
+      await waitForSettingsModalReady();
 
       const input = screen.getByLabelText("Poll Interval (ms)") as HTMLInputElement;
       expect(input).toBeDefined();
@@ -533,10 +494,8 @@ describe("SettingsModal", () => {
     });
 
     it("allows configuring stale high fan-out escalation threshold in hours", async () => {
-      renderModal();
-      await waitFor(() => expect(mockFetchSettings).toHaveBeenCalled());
-
-      fireEvent.click(await screen.findByRole("button", { name: "Scheduling" }));
+      renderModal({ initialSection: "scheduling" });
+      await waitForSettingsModalReady();
 
       const input = screen.getByLabelText("Stale High Fan-out Escalation (hours)") as HTMLInputElement;
       expect(input).toBeDefined();
