@@ -31,10 +31,6 @@
       "types": "./app/components/ViewHeader.tsx",
       "import": "./app/components/ViewHeader.tsx"
     },
-    "./app/utils/taskStuck": {
-      "types": "./app/utils/taskStuck.ts",
-      "import": "./app/utils/taskStuck.ts"
-    },
     "./app/utils/copyToClipboard": {
       "types": "./app/utils/copyToClipboard.ts",
       "import": "./app/utils/copyToClipboard.ts"
