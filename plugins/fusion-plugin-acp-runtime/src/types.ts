@@ -156,6 +156,7 @@ export interface AcpSession {
   /** Working directory the agent operates over (the task worktree). */
   cwd: string;
   lastModelDescription: string;
+  fusionToolBridgeError?: { reasonCode: "mcp-schema-server-missing" | "bridge-start-failed" };
   callbacks: AcpCallbacks;
   /** Per-run permission gate captured at createSession (U5/U7 read this). */
   gate?: PermissionGate;

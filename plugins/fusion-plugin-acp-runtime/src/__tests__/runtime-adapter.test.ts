@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { AcpRuntimeAdapter } from "../runtime-adapter.js";
 import { killAllProcesses, activeProcessCount } from "../process-manager.js";
 import * as provider from "../provider.js";
+import * as toolBridge from "../tool-bridge.js";
 import type { AcpSession, AgentRuntimeOptions } from "../types.js";
 
 const FIXTURE = fileURLToPath(new URL("./fixtures/echo-agent.mjs", import.meta.url));
@@ -125,6 +126,31 @@ describe("AcpRuntimeAdapter (U3)", () => {
 });
 
 describe("AcpRuntimeAdapter custom-tools bridge (FNXC:AcpCustomTools)", () => {
+  it("keeps the ACP session alive when the custom-tools bridge cannot start", async () => {
+    let captured: { mcpServers?: unknown[] } | undefined;
+    const onText = vi.fn();
+    const adapter = makeAdapter();
+    const bridgeSpy = vi.spyOn(toolBridge, "startFusionToolBridge").mockRejectedValue(new Error("bind failed"));
+    const providerSpy = vi.spyOn(provider, "newAcpSession").mockImplementation(async (_connection, opts) => {
+      captured = opts;
+      return { sessionId: "degraded-session" };
+    });
+    try {
+      const { session } = await adapter.createSession(makeOptions({
+        onText,
+        customTools: [{ name: "fn_task_list", execute: async () => "ok" }],
+      }));
+      expect(session.sessionId).toBe("degraded-session");
+      expect(session.fusionToolBridgeError).toEqual({ reasonCode: "bridge-start-failed" });
+      expect(captured?.mcpServers ?? []).toHaveLength(0);
+      expect(onText).toHaveBeenCalledWith("FUSION_TOOL_BRIDGE_FAILED: bridge-start-failed");
+      await adapter.dispose(session);
+    } finally {
+      providerSpy.mockRestore();
+      bridgeSpy.mockRestore();
+    }
+  });
+
   it("registers the tool bridge in session/new mcpServers when customTools are provided", async () => {
     let captured: { mcpServers?: unknown[] } | undefined;
     const spy = vi

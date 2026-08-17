@@ -100,11 +100,19 @@ export class AcpRuntimeAdapter implements AgentRuntime {
     // systemPromptOverride) via options.sessionMeta so agent-specific skill and
     // prompt setup rides on session/new without a second protocol hop.
     let toolBridge: FusionToolBridge | null = null;
+    let toolBridgeFailure: "mcp-schema-server-missing" | "bridge-start-failed" | undefined;
     let sessionId: string;
     const customTools = Array.isArray(options.customTools) ? (options.customTools as ToolLike[]) : [];
     try {
       if (customTools.length > 0) {
-        toolBridge = await startFusionToolBridge(customTools);
+        try {
+          toolBridge = await startFusionToolBridge(customTools);
+        } catch (error) {
+          toolBridgeFailure = (error as { code?: string }).code === "mcp-schema-server-missing"
+            ? "mcp-schema-server-missing"
+            : "bridge-start-failed";
+          options.onText?.(`FUSION_TOOL_BRIDGE_FAILED: ${toolBridgeFailure}`);
+        }
       }
       const sessionMeta =
         options && typeof options === "object" && "sessionMeta" in options
@@ -138,6 +146,7 @@ export class AcpRuntimeAdapter implements AgentRuntime {
       cwd: options.cwd,
       lastModelDescription: `acp/${model}`,
       callbacks,
+      fusionToolBridgeError: toolBridgeFailure ? { reasonCode: toolBridgeFailure } : undefined,
       // Persist the per-run gate (KTD3) so U5/U7 can reach the live action gate.
       gate: options.actionGateContext,
       connection,
