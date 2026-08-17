@@ -490,6 +490,31 @@ describe("secrets-env-writer", () => {
     expect(existsSync(join(dir, ".env"))).toBe(false);
   });
 
+  it("revalidates legacy cleanup after awaited reads before deleting a repaired env", async () => {
+    const dir = tmpWorktree();
+    const body = "A=1\n";
+    writeFileSync(join(dir, ".env"), body);
+    writeFileSync(join(dir, ".fusion-secrets-env.fingerprint"), `${createHash("sha256").update(body).digest("hex")}\n.env\n`);
+    renameSync(join(dir, ".git"), join(dir, ".git-away"));
+    writeFileSync(join(dir, ".git"), "gitdir: /missing-private-git-dir\n");
+    let dangling = true;
+
+    await expect(cleanupSecretsEnvFile({
+      worktreePath: dir,
+      taskId: "FN-1",
+      expectedFingerprint: null,
+      filename: ".env",
+      allowLegacyCleanupForDanglingGitdir: true,
+      isDanglingGitdir: () => dangling,
+      readFileImpl: async (...args) => {
+        dangling = false;
+        return fsPromises.readFile(...args);
+      },
+    })).resolves.toEqual({ outcome: "skipped", reason: "invalid-record" });
+    expect(existsSync(join(dir, ".env"))).toBe(true);
+    expect(existsSync(join(dir, ".fusion-secrets-env.fingerprint"))).toBe(true);
+  });
+
   it("cleanup safely handles missing, repeated, and non-Git legacy records", async () => {
     const dir = tmpWorktree();
     const secretsStore = { listEnvExportable: vi.fn().mockResolvedValue([{ id: "1", key: "A", exportKey: "ALPHA", scope: "project", plaintextValue: "v" }]) } as any;

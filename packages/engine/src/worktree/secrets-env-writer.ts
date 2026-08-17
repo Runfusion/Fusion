@@ -583,6 +583,10 @@ export async function cleanupSecretsEnvFile(opts: CleanupSecretsEnvFileOptions):
     await restoreQuarantine();
     return { outcome: "skipped", reason: "record-remove-failed" };
   }
+  if (!privatePath && opts.allowLegacyCleanupForDanglingGitdir && !(opts.isDanglingGitdir?.() ?? false)) {
+    await restoreQuarantine();
+    return { outcome: "skipped", reason: "invalid-record" };
+  }
   try {
     await fs.unlink(quarantinePath);
   } catch (error) {
