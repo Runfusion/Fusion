@@ -15,6 +15,7 @@ import {
   type TaskCreateInput,
   type TaskDetail,
 } from "@fusion/core";
+import { UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 import { createLogger } from "../logger.js";
 import { defaultShell } from "../worktree/shell-utils.js";
 import { createFnAgent, promptWithFallback } from "../pi.js";
@@ -1000,7 +1001,13 @@ export class CronRunner {
     };
 
     try {
-      const task = await this.store.createTask(taskInput);
+      /*
+      FNXC:Identity 2026-08-09-03:04 (U18/KTD2): marker, not a derived actor.
+      A cron step creates this task on a timer; the schedule's author is not recorded on the run and
+      no agent is acting. Attributing it to the scheduler would invent a system identity, which is
+      U13's decision to make deliberately rather than a side effect of this mechanical conversion.
+      */
+      const task = await this.store.createTask(taskInput, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
 
       const output = `Created task ${task.id}: ${task.title || task.description.slice(0, 80)}`;
       log.log(`    ✓ Create-task step "${step.name}" created task ${task.id}`);

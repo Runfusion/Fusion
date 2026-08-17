@@ -1,4 +1,6 @@
 import type { TaskStore } from "@fusion/core";
+/* FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage B): mutation-context constructors for this lane. */
+import { mutationContextForAgent } from "@fusion/core";
 import type { PrInfo } from "@fusion/core";
 import { prMonitorLog } from "../logger.js";
 import { resolveTerminalColumnsFor } from "../executor.js";
@@ -253,10 +255,10 @@ export class PrCommentHandler {
         },
         "queued",
       );
-      await this.store.moveTask(taskId, wipTarget);
+      await this.store.moveTask(taskId, wipTarget, undefined, mutationContextForAgent("pr-comment-handler"));
       await this.store.logEntry(
         taskId,
-        `PR #${prInfo.number}: changes requested by @${reviewerLogin} — moved back to in-progress`,
+        `PR #${prInfo.number}: changes requested by @${reviewerLogin} — moved back to in-progress`, undefined, mutationContextForAgent("pr-comment-handler"),
       );
       prMonitorLog.log(`Task ${taskId} moved to in-progress after changes requested on PR #${prInfo.number}`);
     } catch (err) {
@@ -320,7 +322,7 @@ Please review the PR comments and address any remaining issues.`;
           sourceParentTaskId: originalTaskId,
           sourceMetadata: { prNumber: prInfo.number, prUrl: prInfo.url },
         },
-      });
+      }, undefined, mutationContextForAgent("pr-comment-handler"));
       prMonitorLog.log(`Created follow-up task ${task.id} for PR #${prInfo.number}`);
     } catch (err) {
       prMonitorLog.error(`Failed to create follow-up task:`, err);
@@ -400,6 +402,6 @@ Please review the PR comments and address any remaining issues.`;
         summary: currentReviewState.summary,
         items: nextReviewStateItems,
       },
-    });
+    }, mutationContextForAgent("pr-comment-handler"));
   }
 }

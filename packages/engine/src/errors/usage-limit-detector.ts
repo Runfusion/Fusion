@@ -11,6 +11,8 @@
  */
 
 import type { Task, TaskStore } from "@fusion/core";
+/* FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage B): mutation-context constructors for this lane. */
+import { mutationContextForAgent, UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 import type { CredentialInstanceRotator } from "../credential-instance-rotation.js";
 // FNXC:WorkflowLifecycleColumns 2026-07-30-11:00: `agentType` is an AGENT ROLE, not a column.
 // The planner lane is named `triage` and keeps that name; only the COLUMN was removed by U11.
@@ -125,7 +127,7 @@ export class UsageLimitPauser {
     Provider recovery is a health-state transition, never a task call used as a probe. The daemon's independent authenticated usage/capacity monitor invokes this seam only after positive health, and this exact-reason filter ensures recovery cannot clear manual parks, unrelated failure reasons, or another provider's outage.
     */
     await Promise.all(recoverableTasks.map(async (task) => {
-      await this.store.logEntry(task.id, `Provider ${providerId} is available again; resuming task`);
+      await this.store.logEntry(task.id, `Provider ${providerId} is available again; resuming task`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
       await this.store.pauseTask(task.id, false);
     }));
 
@@ -229,7 +231,7 @@ export class UsageLimitPauser {
     // Log the triggering error on the task
     await this.store.logEntry(
       taskId,
-      `Usage limit detected (${agentType}${providerId ? `/${providerId}` : ""}): ${errorMessage}`,
+      `Usage limit detected (${agentType}${providerId ? `/${providerId}` : ""}): ${errorMessage}`, undefined, mutationContextForAgent(agentType),
     );
 
     const [settings, tasks] = await Promise.all([
@@ -346,7 +348,7 @@ export class UsageLimitPauser {
       if (task.id !== taskId) {
         await this.store.logEntry(
           task.id,
-          `Paused because provider ${providerId} reached a usage limit on ${taskId}`,
+          `Paused because provider ${providerId} reached a usage limit on ${taskId}`, undefined, mutationContextForAgent(agentType),
         );
       }
       await this.store.pauseTask(task.id, true, undefined, { pausedReason });

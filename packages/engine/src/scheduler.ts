@@ -15,8 +15,7 @@ import {
   type PrInfo,
   type AgentStore,
   type Settings,
-  type FileScopeLeaseClassification,
-} from "@fusion/core";
+  type FileScopeLeaseClassification, fileScopeLeaseBlocksCandidate, UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -1249,7 +1248,7 @@ export class Scheduler {
             lastDispatchAt: null,
             executeRequeueLoopCount: null,
             executeRequeueLoopSignature: null,
-          }).catch((error) => {
+          }, UNATTRIBUTED_MUTATION_CONTEXT).catch((error) => {
             schedulerLog.warn(`Failed to reset dispatch oscillation state for ${task.id} on move to ${to}: ${error instanceof Error ? error.message : String(error)}`);
           });
         }
@@ -1308,17 +1307,16 @@ export class Scheduler {
                   await this.store.updateTask(dependent.id, {
                     status: "queued",
                     blockedBy: unresolvedDeps[0],
-                  });
+                  }, UNATTRIBUTED_MUTATION_CONTEXT);
                   await this.store.logEntry(
                     dependent.id,
-                    `Auto-reblocked: unresolved dependency ${unresolvedDeps[0]} remains after ${task.id} reached ${to}`,
-                  );
+                    `Auto-reblocked: unresolved dependency ${unresolvedDeps[0]} remains after ${task.id} reached ${to}`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
                 } else {
-                  await this.store.updateTask(dependent.id, { blockedBy: null, ...clearBlockedStatusOnly(dependent) });
+                  await this.store.updateTask(dependent.id, { blockedBy: null, ...clearBlockedStatusOnly(dependent) }, UNATTRIBUTED_MUTATION_CONTEXT);
                   const unblockMessage = currentlyBlockedByCompletedTask
                     ? `Auto-unblocked: blocker ${task.id} reached ${to}`
                     : `Auto-unblocked: blocker ${task.id} reached ${to} — all dependencies satisfied`;
-                  await this.store.logEntry(dependent.id, unblockMessage);
+                  await this.store.logEntry(dependent.id, unblockMessage, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
                 }
               } catch (error) {
                 schedulerLog.error(
@@ -1418,7 +1416,7 @@ export class Scheduler {
             lastDispatchAt: null,
             executeRequeueLoopCount: null,
             executeRequeueLoopSignature: null,
-          }).catch((error) => {
+          }, UNATTRIBUTED_MUTATION_CONTEXT).catch((error) => {
             schedulerLog.warn(`Failed to reset dispatch oscillation state for ${task.id} on unpause: ${error instanceof Error ? error.message : String(error)}`);
           });
         }
@@ -1617,17 +1615,16 @@ export class Scheduler {
                 await this.store.updateTask(dependent.id, {
                   blockedBy: nextBlocker,
                   status: "queued",
-                });
+                }, UNATTRIBUTED_MUTATION_CONTEXT);
                 await this.store.logEntry(
                   dependent.id,
-                  `Auto-reblocked (FN-5496): unresolved dependency ${nextBlocker} remains after blocker ${task.id} was soft-deleted`,
-                );
+                  `Auto-reblocked (FN-5496): unresolved dependency ${nextBlocker} remains after blocker ${task.id} was soft-deleted`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
               } else if (dependent.column === deletedParked.hold) {
-                await this.store.updateTask(dependent.id, { blockedBy: null, ...clearBlockedStatusOnly(dependent) });
-                await this.store.logEntry(dependent.id, `Auto-unblocked (FN-5496): blocker ${task.id} was soft-deleted`);
+                await this.store.updateTask(dependent.id, { blockedBy: null, ...clearBlockedStatusOnly(dependent) }, UNATTRIBUTED_MUTATION_CONTEXT);
+                await this.store.logEntry(dependent.id, `Auto-unblocked (FN-5496): blocker ${task.id} was soft-deleted`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
               } else {
-                await this.store.updateTask(dependent.id, { blockedBy: null });
-                await this.store.logEntry(dependent.id, `Auto-unblocked (FN-5496): blocker ${task.id} was soft-deleted`);
+                await this.store.updateTask(dependent.id, { blockedBy: null }, UNATTRIBUTED_MUTATION_CONTEXT);
+                await this.store.logEntry(dependent.id, `Auto-unblocked (FN-5496): blocker ${task.id} was soft-deleted`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
               }
             } catch (error) {
               schedulerLog.error(`Failed to reconcile dependent ${dependent.id} for soft-deleted blocker ${task.id}`, error);
@@ -1785,7 +1782,7 @@ export class Scheduler {
     /*
     FNXC:RUFU-075 2026-08-13-03:16:
     The review-lease and dependency overlap-queue writes historically went straight through
-    `store.updateTask(…, { status: "queued", …, overlapBlockedBy })`. FN-8785 moved them onto the
+    `store.updateTask(…, { status: "queued", …, overlapBlockedBy }, UNATTRIBUTED_MUTATION_CONTEXT)`. FN-8785 moved them onto the
     store's atomic `transitionQueuedEpisode` helper (advisory-locked, edge-triggered queue logging).
     A minimal/legacy store that does not implement `transitionQueuedEpisode` (as several scheduler
     test mocks and older store shims do not) must still receive a correct queue write, or the lease
@@ -1800,7 +1797,7 @@ export class Scheduler {
       status: "queued",
       blockedBy: input.blockedBy ?? null,
       overlapBlockedBy: input.overlapBlockedBy ?? null,
-    });
+    }, UNATTRIBUTED_MUTATION_CONTEXT);
     await this.logDispatchQueuedReason(task.id, input.action);
     return true;
   }
@@ -1813,7 +1810,7 @@ export class Scheduler {
 
     this.clearDispatchQueuedReasonMemo(taskId);
     this.wasDispatchQueuedReasonLogged.add(key);
-    await this.store.logEntry(taskId, reason);
+    await this.store.logEntry(taskId, reason, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
     return true;
   }
 
@@ -1979,7 +1976,7 @@ export class Scheduler {
 
       const message = `Overlap bottleneck: ${blockerId} is currently blocking ${fanout.overlapBlockedTodoCount} todo task(s) via blockedBy (${state}).`;
       schedulerLog.warn(message);
-      await this.store.logEntry(blockerId, message);
+      await this.store.logEntry(blockerId, message, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
       this.lastHighOverlapFanoutWarningKey.set(blockerId, dedupeKey);
     }
 
@@ -2379,7 +2376,7 @@ export class Scheduler {
             "warn",
           );
           if (appended) {
-            await this.store.logEntry(task.id, `symbol-lock renewal lost: ${result.lost.join(", ")}`);
+            await this.store.logEntry(task.id, `symbol-lock renewal lost: ${result.lost.join(", ")}`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
           }
         } else {
           this.symbolLockRenewalLog.clear(task.id);
@@ -2548,6 +2545,7 @@ export class Scheduler {
         effectiveNodeId: string | null;
         effectiveNodeSource: string;
         task: Task;
+        observedOverlapBlockedBy: string | null;
       }>();
       const activeScopes = new Map<string, string[]>();
       const activeScopeColumns = new Map<string, Task["column"]>();
@@ -2678,6 +2676,71 @@ export class Scheduler {
         };
       };
 
+      const freshOverlapBlockerStillBlocks = async (
+        candidate: Task,
+        blockerId: string,
+      ): Promise<boolean> => {
+        const freshSettings = await this.store.getSettings();
+        if (freshSettings.groupOverlappingFiles !== true) return false;
+        const blocker = await this.store.getTask(blockerId).catch(() => null);
+        if (!blocker) return false;
+        const liveTasks = tasks.map((entry) => {
+          if (entry.id === candidate.id) return candidate;
+          if (entry.id === blocker.id) return blocker;
+          return entry;
+        });
+        if (!liveTasks.some((entry) => entry.id === blocker.id)) liveTasks.push(blocker);
+        if (!liveTasks.some((entry) => entry.id === candidate.id)) liveTasks.push(candidate);
+        const classification = classifyFileScopeLease(blocker, liveTasks, {
+          mergeRequestContractShadowEnabled: freshSettings.mergeRequestContractShadowEnabled === true,
+          handoffAccepted: freshSettings.mergeRequestContractShadowEnabled === true && isReviewColumnTask(blocker)
+            ? (await this.store.getCompletionHandoffAcceptedMarker(blocker.id)) !== null
+            : false,
+          schedulingDependencyOptions,
+          isWipColumn: isWipColumnTask(blocker),
+          isReviewColumn: isReviewColumnTask(blocker),
+          isTerminalColumn: isTerminalColumnTask(blocker),
+        });
+        if (!fileScopeLeaseBlocksCandidate(blocker, candidate, classification)) return false;
+        const freshIgnorePaths = freshSettings.overlapIgnorePaths ?? [];
+        const candidateScope = normalizeOverlapScopeForTask(candidate, filterPathsByIgnoreList(
+          await this.store.parseFileScopeFromPrompt(candidate.id),
+          freshIgnorePaths,
+          { ignoreHiddenOverlapPaths: freshSettings.ignoreHiddenOverlapPaths },
+        ));
+        if (candidateScope.length === 0 || isCoordinationOnlyTask(candidate, candidateScope)) return false;
+        const blockerScope = normalizeOverlapScopeForTask(blocker, filterPathsByIgnoreList(
+          await this.store.parseFileScopeFromPrompt(blocker.id),
+          freshIgnorePaths,
+          { ignoreHiddenOverlapPaths: freshSettings.ignoreHiddenOverlapPaths },
+        ));
+        if (blockerScope.length === 0 || isCoordinationOnlyTask(blocker, blockerScope)) return false;
+        return this.pathsOverlap(candidateScope, blockerScope);
+      };
+      const clearObservedOverlapIfStillStale = async (
+        candidate: Task,
+        observedBlockerId: string | null | undefined,
+      ): Promise<boolean> => {
+        if (typeof observedBlockerId !== "string" || observedBlockerId.trim().length === 0) return false;
+        if (await freshOverlapBlockerStillBlocks(candidate, observedBlockerId)) return false;
+        let cleared = false;
+        const clearIfUnchanged = (live: Task) => {
+          if (live.deletedAt != null || (live.overlapBlockedBy ?? null) !== observedBlockerId) return null;
+          cleared = true;
+          return { overlapBlockedBy: null };
+        };
+        if (typeof this.store.updateTaskAtomic === "function") {
+          await this.store.updateTaskAtomic(candidate.id, clearIfUnchanged, UNATTRIBUTED_MUTATION_CONTEXT);
+          return cleared;
+        }
+        // Compatibility only for structural test/extension stores; production TaskStore is atomic.
+        const live = await this.store.getTask(candidate.id).catch(() => null);
+        if (!live) return false;
+        const patch = clearIfUnchanged(live);
+        if (patch) await this.store.updateTask(candidate.id, patch, UNATTRIBUTED_MUTATION_CONTEXT);
+        return cleared;
+      };
+
       const result = await runHoldReleaseSweep(this.store, {
         now: () => Date.now(),
         selectionCache,
@@ -2688,6 +2751,13 @@ export class Scheduler {
           let priorDormantScope: QueuedOverlapCandidate | undefined;
           let priorDormantScopeColumn: Task["column"] | undefined;
           let priorLeaseWaiverIds: readonly string[] | undefined;
+          /*
+          FNXC:OverlapScheduling 2026-09-19-00:00:
+          Snapshot the overlap blocker observed when this reservation began so the eventual dispatch
+          commit can verify (via freshOverlapBlockerStillBlocks) and clear only that exact stale id —
+          never a newer blocker stamped between reservation and commit.
+          */
+          let observedOverlapBlockedBy: string | null = task.overlapBlockedBy ?? null;
           const releaseReservedScope = (): void => {
             if (!reservedScope) return;
             if (priorActiveScope) {
@@ -2759,7 +2829,7 @@ export class Scheduler {
               const milestone = slice ? await this.options.missionStore.getMilestone(slice.milestoneId) : undefined;
               const mission = milestone ? await this.options.missionStore.getMission(milestone.missionId) : undefined;
               if (mission?.status === "blocked") {
-                await this.store.updateTask(task.id, { status: "queued" });
+                await this.store.updateTask(task.id, { status: "queued" }, UNATTRIBUTED_MUTATION_CONTEXT);
                 await this.logDispatchQueuedReason(task.id, "queued — mission is blocked");
                 return null;
               }
@@ -2796,8 +2866,8 @@ export class Scheduler {
                 error,
                 recoveryRetryCount: null,
                 nextRecoveryAt: null,
-              });
-              await this.store.logEntry(task.id, error, validation.reason);
+              }, UNATTRIBUTED_MUTATION_CONTEXT);
+              await this.store.logEntry(task.id, error, validation.reason, UNATTRIBUTED_MUTATION_CONTEXT);
               return null;
             }
             const attempt = decision.nextState.recoveryRetryCount ?? MAX_RECOVERY_RETRIES;
@@ -2806,12 +2876,11 @@ export class Scheduler {
               error: null,
               recoveryRetryCount: decision.nextState.recoveryRetryCount,
               nextRecoveryAt: decision.nextState.nextRecoveryAt,
-            });
+            }, UNATTRIBUTED_MUTATION_CONTEXT);
             await this.store.logEntry(
               task.id,
               `Task retained in ${task.column} for in-place specification repair — filesystem validation failed (attempt ${attempt}/${MAX_RECOVERY_RETRIES} in ${formatDelay(decision.delayMs)})`,
-              validation.reason,
-            );
+              validation.reason, UNATTRIBUTED_MUTATION_CONTEXT);
             return null;
           }
 
@@ -2825,8 +2894,8 @@ export class Scheduler {
             });
             if (staleness.isStale) {
               schedulerLog.warn(`Task ${task.id} specification is stale — ${staleness.reason}`);
-              await this.store.updateTask(task.id, { status: "needs-replan" });
-              await this.store.logEntry(task.id, staleness.reason);
+              await this.store.updateTask(task.id, { status: "needs-replan" }, UNATTRIBUTED_MUTATION_CONTEXT);
+              await this.store.logEntry(task.id, staleness.reason, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
               return null;
             }
           }
@@ -2834,7 +2903,7 @@ export class Scheduler {
           const freshTask = await this.store.getTask(task.id);
           if (!freshTask || freshTask.column !== task.column || freshTask.paused || freshTask.userPaused) {
             if (freshTask?.userPaused === true && freshTask.status !== "queued") {
-              await this.store.updateTask(task.id, { status: "queued" });
+              await this.store.updateTask(task.id, { status: "queued" }, UNATTRIBUTED_MUTATION_CONTEXT);
               await this.logDispatchQueuedReason(task.id, "queued — user paused (manual move to todo)");
             }
             return null;
@@ -2848,7 +2917,7 @@ export class Scheduler {
             );
             if (!recovered) {
               await this.options.leaseManager.reconcileLeaseRow(freshTask.id);
-              await this.store.updateTask(freshTask.id, { status: "queued" });
+              await this.store.updateTask(freshTask.id, { status: "queued" }, UNATTRIBUTED_MUTATION_CONTEXT);
               await this.logDispatchQueuedReason(freshTask.id, "queued — checkout lease recovery blocked dispatch");
               return null;
             }
@@ -2873,7 +2942,7 @@ export class Scheduler {
               if (!this.wasNodeDispatchValidationBlocked.has(task.id)) {
                 this.wasNodeDispatchValidationBlocked.add(task.id);
                 schedulerLog.log(`Task ${task.id} dispatch blocked — ${nodeValidation.reason}`);
-                await this.store.logEntry(task.id, nodeValidation.reason);
+                await this.store.logEntry(task.id, nodeValidation.reason, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
               }
               return null;
             }
@@ -2909,7 +2978,7 @@ export class Scheduler {
                   }
                   const reason = `Owning-node handoff parked dispatch: ${handoffDecision.reason}`;
                   schedulerLog.log(`Task ${task.id} dispatch blocked — ${reason}`);
-                  await this.store.logEntry(task.id, reason);
+                  await this.store.logEntry(task.id, reason, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
                   try {
                     await emitBoundedRunAudit(this.store, {
                       taskId: freshTask.id,
@@ -2938,7 +3007,7 @@ export class Scheduler {
                 return null;
               }
 
-              await this.store.logEntry(task.id, `Owning-node handoff applied: ${handoffDecision.reason}`);
+              await this.store.logEntry(task.id, `Owning-node handoff applied: ${handoffDecision.reason}`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
               try {
                 await emitBoundedRunAudit(this.store, {
                   taskId: freshTask.id,
@@ -2995,14 +3064,14 @@ export class Scheduler {
                 if (!this.wasNodeBlocked.has(task.id)) {
                   this.wasNodeBlocked.add(task.id);
                   schedulerLog.log(`Task ${task.id} dispatch blocked — ${decision.reason}`);
-                  await this.store.logEntry(task.id, decision.reason);
+                  await this.store.logEntry(task.id, decision.reason, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
                 }
                 return null;
               }
               this.wasNodeBlocked.delete(task.id);
               if (decision.fallbackToLocal) {
                 schedulerLog.log(`Task ${task.id} falling back to local — ${decision.reason}`);
-                await this.store.logEntry(task.id, decision.reason);
+                await this.store.logEntry(task.id, decision.reason, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
                 effectiveNode = { nodeId: undefined, source: "local" };
               }
             }
@@ -3053,11 +3122,10 @@ export class Scheduler {
               pausedReason: "dispatch-oscillation",
               status: freshTask.status ?? "queued",
               error: oscillationError,
-            });
+            }, UNATTRIBUTED_MUTATION_CONTEXT);
             await this.store.logEntry(
               task.id,
-              `Dispatch oscillation auto-paused after ${nextDispatchStormCount} cycles within ${dispatchOscillationWindowMs}ms`,
-            );
+              `Dispatch oscillation auto-paused after ${nextDispatchStormCount} cycles within ${dispatchOscillationWindowMs}ms`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
             await this.store.appendAgentLog?.(
               task.id,
               "Dispatch oscillation detected — task auto-paused for operator review",
@@ -3095,7 +3163,11 @@ export class Scheduler {
             { planApprovalRequired: latestSettings.planApprovalMode === "require-all" },
           );
           if (missionAdmission.kind === "lineage-blocked") {
-            await this.store.updateTask(task.id, { status: "queued", blockedBy: null, overlapBlockedBy: null });
+            if (observedOverlapBlockedBy) {
+              const cleared = await clearObservedOverlapIfStillStale(freshTask, observedOverlapBlockedBy);
+              if (cleared) observedOverlapBlockedBy = null;
+            }
+            await this.store.updateTask(task.id, { status: "queued", blockedBy: null }, UNATTRIBUTED_MUTATION_CONTEXT);
             await this.logDispatchQueuedReason(task.id, `queued — mission lineage blocked: ${missionAdmission.reason}`);
             return null;
           }
@@ -3142,8 +3214,7 @@ export class Scheduler {
               if (isCoordinationOnlyTask(task, taskScope)) {
                 await this.store.logEntry(
                   task.id,
-                  "coordination/no-commit task bypassed non-implementation overlap lease",
-                );
+                  "coordination/no-commit task bypassed non-implementation overlap lease", undefined, UNATTRIBUTED_MUTATION_CONTEXT);
               }
             }
           }
@@ -3214,7 +3285,7 @@ export class Scheduler {
             const reason = exhausted
               ? formatConcurrencyLimitReason(freshDiagnostic)
               : `queued — higher-priority lifecycle admission started: task=${admittedTaskId}`;
-            await this.store.updateTask(task.id, { status: "queued" });
+            await this.store.updateTask(task.id, { status: "queued" }, UNATTRIBUTED_MUTATION_CONTEXT);
             await this.logDispatchQueuedReason(task.id, reason);
             return null;
           }
@@ -3241,7 +3312,11 @@ export class Scheduler {
                 if (dropPreHeldExecutorSlot(task.id)) sem?.release();
                 releaseReservedScope();
                 const conflict = lockResult.conflicts[0];
-                await this.store.updateTask(task.id, { status: "queued", blockedBy: null, overlapBlockedBy: null });
+                if (observedOverlapBlockedBy) {
+                  const cleared = await clearObservedOverlapIfStillStale(freshTask, observedOverlapBlockedBy);
+                  if (cleared) observedOverlapBlockedBy = null;
+                }
+                await this.store.updateTask(task.id, { status: "queued", blockedBy: null }, UNATTRIBUTED_MUTATION_CONTEXT);
                 await this.logDispatchQueuedReason(
                   task.id,
                   `queued — symbol contention: symbol=${conflict?.symbolKey ?? "unknown"} holder=${conflict?.ownerTaskId ?? "unknown"}`,
@@ -3249,7 +3324,7 @@ export class Scheduler {
                 return null;
               }
               acquiredSymbols = missionAdmission.symbols;
-              await this.store.logEntry(task.id, `symbol-lock admission acquired: ${missionAdmission.symbols.join(", ")}`);
+              await this.store.logEntry(task.id, `symbol-lock admission acquired: ${missionAdmission.symbols.join(", ")}`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
             }
 
             dispatchPrepByTaskId.set(task.id, {
@@ -3259,6 +3334,7 @@ export class Scheduler {
               effectiveNodeId: effectiveNode.nodeId ?? null,
               effectiveNodeSource: effectiveNode.source,
               task: freshTask,
+              observedOverlapBlockedBy,
             });
 
             reservedWorktreeSlots += 1;
@@ -3315,20 +3391,55 @@ export class Scheduler {
           dispatchStormCount: prep.dispatchStormCount,
           lastDispatchAt: prep.dispatchTimestamp,
         };
-        const scheduledTask = {
-          ...(latest?.id === taskId ? latest : prep.task),
-          ...dispatchUpdate,
+        const observedOverlapBlockedBy = prep.observedOverlapBlockedBy;
+        const mayClearObservedOverlap = typeof observedOverlapBlockedBy === "string"
+          && observedOverlapBlockedBy.trim().length > 0
+          && latest?.id === taskId
+          && (latest.overlapBlockedBy ?? null) === observedOverlapBlockedBy
+          && !await freshOverlapBlockerStillBlocks(latest, observedOverlapBlockedBy);
+        let overlapClearApplied = false;
+        let persistedTask = latest?.id === taskId ? latest : prep.task;
+        const buildDispatchPatch = (live: Task) => {
+          const clearObservedOverlap = mayClearObservedOverlap
+            && live.deletedAt == null
+            && (live.overlapBlockedBy ?? null) === observedOverlapBlockedBy;
+          if (clearObservedOverlap) overlapClearApplied = true;
+          return {
+            ...dispatchUpdate,
+            ...(clearObservedOverlap ? { overlapBlockedBy: null } : {}),
+          };
+        };
+        /*
+        FNXC:OverlapScheduling 2026-09-02-04:46:
+        Hold → WIP has no workflow-hook overlap clear, so the committed dispatch must scrub the stale
+        blocker it actually reserved against. Build the whole metadata patch under the task lock and
+        clear only that exact observed id: the executor pre-dispatch gate can stamp a different fresh
+        in-place hold between reservation and commit, and that newer edge must reach onSchedule intact.
+        */
+        try {
+          if (typeof this.store.updateTaskAtomic === "function") {
+            persistedTask = await this.store.updateTaskAtomic(taskId, buildDispatchPatch, UNATTRIBUTED_MUTATION_CONTEXT);
+          } else {
+            // Compatibility only for structural test/extension stores; production TaskStore is atomic.
+            persistedTask = await this.store.updateTask(taskId, buildDispatchPatch(persistedTask), UNATTRIBUTED_MUTATION_CONTEXT);
+          }
+        } catch (error) {
+          overlapClearApplied = false;
+          schedulerLog.error(`Post-release dispatch metadata update failed for ${taskId}:`, error);
+        }
+        /*
+        DELIBERATE-LITERAL — runHoldReleaseSweep has committed this task to its WIP lane before it
+        appears in `released`. Keep the legacy WIP fallback on the synthetic handoff shape so an
+        isolated post-release read/update failure cannot hand the executor the task's stale hold lane.
+        */
+        const scheduledTask: Task = {
+          ...persistedTask,
           status: undefined,
           blockedBy: undefined,
           effectiveNodeId: prep.effectiveNodeId ?? undefined,
           effectiveNodeSource: prep.effectiveNodeSource as Task["effectiveNodeSource"],
           column: "in-progress" as const,
         };
-        try {
-          await this.store.updateTask(taskId, dispatchUpdate);
-        } catch (error) {
-          schedulerLog.error(`Post-release dispatch metadata update failed for ${taskId}:`, error);
-        }
         try {
           this.options.onSchedule?.(scheduledTask);
         } catch (error) {
@@ -3340,7 +3451,7 @@ export class Scheduler {
         this.wasPermanentAgentUnavailable.delete(taskId);
         this.clearDispatchQueuedReasonMemo(taskId);
         try {
-          await this.store.logEntry(taskId, `Node routing resolved: ${prep.effectiveNodeId ?? "local"} (source: ${prep.effectiveNodeSource})`);
+          await this.store.logEntry(taskId, `Node routing resolved: ${prep.effectiveNodeId ?? "local"} (source: ${prep.effectiveNodeSource})`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
         } catch (error) {
           schedulerLog.error(`Post-release dispatch log failed for ${taskId}:`, error);
         }

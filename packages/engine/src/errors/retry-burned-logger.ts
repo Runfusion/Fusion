@@ -5,6 +5,8 @@ import {
   type TaskDetail,
   type TaskStore,
 } from "@fusion/core";
+/* FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage B): mutation-context constructors for this lane. */
+import { mutationContextForAgent } from "@fusion/core";
 import { createLogger } from "../logger.js";
 
 const retryBurnedLog = createLogger("retry-burned");
@@ -67,7 +69,9 @@ export async function recordRetry(options: {
 
   if (!skipIncrement) {
     const current = (task[column] as number | undefined) ?? 0;
-    await store.updateTask(task.id, { [column]: current + 1 });
+    /* FNXC:Identity 2026-08-09-03:04 (U18 Stage B): the burn is recorded against the agent/role that burned
+       it — both are already parameters of this call, so nothing here needs the marker. */
+    await store.updateTask(task.id, { [column]: current + 1 }, mutationContextForAgent(agentId ?? role));
   }
 
   const refreshed = await store.getTask(task.id);
