@@ -23,6 +23,7 @@ FAILING first. The rebound target is the KTD-10 `resolveReboundTarget` ordering
 rule invented here.
 */
 import { describe, expect, it, vi } from "vitest";
+import { ANY_MUTATION_CONTEXT } from "./mutation-context-matchers.js";
 import type { RunAuditEventInput, Task, TaskStore, WorkflowIr } from "@fusion/core";
 
 import { MeshLeaseManager } from "../project/mesh-lease-manager.js";
@@ -123,7 +124,7 @@ describe("MeshLeaseManager lease rebound under a renamed column vocabulary", () 
     expect(ok).toBe(true);
     // The failure this pins: the card was previously shoved into a column id the
     // workflow does not define.
-    expect(h.moveTask).toHaveBeenCalledWith("FN-1", "drafting", expect.any(Object));
+    expect(h.moveTask).toHaveBeenCalledWith("FN-1", "drafting", expect.any(Object), ANY_MUTATION_CONTEXT);
     expect(h.moveTask).not.toHaveBeenCalledWith("FN-1", "todo", expect.any(Object));
   });
 
@@ -164,7 +165,7 @@ describe("MeshLeaseManager lease rebound under a renamed column vocabulary", () 
 
     await h.manager.recoverAbandonedLease("FN-1", "stale lease");
 
-    expect(h.moveTask).toHaveBeenCalledWith("FN-1", "drafting", expect.any(Object));
+    expect(h.moveTask).toHaveBeenCalledWith("FN-1", "drafting", expect.any(Object), ANY_MUTATION_CONTEXT);
   });
 
   it("keeps the legacy todo target when the workflow cannot be resolved", async () => {
@@ -175,7 +176,7 @@ describe("MeshLeaseManager lease rebound under a renamed column vocabulary", () 
 
     await h.manager.recoverAbandonedLease("FN-1", "stale lease");
 
-    expect(h.moveTask).toHaveBeenCalledWith("FN-1", "todo", expect.any(Object));
+    expect(h.moveTask).toHaveBeenCalledWith("FN-1", "todo", expect.any(Object), ANY_MUTATION_CONTEXT);
     expect(h.unreachableEvent()?.metadata).toMatchObject({
       newColumn: "todo",
       decisionPath: "lease-recovered-to-todo",
@@ -188,7 +189,7 @@ describe("MeshLeaseManager lease rebound under a renamed column vocabulary", () 
 
     await h.manager.recoverAbandonedLease("FN-1", "stale lease");
 
-    expect(h.moveTask).toHaveBeenCalledWith("FN-1", "todo", expect.any(Object));
+    expect(h.moveTask).toHaveBeenCalledWith("FN-1", "todo", expect.any(Object), ANY_MUTATION_CONTEXT);
     expect(h.unreachableEvent()?.metadata).toMatchObject({
       previousColumn: "in-progress",
       newColumn: "todo",
