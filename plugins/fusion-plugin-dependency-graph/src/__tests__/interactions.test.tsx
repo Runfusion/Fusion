@@ -157,7 +157,6 @@ describe("dependency graph interactions", () => {
         onOpenDetailWithTab={vi.fn()}
         onMoveTask={vi.fn()}
         onOpenMission={vi.fn()}
-        taskStuckTimeoutMs={1_000}
         lastFetchTimeMs={Date.now()}
         workflowStepNameLookup={new Map()}
       />,

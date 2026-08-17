@@ -538,6 +538,7 @@ export async function reviewStep(
       systemPromptLayers: layers,
       tools: options.allowInlineFixes === true && reviewType === "code" ? "coding" : "readonly",
       customTools: reviewCustomTools,
+      fusionTools: reviewCustomTools,
       onText: handleReviewerText,
       onThinking: agentLogger?.onThinking,
       onToolStart: agentLogger?.onToolStart,

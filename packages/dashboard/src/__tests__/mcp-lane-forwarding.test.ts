@@ -49,8 +49,10 @@ const { createFnAgentMock, createResolvedAgentSessionMock, resolveMcpServersForS
     FNXC:PlanningRuntimeResolution 2026-07-24-16:20:
     Planning now builds its session through the shared runtime-resolving seam
     (`createResolvedAgentSession`), not a bare `createFnAgent` call, so the MCP-forwarding
-    contract for the planning lanes is asserted on that seam. The mission/target interview
-    lanes still construct through `createFnAgent` and keep their own mock.
+    contract for the planning lanes is asserted on that seam.
+    FNXC:MissionInterviewRuntimeResolution 2026-08-16-14:37: the mission and milestone/slice
+    interview lanes now build through the same seam so CLI-runtime model selections
+    (cursor-cli etc.) route to their runtime plugins; their assertions target it too.
     */
     createResolvedAgentSessionMock: vi.fn(makeScriptedAgent),
     resolveMcpServersForStoreMock: vi.fn(async () => ({
@@ -184,7 +186,7 @@ describe("dashboard MCP lane forwarding", () => {
     await createMissionInterviewAgent(session, "/tmp/fusion-dashboard-test", store);
 
     expect(resolveMcpServersForStoreMock).toHaveBeenCalledWith(store);
-    expect(createFnAgentMock).toHaveBeenCalledWith(expect.objectContaining({
+    expect(createResolvedAgentSessionMock).toHaveBeenCalledWith(expect.objectContaining({
       cwd: "/tmp/fusion-dashboard-test",
       tools: "readonly",
       allowMcpToolsInReadonly: true,
@@ -197,7 +199,7 @@ describe("dashboard MCP lane forwarding", () => {
 
     await createMissionInterviewAgent({ id: "mission-empty", thinkingOutput: "" } as never, "/tmp/fusion-dashboard-test", {} as never);
 
-    expect(createFnAgentMock).toHaveBeenCalledWith(expect.objectContaining({ mcpServers: [] }));
+    expect(createResolvedAgentSessionMock).toHaveBeenCalledWith(expect.objectContaining({ mcpServers: [] }));
   });
 
   it("forwards materialized MCP servers to milestone and slice interview agents", async () => {
@@ -207,7 +209,7 @@ describe("dashboard MCP lane forwarding", () => {
     await createTargetInterviewAgent(session, "/tmp/fusion-dashboard-test", store);
 
     expect(resolveMcpServersForStoreMock).toHaveBeenCalledWith(store);
-    expect(createFnAgentMock).toHaveBeenCalledWith(expect.objectContaining({
+    expect(createResolvedAgentSessionMock).toHaveBeenCalledWith(expect.objectContaining({
       cwd: "/tmp/fusion-dashboard-test",
       tools: "readonly",
       allowMcpToolsInReadonly: true,
@@ -220,6 +222,6 @@ describe("dashboard MCP lane forwarding", () => {
 
     await createTargetInterviewAgent({ id: "target-empty", targetType: "slice", thinkingOutput: "" } as never, "/tmp/fusion-dashboard-test", {} as never);
 
-    expect(createFnAgentMock).toHaveBeenCalledWith(expect.objectContaining({ mcpServers: [] }));
+    expect(createResolvedAgentSessionMock).toHaveBeenCalledWith(expect.objectContaining({ mcpServers: [] }));
   });
 });

@@ -1,5 +1,219 @@
 # @runfusion/fusion
 
+## 0.77.0-beta.1
+
+### Patch Changes
+
+- 7527d26: summary: Keep Planning Mode on the current session after a stale response refresh.
+  category: fix
+  dev: Fence duplicate-response, accepted stream-error, and loading-poll recovery by session, load, and turn ownership.
+- 111c6c9: summary: Preserve typed Planning Mode answers during late session hydration.
+  category: fix
+  dev: Binds visible question submission to the live planning turn and preserves dirty answers during same-session refresh.
+- 3272aff: summary: Keep Create Room member picker states accurate while agent data loads.
+  category: fix
+  dev: Fence superseded agent roster requests and distinguish loading, empty, and failed picker states.
+- 385059f: summary: Plan New Mission now sits at the top of the mission list and is slightly taller.
+  category: fix
+  dev: Replaced footer CTA wrappers with top mission-manager**sidebar-cta-bar and mission-list**header-actions containers using calc(var(--space-lg) \* 2 + var(--space-sm)); removed the duplicate empty-state CTA.
+- 821e036: summary: Route every AI lane through runtime resolution so CLI-runtime models (e.g. Cursor CLI) work everywhere chat does.
+  category: fix
+  dev: `createFnAgent` now delegates to `createResolvedAgentSession` (CLI runtime hint derivation, mock forcing, runtime-resolved visibility) with a host-registered default PluginRunner per project root; `DefaultPiRuntime` re-enters via a `__rawPiSession` marker into `createPiAgentSessionRaw`. Mission and milestone/slice interviews also pass their request-scoped pluginRunner and prompt via the engine `promptWithFallback` dispatcher, fixing "cursor-cli/auto ... not found in the pi model registry" in mission planning.
+
+## 0.77.0-beta.0
+
+### Minor Changes
+
+- 7673f2e: summary: Require a fresh computer-use snapshot after each action so indexes cannot go stale.
+  category: feature
+  dev: Adds `SNAPSHOT_STALE` reason `consumed-by-action` and `snapshotConsumed` action field.
+- dad726c: summary: Add Memory Knowledge Graph navigation and bounded path search.
+  category: feature
+  dev: Adds /knowledge/graph endpoints; path searches cap at 10 hops and 20,000 expansions.
+- c7779e4: summary: Protect live task worktrees from CLI and agent archive cleanup.
+  category: fix
+  dev: Adds core archive liveness and advisory-lock fencing, baseline disposer refusal and cleanup suppression, CLI --force, and structured fn_task_archive refusal.
+- 7bb7d45: summary: Show per-repository landing status and failure detail in workspace task details.
+  category: feature
+  dev: Adds `landFailure`, `workspace-land-failure.ts`, and `deriveWorkspaceRepoStatus`.
+- 1d3f6c1: summary: Route CLI picker models to their installed runtime with actionable failures.
+  category: fix
+  dev: Adds cli-provider-routing census, per-path unavailable-runtime policies, and static routing validator.
+- b6efd89: summary: Run selected Cursor CLI models through Fusion's supervised runtime.
+  category: feature
+  dev: Routes cursor-cli to the Cursor runtime, retires cursorCliExecutionSupported, and uses supervised stream-json turns.
+- 5e5b0db: summary: Bridge Fusion task tools into Cursor CLI sessions safely.
+  category: feature
+  dev: Adds tokenized bridge env vars, baseline-first journaled `.cursor/mcp.json` leases, exclusion-before-creation, operator-edit quarantine/recovery, tracked-config refusal, and awaited disposal.
+- 872d260: summary: Create follow-up tasks directly from mailbox recommendation notices.
+  category: feature
+  dev: Adds guarded recommendation-create actions to mailbox detail and conversation surfaces.
+- 2a9ae0a: summary: Enable Cursor CLI as a retryable fallback for other AI runtimes.
+  category: feature
+  dev: Adds the cross-runtime fallback dispatcher and the cursor-cli defer-cross-runtime policy.
+- d4d13e2: summary: Add a global Quick Add preference for Enter-to-save behavior.
+  category: feature
+  dev: Configure `quickAddSubmitOnEnter` in Settings → Global → General.
+- d9fcabf: summary: Memory Keeper is now added to projects with its heartbeat off by default.
+  category: feature
+  dev: provisionBuiltinMemoryAgent now defaults enabled false and preserves existing runtimeConfig.enabled during convergence.
+- 9f5f981: summary: Enabled skills are available to every agent; per-agent skills are forced reading.
+  category: feature
+  dev: Adds forcedSkillNames requests and resolvedForcedSkills/unresolvedForcedSkills outcomes, non-restrictive skill union semantics, resolved-only prompt instructions, and per-session [skills] summaries.
+- 9a9e591: summary: Clarify agent skills and select forced-reading skills from a searchable list.
+  category: feature
+  dev: Reworks SkillMultiselect as a checkbox list, shares classifyAgentSkill on agent badges, and updates agents.skillsNone and agents.skillsDescription.
+- 87e673b: summary: Remove the pre-commit diff-volume merge gate; approved squashes are no longer blocked on per-file shrinkage.
+  category: feature
+  dev: Deletes `checkDiffVolume`/`DiffVolumeRegressionError`, the `merge:diff-volume-blocked` audit event, and the `mergeDiffVolumeMinLines`/`mergeDiffVolumeThreshold`/`mergeDiffVolumeAllowlist` settings. File scope remains the pre-land guard; the post-squash audit policy remains the shrinkage backstop.
+- 52a28d3: summary: Task creation now accepts per-task GitHub tracking overrides (fn_task_create params and `fn task create --github`).
+  category: feature
+  dev: New `github_tracking`/`github_repo` params on fn_task_create and `--github`/`--no-github`/`--github-repo` flags on `fn task create`. CLI create now also applies the project/global "tracking enabled by default" setting it previously ignored; explicit disables persist `githubTracking.enabled:false`. CLI create now creates the tracking issue synchronously before exit: the task-created hook was previously deferred behind the fire-and-forget auto-title-summarize chain, which the short-lived CLI process dropped on exit, leaving tasks flagged enabled with no issue.
+
+### Patch Changes
+
+- fad45c2: summary: Dashboard event streams for an unknown project now return 404 instead of logging a 500 server error.
+  category: fix
+  dev: `/api/events` maps project-not-found store-resolution failures to 404 with a clean message; stale client tabs and e2e fixture pages no longer fill operator logs with startup-factory construction errors.
+- 13525fc: summary: Keep the Anthropic OAuth login error inside the Settings card on mobile.
+  category: fix
+  dev: Provider loginError is a wrapping block banner under the auth card header instead of an inline flex sibling, so a long expiry message cannot overflow a phone-width Settings card.
+- 7fa5029: summary: Fix Anthropic Subscription login failing with "Unknown provider: anthropic-subscription".
+  category: fix
+  dev: Instance-scoped OAuth login (`loginInstance`) now reuses the Anthropic-aware login seam, logging in upstream as `anthropic` and persisting to the `anthropic-subscription` storage row, instead of passing the storage-only id to `ModelRuntime.login` (GitHub #3462). `FusionAuthStorage.login` — the only seam handing a provider id to `ModelRuntime.login` — additionally normalizes Anthropic auth-card/storage ids via `toExecutionModelProviderId` as defense in depth; see docs/solutions/integration-issues/anthropic-storage-ids-are-never-pi-provider-ids.md.
+- 9673f15: summary: Fix collapsed Command Center spacing and mailbox badge padding; make recommendation settings searchable.
+  category: fix
+  dev: AgentActivityPanel.css used an undefined numeric `--space-1/2/3` scale (FN-8866) and MailboxStructuralItem.css referenced undefined `--space-2xs` (FN-8872), zeroing gaps/padding — mapped to the defined named token scale. Settings search index gains `maxRecommendationsPerTask` (FN-8829) and `recommendationMailboxNoticeEnabled` (FN-9021); MergeSection's `requiredChecks` row now uses the `SettingsTextRow` primitive so the FN-8855 search entry actually scroll-anchors.
+- 987878b: summary: Close Fusion-created GitHub tracking issues when the task is already done.
+  category: fix
+  dev: Late-created tracking issues (opened after the task reached Done) now close immediately, and the reconcile sweep prefers recently updated tracked terminals instead of the oldest 200 board rows.
+- cd433bd: summary: Mission triage with an unknown workflowId now returns 404 instead of a 500.
+  category: fix
+  dev: mission-routes.ts maps core's TaskIntakeOwnerResolutionError (reason "workflow-unresolvable") to notFound in both the feature and slice triage handlers via a structural code+reason match; the old message-pattern mapping stopped firing after the FNXC:IntakeOwnership boundary introduced the typed error.
+- 59dc5df: summary: Show a clear retryable message when Planning Retry hits a down server.
+  category: fix
+  dev: Gateway 502/503/504 non-JSON bodies (for example Traefik "no available server") no longer dump content-type diagnostics into Planning Retry and other dashboard API surfaces.
+- 086cd0a: summary: Retry post-merge pushes after temporary Git network failures.
+  category: fix
+  dev: Adds two cancellation-aware retries with bounded backoff on transient transport failures across both post-merge push paths; configuration, authentication, and ref-rejection errors still fail immediately.
+- 56a087d: summary: Restore agent-activity telemetry, Plan Review convergence, and restart-retry safety guards lost in an executor refactor.
+  category: fix
+  dev: The wave-18 executor peel (#3317) was built from a stale base and silently dropped shipped behaviors; restored — FN-8864 agent-activity writers (task started/handed-off, workflow gate pass/fail, gate principal attribution via new `executor/workflow-gate-activity.ts`), FN-8768 Plan Review group recognition + convergence primer + modified-file review scoping, FN-6782's fire-time guard on transient resume-after-restart retries, FN-8868 session usage telemetry boundaries, recommendation-route withheld-tool guidance, and the per-instance worktree retry cap. Graph dispatch requiring `options.agentStore` (FN-8764/FN-8821) is intended behavior; the shared test harness now provisions it.
+- d3e51f5: summary: Keep computer-use snapshots available across project directories.
+  category: fix
+  dev: Resolve computer-use state once per invocation through resolveComputerStateRoot.
+- 74a0bdb: summary: Rebuild corrupted knowledge-graph caches without retaining foreign artifact data.
+  category: fix
+  dev: Validates exact persisted record shapes and reusable import references before graph cache reuse.
+- d39c0ae: summary: Make Quality file-scoped tests run with each package's local Vitest binary.
+  category: fix
+  dev: Resolves package ownership from the execution worktree and uses Vitest's default reporter.
+- bebb46f: summary: Creating a task from an Insights recommendation is no longer slow on large boards.
+  category: performance
+  dev: Adds indexed findTaskByProposalClaimId and listTasksBySourceLineage reads, removes near-duplicate fullRows hydration, and registers migration 0059.
+- d1bb5f4: summary: Voice input no longer reports a healthy speech runtime as incompatible.
+  category: fix
+  dev: Unwraps the sherpa CommonJS binding and adds POST /voice/runtime/recheck.
+- 873f339: summary: Show database backup inventory and automatic schedule status in Settings.
+  category: fix
+  dev: Reconciles the shared backup routine on engine startup and preserves its next run on unchanged saves.
+- b7604a9: summary: Agent Activity no longer lists agent state-change events.
+  category: fix
+  dev: Removes AgentStore state-change outbox writers and hides historical rows with the dashboard predicate.
+- ba643fc: summary: Show clear outcomes when dashboard updates cannot install.
+  category: fix
+  dev: Distinguishes failed checks from no-op updates and skips unsupported hosts.
+- 25b03d6: summary: Fix workspace task completion when changes land in only one repository.
+  category: fix
+  dev: Adds a per-host workspace resolver, resolves before executor workspace branches, normalizes empty configs, and aggregates commit counts across acquired repositories.
+- 0188d94: summary: Workspace-mode tasks now show their sub-repo worktrees on the board instead of Unassigned.
+  category: fix
+  dev: groupByWorktree groups expose stable id, kind, and workspace repoCount fields.
+- 6896f1d: summary: Make the Workspace mode setting create or remove its real workspace configuration.
+  category: fix
+  dev: Adds disk-observed workspace reconciliation and live executor cache invalidation.
+- 010e619: summary: Merge verification now runs tests for packages depending on a changed package.
+  category: fix
+  dev: `deriveScopedPnpmTestCommand` now uses `...<pkg>` instead of malformed `<pkg>...^` selectors.
+- 1372218: summary: Re-land workspace task work after a clean revert instead of silently skipping it.
+  category: fix
+  dev: Records per-repository `revertBoundarySha` and invalidates stale workspace landing proof.
+- 892afaa: summary: Prevent unarchived workspace tasks from retaining disposed worktree state.
+  category: fix
+  dev: restoreTaskFromArchive reconciles disposed workspace entries before reconcileWorkspacePartialLands runs.
+- c9e283a: summary: Prevent transient Git evidence failures from failing workspace tasks.
+  category: fix
+  dev: Replaces repoBranchExists with tri-state probeRepoBranch and an execBranchProbe seam, switches to show-ref, adds evidence-unavailable audit handling, and bounds deferred evidence retries.
+- 4bc0a32: summary: Block unsafe AI squash merges before they reach integration branches.
+  category: fix
+  dev: Enforces file-scope and diff-volume guards at the unified landOneRepo seam.
+- 41d415f: summary: Workspace merges no longer report success when finalization is blocked.
+  category: fix
+  dev: Adds WorkspaceFinalizeBlockedError and requires finalized/finalizeBlockedReason for workspace merge success.
+- 2f99a8f: summary: Fix lost sub-repo worktree entries when workspace repos are acquired concurrently.
+  category: fix
+  dev: Per-repo workspace state now uses mergeWorkspaceWorktreeEntry under the task advisory lock.
+- da4e4bc: summary: Workspace tasks no longer briefly look single-repo while acquiring a sub-repo worktree.
+  category: fix
+  dev: acquireTaskWorktree gains opt-in `suppressSingularWorktreePersist`; acquireWorkspaceRepoWorktree sets it so the merged `workspaceWorktrees` write is the only durable acquisition write.
+- db8e715: summary: Reclaim stale workspace worktrees and safe task branches after terminal tasks.
+  category: fix
+  dev: reconcileOrphanedWorkspaceWorktrees now bounds prune-only retries and skips duplicate claims.
+- 6adcab3: summary: Prevent stale workspace task trailers from falsely proving a repo landed.
+  category: fix
+  dev: Bounds findProvenLandedCommit degraded scans using taskCreatedAt and recent evidence limits.
+- 43889bc: summary: Prevent workspace tasks from completing after edits to a sub-repo main checkout.
+  category: fix
+  dev: Adds workspace-main-checkout-guard, main_checkout_edit precedence, retry-stable anchoring, warn-vs-block evidence handling, bounded HEAD commit scanning, and audit telemetry.
+- 9fa8b38: summary: Prevent multi-node workspace operations from overlapping or double-landing shared repositories.
+  category: fix
+  dev: Adds migration 0060 lease and land-intent tables, FUSION*NODE_ID plus process incarnation ownership, resource fence tokens and one-publish-per-tenancy refs under refs/fusion/workspace-lease/* and refs/fusion/merge-dispatch/\_. Merge-dispatch tenancy pins publish on every target sub-repository remote before any workspace land begins; merge and land commit points use fence-validated target/fence CAS operations. `isMergePending` consults durable dispatch leases after local state, while startup and periodic sweeps conservatively retire only expired leases. Pending land intents recover project-wide from remote reachability through holder or no-live-lease recovery authority.
+- ebd345d: summary: Workspace tasks with no acquired sub-repo now complete or fail review consistently.
+  category: fix
+  dev: Uses classifyWorkspaceZeroAcquire and the retryable review seam flag to avoid deterministic retry exhaustion.
+- 4958450: summary: Fail fast when workspace projects use per-instance foreach worktrees.
+  category: fix
+  dev: Routes workspace foreach isolation to worktree-isolation-unsupported-workspace with an explicit diagnostic.
+- 284feea: summary: Filtering models no longer closes model-picker dialogs, including on mobile.
+  category: fix
+  dev: Uses shared portal-safe-surface checks and press-origin backdrop dismissal guards.
+- 0ec3c76: summary: Fix Cursor CLI models failing with "install and enable the Cursor runtime plugin" after enabling the provider.
+  category: fix
+  dev: serve/dashboard/daemon now eagerly run `ensureBundledCursorRuntimePluginInstalled` at boot, mirroring the FN-7761 Grok bootstrap, so `getRuntimeById("cursor")` resolves for cursor-cli selections.
+- b26894e: summary: Show Task Detail plan content before low-frequency spec alignment provenance.
+  category: fix
+  dev: Moves the shared Definition-tab spec-lock report after task relationship sections.
+- 743251a: summary: Reliably launch operator-installed Hermes Windows CLI shims.
+  category: fix
+  dev: Adds resolveHermesLaunch/resolveHermesBinaryPath and supervises Hermes prompt turns with superviseSpawn.
+- c0e568b: summary: Package staged runtime plugin core helpers reliably in CLI bundles.
+  category: fix
+  dev: Validate staged plugin core imports against the CLI runtime shim during tests.
+- 6401fde: summary: Fix Claude subscription model resolution failing with unknown provider anthropic-subscription.
+  category: fix
+  dev: Normalize auth-surface ids anthropic-subscription/anthropic-api-key to execution provider anthropic at model resolution seams; keep subscription OAuth credentials and auth cards on anthropic-subscription.
+- 7ed1c39: summary: Fix task runtime chips that over-counted active time after review/replan round-trips.
+  category: fix
+  dev: Clear executionStartedAt when banking cumulativeActiveMs on WIP exit; clamp active-time readers to wall-clock age.
+- 802a424: summary: Non-continuable agent sessions now recover cleanly in step-session runs instead of failing the task.
+  category: fix
+  dev: Pairs run-implementation.ts step-session error handling with handleNonContinuableSessionRetry.
+- 43a42d8: summary: Resume mission validation when a completed mission task's reconciliation fails.
+  category: fix
+  dev: Scheduler task-move reconciliation now fails soft at both boundaries so completion still starts mission execution.
+- 66bbeaa: summary: Restore routed workflow-principal identity for prompt and review sessions.
+  category: fix
+  dev: Restores executeWorkflowStep and runGraphCustomNode principal threading.
+- e9089ee: summary: Keep GitHub pull-request imports readable on mobile screens.
+  category: fix
+  dev: Pull rows and preview branch names now wrap safely in mobile import layouts.
+- 958b08e: summary: Insights now list newest first instead of oldest first.
+  category: fix
+  dev: Ordering is applied in `useInsights` section grouping; `InsightStore.listInsights` keeps its `createdAt ASC, id ASC` contract.
+- f11bb2e: summary: Fix title-only duplicate redirects showing as Ready and workflows created invisible to their own project.
+  category: fix
+  dev: Restores the `task.title` argument to `isDuplicateRedirectOnlyPrompt` in `isTaskAwaitingPlanning` (dropped by a refactor after FN-8840) and stamps `layer.projectId` on the `project.workflows` INSERT so FN-8998's project-scoped reads see a bound layer's own create.
+
 ## 0.76.0
 
 ### Minor Changes

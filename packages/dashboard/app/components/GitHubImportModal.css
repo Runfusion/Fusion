@@ -1638,9 +1638,24 @@ counterpart added later cannot silently reintroduce the band.
   }
 
 
+  /*
+  FNXC:GitHubImport 2026-08-16-00:33:
+  Pull-request rows can contain a wrapped title, a branch line, and an Imported badge. They must use
+  their intrinsic height on phones: the former fixed minimum height constrained wrapped content and
+  made consecutive rows paint over one another.
+  */
   .issue-item {
     flex-wrap: wrap;
-    min-height: 36px;
+  }
+
+  /*
+  FNXC:GitHubImport 2026-08-16-00:33:
+  Pull head/base names can be unbroken generated identifiers. Let the branch line shrink and break
+  them inside the shared list row so both dialog and embedded phone presentations stay contained.
+  */
+  .pull-branch-info {
+    min-width: 0;
+    overflow-wrap: anywhere;
   }
 
   .imported-badge {
@@ -1678,6 +1693,16 @@ shrinkable action tracks preserve every full label by wrapping it inside its own
 shared touch-target token preserves every required target without clipping or scrolling.
 */
 @media (max-width: 768px) {
+  /*
+  FNXC:GitHubImport 2026-08-16-00:33:
+  The selected pull-request sheet shares this preview branch block with desktop. On narrow and
+  landscape sheets, break unbroken branch names so its scrollable detail content cannot overflow.
+  */
+  .preview-branch {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
   .github-import-detail-actions {
     gap: var(--space-xs);
   }

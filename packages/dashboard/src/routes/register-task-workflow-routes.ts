@@ -126,7 +126,9 @@ import { buildBoardWorkflowsPayload } from "./board-workflows.js";
 import { resolveNativeStructurePreview } from "../native-structure-preview.js";
 import { isBackwardMoveBlockedByOpenPr, PR_OPEN_BLOCKS_MOVE_BACK_MESSAGE } from "./register-pull-requests-routes.js";
 import { computePlanApprovalFingerprint, isTaskAwaitingPlanning, isWorkspaceTask, type RunAuditEventInput } from "@fusion/core";
-import { FUSION_CLIENT_HEADER, resolveHttpDeleteCallerKind, BOOTSTRAP_ACTOR_CONTEXT, UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
+// FNXC:Identity 2026-08-17-04:30: the marker is imported once at the top of this file (see the census
+// note there); the merge re-added it here, which is a duplicate identifier, not a second symbol.
+import { FUSION_CLIENT_HEADER, resolveHttpDeleteCallerKind, BOOTSTRAP_ACTOR_CONTEXT } from "@fusion/core";
 import type { RunMutationContext } from "@fusion/core";
 import { ApiError, badRequest, conflict, notFound } from "../api-error.js";
 // FNXC:TaskLookup404 2026-07-26-11:40: shared task-miss -> 404 mapping seam.

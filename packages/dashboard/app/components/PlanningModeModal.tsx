@@ -74,7 +74,7 @@ import { MicButton } from "./MicButton";
 const WARNING_ICON = "⚠️";
 
 /*
-FNXC:Planning 2026-06-23-02:00:
+FNXC:Planning 2026-08-16-14:48:
 The embedded Planning sidebar is resizable exactly like Missions (MissionManager's MISSION_SIDEBAR_* constants). Default 300px matches Missions' default (calc(--space-lg 16px * 18.75)); min/max/storage mirror Missions so the two views resize identically and persist independently.
 */
 const PLANNING_SIDEBAR_DEFAULT_WIDTH = 300;
@@ -614,9 +614,15 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   mutate the newly selected session, while successful progress still resets the three-attempt budget.
   */
   const planningAutoRetryAttemptRef = useRef(0);
-  const planningAutoRetryOwnerRef = useRef<{ sessionId: string; token: symbol } | null>(null);
-  const startPlanningAutoRetryRef = useRef<(sessionId: string) => Promise<boolean>>(async () => false);
+  const planningAutoRetryOwnerRef = useRef<{ sessionId: string; token: symbol; ownsTurn?: () => boolean } | null>(null);
+  const startPlanningAutoRetryRef = useRef<(sessionId: string, ownsTurn?: () => boolean) => Promise<boolean>>(async () => false);
   const planningSessionLoadEpochRef = useRef(0);
+  /*
+  FNXC:PlanningTurnReconciliation 2026-08-16-06:22:
+  Same-session streamed durable turns and response submissions can supersede a pending
+  reconciliation without changing session identity. This epoch lets their newer writer win.
+  */
+  const planningTurnEpochRef = useRef(0);
   /*
   FNXC:PlanningMode 2026-07-02-07:56:
   Refine Further is a single-flight completed-summary turn. Guard synchronously with a ref so duplicate click, touch, or keyboard activations cannot submit a second refine request or close the active stream with a generation-in-progress error before React renders the disabled state.
@@ -951,7 +957,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   }, [isRefineMenuOpen]);
 
   /*
-  FNXC:Planning 2026-06-23-02:00:
+  FNXC:Planning 2026-08-16-14:48:
   Resizable Planning sidebar — pointer-drag + arrow-key resize with localStorage persistence, mirroring MissionManager.handleSidebarResizeStart/handleSidebarResizeKeyDown. Width is clamped to PLANNING_SIDEBAR_MIN/MAX and applied as an inline width on the sidebar <aside>. Disabled on mobile where the sidebar stacks full-width.
   */
   const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
@@ -1261,11 +1267,22 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     const tick = async () => {
       const sessionId = currentSessionIdRef.current;
       if (!sessionId) return;
+      /*
+      FNXC:PlanningTurnReconciliation 2026-08-16-07:57:
+      A loading poll may resolve after an accepted SSE question, response submission, or newer
+      session load has claimed the same session. Fence the fetch at launch so its stale snapshot
+      cannot advance the turn epoch and overwrite the newer question, summary, or recovery state.
+      */
+      const pollTurnEpoch = planningTurnEpochRef.current;
+      const pollLoadEpoch = planningSessionLoadEpochRef.current;
       try {
         const session = await fetchAiSession(sessionId);
         if (cancelled || !session) return;
         if (currentSessionIdRef.current !== sessionId) return;
+        if (planningSessionLoadEpochRef.current !== pollLoadEpoch) return;
+        if (planningTurnEpochRef.current !== pollTurnEpoch) return;
         if (session.status === "awaiting_input" && !session.currentQuestion && session.result) {
+          planningTurnEpochRef.current += 1;
           // Recover a legacy or partially persisted plan when its question event was missed.
           // New sequential turns normally settle with both result and currentQuestion.
           resetPlanningAutoRetryBudget();
@@ -1281,6 +1298,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
           setView({ type: "plan_review", session: { sessionId, currentQuestion: null, summary }, summary });
           setStreamingOutput("");
         } else if (session.status === "awaiting_input" && session.currentQuestion) {
+          planningTurnEpochRef.current += 1;
           /*
           FNXC:PlanningTurnReconciliation 2026-07-20-10:36:
           Missed SSE recovery must hydrate the server's entire interview turn together. Keeping
@@ -1308,6 +1326,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
           });
           setStreamingOutput("");
         } else if (session.status === "complete" && session.result) {
+          planningTurnEpochRef.current += 1;
           const resume = resolveCompletePlanningResume(session);
           if (resume.kind === "unrecoverable") {
             setView({
@@ -1322,9 +1341,23 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
           setStreamingOutput("");
         } else if (session.status === "error") {
           const errorMessage = session.error || t("planning.sessionFailed2", "Session failed");
-          const handled = await startPlanningAutoRetryRef.current(sessionId);
+          /*
+          FNXC:PlanningTurnReconciliation 2026-08-16-07:19:
+          A loading-poll error starts a recovery turn before auto-retry awaits. A successful retry
+          returns early, so claiming afterward left a pending duplicate-response reconciliation
+          authorized to overwrite recovery's loading state. The poll's turn owns both retry and
+          terminal-error writes; a newer question, response, stream recovery, or session switch
+          invalidates this predicate before either path can mutate the view.
+          */
+          const recoveryTurnEpoch = ++planningTurnEpochRef.current;
+          const recoveryLoadEpoch = planningSessionLoadEpochRef.current;
+          const pollRecoveryStillOwnsTurn = () => !cancelled
+            && currentSessionIdRef.current === sessionId
+            && planningSessionLoadEpochRef.current === recoveryLoadEpoch
+            && planningTurnEpochRef.current === recoveryTurnEpoch;
+          const handled = await startPlanningAutoRetryRef.current(sessionId, pollRecoveryStillOwnsTurn);
           if (handled) return;
-          if (cancelled || currentSessionIdRef.current !== sessionId) return;
+          if (!pollRecoveryStillOwnsTurn()) return;
           /*
           FNXC:PlanningRetry 2026-07-13-00:05:
           Mirror the SSE onError terminal-error transition here: when this poll is the one that
@@ -1509,6 +1542,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
           passive stream catch-up event that overwrites a newer awaiting-input question.
           */
           if (isAnsweredQuestion && editingQuestionIdRef.current !== normalizedQuestion.id) return;
+          planningTurnEpochRef.current += 1;
           setIsRetrying(false);
           resetPlanningAutoRetryBudget();
           setIsRefiningSummary(false);
@@ -1539,6 +1573,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
         },
         onSummary: (summary) => {
           if (isStaleEvent()) return;
+          planningTurnEpochRef.current += 1;
           const normalizedSummary = normalizePlanningSummary(summary);
           setIsRetrying(false);
           resetPlanningAutoRetryBudget();
@@ -1578,6 +1613,20 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
         },
         onError: (message) => {
           if (isStaleEvent()) return;
+          /*
+          FNXC:PlanningTurnReconciliation 2026-08-16-06:45:
+          An accepted stream error starts recovery for the current turn, whether it reconnects,
+          auto-retries, or renders a permanent error. Its turn token remains authoritative across
+          recovery awaits, so a later response cannot be replaced by an older recovery either.
+          Advance only after stale-event rejection so a delayed duplicate-response reconciliation
+          from the errored turn cannot overwrite recovery, while an obsolete stream cannot
+          invalidate the live turn.
+          */
+          const recoveryTurnEpoch = ++planningTurnEpochRef.current;
+          const recoveryLoadEpoch = planningSessionLoadEpochRef.current;
+          const recoveryStillOwnsTurn = () => currentSessionIdRef.current === sessionId
+            && planningSessionLoadEpochRef.current === recoveryLoadEpoch
+            && planningTurnEpochRef.current === recoveryTurnEpoch;
           const errorMessage = message || t("planning.sessionFailed", "Session failed while contacting the AI.");
 
           // A single transient stream error (e.g. tab was backgrounded long
@@ -1588,7 +1637,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
           (async () => {
             try {
               const session = await fetchAiSession(sessionId);
-              if (isStaleEvent()) return;
+              if (!recoveryStillOwnsTurn()) return;
               if (
                 session &&
                 (session.status === "generating" || session.status === "awaiting_input")
@@ -1599,7 +1648,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
             } catch {
               // fall through to error view below
             }
-            if (isStaleEvent()) return;
+            if (!recoveryStillOwnsTurn()) return;
 
             /*
             FNXC:PlanningRetry 2026-07-21-10:00:
@@ -1607,9 +1656,10 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
             Returning to Planning must use the same bounded, single-flight retry path as a live
             turn so tab suspension or navigation never turns a resumable session into an error UI.
             */
-            if (await startPlanningAutoRetryRef.current(sessionId)) {
+            if (await startPlanningAutoRetryRef.current(sessionId, recoveryStillOwnsTurn)) {
               return;
             }
+            if (!recoveryStillOwnsTurn()) return;
             setIsRetrying(false);
             setIsAutoRetrying(false);
             setIsRefiningSummary(false);
@@ -1647,7 +1697,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   const startPlanningRetry = useCallback(
     async (
       retryTarget: { sessionId: string; currentQuestion: PlanningQuestion | null; summary: PlanningSummary | null },
-      options: { auto: boolean; retryToken?: symbol },
+      options: { auto: boolean; retryToken?: symbol; ownsTurn?: () => boolean },
     ) => {
       setError(null);
       setIsRetrying(!options.auto);
@@ -1664,7 +1714,8 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
         await retryPlanningSession(retryTarget.sessionId, projectId);
       } catch (err) {
         const retryStillOwnsSession = () => currentSessionIdRef.current === retryTarget.sessionId
-          && (!options.auto || planningAutoRetryOwnerRef.current?.token === options.retryToken);
+          && (!options.auto || planningAutoRetryOwnerRef.current?.token === options.retryToken)
+          && (options.ownsTurn?.() ?? true);
         if (!retryStillOwnsSession()) return;
 
         let retryError: unknown = err;
@@ -1779,14 +1830,15 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
           A rejected automatic attempt has settled before its bounded successor is queued, so
           release only its matching token first. The successor can then acquire ownership, while
           duplicate SSE/poll reports still coalesce only during a genuinely pending invocation;
-          a stale callback cannot clear a newer session's owner.
+          a stale callback cannot clear a newer session's owner. Preserve a recovery's turn
+          predicate into the queued successor because another turn can land before its microtask.
           */
           if (options.retryToken && planningAutoRetryOwnerRef.current?.token === options.retryToken) {
             planningAutoRetryOwnerRef.current = null;
           }
           queueMicrotask(() => {
             if (currentSessionIdRef.current === retryTarget.sessionId) {
-              void startPlanningAutoRetryRef.current(retryTarget.sessionId);
+              void startPlanningAutoRetryRef.current(retryTarget.sessionId, options.ownsTurn);
             }
           });
           return;
@@ -1812,9 +1864,15 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   );
 
   const startPlanningAutoRetry = useCallback(
-    async (sessionId: string) => {
-      if (planningAutoRetryOwnerRef.current?.sessionId === sessionId) {
-        return true;
+    async (sessionId: string, ownsTurn?: () => boolean) => {
+      if (!(ownsTurn?.() ?? true)) return false;
+      const existingOwner = planningAutoRetryOwnerRef.current;
+      if (existingOwner?.sessionId === sessionId) {
+        if (!existingOwner.ownsTurn || existingOwner.ownsTurn()) return true;
+        // FNXC:PlanningTurnReconciliation 2026-08-16-07:19: An invalidated recovery
+        // attempt cannot satisfy a newer error's recovery. Release its token so the current
+        // turn starts the bounded retry that its caller is waiting to observe.
+        planningAutoRetryOwnerRef.current = null;
       }
       if (viewRef.current.type === "error") return false;
       // FNXC:PlanningRetry 2026-07-22-21:00: budget is per-session and survives remounts.
@@ -1828,12 +1886,12 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
       const retryToken = Symbol(`planning-auto-retry:${sessionId}:${attempt}`);
       planningAutoRetryAttemptsBySession.set(sessionId, attempt);
       planningAutoRetryAttemptRef.current = attempt;
-      planningAutoRetryOwnerRef.current = { sessionId, token: retryToken };
+      planningAutoRetryOwnerRef.current = { sessionId, token: retryToken, ownsTurn };
       setAutoRetryAttempt(attempt);
       setIsAutoRetrying(true);
       await startPlanningRetry(
         { sessionId, currentQuestion: null, summary: null },
-        { auto: true, retryToken },
+        { auto: true, retryToken, ownsTurn }
       );
       return true;
     },
@@ -1989,6 +2047,15 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   const loadSession = useCallback(
     async (sessionId: string) => {
       const loadEpoch = ++planningSessionLoadEpochRef.current;
+      /*
+      FNXC:PlanningMode 2026-08-16-08:54:
+      An idle-session SSE refresh rehydrates the same server session while its question remains
+      actionable. Do not transiently clear that workspace: unmounting QuestionForm discards a
+      typed or selected local answer before its enabled Next action can submit it. A different
+      session still takes the neutral loader so its prior turn never remains visible.
+      */
+      const preservesActiveWorkspace = currentSessionIdRef.current === sessionId
+        && (viewRef.current.type === "question" || viewRef.current.type === "plan_review");
       streamConnectionRef.current?.close();
       streamConnectionRef.current = null;
       currentSessionIdRef.current = sessionId;
@@ -2002,23 +2069,25 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
       review with a working View task button. Clear it at load start; the complete branch
       restores it for the session actually being loaded.
       */
-      setLinkedTaskId(null);
-      setLinkedTask(null);
-      setStreamingOutput("");
-      setResponseHistory([]);
-      setConversationHistory([]);
-      setEditedSummary(null);
-      setRunningSummary(null);
-      setWorkspaceQuestion(null);
-      setLoadedSessionTitle(null);
-      setIsRetrying(false);
-      setIsRefiningSummary(false);
-      refineSummaryInFlightRef.current = false;
-      setGenerationStartTime(null);
-      // FNXC:PlanningMode 2026-07-23-00:00: hydrate-from-DB shows the neutral session loader,
-      // not the generation pane — only a fetched status of "generating" enters `loading` below.
-      viewRef.current = { type: "session_loading" };
-      setView({ type: "session_loading" });
+      if (!preservesActiveWorkspace) {
+        setLinkedTaskId(null);
+        setLinkedTask(null);
+        setStreamingOutput("");
+        setResponseHistory([]);
+        setConversationHistory([]);
+        setEditedSummary(null);
+        setRunningSummary(null);
+        setWorkspaceQuestion(null);
+        setLoadedSessionTitle(null);
+        setIsRetrying(false);
+        setIsRefiningSummary(false);
+        refineSummaryInFlightRef.current = false;
+        setGenerationStartTime(null);
+        // FNXC:PlanningMode 2026-07-23-00:00: hydrate-from-DB shows the neutral session loader,
+        // not the generation pane — only a fetched status of "generating" enters `loading` below.
+        viewRef.current = { type: "session_loading" };
+        setView({ type: "session_loading" });
+      }
 
       try {
         const session = await fetchAiSession(sessionId);
@@ -2769,46 +2838,24 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
 
   const handleSubmitResponse = useCallback(
     async (responses: QuestionResponse) => {
-      if (view.type !== "question") return;
-
-      const { session } = view;
-      const sessionId = session.sessionId;
-      const activeQuestion = session.currentQuestion;
-      if (!activeQuestion) {
-        /*
-        FNXC:PlanningQuestionRegeneration 2026-07-23-21:40:
-        Submitting with no active question is no longer a dead-end "No active question in
-        session" error. The server regenerates a fresh interview question from the accumulated
-        context, so forward the input and enter the loading state; the SSE question event (or
-        the HTTP payload for restored sessions without a live stream) restores the view. No
-        optimistic history entry is recorded because there is no question to pair it with.
-        */
-        setError(null);
-        resetPlanningAutoRetryBudget();
-        setGenerationActivity("question");
-        setGenerationStartTime(Date.now());
-        setView({ type: "loading" });
-        setStreamingOutput("");
-        currentSessionIdRef.current = sessionId;
-        if (!streamConnectionRef.current?.isConnected()) {
-          connectToPlanningStream(sessionId);
-        }
-        try {
-          const response = await respondToPlanning(sessionId, responses, projectId);
-          const responseQuestion = "type" in response ? response.data : response.currentQuestion;
-          if (responseQuestion) {
-            const nextQuestion = normalizeQuestionOptions(responseQuestion);
-            setWorkspaceQuestion(nextQuestion);
-            setView({ type: "question", session: { sessionId, currentQuestion: nextQuestion, summary: runningSummaryRef.current } });
-          }
-        } catch (err) {
-          setError(getErrorMessage(err) || t("planning.failedSubmitResponse", "Failed to submit response"));
-          setView({ type: "question", session: { sessionId, currentQuestion: null, summary: runningSummaryRef.current } });
-        }
+      const sessionId = currentSessionIdRef.current;
+      const activeQuestion = workspaceQuestion;
+      if (!sessionId || !activeQuestion) {
+        setError(t("planning.noActiveQuestion", "No active question is available. Wait for the interview to resume."));
         return;
       }
+      /*
+      FNXC:PlanningMode 2026-08-16-06:28:
+      The form is rendered from workspaceQuestion and remains visible beneath the loading overlay.
+      Submit must use that live question and session ref, not a render-time view snapshot: a late
+      hydration may change view between an enabled Next render and its user event, and must never
+      silently discard that answer.
+      */
+      const session = { sessionId, currentQuestion: activeQuestion, summary: runningSummaryRef.current };
 
       setError(null);
+      const responseTurnEpoch = ++planningTurnEpochRef.current;
+      const responseLoadEpoch = planningSessionLoadEpochRef.current;
       // Capture before clearing state: the edit branch rewrites this exact history row while
       // the server preserves the other answers and generates the appended next question.
       const submittedEditingQuestionId = editingQuestionId;
@@ -2872,14 +2919,21 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
       } catch (err) {
         const errorMessage = getErrorMessage(err) || t("planning.failedSubmitResponse", "Failed to submit response");
         const isDuplicateResponseConflict = isDuplicateResponseGenerationConflict(err);
+        const reconciliationStillOwnsTurn = () => currentSessionIdRef.current === sessionId
+          && planningSessionLoadEpochRef.current === responseLoadEpoch
+          && planningTurnEpochRef.current === responseTurnEpoch;
         /*
-        FNXC:PlanningTurnReconciliation 2026-07-20-10:36:
-        A rejected HTTP response is ambiguous: the server may have accepted the answer before
-        the connection failed. Rehydrate durable state before restoring the form. If it was not
-        accepted, roll back the optimistic answer so history and the active question still agree.
+        FNXC:PlanningTurnReconciliation 2026-08-16-06:22:
+        A rejected response may have been durably accepted, so reconciliation rehydrates before
+        rolling back optimism. Its snapshot loses to a newer session load, reset/stop, response
+        submission, or same-session streamed question/summary. Capture both ownership epochs
+        before the response await: an A → B → A reload must not let the old A response adopt the
+        new load epoch. A delayed refresh must then write nothing, or an old durable snapshot can
+        replace the question, history, summary, and error state that the newer turn already owns.
         */
         try {
           const persisted = await fetchAiSession(sessionId);
+          if (!reconciliationStillOwnsTurn()) return;
           if (persisted?.status === "awaiting_input" && !persisted.currentQuestion && persisted.result) {
             const history = parseConversationHistory(persisted.conversationHistory);
             const summary = normalizePlanningSummary(JSON.parse(persisted.result) as PlanningSummary);
@@ -2922,8 +2976,10 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
             return;
           }
         } catch {
+          if (!reconciliationStillOwnsTurn()) return;
           // Fall back to the known pre-submit turn and remove its optimistic answer.
         }
+        if (!reconciliationStillOwnsTurn()) return;
         conversationHistoryRef.current = historyBeforeSubmit;
         setConversationHistory(historyBeforeSubmit);
         setError(errorMessage);
@@ -2931,7 +2987,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
         setView({ type: "question", session: { ...session, summary: runningSummaryRef.current } });
       }
     },
-    [connectToPlanningStream, conversationHistory, editingQuestionId, projectId, resetPlanningAutoRetryBudget, t, view]
+    [connectToPlanningStream, conversationHistory, editingQuestionId, projectId, resetPlanningAutoRetryBudget, t, workspaceQuestion]
   );
 
   const handleStopGeneration = useCallback(async () => {
@@ -4364,6 +4420,11 @@ export function QuestionForm({ question: rawQuestion, initialResponse, onSubmit,
   const [commentValue, setCommentValue] = useState("");
   const [otherValue, setOtherValue] = useState("");
   const [isOtherSelected, setIsOtherSelected] = useState(false);
+  const dirtyResponseRef = useRef(false);
+  const restoredQuestionIdRef = useRef<string | null>(null);
+  const markResponseDirty = useCallback(() => {
+    dirtyResponseRef.current = true;
+  }, []);
   const { ref: textAnswerAutosizeRef } = useAutosizeTextarea({
     value: textValue,
     minHeight: 120,
@@ -4438,9 +4499,18 @@ export function QuestionForm({ question: rawQuestion, initialResponse, onSubmit,
 
   // Restore a selected history answer so editing is a direct, non-destructive operation.
   useEffect(() => {
+    if (restoredQuestionIdRef.current === question.id && dirtyResponseRef.current) return;
     const prior = initialResponse ?? {};
     const other = typeof prior[PLANNING_OTHER_RESPONSE_KEY] === "string" ? prior[PLANNING_OTHER_RESPONSE_KEY] : "";
     const text = prior[question.id];
+    /*
+    FNXC:PlanningMode 2026-08-16-06:28:
+    Hydration can replace the parent response object after a user starts answering the same
+    question. Restore durable data only until that local turn is dirty; object identity churn
+    must not erase an enabled form's unsubmitted answer or disable Next question.
+    */
+    dirtyResponseRef.current = false;
+    restoredQuestionIdRef.current = question.id;
     setResponse(prior);
     setTextValue(typeof text === "string" ? text : "");
     setCommentValue(typeof prior._comment === "string" ? prior._comment : "");
@@ -4502,7 +4572,10 @@ export function QuestionForm({ question: rawQuestion, initialResponse, onSubmit,
                     className="planning-textarea"
                     placeholder={t("planning.typeAnswerPlaceholder", "Type your answer here...")}
                     value={textValue}
-                    onChange={(e) => setTextValue(e.target.value)}
+                    onChange={(e) => {
+                      markResponseDirty();
+                      setTextValue(e.target.value);
+                    }}
                     onKeyDown={(e) => {
                       if (e.key === "Enter" && !e.shiftKey && textValue.trim()) {
                         e.preventDefault();
@@ -4524,6 +4597,7 @@ export function QuestionForm({ question: rawQuestion, initialResponse, onSubmit,
                         value={option.id}
                         checked={response[question.id] === option.id && !isOtherSelected}
                         onChange={() => {
+                          markResponseDirty();
                           setIsOtherSelected(false);
                           setOtherValue("");
                           setResponse({ [question.id]: option.id });
@@ -4545,6 +4619,7 @@ export function QuestionForm({ question: rawQuestion, initialResponse, onSubmit,
                       value={PLANNING_OTHER_OPTION_ID}
                       checked={isOtherSelected}
                       onChange={() => {
+                        markResponseDirty();
                         setIsOtherSelected(true);
                         setResponse({});
                       }}
@@ -4561,7 +4636,10 @@ export function QuestionForm({ question: rawQuestion, initialResponse, onSubmit,
                         data-testid="planning-other-input"
                         placeholder={t("planning.otherOptionPlaceholder", "Write your own answer...")}
                         value={otherValue}
-                        onChange={(e) => setOtherValue(e.target.value)}
+                        onChange={(e) => {
+                          markResponseDirty();
+                          setOtherValue(e.target.value);
+                        }}
                       />
                     </div>
                   )}
@@ -4579,6 +4657,7 @@ export function QuestionForm({ question: rawQuestion, initialResponse, onSubmit,
                           value={option.id}
                           checked={selected.includes(option.id)}
                           onChange={(e) => {
+                            markResponseDirty();
                             const newSelected = e.target.checked
                               ? [...selected, option.id]
                               : selected.filter((id) => id !== option.id);
@@ -4601,6 +4680,7 @@ export function QuestionForm({ question: rawQuestion, initialResponse, onSubmit,
                       value={PLANNING_OTHER_OPTION_ID}
                       checked={isOtherSelected}
                       onChange={(e) => {
+                        markResponseDirty();
                         setIsOtherSelected(e.target.checked);
                         if (!e.target.checked) {
                           setOtherValue("");
@@ -4619,7 +4699,10 @@ export function QuestionForm({ question: rawQuestion, initialResponse, onSubmit,
                         data-testid="planning-other-input"
                         placeholder={t("planning.otherOptionPlaceholder", "Write your own answer...")}
                         value={otherValue}
-                        onChange={(e) => setOtherValue(e.target.value)}
+                        onChange={(e) => {
+                          markResponseDirty();
+                          setOtherValue(e.target.value);
+                        }}
                       />
                     </div>
                   )}
@@ -4632,6 +4715,7 @@ export function QuestionForm({ question: rawQuestion, initialResponse, onSubmit,
                     <button
                       className={`planning-confirm-btn ${response[question.id] === true && !isOtherSelected ? "selected" : ""}`}
                       onClick={() => {
+                        markResponseDirty();
                         setIsOtherSelected(false);
                         setOtherValue("");
                         setResponse({ [question.id]: true });
@@ -4643,6 +4727,7 @@ export function QuestionForm({ question: rawQuestion, initialResponse, onSubmit,
                     <button
                       className={`planning-confirm-btn ${response[question.id] === false && !isOtherSelected ? "selected" : ""}`}
                       onClick={() => {
+                        markResponseDirty();
                         setIsOtherSelected(false);
                         setOtherValue("");
                         setResponse({ [question.id]: false });
@@ -4655,6 +4740,7 @@ export function QuestionForm({ question: rawQuestion, initialResponse, onSubmit,
                       className={`planning-confirm-btn ${isOtherSelected ? "selected" : ""}`}
                       data-testid="planning-option-other"
                       onClick={() => {
+                        markResponseDirty();
                         setIsOtherSelected(true);
                         setResponse({});
                       }}
@@ -4671,7 +4757,10 @@ export function QuestionForm({ question: rawQuestion, initialResponse, onSubmit,
                         data-testid="planning-other-input"
                         placeholder={t("planning.otherOptionPlaceholder", "Write your own answer...")}
                         value={otherValue}
-                        onChange={(e) => setOtherValue(e.target.value)}
+                        onChange={(e) => {
+                          markResponseDirty();
+                          setOtherValue(e.target.value);
+                        }}
                       />
                     </div>
                   )}
@@ -4690,7 +4779,10 @@ export function QuestionForm({ question: rawQuestion, initialResponse, onSubmit,
                   className="planning-textarea"
                   placeholder={t("planning.additionalCommentsPlaceholder", "Add any extra context or direction...")}
                   value={commentValue}
-                  onChange={(e) => setCommentValue(e.target.value)}
+                  onChange={(e) => {
+                    markResponseDirty();
+                    setCommentValue(e.target.value);
+                  }}
                 />
               </div>
             )}
@@ -5464,8 +5556,8 @@ function PlanningSessionList({
       style={sidebarWidth === undefined ? undefined : { width: `${sidebarWidth}px` }}
     >
       {/*
-      FNXC:Planning 2026-06-23-01:15:
-      The embedded Planning view reads as a real two-pane layout matching Missions: the left sidebar is a full-height flex column whose session list scrolls and whose primary action ("New session") is pinned to a bottom footer (parity with MissionManager's mission-manager__sidebar-footer + sidebar-cta). The header that previously held the New session button is removed so the list owns the top of the sidebar like the Missions list.
+      FNXC:Planning 2026-08-16-14:48:
+      Planning intentionally keeps its primary "New session" action pinned to a bottom footer while its session list scrolls. Missions now anchors its slightly taller CTA at the top of its sidebar, so the two surfaces do not require footer-placement parity.
       */}
       <div className="planning-sidebar-list">
         {/*
@@ -5587,8 +5679,8 @@ function PlanningSessionList({
       </div>
       <div className="planning-sidebar-footer">
         {/*
-        FNXC:Planning 2026-06-23-01:15:
-        The New session CTA mirrors Missions' primary sidebar action: it reuses the shared "btn btn-primary" look (same base button class MissionManager pairs with mission-manager__sidebar-cta) so size and color match the Missions create button exactly, full-width and bottom-anchored. The "active" state (no session selected) keeps a subtle accent so the user can tell they're on the new-session view.
+        FNXC:Planning 2026-08-16-14:48:
+        Planning keeps its bottom-anchored New session CTA at its current metrics. It shares the "btn btn-primary" treatment with Missions, whose slightly taller CTA now lives at the top of the mission sidebar; exact placement and height parity are intentionally not required.
         */}
         <button
           className={`btn btn-primary planning-sidebar-new ${selectedSessionId === null ? "active" : ""}`}

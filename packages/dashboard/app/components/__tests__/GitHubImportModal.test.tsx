@@ -2701,6 +2701,38 @@ describe("GitHubImportModal", () => {
 
 
 
+    it.each(["modal", "embedded"] as const)("retains long pull rows, imported state, and the detail sheet in the %s presentation", async (presentation) => {
+      const longBranch = "branch-".repeat(24);
+      const longPull = {
+        number: 31,
+        title: "A deliberately long pull-request title that remains available to the mobile list row",
+        body: "PR body",
+        html_url: "https://github.com/owner/repo/pull/31",
+        headBranch: longBranch,
+        baseBranch: longBranch,
+      };
+      const importedTask: Task = {
+        ...mockPRTask,
+        description: "Review and address any issues in this pull request.\n\nPR: https://github.com/owner/repo/pull/31",
+      };
+      vi.mocked(fetchGitRemotes).mockResolvedValueOnce(singleRemote);
+      vi.mocked(apiFetchGitHubPulls).mockResolvedValueOnce([longPull, mockPulls[0]]);
+
+      render(<GitHubImportModal isOpen onClose={onClose} onImport={onImport} tasks={[importedTask]} presentation={presentation} />);
+      fireEvent.click(screen.getByRole("tab", { name: /Pull Requests/i }));
+
+      const longRow = await screen.findByRole("button", { name: /Select pull request #31/i });
+      expect(longRow).toHaveTextContent(longPull.title);
+      expect(longRow).toHaveTextContent(`${longBranch} → ${longBranch}`);
+      expect(longRow).toBeDisabled();
+      expect(within(longRow).getByText("Imported")).toBeTruthy();
+
+      fireEvent.click(screen.getByRole("button", { name: /Select pull request #1/i }));
+      const detail = await screen.findByTestId("floating-window-github-import-detail");
+      expect(detail.querySelector(".github-import-detail-panel")).toBeTruthy();
+      expect(within(detail).getByTestId("github-import-detail-actions")).toBeTruthy();
+    });
+
     it("calls apiImportGitHubPull when Import is clicked on PRs tab", async () => {
       vi.mocked(fetchGitRemotes).mockResolvedValueOnce(singleRemote);
       vi.mocked(apiFetchGitHubPulls).mockResolvedValueOnce(mockPulls);

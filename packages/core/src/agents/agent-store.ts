@@ -2184,10 +2184,10 @@ export class AgentStore extends EventEmitter {
   }
 
   /*
-  FNXC:MemoryAgent 2026-08-11-09:41:
-  Memory Keeper is custom because it is not a workflow-stage principal. Unlike the four routed
-  owners its heartbeat is enabled, while auto-claim remains off because it only maintains memory.
-  This runs during init, where createAgent name collisions would abort startup; preflight probes,
+  FNXC:MemoryAgent 2026-08-16-02:31:
+  Memory Keeper is custom because it is not a workflow-stage principal. Its heartbeat defaults off
+  until an operator opts in, while auto-claim remains off because it only maintains memory. This
+  runs during init, where createAgent name collisions would abort startup; preflight probes,
   a fallback name, a null degraded result, and the init-side catch keep an operator's same-named
   agent untouched and the project runnable.
   */
@@ -2220,7 +2220,13 @@ export class AgentStore extends EventEmitter {
             roles: [...BUILTIN_MEMORY_AGENT_DEFAULT.roles],
             title: BUILTIN_MEMORY_AGENT_DEFAULT.title,
             metadata: { [BUILTIN_MEMORY_AGENT_PROVENANCE_KEY]: true },
-            runtimeConfig: { enabled: true, autoClaimRelevantTasks: false, heartbeatIntervalMs: 3_600_000 },
+            /*
+            FNXC:MemoryAgent 2026-08-16-02:31:
+            Memory consolidation is opt-in: newly provisioned Memory Keepers must not begin
+            hourly autonomous heartbeats until an operator enables the existing heartbeat toggle.
+            Keep auto-claim off and the one-hour interval ready for that later opt-in.
+            */
+            runtimeConfig: { enabled: false, autoClaimRelevantTasks: false, heartbeatIntervalMs: 3_600_000 },
             instructionsText: BUILTIN_MEMORY_AGENT_DEFAULT.instructionsText,
             soul: BUILTIN_MEMORY_AGENT_DEFAULT.soul,
             bundleConfig: { ...BUILTIN_MEMORY_AGENT_DEFAULT.bundleConfig, files: [...BUILTIN_MEMORY_AGENT_DEFAULT.bundleConfig.files] },
@@ -2235,7 +2241,19 @@ export class AgentStore extends EventEmitter {
         return owner;
       }
       const metadata = { ...(owner.metadata ?? {}), [BUILTIN_MEMORY_AGENT_PROVENANCE_KEY]: true };
-      const runtimeConfig = { ...(owner.runtimeConfig ?? {}), enabled: true, autoClaimRelevantTasks: false, heartbeatIntervalMs: 3_600_000 };
+      const currentRuntimeConfig = owner.runtimeConfig ?? {};
+      /*
+      FNXC:MemoryAgent 2026-08-16-02:31:
+      Startup convergence owns the safe maintenance defaults but never an operator's explicit
+      heartbeat choice. Preserve either boolean direction across init runs; missing legacy config
+      adopts the opt-in default without unnecessarily rewriting an already-converged owner.
+      */
+      const enabled = typeof currentRuntimeConfig.enabled === "boolean" ? currentRuntimeConfig.enabled : false;
+      const runtimeConfig = currentRuntimeConfig.enabled === enabled
+        && currentRuntimeConfig.autoClaimRelevantTasks === false
+        && currentRuntimeConfig.heartbeatIntervalMs === DEFAULT_AGENT_HEARTBEAT_INTERVAL_MS
+        ? currentRuntimeConfig
+        : { ...currentRuntimeConfig, enabled, autoClaimRelevantTasks: false, heartbeatIntervalMs: DEFAULT_AGENT_HEARTBEAT_INTERVAL_MS };
       const updates: Partial<Agent> = {
         roles: [...BUILTIN_MEMORY_AGENT_DEFAULT.roles],
         role: "custom",
@@ -2245,7 +2263,9 @@ export class AgentStore extends EventEmitter {
         instructionsText: owner.instructionsText?.trim() ? owner.instructionsText : BUILTIN_MEMORY_AGENT_DEFAULT.instructionsText,
         soul: owner.soul?.trim() ? owner.soul : BUILTIN_MEMORY_AGENT_DEFAULT.soul,
       };
-      owner = { ...owner, ...updates, updatedAt: new Date().toISOString() };
+      const nextOwner = { ...owner, ...updates };
+      if (JSON.stringify(nextOwner) === JSON.stringify(owner)) return owner;
+      owner = { ...nextOwner, updatedAt: new Date().toISOString() };
       await this.writeAgent(owner, executor);
       return owner;
     };

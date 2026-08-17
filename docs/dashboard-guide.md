@@ -643,6 +643,8 @@ Optional workflow steps declared by the active workflow are available from the q
 FNXC:PriorityColorCoding 2026-07-11-00:00: Priority glyphs share urgency colors across Quick Add, the New Task inline row, and task-card badges: low=info/blue, normal=muted, high=warning/amber, urgent=error/red. -->
 Quick Add and Inline Create model selection include Plan, Executor, Reviewer, and Merger lanes. Each lane can inherit its default or select a task-specific model; Plan, Reviewer, and Merger also provide independent thinking-level overrides.
 
+Quick Add saves with Enter by default. Operators who prefer multi-line descriptions can disable **Settings → Global → General → Press Enter to save a task in Quick Add**; plain Enter then inserts a newline, while Cmd/Ctrl+Enter saves.
+
 <!-- FNXC:QuickAddStart 2026-07-22-17:45: Coding (Ideas) Start is an atomic Todo create, while ordinary Save and Enter remain create-only in Ideas.
 FNXC:QuickAddStart 2026-07-24-11:20: Start is now a visible action-row button for eligible workflows instead of a hidden long-press/right-click menu on Save; eligibility, snapshotting, and fail-closed routing are unchanged. -->
 
@@ -812,7 +814,7 @@ Quick Chat is an optional fast, project-scoped assistant surface for conversatio
 
 ## Mailbox View
 
-Mailbox view shows inbox/outbox communication threads and unread state. When an ephemeral worker is configured for follow-up validation, its task proposals include a **Create task** action; created proposals link directly to the resulting task.
+Mailbox view shows inbox/outbox communication threads and unread state. When an ephemeral worker is configured for follow-up validation, its task proposals include a **Create task** action; created proposals link directly to the resulting task. Completed-task recommendation notices also show an inline **Create task** button for every live recommendation, so operators can file optional follow-ups without leaving the message. Already-created recommendations instead provide **View task FN-NNNN**; unavailable parents remain informational and failed creates offer a retry. The controls are available in both desktop and mobile message detail and conversation views, with mobile actions using the message width.
 
 - Mail composers can attach a native mission, milestone, goal, persisted insight, eval result, or roadmap item by dragging it from its owning view, or through the keyboard/mobile **Attach structure** picker. Roadmap feature-row drag is available on fine pointers; touch and keyboard use the picker. The shared `nativeStructureDrag` payload is copied into the same first-class mail embed metadata as picker attachments, while a dropped payload from another project is rejected.
 - **Draft with AI** opens a compact compose-chat scratch session that uses attached structures as context. **Use draft** replaces an empty message body; replacing typed text requires confirmation, and attached embeds remain in place.
@@ -1726,6 +1728,10 @@ For setup prerequisites, security caveats for tokenized URLs/QR links, and troub
 The Skills view now supports the full browse-and-install loop for skills.sh entries: use **Skills Catalog** to search the catalog, click **Install** on any card with a source repository, and the dashboard will run the same installer as the CLI (`npx skills add <owner/repo> -y -a pi`, with `--skill <slug>` when applicable). On success, the view refreshes **Discovered Skills** immediately so the newly installed skill appears without a page reload.
 
 The Skills API provides endpoints for managing execution skills. Skills are toggled via project-scoped settings in `.fusion/settings.json`. Toggle entries match the skill body’s relative path beneath `skills/` (for example, `api/api-versioning/SKILL.md`), not just its displayed name. Stale flat-layout entries such as `-api-versioning/SKILL.md` are ignored for skills that now use a categorized body path, keeping the Skills view and agent-session manifest aligned.
+
+### Agent skill configuration
+
+Agent cards show **Skills: None** when no forced skills are stored. The agent editor provides a filterable checkbox list: enabled entries are **Auto-available** to every agent, while checked entries are **Forced** so that agent reads them before work starts. Disabled and no-longer-discovered stored skills remain visible and are labeled **Disabled** or **Not discovered** on both the editor and agent badges. See [Agents](agents.md) for the execution semantics.
 
 ![Skills view](./screenshots/skills-view.png)
 

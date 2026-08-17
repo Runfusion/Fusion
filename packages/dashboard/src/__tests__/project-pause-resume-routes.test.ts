@@ -32,8 +32,15 @@ vi.mock("@fusion/core", async () => {
   };
 });
 
-vi.mock("@fusion/engine", () => ({
-  // FNXC:TestInfrastructure 2026-07-13-11:05: Missing @fusion/engine barrel exports added for mock completeness (check-mock-completeness.mjs gate).
+/*
+FNXC:DashboardRouteTests 2026-08-15-05:10:
+Route mounting imports model-registry refresh constants from @fusion/engine, so wholesale inline
+engine mocks go stale whenever the barrel grows. Wrap the override map in the canonical
+createEngineMock helper (fallback vi.fn() proxy) instead of hand-listing every export.
+*/
+vi.mock("@fusion/engine", async () => {
+  const { createEngineMock } = await import("../test/mockCoreEngine.js");
+  return createEngineMock({
   getExemptToolNames: vi.fn(() => []),
   promptWithFallback: vi.fn(),
   reloadExemptTools: vi.fn(),
@@ -71,7 +78,8 @@ vi.mock("@fusion/engine", () => ({
     async generateReflection(): Promise<never> { throw new Error("Reflection service unavailable"); }
     async buildReflectionContext(): Promise<never> { throw new Error("Reflection service unavailable"); }
   },
-}));
+  });
+});
 
 function createMockStore(overrides: Partial<TaskStore> = {}): TaskStore {
   return {

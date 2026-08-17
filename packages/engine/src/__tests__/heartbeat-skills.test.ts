@@ -9,6 +9,7 @@ vi.mock("../logger.js", async () => {
   return {
     createLogger: vi.fn(() => createMockLogger()),
     heartbeatLog: createMockLogger(),
+    piLog: createMockLogger(),
     formatError: formatMockError,
   };
 });
@@ -24,6 +25,7 @@ vi.mock("../pi.js", () => ({
   }),
 }));
 import { createFnAgent } from "../pi.js";
+import { createSkillsOverrideFromSelection } from "../cli-runtime/skill-resolver.js";
 vi.mock("../worktree/worktree-acquisition.js", () => ({
   acquireTaskWorktree: vi.fn(async ({ rootDir }: { rootDir: string }) => ({
     worktreePath: `${rootDir}/.worktrees/fn-001`,
@@ -186,7 +188,46 @@ describe("executeHeartbeat — skill selection resolver contract (FN-1510/FN-151
     const result = await monitor.executeHeartbeat({ agentId: "agent-001", source: "on_demand" });
 
     expect(mockedCreateFnAgent).toHaveBeenCalled();
+    const options = mockedCreateFnAgent.mock.calls[0]![0];
+    // FNXC:SkillResolution 2026-08-16-03:52: heartbeat has no fusion fallback,
+    // but waking-agent skills remain forced intent for the shared prompt seam.
+    expect(options.skillSelection?.forcedSkillNames).toEqual(["heartbeat-skill"]);
+    expect(options.skillSelection?.requestedSkillNames ?? []).not.toContain("heartbeat-skill");
     expect(result.status).toBe("completed");
+  });
+
+  it("keeps enabled skills and resolves only available forced skills through the heartbeat lane", async () => {
+    mockedCreateFnAgent.mockResolvedValue({ session: createMockAgentSession() } as any);
+    const store = createStoreWithAgentForExec({
+      taskId: "FN-001",
+      metadata: { skills: ["alpha", "delta"] },
+    });
+    const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
+
+    await monitor.executeHeartbeat({ agentId: "agent-001", source: "on_demand" });
+
+    const skillSelection = mockedCreateFnAgent.mock.calls[0]![0].skillSelection!;
+    const override = createSkillsOverrideFromSelection({
+      allowedSkillPaths: new Set(["alpha/SKILL.md", "beta/SKILL.md"]),
+      excludedSkillPaths: new Set(["delta/SKILL.md"]),
+      filterActive: true,
+      diagnostics: [],
+    }, skillSelection);
+    const result = override({
+      skills: [
+        { name: "alpha", filePath: "/skills/alpha/SKILL.md" },
+        { name: "beta", filePath: "/skills/beta/SKILL.md" },
+        { name: "delta", filePath: "/skills/delta/SKILL.md" },
+      ] as any,
+      diagnostics: [],
+    });
+
+    // FNXC:SkillResolution 2026-08-16-04:04: The production heartbeat passes
+    // forced intent into the shared resolver; enabled siblings survive and a
+    // disabled request never becomes a read-first prompt candidate.
+    expect(result.skills.map((skill) => skill.name)).toEqual(["alpha", "beta"]);
+    expect(result.resolvedForcedSkills).toEqual([{ requestedName: "alpha", skillName: "alpha" }]);
+    expect(result.unresolvedForcedSkills).toEqual([{ requestedName: "delta", reason: "disabled-by-settings" }]);
   });
 
   it("createFnAgent is called with correct cwd for skill resolution", async () => {

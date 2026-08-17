@@ -126,7 +126,7 @@ export async function executeWorkflowStep(
   worktreePath: string,
   settings: Settings,
   taskEnv?: NodeJS.ProcessEnv,
-  stepOptions?: { unattended?: boolean },
+  stepOptions?: { unattended?: boolean; principalAgentId?: string },
 ): Promise<WorkflowStepOutcome> {
     let toolMode: "coding" | "readonly" = workflowStep.toolMode || "readonly";
     // (U3) Genuinely-unattended run — set FUSION_HEADLESS=1 below so skills record
@@ -443,6 +443,25 @@ CRITICAL SCOPING RULES — read before doing anything else:
 
   You have access to the file system to review changes.${inlineFixBlock}${verdictBlock}`;
 
+    /*
+     * FNXC:WorkflowAgentRouting 2026-08-07-04:45:
+     * The graph admission fence chooses the permanent identity before this
+     * session exists. Resolve that exact agent for its model, skills, audit,
+     * and log attribution; never fall back to task ownership after routing.
+     *
+     * FNXC:WorkflowAgentRouting 2026-08-15-23:41:
+     * Wave-18 peel #3317 dropped this threading. FN-9108 restores the
+     * FN-8764/FN-8821 routed-principal contract and regression coverage.
+     */
+    const workflowPrincipal = stepOptions?.principalAgentId
+      ? await deps.getAuthoritativeAssignedAgent(stepOptions.principalAgentId)
+      : undefined;
+    if (stepOptions?.principalAgentId && !workflowPrincipal) {
+      throw new Error(`workflow-principal-unavailable:${stepOptions.principalAgentId}`);
+    }
+    const sessionTask = workflowPrincipal
+      ? { ...task, assignedAgentId: workflowPrincipal.id }
+      : task;
     const agentLogger = new AgentLogger({
       store: deps.store,
       taskId: task.id,
@@ -458,7 +477,7 @@ CRITICAL SCOPING RULES — read before doing anything else:
       },
     });
     // FNXC:CommandCenterActivity 2026-08-15-22:15: FN-8868 usage telemetry (restored post-wave-18).
-    attachAgentUsageTelemetry(agentLogger, { store: deps.store, agentId: task.assignedAgentId ?? null, taskId: task.id, nodeId: task.effectiveNodeId ?? task.nodeId ?? null, lane: "executor" });
+    attachAgentUsageTelemetry(agentLogger, { store: deps.store, agentId: sessionTask.assignedAgentId ?? null, taskId: task.id, nodeId: task.effectiveNodeId ?? task.nodeId ?? null, lane: "executor" });
 
     // Determine primary model and an explicit fallback. Review-type workflow
     // steps use the validator lane; ordinary workflow prompts use the executor
@@ -467,7 +486,8 @@ CRITICAL SCOPING RULES — read before doing anything else:
     // steps to inherit project execution-lane model settings before defaults.
     // Review gates are independent validation surfaces and must not silently use
     // the same implementation model merely because they execute in this method.
-    const assignedRuntimeConfig = await deps.getAssignedAgentRuntimeConfig(task.assignedAgentId);
+    const assignedRuntimeConfig = workflowPrincipal?.runtimeConfig
+      ?? await deps.getAssignedAgentRuntimeConfig(task.assignedAgentId);
     const laneModel = isReviewTypeWorkflowStep
       ? resolveValidatorSessionModel(
           task.validatorModelProvider,
@@ -488,7 +508,7 @@ CRITICAL SCOPING RULES — read before doing anything else:
     const primaryModelId = useOverride ? workflowStep.modelId : laneModel.modelId;
     // FNXC:ProviderAuth 2026-08-01-08:39: A workflow-step model override has no paired instance selection, so only the resolved primary task lane may carry its requested credential instance. Fallback attempts must retain their provider-default behavior rather than inheriting a primary-provider identity.
     const primaryCredentialInstanceId = useOverride ? undefined : laneModel.credentialInstanceId;
-    attachAgentUsageTelemetry(agentLogger, { store: deps.store, agentId: task.assignedAgentId ?? null, taskId: task.id, nodeId: task.effectiveNodeId ?? task.nodeId ?? null, model: primaryModelId ?? null, provider: primaryProvider ?? null, lane: "executor" });
+    attachAgentUsageTelemetry(agentLogger, { store: deps.store, agentId: sessionTask.assignedAgentId ?? null, taskId: task.id, nodeId: task.effectiveNodeId ?? task.nodeId ?? null, model: primaryModelId ?? null, provider: primaryProvider ?? null, lane: "executor" });
 
     const workflowFallback = isReviewTypeWorkflowStep
       ? resolveValidatorFallbackModel(settings)
@@ -515,13 +535,13 @@ CRITICAL SCOPING RULES — read before doing anything else:
       // Build skill selection context for workflow step session
       const skillContext = await buildSessionSkillContext({
         agentStore: deps.options.agentStore!,
-        task,
+        task: sessionTask,
         sessionPurpose: "executor",
         projectRootDir: deps.rootDir,
         pluginRunner: deps.options.pluginRunner,
       });
 
-      const workflowAgent = await deps.getAuthoritativeAssignedAgent(task.assignedAgentId);
+      const workflowAgent = workflowPrincipal ?? await deps.getAuthoritativeAssignedAgent(task.assignedAgentId);
       const workflowRuntimeHint = extractRuntimeHint(workflowAgent?.runtimeConfig);
       // Signal to skills running in this step (e.g. compound-engineering ce-plan /
       // ce-work) that they are inside a Fusion autonomous workflow step, NOT an
@@ -571,6 +591,7 @@ CRITICAL SCOPING RULES — read before doing anything else:
           projectRootDir: effectiveSkillSelection?.projectRootDir ?? deps.rootDir,
           ...(effectiveSkillSelection?.sessionPurpose ? { sessionPurpose: effectiveSkillSelection.sessionPurpose } : { sessionPurpose: "executor" }),
           requestedSkillNames: mergedNames,
+          forcedSkillNames: [...new Set([...(effectiveSkillSelection?.forcedSkillNames ?? []), namespaced, bare])],
         };
       }
       const additionalSkillPaths = mergeAdditionalSkillPaths(skillContext.additionalSkillPaths, ceSkillsDir ? [ceSkillsDir] : undefined);
@@ -687,10 +708,25 @@ CRITICAL SCOPING RULES — read before doing anything else:
         // Skill selection: assigned-agent / role-fallback skills, plus the step's own named skill (U1) made discoverable via additionalSkillPaths.
         ...(effectiveSkillSelection ? { skillSelection: effectiveSkillSelection } : {}),
         ...(additionalSkillPaths ? { additionalSkillPaths } : {}),
-        ...(readonlyCustomTools.allowed.length > 0 ? { customTools: readonlyCustomTools.allowed } : {}),
+        // FNXC:SkillResolution 2026-08-16-03:19: Workflow steps are task-bound
+        // sessions too, so mirror the shared resolver's one-session summary into
+        // the task log; unresolved forced requests remain observable but are never
+        // presented to the model as required reading.
+        onSkillSummary: async (summary) => {
+          const unavailable = summary.unresolvedForcedSkills.length
+            ? `; forced-unavailable: [${summary.unresolvedForcedSkills.map((entry) => `${entry.requestedName} (${entry.reason})`).join(", ")}]`
+            : "";
+          await deps.store.logEntry(
+            task.id,
+            `[skills] [executor] ${summary.availableCount} skill(s) available; forced: ${summary.forcedSkillNames.length ? `[${summary.forcedSkillNames.join(", ")}]` : "none"}${unavailable}`,
+          );
+        },
+        ...(readonlyCustomTools.allowed.length > 0
+          ? { customTools: readonlyCustomTools.allowed, fusionTools: readonlyCustomTools.allowed }
+          : {}),
       });
       // FNXC:CommandCenterActivity 2026-08-15-22:15: session boundary for the workflow-step runtime session (restored post-wave-18).
-      emitAgentSessionStart({ store: deps.store, agentId: task.assignedAgentId ?? null, taskId: task.id, nodeId: task.effectiveNodeId ?? task.nodeId ?? null, model: primaryModelId ?? null, provider: primaryProvider ?? null, lane: "executor" });
+      emitAgentSessionStart({ store: deps.store, agentId: sessionTask.assignedAgentId ?? null, taskId: task.id, nodeId: task.effectiveNodeId ?? task.nodeId ?? null, model: primaryModelId ?? null, provider: primaryProvider ?? null, lane: "executor" });
 
       const workflowModelDetails = formatModelMarkerDetails(
         describeModel(session),

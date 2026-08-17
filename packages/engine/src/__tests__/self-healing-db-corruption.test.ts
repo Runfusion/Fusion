@@ -103,6 +103,11 @@ const BATCH2_METHODS = [
   "autoReboundPausedScopeDecay",
   "runBoardStallAutoRecoverySweep",
   "reconcileSelfDefeatingDependencies",
+  // FN-8953: pending-wedge-notification reconciliation calls getActiveNotificationService()
+  // unconditionally at its top (to read the wedge settle window), even against a healthy/empty
+  // store. Stub it during every maintenance pass so the healthy-DB test's negative assertion that
+  // the notification-service getter is never called holds. RUFU-078.
+  "reconcilePendingWedgeNotifications",
   "reclaimPrConflicts",
   "reclaimSelfOwnedBranchConflicts",
   "reconcileTaskWorktreeMetadata",

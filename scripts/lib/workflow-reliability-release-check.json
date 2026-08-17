@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "_comment": "FNXC:CustomWorkflowReliability 2026-08-10-18:03: FN-6694 requires this manifest to encode goal G-MPW67VQR-0001-97S3's release-check checklist as objective, runnable seam evidence instead of prose-only QA signoff. FN-8951 repointed deleted pre-cutover seams to live tests that cover definitions and route validation, selection dispatch, REVISE completion, interpreter recovery, and restart durability.",
+  "_comment": "FNXC:CustomWorkflowReliability 2026-08-10-18:03: FN-6694 requires this manifest to encode goal G-MPW67VQR-0001-97S3's release-check checklist as objective, runnable seam evidence instead of prose-only QA signoff. FN-8951 repointed deleted pre-cutover seams to live tests that cover definitions and route validation, selection dispatch, REVISE completion, interpreter recovery, and restart durability. FNXC:CustomWorkflowReliability 2026-08-16-10:52: FN-9123 repoints the custom-v1 dispatch seam after f1a8b271bd consolidated its coverage into no-selection-default-workflow-move.test.ts; the manifest must retain a live file that contains the characterization.",
   "checklist": [
     {
       "id": "author-import-save-discover-reload",
@@ -32,7 +32,7 @@
       "seams": [
         {
           "package": "@fusion/core",
-          "file": "packages/core/src/__tests__/custom-v1-workflow-dispatch.test.ts"
+          "file": "packages/core/src/__tests__/no-selection-default-workflow-move.test.ts"
         },
         {
           "package": "@fusion/engine",

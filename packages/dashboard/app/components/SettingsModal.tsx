@@ -97,6 +97,11 @@ import { SETTINGS_SECTION_METADATA } from "../../src/shared/settings-sections";
 // ---------------------------------------------------------------------------
 export const GITHUB_STAR_CACHE_KEY = "fusion_github_star_count";
 export const GITHUB_STAR_CACHE_TTL_MS = 15 * 60 * 1000;
+/*
+FNXC:SettingsAutoSave 2026-08-17-00:20:
+Form-backed Settings persist after this debounce. Named so quality-lane tests flush the same interval instead of inventing a second timeout.
+*/
+export const SETTINGS_AUTOSAVE_DEBOUNCE_MS = 500;
 const GITHUB_STAR_CLICKED_KEY = "fusion:github-star-clicked";
 
 function isSlashPrefixedAbsolutePath(path: string): boolean {
@@ -3639,7 +3644,7 @@ export function SettingsModal({
     autoSaveTimerRef.current = setTimeout(() => {
       autoSaveTimerRef.current = null;
       void persistSettingsRef.current?.();
-    }, 500);
+    }, SETTINGS_AUTOSAVE_DEBOUNCE_MS);
     return () => {
       if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
     };

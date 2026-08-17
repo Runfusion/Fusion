@@ -79,7 +79,7 @@ describe("Skills", () => {
   it("loads and displays skill details when a dashboard skill badge is clicked", async () => {
     const user = userEvent.setup();
     const agentWithSkills = createMockAgent({
-      metadata: { skills: ["/Users/test/.agents/skills/fusion/SKILL.md"] },
+      metadata: { skills: ["skill-1"] },
     });
     mockFetchAgent.mockResolvedValue(agentWithSkills);
     mockFetchSkillContent.mockResolvedValue({
@@ -96,13 +96,40 @@ describe("Skills", () => {
       />,
     );
 
-    const badge = await screen.findByRole("button", { name: "View details for fusion" });
+    const badge = await screen.findByRole("button", { name: "View details for skill-1" });
     await user.click(badge);
 
     await waitFor(() => {
-      expect(mockFetchSkillContent).toHaveBeenCalledWith("/Users/test/.agents/skills/fusion/SKILL.md", undefined);
+      expect(mockFetchSkillContent).toHaveBeenCalledWith("skill-1", undefined);
       expect(screen.getByText("# Fusion Skill")).toBeInTheDocument();
     });
+  });
+
+  it("marks forced skills pending after a discovery failure rather than undiscovered", async () => {
+    mockFetchAgent.mockResolvedValue(createMockAgent({ metadata: { skills: ["skill-1"] } }));
+    mockFetchDiscoveredSkills.mockRejectedValueOnce(new Error("offline"));
+
+    render(<AgentDetailView agentId="agent-001" onClose={vi.fn()} addToast={vi.fn()} />);
+
+    const badge = await screen.findByRole("button", { name: "View details for skill-1" });
+    await waitFor(() => expect(badge).toHaveAttribute("data-skill-state", "pending"));
+    expect(badge).toHaveTextContent("Forced");
+    expect(badge).not.toHaveTextContent("Not discovered");
+  });
+
+  it("labels an unavailable forced skill and short-circuits its content request", async () => {
+    const user = userEvent.setup();
+    mockFetchAgent.mockResolvedValue(createMockAgent({ metadata: { skills: ["missing-skill"] } }));
+
+    render(<AgentDetailView agentId="agent-001" onClose={vi.fn()} addToast={vi.fn()} />);
+
+    const badge = await screen.findByRole("button", { name: "View details for missing-skill" });
+    await waitFor(() => expect(badge).toHaveAttribute("data-skill-state", "unknown"));
+    await user.click(badge);
+
+    expect(await screen.findByTestId("agent-skill-detail")).toHaveTextContent("This stored skill is no longer discovered by the project.");
+    expect(screen.getByTestId("agent-skill-detail")).toHaveTextContent("Forced");
+    expect(mockFetchSkillContent).not.toHaveBeenCalled();
   });
 
   it("shows error state and supports retry when skill content loading fails", async () => {
@@ -157,24 +184,18 @@ describe("Skills", () => {
     });
   });
 
-  it("shows dash when agent has no skills in Dashboard tab", async () => {
-    const agentWithNoSkills = createMockAgent({
-      metadata: {},
-    });
-    mockFetchAgent.mockResolvedValue(agentWithNoSkills);
+  it.each([{}, { skills: undefined }, { skills: "not-an-array" }])(
+    "shows explicit None rather than an ambiguous dash for empty skills",
+    async (metadata) => {
+      mockFetchAgent.mockResolvedValue(createMockAgent({ metadata }));
 
-    render(
-      <AgentDetailView
-        agentId="agent-001"
-        onClose={vi.fn()}
-        addToast={vi.fn()}
-      />,
-    );
+      render(<AgentDetailView agentId="agent-001" onClose={vi.fn()} addToast={vi.fn()} />);
 
-    await waitFor(() => {
-      expect(screen.getByText("Skills: —")).toBeInTheDocument();
-    });
-  });
+      const region = await screen.findByTestId("agent-skills-empty");
+      expect(region).toHaveTextContent("SkillsNone");
+      expect(region).not.toHaveTextContent("—");
+    },
+  );
 
   it("shows SkillMultiselect in Config tab", async () => {
     const user = userEvent.setup();

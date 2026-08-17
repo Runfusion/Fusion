@@ -44,6 +44,7 @@ import { useModalManager, type DetailTaskOrigin, type DetailTaskTab } from "./ho
 import { useAppSettings } from "./hooks/useAppSettings";
 import { useDashboardKeyboardShortcuts } from "./hooks/useDashboardKeyboardShortcuts";
 import { ModalDismissPreferenceProvider } from "./hooks/useOverlayDismiss";
+import { QuickAddSubmitOnEnterProvider } from "./hooks/useQuickAddSubmitOnEnter";
 import { useDeepLink } from "./hooks/useDeepLink";
 import { useFavorites } from "./hooks/useFavorites";
 import { useAuthOnboarding } from "./hooks/useAuthOnboarding";
@@ -849,7 +850,6 @@ function AppInner() {
     showWorktreeGrouping,
     globalPaused,
     isTestMode,
-    taskStuckTimeoutMs,
     staleHighFanoutBlockerAgeThresholdMs,
     capacityRiskBannerEnabled,
     capacityRiskTodoThreshold,
@@ -864,6 +864,7 @@ function AppInner() {
     quickChatCloseOnOutsideClick,
     dashboardKeyboardShortcuts,
     dismissModalsOnOutsideClick,
+    quickAddSubmitOnEnter,
     skipConfirmationDialogs,
     maxTotalRetriesBeforeFail,
     prAuthAvailable,
@@ -1763,7 +1764,6 @@ function AppInner() {
     handleOpenDetailWithTab,
     handleToggleFavorite,
     handleToggleModelFavorite,
-    taskStuckTimeoutMs,
     staleHighFanoutBlockerAgeThresholdMs,
     lastFetchTimeMs,
     openCreateWorkflowWithNav,
@@ -1861,6 +1861,7 @@ function AppInner() {
   return (
     <ConfirmDialogProvider skipConfirmations={skipConfirmationDialogs}>
       <ModalDismissPreferenceProvider enabled={dismissModalsOnOutsideClick}>
+        <QuickAddSubmitOnEnterProvider enabled={quickAddSubmitOnEnter}>
       <NavigationHistoryProvider value={{ pushNav, replaceCurrent, removeNav }}>
         <FileBrowserProvider openFile={openFileInBrowser}>
           <RetryWarningProvider value={maxTotalRetriesBeforeFail * RETRY_WARNING_RATIO}>
@@ -2029,7 +2030,6 @@ function AppInner() {
           tasks={footerTasks}
           projectId={currentProject.id}
           columnFlagsByTaskId={footerColumnFlagsByTaskId}
-          taskStuckTimeoutMs={taskStuckTimeoutMs}
           staleHighFanoutBlockerAgeThresholdMs={staleHighFanoutBlockerAgeThresholdMs}
           lastFetchTimeMs={lastFetchTimeMs}
           currentProjectPath={currentProject.path}
@@ -2288,6 +2288,7 @@ function AppInner() {
           </RetryWarningProvider>
         </FileBrowserProvider>
       </NavigationHistoryProvider>
+        </QuickAddSubmitOnEnterProvider>
       </ModalDismissPreferenceProvider>
     </ConfirmDialogProvider>
   );

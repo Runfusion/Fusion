@@ -17,15 +17,26 @@ import {
   type PluginInstallation,
 } from "@fusion/core";
 import type { FusionPlugin, PluginToolDefinition } from "@fusion/core";
-import { createLogger } from "../logger.js";
 
-// Mock the logger to suppress output during tests
-vi.mock("../logger.js", () => ({
-  createLogger: vi.fn(() => ({
-    log: vi.fn(), debug: vi.fn(),
+/*
+FNXC:PluginRunnerTests 2026-08-17-12:11:
+The no-isolation, worker-reuse campaign showed unrelated files can call `vi.clearAllMocks()`
+between this module's import and its lifecycle assertion. Keep the mocked logger instance in a
+hoisted stable reference so the assertion continues to test the warning contract rather than
+Vitest's erased mock-call history.
+*/
+const { pluginRunnerLogger } = vi.hoisted(() => ({
+  pluginRunnerLogger: {
+    log: vi.fn(),
+    debug: vi.fn(),
     warn: vi.fn(),
     error: vi.fn(),
-  })),
+  },
+}));
+
+// Mock the logger to suppress output during tests.
+vi.mock("../logger.js", () => ({
+  createLogger: vi.fn(() => pluginRunnerLogger),
   executorLog: {
     log: vi.fn(), debug: vi.fn(),
     warn: vi.fn(),
@@ -99,17 +110,7 @@ describe("PluginRunner", () => {
     ...overrides,
   });
 
-  const getPluginRunnerLogger = () => {
-    const logger = vi.mocked(createLogger).mock.results.at(-1)?.value as {
-      log: ReturnType<typeof vi.fn>;
-      warn: ReturnType<typeof vi.fn>;
-      error: ReturnType<typeof vi.fn>;
-    } | undefined;
-    if (!logger) {
-      throw new Error("Expected plugin-runner logger to be initialized");
-    }
-    return logger;
-  };
+  const getPluginRunnerLogger = () => pluginRunnerLogger;
 
   beforeEach(() => {
     // Create fresh mocks for each test
@@ -1773,6 +1774,8 @@ describe("PluginRunner", () => {
       const unregisteredHandler = mockPluginStore.on.mock.calls.find(
         call => call[0] === "plugin:unregistered"
       )?.[1];
+      // Mirror a worker-reused neighbour's mock cleanup after this module initialized.
+      vi.clearAllMocks();
       const logger = getPluginRunnerLogger();
       logger.warn.mockClear();
       expect(unregisteredHandler).toBeTypeOf("function");

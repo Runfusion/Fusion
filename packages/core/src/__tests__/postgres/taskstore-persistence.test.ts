@@ -20,15 +20,15 @@
  * gate stays green without a running server.
  */
 
-import { describe, it, expect, afterEach } from "vitest";
-import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
+import { it, expect, beforeAll, beforeEach, afterEach, afterAll } from "vitest";
+import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { sql, eq } from "drizzle-orm";
-import { execSync } from "node:child_process";
-import { createAsyncDataLayer, type AsyncDataLayer } from "../../postgres/data-layer.js";
-import { createConnectionSetFromUrl } from "../../postgres/connection.js";
-import type { ResolvedBackend } from "../../postgres/backend-resolver.js";
-import { applySchemaBaseline } from "../../postgres/schema-applier.js";
+import type { AsyncDataLayer } from "../../postgres/data-layer.js";
+import {
+  pgDescribe,
+  createSharedPgTaskStoreTestHarness,
+  type SharedPgTaskStoreHarness,
+} from "../../__test-utils__/pg-test-harness.js";
 import * as schema from "../../postgres/schema/index.js";
 import {
   insertTaskRow,
@@ -52,87 +52,19 @@ import {
 } from "../../task-store/async/async-settings.js";
 import type { WorkflowTransitionNotificationMarker } from "../../types.js";
 
-const PG_TEST_URL_BASE =
-  process.env.FUSION_PG_TEST_URL_BASE ?? "postgresql://localhost:5432";
-const PG_AVAILABLE =
-  process.env.FUSION_PG_TEST_SKIP !== "1" && Boolean(PG_TEST_URL_BASE);
-
-const pgDescribe = PG_AVAILABLE ? describe : describe.skip;
-
-function uniqueDbName(): string {
-  return `fusion_u12_test_${process.pid}_${Math.random().toString(36).slice(2, 8)}`;
-}
-
 /*
-FNXC:PgTestAuthFix 2026-07-14-00:00:
-The inline adminExec used process.env.USER for the psql -U flag, which is 'runner' on GitHub Actions (not 'postgres'). Use the PG_TEST_URL_BASE connection string instead so credentials are always correct.
+FNXC:PgTestHarnessAdoption 2026-08-16-03:45:
+Migrated off the hand-rolled per-test CREATE DATABASE + applySchemaBaseline scaffolding
+(~3-4s of DDL per test) onto the shared PG harness: one template-cloned database per file
+with TRUNCATE-based reset per test. The database setup here was scaffolding, not the
+subject under test, and every assertion is unchanged. Tests that seed
+project.distributed_task_id_state or assume an absent project.config row first DELETE the
+rows the harness's TaskStore init/config re-seed may have created, restoring the pristine
+table state the original per-test database gave them.
 */
-function adminExec(statement: string): void {
-  execSync(
-    `psql "${PG_TEST_URL_BASE}/postgres" -v ON_ERROR_STOP=1 -c "${statement.replace(/"/g, '\\"')}"`,
-    { stdio: "pipe", env: process.env },
-  );
-}
-
 interface TestCtx {
-  dbName: string;
-  testUrl: string;
   layer: AsyncDataLayer;
-  adminSql: ReturnType<typeof postgres>;
-  adminDb: ReturnType<typeof drizzle>;
-}
-
-async function setupCtx(): Promise<TestCtx> {
-  const dbName = uniqueDbName();
-  try {
-    adminExec(`DROP DATABASE IF EXISTS "${dbName}"`);
-  } catch {
-    // may not exist
-  }
-  adminExec(`CREATE DATABASE "${dbName}"`);
-  const testUrl = `${PG_TEST_URL_BASE}/${dbName}`;
-
-  const schemaBackend: ResolvedBackend = {
-    mode: "external",
-    runtimeUrl: testUrl,
-    migrationUrl: testUrl,
-    migrationUrlOverridden: false,
-  };
-  const schemaConnections = await createConnectionSetFromUrl(schemaBackend, {
-    poolMax: 1,
-    connectTimeoutSeconds: 5,
-  });
-  await applySchemaBaseline(schemaConnections.migration);
-  await schemaConnections.close();
-
-  const connections = await createConnectionSetFromUrl(schemaBackend, {
-    poolMax: 5,
-    connectTimeoutSeconds: 5,
-  });
-  const layer = createAsyncDataLayer(connections);
-
-  const adminSql = postgres(testUrl, { max: 2, prepare: false, onnotice: () => {} });
-  const adminDb = drizzle(adminSql);
-  return { dbName, testUrl, layer, adminSql, adminDb };
-}
-
-async function teardownCtx(ctx: TestCtx | null): Promise<void> {
-  if (!ctx) return;
-  try {
-    await ctx.layer.close();
-  } catch {
-    // best-effort
-  }
-  try {
-    await ctx.adminSql.end({ timeout: 5 });
-  } catch {
-    // best-effort
-  }
-  try {
-    adminExec(`DROP DATABASE IF EXISTS "${ctx.dbName}"`);
-  } catch {
-    // best-effort
-  }
+  adminDb: PostgresJsDatabase;
 }
 
 /** A minimal task record with the NOT NULL columns filled. */
@@ -149,17 +81,27 @@ function makeMinimalTask(id: string, column = "todo"): Record<string, unknown> {
 }
 
 pgDescribe("U12 taskstore-persistence (PostgreSQL)", () => {
-  let ctx: TestCtx | null = null;
-
-  afterEach(async () => {
-    await teardownCtx(ctx);
-    ctx = null;
+  const h: SharedPgTaskStoreHarness = createSharedPgTaskStoreTestHarness({
+    prefix: "fusion_u12_test",
   });
+  let ctx: TestCtx;
+
+  beforeAll(h.beforeAll);
+  beforeEach(async () => {
+    await h.beforeEach();
+    ctx = { layer: h.layer(), adminDb: h.adminDb() };
+  });
+  afterEach(h.afterEach);
+  afterAll(h.afterAll);
+
+  /** Restore the pristine allocator-state table the per-test databases used to provide. */
+  async function clearAllocatorState(): Promise<void> {
+    await ctx.adminDb.execute(sql`DELETE FROM project.distributed_task_id_state`);
+  }
 
   // ── VAL-DATA-009 / VAL-SCHEMA-004: create + JSON round-trip ───────────
 
   it("inserts a task and reads it back via async Drizzle (VAL-DATA-009)", async () => {
-    ctx = await setupCtx();
     await insertTaskRow(ctx.layer, makeMinimalTask("KB-001"), { lineageId: null });
 
     const row = await readTaskRow(ctx.layer, "KB-001");
@@ -170,7 +112,6 @@ pgDescribe("U12 taskstore-persistence (PostgreSQL)", () => {
   });
 
   it("round-trips JSON columns as JSONB with identical shape (VAL-SCHEMA-004)", async () => {
-    ctx = await setupCtx();
     // The column descriptors read nested fields (e.g. task.tokenUsage.perModel),
     // so the task record carries the canonical Task shape for JSON-backed columns.
     const workflowTransitionNotification: WorkflowTransitionNotificationMarker = {
@@ -230,7 +171,6 @@ pgDescribe("U12 taskstore-persistence (PostgreSQL)", () => {
   });
 
   it("create-class insert is non-destructive: duplicate id raises, existing row intact (VAL-DATA-009)", async () => {
-    ctx = await setupCtx();
     await insertTaskRow(ctx.layer, makeMinimalTask("KB-010"), { lineageId: null });
 
     // A second insert with the same id must fail (primary-key violation), not
@@ -256,7 +196,6 @@ pgDescribe("U12 taskstore-persistence (PostgreSQL)", () => {
   // ── VAL-DATA-005 / VAL-DATA-006: soft-delete visibility ───────────────
 
   it("soft-deleted tasks are hidden from live readers (VAL-DATA-005)", async () => {
-    ctx = await setupCtx();
     await insertTaskRow(ctx.layer, makeMinimalTask("KB-100", "todo"), { lineageId: null });
     await insertTaskRow(ctx.layer, makeMinimalTask("KB-101", "todo"), { lineageId: null });
 
@@ -280,7 +219,6 @@ pgDescribe("U12 taskstore-persistence (PostgreSQL)", () => {
   });
 
   it("forensic reads surface soft-deleted rows (VAL-DATA-006)", async () => {
-    ctx = await setupCtx();
     await insertTaskRow(ctx.layer, makeMinimalTask("KB-200", "todo"), { lineageId: null });
     const deletedAt = new Date().toISOString();
     await softDeleteTaskRow(ctx.layer, "KB-200", deletedAt);
@@ -299,7 +237,6 @@ pgDescribe("U12 taskstore-persistence (PostgreSQL)", () => {
   // listTasks → readLiveTaskRows. Without the wiring, soft-deleted tasks were
   // absent from the list response even when includeDeleted=true was passed.
   it("readLiveTaskRows surfaces soft-deleted rows when includeDeleted is set (VAL-CROSS-003)", async () => {
-    ctx = await setupCtx();
     await insertTaskRow(ctx.layer, makeMinimalTask("KB-300", "todo"), { lineageId: null });
     await insertTaskRow(ctx.layer, makeMinimalTask("KB-301", "todo"), { lineageId: null });
     const deletedAt = new Date().toISOString();
@@ -323,7 +260,7 @@ pgDescribe("U12 taskstore-persistence (PostgreSQL)", () => {
   // ── VAL-DATA-007 / VAL-DATA-008: allocator reconciliation ─────────────
 
   it("allocator reconciliation bumps sequences to max suffix on store open (VAL-DATA-007)", async () => {
-    ctx = await setupCtx();
+    await clearAllocatorState();
     // Seed a task with a high suffix, but leave the sequence at a low value.
     await insertTaskRow(ctx.layer, makeMinimalTask("KB-050"), { lineageId: null });
     // Manually set the sequence to a low value (below the seeded suffix).
@@ -352,7 +289,6 @@ pgDescribe("U12 taskstore-persistence (PostgreSQL)", () => {
   });
 
   it("soft-deleted IDs stay reserved (VAL-DATA-008)", async () => {
-    ctx = await setupCtx();
     // Seed a soft-deleted task with a high suffix.
     await insertTaskRow(ctx.layer, makeMinimalTask("KB-099", "todo"), { lineageId: null });
     await softDeleteTaskRow(ctx.layer, "KB-099", new Date().toISOString());
@@ -375,7 +311,6 @@ pgDescribe("U12 taskstore-persistence (PostgreSQL)", () => {
   });
 
   it("reconciliation accounts for archived-task IDs (VAL-DATA-008)", async () => {
-    ctx = await setupCtx();
     // Seed an archived task row with a high suffix.
     await ctx.adminDb.execute(sql`
       INSERT INTO project.archived_tasks (id, data, archived_at)
@@ -387,7 +322,7 @@ pgDescribe("U12 taskstore-persistence (PostgreSQL)", () => {
   });
 
   it("reconciliation accounts for reservation IDs", async () => {
-    ctx = await setupCtx();
+    await clearAllocatorState();
     // Seed a reservation with a high sequence.
     const nowIso = new Date().toISOString();
     await ctx.adminDb.execute(sql`
@@ -406,7 +341,6 @@ pgDescribe("U12 taskstore-persistence (PostgreSQL)", () => {
   });
 
   it("getKnownPrefixes discovers prefixes from tasks and archived tasks", async () => {
-    ctx = await setupCtx();
     await insertTaskRow(ctx.layer, makeMinimalTask("ABC-001"), { lineageId: null });
     await ctx.adminDb.execute(sql`
       INSERT INTO project.archived_tasks (id, data, archived_at)
@@ -423,7 +357,9 @@ pgDescribe("U12 taskstore-persistence (PostgreSQL)", () => {
   // ── Settings round-trip ───────────────────────────────────────────────
 
   it("settings read/update project round-trip (VAL-SCHEMA-004 jsonb)", async () => {
-    ctx = await setupCtx();
+    // The shared harness re-seeds a default config row per test; remove it so the
+    // "initially absent" contract this test pins is observed exactly as before.
+    await ctx.adminDb.execute(sql`DELETE FROM project.config`);
 
     // Initially absent → default.
     let config = await readProjectConfig(ctx.layer);
@@ -449,7 +385,6 @@ pgDescribe("U12 taskstore-persistence (PostgreSQL)", () => {
   });
 
   it("settings patch deep-merges into the existing row", async () => {
-    ctx = await setupCtx();
     await writeProjectConfig(ctx.layer, { taskPrefix: "KB", maxConcurrent: 4 });
 
     await patchProjectSettings(ctx.layer, { autoMerge: true });
@@ -459,7 +394,6 @@ pgDescribe("U12 taskstore-persistence (PostgreSQL)", () => {
   });
 
   it("settings preserve nextWorkflowStepId across updates", async () => {
-    ctx = await setupCtx();
     await writeProjectConfig(ctx.layer, { taskPrefix: "KB" }, { nextWorkflowStepId: 7 });
 
     // A subsequent write without the option preserves the prior value.
@@ -470,7 +404,6 @@ pgDescribe("U12 taskstore-persistence (PostgreSQL)", () => {
   });
 
   it("config row enforces per-project singleton via project_id PK", async () => {
-    ctx = await setupCtx();
     // FNXC:MultiProjectIsolation 2026-07-11: config is now keyed per-project on
     // project_id (the PK). The old singleton CHECK (id = 1) was removed so multiple
     // projects can each have their own config row. A duplicate project_id must

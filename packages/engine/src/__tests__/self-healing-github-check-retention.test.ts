@@ -11,10 +11,17 @@ import {
 } from "../../../core/src/__test-utils__/pg-test-harness.js";
 import { SelfHealingManager } from "../self-healing.js";
 
-function createStore(layer: { projectId?: string } | null) {
+function createStore(
+  layer: { projectId?: string } | null,
+  settings: { globalPause: boolean; enginePaused: boolean; maintenanceIntervalMs: number } = {
+    globalPause: true,
+    enginePaused: true,
+    maintenanceIntervalMs: 0,
+  },
+) {
   return Object.assign(new EventEmitter(), {
     getAsyncLayer: vi.fn(() => layer),
-    getSettings: vi.fn().mockResolvedValue({ globalPause: true, enginePaused: true, maintenanceIntervalMs: 0 }),
+    getSettings: vi.fn().mockResolvedValue(settings),
     listTasks: vi.fn().mockResolvedValue([]),
     walCheckpoint: vi.fn().mockReturnValue({ busy: 0, log: 0, checkpointed: 0 }),
   }) as any;
@@ -57,9 +64,21 @@ describe("GitHub check-state maintenance retention", () => {
     unscoped.stop();
   });
 
+  /*
+   * FNXC:PauseGatedMaintenance 2026-08-13-03:08 (RUFU-076):
+   * This test's intent is "a failed GitHub-check retention attempt is diagnostic-only and batch-1
+   * maintenance still continues". Under the RUFU-076 pause gate the git-churn `cleanupOrphans` step is
+   * legitimately skipped on a PAUSED project (I3), so the store must be ACTIVE for the git-churn steps
+   * to run at all. Use an unpaused project so batch-1 (including the git-churn steps on their first
+   * coarse-cadence pass) genuinely executes and the "retention failure is non-fatal" contract is the
+   * thing under test — not the (now separately-covered) pause gate.
+   */
   it("keeps a failed retention attempt diagnostic-only and continues batch-1 maintenance", async () => {
     const layer = { projectId: "project-a", db: {} };
-    const manager = new SelfHealingManager(createStore(layer), { rootDir: "/tmp/test-project" });
+    const manager = new SelfHealingManager(
+      createStore(layer, { globalPause: false, enginePaused: false, maintenanceIntervalMs: 0 }),
+      { rootDir: "/tmp/test-project" },
+    );
     stubUnrelatedBatchOneSteps(manager);
     const cleanupOrphans = vi.spyOn(manager as any, "cleanupOrphans");
 

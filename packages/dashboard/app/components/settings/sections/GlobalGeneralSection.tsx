@@ -49,6 +49,16 @@ export function GlobalGeneralSection({ form, setForm }: GlobalGeneralSectionProp
       />
       <SettingsToggleRow
         descriptor={{
+          key: "quickAddSubmitOnEnter",
+          label: t("settings.globalGeneral.quickAddSubmitOnEnter", " Press Enter to save a task in Quick Add "),
+          help: t("settings.globalGeneral.quickAddSubmitOnEnterHint", " Default: enabled. When disabled, Enter inserts a newline and Cmd/Ctrl+Enter saves. "),
+          scope: "global",
+        }}
+        value={form.quickAddSubmitOnEnter !== false}
+        onChange={(v) => setForm((f) => ({ ...f, quickAddSubmitOnEnter: v === true }))}
+      />
+      <SettingsToggleRow
+        descriptor={{
           key: "persistAgentToolOutput",
           label: t("settings.globalGeneral.saveToolOutputInAgentLogs", " Save tool output in agent logs "),
           help: t("settings.globalGeneral.whenDisabledToolRowsAreStillLoggedBut", " When disabled, tool rows are still logged but detailed tool payloads are omitted. Very large tool payloads may still be clipped even when this stays enabled. Default: disabled. "),

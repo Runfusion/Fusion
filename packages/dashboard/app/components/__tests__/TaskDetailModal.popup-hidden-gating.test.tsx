@@ -87,23 +87,30 @@ describe("TaskDetailContent hidden-popup gating (active=false)", () => {
 
   it("keeps Definition prompt refresh request-free while hidden and resumes one planning chain on reveal", async () => {
     vi.useFakeTimers();
-    const mockDetail = vi.mocked(dashboardApi.fetchTaskDetail);
-    mockDetail.mockReset();
-    mockDetail.mockResolvedValue(makeTask({ id: "FN-9001", column: "triage", status: "planning", prompt: "# Fresh plan" }));
+    /*
+    FNXC:TaskDetailPlan 2026-08-15-22:30:
+    FN-8797 (35810666be) made the Definition tab's 5s planning refresh prompt-only via
+    `fetchTaskPrompt` — the old `fetchTaskDetail` chain rolled queued cards back to Todo,
+    so the periodic read no longer touches the detail endpoint. The hidden/reveal gating
+    invariant is unchanged; only the polled request boundary moved.
+    */
+    const mockPrompt = vi.mocked(dashboardApi.fetchTaskPrompt);
+    mockPrompt.mockReset();
+    mockPrompt.mockResolvedValue({ id: "FN-9001", prompt: "# Fresh plan" });
 
     const { rerenderWithActive } = renderContent(false, makeTask({ id: "FN-9001", column: "triage", status: "planning" }));
     await act(async () => { await vi.advanceTimersByTimeAsync(16_000); });
-    expect(mockDetail).not.toHaveBeenCalled();
+    expect(mockPrompt).not.toHaveBeenCalled();
 
     rerenderWithActive(true);
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
-    expect(mockDetail).toHaveBeenCalledTimes(1);
+    expect(mockPrompt).toHaveBeenCalledTimes(1);
     await act(async () => { await vi.advanceTimersByTimeAsync(5_000); });
-    expect(mockDetail).toHaveBeenCalledTimes(2);
+    expect(mockPrompt).toHaveBeenCalledTimes(2);
 
     rerenderWithActive(false);
     await act(async () => { await vi.advanceTimersByTimeAsync(16_000); });
-    expect(mockDetail).toHaveBeenCalledTimes(2);
+    expect(mockPrompt).toHaveBeenCalledTimes(2);
   });
 
   it("suspends the 5s verification polling while hidden and resumes it on reveal", async () => {

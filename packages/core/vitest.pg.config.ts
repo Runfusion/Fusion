@@ -5,6 +5,11 @@ import { computeMaxWorkers } from "./src/__test-utils__/vitest-workers";
 
 /*
 FNXC:PgTestWorkerCap 2026-07-18-18:00:
+FNXC:PgTestDdlAdmission 2026-08-16-20:30:
+FN-9130 retained the advisory primitive's deterministic coverage and reverted
+both regressive admission and deferred-reaper experiments after loaded measurements. This cap remains a
+separate gate-shape policy; keep PG_MAX_WORKERS unchanged.
+
 Dedicated vitest config for the PostgreSQL gate suite (`test:pg-gate`). The
 pg-gate runs ONLY *.pg.test.ts files, each of which builds and copies a
 per-file schema-template database (heavy CREATE/DROP DATABASE DDL that the one
@@ -33,6 +38,16 @@ export default mergeConfig(
   baseConfig,
   defineConfig({
     test: {
+      /*
+      FNXC:PgTestPreAdmission 2026-08-17-03:38:
+      FN-9139 requires the dedicated PostgreSQL config to explicitly identify
+      its participating lane. The shared setup stays inert everywhere else,
+      while plain invocations can still opt in through the same environment
+      variable without relying on this config.
+      */
+      env: {
+        FUSION_PG_TEST_SETUP_PARTICIPANT: "1",
+      },
       maxWorkers: computeMaxWorkers({ maxCap: PG_MAX_WORKERS }),
       minWorkers: 1,
     },

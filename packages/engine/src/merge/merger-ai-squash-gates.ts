@@ -1,8 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import type { Settings, Task, TaskStore } from "@fusion/core";
+import type { Task, TaskStore } from "@fusion/core";
 import { deriveRepoForPath, deriveRepoScopeSubset, UNSCOPED_REPO } from "../worktree/workspace-paths.js";
-import { checkDiffVolume, DiffVolumeRegressionError, formatDiffVolumeFindings, resolveDiffVolumeGateSettings } from "./merger-diff-volume-gate.js";
 import { createCommitRangeFilesReader, enforceSquashFileScopeInvariant, FileScopeViolationError } from "./merger-file-scope.js";
 import type { RunAuditor } from "../util/run-audit.js";
 
@@ -22,8 +21,15 @@ export function resolveRepoDeclaredScopeTransform({ repoRel, repoKeys }: { repoR
   };
 }
 
-/** Apply both pre-land guards to the approved clean-room squash. */
-export async function enforceAiMergeSquashGates(params: { store: TaskStore; task: Task; taskId: string; mergeRoot: string; branch: string; tipSha: string; squashSha: string; settings: Settings; audit: RunAuditor; log: (message: string) => Promise<void>; repoRel?: string; repoKeys?: readonly string[] }): Promise<void> {
+/*
+FNXC:AIMerge 2026-08-16-05:28:
+The pre-land diff-volume shrinkage gate (checkDiffVolume + merge:diff-volume-blocked audit)
+was removed by operator decision: it blocked approved clean-room squashes whose review had
+already accepted the diff, with no override path. File scope is the sole pre-land guard now;
+the post-squash audit policy remains the shrinkage backstop.
+*/
+/** Apply the file-scope pre-land guard to the approved clean-room squash. */
+export async function enforceAiMergeSquashGates(params: { store: TaskStore; task: Task; taskId: string; mergeRoot: string; branch: string; tipSha: string; squashSha: string; audit: RunAuditor; log: (message: string) => Promise<void>; repoRel?: string; repoKeys?: readonly string[] }): Promise<void> {
   const resolver = params.repoRel ? resolveRepoDeclaredScopeTransform({ repoRel: params.repoRel, repoKeys: params.repoKeys ?? [] }) : undefined;
   const transform = resolver ? (scope: string[]) => resolver.transform(scope) : undefined;
   try {
@@ -51,16 +57,6 @@ export async function enforceAiMergeSquashGates(params: { store: TaskStore; task
     */
     await execFileAsync("git", ["reset", "--hard", params.tipSha], { cwd: params.mergeRoot });
     await execFileAsync("git", ["clean", "-fd"], { cwd: params.mergeRoot });
-    throw error;
-  }
-  try {
-    await checkDiffVolume({ rootDir: params.mergeRoot, branch: params.branch, integrationTargetSha: params.tipSha, squashRange: { fromSha: params.tipSha, toSha: params.squashSha }, ...resolveDiffVolumeGateSettings(params.settings) });
-  } catch (error) {
-    if (!(error instanceof DiffVolumeRegressionError)) throw error;
-    await execFileAsync("git", ["reset", "--hard", params.tipSha], { cwd: params.mergeRoot });
-    await execFileAsync("git", ["clean", "-fd"], { cwd: params.mergeRoot });
-    await params.store.appendAgentLog(params.taskId, "AI merge diff-volume gate blocked the approved squash", "tool_error", formatDiffVolumeFindings(error.findings), "merger");
-    await params.audit.git({ type: "merge:diff-volume-blocked", target: params.taskId, metadata: { taskId: params.taskId, repo: params.repoRel, tipSha: params.tipSha, squashSha: params.squashSha, findingCount: error.findings.length, files: error.findings.map((finding) => finding.file) } });
     throw error;
   }
 }

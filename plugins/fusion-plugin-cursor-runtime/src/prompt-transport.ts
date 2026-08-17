@@ -12,7 +12,7 @@ const STDERR_MAX = 16_384;
 function timeout(name: string, fallback: number) { const value = Number(process.env[name]); return Number.isFinite(value) && value > 0 ? value : fallback; }
 
 export interface CursorPromptCallbacks { onText?: (text: string) => void; onThinking?: (text: string) => void; onToolStart?: (name: string, args?: Record<string, unknown>) => void; onToolEnd?: (name: string, isError: boolean, result?: unknown) => void; }
-export interface CursorPromptInput extends CursorPromptCallbacks { binary?: string; model?: string; cwd: string; tools?: "coding" | "readonly"; prompt: string; resumeId?: string; signal?: AbortSignal; workspaceFlagRequired?: boolean; }
+export interface CursorPromptInput extends CursorPromptCallbacks { binary?: string; model?: string; cwd: string; tools?: "coding" | "readonly"; prompt: string; resumeId?: string; signal?: AbortSignal; workspaceFlagRequired?: boolean; approveMcps?: boolean; }
 export interface CursorPromptResult { sessionId?: string; text: string; usage?: unknown; }
 export interface CursorPromptDependencies { supervise?: typeof superviseSpawn; taskkill?: typeof spawn; platform?: NodeJS.Platform; resolvePowerShell?: () => string; }
 
@@ -32,6 +32,8 @@ export async function launchCursorPrompt(input: CursorPromptInput, deps: CursorP
   const args = ["--print", "--output-format", "stream-json", "--model", model, "--trust"];
   if (input.workspaceFlagRequired) args.push("--workspace", input.cwd);
   if (input.tools === "coding") args.push("--force"); else args.push("--mode", "plan");
+  // FNXC:CursorMcpBridge 2026-08-15-21:20: Cursor approves MCP calls only when a lease was safely staged for this turn; failed staging must remain a tool-less turn.
+  if (input.approveMcps) args.push("--approve-mcps");
   if (input.resumeId) args.push("--resume", input.resumeId);
   /*
   FNXC:CursorCli 2026-08-15-15:47:

@@ -144,7 +144,7 @@ This keeps member execution isolated per task while still routing member landing
 
 Use the Mission Manager UI to create missions and build hierarchy interactively.
 
-On mobile, Mission Manager surfaces the primary **Plan New Mission** CTA at the top of the mission list for faster access, while desktop keeps the split-layout sidebar CTA anchored in the bottom action region as the primary entry point.
+Mission Manager anchors the primary **Plan New Mission** CTA at the top of the mission list on both mobile stacked and desktop split layouts. The secondary **Create** manual-create link sits beneath it, and both primary controls use the same slightly taller tokenized height. While the inline create form is open, the CTA is suppressed cleanly without leaving an empty container; each surface retains only one primary planning control.
 
 Mission detail refreshes now preserve expanded milestone/slice state and keep the selected milestone expanded, so persisted milestone acceptance criteria remain visible across live updates.
 
@@ -778,7 +778,7 @@ Mission hierarchy operations are available with the same project-scoped `Mission
 
 ## Automatic mission reconciliation
 
-The scheduler startup and self-healing maintenance passes, mission autopilot, task moves, and `fn_mission_reconcile({ id?, dryRun? })` use one idempotent reconciliation authority. `POST /api/missions/:missionId/reconcile` exposes the same pass; `dryRun: true` returns planned changes without mutation. Automatic writes are attributed to `mission-reconcile:<startup|self-healing|autopilot|task-move>` and API/tool calls retain their operator or agent actor.
+The scheduler startup and self-healing maintenance passes, mission autopilot, task moves, and `fn_mission_reconcile({ id?, dryRun? })` use one idempotent reconciliation authority. `POST /api/missions/:missionId/reconcile` exposes the same pass; `dryRun: true` returns planned changes without mutation. Task-move reconciliation is best-effort: a reconciliation failure is logged but cannot suppress the mission completion trigger or its validation loop. Automatic writes are attributed to `mission-reconcile:<startup|self-healing|autopilot|task-move>` and API/tool calls retain their operator or agent actor.
 
 ### Mission Manager reconcile control
 

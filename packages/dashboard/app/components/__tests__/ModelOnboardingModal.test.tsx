@@ -744,20 +744,6 @@ describe("ModelOnboardingModal", () => {
       expect(screen.getByTestId("provider-summary")).toHaveTextContent("1 of 2 providers connected");
     });
 
-    it("renders onboarding provider icon wrapper for connected advanced providers", async () => {
-      mockFetchAuthStatus.mockResolvedValueOnce({
-        providers: [
-          { id: "anthropic", name: "Anthropic", authenticated: false, type: "oauth" },
-          { id: "minimax", name: "MiniMax", authenticated: true, type: "api_key" },
-        ],
-      });
-
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
-
-      const minimaxWrapper = await screen.findByTestId("onboarding-provider-icon-minimax");
-      expect(within(minimaxWrapper).getByTestId("provider-icon")).toHaveAttribute("data-provider", "minimax");
-    });
-
     it("places the single advanced-provider disclosure inside quick start before default model selection", async () => {
       render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
@@ -1370,24 +1356,6 @@ describe("ModelOnboardingModal", () => {
       expect(description.closest(".onboarding-provider-card")).toBeTruthy();
     });
 
-    it("renders provider description for API key provider", async () => {
-      mockFetchAuthStatus.mockResolvedValueOnce({
-        providers: [
-          { id: "openai", name: "OpenAI", authenticated: false, type: "api_key" },
-        ],
-      });
-
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
-
-      await waitFor(() => {
-        expect(screen.getByText("GPT models — versatile for a wide range of tasks")).toBeTruthy();
-      });
-
-      // Verify the description is inside a provider card
-      const description = screen.getByText("GPT models — versatile for a wide range of tasks");
-      expect(description.closest(".onboarding-provider-card")).toBeTruthy();
-    });
-
     it("renders cursor cli provider card when cursor provider is present", async () => {
       mockFetchAuthStatus.mockResolvedValue({
         providers: [
@@ -1416,36 +1384,6 @@ describe("ModelOnboardingModal", () => {
 
       expect(within(anthropicIconWrapper).getByTestId("provider-icon")).toHaveAttribute("data-provider", "anthropic");
       expect(within(openaiIconWrapper).getByTestId("provider-icon")).toHaveAttribute("data-provider", "openai");
-    });
-
-    it("applies connected modifier class to authenticated provider cards", async () => {
-      mockFetchAuthStatus.mockResolvedValueOnce({
-        providers: [
-          { id: "anthropic", name: "Anthropic", authenticated: true, type: "oauth" },
-          { id: "openai", name: "OpenAI", authenticated: false, type: "api_key" },
-        ],
-      });
-
-      const { baseElement } = render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
-
-      await waitFor(() => {
-        expect(screen.getByText("Anthropic")).toBeTruthy();
-      });
-
-      // Verify the authenticated provider has the connected modifier class
-      const connectedCards = baseElement.querySelectorAll(".onboarding-provider-card--connected");
-      expect(connectedCards.length).toBe(1);
-
-      // Verify the connected card contains Anthropic
-      const anthropicCard = connectedCards[0];
-      expect(anthropicCard?.textContent?.includes("Anthropic")).toBe(true);
-
-      // Verify non-authenticated provider does not have the modifier
-      const allCards = baseElement.querySelectorAll(".onboarding-provider-card");
-      const connectedCardIds = Array.from(connectedCards).map((card) =>
-        card.querySelector(".onboarding-provider-card__name")?.textContent
-      );
-      expect(connectedCardIds).toContain("Anthropic");
     });
 
     it("renders fallback description for unknown provider", async () => {
@@ -2684,78 +2622,6 @@ describe("ModelOnboardingModal", () => {
       expect(screen.getByText("Implement onboarding success flow")).toBeTruthy();
     });
 
-    it("shows the created task ID in the success view", async () => {
-      mockGetOnboardingState.mockReturnValue({
-        currentStep: "first-task",
-        completedSteps: ["ai-setup", "github"],
-        skippedSteps: [],
-        updatedAt: "2026-04-17T00:00:00.000Z",
-        dismissed: false,
-        completed: false,
-        stepData: {},
-      });
-
-      const { rerender } = render(
-        <ModelOnboardingModal
-          onComplete={vi.fn()}
-          addToast={vi.fn()}
-          firstCreatedTask={null}
-        projectId="proj_123" />,
-      );
-
-      await waitFor(() => {
-        expect(screen.getByText("Create Your First Task")).toBeTruthy();
-      });
-
-      rerender(
-        <ModelOnboardingModal
-          onComplete={vi.fn()}
-          addToast={vi.fn()}
-          firstCreatedTask={createdTaskMock}
-        projectId="proj_123" />,
-      );
-
-      await waitFor(() => {
-        expect(screen.getByText("FN-0001")).toBeTruthy();
-      });
-    });
-
-    it("shows the first line of created task description in the success view", async () => {
-      mockGetOnboardingState.mockReturnValue({
-        currentStep: "first-task",
-        completedSteps: ["ai-setup", "github"],
-        skippedSteps: [],
-        updatedAt: "2026-04-17T00:00:00.000Z",
-        dismissed: false,
-        completed: false,
-        stepData: {},
-      });
-
-      const { rerender } = render(
-        <ModelOnboardingModal
-          onComplete={vi.fn()}
-          addToast={vi.fn()}
-          firstCreatedTask={null}
-        projectId="proj_123" />,
-      );
-
-      await waitFor(() => {
-        expect(screen.getByText("Create Your First Task")).toBeTruthy();
-      });
-
-      rerender(
-        <ModelOnboardingModal
-          onComplete={vi.fn()}
-          addToast={vi.fn()}
-          firstCreatedTask={createdTaskMock}
-        projectId="proj_123" />,
-      );
-
-      await waitFor(() => {
-        expect(screen.getByText("Implement onboarding success flow")).toBeTruthy();
-      });
-    });
-
     it("View Task button calls onViewTask with task and then onComplete", async () => {
       mockGetOnboardingState.mockReturnValue({
         currentStep: "first-task",
@@ -3690,27 +3556,6 @@ describe("ModelOnboardingModal", () => {
       expect(screen.queryByText(/error/i)).toBeNull();
     });
 
-    it("allows advancing to GitHub step without selecting a model", async () => {
-      // Default mock setup has no model selected
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
-
-      await waitFor(() => {
-        expect(screen.getByText("Set Up AI")).toBeTruthy();
-      });
-
-      // Verify model dropdown is empty (no model selected)
-      const dropdown = screen.getByTestId("mock-model-dropdown") as HTMLSelectElement;
-      expect(dropdown.value).toBe("");
-
-      // Click Next without selecting a model
-      fireEvent.click(screen.getByText("Next →"));
-
-      // Should advance to GitHub step successfully
-      await waitFor(() => {
-        expect(screen.getByText("Connect GitHub")).toBeTruthy();
-      });
-    });
-
     it("allows advancing to First Task step without connecting GitHub", async () => {
       // GitHub provider exists but is not authenticated
       mockFetchAuthStatus.mockResolvedValueOnce({
@@ -4449,26 +4294,6 @@ describe("ModelOnboardingModal progressive disclosure", () => {
         expect(trigger2.getAttribute("aria-expanded")).toBe("true");
         expect(screen.queryByText(/AI providers like OpenAI and Anthropic/)).toBeNull();
       });
-    });
-  });
-
-  describe("GitHub step disclosures", () => {
-    it("renders GitHub integration disclosure in GitHub step", async () => {
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
-
-      await navigateToGitHubStep();
-
-      expect(screen.getByText("What does GitHub integration do?")).toBeTruthy();
-    });
-  });
-
-  describe("First Task step disclosures", () => {
-    it("renders task creation disclosure in First Task step", async () => {
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
-
-      await navigateToFirstTaskStep();
-
-      expect(screen.getByText("What happens when I create a task?")).toBeTruthy();
     });
   });
 

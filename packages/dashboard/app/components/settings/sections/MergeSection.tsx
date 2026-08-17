@@ -5,6 +5,7 @@ import { fetchGitRemoteBranches } from "../../../api";
 import { MovedSettingsStub } from "./MovedSettingsStub";
 import { SettingsSelectRow } from "../SettingsSelectRow";
 import { SettingsNumberRow } from "../SettingsNumberRow";
+import { SettingsTextRow } from "../SettingsTextRow";
 import { SettingsHelpTip } from "../SettingsHelpTip";
 import type { SectionBaseProps } from "./context";
 /*
@@ -279,19 +280,28 @@ export function MergeSection({ form, setForm, integrationBranchOptions, integrat
         </select>
       </div>
       {form.mergeStrategy === "pull-request" && <>
-      <div className="form-group">
-        <div className="settings-field-label-row">
-          <label htmlFor="requiredChecks">{t("settings.merge.requiredChecks", "Required pull-request checks")}</label>
-          <SettingsHelpTip settingKey="requiredChecks">{t("settings.merge.requiredChecksHelp", "No default — unset. Comma-separated check names match GitHub exactly (case-sensitive). Leaving this empty uses GitHub required-status checks only; a named check that never reports blocks the merge.")}</SettingsHelpTip>
-        </div>
-        <input id="requiredChecks" className="input" value={requiredChecksInput} onChange={(event) => {
-          const rawValue = event.target.value;
+      {/*
+      FNXC:SettingsSearch 2026-08-16-05:07:
+      FN-8855 (d59c1b162f) indexed requiredChecks in MergeSection.search.ts but rendered it as a
+      bespoke label/input, so the search result had no `data-settings-key` anchor to scroll to and
+      the drift guard flagged the entry as stale. The row composes the typed SettingsTextRow like
+      its descriptor-row neighbors: same label/help copy, same comma-list parsing on change.
+      */}
+      <SettingsTextRow
+        descriptor={{
+          key: "requiredChecks",
+          label: t("settings.merge.requiredChecks", "Required pull-request checks"),
+          help: t("settings.merge.requiredChecksHelp", "No default — unset. Comma-separated check names match GitHub exactly (case-sensitive). Leaving this empty uses GitHub required-status checks only; a named check that never reports blocks the merge."),
+        }}
+        value={requiredChecksInput}
+        onChange={(nextValue) => {
+          const rawValue = nextValue ?? "";
           setRequiredChecksInput(rawValue);
           const requiredChecks = resolveRequiredCheckNames({ requiredChecks: rawValue.split(",") });
           emittedRequiredCheckNames.current = requiredChecks;
           setForm((current) => ({ ...current, requiredChecks: requiredChecks.length > 0 ? requiredChecks : undefined }));
-        }}/>
-      </div>
+        }}
+      />
       <div className="form-group">
         <div className="settings-field-label-row">
           <label htmlFor="githubNativeAutoMerge" className="checkbox-label">

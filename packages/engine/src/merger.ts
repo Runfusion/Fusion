@@ -286,6 +286,8 @@ export { regenerateBareMergeSubject, BARE_MERGE_SUBJECT_RE } from "./merge/merge
 import { isUsageLimitError, checkSessionError, type UsageLimitPauser } from "./errors/usage-limit-detector.js";
 import { isContextLimitError } from "./errors/context-limit-detector.js";
 import { withRateLimitRetry } from "./errors/rate-limit-retry.js";
+import { cancellableSleep } from "./errors/retry-with-backoff.js";
+import { TRANSIENT_ERROR_PATTERNS } from "./errors/transient-error-patterns.js";
 import { resolveAgentInstructions, buildSystemPromptWithInstructions } from "./agents/agent-instructions.js";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
@@ -300,16 +302,6 @@ import {
   type SquashAuditFindings,
 } from "./merge/merger-squash-audit.js";
 import { detectMergeOverlap, restoreBranchWinsFiles } from "./merge/merger-overlap-guard.js";
-import {
-  checkDiffVolume,
-  DiffVolumeRegressionError,
-  resolveDiffVolumeGateSettings,
-  formatDiffVolumeFindings,
-} from "./merge/merger-diff-volume-gate.js";
-export {
-  resolveDiffVolumeGateSettings,
-  formatDiffVolumeFindings,
-} from "./merge/merger-diff-volume-gate.js";
 import { detectAlreadyLandedOnMain, type AlreadyMergedDetectionStrategy } from "./merge/already-merged-detector.js";
 import { decideAutoPrerebase, probeDivergence, runAutoPrerebase } from "./merge/merger-auto-prerebase.js";
 import {
@@ -329,7 +321,6 @@ import { advanceIntegrationBranchRef, IntegrationBranchConcurrentAdvanceError } 
 import { syncWorktreeToHead, type SyncWorktreeResult } from "./worktree/worktree-ref-sync.js";
 import { appendAutoWidenedScopeToPrompt, evaluateScopeAutoWiden } from "./merge/merger-scope-auto-widen.js";
 
-export { DiffVolumeRegressionError } from "./merge/merger-diff-volume-gate.js";
 export { IntegrationBranchConcurrentAdvanceError } from "./merge/merger-ref-update-advance.js";
 
 /*
@@ -526,9 +517,81 @@ const PULL_REBASE_TIMEOUT_MS = 120_000;
 const PUSH_TIMEOUT_MS = 60_000;
 const PUSH_NON_FF_MAX_RETRIES = 3;
 const PUSH_NON_FF_RETRY_BACKOFF_MS = [2_000, 5_000, 10_000];
+const PUSH_TRANSIENT_RETRY_BACKOFF_MS = [2_000, 5_000];
 
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+const TRANSIENT_GIT_PUSH_PATTERNS = [
+  /could not resolve host/i,
+  /temporary failure in name resolution/i,
+  /network is unreachable/i,
+  /failed to connect/i,
+  /couldn't connect/i,
+  /rpc failed;\s*http\s+(?:429|5\d\d)/i,
+  /remote end hung up unexpectedly/i,
+  /unexpected disconnect while reading sideband packet/i,
+  /send failure:\s*broken pipe/i,
+  /connection closed by remote host/i,
+];
+
+export function isTransientGitPushError(message: string): boolean {
+  return TRANSIENT_ERROR_PATTERNS.some((pattern) => pattern.test(message))
+    || TRANSIENT_GIT_PUSH_PATTERNS.some((pattern) => pattern.test(message));
+}
+
+async function sleepForPushRetry(ms: number, signal: AbortSignal | undefined, taskId: string): Promise<void> {
+  try {
+    await cancellableSleep(ms, signal);
+  } catch (error: unknown) {
+    throwIfAborted(signal, taskId);
+    throw error;
+  }
+}
+
+/*
+FNXC:MergePush 2026-08-16-02:17:
+Post-merge delivery must recover from short-lived Git transport failures for every remote and
+hosting provider without depending on an operator-specific notification channel. Retry only
+recognized transient transport errors, keep configuration/auth/rejection failures immediate, and
+make both the bounded backoff and every subsequent attempt cancellation-aware.
+*/
+export async function pushWithTransientRetries(
+  push: () => Promise<unknown>,
+  options: {
+    taskId: string;
+    signal?: AbortSignal;
+    retryBackoffMs?: readonly number[];
+    onRetry?: (event: { attempt: number; maxRetries: number; delayMs: number; error: string }) => void | Promise<void>;
+  },
+): Promise<void> {
+  const retryBackoffMs = options.retryBackoffMs ?? PUSH_TRANSIENT_RETRY_BACKOFF_MS;
+  let attempt = 0;
+
+  while (true) {
+    throwIfAborted(options.signal, options.taskId);
+    try {
+      await push();
+      return;
+    } catch (error: unknown) {
+      rethrowIfMergeAborted(error);
+      throwIfAborted(options.signal, options.taskId);
+      const message = getCommandErrorMessage(error);
+      const delayMs = retryBackoffMs[attempt];
+      if (delayMs === undefined || !isTransientGitPushError(message)) throw error;
+
+      attempt += 1;
+      try {
+        await options.onRetry?.({
+          attempt,
+          maxRetries: retryBackoffMs.length,
+          delayMs,
+          error: message,
+        });
+      } catch {
+        // Retry diagnostics are best-effort and must not suppress delivery.
+      }
+
+      await sleepForPushRetry(delayMs, options.signal, options.taskId);
+    }
+  }
 }
 
 export async function emitMergeAttemptAuditEvent(params: {
@@ -572,53 +635,6 @@ const MERGE_USER_COMMENTS_MAX_CHARS = 4000;
  */
 export const summarizeVerificationOutputLocal = summarizeVerificationOutput;
 
-
-async function resetToIntegrationTarget(rootDir: string, integrationTargetSha: string): Promise<void> {
-  await execAsync(`git reset --hard ${quoteArg(integrationTargetSha)}`, {
-    cwd: rootDir,
-    encoding: "utf-8",
-  });
-  await execAsync("git clean -fd", {
-    cwd: rootDir,
-    encoding: "utf-8",
-  });
-}
-
-async function runDiffVolumeGate(params: {
-  rootDir: string;
-  branch: string;
-  integrationTargetSha: string;
-  taskId: string;
-  settings?: Settings;
-  store?: TaskStore;
-}): Promise<void> {
-  try {
-    const gateSettings = resolveDiffVolumeGateSettings(params.settings);
-    await checkDiffVolume({
-      rootDir: params.rootDir,
-      branch: params.branch,
-      integrationTargetSha: params.integrationTargetSha,
-      minLines: gateSettings.minLines,
-      threshold: gateSettings.threshold,
-      allowlistGlobs: gateSettings.allowlistGlobs,
-      taskId: params.taskId,
-    });
-  } catch (error: unknown) {
-    if (!(error instanceof DiffVolumeRegressionError)) throw error;
-    await resetToIntegrationTarget(params.rootDir, params.integrationTargetSha);
-    const details = formatDiffVolumeFindings(error.findings);
-    if (params.store) {
-      await params.store.appendAgentLog(
-        params.taskId,
-        `Diff-volume gate blocked auto-resolved squash before commit`,
-        "tool_error",
-        details,
-        "merger",
-      );
-    }
-    throw error;
-  }
-}
 
 export async function getStagedFiles(cwd: string): Promise<string[]> {
   try {
@@ -3767,8 +3783,8 @@ export async function commitOrAmendMergeWithFixes(
   preAttemptHeadSha: string,
   authorArg: string,
   diffStat?: string,
-  settings?: Settings,
-  signal?: AbortSignal,
+  _settings?: Settings,
+  _signal?: AbortSignal,
   aiSummary?: string | null,
   aiBody?: string | null,
   aiSubject?: string | null,
@@ -4169,14 +4185,6 @@ export async function commitOrAmendMergeWithFixes(
           auditor,
         });
       }
-      await runDiffVolumeGate({
-        rootDir,
-        branch,
-        integrationTargetSha: preAttemptHeadSha,
-        taskId,
-        settings,
-        store,
-      });
       await execAsync(
         `git commit ${subjectArg} ${bodyArg}${trailerArg}${authorArg}`,
         { cwd: rootDir, env: mergerCommitEnv() },
@@ -4201,14 +4209,6 @@ export async function commitOrAmendMergeWithFixes(
         auditor,
       });
     }
-    await runDiffVolumeGate({
-      rootDir,
-      branch,
-      integrationTargetSha: preAttemptHeadSha,
-      taskId,
-      settings,
-      store,
-    });
     await execAsync(
       `git commit --amend ${subjectArg} ${bodyArg}${trailerArg}${authorArg}`,
       { cwd: rootDir, env: mergerCommitEnv() },
@@ -4219,7 +4219,7 @@ export async function commitOrAmendMergeWithFixes(
     mergerLog.log(`${taskId}: amended merge commit with verification fixes (deterministic message)`);
     return { ok: true, reason: "committed" };
   } catch (err: unknown) {
-    if (err instanceof DiffVolumeRegressionError || err instanceof FileScopeViolationError) {
+    if (err instanceof FileScopeViolationError) {
       throw err;
     }
     const errorMessage = err instanceof Error ? err.message : String(err);
@@ -6376,18 +6376,32 @@ export async function pushToRemoteAfterMerge(
   const pushCommand = options?.pushHeadRefspec
     ? `git push ${quoteArg(remote)} ${quoteArg(`HEAD:refs/heads/${branch}`)}`
     : `git push ${quoteArg(remote)} ${quoteArg(branch)}`;
-
-  try {
-    throwIfAborted(options?.signal, taskId);
-    await execAsync(pushCommand, {
+  const runTargetPush = () => pushWithTransientRetries(
+    () => execAsync(pushCommand, {
       cwd: rootDir,
       timeout: PUSH_TIMEOUT_MS,
       maxBuffer: VERIFICATION_COMMAND_MAX_BUFFER,
       encoding: "utf-8",
-    });
+    }),
+    {
+      taskId,
+      signal: options?.signal,
+      onRetry: ({ attempt, maxRetries, delayMs, error }) => {
+        mergerLog.warn(
+          `${taskId}: temporary Git transport failure; retrying push in ${delayMs}ms (${attempt}/${maxRetries}): ${error}`,
+        );
+      },
+    },
+  );
+
+  try {
+    throwIfAborted(options?.signal, taskId);
+    await runTargetPush();
     mergerLog.log(`${taskId}: pushed merged result to ${remote}/${branch}`);
     return { pushed: true };
   } catch (firstPushError: unknown) {
+    // FNXC:MergePush 2026-08-16-05:14: Cancellation from the shared initial push must reach the caller's aborted-push audit path instead of being recorded as a terminal delivery failure.
+    rethrowIfMergeAborted(firstPushError);
     let lastMessage = getCommandErrorMessage(firstPushError);
     mergerLog.warn(`${taskId}: initial push failed: ${lastMessage}`);
 
@@ -6409,12 +6423,7 @@ export async function pushToRemoteAfterMerge(
         throwIfAborted(options?.signal, taskId);
         await pullWithRebaseAndResolveConflicts(store, rootDir, taskId, settings, remote, branch, options);
         throwIfAborted(options?.signal, taskId);
-        await execAsync(pushCommand, {
-          cwd: rootDir,
-          timeout: PUSH_TIMEOUT_MS,
-          maxBuffer: VERIFICATION_COMMAND_MAX_BUFFER,
-          encoding: "utf-8",
-        });
+        await runTargetPush();
         mergerLog.log(`${taskId}: push succeeded after non-fast-forward retry (attempt ${attempt}/${maxRetries})`);
         return { pushed: true };
       } catch (retryError: unknown) {
@@ -6425,7 +6434,11 @@ export async function pushToRemoteAfterMerge(
           break;
         }
         throwIfAborted(options?.signal, taskId);
-        await delay(PUSH_NON_FF_RETRY_BACKOFF_MS[attempt - 1] ?? PUSH_NON_FF_RETRY_BACKOFF_MS.at(-1)!);
+        await sleepForPushRetry(
+          PUSH_NON_FF_RETRY_BACKOFF_MS[attempt - 1] ?? PUSH_NON_FF_RETRY_BACKOFF_MS.at(-1)!,
+          options?.signal,
+          taskId,
+        );
       }
     }
     return { pushed: false, error: lastMessage };
@@ -8904,11 +8917,7 @@ export async function aiMergeTask(
         throw error;
       }
 
-      if (
-        error instanceof DiffVolumeRegressionError
-        || error?.name === "DiffVolumeRegressionError"
-        || error?.name === "FileScopeViolationError"
-      ) {
+      if (error?.name === "FileScopeViolationError") {
         throw error;
       }
 
@@ -9996,24 +10005,42 @@ export async function aiMergeTask(
         result.pushError = pushResult.error;
       }
     } catch (err: any) {
-      mergerLog.error(`${taskId}: push to remote error: ${err.message}`);
-      result.pushedToRemote = false;
-      result.pushError = err.message;
-      await audit.git({
-        type: "push:origin",
-        target: taskId,
-        metadata: {
-          integrationBranch: mergeTarget.branch,
-          remote: settings.pushRemote || "origin",
-          outcome: "failed",
-          stderrPreview: err.message,
-        },
-      }).catch(() => undefined);
-      await store.logEntry(
-        taskId,
-        `Push to remote threw after merge — task marked done anyway; local main may diverge from origin: ${err.message}`,
-        "PushToRemoteFailed", toRunMutationContext(engineRunContext),
-      ).catch(() => undefined);
+      if (err instanceof Error && err.name === "MergeAbortedError") {
+        // FNXC:MergePush 2026-08-16-03:39: The retained public merger must preserve shutdown cancellation as an aborted delivery outcome after the local merge is finalized.
+        const message = "Push after merge aborted by shutdown signal; the local merge remains finalized";
+        mergerLog.warn(`${taskId}: ${message}`);
+        result.pushedToRemote = false;
+        result.pushError = message;
+        await audit.git({
+          type: "push:origin",
+          target: taskId,
+          metadata: {
+            integrationBranch: mergeTarget.branch,
+            remote: settings.pushRemote || "origin",
+            outcome: "aborted",
+          },
+        }).catch(() => undefined);
+        await store.logEntry(taskId, message, "PushToRemoteFailed", toRunMutationContext(engineRunContext)).catch(() => undefined);
+      } else {
+        mergerLog.error(`${taskId}: push to remote error: ${err.message}`);
+        result.pushedToRemote = false;
+        result.pushError = err.message;
+        await audit.git({
+          type: "push:origin",
+          target: taskId,
+          metadata: {
+            integrationBranch: mergeTarget.branch,
+            remote: settings.pushRemote || "origin",
+            outcome: "failed",
+            stderrPreview: err.message,
+          },
+        }).catch(() => undefined);
+        await store.logEntry(
+          taskId,
+          `Push to remote threw after merge — task marked done anyway; local main may diverge from origin: ${err.message}`,
+          "PushToRemoteFailed", toRunMutationContext(engineRunContext),
+        ).catch(() => undefined);
+      }
     }
   }
 
@@ -10448,14 +10475,6 @@ export async function executeMergeAttempt(
               resetLabel: "file-scope invariant violation",
               auditor: params.auditor,
             });
-            await runDiffVolumeGate({
-              rootDir,
-              branch,
-              integrationTargetSha: params.preAttemptHeadSha || "HEAD",
-              taskId,
-              settings,
-              store,
-            });
             await execAsync(
               `git commit ${subjectArg} ${bodyArg}${trailerArg}${authorArg}`,
               { cwd: rootDir, env: mergerCommitEnv() },
@@ -10741,7 +10760,6 @@ export async function executeMergeAttempt(
     // verification failure anyway — there are no conflicts to resolve.
     if (
       error?.name === "VerificationError"
-      || error?.name === "DiffVolumeRegressionError"
       || error?.name === "FileScopeViolationError"
     ) {
       throw error;
@@ -10791,7 +10809,7 @@ export async function attemptWithSideStrategy(
 
     return finalizeSideStrategyAttempt(params, side, aiTracker);
   } catch (error) {
-    if (error instanceof Error && (error.name === "MergeAbortedError" || error.name === "DiffVolumeRegressionError" || error.name === "FileScopeViolationError")) {
+    if (error instanceof Error && (error.name === "MergeAbortedError" || error.name === "FileScopeViolationError")) {
       throw error;
     }
     mergerLog.error(`${taskId}: -X ${side} merge failed: ${error}`);
@@ -10832,7 +10850,7 @@ async function attemptWithMixedSideStrategy(
 
     return finalizeSideStrategyAttempt(params, strategy.defaultSide, aiTracker);
   } catch (error) {
-    if (error instanceof Error && (error.name === "MergeAbortedError" || error.name === "DiffVolumeRegressionError" || error.name === "FileScopeViolationError")) {
+    if (error instanceof Error && (error.name === "MergeAbortedError" || error.name === "FileScopeViolationError")) {
       throw error;
     }
     mergerLog.error(`${taskId}: overlap-aware merge failed: ${error}`);
@@ -10901,14 +10919,6 @@ async function finalizeSideStrategyAttempt(
     task: await store.getTask(taskId),
     resetLabel: "file-scope invariant violation",
     auditor: params.auditor,
-  });
-  await runDiffVolumeGate({
-    rootDir,
-    branch,
-    integrationTargetSha: params.preAttemptHeadSha || "HEAD",
-    taskId,
-    settings,
-    store,
   });
   await execAsync(
     `git commit ${subjectArg} ${bodyArg}${issueRefBodyArg}${trailerArg}${authorArg}`,
@@ -11012,7 +11022,6 @@ async function runAiAgentForCommit(params: AiAgentParams): Promise<{ success: bo
     testCommand,
     buildCommand,
     preMergeRebaseFallthrough,
-    preAttemptHeadSha,
   } = params;
 
   // Merge per-task effective workflow settings (U3, KTD-3) — this worker re-fetches
@@ -11141,6 +11150,7 @@ async function runAiAgentForCommit(params: AiAgentParams): Promise<{ success: bo
   // FNXC:Settings-MergerModel 2026-07-16-00:00: merger retries use the dedicated project fallback lane before the shared global fallback pair.
 
   const mergerFallbackModel = resolveMergerFallbackModel(settings);
+  const mergerFusionTools = [reportBuildFailureTool, createWebFetchTool()];
 
   // FN-5279: Layer 3 / merge-authoring AI runs in the resolved integration
   // root so arbiter edits land in the reused task worktree when handoff mode
@@ -11161,7 +11171,8 @@ async function runAiAgentForCommit(params: AiAgentParams): Promise<{ success: bo
     cwd: rootDir,
     systemPrompt: mergerSystemPrompt,
     tools: "coding",
-    customTools: [reportBuildFailureTool, createWebFetchTool()],
+    customTools: mergerFusionTools,
+    fusionTools: mergerFusionTools,
     onText: agentLogger.onText,
     onThinking: agentLogger.onThinking,
     onToolStart: agentLogger.onToolStart,
@@ -11340,14 +11351,6 @@ async function runAiAgentForCommit(params: AiAgentParams): Promise<{ success: bo
           aiSummary,
           aiBody: aiBody?.trim().length ? aiBody : safeBody,
           aiSubject,
-        });
-        await runDiffVolumeGate({
-          rootDir,
-          branch,
-          integrationTargetSha: preAttemptHeadSha || "HEAD",
-          taskId,
-          settings,
-          store,
         });
         await execAsync(
           `git commit ${subjectArg} ${bodyArg}${issueRefBodyArg}${trailerArg}${authorArg}`,

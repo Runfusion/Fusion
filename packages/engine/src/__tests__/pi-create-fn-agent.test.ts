@@ -1333,6 +1333,15 @@ describe("wrapToolsWithActionGate", () => {
   });
 });
 
+/*
+FNXC:CliRuntimeRouting 2026-08-16-14:37:
+This file pins the RAW pi session constructor's behavior (auth, principals,
+skills, registry resolution, tool wrapping). The public `createFnAgent` now
+routes through createResolvedAgentSession, so every direct call here aliases
+`createPiAgentSessionRaw` — the function DefaultPiRuntime bridges into — to
+keep asserting pi internals rather than the routing seam (covered by
+agent-session-helpers/runtime-resolution tests).
+*/
 describe("createFnAgent", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -1370,7 +1379,7 @@ describe("createFnAgent", () => {
   });
 
   it("binds a durable chat principal to the host-tool prompt invocation when pi omits agentId", async () => {
-    const { createFnAgent } = await import("../pi.js");
+    const { createPiAgentSessionRaw: createFnAgent } = await import("../pi.js");
     const {
       __clearFusionSessionIdentityRegistryForTests,
       resolveFusionSessionPrincipal,
@@ -1430,7 +1439,7 @@ describe("createFnAgent", () => {
   });
 
   it("reaches the pi host-tool identity wrapper from a durable dashboard chat session", async () => {
-    const { createFnAgent } = await import("../pi.js");
+    const { createPiAgentSessionRaw: createFnAgent } = await import("../pi.js");
     const {
       __clearFusionSessionIdentityRegistryForTests,
       resolveFusionSessionPrincipal,
@@ -1514,7 +1523,7 @@ describe("createFnAgent", () => {
   });
 
   it("assigns distinct fail-closed principals to concurrent anonymous engine sessions", async () => {
-    const { createFnAgent } = await import("../pi.js");
+    const { createPiAgentSessionRaw: createFnAgent } = await import("../pi.js");
     const {
       __clearFusionSessionIdentityRegistryForTests,
       resolveFusionSessionPrincipal,
@@ -1558,7 +1567,7 @@ describe("createFnAgent", () => {
     FN-7956 hung AI merge review on extension fn_task_show (second TaskStore boot, no tool timeout).
     Merger sessions must not receive host @runfusion/fusion extension paths even with tools:coding.
     */
-    const { createFnAgent, setHostExtensionPaths } = await import("../pi.js");
+    const { createPiAgentSessionRaw: createFnAgent, setHostExtensionPaths } = await import("../pi.js");
     setHostExtensionPaths(["/mock/fusion-extension"]);
 
     await createFnAgent({
@@ -1578,7 +1587,7 @@ describe("createFnAgent", () => {
   });
 
   it("still injects host extensions for coding non-merger sessions", async () => {
-    const { createFnAgent, setHostExtensionPaths } = await import("../pi.js");
+    const { createPiAgentSessionRaw: createFnAgent, setHostExtensionPaths } = await import("../pi.js");
     setHostExtensionPaths(["/mock/fusion-extension"]);
 
     await createFnAgent({
@@ -1597,7 +1606,7 @@ describe("createFnAgent", () => {
   });
 
   it("passes task-scoped env into bash spawn hook when provided", async () => {
-    const { createFnAgent } = await import("../pi.js");
+    const { createPiAgentSessionRaw: createFnAgent } = await import("../pi.js");
 
     await createFnAgent({
       cwd: "/project",
@@ -1636,7 +1645,7 @@ describe("createFnAgent", () => {
   });
 
   it("keeps bash tool default behavior when taskEnv is not provided", async () => {
-    const { createFnAgent } = await import("../pi.js");
+    const { createPiAgentSessionRaw: createFnAgent } = await import("../pi.js");
 
     await createFnAgent({
       cwd: "/project",
@@ -1648,7 +1657,7 @@ describe("createFnAgent", () => {
   });
 
   it("keeps spawned env unchanged when taskEnv is empty", async () => {
-    const { createFnAgent } = await import("../pi.js");
+    const { createPiAgentSessionRaw: createFnAgent } = await import("../pi.js");
 
     await createFnAgent({
       cwd: "/project",
@@ -1665,7 +1674,7 @@ describe("createFnAgent", () => {
   });
 
   it("adds new task env keys absent from spawned env", async () => {
-    const { createFnAgent } = await import("../pi.js");
+    const { createPiAgentSessionRaw: createFnAgent } = await import("../pi.js");
 
     await createFnAgent({
       cwd: "/project",
@@ -1681,7 +1690,7 @@ describe("createFnAgent", () => {
   });
 
   it("preserves undefined task env values explicitly in merged env", async () => {
-    const { createFnAgent } = await import("../pi.js");
+    const { createPiAgentSessionRaw: createFnAgent } = await import("../pi.js");
 
     await createFnAgent({
       cwd: "/project",
@@ -1697,7 +1706,7 @@ describe("createFnAgent", () => {
   });
 
   it("injects PATH from task env when spawned env has no PATH", async () => {
-    const { createFnAgent } = await import("../pi.js");
+    const { createPiAgentSessionRaw: createFnAgent } = await import("../pi.js");
 
     await createFnAgent({
       cwd: "/project",
@@ -1725,7 +1734,7 @@ describe("createFnAgent", () => {
       return "worktree /project\nHEAD abc123\nbranch refs/heads/main\n";
     });
 
-    const { createFnAgent } = await import("../pi.js");
+    const { createPiAgentSessionRaw: createFnAgent } = await import("../pi.js");
 
     await expect(createFnAgent({
       cwd: "/project/.worktrees/fn-001",
@@ -1752,7 +1761,7 @@ describe("createFnAgent", () => {
         "worktree /project/.worktrees/fn-001\nHEAD def456\nbranch refs/heads/fusion/fn-001\n";
     });
 
-    const { createFnAgent } = await import("../pi.js");
+    const { createPiAgentSessionRaw: createFnAgent } = await import("../pi.js");
 
     await createFnAgent({
       cwd: "/project/.worktrees/fn-001",
@@ -1779,7 +1788,7 @@ describe("createFnAgent", () => {
         "worktree /project/.worktrees/task-branch\nHEAD def456\nbranch refs/heads/fusion/fn-001\n";
     });
 
-    const { createFnAgent } = await import("../pi.js");
+    const { createPiAgentSessionRaw: createFnAgent } = await import("../pi.js");
 
     // Pass skills parameter with a worktree cwd.
     // getProjectRootFromWorktree extracts /project from the .worktrees path,
@@ -1807,7 +1816,7 @@ describe("createFnAgent", () => {
       return value === "/project/.fusion";
     });
 
-    const { createFnAgent } = await import("../pi.js");
+    const { createPiAgentSessionRaw: createFnAgent } = await import("../pi.js");
 
     await createFnAgent({
       cwd: "/project/src/components",
@@ -1826,7 +1835,7 @@ describe("createFnAgent", () => {
     // No .fusion directory exists anywhere above cwd.
     existsSyncMock.mockImplementation(() => false);
 
-    const { createFnAgent } = await import("../pi.js");
+    const { createPiAgentSessionRaw: createFnAgent } = await import("../pi.js");
 
     await createFnAgent({
       cwd: "/unrelated/directory",
@@ -1850,7 +1859,7 @@ describe("createFnAgent", () => {
   });
 
   it("passes a project-trusted settings view through package-manager discovery", async () => {
-    const { createFnAgent } = await import("../pi.js");
+    const { createPiAgentSessionRaw: createFnAgent } = await import("../pi.js");
 
     await createFnAgent({
       cwd: "/tmp",
@@ -1882,7 +1891,7 @@ describe("createFnAgent", () => {
       errors: [],
     });
 
-    const { createFnAgent } = await import("../pi.js");
+    const { createPiAgentSessionRaw: createFnAgent } = await import("../pi.js");
 
     await createFnAgent({
       cwd: "/tmp",
@@ -1939,7 +1948,7 @@ describe("createFnAgent", () => {
       },
     ] as any);
 
-    const { createFnAgent } = await import("../pi.js");
+    const { createPiAgentSessionRaw: createFnAgent } = await import("../pi.js");
 
     await createFnAgent({
       cwd: "/tmp",
@@ -2034,7 +2043,7 @@ describe("createFnAgent", () => {
       },
     ] as any);
 
-    const { createFnAgent } = await import("../pi.js");
+    const { createPiAgentSessionRaw: createFnAgent } = await import("../pi.js");
 
     await createFnAgent({
       cwd: "/tmp",
@@ -2069,7 +2078,7 @@ describe("createFnAgent", () => {
   });
 
   it("avoids lock-based SettingsManager.create when loading extension providers", async () => {
-    const { createFnAgent } = await import("../pi.js");
+    const { createPiAgentSessionRaw: createFnAgent } = await import("../pi.js");
 
     await createFnAgent({
       cwd: "/tmp",
@@ -2090,7 +2099,7 @@ describe("createFnAgent", () => {
       provider === "zai" && modelId === "glm-5.1" ? undefined : { provider, id: modelId }
     ));
 
-    const { createFnAgent } = await import("../pi.js");
+    const { createPiAgentSessionRaw: createFnAgent } = await import("../pi.js");
 
     await expect(createFnAgent({
       cwd: "/tmp",
@@ -2116,7 +2125,7 @@ describe("createFnAgent", () => {
       return { provider, id: modelId };
     });
 
-    const { createFnAgent } = await import("../pi.js");
+    const { createPiAgentSessionRaw: createFnAgent } = await import("../pi.js");
 
     await createFnAgent({
       cwd: "/tmp",
@@ -2139,7 +2148,7 @@ describe("createFnAgent", () => {
       provider === "openai-codex" && modelId === "missing-model" ? undefined : { provider, id: modelId }
     ));
 
-    const { createFnAgent } = await import("../pi.js");
+    const { createPiAgentSessionRaw: createFnAgent } = await import("../pi.js");
 
     await expect(createFnAgent({
       cwd: "/tmp",
@@ -2170,7 +2179,7 @@ describe("createFnAgent", () => {
     ));
     getAllMock.mockReturnValue([]);
 
-    const { createFnAgent } = await import("../pi.js");
+    const { createPiAgentSessionRaw: createFnAgent } = await import("../pi.js");
 
     await expect(createFnAgent({
       cwd: "/tmp",
@@ -2209,7 +2218,7 @@ describe("createFnAgent", () => {
     ));
     getAllMock.mockReturnValue([{ provider: "grok-cli", id: "grok-4.5", name: "Grok 4.5" }]);
 
-    const { createFnAgent } = await import("../pi.js");
+    const { createPiAgentSessionRaw: createFnAgent } = await import("../pi.js");
 
     await createFnAgent({
       cwd: "/tmp",
@@ -2226,7 +2235,7 @@ describe("createFnAgent", () => {
   });
 
   it("creates a session when configured models resolve successfully", async () => {
-    const { createFnAgent } = await import("../pi.js");
+    const { createPiAgentSessionRaw: createFnAgent } = await import("../pi.js");
 
     await createFnAgent({
       cwd: "/tmp",
@@ -2249,7 +2258,7 @@ describe("createFnAgent", () => {
     getAllMock.mockReturnValue([]);
     findMock.mockImplementation((provider: string, modelId: string) => ({ provider, id: modelId }));
 
-    const { createFnAgent } = await import("../pi.js");
+    const { createPiAgentSessionRaw: createFnAgent } = await import("../pi.js");
     await createFnAgent({
       cwd: "/tmp",
       systemPrompt: "test",
@@ -2282,7 +2291,7 @@ describe("createFnAgent", () => {
     ]);
     findMock.mockImplementation((provider: string, modelId: string) => ({ provider, id: modelId }));
 
-    const { createFnAgent } = await import("../pi.js");
+    const { createPiAgentSessionRaw: createFnAgent } = await import("../pi.js");
     await createFnAgent({
       cwd: "/tmp",
       systemPrompt: "test",
@@ -2301,7 +2310,7 @@ describe("createFnAgent", () => {
     getAllMock.mockReturnValue([]);
     findMock.mockImplementation((provider: string, modelId: string) => ({ provider, id: modelId }));
 
-    const { createFnAgent } = await import("../pi.js");
+    const { createPiAgentSessionRaw: createFnAgent } = await import("../pi.js");
     await createFnAgent({
       cwd: "/tmp",
       systemPrompt: "test",
@@ -2336,7 +2345,7 @@ describe("createFnAgent", () => {
     getAllMock.mockReturnValue([existingLunaRow]);
     findMock.mockImplementation((provider: string, modelId: string) => ({ provider, id: modelId }));
 
-    const { createFnAgent } = await import("../pi.js");
+    const { createPiAgentSessionRaw: createFnAgent } = await import("../pi.js");
     await createFnAgent({
       cwd: "/tmp",
       systemPrompt: "test",
@@ -2372,7 +2381,7 @@ describe("createFnAgent", () => {
     getAllMock.mockReturnValue([{ provider: "anthropic", id: "claude-opus-4-8", name: "Claude Opus 4.8" }]);
     findMock.mockImplementation((provider: string, modelId: string) => ({ provider, id: modelId }));
 
-    const { createFnAgent } = await import("../pi.js");
+    const { createPiAgentSessionRaw: createFnAgent } = await import("../pi.js");
     await createFnAgent({
       cwd: "/tmp",
       systemPrompt: "test",
@@ -2400,7 +2409,7 @@ describe("createFnAgent", () => {
       ? { provider, id: modelId }
       : undefined);
 
-    const { createFnAgent } = await import("../pi.js");
+    const { createPiAgentSessionRaw: createFnAgent } = await import("../pi.js");
     await expect(createFnAgent({
       cwd: "/tmp",
       systemPrompt: "test",
@@ -2419,7 +2428,7 @@ describe("createFnAgent", () => {
     authStorageGetApiKeyMock.mockResolvedValue(undefined);
     findMock.mockImplementation((provider: string, modelId: string) => ({ provider, id: modelId }));
 
-    const { createFnAgent } = await import("../pi.js");
+    const { createPiAgentSessionRaw: createFnAgent } = await import("../pi.js");
     await createFnAgent({
       cwd: "/tmp",
       systemPrompt: "test",
@@ -2439,7 +2448,7 @@ describe("createFnAgent", () => {
       provider === "anthropic" ? "sk-ant-api03-direct" : undefined
     ));
 
-    const { createFnAgent } = await import("../pi.js");
+    const { createPiAgentSessionRaw: createFnAgent } = await import("../pi.js");
     await createFnAgent({
       cwd: "/tmp",
       systemPrompt: "test",
@@ -2470,7 +2479,7 @@ describe("createFnAgent", () => {
     });
     getAllMock.mockReturnValue([{ provider: "anthropic", id: "claude-opus-4-8" }]);
 
-    const { createFnAgent } = await import("../pi.js");
+    const { createPiAgentSessionRaw: createFnAgent } = await import("../pi.js");
     await createFnAgent({
       cwd: "/tmp",
       systemPrompt: "test",
@@ -2493,7 +2502,7 @@ describe("createFnAgent", () => {
     };
     createAgentSessionMock.mockResolvedValueOnce({ session });
 
-    const { createFnAgent } = await import("../pi.js");
+    const { createPiAgentSessionRaw: createFnAgent } = await import("../pi.js");
     const result = await createFnAgent({
       cwd: "/tmp",
       systemPrompt: "test",
@@ -2522,7 +2531,7 @@ describe("createFnAgent", () => {
       execute: vi.fn(),
     };
 
-    const { createFnAgent } = await import("../pi.js");
+    const { createPiAgentSessionRaw: createFnAgent } = await import("../pi.js");
     await createFnAgent({
       cwd: "/tmp",
       systemPrompt: "test",
@@ -2543,7 +2552,7 @@ describe("createFnAgent", () => {
       execute: vi.fn(),
     };
 
-    const { createFnAgent } = await import("../pi.js");
+    const { createPiAgentSessionRaw: createFnAgent } = await import("../pi.js");
     await createFnAgent({
       cwd: "/tmp",
       systemPrompt: "test",
@@ -2556,7 +2565,7 @@ describe("createFnAgent", () => {
   });
 
   it("does not allow extra builtin tools in readonly sessions by default", async () => {
-    const { createFnAgent } = await import("../pi.js");
+    const { createPiAgentSessionRaw: createFnAgent } = await import("../pi.js");
 
     await createFnAgent({
       cwd: "/tmp",
@@ -2569,7 +2578,7 @@ describe("createFnAgent", () => {
   });
 
   it("intersects readonly builtin allowlist with readonly policy", async () => {
-    const { createFnAgent } = await import("../pi.js");
+    const { createPiAgentSessionRaw: createFnAgent } = await import("../pi.js");
 
     await createFnAgent({
       cwd: "/tmp",
@@ -2590,7 +2599,7 @@ describe("createFnAgent", () => {
   });
 
   it("filters coding tools with a case-insensitive toolsAllowlist", async () => {
-    const { createFnAgent } = await import("../pi.js");
+    const { createPiAgentSessionRaw: createFnAgent } = await import("../pi.js");
 
     await createFnAgent({
       cwd: "/tmp",
@@ -2605,7 +2614,7 @@ describe("createFnAgent", () => {
   });
 
   it("keeps all coding tools when toolsAllowlist is undefined", async () => {
-    const { createFnAgent } = await import("../pi.js");
+    const { createPiAgentSessionRaw: createFnAgent } = await import("../pi.js");
 
     await createFnAgent({
       cwd: "/tmp",
@@ -2619,7 +2628,7 @@ describe("createFnAgent", () => {
   });
 
   it("exposes no coding tools when toolsAllowlist is empty", async () => {
-    const { createFnAgent } = await import("../pi.js");
+    const { createPiAgentSessionRaw: createFnAgent } = await import("../pi.js");
 
     await createFnAgent({
       cwd: "/tmp",
@@ -2643,7 +2652,7 @@ describe("createFnAgent", () => {
       execute: vi.fn(),
     };
 
-    const { createFnAgent } = await import("../pi.js");
+    const { createPiAgentSessionRaw: createFnAgent } = await import("../pi.js");
     await createFnAgent({
       cwd: "/tmp",
       systemPrompt: "test",
@@ -2659,7 +2668,7 @@ describe("createFnAgent", () => {
     const execute = vi.fn().mockResolvedValue({ content: [{ type: "text", text: "ok" }] });
     const permanentCreateApproval = vi.fn();
     const markApprovalCompleted = vi.fn();
-    const { createFnAgent } = await import("../pi.js");
+    const { createPiAgentSessionRaw: createFnAgent } = await import("../pi.js");
 
     await createFnAgent({
       cwd: "/tmp",
@@ -2700,7 +2709,7 @@ describe("createFnAgent", () => {
   });
 
   it("exposes connected MCP tools in readonly sessions only with the explicit opt-in", async () => {
-    const { createFnAgent } = await import("../pi.js");
+    const { createPiAgentSessionRaw: createFnAgent } = await import("../pi.js");
     const close = vi.fn(async () => undefined);
     const mcpClient = {
       connect: vi.fn(async () => undefined),
@@ -2764,7 +2773,7 @@ describe("createFnAgent", () => {
       clients.push(client);
       return client;
     });
-    const { createFnAgent } = await import("../pi.js");
+    const { createPiAgentSessionRaw: createFnAgent } = await import("../pi.js");
 
     try {
       await expect(createFnAgent({
@@ -2794,7 +2803,7 @@ describe("createFnAgent", () => {
   });
 
   it("keeps MCP tools out of readonly sessions without the explicit opt-in", async () => {
-    const { createFnAgent } = await import("../pi.js");
+    const { createPiAgentSessionRaw: createFnAgent } = await import("../pi.js");
     const mcpClient = {
       connect: vi.fn(async () => undefined),
       listTools: vi.fn(async () => ({ tools: [{ name: "lookup" }] })),
@@ -2821,7 +2830,7 @@ describe("createFnAgent", () => {
     const { piLog } = await import("../logger.js");
     // FNXC:EngineDiagnostics 2026-07-26-09:55: entry chatter is debug-gated.
     const debugSpy = vi.spyOn(piLog, "debug").mockImplementation(() => {});
-    const { createFnAgent } = await import("../pi.js");
+    const { createPiAgentSessionRaw: createFnAgent } = await import("../pi.js");
 
     await createFnAgent({
       cwd: "/tmp/private-worktree",
@@ -2874,7 +2883,7 @@ describe("createFnAgent", () => {
         },
       });
 
-    const { createFnAgent } = await import("../pi.js");
+    const { createPiAgentSessionRaw: createFnAgent } = await import("../pi.js");
     const { __clearFusionSessionIdentityRegistryForTests } = await import("@fusion/core");
     __clearFusionSessionIdentityRegistryForTests();
 
@@ -2942,7 +2951,7 @@ describe("createFnAgent", () => {
         },
       });
 
-    const { createFnAgent } = await import("../pi.js");
+    const { createPiAgentSessionRaw: createFnAgent } = await import("../pi.js");
 
     const { session } = await createFnAgent({
       cwd: "/tmp",
@@ -2965,7 +2974,7 @@ describe("createFnAgent", () => {
   });
 
   it("enables auto-compaction to prevent context-window overflow", async () => {
-    const { createFnAgent } = await import("../pi.js");
+    const { createPiAgentSessionRaw: createFnAgent } = await import("../pi.js");
 
     await createFnAgent({
       cwd: "/tmp",
@@ -2982,7 +2991,7 @@ describe("createFnAgent", () => {
   });
 
   it("passes compaction enabled alongside retry settings", async () => {
-    const { createFnAgent } = await import("../pi.js");
+    const { createPiAgentSessionRaw: createFnAgent } = await import("../pi.js");
 
     await createFnAgent({
       cwd: "/tmp",
@@ -3013,7 +3022,7 @@ describe("createFnAgent", () => {
     };
     createAgentSessionMock.mockResolvedValueOnce({ session });
 
-    const { createFnAgent } = await import("../pi.js");
+    const { createPiAgentSessionRaw: createFnAgent } = await import("../pi.js");
     const { session: guardedSession } = await createFnAgent({
       cwd: "/tmp",
       systemPrompt: "test",
@@ -3044,7 +3053,7 @@ describe("createFnAgent", () => {
       _rewriteFile: rewriteFile,
     };
 
-    const { createFnAgent } = await import("../pi.js");
+    const { createPiAgentSessionRaw: createFnAgent } = await import("../pi.js");
     await createFnAgent({
       cwd: "/tmp",
       systemPrompt: "test",
@@ -3090,7 +3099,7 @@ describe("createFnAgent", () => {
     };
     createAgentSessionMock.mockResolvedValueOnce({ session });
 
-    const { createFnAgent } = await import("../pi.js");
+    const { createPiAgentSessionRaw: createFnAgent } = await import("../pi.js");
     await createFnAgent({
       cwd: "/tmp",
       systemPrompt: "test",
@@ -3134,7 +3143,7 @@ describe("createFnAgent", () => {
       },
     });
 
-    const { createFnAgent } = await import("../pi.js");
+    const { createPiAgentSessionRaw: createFnAgent } = await import("../pi.js");
 
     await expect(createFnAgent({
       cwd: "/tmp",
@@ -3164,7 +3173,7 @@ describe("createFnAgent", () => {
     const anyModel = { provider: "anthropic", id: "claude" } as never;
 
     async function createAndCaptureRuntime(overrides: Record<string, unknown> = {}) {
-      const { createFnAgent } = await import("../pi.js");
+      const { createPiAgentSessionRaw: createFnAgent } = await import("../pi.js");
       await createFnAgent({
         cwd: "/tmp",
         systemPrompt: "test",
@@ -3283,7 +3292,7 @@ describe("createFnAgent", () => {
         },
       }));
 
-      const { createFnAgent: freshCreateFnAgent } = await import("../pi.js");
+      const { createPiAgentSessionRaw: freshCreateFnAgent } = await import("../pi.js");
 
       await freshCreateFnAgent({
         cwd: "/tmp",
@@ -3374,7 +3383,7 @@ describe("createFnAgent", () => {
         },
       }));
 
-      const { createFnAgent: freshCreateFnAgent } = await import("../pi.js");
+      const { createPiAgentSessionRaw: freshCreateFnAgent } = await import("../pi.js");
 
       await freshCreateFnAgent({
         cwd: "/tmp",
@@ -3396,7 +3405,15 @@ describe("createFnAgent", () => {
       }
     });
 
-    it("with skillSelection (specific requested names) activates skill filtering", async () => {
+    /*
+    FNXC:SkillResolution 2026-08-16-15:12:
+    FN-9114 changed requested skill names from an allow-list to ensure-present:
+    all enabled discovered skills stay available, and requested names only
+    guarantee inclusion (agent metadata is no longer an availability filter).
+    This test previously asserted the pre-FN-9114 allow-list narrowing and was
+    the one call-site-level assertion missed by that commit's test sweep.
+    */
+    it("with skillSelection (specific requested names) keeps all discovered skills and ensures requested ones are present", async () => {
       let capturedResourceLoaderOptions: any;
       vi.doMock("@earendil-works/pi-coding-agent", () => ({
         LegacyCredentialStorage: {
@@ -3462,7 +3479,7 @@ describe("createFnAgent", () => {
         },
       }));
 
-      const { createFnAgent: freshCreateFnAgent } = await import("../pi.js");
+      const { createPiAgentSessionRaw: freshCreateFnAgent } = await import("../pi.js");
 
       await freshCreateFnAgent({
         cwd: "/tmp",
@@ -3487,9 +3504,12 @@ describe("createFnAgent", () => {
         diagnostics: [],
       });
 
-      // Only paperclip should pass through (matching requested name)
-      expect(result.skills).toHaveLength(1);
-      expect(result.skills[0].name).toBe("paperclip");
+      // FN-9114: requested names are ensure-present, not an allow-list — every
+      // discovered skill stays available and the requested one is included.
+      expect(result.skills).toHaveLength(2);
+      expect(result.skills.map((skill: { name: string }) => skill.name)).toEqual(
+        expect.arrayContaining(["paperclip", "lint"]),
+      );
     });
 
     it("diagnostics are logged via structured logger with [skills] context", async () => {

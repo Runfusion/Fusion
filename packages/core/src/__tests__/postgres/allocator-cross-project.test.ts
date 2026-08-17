@@ -10,13 +10,15 @@
  * gate stays green without a running server.
  */
 
-import { describe, it, expect, afterEach } from "vitest";
+import { it, expect, afterEach } from "vitest";
 import { eq } from "drizzle-orm";
-import { execSync } from "node:child_process";
 import { createAsyncDataLayer, type AsyncDataLayer } from "../../postgres/data-layer.js";
 import { createConnectionSetFromUrl, type PostgresConnections } from "../../postgres/connection.js";
 import type { ResolvedBackend } from "../../postgres/backend-resolver.js";
-import { applySchemaBaseline } from "../../postgres/schema-applier.js";
+import {
+  pgDescribe,
+  createTaskStoreForTest,
+} from "../../__test-utils__/pg-test-harness.js";
 import * as schema from "../../postgres/schema/index.js";
 import { insertTaskRow } from "../../task-store/async/async-persistence.js";
 import {
@@ -25,30 +27,21 @@ import {
 } from "../../task-store/async/async-allocator.js";
 import type { DistributedTaskIdAllocator } from "../../tasks/distributed-task-id.js";
 
-const PG_TEST_URL_BASE =
-  process.env.FUSION_PG_TEST_URL_BASE ?? "postgresql://localhost:5432";
-const PG_AVAILABLE =
-  process.env.FUSION_PG_TEST_SKIP !== "1" && Boolean(PG_TEST_URL_BASE);
-
-const pgDescribe = PG_AVAILABLE ? describe : describe.skip;
-
 const SHARED_PREFIX = "KB";
 
-function uniqueDbName(): string {
-  return `fusion_allocxp_test_${process.pid}_${Math.random().toString(36).slice(2, 8)}`;
-}
-
-// FNXC:PgTestAuthFix 2026-07-14-07:30:
-// The inline adminExec used process.env.USER for the psql -U flag, which is 'runner' on GitHub Actions (not 'postgres'). Use the PG_TEST_URL_BASE connection string instead so credentials are always correct.
-function adminExec(statement: string): void {
-  execSync(
-    `psql "${PG_TEST_URL_BASE}/postgres" -v ON_ERROR_STOP=1 -c "${statement.replace(/"/g, '\\"')}"`,
-    { stdio: "pipe", env: process.env },
-  );
-}
-
+/*
+FNXC:PgTestHarnessAdoption 2026-08-16-03:45:
+Migrated the per-test database creation off hand-rolled CREATE DATABASE +
+applySchemaBaseline (~3-4s of DDL per test) onto the harness's template-cloned
+`createTaskStoreForTest`. This file KEEPS a private database per test because it opens
+its own pair of project-bound, RLS-enforced runtime-role connection sets against that
+database — the cross-project isolation those connections provide is the subject, and
+the harness database is only the substrate. The harness TaskStore's unbound init rows
+live outside the proj_a/proj_b partitions, so the RLS-scoped reads never see them.
+Every assertion is unchanged.
+*/
 interface TestCtx {
-  dbName: string;
+  baseTeardown: () => Promise<void>;
   connectionsA: PostgresConnections;
   connectionsB: PostgresConnections;
   layerA: AsyncDataLayer;
@@ -58,27 +51,16 @@ interface TestCtx {
 }
 
 async function setupCtx(): Promise<TestCtx> {
-  const dbName = uniqueDbName();
-  try {
-    adminExec(`DROP DATABASE IF EXISTS "${dbName}"`);
-  } catch {
-    // may not exist
-  }
-  adminExec(`CREATE DATABASE "${dbName}"`);
-  const testUrl = `${PG_TEST_URL_BASE}/${dbName}`;
-
+  const base = await createTaskStoreForTest({
+    prefix: "fusion_allocxp_test",
+    copyFromGolden: true,
+  });
   const backend: ResolvedBackend = {
     mode: "external",
-    runtimeUrl: testUrl,
-    migrationUrl: testUrl,
+    runtimeUrl: base.testUrl,
+    migrationUrl: base.testUrl,
     migrationUrlOverridden: false,
   };
-  const schemaConnections = await createConnectionSetFromUrl(backend, {
-    poolMax: 1,
-    connectTimeoutSeconds: 5,
-  });
-  await applySchemaBaseline(schemaConnections.migration);
-  await schemaConnections.close();
 
   const connectionsA = await createConnectionSetFromUrl(backend, {
     poolMax: 5,
@@ -96,7 +78,7 @@ async function setupCtx(): Promise<TestCtx> {
   const layerB = createAsyncDataLayer(connectionsB, { projectId: "proj_b" });
   const allocatorA = createAsyncDistributedTaskIdAllocator(layerA);
   const allocatorB = createAsyncDistributedTaskIdAllocator(layerB);
-  return { dbName, connectionsA, connectionsB, layerA, layerB, allocatorA, allocatorB };
+  return { baseTeardown: base.teardown, connectionsA, connectionsB, layerA, layerB, allocatorA, allocatorB };
 }
 
 async function teardownCtx(ctx: TestCtx | null): Promise<void> {
@@ -107,7 +89,7 @@ async function teardownCtx(ctx: TestCtx | null): Promise<void> {
     // best-effort
   }
   try {
-    adminExec(`DROP DATABASE IF EXISTS "${ctx.dbName}"`);
+    await ctx.baseTeardown();
   } catch {
     // best-effort
   }

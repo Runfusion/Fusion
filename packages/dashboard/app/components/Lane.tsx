@@ -65,7 +65,6 @@ export interface LaneProps {
   onToggleFavorite?: (provider: string) => void;
   onToggleModelFavorite?: (modelId: string) => void;
   isSearchActive?: boolean;
-  taskStuckTimeoutMs?: number;
   onOpenMission?: (missionId: string) => void;
   lastFetchTimeMs?: number;
   /** Per-task card-placed custom field definitions (U13/KTD-14). */
@@ -211,7 +210,6 @@ function LaneComponent(props: LaneProps) {
               onToggleFavorite={props.onToggleFavorite}
               onToggleModelFavorite={props.onToggleModelFavorite}
               isSearchActive={props.isSearchActive}
-              taskStuckTimeoutMs={props.taskStuckTimeoutMs}
               onOpenMission={props.onOpenMission}
               lastFetchTimeMs={props.lastFetchTimeMs}
               taskCardFieldDefs={props.taskCardFieldDefs}

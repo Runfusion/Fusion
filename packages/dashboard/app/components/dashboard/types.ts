@@ -233,7 +233,7 @@ export interface MainContentProps {
   handleOpenDetailWithTab: (task: Task | TaskDetail, initialTab: "changes" | "retries" | "workflow") => void;
   handleToggleFavorite: (provider: string) => Promise<void>;
   handleToggleModelFavorite: (modelId: string) => Promise<void>;
-  taskStuckTimeoutMs: number | undefined;
+  // FNXC:StuckTagRemoval 2026-08-17-22:30: stuck-task tagging removed from the dashboard; taskStuckTimeoutMs is engine-side only now.
   staleHighFanoutBlockerAgeThresholdMs: number;
   lastFetchTimeMs: number | undefined;
   openCreateWorkflowWithNav: () => void;

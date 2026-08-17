@@ -108,11 +108,13 @@ export class DefaultPiRuntime implements AgentRuntime {
     Forward the resolved session budget explicitly across the default-pi bridge. A project setting of 0 becomes null before this point and must reach createFnAgent so the pi wrapper skips clamping just like plugin runtimes.
     */
     const { toolOutputMaxChars, mcpServers, ...agentOptions } = options;
+    // FNXC:CliRuntimeRouting 2026-08-16-14:37: `__rawPiSession` short-circuits createFnAgent's routed path — the seam resolved to THIS runtime, so routing the bridge again would recurse. createFnAgent stays the bridge target so tests mocking it keep intercepting pi-session construction.
     const result = await createFnAgent({
       ...agentOptions,
       toolOutputMaxChars,
       mcpServers: normalizeAgentRuntimeMcpServers(mcpServers),
-    });
+      __rawPiSession: true,
+    } as Parameters<typeof createFnAgent>[0]);
     /*
     FNXC:TriagePlanningRetry 2026-08-03-01:10:
     Pi dispatches fallback notification work before its prompt resolves, so it has a known finite

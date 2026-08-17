@@ -1328,7 +1328,20 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
         automationStore,
       )(req, res);
     } catch (err: unknown) {
-      sendErrorResponse(res, 500, err instanceof Error ? err.message : "Failed to open project event stream");
+      /*
+      FNXC:ProjectScoping 2026-08-16-05:28:
+      An SSE subscription for a nonexistent project (e.g. a stale client tab or an
+      e2e fixture page using projectId "fixture") is a client addressing error, not a
+      server fault. Surfacing the startup-factory construction chain as a 500 filled
+      operator logs with alarming "failed to construct TaskStore" errors on every
+      poll; map project-not-found to 404 with a clean message instead.
+      */
+      const message = err instanceof Error ? err.message : "Failed to open project event stream";
+      if (/Project (?:"[^"]*" )?not found/.test(message)) {
+        sendErrorResponse(res, 404, `Project "${projectId}" not found`);
+        return;
+      }
+      sendErrorResponse(res, 500, message);
     }
   });
 

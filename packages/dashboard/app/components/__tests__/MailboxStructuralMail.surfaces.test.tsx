@@ -28,6 +28,8 @@ vi.mock("lucide-react", () => ({
   User: () => null, X: () => null, Check: () => null, ChevronRight: () => null, ChevronDown: () => null,
   AlertCircle: () => null, Map: () => null, Flag: () => null, Lightbulb: () => null, BarChart3: () => null,
   Target: () => null, CircleAlert: () => null,
+  // FNXC:MessageArchive 2026-08-15-05:45: FN-9014 added mailbox archiving; MailboxModal now imports Archive.
+  Archive: () => null,
 }));
 
 import * as api from "../../api";

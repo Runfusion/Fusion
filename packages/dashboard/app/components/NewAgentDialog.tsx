@@ -734,9 +734,10 @@ export function NewAgentDialog({
                   value={selectedSkills}
                   onChange={setSelectedSkills}
                   projectId={projectId}
+                  ariaDescribedBy="agent-skills-hint"
                 />
-                <p className="agent-dialog-optional agent-dialog-skills-hint">
-                  {t("agents.skillsHint", "Optional skills to assign to this agent")}
+                <p id="agent-skills-hint" className="agent-dialog-optional agent-dialog-skills-hint">
+                  {t("agents.skillsHint", "All enabled skills are available automatically. Select skills to force this agent to read them before starting work.")}
                 </p>
               </div>
             </div>

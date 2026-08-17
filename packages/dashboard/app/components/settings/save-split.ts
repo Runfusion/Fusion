@@ -149,6 +149,7 @@ export const GLOBAL_SECTION_KEYS: Record<string, ReadonlySet<string>> = {
     "language",
     "dismissModalsOnOutsideClick",
     "skipConfirmationDialogs",
+    "quickAddSubmitOnEnter",
     "persistAgentToolOutput",
     "agentToolOutputMaxChars",
     "proactiveTaskChatEnabled",

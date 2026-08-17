@@ -7,6 +7,13 @@ Task create/link success lines use `result()` so they survive quiet mode.
 Capture that seam for assertions that previously spied console.log.
 */
 const resultSpy = vi.hoisted(() => vi.fn());
+const requiredTaskStoreCapabilities = vi.hoisted(() => () => ({
+  getSettings: vi.fn().mockResolvedValue({}),
+  getGlobalSettingsStore: vi.fn().mockReturnValue({
+    getSettings: vi.fn().mockResolvedValue({}),
+  }),
+  resetTerminalFailureAutoRecoveryBudget: vi.fn().mockResolvedValue(undefined),
+}));
 vi.mock("../../output.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../output.js")>();
   return {
@@ -68,7 +75,13 @@ vi.mock("@fusion/core", async (importActual) => {
   const taskStoreMockImplementation = TaskStoreMock.mockImplementation.bind(TaskStoreMock);
   TaskStoreMock.mockImplementation = ((impl: (...args: any[]) => unknown) =>
     taskStoreMockImplementation(function (this: unknown, ...args: any[]) {
-      return impl(...args);
+      const instance = impl(...args);
+      if (typeof instance === "object" && instance !== null) {
+        for (const [name, capability] of Object.entries(requiredTaskStoreCapabilities())) {
+          if (!(name in instance)) Object.assign(instance, { [name]: capability });
+        }
+      }
+      return instance;
     })) as typeof TaskStoreMock.mockImplementation;
 
   const CentralCoreMock = vi.fn(function () {});
@@ -185,9 +198,25 @@ vi.mock("@fusion/core/gh-cli", () => ({
 }));
 
 // Mock project-context
-vi.mock("../../project-context.js", () => ({
+vi.mock("../../project-context.js", () => {
+  const resolveProjectMock = vi.fn();
+  const withRequiredStoreCapabilities = (context: any) => {
+    for (const [name, capability] of Object.entries(requiredTaskStoreCapabilities())) {
+      if (!(name in context.store)) Object.assign(context.store, { [name]: capability });
+    }
+    return context;
+  };
+  const mockResolvedValue = resolveProjectMock.mockResolvedValue.bind(resolveProjectMock);
+  const mockResolvedValueOnce = resolveProjectMock.mockResolvedValueOnce.bind(resolveProjectMock);
+  resolveProjectMock.mockResolvedValue = ((context: any) =>
+    mockResolvedValue(withRequiredStoreCapabilities(context))) as typeof resolveProjectMock.mockResolvedValue;
+  resolveProjectMock.mockResolvedValueOnce = ((context: any) =>
+    mockResolvedValueOnce(withRequiredStoreCapabilities(context))) as typeof resolveProjectMock.mockResolvedValueOnce;
+  resolveProjectMock.mockRejectedValue(new Error("No project context"));
+
+  return {
   resolveProjectPathOnly: vi.fn(async () => process.cwd()),
-  resolveProject: vi.fn().mockRejectedValue(new Error("No project context")),
+  resolveProject: resolveProjectMock,
   getStore: vi.fn().mockResolvedValue({}),
   getDefaultProject: vi.fn().mockResolvedValue(undefined),
   setDefaultProject: vi.fn().mockResolvedValue(undefined),
@@ -223,7 +252,8 @@ vi.mock("../../project-context.js", () => ({
     isRegistered: false,
     store,
   })),
-}));
+  };
+});
 
 import { createInterface } from "node:readline/promises";
 import { TaskStore, CentralCore, extractIntentSignature, findNearDuplicates, runDeterministicDuplicateGuard, reconcileDeterministicDuplicate, TaskIsLiveError } from "@fusion/core";
@@ -539,11 +569,11 @@ vi.mock("node:fs/promises", () => ({
 }));
 
 /*
-FNXC:OriginWorkflowSelection 2026-07-26-19:40:
-Every partial TaskStore mock below stubs `resolveOriginWorkflowOverrideId`: `runTaskCreate`
-consults it to honor the project `taskCreateWorkflowId` setting, and these mocks are structural
-partials, so a missing method is a TypeError rather than a fallback. `undefined` is the
-unconfigured answer — CLI create then takes its unchanged project-default path.
+FNXC:OriginWorkflowSelection 2026-08-15-01:12:
+Every partial TaskStore mock below stubs `resolveOriginWorkflowOverrideId`; the central constructor and project-context wrappers also preserve the global-settings and retry-budget capabilities now required by CLI creation and manual retry. `undefined` keeps the unchanged project-default workflow path.
+
+FNXC:CliTests 2026-08-15-01:12:
+CLI create fixture assertions must include `{ invokeTaskCreatedHook: false }`; the command synchronously owns post-create tracking work and suppresses the deferred store hook to avoid duplicate or lost issue creation.
 */
 describe("project-aware task command behavior", () => {
   afterEach(() => {
@@ -650,7 +680,7 @@ describe("project-aware task command behavior", () => {
       description: "test task",
       dependencies: undefined,
       source: { sourceType: "cli", sourceMetadata: { contentFingerprint: "fp-1" } },
-    }, undefined, UNATTRIBUTED_CONTEXT_MATCHER);
+    }, { invokeTaskCreatedHook: false }, UNATTRIBUTED_CONTEXT_MATCHER);
     expect(logSpy.mock.calls.some((call) => String(call[0]).includes("Project: demo-project"))).toBe(true);
 
     logSpy.mockRestore();
@@ -672,7 +702,11 @@ describe("project-aware task command behavior", () => {
     await runTaskCreate("default task");
 
     expect(resolveProject).toHaveBeenCalledWith(undefined);
-    expect(mockCreateTask).toHaveBeenCalledWith({ description: "default task", dependencies: undefined, source: { sourceType: "cli", sourceMetadata: undefined } }, undefined, UNATTRIBUTED_CONTEXT_MATCHER);
+    expect(mockCreateTask).toHaveBeenCalledWith(
+      { description: "default task", dependencies: undefined, source: { sourceType: "cli", sourceMetadata: undefined } },
+      { invokeTaskCreatedHook: false },
+      UNATTRIBUTED_CONTEXT_MATCHER,
+    );
   });
 
   it("runTaskCreate without project flag falls back to TaskStore(process.cwd()) when resolution fails", async () => {
@@ -688,6 +722,7 @@ describe("project-aware task command behavior", () => {
     );
 
     vi.mocked(createLocalStore).mockResolvedValueOnce({
+      ...requiredTaskStoreCapabilities(),
       init,
       resolveOriginWorkflowOverrideId: vi.fn().mockResolvedValue(undefined), createTask: mockCreateTask,
       addAttachment: vi.fn(),
@@ -699,7 +734,11 @@ describe("project-aware task command behavior", () => {
 
     expect(resolveProject).toHaveBeenCalledWith(undefined);
     expect(createLocalStore).toHaveBeenCalledWith("/current/project");
-    expect(mockCreateTask).toHaveBeenCalledWith({ description: "local task", dependencies: undefined, source: { sourceType: "cli", sourceMetadata: { contentFingerprint: "fp-local" } } }, undefined, UNATTRIBUTED_CONTEXT_MATCHER);
+    expect(mockCreateTask).toHaveBeenCalledWith(
+      { description: "local task", dependencies: undefined, source: { sourceType: "cli", sourceMetadata: { contentFingerprint: "fp-local" } } },
+      { invokeTaskCreatedHook: false },
+      UNATTRIBUTED_CONTEXT_MATCHER,
+    );
     cwdSpy.mockRestore();
   });
 
@@ -830,13 +869,17 @@ describe("project-aware task command behavior", () => {
 
     await runTaskCreate("Investigate /pr/options /pr/preflight flow");
 
-    expect(mockCreateTask).toHaveBeenCalledWith(expect.objectContaining({
-      source: expect.objectContaining({
-        sourceMetadata: expect.objectContaining({
-          intentSignature: expect.objectContaining({ routePaths: ["/pr/options", "/pr/preflight"] }),
+    expect(mockCreateTask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: expect.objectContaining({
+          sourceMetadata: expect.objectContaining({
+            intentSignature: expect.objectContaining({ routePaths: ["/pr/options", "/pr/preflight"] }),
+          }),
         }),
       }),
-    }), undefined, UNATTRIBUTED_CONTEXT_MATCHER);
+      { invokeTaskCreatedHook: false },
+      UNATTRIBUTED_CONTEXT_MATCHER,
+    );
     expect(close).toHaveBeenCalled();
 
     Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: originalInTTY });
@@ -915,14 +958,18 @@ describe("project-aware task command behavior", () => {
     expect(runDeterministicDuplicateGuard).toHaveBeenCalledWith(expect.anything(), { description: "same task" }, expect.objectContaining({ bypass: true }));
     expect(findNearDuplicates).not.toHaveBeenCalled();
     expect(extractIntentSignature).toHaveBeenCalledWith({ description: "same task" });
-    expect(mockCreateTask).toHaveBeenCalledWith(expect.objectContaining({
-      source: expect.objectContaining({
-        sourceMetadata: expect.objectContaining({
-          contentFingerprint: "fp-no-dedup",
-          intentSignature: expect.objectContaining({ routePaths: ["/pr/options", "/pr/preflight"] }),
+    expect(mockCreateTask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: expect.objectContaining({
+          sourceMetadata: expect.objectContaining({
+            contentFingerprint: "fp-no-dedup",
+            intentSignature: expect.objectContaining({ routePaths: ["/pr/options", "/pr/preflight"] }),
+          }),
         }),
       }),
-    }), undefined, UNATTRIBUTED_CONTEXT_MATCHER);
+      { invokeTaskCreatedHook: false },
+      UNATTRIBUTED_CONTEXT_MATCHER,
+    );
   });
 
   it("runTaskCreate fails open when listTasks throws during near-duplicate checking", async () => {
@@ -1730,8 +1777,8 @@ describe("runTaskCreate with --depends", () => {
     expect(mockCreateTask).toHaveBeenCalledWith({
       description: "test task",
       dependencies: ["FN-124"],
-      source: { sourceType: "cli" },
-    }, undefined, UNATTRIBUTED_CONTEXT_MATCHER);
+      source: { sourceType: "cli", sourceMetadata: undefined },
+    }, { invokeTaskCreatedHook: false }, UNATTRIBUTED_CONTEXT_MATCHER);
   });
 
   it("passes multiple dependencies correctly", async () => {
@@ -1740,8 +1787,8 @@ describe("runTaskCreate with --depends", () => {
     expect(mockCreateTask).toHaveBeenCalledWith({
       description: "test task",
       dependencies: ["FN-124", "FN-100"],
-      source: { sourceType: "cli" },
-    }, undefined, UNATTRIBUTED_CONTEXT_MATCHER);
+      source: { sourceType: "cli", sourceMetadata: undefined },
+    }, { invokeTaskCreatedHook: false }, UNATTRIBUTED_CONTEXT_MATCHER);
 
     const depsLine = logSpy.mock.calls.find(
       (call) => typeof call[0] === "string" && call[0].includes("Dependencies:"),
@@ -1757,8 +1804,8 @@ describe("runTaskCreate with --depends", () => {
     expect(mockCreateTask).toHaveBeenCalledWith({
       description: "test task",
       dependencies: undefined,
-      source: { sourceType: "cli" },
-    }, undefined, UNATTRIBUTED_CONTEXT_MATCHER);
+      source: { sourceType: "cli", sourceMetadata: undefined },
+    }, { invokeTaskCreatedHook: false }, UNATTRIBUTED_CONTEXT_MATCHER);
   });
 });
 

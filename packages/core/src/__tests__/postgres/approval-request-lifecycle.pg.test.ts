@@ -1,53 +1,24 @@
-import { describe, it, expect, afterEach } from "vitest";
-import { execSync } from "node:child_process";
-import { createAsyncDataLayer, type AsyncDataLayer } from "../../postgres/data-layer.js";
-
-const PG_TEST_URL_BASE =
-  process.env.FUSION_PG_TEST_URL_BASE ?? "postgresql://localhost:5432";
-const PG_AVAILABLE =
-  process.env.FUSION_PG_TEST_SKIP !== "1" && Boolean(PG_TEST_URL_BASE);
-
-const pgDescribe = PG_AVAILABLE ? describe : describe.skip;
-
-function uniqueDbName(): string {
-  return `fusion_sat_test_${process.pid}_${Math.random().toString(36).slice(2, 8)}`;
-}
+import { describe, it, expect, vi, beforeAll, beforeEach, afterEach, afterAll } from "vitest";
+import { ApprovalRequestStore } from "../../agents/approval-request-store.js";
+import type { AsyncDataLayer } from "../../postgres/data-layer.js";
+import * as schema from "../../postgres/schema/index.js";
+import {
+  PG_AVAILABLE,
+  pgDescribe,
+  createSharedPgTaskStoreTestHarness,
+  type SharedPgTaskStoreHarness,
+} from "../../__test-utils__/pg-test-harness.js";
 
 /*
-FNXC:PgTestAuthFix 2026-07-14-00:00:
-The inline adminExec used process.env.USER for the psql -U flag, which is 'runner' on GitHub Actions (not 'postgres'). Use the PG_TEST_URL_BASE connection string instead so credentials are always correct.
+FNXC:PgTestHarnessAdoption 2026-08-16-03:45:
+Migrated off the hand-rolled per-test CREATE DATABASE + applySchemaBaseline scaffolding
+(~3-4s of DDL per test) onto the shared PG harness: one template-cloned database per file
+with TRUNCATE-based reset per test. The database setup here was scaffolding, not the
+subject under test (the approval-request transition guards are), and every assertion is
+unchanged.
 */
-function adminExec(statement: string): void {
-  execSync(
-    `psql "${PG_TEST_URL_BASE}/postgres" -v ON_ERROR_STOP=1 -c "${statement.replace(/"/g, '\\"')}"`,
-    { stdio: "pipe", env: process.env },
-  );
-}
-
 interface StoreTestCtx {
-  dbName: string;
   layer: AsyncDataLayer;
-}
-
-async function setupCtx(): Promise<StoreTestCtx> {
-  const dbName = uniqueDbName();
-  try { adminExec(`DROP DATABASE IF EXISTS "${dbName}"`); } catch { /* may not exist */ }
-  adminExec(`CREATE DATABASE "${dbName}"`);
-  const testUrl = `${PG_TEST_URL_BASE}/${dbName}`;
-  const { createConnectionSetFromUrl } = await import("../../postgres/connection.js");
-  const { applySchemaBaseline } = await import("../../postgres/schema-applier.js");
-  const { resolveBackendWithOptions } = await import("../../postgres/backend-resolver.js");
-  const backend = resolveBackendWithOptions({ databaseUrl: testUrl, databaseMigrationUrl: testUrl });
-  const connections = await createConnectionSetFromUrl(backend, { poolMax: 3, connectTimeoutSeconds: 5 });
-  await applySchemaBaseline(connections.migration);
-  const layer = createAsyncDataLayer(connections);
-  return { dbName, layer };
-}
-
-async function teardownCtx(ctx: StoreTestCtx | null): Promise<void> {
-  if (!ctx) return;
-  try { await ctx.layer.close(); } catch { /* best-effort */ }
-  try { adminExec(`DROP DATABASE IF EXISTS "${ctx.dbName}"`); } catch { /* best-effort */ }
 }
 
 /*
@@ -65,17 +36,32 @@ WHAT THESE DO AND DO NOT COVER, measured by reverting each guard in turn rather 
   - requester-ownership on redemption                                    -> 1 of 6 fails when removed
   - the `AND status = ?` guard on the UPDATE                             -> 0 fail when removed
 
-That last line is the honest limit. The in-transaction re-read already rejects a replay single-threaded,
-so the guard only earns its keep against a racer committing BETWEEN the read and the write — which needs
-two concurrent transactions these tests do not create. The guard stays because the race is real; it is
-simply not what is verified here. Do not read a green run as proof of it.
+The guarded `AND status = ?` update is now pinned by the always-running
+`approval-request-audit-id-race.test.ts` stale-read simulation and the barrier-overlapped
+PostgreSQL double-decision/double-completion probes below. The pure test proves the exact
+empty-returning branch; PostgreSQL may validly serialize its loser to the transition matrix.
 */
-pgDescribe("approval request lifecycle security (PostgreSQL)", () => {
-  let ctx: StoreTestCtx | null = null;
-  afterEach(async () => {
-    await teardownCtx(ctx);
-    ctx = null;
+describe("approval request lifecycle PostgreSQL availability", () => {
+  it("fails closed when a required PostgreSQL probe would otherwise be skipped", () => {
+    if (process.env.FUSION_PG_REQUIRED === "1") {
+      expect(PG_AVAILABLE).toBe(true);
+    }
   });
+});
+
+pgDescribe("approval request lifecycle security (PostgreSQL)", () => {
+  const h: SharedPgTaskStoreHarness = createSharedPgTaskStoreTestHarness({
+    prefix: "fusion_sat_test",
+  });
+  let ctx: StoreTestCtx;
+
+  beforeAll(h.beforeAll);
+  beforeEach(async () => {
+    await h.beforeEach();
+    ctx = { layer: h.layer() };
+  });
+  afterEach(h.afterEach);
+  afterAll(h.afterAll);
 
   const REQUESTER = { actorId: "agent-1", actorType: "agent" as const, actorName: "Bot" };
   const DECIDER = { actorId: "user-1", actorType: "user" as const, actorName: "Admin" };
@@ -90,8 +76,57 @@ pgDescribe("approval request lifecycle security (PostgreSQL)", () => {
     return store;
   }
 
+  it("orders audit history by lifecycle within timestamp ties across store surfaces", async () => {
+    const store = await import("../../async-stores/async-approval-request-store.js");
+    const publicStore = new ApprovalRequestStore(null, { asyncLayer: ctx.layer });
+    const targetAction = { category: "shell", action: "exec", summary: "run cmd", resourceType: "host", resourceId: "local", context: { cmd: "ls" } };
+    const assertHistory = async (id: string, expectedTypes: string[]) => {
+      const moduleHistory = await store.getApprovalAuditHistory(ctx.layer.db, id);
+      const delegatedHistory = await publicStore.getAuditHistory(id);
+      expect(moduleHistory.map((event) => event.eventType)).toEqual(expectedTypes);
+      expect(delegatedHistory.map((event) => event.eventType)).toEqual(expectedTypes);
+    };
+    const create = (id: string) => store.createApprovalRequest(ctx.layer, { id, requester: REQUESTER, targetAction });
+
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      const tiedAt = new Date("2026-08-16T22:26:00.000Z");
+      vi.setSystemTime(tiedAt);
+      await create("apr-tied-approved");
+      await store.decideApprovalRequest(ctx.layer, "apr-tied-approved", "approved", { actor: DECIDER });
+      const tiedApproved = await store.getApprovalAuditHistory(ctx.layer.db, "apr-tied-approved");
+      expect(tiedApproved.map((event) => event.createdAt)).toEqual([tiedAt.toISOString(), tiedAt.toISOString()]);
+      await assertHistory("apr-tied-approved", ["created", "approved"]);
+
+      await create("apr-tied-denied");
+      await store.decideApprovalRequest(ctx.layer, "apr-tied-denied", "denied", { actor: DECIDER });
+      await assertHistory("apr-tied-denied", ["created", "denied"]);
+
+      await create("apr-tied-completed");
+      await store.decideApprovalRequest(ctx.layer, "apr-tied-completed", "approved", { actor: DECIDER });
+      await store.markApprovalRequestCompleted(ctx.layer, "apr-tied-completed", { actor: DECIDER });
+      await assertHistory("apr-tied-completed", ["created", "approved", "completed"]);
+
+      vi.setSystemTime(new Date("2026-08-16T22:27:00.000Z"));
+      await create("apr-distinct");
+      vi.setSystemTime(new Date("2026-08-16T22:28:00.000Z"));
+      await store.decideApprovalRequest(ctx.layer, "apr-distinct", "approved", { actor: DECIDER });
+      vi.setSystemTime(new Date("2026-08-16T22:29:00.000Z"));
+      await store.markApprovalRequestCompleted(ctx.layer, "apr-distinct", { actor: DECIDER });
+      await assertHistory("apr-distinct", ["created", "approved", "completed"]);
+
+      vi.setSystemTime(new Date("2026-08-16T22:30:00.000Z"));
+      await create("apr-mixed");
+      await store.decideApprovalRequest(ctx.layer, "apr-mixed", "approved", { actor: DECIDER });
+      vi.setSystemTime(new Date("2026-08-16T22:31:00.000Z"));
+      await store.markApprovalRequestCompleted(ctx.layer, "apr-mixed", { actor: DECIDER });
+      await assertHistory("apr-mixed", ["created", "approved", "completed"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("a same-verdict replay is rejected as an invalid transition", async () => {
-    ctx = await setupCtx();
     const store = await seed("apr-replay");
     await store.decideApprovalRequest(ctx.layer, "apr-replay", "approved", { actor: DECIDER });
 
@@ -101,7 +136,6 @@ pgDescribe("approval request lifecycle security (PostgreSQL)", () => {
   });
 
   it("a replay does not re-stamp decidedAt or append a duplicate audit event", async () => {
-    ctx = await setupCtx();
     const store = await seed("apr-nodup");
     const first = await store.decideApprovalRequest(ctx.layer, "apr-nodup", "approved", { actor: DECIDER });
     const auditBefore = await store.getApprovalAuditHistory(ctx.layer.db, "apr-nodup");
@@ -116,7 +150,6 @@ pgDescribe("approval request lifecycle security (PostgreSQL)", () => {
   });
 
   it("approve then deny is rejected — the first decision stands", async () => {
-    ctx = await setupCtx();
     const store = await seed("apr-flip");
     await store.decideApprovalRequest(ctx.layer, "apr-flip", "approved", { actor: DECIDER });
 
@@ -127,7 +160,6 @@ pgDescribe("approval request lifecycle security (PostgreSQL)", () => {
   });
 
   it("deciding a request that does not exist reports not-found", async () => {
-    ctx = await setupCtx();
     const store = await import("../../async-stores/async-approval-request-store.js");
 
     await expect(
@@ -136,7 +168,6 @@ pgDescribe("approval request lifecycle security (PostgreSQL)", () => {
   });
 
   it("markCompleted on a still-pending request is rejected", async () => {
-    ctx = await setupCtx();
     const store = await seed("apr-pending");
 
     await expect(
@@ -149,7 +180,6 @@ pgDescribe("approval request lifecycle security (PostgreSQL)", () => {
     The ownership check is the containment that matters: without it any caller who learned a request id
     could redeem someone else's approved grant.
     */
-    ctx = await setupCtx();
     const store = await seed("apr-owner");
     await store.decideApprovalRequest(ctx.layer, "apr-owner", "approved", { actor: DECIDER });
 
@@ -164,4 +194,116 @@ pgDescribe("approval request lifecycle security (PostgreSQL)", () => {
     });
     expect(completed.status).toBe("completed");
   });
+
+  it("rejects an exact same-millisecond audit primary-key duplicate", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      const tiedAt = new Date("2026-08-16T23:22:00.000Z");
+      vi.setSystemTime(tiedAt);
+      const store = await seed("apr-audit-primary-key");
+      const [created] = await store.getApprovalAuditHistory(ctx.layer.db, "apr-audit-primary-key");
+      expect(created).toBeDefined();
+      const duplicateError = await h.adminDb().insert(schema.project.approvalRequestAuditEvents).values({
+        projectId: "__legacy_unscoped__",
+        id: created!.id,
+        requestId: created!.requestId,
+        eventType: created!.eventType,
+        actorId: created!.actor.actorId,
+        actorType: created!.actor.actorType,
+        actorName: created!.actor.actorName,
+        note: created!.note ?? null,
+        createdAt: created!.createdAt,
+      }).then(() => null, (error: unknown) => error as { cause?: unknown });
+      expect(duplicateError).toMatchObject({ cause: { code: "23505" } });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each([
+    ["pending double approve", "approved", "approved"] as const,
+    ["pending double deny", "denied", "denied"] as const,
+    ["pending approve versus deny", "approved", "denied"] as const,
+  ])("runs overlapping %s decisions without duplicate audit IDs", async (_name, first, second) => {
+    const store = await seed(`apr-race-${first}-${second}`);
+    const requestId = `apr-race-${first}-${second}`;
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(new Date("2026-08-16T23:22:00.000Z"));
+      let release!: () => void;
+      const barrier = new Promise<void>((resolve) => { release = resolve; });
+      const windows: Array<{ started: number; settled: number }> = [];
+      const racer = async (status: "approved" | "denied") => {
+        await barrier;
+        const window = { started: performance.now(), settled: Number.NaN };
+        windows.push(window);
+        try {
+          return await store.decideApprovalRequest(ctx.layer, requestId, status, { actor: DECIDER });
+        } finally {
+          window.settled = performance.now();
+        }
+      };
+      const racers = [racer(first), racer(second)];
+      await Promise.resolve();
+      release();
+      const outcomes = await Promise.allSettled(racers);
+      expect(windows).toHaveLength(2);
+      expect(Math.max(...windows.map((window) => window.started))).toBeLessThan(
+        Math.min(...windows.map((window) => window.settled)),
+      );
+      expect(outcomes.filter((outcome) => outcome.status === "fulfilled")).toHaveLength(1);
+      expect(outcomes.filter((outcome) => outcome.status === "rejected")).toHaveLength(1);
+      const loser = outcomes.find((outcome) => outcome.status === "rejected") as PromiseRejectedResult;
+      expect(String(loser.reason)).toMatch(/Invalid approval request transition/);
+      expect(String(loser.reason)).not.toMatch(/duplicate key|unique constraint/i);
+      const winner = outcomes.find((outcome) => outcome.status === "fulfilled") as PromiseFulfilledResult<{ status: string }>;
+      expect((await store.getApprovalRequest(ctx.layer.db, requestId))?.status).toBe(winner.value.status);
+      const history = await store.getApprovalAuditHistory(ctx.layer.db, requestId);
+      expect(history.filter((event) => event.eventType === winner.value.status)).toHaveLength(1);
+      expect(new Set(history.map((event) => `${event.eventType}:${event.createdAt}`)).size).toBe(history.length);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("runs overlapping approved double completion without duplicate audit IDs", async () => {
+    const store = await seed("apr-race-completed");
+    await store.decideApprovalRequest(ctx.layer, "apr-race-completed", "approved", { actor: DECIDER });
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(new Date("2026-08-16T23:22:00.000Z"));
+      let release!: () => void;
+      const barrier = new Promise<void>((resolve) => { release = resolve; });
+      const windows: Array<{ started: number; settled: number }> = [];
+      const racer = async () => {
+        await barrier;
+        const window = { started: performance.now(), settled: Number.NaN };
+        windows.push(window);
+        try {
+          return await store.markApprovalRequestCompleted(ctx.layer, "apr-race-completed", { actor: DECIDER });
+        } finally {
+          window.settled = performance.now();
+        }
+      };
+      const outcomes = [racer(), racer()];
+      await Promise.resolve();
+      release();
+      const settled = await Promise.allSettled(outcomes);
+      expect(Math.max(...windows.map((window) => window.started))).toBeLessThan(
+        Math.min(...windows.map((window) => window.settled)),
+      );
+      expect(settled.filter((outcome) => outcome.status === "fulfilled")).toHaveLength(1);
+      expect(settled.filter((outcome) => outcome.status === "rejected")).toHaveLength(1);
+      const loser = settled.find((outcome) => outcome.status === "rejected") as PromiseRejectedResult;
+      expect(String(loser.reason)).toMatch(/Invalid approval request transition/);
+      expect(String(loser.reason)).not.toMatch(/duplicate key|unique constraint/i);
+      expect((await store.getApprovalRequest(ctx.layer.db, "apr-race-completed"))?.status).toBe("completed");
+      const history = await store.getApprovalAuditHistory(ctx.layer.db, "apr-race-completed");
+      expect(history.filter((event) => event.eventType === "completed")).toHaveLength(1);
+      expect(new Set(history.map((event) => `${event.eventType}:${event.createdAt}`)).size).toBe(history.length);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
 });

@@ -523,7 +523,14 @@ describe("useAppSettings", () => {
     });
   });
 
-  it("derives todosEnabled from experimentalFeatures.todoView", async () => {
+  /*
+  FNXC:Navigation 2026-08-15-22:15:
+  FN-8762 (5b2b31d2c9) extracted Todo Lists into the bundled `fusion-plugin-todos`
+  plugin and removed the host `todosEnabled` derivation from useAppSettings; the
+  `experimentalFeatures.todoView` gate no longer exists. Regression-pin that the
+  removed field never reappears on the hook result.
+  */
+  it("no longer derives a host todosEnabled flag (Todos is the fusion-plugin-todos plugin, FN-8762)", async () => {
     mockFetchSettings.mockResolvedValueOnce({
       autoMerge: false,
       globalPause: false,
@@ -539,8 +546,9 @@ describe("useAppSettings", () => {
     const { result } = renderHook(() => useAppSettings("proj_123"));
 
     await waitFor(() => {
-      expect(result.current.todosEnabled).toBe(true);
+      expect(result.current.taskStuckTimeoutMs).toBe(600000);
     });
+    expect("todosEnabled" in result.current).toBe(false);
   });
 
   it("derives goalsEnabled from experimentalFeatures.goalsView", async () => {

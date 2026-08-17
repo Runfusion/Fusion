@@ -4,7 +4,6 @@ import type { Task, TraitFlags } from "@fusion/core";
 import { enrichRunningAgentTaskShapeFromFlags, isRunningAgentTask, isWaitingAgentTask } from "../../../core/src/agents/live-agent-count";
 import { fetchExecutorStats } from "../api";
 import type { ExecutorStats, ExecutorState } from "../api";
-import { isTaskStuck } from "../utils/taskStuck";
 import { isLikelyTabSuspensionError, isVisibilityResumeError, useTabVisibilitySuspension, useVisibilityAwarePoll } from "./visibilitySuspension";
 
 const POLL_INTERVAL_MS = 5000; // 5 seconds - different from useProjectHealth's 10s
@@ -14,6 +13,10 @@ const POLL_INTERVAL_MS = 5000; // 5 seconds - different from useProjectHealth's 
  */
 const TRANSIENT_FAILURE_THRESHOLD = 2;
 
+/*
+FNXC:StuckTagRemoval 2026-08-17-22:30: Operator removed stuck-task tagging from the dashboard; engine recovery sweeps still consume taskStuckTimeoutMs server-side.
+This hook no longer derives a stuck-task count.
+*/
 export interface UseExecutorStatsResult {
   /** Aggregated executor statistics */
   stats: ExecutorStats;
@@ -71,13 +74,16 @@ export function deriveExecutorState(
  */
 export type ExecutorColumnFlags = Pick<TraitFlags, "complete" | "archived" | "intake" | "hold" | "countsTowardWip" | "mergeOrchestration" | "mergeBlocker">;
 
-export function deriveStatsFromTasks(tasks: Task[], taskStuckTimeoutMs?: number, lastFetchTimeMs?: number, columnFlagsById?: ReadonlyMap<string, ExecutorColumnFlags>, columnFlagsByTaskId?: ReadonlyMap<string, ExecutorColumnFlags>): Pick<
+/*
+FNXC:StuckTagRemoval 2026-08-17-22:30: Operator removed stuck-task tagging from the dashboard; engine recovery sweeps still consume taskStuckTimeoutMs server-side.
+The stuck-task count and the taskStuckTimeoutMs/lastFetchTimeMs parameters are gone from this derivation.
+*/
+export function deriveStatsFromTasks(tasks: Task[], columnFlagsById?: ReadonlyMap<string, ExecutorColumnFlags>, columnFlagsByTaskId?: ReadonlyMap<string, ExecutorColumnFlags>): Pick<
   ExecutorStats,
-  "runningTaskCount" | "blockedTaskCount" | "stuckTaskCount" | "queuedTaskCount" | "inReviewCount"
+  "runningTaskCount" | "blockedTaskCount" | "queuedTaskCount" | "inReviewCount"
 > {
   let runningTaskCount = 0;
   let blockedTaskCount = 0;
-  let stuckTaskCount = 0;
   let queuedTaskCount = 0;
   let inReviewCount = 0;
 
@@ -86,17 +92,6 @@ export function deriveStatsFromTasks(tasks: Task[], taskStuckTimeoutMs?: number,
     const enriched = enrichRunningAgentTaskShapeFromFlags(task, columnFlagsByTaskId?.get(task.id) ?? columnFlagsById?.get(task.column));
     if (isRunningAgentTask(enriched)) {
       runningTaskCount++;
-      /*
-      FNXC:WorkflowResolvedColumns 2026-07-30-00:20 (PR #2772 review):
-      Per-task WIP flags, same precedence as line ~86. `isTaskStuck` gained this parameter and
-      TaskCard supplies it, so the repo-wide seam gate was satisfied by that ONE caller — this path
-      was still passing three arguments and counting zero stuck tasks on a renamed board.
-
-      That is the gate's documented limit made concrete: it proves SOME caller supplies the
-      parameter, never that ALL do. Worth knowing before trusting it as coverage.
-      */
-      if (isTaskStuck(task, taskStuckTimeoutMs, lastFetchTimeMs,
-        columnFlagsByTaskId?.get(task.id) ?? columnFlagsById?.get(task.column))) stuckTaskCount++;
     }
     if (isWaitingAgentTask(enriched)) queuedTaskCount++;
     // Kept in the API shape for compatibility; the footer no longer renders it.
@@ -120,7 +115,6 @@ export function deriveStatsFromTasks(tasks: Task[], taskStuckTimeoutMs?: number,
   return {
     runningTaskCount,
     blockedTaskCount,
-    stuckTaskCount,
     queuedTaskCount,
     inReviewCount,
   };
@@ -141,8 +135,6 @@ function hasActionableBlockedBy(blockedBy: Task["blockedBy"] | string[] | null):
  *   so footer counts always match the board state
  * - Polls `/api/executor/stats` every 5 seconds for executor state
  * - Derives blockedTaskCount from tasks with blockedBy field set
- * - Derives stuckTaskCount using the project's `taskStuckTimeoutMs` setting;
- *   returns 0 when the setting is undefined/disabled
  * - Derives executorState from globalPause and enginePaused flags, with globalPause mapping to "stopped" and enginePaused to "paused" at any running count
  * - Returns ExecutorStats object with reactive updates
  */
@@ -155,7 +147,7 @@ const DEFAULT_API_DATA: Pick<ExecutorStats, "maxConcurrent" | "lastActivityAt"> 
   maxConcurrent: 2,
 };
 
-export function useExecutorStats(tasks: Task[], projectId?: string, taskStuckTimeoutMs?: number, lastFetchTimeMs?: number, columnFlagsByTaskId?: ReadonlyMap<string, ExecutorColumnFlags>): UseExecutorStatsResult {
+export function useExecutorStats(tasks: Task[], projectId?: string, columnFlagsByTaskId?: ReadonlyMap<string, ExecutorColumnFlags>): UseExecutorStatsResult {
 
   const [apiDataState, setApiDataState] = useState<{
     projectId?: string;
@@ -257,7 +249,7 @@ export function useExecutorStats(tasks: Task[], projectId?: string, taskStuckTim
   const effectiveLoading = loading || (!error && !currentProjectApiDataState);
 
   // Derive stats from tasks and API data
-  const taskStats = deriveStatsFromTasks(tasks, taskStuckTimeoutMs, lastFetchTimeMs, undefined, columnFlagsByTaskId);
+  const taskStats = deriveStatsFromTasks(tasks, undefined, columnFlagsByTaskId);
   const executorState = deriveExecutorState(
     apiData.globalPause,
     apiData.enginePaused,

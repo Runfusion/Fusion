@@ -1,5 +1,19 @@
 # @fusion-plugin-examples/compound-engineering
 
+## 0.1.36-beta.1
+
+### Patch Changes
+
+- @fusion/core@0.77.0-beta.1
+- @fusion/plugin-sdk@0.77.0-beta.1
+
+## 0.1.36-beta.0
+
+### Patch Changes
+
+- @fusion/core@0.77.0-beta.0
+- @fusion/plugin-sdk@0.77.0-beta.0
+
 ## 0.1.35
 
 ### Patch Changes

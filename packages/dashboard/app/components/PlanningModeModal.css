@@ -53,7 +53,7 @@ FNXC:PlanningMode 2026-06-21-00:00:
 FN-6886 promotes Planning Mode into the main app content area. The embedded shell fills the available content pane and intentionally disables modal-only sizing/resizing so the left sidebar owns navigation and no backdrop shell remains.
 */
 /*
-FNXC:Planning 2026-06-23-02:00:
+FNXC:Planning 2026-08-16-14:48:
 The embedded Planning wrapper matches Missions' shell: NO outer padding. Missions' inline shell (mission-manager--inline) has no wrapper inset — its header supplies the top/side padding (var(--space-lg) var(--space-xl)) and the split body fills edge-to-edge below. Mirroring that here removes the previous extra var(--space-lg) inset so Planning's header and two-pane body align with Missions.
 */
 .planning-view {
@@ -293,7 +293,7 @@ The embedded planning header must be a visual SIBLING of MissionManager's inline
 }
 
 /*
-FNXC:Planning 2026-06-23-01:15:
+FNXC:Planning 2026-08-16-14:48:
 Embedded Planning is a real two-pane view mirroring Missions (mission-manager__split): the left sidebar is a full-height flex column (list scrolls, footer pinned to bottom) and the right detail pane fills the remaining width AND height. The sidebar surface/border/width treatment matches mission-manager__sidebar — var(--surface) background, a single border-right divider — so the two views read consistently. The flex chain planning-view -> planning-modal--embedded -> planning-modal-body keeps the whole layout filling the main-content pane to the bottom.
 */
 .planning-sidebar {
@@ -308,7 +308,7 @@ Embedded Planning is a real two-pane view mirroring Missions (mission-manager__s
 }
 
 /*
-FNXC:Planning 2026-06-23-02:00:
+FNXC:Planning 2026-08-16-14:48:
 Sidebar resize handle — identical treatment to MissionManager's mission-manager__sidebar-resize-handle: a thin (var(--space-sm)) col-resize strip whose ::before center bar tints with var(--todo) on hover/active, plus a focus ring for keyboard resize. touch-action:none keeps the pointer drag from scrolling on trackpads.
 */
 .planning-sidebar-resize-handle {
@@ -342,8 +342,8 @@ Sidebar resize handle — identical treatment to MissionManager's mission-manage
 }
 
 /*
-FNXC:Planning 2026-06-23-02:00:
-Footer matches MissionManager's mission-manager__sidebar-footer EXACTLY: padding var(--space-md), a single border-top divider (var(--btn-border-width) solid var(--border)), gap var(--space-sm), centered. Missions has no separate footer band styling beyond the centered CTA, so we mirror that — no extra bottom padding/margin and no empty space. The column direction is the only deviation, required because Planning carries the show/hide-archived link beneath the CTA (Missions has a single child); align-items stays stretch so the full-width CTA fills the footer like Missions'.
+FNXC:Planning 2026-08-16-14:48:
+Planning intentionally retains this bottom-pinned session footer at its current metrics. Missions now uses a top-anchored sidebar CTA, so this footer preserves its own padding, border-top, gap, and column layout for the archived-session link.
 */
 .planning-sidebar-footer {
   display: flex;
@@ -377,8 +377,8 @@ Footer matches MissionManager's mission-manager__sidebar-footer EXACTLY: padding
 }
 
 /*
-FNXC:Planning 2026-06-23-02:00:
-The New session button must look EXACTLY like Missions' primary sidebar create button (mission-manager__sidebar-cta with btn btn-primary): same full-width fill, same min-height (calc(--space-lg * 2 + --space-xs)), centered icon+label gap, inherited font-size. The earlier .active "inset ring" outline is REMOVED — Missions' CTA has no ring in any state, so the no-session-selected (.active) state now relies solely on the empty/initial detail pane to signal the new-session view, keeping the two buttons visually identical.
+FNXC:Planning 2026-08-16-14:48:
+Planning intentionally retains this bottom-pinned New session button at its current metrics. Missions now anchors its slightly taller CTA at the top of its sidebar; both controls reuse the shared primary button treatment without requiring exact height parity. The earlier .active "inset ring" outline is REMOVED so the no-session-selected (.active) state relies solely on the empty/initial detail pane.
 */
 .planning-sidebar-new {
   width: 100%;

@@ -86,6 +86,7 @@ import {
   settingsModalUser,
   expectSettingPersists,
   installSettingsModalEnv,
+  flushSettingsAutoSave,
 } from "./SettingsModal.test-harness";
 
 const mockListDiscussionCategories = vi.fn(async () => ({ categories: [] }));
@@ -257,8 +258,12 @@ describe("SettingsModal", () => {
       const category = await screen.findByLabelText("Discussion category");
       expect(category).toBeEnabled();
       expect(screen.getByRole("option", { name: "Ideas" })).toHaveValue("DC_ideas");
-      await settingsModalUser.selectOptions(category, "DC_ideas");
-      await waitFor(() => expect(mockUpdateSettings.mock.calls[0]?.[0]).toMatchObject({ reportDiscussionCategory: "DC_ideas" }));
+      // FNXC:SettingsModalTests 2026-08-16-03:46: flush the 500ms auto-save debounce on the fake clock instead of a real-timer waitFor (FN-2707); assertions unchanged.
+      vi.useFakeTimers();
+      fireEvent.change(category, { target: { value: "DC_ideas" } });
+      await flushSettingsAutoSave();
+      vi.useRealTimers();
+      expect(mockUpdateSettings.mock.calls[0]?.[0]).toMatchObject({ reportDiscussionCategory: "DC_ideas" });
     });
 
     it("renders completion documentation automation control", async () => {
@@ -282,10 +287,13 @@ describe("SettingsModal", () => {
 
       const policy = screen.getByLabelText("Ephemeral agent follow-up tasks");
       expect(policy).toBeInTheDocument();
-      await settingsModalUser.selectOptions(policy, "deny");
-      await waitFor(() => expect(mockUpdateSettings.mock.calls[0]?.[0]).toMatchObject({
+      vi.useFakeTimers();
+      fireEvent.change(policy, { target: { value: "deny" } });
+      await flushSettingsAutoSave();
+      vi.useRealTimers();
+      expect(mockUpdateSettings.mock.calls[0]?.[0]).toMatchObject({
         ephemeralAgentTaskCreationPolicy: "deny",
-      }));
+      });
     });
 
     it("reports Quick Chat launcher changes immediately before save", async () => {
@@ -384,12 +392,15 @@ describe("SettingsModal", () => {
       renderModal({ initialSection: "general" });
       await waitForSettingsModalReady();
 
+      vi.useFakeTimers();
       fireEvent.change(screen.getByLabelText("In-app report mode"), { target: { value: "auto-file" } });
       fireEvent.change(screen.getByLabelText("Bug report override"), { target: { value: "draft-review" } });
       fireEvent.click(screen.getByLabelText("Deduplicate reports against public roadmap"));
       fireEvent.change(screen.getByLabelText("Public roadmap label"), { target: { value: "planned" } });
 
-      await waitFor(() => expect(mockUpdateSettings).toHaveBeenCalled());
+      await flushSettingsAutoSave();
+      vi.useRealTimers();
+      expect(mockUpdateSettings).toHaveBeenCalled();
       expect(mockUpdateSettings.mock.calls[0]?.[0]).toEqual(expect.objectContaining({
         reportMode: "auto-file",
         reportModeByAction: { bug: "draft-review" },
@@ -456,22 +467,22 @@ describe("SettingsModal", () => {
       const mailCleanupSelect = screen.getByLabelText("Auto-prune old mail") as HTMLSelectElement;
       expect(mailCleanupSelect.value).toBe("0");
 
-      await settingsModalUser.selectOptions(mailCleanupSelect, "7");
+      vi.useFakeTimers();
+      fireEvent.change(mailCleanupSelect, { target: { value: "7" } });
 
-      await waitFor(() => {
-        expect(mockUpdateSettings).toHaveBeenCalled();
-      });
+      await flushSettingsAutoSave();
+      expect(mockUpdateSettings).toHaveBeenCalled();
 
       const payload = mockUpdateSettings.mock.calls[0][0] as Record<string, unknown>;
       expect(payload.mailAutoCleanupDays).toBe(7);
 
       mockUpdateSettings.mockClear();
 
-      await settingsModalUser.selectOptions(mailCleanupSelect, "0");
+      fireEvent.change(mailCleanupSelect, { target: { value: "0" } });
 
-      await waitFor(() => {
-        expect(mockUpdateSettings).toHaveBeenCalled();
-      });
+      await flushSettingsAutoSave();
+      vi.useRealTimers();
+      expect(mockUpdateSettings).toHaveBeenCalled();
 
       const offPayload = mockUpdateSettings.mock.calls[0][0] as Record<string, unknown>;
       expect(offPayload.mailAutoCleanupDays).toBe(0);
@@ -491,13 +502,14 @@ describe("SettingsModal", () => {
       expect(fetchLimitInput.placeholder).toBe("200");
       expect(summaryMaxInput.placeholder).toBe("3000");
 
-      await settingsModalUser.type(recentInput, "7");
-      await settingsModalUser.type(fetchLimitInput, "60");
-      await settingsModalUser.type(summaryMaxInput, "900");
+      vi.useFakeTimers();
+      fireEvent.change(recentInput, { target: { value: "7" } });
+      fireEvent.change(fetchLimitInput, { target: { value: "60" } });
+      fireEvent.change(summaryMaxInput, { target: { value: "900" } });
 
-      await waitFor(() => {
-        expect(mockUpdateSettings).toHaveBeenCalled();
-      });
+      await flushSettingsAutoSave();
+      vi.useRealTimers();
+      expect(mockUpdateSettings).toHaveBeenCalled();
 
       const payload = mockUpdateSettings.mock.calls[0][0] as Record<string, unknown>;
       expect(payload.chatRoomRecentVerbatimMessages).toBe(7);
@@ -516,12 +528,13 @@ describe("SettingsModal", () => {
       expect(modeSelect.value).toBe("off");
       expect(repoSelect.value).toBe("__custom__");
 
-      await settingsModalUser.selectOptions(modeSelect, "new-tasks");
-      await settingsModalUser.type(screen.getByPlaceholderText("owner/repo"), "octo/repo");
+      vi.useFakeTimers();
+      fireEvent.change(modeSelect, { target: { value: "new-tasks" } });
+      fireEvent.change(screen.getByPlaceholderText("owner/repo"), { target: { value: "octo/repo" } });
 
-      await waitFor(() => {
-        expect(mockUpdateSettings).toHaveBeenCalled();
-      });
+      await flushSettingsAutoSave();
+      vi.useRealTimers();
+      expect(mockUpdateSettings).toHaveBeenCalled();
 
       const payload = mockUpdateSettings.mock.calls[0][0] as Record<string, unknown>;
       expect(payload.githubTrackingEnabledByDefault).toBe(true);
@@ -548,12 +561,13 @@ describe("SettingsModal", () => {
       expect(screen.getByText(/Blank uses GitLab.com or the global default/i)).toBeInTheDocument();
       expect(screen.getByText(/Blank derives <instance>\/api\/v4/i)).toBeInTheDocument();
 
-      await settingsModalUser.type(screen.getByLabelText("GitLab instance URL"), " https://gitlab.example.com/gitlab/ ");
-      await settingsModalUser.type(screen.getByLabelText("GitLab API base URL (optional / advanced)"), " https://api.example.com/v4/ ");
+      vi.useFakeTimers();
+      fireEvent.change(screen.getByLabelText("GitLab instance URL"), { target: { value: " https://gitlab.example.com/gitlab/ " } });
+      fireEvent.change(screen.getByLabelText("GitLab API base URL (optional / advanced)"), { target: { value: " https://api.example.com/v4/ " } });
 
-      await waitFor(() => {
-        expect(mockUpdateSettings).toHaveBeenCalled();
-      });
+      await flushSettingsAutoSave();
+      vi.useRealTimers();
+      expect(mockUpdateSettings).toHaveBeenCalled();
 
       const payload = mockUpdateSettings.mock.calls[0][0] as Record<string, unknown>;
       expect(payload.gitlabInstanceUrl).toBe("https://gitlab.example.com/gitlab/");
@@ -584,11 +598,12 @@ describe("SettingsModal", () => {
       renderModal({ initialSection: "source-control" });
       await waitForSettingsModalReady();
 
-      await settingsModalUser.click(screen.getByLabelText("Enable GitLab integration"));
+      vi.useFakeTimers();
+      fireEvent.click(screen.getByLabelText("Enable GitLab integration"));
 
-      await waitFor(() => {
-        expect(mockUpdateSettings).toHaveBeenCalled();
-      });
+      await flushSettingsAutoSave();
+      vi.useRealTimers();
+      expect(mockUpdateSettings).toHaveBeenCalled();
 
       expect(mockUpdateSettings.mock.calls[0][0]).toMatchObject({ gitlabEnabled: false });
       expect(mockUpdateSettings.mock.calls[0][0]).not.toHaveProperty("gitlabInstanceUrl");
@@ -612,12 +627,13 @@ describe("SettingsModal", () => {
       renderModal({ initialSection: "source-control" });
       await waitForSettingsModalReady();
 
-      await settingsModalUser.clear(screen.getByLabelText("GitLab instance URL"));
-      await settingsModalUser.clear(screen.getByLabelText("GitLab API base URL (optional / advanced)"));
+      vi.useFakeTimers();
+      fireEvent.change(screen.getByLabelText("GitLab instance URL"), { target: { value: "" } });
+      fireEvent.change(screen.getByLabelText("GitLab API base URL (optional / advanced)"), { target: { value: "" } });
 
-      await waitFor(() => {
-        expect(mockUpdateSettings).toHaveBeenCalled();
-      });
+      await flushSettingsAutoSave();
+      vi.useRealTimers();
+      expect(mockUpdateSettings).toHaveBeenCalled();
 
       expect(mockUpdateSettings.mock.calls[0][0]).toMatchObject({
         gitlabInstanceUrl: null,
@@ -636,11 +652,12 @@ describe("SettingsModal", () => {
       expect(importLinkToggle.checked).toBe(false);
       expect(screen.getByText(/does not turn GitHub tracking on for ordinary new tasks/i)).toBeInTheDocument();
 
-      await settingsModalUser.click(importLinkToggle);
+      vi.useFakeTimers();
+      fireEvent.click(importLinkToggle);
 
-      await waitFor(() => {
-        expect(mockUpdateSettings).toHaveBeenCalled();
-      });
+      await flushSettingsAutoSave();
+      vi.useRealTimers();
+      expect(mockUpdateSettings).toHaveBeenCalled();
 
       const payload = mockUpdateSettings.mock.calls[0][0] as Record<string, unknown>;
       expect(payload.githubLinkImportedIssuesToTracking).toBe(true);
@@ -668,11 +685,12 @@ describe("SettingsModal", () => {
       ) as HTMLInputElement;
       expect(importLinkToggle.checked).toBe(true);
 
-      await settingsModalUser.click(importLinkToggle);
+      vi.useFakeTimers();
+      fireEvent.click(importLinkToggle);
 
-      await waitFor(() => {
-        expect(mockUpdateSettings).toHaveBeenCalled();
-      });
+      await flushSettingsAutoSave();
+      vi.useRealTimers();
+      expect(mockUpdateSettings).toHaveBeenCalled();
 
       const payload = mockUpdateSettings.mock.calls[0][0] as Record<string, unknown>;
       expect(payload.githubLinkImportedIssuesToTracking).toBe(false);
@@ -698,12 +716,13 @@ describe("SettingsModal", () => {
       expect(modeSelect.value).toBe("new-tasks");
       expect(repoSelect.value).toBe("__custom__");
 
-      await settingsModalUser.selectOptions(modeSelect, "off");
-      await settingsModalUser.clear(screen.getByPlaceholderText("owner/repo"));
+      vi.useFakeTimers();
+      fireEvent.change(modeSelect, { target: { value: "off" } });
+      fireEvent.change(screen.getByPlaceholderText("owner/repo"), { target: { value: "" } });
 
-      await waitFor(() => {
-        expect(mockUpdateSettings).toHaveBeenCalled();
-      });
+      await flushSettingsAutoSave();
+      vi.useRealTimers();
+      expect(mockUpdateSettings).toHaveBeenCalled();
 
       const payload = mockUpdateSettings.mock.calls[0][0] as Record<string, unknown>;
       expect(payload.githubTrackingEnabledByDefault).toBe(false);
@@ -743,22 +762,22 @@ describe("SettingsModal", () => {
         "Search the tracking repo for likely duplicates before opening a new issue",
       ) as HTMLInputElement;
 
-      await settingsModalUser.click(dedupToggle);
+      vi.useFakeTimers();
+      fireEvent.click(dedupToggle);
 
-      await waitFor(() => {
-        expect(mockUpdateSettings).toHaveBeenCalled();
-      });
+      await flushSettingsAutoSave();
+      expect(mockUpdateSettings).toHaveBeenCalled();
 
       const firstPayload = mockUpdateSettings.mock.calls[0][0] as Record<string, unknown>;
       expect(firstPayload.githubTrackingDedupEnabled).toBe(false);
 
       mockUpdateSettings.mockClear();
 
-      await settingsModalUser.click(dedupToggle);
+      fireEvent.click(dedupToggle);
 
-      await waitFor(() => {
-        expect(mockUpdateSettings).toHaveBeenCalled();
-      });
+      await flushSettingsAutoSave();
+      vi.useRealTimers();
+      expect(mockUpdateSettings).toHaveBeenCalled();
 
       const secondPayload = mockUpdateSettings.mock.calls[0][0] as Record<string, unknown>;
       expect(secondPayload.githubTrackingDedupEnabled).toBe(true);
@@ -802,11 +821,12 @@ describe("SettingsModal", () => {
       const repoSelect = screen.getByRole("combobox", { name: "Project default tracking repo" }) as HTMLSelectElement;
       expect(await within(repoSelect).findByRole("option", { name: "octo/repo" })).toBeInTheDocument();
 
-      await settingsModalUser.selectOptions(repoSelect, "octo/repo");
+      vi.useFakeTimers();
+      fireEvent.change(repoSelect, { target: { value: "octo/repo" } });
 
-      await waitFor(() => {
-        expect(mockUpdateSettings).toHaveBeenCalled();
-      });
+      await flushSettingsAutoSave();
+      vi.useRealTimers();
+      expect(mockUpdateSettings).toHaveBeenCalled();
 
       const payload = mockUpdateSettings.mock.calls[0][0] as Record<string, unknown>;
       expect(payload.githubTrackingDefaultRepo).toBe("octo/repo");

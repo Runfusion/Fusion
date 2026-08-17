@@ -56,9 +56,18 @@ describe("registerConfigMcpPiSettingsRoutes", () => {
     ]), "GET", "/mcp/plugin-servers?projectId=project-a");
 
     expect(response.status).toBe(200);
-    expect(response.body).toEqual({ servers: [
-      { pluginId: "enabled", server: { name: "navigator", transport: "stdio", command: "roslyn" } },
-    ] });
+    /*
+    FNXC:MemoryMcp 2026-08-15-05:10:
+    The route now also reports whether Fusion's built-in memory MCP entry resolves on this host
+    (a Node filesystem probe, deliberately outside the SPA bundle). Its value is environment-
+    dependent, so pin its presence and type while keeping the server list exact.
+    */
+    expect(response.body).toEqual({
+      servers: [
+        { pluginId: "enabled", server: { name: "navigator", transport: "stdio", command: "roslyn" } },
+      ],
+      fusionMemoryMcpAvailable: expect.any(Boolean),
+    });
   });
 
   it("rejects malformed MCP validation bodies", async () => {

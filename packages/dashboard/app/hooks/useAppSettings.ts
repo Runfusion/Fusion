@@ -39,6 +39,7 @@ export interface UseAppSettingsResult {
   quickChatCloseOnOutsideClick: boolean;
   dashboardKeyboardShortcuts: Required<DashboardKeyboardShortcutMap>;
   dismissModalsOnOutsideClick: boolean;
+  quickAddSubmitOnEnter: boolean;
   skipConfirmationDialogs: boolean;
   showQuickChatFAB: boolean;
   maxTotalRetriesBeforeFail: number;
@@ -99,6 +100,7 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
   const [quickChatCloseOnOutsideClick, setQuickChatCloseOnOutsideClick] = useState(true);
   const [dashboardKeyboardShortcuts, setDashboardKeyboardShortcuts] = useState<Required<DashboardKeyboardShortcutMap>>(DEFAULT_DASHBOARD_KEYBOARD_SHORTCUTS);
   const [dismissModalsOnOutsideClick, setDismissModalsOnOutsideClick] = useState(false);
+  const [quickAddSubmitOnEnter, setQuickAddSubmitOnEnter] = useState(true);
   const [skipConfirmationDialogs, setSkipConfirmationDialogs] = useState(false);
   const [showQuickChatFAB, setShowQuickChatFAB] = useState(false);
   const [maxTotalRetriesBeforeFail, setMaxTotalRetriesBeforeFail] = useState(25);
@@ -167,6 +169,7 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
       setQuickChatCloseOnOutsideClick(settings.quickChatCloseOnOutsideClick !== false);
       setDashboardKeyboardShortcuts(resolveDashboardKeyboardShortcuts((settings as GlobalSettings).dashboardKeyboardShortcuts));
       setDismissModalsOnOutsideClick(settings.dismissModalsOnOutsideClick === true);
+      setQuickAddSubmitOnEnter(settings.quickAddSubmitOnEnter !== false);
       setSkipConfirmationDialogs(settings.skipConfirmationDialogs === true);
       setShowQuickChatFAB(nextQuickChatButtonMode === "floating");
       setMaxTotalRetriesBeforeFail(settings.maxTotalRetriesBeforeFail ?? 25);
@@ -363,6 +366,7 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
     quickChatCloseOnOutsideClick,
     dashboardKeyboardShortcuts,
     dismissModalsOnOutsideClick,
+    quickAddSubmitOnEnter,
     skipConfirmationDialogs,
     showQuickChatFAB,
     maxTotalRetriesBeforeFail,

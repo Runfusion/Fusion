@@ -9,9 +9,13 @@
  * unreachable (FUSION_PG_TEST_SKIP=1) so the merge gate stays green.
  */
 
-import { describe, it, expect, afterEach } from "vitest";
-import { execSync } from "node:child_process";
-import { createAsyncDataLayer, type AsyncDataLayer } from "../../postgres/data-layer.js";
+import { it, expect, beforeAll, beforeEach, afterEach, afterAll } from "vitest";
+import type { AsyncDataLayer } from "../../postgres/data-layer.js";
+import {
+  pgDescribe,
+  createSharedPgTaskStoreTestHarness,
+  type SharedPgTaskStoreHarness,
+} from "../../__test-utils__/pg-test-harness.js";
 import {
   getArchivedRowCount,
   listArchivedTaskEntriesPage,
@@ -19,52 +23,15 @@ import {
 } from "../../async-stores/async-archive-db.js";
 import type { ArchivedTaskEntry } from "../../types.js";
 
-const PG_TEST_URL_BASE =
-  process.env.FUSION_PG_TEST_URL_BASE ?? "postgresql://localhost:5432";
-const PG_AVAILABLE =
-  process.env.FUSION_PG_TEST_SKIP !== "1" && Boolean(PG_TEST_URL_BASE);
-
-const pgDescribe = PG_AVAILABLE ? describe : describe.skip;
-
-function uniqueDbName(): string {
-  return `fusion_archive_page_test_${process.pid}_${Math.random().toString(36).slice(2, 8)}`;
-}
-
 /*
-FNXC:PgTestAuthFix 2026-07-14-00:00:
-The inline adminExec used process.env.USER for the psql -U flag, which is 'runner' on GitHub Actions (not 'postgres'). Use the PG_TEST_URL_BASE connection string instead so credentials are always correct.
+FNXC:PgTestHarnessAdoption 2026-08-16-03:45:
+Migrated off the hand-rolled per-test CREATE DATABASE + applySchemaBaseline scaffolding
+(~3-4s of DDL per test) onto the shared PG harness: one template-cloned database per file
+with TRUNCATE-based reset per test. The database setup here was scaffolding, not the
+subject under test (FN-7659 pagination ordering is), and every assertion is unchanged.
 */
-function adminExec(statement: string): void {
-  execSync(
-    `psql "${PG_TEST_URL_BASE}/postgres" -v ON_ERROR_STOP=1 -c "${statement.replace(/"/g, '\\"')}"`,
-    { stdio: "pipe", env: process.env },
-  );
-}
-
 interface Ctx {
-  dbName: string;
   layer: AsyncDataLayer;
-}
-
-async function setupCtx(): Promise<Ctx> {
-  const dbName = uniqueDbName();
-  try { adminExec(`DROP DATABASE IF EXISTS "${dbName}"`); } catch { /* may not exist */ }
-  adminExec(`CREATE DATABASE "${dbName}"`);
-  const testUrl = `${PG_TEST_URL_BASE}/${dbName}`;
-  const { createConnectionSetFromUrl } = await import("../../postgres/connection.js");
-  const { applySchemaBaseline } = await import("../../postgres/schema-applier.js");
-  const { resolveBackendWithOptions } = await import("../../postgres/backend-resolver.js");
-  const backend = resolveBackendWithOptions({ databaseUrl: testUrl, databaseMigrationUrl: testUrl });
-  const connections = await createConnectionSetFromUrl(backend, { poolMax: 3, connectTimeoutSeconds: 5 });
-  await applySchemaBaseline(connections.migration);
-  const layer = createAsyncDataLayer(connections);
-  return { dbName, layer };
-}
-
-async function teardownCtx(ctx: Ctx | null): Promise<void> {
-  if (!ctx) return;
-  try { await ctx.layer.close(); } catch { /* best-effort */ }
-  try { adminExec(`DROP DATABASE IF EXISTS "${ctx.dbName}"`); } catch { /* best-effort */ }
 }
 
 function makeEntry(id: string, archivedAt: string): ArchivedTaskEntry {
@@ -81,21 +48,25 @@ function makeEntry(id: string, archivedAt: string): ArchivedTaskEntry {
 }
 
 pgDescribe("archive pagination (PostgreSQL, FN-7659)", () => {
-  let ctx: Ctx | null = null;
-
-  afterEach(async () => {
-    await teardownCtx(ctx);
-    ctx = null;
+  const h: SharedPgTaskStoreHarness = createSharedPgTaskStoreTestHarness({
+    prefix: "fusion_archive_page_test",
   });
+  let ctx: Ctx;
+
+  beforeAll(h.beforeAll);
+  beforeEach(async () => {
+    await h.beforeEach();
+    ctx = { layer: h.layer() };
+  });
+  afterEach(h.afterEach);
+  afterAll(h.afterAll);
 
   it("returns [] and total 0 for an empty archive", async () => {
-    ctx = await setupCtx();
     expect(await listArchivedTaskEntriesPage(ctx.layer.db, 100, 0)).toEqual([]);
     expect(await getArchivedRowCount(ctx.layer.db)).toBe(0);
   });
 
   it("orders results by archivedAt DESC (newest first)", async () => {
-    ctx = await setupCtx();
     const base = Date.parse("2026-01-01T00:00:00.000Z");
     for (let i = 0; i < 10; i++) {
       await upsertArchivedTask(ctx.layer.db, makeEntry(`FN-${i}`, new Date(base + i * 60_000).toISOString()));
@@ -107,7 +78,6 @@ pgDescribe("archive pagination (PostgreSQL, FN-7659)", () => {
   });
 
   it("windows correctly with LIMIT/OFFSET across page boundaries", async () => {
-    ctx = await setupCtx();
     const base = Date.parse("2026-01-01T00:00:00.000Z");
     const total = 250;
     for (let i = 0; i < total; i++) {
@@ -137,7 +107,6 @@ pgDescribe("archive pagination (PostgreSQL, FN-7659)", () => {
   });
 
   it("handles the exact page-boundary cases (total === 100 and 101)", async () => {
-    ctx = await setupCtx();
     const base = Date.parse("2026-01-01T00:00:00.000Z");
     for (let i = 0; i < 101; i++) {
       await upsertArchivedTask(ctx.layer.db, makeEntry(`FN-${i}`, new Date(base + i * 60_000).toISOString()));

@@ -124,8 +124,11 @@ const mockUseTasks = vi.fn(() => ({
   lastFetchTimeMs: Date.now(),
 }));
 
-// Accept both old and new hook signatures
-vi.mock("../../hooks/useTasks", () => ({
+// Accept both old and new hook signatures.
+// FNXC:DashboardTests 2026-08-15-05:15: App/AppModals/TaskDetailModal also import the real
+// mergeTaskSnapshot from this module, so spread importOriginal instead of replacing the barrel.
+vi.mock("../../hooks/useTasks", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../hooks/useTasks")>()),
   useTasks: (_options?: { projectId?: string; searchQuery?: string; sseEnabled?: boolean }) => mockUseTasks(),
 }));
 
@@ -409,6 +412,19 @@ vi.mock("../../components/AgentsView", () => ({
 
 vi.mock("@fusion-plugin-examples/dependency-graph/dashboard-view", () => ({
   DependencyGraphDashboardView: () => <div data-testid="dependency-graph">No active tasks to display in graph view.</div>,
+}));
+
+// FNXC:TodoPluginOwnership 2026-08-15-05:30: FN-8762 moved the Todo view into the bundled
+// fusion-plugin-todos plugin; the host mounts it through PluginDashboardViewHost with the
+// plugin context supplying openPlanningMode. Mirror the dependency-graph mock shape.
+vi.mock("@fusion-plugin-examples/todos/dashboard-view", () => ({
+  TodoDashboardView: ({ context }: { context?: { openPlanningMode?: (initialPlan: string) => void } }) => (
+    <div data-testid="todo-view">
+      <button type="button" data-testid="todo-planning-button" onClick={() => context?.openPlanningMode?.("Plan: my todo item")}>
+        Plan
+      </button>
+    </div>
+  ),
 }));
 
 vi.mock("../../components/ResearchView", () => ({
@@ -808,7 +824,20 @@ beforeEach(() => {
   /*
    * FNXC:DashboardTests 2026-06-22-03:47:
    * App.test.tsx runs beside other dashboard specs in the same Vitest process, so reset API mock implementations as well as call counts to prevent cross-file implementation leakage.
+   *
+   * FNXC:DashboardTests 2026-08-16-05:22:
+   * vi.clearAllMocks() clears calls but NEVER drops unconsumed mockResolvedValueOnce queue
+   * entries, and a plain mockResolvedValue default does not purge them either — the once-queue
+   * always wins first. A test that queued a Once response and bailed before consuming it (auth
+   * status, settings, health, plugin views) therefore poisoned the NEXT test's first fetch,
+   * which is why "closes board-opened main-panel task detail on one browser back" flaked: a
+   * leaked auth/settings Once value made App render an auto-opened modal surface instead of the
+   * board. mockReset each once-queue-prone API mock here, then re-apply its default below.
    */
+  for (const onceProneApiMock of [fetchSettings, updateSettings, fetchGlobalSettings, fetchDashboardHealth, fetchAuthStatus, fetchModels, fetchScripts, runScript, fetchBoardWorkflows, fetchPluginDashboardViews]) {
+    vi.mocked(onceProneApiMock).mockReset();
+  }
+  vi.mocked(fetchPluginDashboardViews).mockResolvedValue([]);
   vi.mocked(fetchSettings).mockResolvedValue({ ...defaultSettings });
   vi.mocked(updateSettings).mockResolvedValue({ ...defaultSettings });
   vi.mocked(fetchGlobalSettings).mockResolvedValue({ modelOnboardingComplete: true });
@@ -2036,7 +2065,14 @@ describe("App deep link handling", () => {
 
     render(<App />);
     await waitForAppShell();
-    fireEvent.click(screen.getByText("Back nav task"));
+    /*
+    FNXC:DashboardTests 2026-08-16-05:55:
+    The board is a lazy-loaded chunk behind <Suspense fallback={null}> and waitForAppShell only
+    proves the header. Under sharded-lane load the chunk sometimes resolves after this line, so
+    the first board lookup must be the async finder; a sync getByText here rendered this test
+    load-flaky (header-only DOM at failure).
+    */
+    fireEvent.click(await screen.findByText("Back nav task"));
     expect(await screen.findByTestId("main-panel-task-detail")).toBeTruthy();
 
     act(() => {
@@ -2076,7 +2112,8 @@ describe("App deep link handling", () => {
     render(<App />);
     await waitForAppShell();
 
-    fireEvent.click(screen.getByText("Back nav task"));
+    // Same lazy-board race as the sibling test above: first board lookup must be async.
+    fireEvent.click(await screen.findByText("Back nav task"));
     expect(await screen.findByText("Open nested task")).toBeTruthy();
     fireEvent.click(screen.getByText("Open nested task"));
     expect(await screen.findByText("Nested task")).toBeTruthy();
@@ -2710,19 +2747,28 @@ describe("App view switching", () => {
     localStorage.removeItem("kb-dashboard-view-mode");
   });
 
-  // FN-3916 regression: graph view must render via bundled static registration
-  // even when the API reports no plugin dashboard views (e.g. fresh DB).
-  it("renders graph view from bundled static registration when API returns no views", async () => {
+  /*
+  FNXC:TodoPluginEnablement 2026-08-15-05:30:
+  FN-8762 superseded the FN-3916 static-fallback behavior: bundled static registration makes plugin
+  chunks importable, but ONLY the project-scoped dashboard-views API response may MOUNT a plugin
+  view, so a persisted legacy "graph" view cannot revive a plugin the API does not advertise.
+  */
+  it("does not mount the graph view from bundled static registration alone when API returns no views", async () => {
     localStorage.setItem("kb-dashboard-view-mode", "project");
     localStorage.setItem(taskViewStorageKey(), "graph");
-    // API returns empty — plugin not installed/loaded
+    // API returns empty — plugin not installed/enabled for this project
     (fetchPluginDashboardViews as ReturnType<typeof vi.fn>).mockResolvedValueOnce([]);
 
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByTestId("dependency-graph")).toBeInTheDocument();
+      expect(fetchPluginDashboardViews).toHaveBeenCalled();
     });
+    // Let the plugin-view resolution settle, then assert the disabled plugin view never mounted.
+    await waitFor(() => {
+      expect(screen.getByTestId("sidebar-nav-board")).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId("dependency-graph")).toBeNull();
 
     localStorage.removeItem(taskViewStorageKey());
     localStorage.removeItem("kb-dashboard-view-mode");
@@ -2813,16 +2859,26 @@ describe("App view switching", () => {
 
 
   it("opens planning mode when TodoView triggers planning from todo item", async () => {
+    /*
+    FNXC:TodoPluginOwnership 2026-08-15-05:30:
+    FN-8762: the Todo view is now the bundled fusion-plugin-todos plugin view, mounted only when
+    the project-scoped dashboard-views API advertises it. The planning affordance still must open
+    Planning Mode, now via the plugin context's openPlanningMode callback.
+    */
+    // Fresh boot: jsdom shares one session store across the test file, so clear the per-tab
+    // session view copy or the previous test's live view wins over the persisted value.
+    sessionStorage.clear();
     localStorage.setItem("kb-dashboard-view-mode", "project");
-    (fetchSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
-      ...defaultSettings,
-      experimentalFeatures: {
-        ...defaultSettings.experimentalFeatures,
-        todoView: true,
+    localStorage.setItem(taskViewStorageKey(), "plugin:fusion-plugin-todos:todos");
+    // beforeEach's vi.clearAllMocks() does NOT drop queued mockResolvedValueOnce values left
+    // unconsumed by earlier tests, so reset before installing this test's persistent response.
+    (fetchPluginDashboardViews as ReturnType<typeof vi.fn>).mockReset();
+    (fetchPluginDashboardViews as ReturnType<typeof vi.fn>).mockResolvedValue([
+      {
+        pluginId: "fusion-plugin-todos",
+        view: { viewId: "todos", label: "Todos", componentPath: "./dashboard-view", placement: "more" },
       },
-    });
-
-    localStorage.setItem(taskViewStorageKey(), "todos");
+    ]);
 
     render(<App />);
 
@@ -3193,13 +3249,15 @@ describe("App view switching", () => {
     localStorage.removeItem(taskViewStorageKey());
   });
 
-  it("keeps todo view selected after graduation from experimental flags", async () => {
+  it("falls back to board for a persisted legacy todos view instead of reviving the Todo plugin", async () => {
+    /*
+    FNXC:TodoPluginEnablement 2026-08-15-05:30:
+    FN-8762 moved Todo Lists into the bundled fusion-plugin-todos plugin and replaced the graduated
+    built-in view: a persisted legacy "todos" task view must fall back to Board so static bundled
+    registration cannot revive a disabled project's Todo view (see useViewState's "todos" mapping).
+    */
     localStorage.setItem("kb-dashboard-view-mode", "project");
     localStorage.setItem(taskViewStorageKey(), "todos");
-    (fetchSettings as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
-      ...defaultSettings,
-      experimentalFeatures: { ...defaultSettings.experimentalFeatures, todoView: false },
-    });
 
     render(<App />);
 
@@ -3208,14 +3266,9 @@ describe("App view switching", () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByTestId("todo-view")).toBeTruthy();
+      expect(document.querySelector(".board")).toBeTruthy();
     });
-
-    /*
-     * FNXC:DefaultNavigation 2026-06-25-11:03:
-     * Todo graduated with the other primary destinations; stale `todoView:false` settings must not redirect a saved Todo view back to Board. Todos intentionally stay out of the left sidebar because that destination lives in the right dock and mobile More sheet.
-     */
-    expect(document.querySelector(".board")).toBeNull();
+    expect(screen.queryByTestId("todo-view")).toBeNull();
     localStorage.removeItem(taskViewStorageKey());
     localStorage.removeItem("kb-dashboard-view-mode");
   });

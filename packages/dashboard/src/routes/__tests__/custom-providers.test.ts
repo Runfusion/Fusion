@@ -27,16 +27,25 @@ vi.mock("@fusion/core", async () => {
   };
 });
 
-vi.mock("@fusion/engine", () => ({
-  listCliAdapterDescriptors: () => [],
-  createFnAgent: vi.fn(async () => ({ session: { state: { messages: [] }, prompt: vi.fn(), dispose: vi.fn() } })),
-  createResolvedAgentSession: vi.fn(async () => ({
-    session: { state: { messages: [] }, prompt: vi.fn(), dispose: vi.fn() },
-    provider: "test",
-    model: "test",
-  })),
-  promptWithFallback: vi.fn(),
-}));
+/*
+FNXC:DashboardRouteTests 2026-08-15-05:10:
+Route mounting imports model-registry refresh constants from @fusion/engine, so wholesale inline
+engine mocks go stale whenever the barrel grows. Use the canonical createEngineMock helper
+(fallback vi.fn() proxy) instead of hand-listing every export.
+*/
+vi.mock("@fusion/engine", async () => {
+  const { createEngineMock } = await import("../../test/mockCoreEngine.js");
+  return createEngineMock({
+    listCliAdapterDescriptors: () => [],
+    createFnAgent: vi.fn(async () => ({ session: { state: { messages: [] }, prompt: vi.fn(), dispose: vi.fn() } })),
+    createResolvedAgentSession: vi.fn(async () => ({
+      session: { state: { messages: [] }, prompt: vi.fn(), dispose: vi.fn() },
+      provider: "test",
+      model: "test",
+    })),
+    promptWithFallback: vi.fn(),
+  });
+});
 
 function createMockStore(overrides: Partial<TaskStore> = {}): TaskStore {
   return {

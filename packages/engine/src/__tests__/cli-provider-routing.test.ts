@@ -7,6 +7,7 @@ import {
   dropUnsupportedCliFallback,
   stripCliProviderPrefix,
 } from "../agents/cli-provider-routing.js";
+import { deferCrossRuntimeCliFallback } from "../agents/cross-runtime-fallback.js";
 
 const options = (overrides: Record<string, unknown> = {}) => ({
   defaultProvider: undefined,
@@ -66,9 +67,20 @@ describe("CLI provider routing census", () => {
     expect(applyCliRuntimeOptions(options({ defaultProvider: "openai", fallbackProvider: "omp-cli", fallbackModelId: "omp-cli/model" }), "omp")).toMatchObject({ defaultProvider: "omp-cli", defaultModelId: "model", fallbackProvider: undefined });
   });
 
-  it("uses a provider-named Cursor failure in both injected support states", () => {
-    for (const _support of [false, true]) {
-      expect(() => deriveCliRuntimeHint({ runtimeOptions: options({ defaultProvider: "cursor-cli" }), pluginRunner: runner(true) as never, grokApiKeyVisible: false })).toThrow(/Cursor CLI/);
+  it("defers an available Cursor fallback and drops it when the runtime cannot be looked up", () => {
+    const runtimeOptions = options({ defaultProvider: "openai", defaultModelId: "gpt", fallbackProvider: "cursor-cli", fallbackModelId: "cursor-cli/small", fallbackThinkingLevel: "high" });
+    const deferred = deferCrossRuntimeCliFallback(runtimeOptions, runner(true) as never);
+    expect(deferred.options).toMatchObject({ fallbackProvider: undefined, fallbackModelId: undefined, fallbackThinkingLevel: undefined });
+    expect(deferred.deferred).toMatchObject({ providerId: "cursor-cli", runtimeId: "cursor", modelId: "small", thinkingLevel: "high" });
+    expect(dropUnsupportedCliFallback(deferred.options).droppedProvider).toBeUndefined();
+    for (const unavailable of [undefined, runner(false), runner(false, true)]) {
+      expect(deferCrossRuntimeCliFallback(runtimeOptions, unavailable as never).dropped).toBe(true);
+    }
+  });
+
+  it("uses a provider-named Cursor failure when its required runtime is unavailable", () => {
+    for (const pluginRunner of [undefined, runner(false), runner(false, true)]) {
+      expect(() => deriveCliRuntimeHint({ runtimeOptions: options({ defaultProvider: "cursor-cli" }), pluginRunner: pluginRunner as never, grokApiKeyVisible: false })).toThrow(/Cursor CLI/);
     }
   });
 });

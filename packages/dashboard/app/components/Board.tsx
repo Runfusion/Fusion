@@ -90,8 +90,6 @@ interface BoardProps {
   favoriteModels?: string[];
   onToggleFavorite?: (provider: string) => void;
   onToggleModelFavorite?: (modelId: string) => void;
-  /** Project-level stuck task timeout in milliseconds (undefined = disabled) */
-  taskStuckTimeoutMs?: number;
   /** Called when user clicks a mission badge on a task card */
   onOpenMission?: (missionId: string) => void;
   /** Age threshold in milliseconds before high fan-out blockers escalate in dashboard surfaces. */
@@ -177,7 +175,7 @@ function columnDefOffersArchiveAllDone(columnDef: { flags: { complete?: boolean;
   return columnDef.flags.complete === true && columnDef.flags.archived !== true;
 }
 
-export function Board({ tasks, projectId, maxConcurrent, showWorktreeGrouping, onMoveTask, onPauseTask, onUnpauseTask, onResetTask, onDuplicateTask, onMergeTask, onOpenDetail, onOpenRefine, onOpenGroupModal, addToast, onQuickCreate, onNewTask, autoMerge, mergeStrategy = "direct", onToggleAutoMerge, planAutoApproveEnabled, onTogglePlanAutoApprove, globalPaused, onUpdateTask, onRetryTask, onArchiveTask, onUnarchiveTask, onRevertTask, onReviseTask, onDeleteTask, onArchiveAllDone, onLoadArchivedTasks, onLoadMoreArchivedTasks, archivedHasMore, archivedLoadingMore, searchQuery = "", availableModels, onPlanningMode, onSubtaskBreakdown, onOpenDetailWithTab, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, taskStuckTimeoutMs, onOpenMission, staleHighFanoutBlockerAgeThresholdMs, lastFetchTimeMs, prAuthAvailable, onOpenWorkflowEditor, onCreateWorkflow, workflowControlsInHeader = false }: BoardProps) {
+export function Board({ tasks, projectId, maxConcurrent, showWorktreeGrouping, onMoveTask, onPauseTask, onUnpauseTask, onResetTask, onDuplicateTask, onMergeTask, onOpenDetail, onOpenRefine, onOpenGroupModal, addToast, onQuickCreate, onNewTask, autoMerge, mergeStrategy = "direct", onToggleAutoMerge, planAutoApproveEnabled, onTogglePlanAutoApprove, globalPaused, onUpdateTask, onRetryTask, onArchiveTask, onUnarchiveTask, onRevertTask, onReviseTask, onDeleteTask, onArchiveAllDone, onLoadArchivedTasks, onLoadMoreArchivedTasks, archivedHasMore, archivedLoadingMore, searchQuery = "", availableModels, onPlanningMode, onSubtaskBreakdown, onOpenDetailWithTab, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, onOpenMission, staleHighFanoutBlockerAgeThresholdMs, lastFetchTimeMs, prAuthAvailable, onOpenWorkflowEditor, onCreateWorkflow, workflowControlsInHeader = false }: BoardProps) {
   const [archivedCollapsed, setArchivedCollapsed] = useState(true);
   /*
   FNXC:DoneColumnSorting 2026-06-29-16:57:
@@ -1001,7 +999,6 @@ export function Board({ tasks, projectId, maxConcurrent, showWorktreeGrouping, o
                   onToggleFavorite={onToggleFavorite}
                   onToggleModelFavorite={onToggleModelFavorite}
                   isSearchActive={isSearchActive}
-                  taskStuckTimeoutMs={taskStuckTimeoutMs}
                   onOpenMission={onOpenMission}
                   lastFetchTimeMs={lastFetchTimeMs}
                   taskCardFieldDefs={taskCardFieldDefs}
@@ -1104,7 +1101,6 @@ export function Board({ tasks, projectId, maxConcurrent, showWorktreeGrouping, o
                 onToggleFavorite={onToggleFavorite}
                 onToggleModelFavorite={onToggleModelFavorite}
                 isSearchActive={isSearchActive}
-                taskStuckTimeoutMs={taskStuckTimeoutMs}
                 onOpenMission={onOpenMission}
                 lastFetchTimeMs={lastFetchTimeMs}
                 taskCardFieldDefs={taskCardFieldDefs}
@@ -1171,7 +1167,6 @@ export function Board({ tasks, projectId, maxConcurrent, showWorktreeGrouping, o
               onToggleFavorite={onToggleFavorite}
               onToggleModelFavorite={onToggleModelFavorite}
               isSearchActive={isSearchActive}
-              taskStuckTimeoutMs={taskStuckTimeoutMs}
               onOpenMission={onOpenMission}
               lastFetchTimeMs={lastFetchTimeMs}
               taskCardFieldDefs={taskCardFieldDefs}

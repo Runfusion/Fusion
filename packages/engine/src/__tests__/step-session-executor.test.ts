@@ -2618,6 +2618,22 @@ describe("StepSessionExecutor", () => {
   });
 
   describe("cleanup failure diagnostics", () => {
+    it("awaits asynchronous session disposal before the step boundary completes", async () => {
+      const task = makeTaskDetail({ prompt: makeStepPrompt("FN-ASYNC-DISPOSE", 1), steps: [{ name: "Step 0", status: "pending" }] });
+      let resolveDispose!: () => void;
+      const session = makeMockSession();
+      session.dispose = vi.fn(() => new Promise<void>((resolve) => { resolveDispose = resolve; }));
+      mockedCreateFnAgent.mockResolvedValue({ session } as any);
+      const executor = new StepSessionExecutor({ taskDetail: task, worktreePath: "/project/.worktrees/main", rootDir: "/project", settings: makeSettings() });
+      let completed = false;
+      const execution = executor.executeAll().then((result) => { completed = true; return result; });
+      await vi.waitFor(() => expect(session.dispose).toHaveBeenCalledOnce());
+      expect(completed).toBe(false);
+      resolveDispose();
+      await execution;
+      expect(completed).toBe(true);
+    });
+
     it("logs warning when session dispose fails during error cleanup", async () => {
       const task = makeTaskDetail({
         prompt: makeStepPrompt("FN-001", 1),

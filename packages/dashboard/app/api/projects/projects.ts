@@ -74,7 +74,7 @@ export type ExecutorState = "idle" | "running" | "paused" | "stopped";
 
 /** Aggregated executor statistics for the status bar.
  * 
- * Counts (runningTaskCount, blockedTaskCount, queuedTaskCount, inReviewCount, stuckTaskCount)
+ * Counts (runningTaskCount, blockedTaskCount, queuedTaskCount, inReviewCount)
  * are derived client-side from the same tasks array shared with the board, ensuring
  * the footer counts always match the active work states displayed on screen. Queued covers
  * todo plus planning/triage work; Done is intentionally not exposed unless a footer Done
@@ -97,8 +97,11 @@ export interface ExecutorStats {
   runningTaskCount: number;
   /** Number of tasks with blockedBy field set (waiting on file overlap) */
   blockedTaskCount: number;
-  /** Number of "in-progress" tasks with no activity for > 10 minutes */
-  stuckTaskCount: number;
+  /*
+  FNXC:StuckTagRemoval 2026-08-17-22:30:
+  Operator removed stuck-task tagging from the dashboard (stuckTaskCount deleted here);
+  engine recovery sweeps still consume taskStuckTimeoutMs server-side.
+  */
   /** Number of tasks in "todo" plus planning/triage work states */
   queuedTaskCount: number;
   /** Number of tasks in "in-review" column */

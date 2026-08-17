@@ -250,10 +250,9 @@ Use `superviseSpawn(...)` from `@fusion/core` for managed child processes; do no
 4. **Already-on-main classifier applies.** Allow finalize/self-healing recovery when lineage is landed.
 5. **Contamination auto-recovery is bounded.** First pass can auto-drop upstream foreign commits; repeated/ambiguous cases escalate.
 6. **Run post-squash audit policy.** Respect `postMergeAuditMode` (`warn`/`block`/`off`) and auto-recovery stages.
-7. **Enforce pre-commit diff-volume gate.** Block suspicious shrinkage before squash commit.
-8. **Smart-prefer-main overlap guard.** Recent overlapping main commits can flip to prefer-branch.
-9. **Layer-3 scope partition.** Out-of-scope conflicts resolve to main before AI arbitration unless `task.scopeOverride=true`.
-10. **Legacy auto-prerebase is inert.** It belonged to the soft-deprecated `aiMergeTask` pipeline; unified `runAiMerge` does not use it.
+7. **Smart-prefer-main overlap guard.** Recent overlapping main commits can flip to prefer-branch.
+8. **Layer-3 scope partition.** Out-of-scope conflicts resolve to main before AI arbitration unless `task.scopeOverride=true`.
+9. **Legacy auto-prerebase is inert.** It belonged to the soft-deprecated `aiMergeTask` pipeline; unified `runAiMerge` does not use it.
 
 ### Gitignored-path guard on squash merges
 
@@ -276,6 +275,8 @@ Scoped exception (FN-5819/FN-8823): while project auto-merge is On, shared-branc
 `testMode?: boolean` is now available in both project and global settings. If project `testMode === true` (or the resolved default provider is `"mock"` at any tier), every AI lane is forced to `mock/scripted`, overriding per-task and per-lane model selections. The dashboard exposes this via the Settings Modal "Enable test mode" toggle and a persistent "Test mode — no real AI calls" banner.
 
 ### Run Audit
+- FN-9109: `session:cross-runtime-fallback-engaged` records a single retryable-failure handoff from a primary runtime to a deferred CLI runtime. Metadata is ids/outcomes-only (`sessionPurpose`, primary/fallback provider and model IDs, trigger point, failure category, `contextTransferred`); never record error prose or transferred transcript text.
+
 - FN-8958: `merge:orphan-write-fenced` is emitted once per orphan merge body at its fence's first interaction. Metadata is ids/counts/outcomes-only: `{ taskId, category, interaction, suppressedCount }`; `suppressedCount` is the emit-time count (`1` for `interaction:"suppressed"`, `0` for `interaction:"rejected"`), never a cumulative body total.
 
 - Store-open provenance: every `TaskStore.init()` emits `store:open` with ids/paths-only metadata (`pid`, `ppid`, `execPath`, `entry`, `cwd`, `nodeVersion`). Purpose: attribute shared-DB mutations to the process that opened the store (the FN-7910 Ideas-evacuation writer was unidentifiable without it). Tests reading unfiltered `runAuditEvents` must filter out `store:open` rather than assert exact counts.

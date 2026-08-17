@@ -101,8 +101,8 @@ describe("isTaskAgentActive", () => {
     ["done column", taskWithRunningWorkflowStep({ column: "done" }), {}],
     ["archived column with merging status", taskWithRunningWorkflowStep({ column: "archived", status: "merging" }), {}],
     ["archived column with running workflow", taskWithRunningWorkflowStep({ column: "archived" }), {}],
+    // FNXC:StuckTagRemoval 2026-08-17-22:30: stuck-task tagging removed from the dashboard; stuck coverage deleted with it.
     ["render queue", taskWithRunningWorkflowStep(), { queued: true }],
-    ["derived stuck", taskWithRunningWorkflowStep(), { isStuck: true }],
     ["global pause", taskWithRunningWorkflowStep(), { globalPaused: true }],
     ["failed status with fresh planner log", makeTask({ status: "failed", recentAgentActivityAt: new Date().toISOString() }), {}],
     ["paused task with fresh planner log", makeTask({ paused: true, recentAgentActivityAt: new Date().toISOString() }), {}],
@@ -111,7 +111,6 @@ describe("isTaskAgentActive", () => {
     ["awaiting approval with fresh planner log", makeTask({ status: "awaiting-approval", recentAgentActivityAt: new Date().toISOString() }), {}],
     ["awaiting user input with fresh planner log", makeTask({ status: "awaiting-user-input", recentAgentActivityAt: new Date().toISOString() }), {}],
     ["queued replan", makeTask({ status: "needs-replan", recentAgentActivityAt: new Date().toISOString() }), { queued: true }],
-    ["derived stuck replan", makeTask({ status: "needs-replan", recentAgentActivityAt: new Date().toISOString() }), { isStuck: true }],
     ["global pause replan", makeTask({ status: "needs-replan", recentAgentActivityAt: new Date().toISOString() }), { globalPaused: true }],
     ["paused replan", makeTask({ status: "needs-replan", paused: true, recentAgentActivityAt: new Date().toISOString() }), {}],
     ["failed replan", makeTask({ status: "failed", recentAgentActivityAt: new Date().toISOString() }), {}],

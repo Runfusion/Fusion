@@ -67,7 +67,9 @@ export interface SessionSkillContextInput {
 export interface SessionSkillContextResult {
   /** Context to pass to createFnAgent's skillSelection option */
   skillSelectionContext: SkillSelectionContext | undefined;
-  /** Normalized skill names that were resolved (for logging/debugging) */
+  /** Forced names are intent only; resolver confirms availability downstream. */
+  forcedSkillNames: string[];
+  /** Ensure-present names (role fallback and plugin contributions). */
   resolvedSkillNames: string[];
   /** Source of the skills: 'assigned-agent', 'role-fallback', or 'none' */
   skillSource: "assigned-agent" | "role-fallback" | "none";
@@ -266,49 +268,22 @@ export const SKILL_DIAGNOSTIC_MESSAGES = {
 export async function buildSessionSkillContext(
   input: SessionSkillContextInput,
 ): Promise<SessionSkillContextResult> {
-  const { agentStore, task, sessionPurpose, projectRootDir } = input;
-  const { assignedAgentId } = task;
-
-  // Rule 1: Check assigned agent
-  if (assignedAgentId) {
+  let forcedSkillNames: string[] = [];
+  if (input.task.assignedAgentId) {
     try {
-      const agent = await agentStore.getAgent(assignedAgentId);
-      if (agent) {
-        const agentSkills = normalizeAgentSkills(
-          (agent.metadata as Record<string, unknown> | undefined)?.skills,
-        );
-
-        if (agentSkills.length > 0) {
-          return mergePluginSkills(
-            {
-              skillSelectionContext: {
-                projectRootDir,
-                requestedSkillNames: agentSkills,
-                sessionPurpose,
-              },
-              resolvedSkillNames: agentSkills,
-              skillSource: "assigned-agent",
-              additionalSkillPaths: [],
-            },
-            sessionPurpose,
-            projectRootDir,
-            input.pluginRunner,
-          );
-        }
-      }
-    } catch {
-      // Agent lookup failed - fall through to role fallback
-    }
+      const agent = await input.agentStore.getAgent(input.task.assignedAgentId);
+      forcedSkillNames = normalizeAgentSkills((agent?.metadata as Record<string, unknown> | undefined)?.skills);
+    } catch { /* role fallback still applies */ }
   }
-
-  return mergePluginSkills(
-    resolveRoleFallback(sessionPurpose, projectRootDir),
-    sessionPurpose,
-    projectRootDir,
-    input.pluginRunner,
-  );
+  const base = resolveRoleFallback(input.sessionPurpose, input.projectRootDir);
+  const skillSelectionContext: SkillSelectionContext = {
+    projectRootDir: input.projectRootDir,
+    requestedSkillNames: base.resolvedSkillNames,
+    ...(forcedSkillNames.length ? { forcedSkillNames } : {}),
+    sessionPurpose: input.sessionPurpose,
+  };
+  return mergePluginSkills({ ...base, skillSelectionContext, forcedSkillNames, skillSource: forcedSkillNames.length ? "assigned-agent" : base.skillSource }, input.sessionPurpose, input.projectRootDir, input.pluginRunner);
 }
-
 function resolveRoleFallback(
   sessionPurpose: SessionPurpose,
   projectRootDir: string,
@@ -322,14 +297,26 @@ function resolveRoleFallback(
         requestedSkillNames: roleFallbackSkills,
         sessionPurpose,
       },
+      forcedSkillNames: [],
       resolvedSkillNames: roleFallbackSkills,
       skillSource: "role-fallback",
       additionalSkillPaths: [],
     };
   }
 
+  /*
+  FNXC:SkillResolution 2026-08-16-03:52:
+  GitHub #1422 requires project settings to govern every session, including a
+  heartbeat with neither agent nor role skills. Keep an empty context so `-`
+  exclusions reach the resolver instead of letting the loader expose disabled skills.
+  */
   return {
-    skillSelectionContext: undefined,
+    skillSelectionContext: {
+      projectRootDir,
+      requestedSkillNames: [],
+      sessionPurpose,
+    },
+    forcedSkillNames: [],
     resolvedSkillNames: [],
     skillSource: "none",
     additionalSkillPaths: [],
@@ -381,8 +368,10 @@ function mergePluginSkills(
     skillSelectionContext: {
       projectRootDir,
       requestedSkillNames: mergedNames,
+      ...(baseResult.forcedSkillNames.length ? { forcedSkillNames: baseResult.forcedSkillNames } : {}),
       sessionPurpose,
     },
+    forcedSkillNames: baseResult.forcedSkillNames,
     resolvedSkillNames: mergedNames,
     skillSource: baseResult.skillSource === "none" ? "role-fallback" : baseResult.skillSource,
     additionalSkillPaths: mergeAdditionalSkillPaths(baseResult.additionalSkillPaths, additionalSkillPaths),
@@ -403,35 +392,17 @@ export function buildSessionSkillContextSync(
   projectRootDir: string,
   pluginRunner?: PluginRunner,
 ): SessionSkillContextResult {
-  // Rule 1: Check assigned agent skills
-  if (agent) {
-    const agentSkills = normalizeAgentSkills(
-      (agent.metadata as Record<string, unknown> | undefined)?.skills,
-    );
-
-    if (agentSkills.length > 0) {
-      return mergePluginSkills(
-        {
-          skillSelectionContext: {
-            projectRootDir,
-            requestedSkillNames: agentSkills,
-            sessionPurpose,
-          },
-          resolvedSkillNames: agentSkills,
-          skillSource: "assigned-agent",
-          additionalSkillPaths: [],
-        },
-        sessionPurpose,
-        projectRootDir,
-        pluginRunner,
-      );
-    }
-  }
-
-  return mergePluginSkills(
-    resolveRoleFallback(sessionPurpose, projectRootDir),
-    sessionPurpose,
-    projectRootDir,
-    pluginRunner,
-  );
+  const forcedSkillNames = normalizeAgentSkills((agent?.metadata as Record<string, unknown> | undefined)?.skills);
+  const base = resolveRoleFallback(sessionPurpose, projectRootDir);
+  return mergePluginSkills({
+    ...base,
+    forcedSkillNames,
+    skillSelectionContext: {
+      projectRootDir,
+      requestedSkillNames: base.resolvedSkillNames,
+      ...(forcedSkillNames.length ? { forcedSkillNames } : {}),
+      sessionPurpose,
+    },
+    skillSource: forcedSkillNames.length ? "assigned-agent" : base.skillSource,
+  }, sessionPurpose, projectRootDir, pluginRunner);
 }

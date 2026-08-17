@@ -45,8 +45,6 @@ interface WorktreeGroupProps {
     githubIssueAction?: GithubIssueAction;
   }) => Promise<Task>;
   onOpenDetailWithTab?: (task: Task | TaskDetail, initialTab: "changes" | "retries" | "workflow") => void;
-  /** Project-level stuck task timeout in milliseconds (undefined = disabled) */
-  taskStuckTimeoutMs?: number;
   /** Called when user clicks a mission badge on a task card */
   onOpenMission?: (missionId: string) => void;
   /** Timestamp (ms) when task data was last confirmed fresh from the server. Used for freshness-aware stuck detection. */
@@ -96,7 +94,6 @@ function WorktreeGroupComponent({
   onRevertTask,
   onDeleteTask,
   onOpenDetailWithTab,
-  taskStuckTimeoutMs,
   onOpenMission,
   lastFetchTimeMs,
   taskCardFieldDefs,
@@ -169,7 +166,6 @@ function WorktreeGroupComponent({
           onRevertTask={onRevertTask}
           onDeleteTask={onDeleteTask}
           onOpenDetailWithTab={onOpenDetailWithTab}
-          taskStuckTimeoutMs={taskStuckTimeoutMs}
           onOpenMission={onOpenMission}
           lastFetchTimeMs={lastFetchTimeMs}
           cardFieldDefs={taskCardFieldDefs?.get(task.id)}
@@ -208,7 +204,6 @@ function WorktreeGroupComponent({
           onRevertTask={onRevertTask}
           onDeleteTask={onDeleteTask}
           onOpenDetailWithTab={onOpenDetailWithTab}
-          taskStuckTimeoutMs={taskStuckTimeoutMs}
           onOpenMission={onOpenMission}
           lastFetchTimeMs={lastFetchTimeMs}
           cardFieldDefs={taskCardFieldDefs?.get(task.id)}

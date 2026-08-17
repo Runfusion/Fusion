@@ -33,7 +33,6 @@ import { getFreshBatchData } from "../hooks/useBatchBadgeFetch";
 import { useTaskDiffStats } from "../hooks/useTaskDiffStats";
 import { useAgentsMapCache } from "../hooks/useAgentsMapCache";
 import { useLiveTimeTicker } from "../hooks/useLiveTimeTicker";
-import { isTaskStuck } from "../utils/taskStuck";
 import {
   isArchivedColumnRole,
   isCompleteColumnRole,
@@ -644,8 +643,10 @@ interface TaskCardProps {
   onDuplicateTask?: (id: string) => Promise<Task>;
   onMergeTask?: (id: string) => Promise<MergeResult>;
   onOpenDetailWithTab?: (task: Task | TaskDetail, initialTab: "changes" | "retries" | "workflow") => void;
-  /** Project-level stuck task timeout in milliseconds (undefined = disabled) */
-  taskStuckTimeoutMs?: number;
+  /*
+  FNXC:StuckTagRemoval 2026-08-17-22:30: Operator removed stuck-task tagging from the dashboard; engine recovery sweeps still consume taskStuckTimeoutMs server-side.
+  TaskCard no longer takes taskStuckTimeoutMs or renders stuck classes/badges; lastFetchTimeMs stays for retry/recovery freshness checks.
+  */
   /** Called when user clicks the mission badge on a task card. */
   onOpenMission?: (missionId: string) => void;
   /** Called when user moves a task to a different column from the card. */
@@ -658,7 +659,7 @@ interface TaskCardProps {
   onPromote?: (taskId: string) => Promise<void>;
   /** True while this task's promote action is in flight. */
   isPromoting?: boolean;
-  /** Timestamp (ms) when task data was last confirmed fresh from the server. Used for freshness-aware stuck detection. */
+  /** Timestamp (ms) when task data was last confirmed fresh from the server. */
   lastFetchTimeMs?: number;
   /** Disable card drag semantics when embedding in custom draggable containers (e.g. dependency graph). */
   disableDrag?: boolean;
@@ -834,7 +835,6 @@ function areTaskCardPropsEqual(previous: TaskCardProps, next: TaskCardProps): bo
     previous.queued === next.queued &&
     previous.projectId === next.projectId &&
     previous.globalPaused === next.globalPaused &&
-    previous.taskStuckTimeoutMs === next.taskStuckTimeoutMs &&
     previous.prAuthAvailable === next.prAuthAvailable &&
     previous.autoMergeEnabled === next.autoMergeEnabled &&
     previous.mergeStrategy === next.mergeStrategy &&
@@ -1018,7 +1018,6 @@ function TaskCardComponent({
   onDuplicateTask,
   onMergeTask,
   onOpenDetailWithTab,
-  taskStuckTimeoutMs,
   onOpenMission,
   onMoveTask,
   taskColumnFlags,
@@ -1502,7 +1501,6 @@ function TaskCardComponent({
   const normalizedPriority = normalizeTaskPriorityValue(task.priority);
   const showPriorityBadge = normalizedPriority !== DEFAULT_TASK_PRIORITY;
   const PriorityBadgeIcon = getPriorityIcon(normalizedPriority);
-  const isStuck = isTaskStuck(task, taskStuckTimeoutMs, lastFetchTimeMs, taskColumnFlags);
   const stalledReview = getStalledReviewSignal(task);
   const showStalledReview = Boolean(stalledReview && isReviewColumn && !isPaused);
   const hasInReviewStall = shouldShowInReviewStallBadge(task, taskColumnFlags);
@@ -1570,10 +1568,10 @@ function TaskCardComponent({
   optional-gate activity and the column's executing count all read idle. Threading
   ListView alone left this path — the board cards — still broken.
   */
-  const isAgentActive = isTaskAgentActive(task, { globalPaused, queued, isStuck, columnFlags: taskColumnFlags });
+  const isAgentActive = isTaskAgentActive(task, { globalPaused, queued, columnFlags: taskColumnFlags });
   /*
   FNXC:TaskCardOptionalGateBadge 2026-07-21-22:30:
-  Match FN-8055: optional-gate badges pulse only while the card is agent-active (queue/pause/stuck gates suppress the badge).
+  Match FN-8055: optional-gate badges pulse only while the card is agent-active (queue/pause gates suppress the badge).
   */
   const showOptionalGateBadge = Boolean(optionalGateBadge) && isAgentActive;
   /*
@@ -3154,7 +3152,7 @@ function TaskCardComponent({
     }
   }, [addToast, isRetrying, onRetryTask, task.id]);
 
-  const cardClass = `card${dragging ? " dragging" : ""}${queued ? " queued" : ""}${isAgentActive ? " agent-active" : ""}${isFailed ? " failed" : ""}${isPaused ? " paused" : ""}${isStuck ? " stuck" : ""}${isAwaitingApproval ? " awaiting-approval" : ""}${isAwaitingInput ? " awaiting-input" : ""}${fileDragOver ? " file-drop-target" : ""}${isEditing ? " card-editing" : ""}${isSaving ? " card-saving" : ""}`;
+  const cardClass = `card${dragging ? " dragging" : ""}${queued ? " queued" : ""}${isAgentActive ? " agent-active" : ""}${isFailed ? " failed" : ""}${isPaused ? " paused" : ""}${isAwaitingApproval ? " awaiting-approval" : ""}${isAwaitingInput ? " awaiting-input" : ""}${fileDragOver ? " file-drop-target" : ""}${isEditing ? " card-editing" : ""}${isSaving ? " card-saving" : ""}`;
 
   const filesChangedButton = (() => {
     if (isWipColumn) {
@@ -3423,11 +3421,10 @@ function TaskCardComponent({
   A visible non-planning gate is the lifecycle authority while it runs, so suppress only the
   contradictory Planning status shell. Plan Review is intentionally excluded by the shared helper:
   Planning + Plan Review expresses nested planning, while Planning + Code Review is stale state.
-  Paused, stuck, approval, merge, and other operator states retain their existing precedence.
+  Paused, approval, merge, and other operator states retain their existing precedence.
   */
   const suppressPlanningStatusBadge = showOptionalGateBadge && isNonPlanningOptionalGateBadge(optionalGateBadge);
-  const isPlanningStatusBadge = !isStuck
-    && !isPlanReviewReplanCapApproval
+  const isPlanningStatusBadge = !isPlanReviewReplanCapApproval
     && !isAwaitingApproval
     && !isAwaitingInput
     && (isLivePlanning || isTransientPlannerActive || visualStatus === "planning");
@@ -3442,7 +3439,6 @@ function TaskCardComponent({
     && !isWipColumn
     && (queued || visualStatus === "queued");
   const wipLifecycleBadgeLabel = !isPaused
-    && !isStuck
     && !isPlanReviewReplanCapApproval
     && !isAwaitingApproval
     && !showOptionalGateBadge
@@ -3466,9 +3462,7 @@ function TaskCardComponent({
   states the card's own status ("Planning"). The two badges stay orthogonal: what the card IS, and
   which gate is RUNNING.
   */
-  const statusBadgeLabel = isStuck
-    ? t("tasks.stuck", "Stuck")
-    : isPlanReviewReplanCapApproval
+  const statusBadgeLabel = isPlanReviewReplanCapApproval
       ? t("tasks.reviewBudgetExhausted", "Review budget exhausted")
       : isAwaitingApproval
         ? t("tasks.awaitingApproval", "Awaiting Approval")
@@ -3508,7 +3502,6 @@ function TaskCardComponent({
     || cliNeedsAttention
     || Boolean(hasStalePausedReview && stalePausedReviewCopy)
     || Boolean(hasTaskAgeStaleness && taskAgeStalenessCopy)
-    || Boolean(isStuck && (isPaused || !task.status || task.status === "queued"))
     || Boolean(Array.isArray((task as TaskWithBranchProgress).branchProgress) && (task as TaskWithBranchProgress).branchProgress!.length > 0)
     || showPlannerOverseerStateBadge
     || Boolean(showStalledReview && stalledReview)
@@ -3651,7 +3644,7 @@ function TaskCardComponent({
         )}
         {(showStatusBadge || showQueuedToPlanBadge || showQueuedBadge) && (
           <span
-            className={`card-status-badge card-status-badge--${task.column}${showQueuedToPlanBadge ? " queued-to-plan" : ""}${showQueuedBadge && (task.overlapBlockedBy || task.blockedBy) ? " card-status-badge--queued-with-reason" : ""}${isAwaitingApproval ? " awaiting-approval" : ""}${isPlanReviewReplanCapApproval ? " awaiting-approval--plan-review-replan-cap" : ""}${isAwaitingInput ? " awaiting-input" : ""}${isAgentActive ? " pulsing" : ""}${isFailed ? " failed" : ""}${isStuck ? " stuck" : ""}`}
+            className={`card-status-badge card-status-badge--${task.column}${showQueuedToPlanBadge ? " queued-to-plan" : ""}${showQueuedBadge && (task.overlapBlockedBy || task.blockedBy) ? " card-status-badge--queued-with-reason" : ""}${isAwaitingApproval ? " awaiting-approval" : ""}${isPlanReviewReplanCapApproval ? " awaiting-approval--plan-review-replan-cap" : ""}${isAwaitingInput ? " awaiting-input" : ""}${isAgentActive ? " pulsing" : ""}${isFailed ? " failed" : ""}`}
             title={
               isPlanReviewReplanCapApproval
                 ? t(
@@ -3705,7 +3698,7 @@ function TaskCardComponent({
         {showOptionalGateBadge && optionalGateBadge && (
           /*
           FNXC:TaskCardPlanReviewBadge 2026-07-11-12:06:
-          The Reviewing badge is additive to the normal header status badge so operators can distinguish "planning" from active Plan Review without hiding paused/stuck/status affordances.
+          The Reviewing badge is additive to the normal header status badge so operators can distinguish "planning" from active Plan Review without hiding paused/status affordances.
 
           FNXC:TaskCardOptionalGateBadge 2026-07-21-22:30:
           Same additive pattern for Code Review / Browser Verification in In-review. Label is the gate's own name. These gates stay out of the WIP bullet list.
@@ -3794,11 +3787,6 @@ function TaskCardComponent({
             title={`${taskAgeStalenessCopy.headline} — ${taskAgeStalenessCopy.description}`}
           >
             {taskAgeStalenessCopy.badgeLabel}
-          </span>
-        )}
-        {isStuck && (isPaused || !task.status || task.status === "queued") && (
-          <span className="card-status-badge stuck">
-            {t("tasks.stuck", "Stuck")}
           </span>
         )}
         {/* U13/U9: per-branch progress badges while the card is in a parallel

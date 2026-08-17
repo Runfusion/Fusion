@@ -79,6 +79,12 @@ export interface SkillSelectionContext {
   requestedSkillNames?: string[];
 
   /**
+   * Names that must be read before work when they survive project settings.
+   * Unlike requestedSkillNames, these are intent only and never restrict discovery.
+   */
+  forcedSkillNames?: string[];
+
+  /**
    * Diagnostic label for log messages (e.g., "executor", "triage", "reviewer").
    */
   sessionPurpose?: string;
@@ -277,7 +283,7 @@ function requestedSkillMatchKey(name: string): string {
  *    - Requested names not matching any discovered skill (warning)
  */
 export function resolveSessionSkills(context: SkillSelectionContext): SkillSelectionResult {
-  const { requestedSkillNames } = context;
+  const { requestedSkillNames, forcedSkillNames } = context;
 
   // Resolve project root from the given projectRootDir — it may be a
   // worktree path (e.g., /project/.worktrees/task-branch) which doesn't
@@ -314,9 +320,10 @@ export function resolveSessionSkills(context: SkillSelectionContext): SkillSelec
 
   const hasPatterns = skillPatterns.length > 0;
   const hasRequestedNames = Boolean(requestedSkillNames && requestedSkillNames.length > 0);
+  const hasForcedNames = Boolean(forcedSkillNames && forcedSkillNames.length > 0);
 
   // If no patterns and no requested names, no filtering needed
-  if (!hasPatterns && !hasRequestedNames) {
+  if (!hasPatterns && !hasRequestedNames && !hasForcedNames) {
     return {
       allowedSkillPaths: new Set<string>(),
       excludedSkillPaths: new Set<string>(),
@@ -350,7 +357,7 @@ export function resolveSessionSkills(context: SkillSelectionContext): SkillSelec
   // filterActive is true when:
   // - Patterns exist (some skills are explicitly configured)
   // - OR only requested names are provided (filter to those names)
-  const filterActive = hasPatterns || hasRequestedNames;
+  const filterActive = hasPatterns || hasRequestedNames || hasForcedNames;
 
   // Produce diagnostics for patterns (we can't check against actual discovered skills here,
   // so we note which patterns are configured)
@@ -391,29 +398,6 @@ export function resolveSessionSkills(context: SkillSelectionContext): SkillSelec
 
 // ── Skills Override Factory ─────────────────────────────────────────────────
 
-/*
-FNXC:SkillResolution 2026-06-29-12:30:
-Configured allow-list misses such as ce-optimize/SKILL.md are common when optional skills are absent from a checkout.
-Keep the ResourceDiagnostic for programmatic visibility, but classify it separately so override application never mirrors this non-actionable info into piLog or console output.
-*/
-function isMissingConfiguredPatternDiagnostic(diag: ResourceDiagnostic): boolean {
-  const diagnosticType = diag.type as string;
-  return diagnosticType === "info"
-    && diag.message.startsWith("Configured skill pattern '")
-    && diag.message.includes("' not found in discovered skills");
-}
-
-/*
-FNXC:EngineDiagnostics 2026-07-26-08:01:
-"Requested skill: <name>" is a per-session listing diagnostic (not a miss). Emitting it at info filled the TUI with one line per skill on every session start. Keep the ResourceDiagnostic for programmatic consumers; mirror only to piLog.debug (FUSION_DEBUG=pi).
-
-FNXC:EngineDiagnostics 2026-07-26-09:40:
-Also demote `Requested skill '…' not found…` and every other type=info skill diagnostic to debug. Operators still see warnings/errors; the TUI no longer fills with `[skills] info: Requested skill…` on every session start.
-*/
-function isSkillInfoDiagnostic(diag: ResourceDiagnostic): boolean {
-  return (diag.type as string) === "info";
-}
-
 /**
  * Options for skills override filtering.
  * We track requested names here so we can validate against base.skills.
@@ -425,8 +409,10 @@ export interface SkillsOverrideOptions {
   excludedSkillPaths?: Set<string>;
   /** Whether filtering is active */
   filterActive: boolean;
-  /** Requested skill names for diagnostic purposes */
+  /** Ensure-present names; they never narrow the discovered set. */
   requestedSkillNames?: string[];
+  /** Forced read-first names, resolved only after final filtering. */
+  forcedSkillNames?: string[];
   /** Session purpose for log messages */
   sessionPurpose?: string;
 }
@@ -438,146 +424,112 @@ export interface SkillsOverrideOptions {
  * @param options - Additional options for the override
  * @returns A skillsOverride callback for DefaultResourceLoader
  */
+export interface ResolvedForcedSkill {
+  requestedName: string;
+  skillName: string;
+}
+
+export interface UnresolvedForcedSkill {
+  requestedName: string;
+  reason: "disabled-by-settings" | "not-found";
+}
+
+export interface SkillsOverrideResult {
+  skills: Skill[];
+  diagnostics: ResourceDiagnostic[];
+  resolvedForcedSkills: ResolvedForcedSkill[];
+  unresolvedForcedSkills: UnresolvedForcedSkill[];
+}
+
+/*
+FNXC:SkillResolution 2026-08-16-03:19:
+GitHub #1422 requires project enablement to decide availability for every agent.
+Per-agent and workflow names are additive forced-read intent: exclusions win, and
+only names resolved in the final session set may be ordered in a prompt.
+*/
 export function createSkillsOverrideFromSelection(
   selection: SkillSelectionResult,
   options: Omit<SkillsOverrideOptions, "allowedSkillPaths" | "filterActive"> = {},
-): (base: { skills: Skill[]; diagnostics: ResourceDiagnostic[] }) => { skills: Skill[]; diagnostics: ResourceDiagnostic[] } {
+): (base: { skills: Skill[]; diagnostics: ResourceDiagnostic[] }) => SkillsOverrideResult {
   const { allowedSkillPaths, excludedSkillPaths, filterActive } = selection;
-  const { requestedSkillNames, sessionPurpose } = options;
+  const { requestedSkillNames, forcedSkillNames, sessionPurpose } = options;
+  const isBuiltInFallbackRequest = (name: string): boolean =>
+    ROLE_FALLBACK_SESSION_PURPOSES.has(sessionPurpose ?? "") && name.toLowerCase() === "fusion";
 
-  const isBuiltInFallbackRequest = (name: string): boolean => {
-    const purposeUsesRoleFallback = ROLE_FALLBACK_SESSION_PURPOSES.has(sessionPurpose ?? "");
-    return purposeUsesRoleFallback
-      && requestedSkillNames?.length === 1
-      && name.toLowerCase() === "fusion";
-  };
-
-  return (base: { skills: Skill[]; diagnostics: ResourceDiagnostic[] }) => {
-    // If filtering is not active, return base unchanged
-    if (!filterActive) {
-      return base;
+  return (base) => {
+    // FNXC:SkillResolution 2026-08-16-03:42: Even an unfiltered session must
+    // return explicit forced-resolution channels. The shared prompt seam and
+    // session summary consume this result for every lane, including heartbeat.
+    if (!filterActive && !(forcedSkillNames?.length)) {
+      return {
+        skills: base.skills,
+        diagnostics: base.diagnostics,
+        resolvedForcedSkills: [],
+        unresolvedForcedSkills: [],
+      };
     }
-
-    // Determine the effective filter criteria
-    // When requestedSkillNames is provided without patterns, filter by name
-    // When patterns are provided, filter by file path
-    const hasRequestedNames = Boolean(requestedSkillNames && requestedSkillNames.length > 0);
-
-    // A stale flat enable must not turn into an empty allow-list after a body
-    // moved to a category. Keep truly missing configured patterns intact so
-    // their existing missing-pattern diagnostic and filtering semantics remain.
-    const effectiveAllowedSkillPaths = new Set(
-      [...allowedSkillPaths].filter((pattern) => !base.skills.some(
-        (skill) => isLegacyFlatPatternForNestedSkill(skill, pattern),
-      )),
-    );
-    const hasPatterns = effectiveAllowedSkillPaths.size > 0;
-
-    // Filter skills
-    // Skills must match the inclusion criteria AND not be in the exclusion list
+    const effectiveAllowed = new Set([...allowedSkillPaths].filter((pattern) => !base.skills.some(
+      (skill) => isLegacyFlatPatternForNestedSkill(skill, pattern),
+    )));
+    const isExcluded = (skill: Skill) => [...excludedSkillPaths].some((path) => skillMatchesExecutionPattern(skill, path));
+    const isAllowed = (skill: Skill) => [...effectiveAllowed].some((path) => skillMatchesExecutionPattern(skill, path));
     const hasExcluded = excludedSkillPaths.size > 0;
-    let filteredSkills: Skill[];
-    const isExcluded = (skill: Skill): boolean => {
-      for (const excludedPath of excludedSkillPaths) {
-        if (skillMatchesExecutionPattern(skill, excludedPath)) return true;
-      }
-      return false;
-    };
-    const isAllowed = (skill: Skill): boolean => {
-      for (const allowedPath of effectiveAllowedSkillPaths) {
-        if (skillMatchesExecutionPattern(skill, allowedPath)) return true;
-      }
-      return false;
-    };
 
-    if (hasRequestedNames) {
-      // Filter by requested names using the chat/dashboard bare-token convention only for requested-name matching.
-      const requestedMatchKeys = new Set(requestedSkillNames!.map(requestedSkillMatchKey));
-      filteredSkills = base.skills.filter(
-        (skill) => requestedMatchKeys.has(requestedSkillMatchKey(skill.name)) && !isExcluded(skill)
-      );
-    } else if (hasPatterns) {
-      // Filter by pattern (allowed AND not excluded)
-      filteredSkills = base.skills.filter(
-        (skill) => isAllowed(skill) && !isExcluded(skill)
-      );
-    } else if (hasExcluded) {
-      // Only exclusions set - filter out excluded skills
-      filteredSkills = base.skills.filter((skill) => !isExcluded(skill));
-    } else {
-      // No filter criteria - this shouldn't happen if filterActive is true
-      filteredSkills = base.skills;
+    // Patterns establish the base availability. Requested names only ensure a
+    // discovered skill is included; they are no longer an allow-list.
+    const skills = !filterActive ? base.skills : effectiveAllowed.size > 0
+      ? base.skills.filter((skill) => isAllowed(skill) && !isExcluded(skill))
+      : hasExcluded ? base.skills.filter((skill) => !isExcluded(skill)) : base.skills;
+    const ensureNames = [...(requestedSkillNames ?? []), ...(forcedSkillNames ?? [])];
+    for (const name of ensureNames) {
+      const matching = base.skills.filter((skill) => requestedSkillMatchKey(skill.name) === requestedSkillMatchKey(name));
+      for (const skill of matching) if (!isExcluded(skill) && !skills.includes(skill)) skills.push(skill);
     }
 
-    // Build diagnostics for missing and disabled skills
-    const newDiagnostics: ResourceDiagnostic[] = [];
-
-    // Check for excluded paths that DO match a discovered skill (disabled)
-    const purpose = sessionPurpose ? ` [${sessionPurpose}]` : "";
-    const hasDiscoveredMatch = (pattern: string): boolean =>
-      base.skills.some((skill) => skillMatchesExecutionPattern(skill, pattern));
-
-    for (const excludedPath of excludedSkillPaths) {
-      if (hasDiscoveredMatch(excludedPath)) {
-        /*
-        FNXC:EngineDiagnostics 2026-08-01-18:11:
-        Intentional project skill exclusions are expected config, not operator degradation.
-        Use type=info so emission paths route to piLog.debug (FUSION_DEBUG=pi) instead of
-        warn-flooding the TUI on every session that rediscovers the same disabled skill.
-        */
-        newDiagnostics.push({
-          type: "info" as ResourceDiagnostic["type"],
-          message: `Skill at '${excludedPath}' exists but is disabled by project execution settings${purpose}`,
-          path: excludedPath,
-        });
+    const diagnostics: ResourceDiagnostic[] = [];
+    const unresolvedForcedSkills: UnresolvedForcedSkill[] = [];
+    const resolvedForcedSkills: ResolvedForcedSkill[] = [];
+    const seenForced = new Set<string>();
+    for (const requestedName of forcedSkillNames ?? []) {
+      const key = requestedSkillMatchKey(requestedName);
+      if (!key || seenForced.has(key)) continue;
+      seenForced.add(key);
+      const matches = base.skills.filter((skill) => requestedSkillMatchKey(skill.name) === key);
+      const resolved = matches.find((skill) => skills.includes(skill));
+      if (resolved) resolvedForcedSkills.push({ requestedName, skillName: resolved.name });
+      else if (matches.some(isExcluded)) {
+        unresolvedForcedSkills.push({ requestedName, reason: "disabled-by-settings" });
+        diagnostics.push({ type: "warning" as ResourceDiagnostic["type"], message: `Forced skill '${requestedName}' stays disabled by project settings`, path: requestedName });
+      } else {
+        unresolvedForcedSkills.push({ requestedName, reason: "not-found" });
+        diagnostics.push({ type: "info" as ResourceDiagnostic["type"], message: `Requested skill '${requestedName}' not found in discovered skills` });
       }
     }
-
-    // Check for configured patterns (allowed paths) that don't match any discovered skill
-    for (const allowedPath of effectiveAllowedSkillPaths) {
-      if (!hasDiscoveredMatch(allowedPath)) {
-        newDiagnostics.push({
-          type: "info" as ResourceDiagnostic["type"],
-          message: `Configured skill pattern '${allowedPath}' not found in discovered skills${purpose}`,
-          path: allowedPath,
-        });
+    for (const path of effectiveAllowed) {
+      if (!base.skills.some((skill) => skillMatchesExecutionPattern(skill, path))) {
+        diagnostics.push({ type: "info" as ResourceDiagnostic["type"], message: `Configured skill pattern '${path}' not found in discovered skills${sessionPurpose ? ` [${sessionPurpose}]` : ""}`, path });
       }
     }
-
-    // Check for requested names that don't match any discovered skill
-    if (requestedSkillNames) {
-      const discoveredRequestedMatchKeys = new Set(base.skills.map((s) => requestedSkillMatchKey(s.name)));
-      for (const requestedName of requestedSkillNames) {
-        if (
-          !discoveredRequestedMatchKeys.has(requestedSkillMatchKey(requestedName))
-          && !isBuiltInFallbackRequest(requestedName)
-        ) {
-          const purpose = sessionPurpose ? ` [${sessionPurpose}]` : "";
-          newDiagnostics.push({
-            type: "info" as ResourceDiagnostic["type"],
-            message: `Requested skill '${requestedName}' not found in discovered skills${purpose}`,
-          });
-        }
+    for (const path of excludedSkillPaths) {
+      if (base.skills.some((skill) => skillMatchesExecutionPattern(skill, path))) {
+        diagnostics.push({ type: "info" as ResourceDiagnostic["type"], message: `Skill at '${path}' exists but is disabled by project execution settings`, path });
       }
     }
-
-    // Log diagnostics if any
-    if (newDiagnostics.length > 0) {
-      const _purpose = sessionPurpose ? `[${sessionPurpose}]` : "skills";
-      for (const diag of newDiagnostics) {
-        if (isMissingConfiguredPatternDiagnostic(diag)) continue;
-        const msg = `[skills] ${diag.type}: ${diag.message}`;
-        if (diag.type === "error") piLog.error(msg);
-        else if (diag.type === "warning") piLog.warn(msg);
-        else if (isSkillInfoDiagnostic(diag)) piLog.debug(msg);
-        else piLog.log(msg);
+    for (const name of requestedSkillNames ?? []) {
+      if (!base.skills.some((skill) => requestedSkillMatchKey(skill.name) === requestedSkillMatchKey(name)) && !isBuiltInFallbackRequest(name)) {
+        diagnostics.push({ type: "info" as ResourceDiagnostic["type"], message: `Requested skill '${name}' not found in discovered skills${sessionPurpose ? ` [${sessionPurpose}]` : ""}` });
       }
     }
-
-    return {
-      skills: filteredSkills,
-      diagnostics: [...base.diagnostics, ...newDiagnostics],
-    };
+    for (const diagnostic of diagnostics) {
+      const message = `[skills] ${diagnostic.type}: ${diagnostic.message}`;
+      if (diagnostic.type === "warning") piLog.warn(message);
+      else piLog.debug(message);
+    }
+    const purpose = sessionPurpose ?? "skills";
+    const unavailable = unresolvedForcedSkills.length
+      ? `; forced-unavailable: [${unresolvedForcedSkills.map((entry) => `${entry.requestedName} (${entry.reason})`).join(", ")}]` : "";
+    piLog.log(`[skills] [${purpose}] ${skills.length} skill(s) available; forced: ${resolvedForcedSkills.length ? `[${resolvedForcedSkills.map((entry) => entry.skillName).join(", ")}]` : "none"}${unavailable}`);
+    return { skills, diagnostics: [...base.diagnostics, ...diagnostics], resolvedForcedSkills, unresolvedForcedSkills };
   };
 }
 

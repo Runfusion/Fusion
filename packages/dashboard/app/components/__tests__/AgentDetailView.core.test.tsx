@@ -47,6 +47,15 @@ import {
 } from "./AgentDetailView.test-helpers";
 import { AgentDetailView } from "../AgentDetailView";
 
+const STORED_PATH_SKILL_ID = "/Users/test/.agents/skills/fusion/SKILL.md";
+const STORED_SLUG_SKILL_ID = "simple-skill";
+const UNDISCOVERED_SKILL_ID = "missing-skill";
+const AUTO_AVAILABLE_SKILL_TITLE = "Enabled skills are available automatically.";
+
+/*
+ * FNXC:AgentSkills 2026-08-16-06:34:
+ * These fixture IDs are literals, never cwd- or home-directory-derived values. Summary badge markup is breakpoint-independent, so this contract covers desktop and mobile layouts.
+ */
 describe("AgentDetailView — core", () => {
   beforeEach(() => {
     setupAgentDetailMocks();
@@ -450,12 +459,13 @@ it("displays canonical role tags", async () => {
 it("renders assigned skills as readable badges with full id tooltip", async () => {
   mockFetchAgent.mockResolvedValue(createMockAgent({
     metadata: {
-      skills: [
-        "/Users/test/.agents/skills/fusion/SKILL.md",
-        "simple-skill",
-      ],
+      skills: [STORED_PATH_SKILL_ID, STORED_SLUG_SKILL_ID, UNDISCOVERED_SKILL_ID],
     },
   }));
+  mockFetchDiscoveredSkills.mockResolvedValue([
+    { ...MOCK_SKILLS[0], id: STORED_PATH_SKILL_ID, name: "Fusion", path: STORED_PATH_SKILL_ID, relativePath: "skills/fusion" },
+    { ...MOCK_SKILLS[1], id: STORED_SLUG_SKILL_ID, name: "Simple skill", path: STORED_SLUG_SKILL_ID, relativePath: "skills/simple-skill" },
+  ]);
 
   render(
     <AgentDetailView
@@ -465,13 +475,22 @@ it("renders assigned skills as readable badges with full id tooltip", async () =
     />,
   );
 
-  await waitFor(() => {
-    expect(screen.getByText("fusion")).toBeInTheDocument();
-    expect(screen.getByText("simple-skill")).toBeInTheDocument();
-  });
+  const fusionBadge = await screen.findByRole("button", { name: "View details for fusion" });
+  const simpleSkillBadge = screen.getByRole("button", { name: "View details for simple-skill" });
+  const missingSkillBadge = screen.getByRole("button", { name: "View details for missing-skill" });
 
-  const fusionBadge = screen.getByText("fusion").closest(".dashboard-summary-skill-badge");
-  expect(fusionBadge).toHaveAttribute("title", "/Users/test/.agents/skills/fusion/SKILL.md");
+  expect(fusionBadge).toHaveAttribute("data-skill-state", "auto-available");
+  expect(fusionBadge).toHaveTextContent("fusion");
+  const fusionTitle = fusionBadge.getAttribute("title");
+  expect(fusionTitle?.startsWith(`${STORED_PATH_SKILL_ID}: `)).toBe(true);
+  expect(fusionTitle).toContain(AUTO_AVAILABLE_SKILL_TITLE);
+
+  expect(simpleSkillBadge).toHaveAttribute("data-skill-state", "auto-available");
+  expect(simpleSkillBadge).toHaveTextContent(STORED_SLUG_SKILL_ID);
+  expect(simpleSkillBadge.getAttribute("title")?.startsWith(`${STORED_SLUG_SKILL_ID}: `)).toBe(true);
+
+  expect(missingSkillBadge).toHaveAttribute("data-skill-state", "unknown");
+  expect(missingSkillBadge.getAttribute("title")?.startsWith(`${UNDISCOVERED_SKILL_ID}: `)).toBe(true);
 });
 
 it("displays state badge", async () => {

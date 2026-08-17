@@ -1,57 +1,72 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import "@testing-library/jest-dom";
 
 const { fetchDiscoveredSkills } = vi.hoisted(() => ({ fetchDiscoveredSkills: vi.fn() }));
 vi.mock("../../api", () => ({ fetchDiscoveredSkills }));
-
 import { SkillMultiselect } from "../SkillMultiselect";
 
-/*
-FNXC:AgentSettingsTheming 2026-07-23-13:01:
-The Settings theme contract covers real skill control states, not only CSS text. Keep loading, empty, populated, removal, duplicate prevention, and disabled controls rendered so their stable classes and accessibility semantics cannot regress while themes evolve.
-*/
-describe("SkillMultiselect", () => {
-  const skills = [
-    { id: "skill-1", name: "Skill One" },
-    { id: "skill-2", name: "Skill Two" },
-  ];
+const skills = [
+  { id: "skill-1", name: "Skill One", relativePath: "skills/one/SKILL.md", enabled: true },
+  { id: "skill-2", name: "Skill Two", relativePath: "skills/two/SKILL.md", enabled: false },
+  { id: "skill-3", name: "Skill Three", relativePath: "skills/three/SKILL.md", enabled: true },
+] as any[];
 
-  beforeEach(() => {
-    fetchDiscoveredSkills.mockReset();
-  });
+describe("SkillMultiselect", () => {
+  beforeEach(() => fetchDiscoveredSkills.mockReset());
 
   it("renders loading then empty state", async () => {
-    let resolveSkills!: (value: typeof skills) => void;
+    let resolveSkills!: (value: any[]) => void;
     fetchDiscoveredSkills.mockReturnValue(new Promise((resolve) => { resolveSkills = resolve; }));
     render(<SkillMultiselect value={[]} onChange={vi.fn()} id="skills" />);
-
-    expect(screen.getByTestId("skills-loading")).toHaveClass("skill-multiselect-loading");
+    expect(screen.getByTestId("skills-loading")).toBeInTheDocument();
     resolveSkills([]);
     expect(await screen.findByTestId("skills-empty")).toHaveTextContent("No skills discovered");
   });
 
-  it("adds available skills once and renders removable populated chips", async () => {
+  it("selects three visible checkbox rows without a dropdown", async () => {
     fetchDiscoveredSkills.mockResolvedValue(skills);
     const onChange = vi.fn();
-    render(<SkillMultiselect value={["skill-1"]} onChange={onChange} id="skills" />);
-
-    expect(await screen.findByTestId("skill-chip-skill-1")).toHaveTextContent("Skill One");
-    const dropdown = screen.getByTestId("skill-dropdown") as HTMLSelectElement;
-    expect(Array.from(dropdown.options).map((option) => option.value)).not.toContain("skill-1");
-    fireEvent.change(dropdown, { target: { value: "skill-2" } });
-    expect(onChange).toHaveBeenCalledWith(["skill-1", "skill-2"]);
-
-    fireEvent.click(screen.getByTestId("remove-skill-skill-1"));
-    expect(onChange).toHaveBeenLastCalledWith([]);
+    const user = userEvent.setup();
+    render(<SkillMultiselect value={[]} onChange={onChange} id="skills" />);
+    await screen.findByTestId("skill-option-skill-1");
+    await user.click(screen.getByTestId("skill-option-skill-1").querySelector("input")!);
+    await user.click(screen.getByTestId("skill-option-skill-2").querySelector("input")!);
+    await user.click(screen.getByTestId("skill-option-skill-3").querySelector("input")!);
+    expect(screen.queryByRole("combobox")).toBeNull();
+    expect(onChange).toHaveBeenCalledTimes(3);
+    expect(screen.getAllByText("Auto-available").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Disabled").length).toBeGreaterThan(0);
   });
 
-  it("disables dropdown and removal controls without hiding populated state", async () => {
+  it("filters with retained focus and supports unknown chips", async () => {
     fetchDiscoveredSkills.mockResolvedValue(skills);
-    render(<SkillMultiselect value={["skill-1"]} onChange={vi.fn()} id="skills" disabled />);
+    const user = userEvent.setup();
+    render(<SkillMultiselect value={["missing", "missing"]} onChange={vi.fn()} id="skills" />);
+    const filter = await screen.findByTestId("skill-filter");
+    await user.type(filter, "Three");
+    expect(filter).toHaveFocus();
+    expect(filter).toHaveValue("Three");
+    expect(screen.getByTestId("skill-option-skill-3")).toBeInTheDocument();
+    expect(screen.queryByTestId("skill-option-skill-1")).toBeNull();
+    expect(screen.getByTestId("skill-chip-missing")).toHaveTextContent("Not discovered");
+  });
 
-    await waitFor(() => expect(screen.getByTestId("skill-dropdown")).toBeDisabled());
-    expect(screen.getByTestId("remove-skill-skill-1")).toBeDisabled();
-    expect(screen.getByTestId("skill-chip-skill-1")).toBeInTheDocument();
+  it("renders error retry, no matches, and disabled populated controls", async () => {
+    fetchDiscoveredSkills.mockRejectedValueOnce(new Error("offline")).mockResolvedValueOnce(skills);
+    const user = userEvent.setup();
+    render(<SkillMultiselect value={["skill-1"]} onChange={vi.fn()} id="skills" disabled />);
+    expect(await screen.findByTestId("skills-error")).toBeInTheDocument();
+    expect(screen.getByTestId("skill-chip-skill-1")).toHaveTextContent("Checking availability");
+    expect(screen.getByTestId("skill-chip-skill-1")).not.toHaveTextContent("Not discovered");
+    expect(screen.getByRole("button", { name: "Retry" })).toBeDisabled();
+    // A separate enabled render proves retry and no-match states without hiding controls.
+    const { unmount } = render(<SkillMultiselect value={[]} onChange={vi.fn()} id="enabled" />);
+    await user.click(await screen.findAllByRole("button", { name: "Retry" }).then((items) => items[1]!));
+    const filter = await screen.findByTestId("skill-filter");
+    await user.type(filter, "absent");
+    expect(screen.getByTestId("skills-no-matches")).toBeInTheDocument();
+    unmount();
   });
 });

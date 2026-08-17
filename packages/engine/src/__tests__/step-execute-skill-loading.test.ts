@@ -109,6 +109,11 @@ describe("foreach step-execute skill session selection", () => {
     expect(options.skillSelection.requestedSkillNames).toEqual(expect.arrayContaining([
       "compound-engineering:verify", "verify",
     ]));
+    // FNXC:SkillResolution 2026-08-16-03:42: A workflow's named skill is
+    // required reading when available, but remains additive to enabled skills.
+    expect(options.skillSelection.forcedSkillNames).toEqual(expect.arrayContaining([
+      "compound-engineering:verify", "verify",
+    ]));
     expect(options.additionalSkillPaths).toContain("/opt/ce/.fusion-ce-skills");
     expect(store.logEntry).not.toHaveBeenCalledWith(expect.anything(), expect.stringContaining("[skill-load]"), undefined, ANY_MUTATION_CONTEXT);
   });
@@ -125,6 +130,7 @@ describe("foreach step-execute skill session selection", () => {
 
     const options = mockedStepSessionExecutor.mock.calls.at(-1)?.[0] as any;
     expect(options.skillSelection.requestedSkillNames).toContain("missing-verify");
+    expect(options.skillSelection.forcedSkillNames).toContain("missing-verify");
     expect(store.logEntry).toHaveBeenCalledWith(taskDetail.id, expect.stringContaining("[skill-load] Foreach step-execute"), undefined, ANY_MUTATION_CONTEXT);
   });
 });

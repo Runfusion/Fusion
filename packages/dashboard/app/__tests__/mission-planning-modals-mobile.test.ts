@@ -59,7 +59,14 @@ function findMobileBlockContaining(needle: string): string {
 describe("mission + planning modal mobile CSS", () => {
   it("MissionManager: mission icon button touch targets are 36px", () => {
     const missionBlock = findMobileBlockContaining(".mission-manager-overlay");
-    expect(missionBlock).toMatch(/\.mission-list__item-actions \.mission-icon-btn,[\s\S]*?\.mission-feature__actions \.mission-icon-btn\s*\{[\s\S]*?min-width:\s*36px;[\s\S]*?min-height:\s*36px;/s);
+    /*
+    FNXC:Missions 2026-08-15-22:40:
+    FN-8947 (b82f1a41f3) appended `.mission-fix-feature__actions .mission-icon-btn` to this
+    touch-target selector list, so `.mission-feature__actions .mission-icon-btn` is no longer
+    the final selector before `{`. Match the selectors up to the fix-feature entry that now
+    closes the list, keeping the same 36px touch-target invariant.
+    */
+    expect(missionBlock).toMatch(/\.mission-list__item-actions \.mission-icon-btn,[\s\S]*?\.mission-feature__actions \.mission-icon-btn,[\s\S]*?\.mission-fix-feature__actions \.mission-icon-btn\s*\{[\s\S]*?min-width:\s*36px;[\s\S]*?min-height:\s*36px;/s);
   });
 
   it("MissionManager: body prevents horizontal overflow", () => {

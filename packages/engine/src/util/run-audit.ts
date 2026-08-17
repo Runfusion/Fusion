@@ -218,7 +218,6 @@ export type GitMutationType =
   | "merge:resolve"
   | "merge:file-scope-violation"
   | "merge:file-scope-enforcement-disabled"
-  | "merge:diff-volume-blocked"
   // FNXC:MergerUnification 2026-08-09-12:04: Legacy-only audit events emitted
   // exclusively by soft-deprecated aiMergeTask, never by production runAiMerge.
   | "merge:auto-prerebase:applied"
@@ -767,6 +766,14 @@ export type DatabaseMutationType =
    * — never error prose.
    */
   | "session:grok-cli-fallback-engaged"
+  /**
+   * FNXC:CliRuntimeRouting 2026-08-16-01:25:
+   * A configured cross-runtime CLI fallback engaged once after a retryable primary failure.
+   * Metadata is ids/outcomes-only: `{ sessionPurpose, primaryProvider, primaryModelId,
+   * fallbackProvider, fallbackModelId, triggerPoint, failureCategory, contextTransferred }`.
+   * It never stores the primary error or transferred conversation text.
+   */
+  | "session:cross-runtime-fallback-engaged"
   /**
    * FNXC:AgentReflectionTelemetry 2026-06-27-00:00:
    * Agent performance reflection attempts must emit durable telemetry for every generated, skipped, or failed outcome. Metadata carries ids, trigger taxonomy, counts, and outcomes only; never persist reflection summaries, insight strings, suggested-improvement text, triggerDetail, or prompt text.

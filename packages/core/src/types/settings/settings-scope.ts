@@ -360,6 +360,11 @@ export interface GlobalSettings {
    * This global operator preference defaults to false. When enabled, the dashboard skips centralized critical-action confirmations and proceeds with their primary/default choice. It must never be project-scoped so shared projects cannot force destructive actions without a prompt.
    */
   skipConfirmationDialogs?: boolean;
+  /**
+   * FNXC:QuickEntry 2026-08-16-03:15:
+   * This global-only operator keyboard preference defaults to true to preserve Enter-submits behavior. When disabled, Enter inserts a newline and Cmd/Ctrl+Enter submits; shared projects must never change an operator's keyboard behavior.
+   */
+  quickAddSubmitOnEnter?: boolean;
   /** Active UI locale (e.g. `"en"`, `"zh-CN"`, `"fr"`). One of `SUPPORTED_LOCALES`.
    *  When unset, each surface resolves the locale at runtime (browser/env
    *  detection) and falls back to `DEFAULT_LOCALE` ("en"). */
@@ -1686,12 +1691,6 @@ export interface ProjectSettings {
    *  When mode is "ai" (default), the standalone AI merge path is used and the
    *  legacy merge settings above/below it do not apply. */
   merger?: MergerSettings;
-  /** Minimum branch net line volume before the pre-commit diff-volume gate evaluates a file. Default applied at read site: 20. */
-  mergeDiffVolumeMinLines?: number;
-  /** Minimum staged/branch-net ratio required by the pre-commit diff-volume gate. Default applied at read site: 0.2. */
-  mergeDiffVolumeThreshold?: number;
-  /** Additional file globs allowlisted by the pre-commit diff-volume gate on top of generated/lockfile patterns. Default applied at read site: []. */
-  mergeDiffVolumeAllowlist?: string[];
   /**
    * FNXC:PrMergeRequiredChecks 2026-08-09-06:39:
    * Fusion honors these names independently of GitHub's isRequired flag. Empty preserves

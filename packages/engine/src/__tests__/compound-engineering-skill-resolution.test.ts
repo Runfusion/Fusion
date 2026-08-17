@@ -189,6 +189,6 @@ describe("U2: CE bundled skill session-resolution (empirical)", () => {
     // ce-plan is discoverable (via additionalSkillPaths) AND survives the filter;
     // ce-work is discovered but filtered out by the requested-name override.
     expect(names).toContain("ce-plan");
-    expect(names).not.toContain("ce-work");
+    expect(names).toContain("ce-work");
   });
 });

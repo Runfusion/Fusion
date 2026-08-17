@@ -160,10 +160,12 @@ describe("buildSessionSkillContextSync", () => {
       const result = buildSessionSkillContextSync(agent, "executor", projectRootDir);
 
       expect(result.skillSource).toBe("assigned-agent");
-      expect(result.resolvedSkillNames).toEqual(["triage", "executor"]);
+      expect(result.resolvedSkillNames).toEqual(["fusion"]);
+      expect(result.forcedSkillNames).toEqual(["triage", "executor"]);
       expect(result.skillSelectionContext).toEqual({
         projectRootDir,
-        requestedSkillNames: ["triage", "executor"],
+        requestedSkillNames: ["fusion"],
+        forcedSkillNames: ["triage", "executor"],
         sessionPurpose: "executor",
       });
     });
@@ -180,7 +182,8 @@ describe("buildSessionSkillContextSync", () => {
       const result = buildSessionSkillContextSync(agent, "executor", projectRootDir);
 
       expect(result.skillSource).toBe("assigned-agent");
-      expect(result.resolvedSkillNames).toEqual(["triage", "executor"]);
+      expect(result.resolvedSkillNames).toEqual(["fusion"]);
+      expect(result.forcedSkillNames).toEqual(["triage", "executor"]);
     });
 
     it("correctly extracts skills from a cached agent object", () => {
@@ -195,10 +198,12 @@ describe("buildSessionSkillContextSync", () => {
       const result = buildSessionSkillContextSync(agent, "executor", projectRootDir);
 
       expect(result.skillSource).toBe("assigned-agent");
-      expect(result.resolvedSkillNames).toEqual(["triage", "executor"]);
+      expect(result.resolvedSkillNames).toEqual(["fusion"]);
+      expect(result.forcedSkillNames).toEqual(["triage", "executor"]);
       expect(result.skillSelectionContext).toEqual({
         projectRootDir,
-        requestedSkillNames: ["triage", "executor"],
+        requestedSkillNames: ["fusion"],
+        forcedSkillNames: ["triage", "executor"],
         sessionPurpose: "executor",
       });
     });
@@ -282,7 +287,7 @@ describe("buildSessionSkillContextSync", () => {
 
       expect(result.skillSource).toBe("none");
       expect(result.resolvedSkillNames).toEqual([]);
-      expect(result.skillSelectionContext).toBeUndefined();
+      expect(result.skillSelectionContext?.requestedSkillNames).toEqual([]);
     });
 
     it("uses agent skills over role fallback", () => {
@@ -297,15 +302,20 @@ describe("buildSessionSkillContextSync", () => {
       const result = buildSessionSkillContextSync(agent, "executor", projectRootDir);
 
       expect(result.skillSource).toBe("assigned-agent");
-      expect(result.resolvedSkillNames).toEqual(["custom-skill-1", "custom-skill-2"]);
+      expect(result.resolvedSkillNames).toEqual(["fusion"]);
+      expect(result.forcedSkillNames).toEqual(["custom-skill-1", "custom-skill-2"]);
     });
   });
 
   describe("no skills available", () => {
-    it("returns undefined context when no skills and no fallback", () => {
+    it("keeps an empty context when no skills and no fallback so project exclusions still apply", () => {
       const result = buildSessionSkillContextSync(null, "heartbeat", projectRootDir);
 
-      expect(result.skillSelectionContext).toBeUndefined();
+      expect(result.skillSelectionContext).toEqual({
+        projectRootDir,
+        requestedSkillNames: [],
+        sessionPurpose: "heartbeat",
+      });
       expect(result.resolvedSkillNames).toEqual([]);
     });
   });
@@ -563,7 +573,8 @@ describe("buildSessionSkillContext", () => {
     });
 
     expect(result.skillSource).toBe("assigned-agent");
-    expect(result.resolvedSkillNames).toEqual(["triage", "executor"]);
+    expect(result.resolvedSkillNames).toEqual(["fusion"]);
+      expect(result.forcedSkillNames).toEqual(["triage", "executor"]);
     expect(mockAgentStore.getAgent).toHaveBeenCalledWith("agent-001");
   });
 
@@ -588,8 +599,9 @@ describe("buildSessionSkillContext", () => {
     });
 
     expect(result.skillSource).toBe("assigned-agent");
-    expect(result.resolvedSkillNames).toEqual(["review", "custom-skill"]);
-    expect(result.skillSelectionContext?.requestedSkillNames).toEqual(["review", "custom-skill"]);
+    expect(result.resolvedSkillNames).toEqual(["fusion"]);
+    expect(result.forcedSkillNames).toEqual(["review", "custom-skill"]);
+    expect(result.skillSelectionContext?.requestedSkillNames).toEqual(["fusion"]);
     expect(mockAgentStore.getAgent).toHaveBeenCalledWith("agent-001");
   });
 
@@ -680,7 +692,7 @@ describe("buildSessionSkillContext", () => {
 
     expect(result.skillSource).toBe("none");
     expect(result.resolvedSkillNames).toEqual([]);
-    expect(result.skillSelectionContext).toBeUndefined();
+    expect(result.skillSelectionContext?.requestedSkillNames).toEqual([]);
   });
 
   it("appends plugin skills to requestedSkillNames", async () => {
@@ -772,7 +784,7 @@ describe("buildSessionSkillContext", () => {
       pluginRunner,
     });
 
-    expect(result.resolvedSkillNames).toEqual(["Fusion", "plugin-skill"]);
+    expect(result.resolvedSkillNames).toEqual(["fusion", "plugin-skill"]);
   });
 
   it("creates heartbeat skill context from plugin skills when no agent skills exist", async () => {

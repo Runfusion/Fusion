@@ -18,7 +18,7 @@ fails with 400 instead of succeeding, because these cards are in `todo`.
 */
 import { describe, it, expect, vi } from "vitest";
 import express from "express";
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { TaskStore, TaskDetail } from "@fusion/core";
@@ -56,9 +56,23 @@ const PLANNING_TASK: TaskDetail = {
 } as unknown as TaskDetail;
 
 function createMockStore(overrides: Partial<TaskStore> = {}): TaskStore {
+  /*
+  FNXC:SpecLockApproval 2026-08-15-05:10:
+  approve-plan now refuses (409) when the approved card's PROMPT.md is unreadable — approval is
+  the spec-lock release boundary. Materialize the fixture card's on-disk plan so the merged-intake
+  approval case exercises the success path, and mock the spec-lock/drift seams the route calls
+  inside the planning fence.
+  */
+  const root = mkdtempSync(join(tmpdir(), "kb-plan-approval-"));
+  mkdirSync(join(root, ".fusion", "tasks", "FN-200"), { recursive: true });
+  writeFileSync(join(root, ".fusion", "tasks", "FN-200", "PROMPT.md"), "# Plan\n");
   return {
     getSettings: vi.fn().mockResolvedValue({}),
-    getRootDir: vi.fn().mockReturnValue(mkdtempSync(join(tmpdir(), "kb-plan-approval-"))),
+    getRootDir: vi.fn().mockReturnValue(root),
+    lockCurrentPlanWhilePlanningLocked: vi.fn().mockResolvedValue(undefined),
+    reconcileSpecDriftWhilePlanningLocked: vi.fn().mockResolvedValue(undefined),
+    // FNXC:TaskWedgeNotifications 2026-08-15-05:10: dashboard Retry clears the generic-terminal auto-recovery budget before mutating task state.
+    resetTerminalFailureAutoRecoveryBudget: vi.fn().mockResolvedValue(undefined),
     getTask: vi.fn().mockResolvedValue(PLANNING_TASK),
     updateTask: vi.fn().mockResolvedValue(PLANNING_TASK),
     withPlanningLifecycleLock: vi.fn(async (_id, fn) => await fn()),

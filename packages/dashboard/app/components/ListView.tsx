@@ -15,7 +15,6 @@ import type { BoardWorkflowColumn, BoardWorkflowsPayload, ModelInfo, NodeInfo, R
 import { QuickEntryBox } from "./QuickEntryBox";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import { NodeHealthDot } from "./NodeHealthDot";
-import { isTaskStuck } from "../utils/taskStuck";
 import { hasPendingAutomaticRecovery, isTaskManuallyRetryable } from "../utils/taskRecovery";
 import type { ToastType } from "../hooks/useToast";
 import { useViewportMode } from "../hooks/useViewportMode";
@@ -309,11 +308,13 @@ interface ListViewProps {
   projectId?: string;
   /** Project name for display (optional) */
   projectName?: string;
-  /** Project-level stuck task timeout in milliseconds (undefined = disabled) */
-  taskStuckTimeoutMs?: number;
+  /*
+  FNXC:StuckTagRemoval 2026-08-17-22:30: Operator removed stuck-task tagging from the dashboard; engine recovery sweeps still consume taskStuckTimeoutMs server-side.
+  ListView no longer takes taskStuckTimeoutMs or renders stuck rows/badges; lastFetchTimeMs stays for failed-state recovery freshness.
+  */
   /** External search query from header search (defaults to "") */
   searchQuery?: string;
-  /** Timestamp (ms) when task data was last confirmed fresh from the server. Used for freshness-aware stuck detection. */
+  /** Timestamp (ms) when task data was last confirmed fresh from the server. */
   lastFetchTimeMs?: number;
   prAuthAvailable?: boolean;
   autoMerge?: boolean;
@@ -389,7 +390,6 @@ export function ListView({
   onTasksUpdated,
   projectId,
   projectName: _projectName,
-  taskStuckTimeoutMs,
   searchQuery = "",
   lastFetchTimeMs,
   prAuthAvailable,
@@ -3139,8 +3139,7 @@ export function ListView({
                           const visualStatus = isDoneColumn ? "done" : task.status;
                           const isFailed = !isDoneColumn && task.status === "failed" && !hasPendingAutomaticRecovery(task, lastFetchTimeMs);
                           const isPaused = !isDoneColumn && task.paused === true;
-                          const isStuckState = isTaskStuck(task, taskStuckTimeoutMs, lastFetchTimeMs, getTaskColumnFlags(task));
-                          const isAgentActive = isTaskAgentActive(task, { globalPaused, isStuck: isStuckState, columnFlags: getTaskColumnFlags(task) });
+                          const isAgentActive = isTaskAgentActive(task, { globalPaused, columnFlags: getTaskColumnFlags(task) });
                           // FNXC:TaskStatusBadge 2026-07-28-12:00: FN-8300 renders the same transient Planning badge as TaskCard so fresh planner logs never make grouped-list cards appear idle.
                           const isTransientPlannerActive = isIntakeColumnForTask(task)
                             && !visualStatus
@@ -3163,14 +3162,13 @@ export function ListView({
                           FNXC:TaskCardBadgePrecedence 2026-08-06-14:53:
                           Keep card and both list render paths on the shared precedence rule: a visible
                           non-planning review gate displaces only Planning, while Plan Review remains
-                          additive and pause/stuck/approval states keep their existing render branches. The table
+                          additive and pause/approval states keep their existing render branches. The table
                           path also omits its otherwise-empty dash shell when the gate is the sole badge.
                           */
                           const suppressPlanningStatusBadge = showOptionalGateBadge && isNonPlanningOptionalGateBadge(optionalGateBadge);
                           const isPlanningStatusBadge = !isReviewBudgetExhausted
                             && (isLivePlanning || isTransientPlannerActive || visualStatus === "planning");
                           const wipLifecycleBadgeLabel = !isPaused
-                            && !isStuckState
                             && !isReviewBudgetExhausted
                             && !showOptionalGateBadge
                             ? getTaskWipLifecycleBadgeLabel(visualStatus, t, {
@@ -3245,8 +3243,6 @@ export function ListView({
                                 <span className="list-card-spacer" />
                                 {isPaused && task.pausedByAgentId ? (
                                   <span className="list-status-badge paused">{t("listView.pausedByAgent", "paused by agent")}</span>
-                                ) : isStuckState ? (
-                                  <span className="list-status-badge stuck">{t("listView.stuck", "Stuck")}</span>
                                 ) : hasStatus ? (
                                   <span
                                     className={`list-status-badge list-status-badge--${task.column}${isReviewBudgetExhausted ? " list-status-badge--review-budget-exhausted" : ""}${isFailed ? " failed" : ""}${isAgentActive ? " pulsing" : ""}`}
@@ -3434,8 +3430,7 @@ export function ListView({
                             const visualStatus = isDoneColumn ? "done" : task.status;
                             const isFailed = !isDoneColumn && task.status === "failed" && !hasPendingAutomaticRecovery(task, lastFetchTimeMs);
                             const isPaused = !isDoneColumn && task.paused === true;
-                            const isStuckState = isTaskStuck(task, taskStuckTimeoutMs, lastFetchTimeMs, getTaskColumnFlags(task));
-                            const isAgentActive = isTaskAgentActive(task, { globalPaused, isStuck: isStuckState, columnFlags: getTaskColumnFlags(task) });
+                            const isAgentActive = isTaskAgentActive(task, { globalPaused, columnFlags: getTaskColumnFlags(task) });
                             const isReviewBudgetExhausted = isReviewBudgetExhaustedApproval(task);
                             const isTransientPlannerActive = isIntakeColumnForTask(task)
                               && !visualStatus
@@ -3457,7 +3452,6 @@ export function ListView({
                             const isPlanningStatusBadge = !isReviewBudgetExhausted
                               && (isLivePlanning || isTransientPlannerActive || visualStatus === "planning");
                             const wipLifecycleBadgeLabel = !isPaused
-                              && !isStuckState
                               && !isReviewBudgetExhausted
                               && !showOptionalGateBadge
                               ? getTaskWipLifecycleBadgeLabel(visualStatus, t, {
@@ -3482,9 +3476,7 @@ export function ListView({
                             return (
                               <tr
                                 key={task.id}
-                                className={`list-row${isFailed ? " failed" : ""}${isPaused ? " paused" : ""}${
-                                  isStuckState ? " stuck" : ""
-                                }${isAgentActive ? " agent-active" : ""}${
+                                className={`list-row${isFailed ? " failed" : ""}${isPaused ? " paused" : ""}${isAgentActive ? " agent-active" : ""}${
                                   isDragging ? " dragging" : ""
                                 }${selectedTaskId === task.id ? " list-row--selected" : ""}`}
                                 onClick={() => handleRowClick(task)}
@@ -3536,10 +3528,6 @@ export function ListView({
                                   <td className="list-cell">
                                     {isPaused && task.pausedByAgentId ? (
                                       <span className="list-status-badge paused">{t("listView.pausedByAgent", "paused by agent")}</span>
-                                    ) : isStuckState ? (
-                                      <span className="list-status-badge stuck">
-                                        {t("listView.stuck", "Stuck")}
-                                      </span>
                                     ) : showStatusBadge ? (
                                       <span
                                         className={`list-status-badge list-status-badge--${task.column}${isReviewBudgetExhausted ? " list-status-badge--review-budget-exhausted" : ""}${isFailed ? " failed" : ""}${

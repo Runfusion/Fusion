@@ -2271,6 +2271,120 @@
       "timingNotes": [
         "Timing snapshot is 19 days old; verify slowest-file attribution before treating the table as the current culprit."
       ]
+    },
+    {
+      "capturedAt": "2026-08-16T06:01:44.671Z",
+      "gateMs": 14018,
+      "bootSmokeMs": 20378,
+      "testMs": 17468,
+      "quarantineCount": 0,
+      "slowestTop20": [
+        {
+          "file": "packages/dashboard/app/components/__tests__/SettingsModal.general.test.tsx",
+          "ms": 121100,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/SettingsModal.scheduling-merge.test.tsx",
+          "ms": 77800,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/core/src/__tests__/postgres/schema-applier.test.ts",
+          "ms": 65900,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/SettingsModal.remote-notifications.test.tsx",
+          "ms": 55700,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/SettingsModal.models-auth.test.tsx",
+          "ms": 53500,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/TaskDetailModal.rendering.test.tsx",
+          "ms": 52100,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/cli/src/__tests__/extension.test.ts",
+          "ms": 51600,
+          "package": "@runfusion/fusion"
+        },
+        {
+          "file": "packages/core/src/__tests__/postgres/sqlite-migrator.test.ts",
+          "ms": 51300,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/TaskDetailModal.inline-editing-and-integrations.test.tsx",
+          "ms": 39700,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/ListView.test.tsx",
+          "ms": 38100,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/App.test.tsx",
+          "ms": 33100,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/WorkflowNodeEditor.test.tsx",
+          "ms": 33100,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/AgentDetailView.advanced-settings.test.tsx",
+          "ms": 32900,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/SecretsView.test.tsx",
+          "ms": 30900,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/core/src/__tests__/postgres/taskstore-remaining.test.ts",
+          "ms": 30500,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/AgentPromptsManager.test.tsx",
+          "ms": 30200,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/ChatView.core-interactions.test.tsx",
+          "ms": 29200,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/TaskDetailModal.test.tsx",
+          "ms": 27800,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/TaskDetailModal.definition-actions.test.tsx",
+          "ms": 27000,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/engine/src/__tests__/reliability-interactions/explicit-duplicate-marker-sweep.test.ts",
+          "ms": 26800,
+          "package": "@fusion/engine"
+        }
+      ],
+      "measurementFailures": [],
+      "timingSnapshotCapturedAt": "2026-07-24T13:09:41.412Z",
+      "timingNotes": [
+        "Timing snapshot is 22 days old; verify slowest-file attribution before treating the table as the current culprit."
+      ]
     }
   ]
 }

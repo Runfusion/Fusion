@@ -3,7 +3,14 @@
  * AI / planning session client API peeled from legacy.ts.
  */
 import type { PlanningQuestion, ThinkingLevel } from "@fusion/core";
-import { api, buildApiUrl, ApiRequestError, looksLikeHtml } from "../client/client.js";
+import {
+  api,
+  buildApiUrl,
+  ApiRequestError,
+  SERVER_UNAVAILABLE_MESSAGE,
+  errorFromUnparseableApiResponse,
+  isGatewayUnavailableStatus,
+} from "../client/client.js";
 import { withProjectId } from "../client/health.js";
 import { withTokenHeader } from "../../auth";
 
@@ -141,27 +148,29 @@ export async function deleteAiSession(id: string): Promise<void> {
   const contentType = res.headers.get("content-type") ?? "";
   const bodyText = await res.text();
   const isJson = contentType.includes("application/json");
-  const isHtml = contentType.includes("text/html") || looksLikeHtml(bodyText);
 
-  if (isHtml) {
-    throw new Error(
-      `API returned HTML instead of JSON for ${url}. ` +
-      `The endpoint may not be properly configured. (${res.status} ${res.statusText})`
-    );
-  }
-
+  /*
+  FNXC:DashboardApi 2026-08-16-03:09:
+  Same gateway-unavailable classification as `api()`. deleteAiSession has its own fetch parser
+  and must not dump Traefik/plain-text 503 bodies into the Planning session list.
+  */
   if (!isJson) {
-    const preview = bodyText.length > 160 ? `${bodyText.slice(0, 160)}...` : bodyText;
-    throw new Error(
-      `API returned ${contentType || "an unknown content type"} instead of JSON for ${url}. ` +
-      `(${res.status} ${res.statusText})${preview ? ` Response: ${preview}` : ""}`
-    );
+    throw errorFromUnparseableApiResponse({
+      url,
+      status: res.status,
+      statusText: res.statusText,
+      contentType,
+      bodyText,
+    });
   }
 
   let data: unknown;
   try {
     data = bodyText ? JSON.parse(bodyText) : null;
   } catch {
+    if (isGatewayUnavailableStatus(res.status)) {
+      throw new ApiRequestError(SERVER_UNAVAILABLE_MESSAGE, res.status);
+    }
     throw new Error(`API returned invalid JSON for ${url}. (${res.status} ${res.statusText})`);
   }
 

@@ -5,11 +5,14 @@ import { CLI_PROVIDER_ROUTING_CENSUS, type CliProviderRouting } from "../agents/
 import type { PluginRunner } from "../plugins/plugin-runner.js";
 import type { PluginRuntimeRegistration } from "@fusion/core";
 
-const mockCreateFnAgent = vi.hoisted(() => vi.fn());
+const { mockCreateFnAgent, mockPromptWithFallback } = vi.hoisted(() => ({
+  mockCreateFnAgent: vi.fn(),
+  mockPromptWithFallback: vi.fn(),
+}));
 
 vi.mock("../pi.js", () => ({
   createFnAgent: mockCreateFnAgent,
-  promptWithFallback: vi.fn().mockResolvedValue(undefined),
+  promptWithFallback: mockPromptWithFallback,
   describeModel: vi.fn().mockReturnValue("pi/default"),
   wrapToolsWithActionGate: vi.fn((tools) => tools),
   wrapToolsWithPermanentAgentGating: vi.fn((tools) => tools),
@@ -74,6 +77,7 @@ describe("CLI provider routing conformance", () => {
     vi.restoreAllMocks();
     vi.spyOn(fusionCore, "isGrokApiKeyFusionVisible").mockReturnValue(false);
     mockCreateFnAgent.mockReset().mockResolvedValue({ session: { runtimeId: "pi" } });
+    mockPromptWithFallback.mockReset().mockResolvedValue(undefined);
   });
 
   it.each(CLI_PROVIDER_ROUTING_CENSUS.filter((entry) => entry.classification === "runtime-routed"))(
@@ -185,6 +189,13 @@ describe("CLI provider routing conformance", () => {
       }));
       const absent = await createResolvedAgentSession(options(undefined, { pluginRunner }));
       expect(fallback.runtimeId).toBe(entry.fallbackPolicy === "promote-to-primary" ? "omp" : "pi");
+      if (entry.fallbackPolicy === "defer-cross-runtime") {
+        expect(mockCreateFnAgent).toHaveBeenCalledWith(expect.objectContaining({
+          defaultProvider: "openai",
+          fallbackProvider: undefined,
+          fallbackModelId: undefined,
+        }));
+      }
       expect(absent.runtimeId).toBe("pi");
     },
   );
@@ -197,6 +208,55 @@ describe("CLI provider routing conformance", () => {
     }));
     expect(result.runtimeId).toBe("mock");
     expect(pluginRunner.getRuntimeById).not.toHaveBeenCalled();
+  });
+
+  it("swaps a deferred Cursor fallback after a retryable primary failure with portable context", async () => {
+    const cursorPrompt = vi.fn().mockResolvedValue("cursor result");
+    const cursorCreateSession = vi.fn().mockResolvedValue({ session: {} });
+    const pluginRunner = {
+      getRuntimeById: vi.fn(() => ({
+        pluginId: "fusion-plugin-cursor-runtime",
+        runtime: {
+          metadata: { runtimeId: "cursor", name: "Cursor" },
+          factory: vi.fn().mockResolvedValue({
+            id: "cursor", name: "Cursor", createSession: cursorCreateSession,
+            promptWithFallback: cursorPrompt, describeModel: vi.fn(),
+          }),
+        },
+      })),
+      createRuntimeContext: vi.fn().mockResolvedValue({ pluginId: "fusion-plugin-cursor-runtime", taskStore: {}, settings: {}, logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }, emitEvent: vi.fn() }),
+    } as unknown as PluginRunner;
+    mockCreateFnAgent.mockResolvedValue({ session: { state: { messages: [{ role: "assistant", content: "prior answer" }] } } });
+    vi.mocked((await import("../pi.js")).isRetryableModelSelectionError).mockReturnValue(true);
+    mockPromptWithFallback.mockRejectedValueOnce(new Error("rate limit"));
+    const database = vi.fn();
+    const result = await createResolvedAgentSession(options(undefined, {
+      defaultProvider: "openai", defaultModelId: "primary", fallbackProvider: "cursor-cli", fallbackModelId: "cursor-cli/small",
+      pluginRunner, runAuditor: { database },
+    }));
+    await expect((result.session as { promptWithFallback: (prompt: string) => Promise<unknown> }).promptWithFallback("current prompt")).resolves.toBe("cursor result");
+    expect(cursorCreateSession).toHaveBeenCalledOnce();
+    expect(cursorPrompt).toHaveBeenCalledWith(expect.anything(), expect.stringContaining("prior answer"), undefined);
+    expect(database).toHaveBeenCalledWith(expect.objectContaining({
+      type: "session:runtime-resolved",
+      metadata: expect.objectContaining({ crossRuntimeFallbackDeferred: true }),
+    }));
+    expect(database).toHaveBeenCalledWith(expect.objectContaining({ type: "session:cross-runtime-fallback-engaged" }));
+  });
+
+  it("drops an unavailable Cursor fallback without creating a replacement runtime", async () => {
+    const pluginRunner = runner("cursor", "missing");
+    const database = vi.fn();
+    const result = await createResolvedAgentSession(options(undefined, {
+      defaultProvider: "openai", defaultModelId: "primary", fallbackProvider: "cursor-cli", fallbackModelId: "cursor-cli/small",
+      pluginRunner, runAuditor: { database },
+    }));
+    await expect((result.session as { promptWithFallback: (prompt: string) => Promise<unknown> }).promptWithFallback("current prompt")).resolves.toBeUndefined();
+    expect(database).toHaveBeenCalledWith(expect.objectContaining({
+      type: "session:runtime-resolved",
+      metadata: expect.objectContaining({ crossRuntimeFallbackDropped: true }),
+    }));
+    expect(pluginRunner.getRuntimeById).toHaveBeenCalledTimes(1);
   });
 
   it("routes Cursor primary selection through its installed runtime", async () => {

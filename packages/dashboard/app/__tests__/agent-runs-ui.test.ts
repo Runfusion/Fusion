@@ -11,7 +11,9 @@ const agentDetailViewPath = path.join(__dirname, "../components/AgentDetailView.
 const agentRunHistoryPath = path.join(__dirname, "../components/AgentRunHistory.tsx");
 const apiPath = path.join(__dirname, "../api.ts");
 const apiLegacyPath = path.join(__dirname, "../api/legacy.ts");
-const apiAgentsPath = path.join(__dirname, "../api/agents.ts");
+// FNXC:DashboardTests 2026-08-15-05:50: the domain folder layout refactor (#2398) moved
+// app/api/agents.ts to app/api/agents/agents.ts; keep this source-scan pointed at the real module.
+const apiAgentsPath = path.join(__dirname, "../api/agents/agents.ts");
 
 const agentsViewContent = fs.readFileSync(agentsViewPath, "utf-8");
 const agentDetailViewContent = fs.readFileSync(agentDetailViewPath, "utf-8");

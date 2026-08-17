@@ -1446,7 +1446,8 @@ describe("ChatManager.sendMessage", () => {
       projectRootDir: "/tmp/test",
       sessionPurpose: "executor",
     });
-    expect(createOptions.skillSelection.requestedSkillNames).toEqual(["agent-debug", "ce-debug"]);
+    expect(createOptions.skillSelection.requestedSkillNames).toEqual(["fusion", "ce-debug"]);
+    expect(createOptions.skillSelection.forcedSkillNames).toEqual(["agent-debug", "ce-debug"]);
     expect(createOptions.skillSelection.requestedSkillNames).not.toContain("disabled-debug");
     expect(createOptions.additionalSkillPaths).toEqual([pluginSkillDir, dirname(pluginSkillDir)]);
   });
@@ -1540,7 +1541,10 @@ describe("ChatManager.sendMessage", () => {
     const chatManager = createChatManager();
     await chatManager.sendMessage("chat-001", "/skill:ce-debug please debug this");
 
-    expect(createOptions.skillSelection.requestedSkillNames).toEqual(["agent-debug", "ce-debug"]);
+    expect(createOptions.skillSelection.requestedSkillNames).toEqual(["fusion", "ce-debug"]);
+    // FNXC:ChatSkills 2026-08-16-04:04: A typed `/skill:` command ensures
+    // availability but must not erase the bound agent's forced read-first intent.
+    expect(createOptions.skillSelection.forcedSkillNames).toEqual(["agent-debug"]);
     expect(promptSpy).toHaveBeenCalledTimes(1);
     const promptContent = promptSpy.mock.calls[0]?.[0] as string;
     expect(promptContent).toBe("please debug this");
@@ -1610,9 +1614,10 @@ describe("ChatManager.sendMessage", () => {
     const chatManager = createChatManager(pluginRunner);
     await chatManager.sendMessage("chat-001", "/skill:CE-DEBUG /skill:review/pr/SKILL.md use both");
 
-    expect(createOptions.skillSelection.requestedSkillNames).toEqual(["ce-debug", "review/pr"]);
+    expect(createOptions.skillSelection.requestedSkillNames).toEqual(["fusion", "review/pr", "CE-DEBUG"]);
     const names = createOptions.skillSelection.requestedSkillNames.filter((name: string) => name.toLowerCase() === "ce-debug");
     expect(names).toHaveLength(1);
+    expect(createOptions.skillSelection.forcedSkillNames).toEqual(["ce-debug"]);
     expect(promptSpy.mock.calls[0]?.[0]).toBe("use both");
   });
 
@@ -1670,7 +1675,8 @@ describe("ChatManager.sendMessage", () => {
     const chatManager = createChatManager();
     await chatManager.sendMessage("chat-001", "plain hello");
 
-    expect(createOptions.skillSelection.requestedSkillNames).toEqual(["agent-debug"]);
+    expect(createOptions.skillSelection.requestedSkillNames).toEqual(["fusion"]);
+    expect(createOptions.skillSelection.forcedSkillNames).toEqual(["agent-debug"]);
     expect(promptSpy.mock.calls[0]?.[0]).toBe("plain hello");
   });
 
@@ -1697,7 +1703,8 @@ describe("ChatManager.sendMessage", () => {
     const chatManager = createChatManager({ getRuntimeById: vi.fn() });
     await chatManager.sendMessage("chat-001", "Hello");
 
-    expect(createOptions.skillSelection.requestedSkillNames).toEqual(["agent-debug"]);
+    expect(createOptions.skillSelection.requestedSkillNames).toEqual(["fusion"]);
+    expect(createOptions.skillSelection.forcedSkillNames).toEqual(["agent-debug"]);
   });
 
   it("accumulates thinking output separately from text", async () => {
@@ -4025,7 +4032,7 @@ describe("ChatManager generation isolation", () => {
       roomId: "room-1",
       ...input,
     }));
-    mockAgentStore.listAgents.mockResolvedValue([{ id: "agent-001", name: "Avery", role: "executor", state: "idle" }]);
+    mockAgentStore.listAgents.mockResolvedValue([{ id: "agent-001", name: "Avery", role: "executor", state: "idle", metadata: { skills: ["agent-debug"] } }]);
     mockAgentStore.getAgent.mockResolvedValue({
       id: "agent-001",
       name: "Avery",
@@ -4053,9 +4060,12 @@ describe("ChatManager generation isolation", () => {
       ]),
     };
 
-    await createChatManager(pluginRunner).sendRoomMessage("room-1", "hello @Avery");
+    await createChatManager(pluginRunner).sendRoomMessage("room-1", "/skill:review/pr hello @Avery");
 
-    expect(createOptions.skillSelection.requestedSkillNames).toEqual(["ce-debug"]);
+    expect(createOptions.skillSelection.requestedSkillNames).toEqual(["ce-debug", "review/pr"]);
+    // FNXC:ChatSkills 2026-08-16-04:04: Room responders use the same merge
+    // seam as direct chat, preserving metadata-forced skills beside `/skill:`.
+    expect(createOptions.skillSelection.forcedSkillNames).toEqual(["agent-debug"]);
     expect(createOptions.skillSelection.sessionPurpose).toBe("heartbeat");
     expect(createOptions.additionalSkillPaths).toEqual([pluginSkillDir, dirname(pluginSkillDir)]);
   });

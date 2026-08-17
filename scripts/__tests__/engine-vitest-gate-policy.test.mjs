@@ -128,13 +128,31 @@ test("root and package gate scripts still propagate real Vitest failures", () =>
     staticCheck("no-getdatabase"),
     staticCheck("prerebase-inert"),
     staticCheck("capacity-pool-id"),
+    staticCheck("cli-runtime-routing"),
     staticCheck("no-node-only-core-imports-in-dashboard"),
     staticCheck("pi-versions-pinned"),
+    staticCheck("workspace-package-graph"),
     staticCheck("no-test-timeout-appeasement"),
     staticCheck("changeset-format"),
     staticCheck("mock-completeness"),
     staticCheck("inert-sync-lane-conversions"),
+    staticCheck("runtime-skill-loader-drift"),
   ], "every static policy validator must remain once in the blocking composition");
+  /*
+  FNXC:TestInfrastructure 2026-08-16-10:52:
+  FN-8991, FN-8994, and FN-9096 added runtime-skill-loader-drift,
+  workspace-package-graph, and cli-runtime-routing validators to the
+  production chains. This ordered mirror follows those authoritative chains,
+  rather than treating its former inventory as production policy.
+
+  FNXC:MergeGatePerformance 2026-08-16-10:29:
+  FN-9122's controlled W33 re-measurement closes the 14.0s row as variance,
+  but the correction is only meaningful when the composition is exact: 15
+  concurrent static validators, 21 engine-core files, two PG canaries, and
+  four unit-gate files. Keep this cardinality alongside the ordered ledger so
+  a future declaration edit cannot silently invalidate the timing baseline.
+  */
+  assert.equal(gateValidators.length, 15, "the W33 timing baseline requires all 15 static validators");
   assert.equal(new Set(gateValidators).size, gateValidators.length, "the static validator composition must be duplicate-free");
   assert.match(gate, /pnpm --filter @fusion\/engine test:core/);
   assert.match(gate, /pnpm --filter @fusion\/core test:pg-gate/);

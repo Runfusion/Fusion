@@ -79,9 +79,25 @@ describe("useDiscoveredSkillsCache", () => {
 
     await waitFor(() => {
       expect(result.current.loading).toBe(false);
+      expect(result.current.error).toBe(true);
     });
 
     expect(clearCacheSpy).toHaveBeenCalledWith(`${SWR_CACHE_KEYS.DISCOVERED_SKILLS_PREFIX}proj-1`);
+  });
+
+  it("clears its error after a successful retry", async () => {
+    mockFetchDiscoveredSkills.mockRejectedValueOnce(new Error("offline")).mockResolvedValueOnce([
+      { name: "recovered-skill", enabled: true, source: "skills/recovered" },
+    ]);
+    const { result } = renderHook(() => useDiscoveredSkillsCache("proj-error-retry"));
+
+    await waitFor(() => expect(result.current.error).toBe(true));
+    await act(async () => {
+      await result.current.refresh();
+    });
+
+    expect(result.current.error).toBe(false);
+    expect(result.current.skills[0]?.name).toBe("recovered-skill");
   });
 
   it("refresh forces a new request", async () => {

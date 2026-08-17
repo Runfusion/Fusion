@@ -160,6 +160,11 @@ export const DEFAULT_GLOBAL_SETTINGS = {
   Critical-action confirmation dialogs stay enabled by default. This global-only preference may opt an operator into primary/default auto-approval, but project settings cannot enable it for collaborators.
   */
   skipConfirmationDialogs: false,
+  /*
+  FNXC:QuickEntry 2026-08-16-03:15:
+  Quick Add keeps its historical Enter-to-submit behavior by default; only an operator's global preference may opt into newline-first entry.
+  */
+  quickAddSubmitOnEnter: true,
   language: undefined,
   defaultProvider: undefined,
   defaultCredentialInstanceId: undefined,
@@ -624,9 +629,6 @@ export const DEFAULT_PROJECT_SETTINGS = {
    * New and unconfigured projects default AI merge to sync a dirty checked-out integration branch, restoring the legacy stash → fast-forward → restore landing behavior. Explicit persisted merger.allowDirtyLocalCheckoutSync values still win, and no existing-project migration stamps this default into storage.
    */
   merger: { mode: "ai", maxReviewPasses: 3, allowDirtyLocalCheckoutSync: true },
-  mergeDiffVolumeMinLines: undefined,
-  mergeDiffVolumeThreshold: undefined,
-  mergeDiffVolumeAllowlist: undefined,
   requiredChecks: undefined,
   mergeStrategyOverlapBehavior: "flip-to-prefer-branch",
   postMergeAuditMode: "warn",

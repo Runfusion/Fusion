@@ -143,7 +143,7 @@ describe("recoverPausedAbortFailures", () => {
     expect(store.moveTask).toHaveBeenCalledWith(
       "FN-7001",
       "todo",
-      { preserveProgress: true, moveSource: "engine", recoveryRehome: true }, UNATTRIBUTED_MUTATION_CONTEXT,
+      { preserveProgress: true, preserveWorktree: true, moveSource: "engine", recoveryRehome: true }, UNATTRIBUTED_MUTATION_CONTEXT,
     );
     expect(store.updateTask).toHaveBeenNthCalledWith(2, "FN-7001", {
       workflowTransitionNotification: {

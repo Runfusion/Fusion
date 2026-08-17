@@ -14,9 +14,13 @@
  * green without a running server. Mirrors the satellite-db-injected-stores harness.
  */
 
-import { describe, it, expect, afterEach } from "vitest";
-import { execSync } from "node:child_process";
-import { createAsyncDataLayer, type AsyncDataLayer } from "../../postgres/data-layer.js";
+import { it, expect, beforeAll, beforeEach, afterEach, afterAll } from "vitest";
+import type { AsyncDataLayer } from "../../postgres/data-layer.js";
+import {
+  pgDescribe,
+  createSharedPgTaskStoreTestHarness,
+  type SharedPgTaskStoreHarness,
+} from "../../__test-utils__/pg-test-harness.js";
 import {
   addChatMessage,
   addChatMessageAttachment,
@@ -30,52 +34,16 @@ import {
 } from "../../async-stores/async-chat-store.js";
 import type { ChatInFlightGenerationState, ChatMessage, ChatSession } from "../../chat/chat-types.js";
 
-const PG_TEST_URL_BASE =
-  process.env.FUSION_PG_TEST_URL_BASE ?? "postgresql://localhost:5432";
-const PG_AVAILABLE =
-  process.env.FUSION_PG_TEST_SKIP !== "1" && Boolean(PG_TEST_URL_BASE);
-
-const pgDescribe = PG_AVAILABLE ? describe : describe.skip;
-
-function uniqueDbName(): string {
-  return `fusion_chat_search_test_${process.pid}_${Math.random().toString(36).slice(2, 8)}`;
-}
-
 /*
-FNXC:PgTestAuthFix 2026-07-14-00:00:
-The inline adminExec used process.env.USER for the psql -U flag, which is 'runner' on GitHub Actions (not 'postgres'). Use the PG_TEST_URL_BASE connection string instead so credentials are always correct.
+FNXC:PgTestHarnessAdoption 2026-08-16-03:45:
+Migrated off the hand-rolled per-test CREATE DATABASE + applySchemaBaseline scaffolding
+(~3-4s of DDL per test) onto the shared PG harness: one template-cloned database per file
+with TRUNCATE-based reset per test. The database setup here was scaffolding, not the
+subject under test (the async chat-store search/edit primitives are), and every assertion
+is unchanged.
 */
-function adminExec(statement: string): void {
-  execSync(
-    `psql "${PG_TEST_URL_BASE}/postgres" -v ON_ERROR_STOP=1 -c "${statement.replace(/"/g, '\\"')}"`,
-    { stdio: "pipe", env: process.env },
-  );
-}
-
 interface Ctx {
-  dbName: string;
   layer: AsyncDataLayer;
-}
-
-async function setupCtx(): Promise<Ctx> {
-  const dbName = uniqueDbName();
-  try { adminExec(`DROP DATABASE IF EXISTS "${dbName}"`); } catch { /* may not exist */ }
-  adminExec(`CREATE DATABASE "${dbName}"`);
-  const testUrl = `${PG_TEST_URL_BASE}/${dbName}`;
-  const { createConnectionSetFromUrl } = await import("../../postgres/connection.js");
-  const { applySchemaBaseline } = await import("../../postgres/schema-applier.js");
-  const { resolveBackendWithOptions } = await import("../../postgres/backend-resolver.js");
-  const backend = resolveBackendWithOptions({ databaseUrl: testUrl, databaseMigrationUrl: testUrl });
-  const connections = await createConnectionSetFromUrl(backend, { poolMax: 3, connectTimeoutSeconds: 5 });
-  await applySchemaBaseline(connections.migration);
-  const layer = createAsyncDataLayer(connections);
-  return { dbName, layer };
-}
-
-async function teardownCtx(ctx: Ctx | null): Promise<void> {
-  if (!ctx) return;
-  try { await ctx.layer.close(); } catch { /* best-effort */ }
-  try { adminExec(`DROP DATABASE IF EXISTS "${ctx.dbName}"`); } catch { /* best-effort */ }
 }
 
 let sessionCounter = 0;
@@ -120,16 +88,20 @@ async function addMessage(
 }
 
 pgDescribe("async chat store content search + edit primitives (PostgreSQL)", () => {
-  let ctx: Ctx | null = null;
-
-  afterEach(async () => {
-    await teardownCtx(ctx);
-    ctx = null;
+  const h: SharedPgTaskStoreHarness = createSharedPgTaskStoreTestHarness({
+    prefix: "fusion_chat_search_test",
   });
+  let ctx: Ctx;
+
+  beforeAll(h.beforeAll);
+  beforeEach(async () => {
+    await h.beforeEach();
+    ctx = { layer: h.layer() };
+  });
+  afterEach(h.afterEach);
+  afterAll(h.afterAll);
 
   it("matches by message content, dedups to the most recent match, and respects scope", async () => {
-    ctx = await setupCtx();
-
     const session = await makeSession(ctx, "Weekend plans");
     await addMessage(ctx, session.id, "user", "Let's talk about the quarterly roadmap");
     const single = await searchChatSessionsByMessageContent(ctx.layer.db, "roadmap", [session.id]);
@@ -165,8 +137,6 @@ pgDescribe("async chat store content search + edit primitives (PostgreSQL)", () 
   });
 
   it("treats literal % and _ as literal characters, not LIKE wildcards", async () => {
-    ctx = await setupCtx();
-
     const literalSession = await makeSession(ctx);
     await addMessage(ctx, literalSession.id, "user", "Discount is 50% off, use code A_B");
     const otherSession = await makeSession(ctx);
@@ -186,8 +156,6 @@ pgDescribe("async chat store content search + edit primitives (PostgreSQL)", () 
   });
 
   it("deleteChatMessagesFrom truncates from the target (inclusive) and preserves retained order", async () => {
-    ctx = await setupCtx();
-
     const session = await makeSession(ctx);
     const m1 = await addMessage(ctx, session.id, "user", "first turn");
     const m2 = await addMessage(ctx, session.id, "assistant", "first reply");
@@ -203,8 +171,6 @@ pgDescribe("async chat store content search + edit primitives (PostgreSQL)", () 
   });
 
   it("deleteChatMessagesFrom is a no-op for a wrong-session or unknown target", async () => {
-    ctx = await setupCtx();
-
     const sessionA = await makeSession(ctx);
     const sessionB = await makeSession(ctx);
     const a1 = await addMessage(ctx, sessionA.id, "user", "keep me");
@@ -226,7 +192,6 @@ pgDescribe("async chat store content search + edit primitives (PostgreSQL)", () 
   invariant so a later tool-derived mutation cannot poison a chat row.
   */
   it("sanitizes attachment appends and metadata merge updates at their jsonb boundaries", async () => {
-    ctx = await setupCtx();
     const session = await makeSession(ctx);
     const message = await addMessage(ctx, session.id, "user", "hello", { clean: true });
 
@@ -254,8 +219,6 @@ pgDescribe("async chat store content search + edit primitives (PostgreSQL)", () 
   });
 
   it("updateChatMessageMetadata merges by default, replaces on merge:false, and throws for missing messages", async () => {
-    ctx = await setupCtx();
-
     const session = await makeSession(ctx);
     const message = await addMessage(ctx, session.id, "user", "hello", { mentions: ["@a"] });
 
@@ -280,7 +243,6 @@ pgDescribe("async chat store content search + edit primitives (PostgreSQL)", () 
   by the live chat callback untouched.
   */
   it("persists the NUL-marked in-flight tool snapshot and reads back its sanitized shape", async () => {
-    ctx = await setupCtx();
     const session = await makeSession(ctx);
     const snapshot: ChatInFlightGenerationState = {
       status: "generating",
@@ -336,7 +298,6 @@ pgDescribe("async chat store content search + edit primitives (PostgreSQL)", () 
   containing a raw NUL byte round-trips instead of throwing.
   */
   it("addChatMessage strips a raw U+0000 byte instead of throwing (regression for the CEO-agent chat crash)", async () => {
-    ctx = await setupCtx();
     const session = await makeSession(ctx);
 
     const diagnosticDump =

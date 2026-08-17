@@ -1,21 +1,7 @@
-declare module "@fusion/dashboard/app/utils/taskStuck" {
-  import type { Task, TraitFlags } from "@fusion/core";
-
-  /* FNXC:WorkflowLifecycleColumns 2026-07-31-15:30: the 4th parameter existed upstream and this shim
-     did not declare it, so the plugin could not pass resolved traits even once it had them — and
-     `isWipColumnRole` fell back to the literal, meaning NO card in the graph was ever shown stuck on a
-     renamed board while the same card showed stuck correctly on the main board. */
-  export function isTaskStuck(
-    task: Task,
-    /* FNXC:PluginInteropDrift 2026-07-31-07:50: positionally REQUIRED in the real signature
-       (`number | undefined`), not optional — a mirror that is merely approximate is the drift this
-       file already caused once. Found by check-plugin-interop-drift. */
-    taskStuckTimeoutMs: number | undefined,
-    lastFetchTimeMs?: number,
-    columnFlags?: Partial<TraitFlags>,
-  ): boolean;
-}
-
+/*
+FNXC:StuckTagRemoval 2026-08-17-22:30:
+The taskStuck shim was deleted with the dashboard's stuck-task tagging; the host module no longer exists.
+*/
 declare module "@fusion/dashboard/app/plugins/types" {
   import type { ReactNode } from "react";
   import type { Task, TaskDetail, TraitFlags, WorkflowStep } from "@fusion/core";
@@ -57,7 +43,6 @@ declare module "@fusion/dashboard/app/components/TaskCard" {
     onDeleteTask?: (id: string, options?: { removeDependencyReferences?: boolean }) => Promise<Task>;
     onRetryTask?: (id: string) => Promise<Task>;
     onOpenDetailWithTab?: (task: Task | TaskDetail, initialTab: "changes") => void;
-    taskStuckTimeoutMs?: number;
     onOpenMission?: (missionId: string) => void;
     onMoveTask?: (id: string, column: Column, optionsOrPosition?: { preserveProgress?: boolean } | number) => Promise<Task>;
     lastFetchTimeMs?: number;

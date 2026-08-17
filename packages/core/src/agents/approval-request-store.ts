@@ -243,6 +243,12 @@ export class ApprovalRequestStore {
       if (input.taskId !== undefined) {
         conditions.push(eq(table.taskId, input.taskId));
       }
+      /*
+      FNXC:ApprovalRequestOrdering 2026-08-16-23:07:
+      Keep this dedupe scan aligned with listApprovalRequests: createdAt DESC then
+      random request id DESC makes same-millisecond "latest" arbitrary-but-stable,
+      never a lifecycle or recency claim.
+      */
       const rows = await this.asyncLayer!.db
         .select()
         .from(table)
@@ -265,6 +271,11 @@ export class ApprovalRequestStore {
       params.push(input.taskId);
     }
 
+    /*
+    FNXC:ApprovalRequestOrdering 2026-08-16-23:07:
+    Preserve the backend dedupe ordering in the legacy SQL fallback: tie resolution
+    is arbitrary-but-stable and must not imply that an id is newer.
+    */
     const rows = this.syncDb().prepare(`
       SELECT * FROM approval_requests
       WHERE ${where.join(" AND ")}

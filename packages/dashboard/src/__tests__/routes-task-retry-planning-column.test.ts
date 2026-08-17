@@ -109,6 +109,8 @@ function buildApp(input: { task: Task; workflowId?: string; definition?: unknown
     // no-op (`force: true`) rather than touching any real tree.
     getRootDir: () => "/tmp/fusion-retry-planning-column-does-not-exist",
     listTasks: async () => [input.task],
+    // FNXC:TaskWedgeNotifications 2026-08-15-05:10: dashboard Retry now clears the spent generic-terminal auto-recovery budget before mutating task state; the fixture must expose the seam or every retry 500s.
+    resetTerminalFailureAutoRecoveryBudget: async () => {},
     getTaskWorkflowSelectionAsync: async () => (input.workflowId ? { workflowId: input.workflowId } : null),
     getWorkflowDefinition: async () => input.definition,
     getWorkflowSettingsProjectId: () => undefined,

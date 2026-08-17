@@ -249,7 +249,26 @@ FNXC:EngineDiagnostics 2026-07-26-10:25:
 Self-healing no-action/skip/defer/worktrunk-skip/maintenance lifecycle lines fire every sweep and drowned recoveries in the TUI. Those are debug (FUSION_DEBUG=self-healing). Keep log/warn/error for real recoveries (Recovered/Reclaimed/Cleaned/Revived/…), stuck kills, and failures.
 */
 const yieldEventLoop = (): Promise<void> => new Promise((resolve) => setImmediateCb(resolve));
+/*
+FNXC:DoneMetadataRepairBound 2026-08-13-04:10 (RUFU-076):
+The done-task-merge-metadata sweep repairs stale `mergeDetails` on COMPLETE-lane cards by re-deriving
+landed-commit proof (`findLandedTaskCommit` + shortstat + landed-files) per candidate. On a done-heavy
+repo that was O(done_tasks) x multiple git subprocesses EVERY maintenance cycle — one of the two measured
+git-storm drivers behind the production 61-70% CPU collapse. Bound it: process at most this many
+candidates per cycle (round-robin across cycles) so recovery still happens without re-deriving proof for
+every done card each pass.
+*/
+const DONE_METADATA_REPAIR_CAP = 25;
 const DONE_TASK_INTEGRITY_SWEEP_LIMIT = 50;
+/**
+ * FNXC:GitWorktreeChurnCadenceCoarsen 2026-08-13-04:05 (RUFU-076):
+ * Batch-1 git-churn steps (prune-worktrees, cleanup-orphans, cleanup-stale-temp-merge-worktrees,
+ * cleanup-orphaned-branches, enforce-worktree-cap) each shell out to git. On an ACTIVE project they
+ * used to run every maintenanceIntervalMs (default 5m) even when nothing changed, contributing to the
+ * production git storm. Coarsen them to at-most-hourly so a healthy active project stops re-running
+ * `git worktree prune` / `git worktree list --porcelain` / `git branch --list 'fusion/*'` every cycle.
+ */
+const GIT_WORKTREE_CHURN_INTERVAL_MS = 60 * 60 * 1000;
 const BOARD_STALL_NOTIFICATION_COOLDOWN_MS = 60 * 60_000;
 const DB_CORRUPTION_NOTIFICATION_COOLDOWN_MS = 60 * 60 * 1000;
 const PHANTOM_EXECUTOR_BINDING_AGE_MULTIPLIER = 3;
@@ -636,6 +655,8 @@ type RebindOutcome =
     aheadCount: number;
     integrationBase: string;
     previousBranch: string | null;
+    /* FNXC:SelfHealingRebind 2026-08-17-20:59: true when the rebind kept `task.worktree` because the directory exists and is checked out on the rebound branch. */
+    preservedWorktree: boolean;
   }
   | {
     taskId: string;
@@ -716,7 +737,10 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
 
   // ── Maintenance timer ───────────────────────────────────────────────
   private maintenanceInterval: ReturnType<typeof setInterval> | null = null;
+  private maintenanceStarting = false;
   private maintenanceRunning = false;
+  /** Last wall-clock a batch-1 git-churn pass ran on this manager (coarse-cadence gate). */
+  private lastGitWorktreeChurnAt = 0;
   /** In-process belt only; the durable apply token remains the cross-process fence. */
   private autoRecoverTerminalFailuresInFlight = false;
 
@@ -1901,6 +1925,12 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
   // ── Auto-unpause ───────────────────────────────────────────────────
 
   private onSettingsUpdated(settings: Settings, previous: Settings): void {
+    // FNXC:PauseGatedMaintenance 2026-08-13-03:08 (RUFU-076):
+    // Keep the periodic-maintenance timer in sync with pause state on every settings change. This
+    // handles enginePaused as well as globalPause transitions, so a project paused mid-run clears its
+    // armed maintenance timer and an unpaused project re-arms it idempotently.
+    this.syncMaintenanceOnRefresh(settings);
+
     // globalPause false → true: schedule auto-unpause
     if (!previous.globalPause && settings.globalPause) {
       if (!settings.autoUnpauseEnabled) {
@@ -2124,6 +2154,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           try {
             await this.store.moveTask(taskId, await resolveReboundTargetForTask(this.store, taskId), {
               preserveProgress: true,
+              preserveWorktree: true,
               preserveStatus: true,
               // #1411: backward recovery — skip order-derived adjacency.
               moveSource: "engine",
@@ -2214,7 +2245,36 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
   // ── Periodic maintenance ──────────────────────────────────────────
 
   private async startMaintenance(): Promise<void> {
+    if (this.maintenanceInterval) return; // already armed — prevent double-arming on unpause transitions
+    if (this.maintenanceStarting) return; // an arm is already in flight — never arm two timers
+    this.maintenanceStarting = true;
+    try {
+      await this.armMaintenanceInternal();
+    } finally {
+      this.maintenanceStarting = false;
+    }
+  }
+
+  private async armMaintenanceInternal(): Promise<void> {
+    if (this.maintenanceInterval) return; // re-check after the await window (double-arm guard)
+
     const settings = await this.store.getSettings();
+    if (this.maintenanceInterval) return; // another arm won the race after getSettings resolved
+    /*
+    FNXC:PauseGatedMaintenance 2026-08-13-03:08 (RUFU-076):
+    A paused project (globalPause or enginePaused) must NOT arm periodic self-healing maintenance.
+    Before this fix SelfHealingManager.start() ran before the runtime's pause gate, so the periodic
+    setInterval still fired on paused projects and batch-1 ran `git worktree prune` / `git worktree
+    list --porcelain` / `git branch --list 'fusion/*'` / `git log` unconditionally — the measured
+    production git storm that pinned the single engine process at 61-70% CPU and starved /api/health
+    past its 5000ms timeout. `onSettingsUpdated` re-arms the timer on the unpause transition and
+    `stop()` clears it on teardown, so a project that starts paused never arms in the first place.
+    */
+    if (settings.globalPause || settings.enginePaused) {
+      log.debug("Periodic maintenance not armed — engine/global pause is active");
+      return;
+    }
+
     const intervalMs = settings.maintenanceIntervalMs ?? 900_000;
 
     if (intervalMs <= 0) {
@@ -2226,6 +2286,41 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     this.maintenanceInterval = setInterval(() => {
       void this.runMaintenance();
     }, intervalMs);
+  }
+
+  /*
+   * FNXC:PauseGatedMaintenance 2026-08-13-03:08 (RUFU-076):
+   * Keep the periodic maintenance timer in sync with the engine/global pause state. `onSettingsUpdated`
+   * calls this on every settings:updated event; pausing clears the armed timer (stopping the git churn),
+   * unpausing (re)arms it idempotently via `startMaintenance`'s guard. This is the only writer of the
+   * pause->stop-maintenance transition besides `stop()` teardown.
+   */
+  /*
+   * FNXC:GitWorktreeChurnCadenceCoarsen 2026-08-13-04:05 (RUFU-076):
+   * Coarse-cadence gate for batch-1 git-churn steps. Returns true only when a full coarse window
+   * (hourly) has elapsed since the last batch-1 git-worktree pass, so an idle/healthy active project
+   * does not re-run `git worktree prune` / `git worktree list` / `git branch` on every maintenance
+   * interval. Note the shared timestamp also bounds cleanup-orphaned-branches and enforce-worktree-cap
+   * even though they live further down batch-1.
+   */
+  private isGitWorktreeChurnDue(): boolean {
+    return Date.now() - this.lastGitWorktreeChurnAt >= GIT_WORKTREE_CHURN_INTERVAL_MS;
+  }
+
+  private syncMaintenanceOnRefresh(settings: Settings): void {
+    const paused = settings.globalPause || settings.enginePaused;
+    if (paused) {
+      if (this.maintenanceInterval) {
+        clearInterval(this.maintenanceInterval);
+        this.maintenanceInterval = null;
+        log.debug("Periodic maintenance paused — cleared maintenance timer");
+      }
+      return;
+    }
+    if (!this.maintenanceInterval) {
+      // Unpaused transition (or first settings refresh) — (re)arm if not already running.
+      void this.startMaintenance();
+    }
   }
 
   /*
@@ -2633,19 +2728,42 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
 
     try {
       const settings = await this.store.getSettings();
+      /*
+      FNXC:PauseGatedMaintenance 2026-08-13-03:08 (RUFU-076):
+      Under pause, only the pure-DB/FS housekeeping batch-1 steps may run. The git-churn steps —
+      prune-worktrees, cleanup-orphans, cleanup-stale-temp-merge-worktrees, cleanup-orphaned-branches,
+      enforce-worktree-cap — each call `git worktree prune` / `git worktree list` / `git branch` and
+      would drift toward the production git storm if they ran on a paused project. The maintenance timer
+      is already cleared on pause, so in steady state this branch is dead; it is a defence-in-depth gate
+      for an in-flight cycle that overlaps a pause transition.
+      */
+      const maintenancePaused = settings.globalPause || settings.enginePaused;
+
+      // FNXC:GitWorktreeChurnCadenceCoarsen 2026-08-13-04:05 (RUFU-076): batch-1 git-churn steps run
+      // at most hourly on an ACTIVE project, not every maintenanceIntervalMs. Under pause they never run
+      // and the coarse-gate timestamp is NOT advanced, so a project that wakes from a long pause still
+      // gets its next git pass when it unpauses (it does not "spend" its idle window).
+      const gitWorktreeChurnDue = this.isGitWorktreeChurnDue();
+      if (!maintenancePaused && gitWorktreeChurnDue) {
+        this.lastGitWorktreeChurnAt = Date.now();
+      }
 
       // Batch 1 — housekeeping (safe under pause: filesystem/db cleanup only)
       const batch1Fns: Array<{ name: string; fn: () => Promise<unknown> }> = [
-        { name: "prune-worktrees", fn: () => this.pruneWorktrees() },
+        {
+          name: "prune-worktrees",
+          fn: () => (maintenancePaused || !gitWorktreeChurnDue ? Promise.resolve(0) : this.pruneWorktrees()),
+        },
         {
           name: "prune-task-lifecycle-events",
           fn: async () => this.pruneTaskLifecycleEventsForMaintenance(),
         },
         { name: "prune-github-check-states", fn: async () => this.pruneGitHubCheckStatesForMaintenance() },
-        { name: "cleanup-orphans", fn: () => this.cleanupOrphans() },
+        { name: "cleanup-orphans", fn: () => (maintenancePaused || !gitWorktreeChurnDue ? Promise.resolve(0) : this.cleanupOrphans()) },
         {
           name: "cleanup-stale-temp-merge-worktrees",
           fn: async () => {
+            if (maintenancePaused || !gitWorktreeChurnDue) return 0;
             const cleaned = await this.cleanupStaleTempMergeWorktrees();
             if (cleaned > 0) {
               log.debug(`Cleaned ${cleaned} stale AI merge temp worktree(s)`);
@@ -2653,7 +2771,10 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
             return cleaned;
           },
         },
-        { name: "cleanup-orphaned-branches", fn: () => this.cleanupOrphanedBranches() },
+        {
+          name: "cleanup-orphaned-branches",
+          fn: () => (maintenancePaused || !gitWorktreeChurnDue ? Promise.resolve(0) : this.cleanupOrphanedBranches()),
+        },
         {
           name: "reconcile-orphaned-task-dirs",
           fn: async () => {
@@ -2779,7 +2900,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         },
         { name: "fts-maintenance", fn: () => this.maintainTaskFts() },
         { name: "checkpoint-wal", fn: () => Promise.resolve(this.checkpointWal()) },
-        { name: "enforce-worktree-cap", fn: () => this.enforceWorktreeCap() },
+        { name: "enforce-worktree-cap", fn: () => (maintenancePaused || !gitWorktreeChurnDue ? Promise.resolve(0) : this.enforceWorktreeCap()) },
       ];
       for (const fn of batch1Fns) {
         try {
@@ -4499,6 +4620,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
                     moveSource: "engine",
                     // #1411: backward recovery — skip order-derived adjacency.
                     recoveryRehome: true,
+                    // worktree-discard-intended: reclaim proved the branch already merged / has zero unique commits; the checkout holds nothing worth keeping and worktree was explicitly nulled above.
                     preserveProgress: true,
                     preserveResumeState: true,
                   }, UNATTRIBUTED_MUTATION_CONTEXT);
@@ -4619,6 +4741,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
                       moveSource: "engine",
                       // #1411: backward recovery — skip order-derived adjacency.
                       recoveryRehome: true,
+                      // worktree-discard-intended: reclaim proved the branch already merged / has zero unique commits; the checkout holds nothing worth keeping and worktree was explicitly nulled above.
                       preserveProgress: true,
                       preserveResumeState: true,
                     }, UNATTRIBUTED_MUTATION_CONTEXT);
@@ -5616,7 +5739,30 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         const withUniqueWork = existingCandidates.filter((candidate) => candidate.aheadCount > 0);
         if (withUniqueWork.length === 1) {
           const selected = withUniqueWork[0];
-          const patch: Partial<Task> = { branch: selected.branch, worktree: null as unknown as string };
+          /*
+          FNXC:SelfHealingRebind 2026-08-17-20:59:
+          A branch rebind must not discard a live checkout. Nulling `task.worktree` here made the
+          existing worktree directory invisible to `scanIdleWorktrees`' active set, so the next idle
+          sweep / cap enforcement `git worktree remove`d it — the reported "worktree lost between
+          review and in-progress" incident. Preserve the pointer when the directory still exists and
+          is checked out on the branch being rebound to; only a missing or mismatched checkout keeps
+          the legacy clear (worktree acquisition re-validates and recreates on next dispatch anyway).
+          */
+          let preservedWorktree = false;
+          if (task.worktree && existsSync(task.worktree)) {
+            try {
+              const { stdout } = await execAsync("git rev-parse --abbrev-ref HEAD", {
+                cwd: task.worktree,
+                timeout: 30_000,
+              });
+              preservedWorktree = stdout.trim() === selected.branch;
+            } catch {
+              // unreadable checkout — fall back to clearing metadata
+            }
+          }
+          const patch: Partial<Task> = preservedWorktree
+            ? { branch: selected.branch }
+            : { branch: selected.branch, worktree: null as unknown as string };
           if (!task.baseCommitSha) {
             const derivedBaseCommit = (await execAsync(
               `git merge-base ${shellQuote(integrationBase)} ${shellQuote(selected.branch)}`,
@@ -5656,6 +5802,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
               integrationBase,
               source: "auto-rebind-in-review",
               previousBranch: task.branch ?? null,
+              preservedWorktree,
             },
           });
           result.repaired++;
@@ -5666,6 +5813,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
             aheadCount: selected.aheadCount,
             integrationBase,
             previousBranch: task.branch ?? null,
+            preservedWorktree,
           });
           continue;
         }
@@ -7537,6 +7685,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
               recoveryRehome: true,
               bypassGuards: true,
               preserveProgress: true,
+              preserveWorktree: true,
             }, UNATTRIBUTED_MUTATION_CONTEXT);
             rehomed += 1;
             await createRunAuditor(this.store, {
@@ -8327,7 +8476,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
             continue;
           }
           // #1411: backward recovery — skip order-derived adjacency.
-          await this.store.moveTask(task.id, await resolveReboundTargetForTask(this.store, task.id), { preserveProgress: true, moveSource: "engine", recoveryRehome: true }, UNATTRIBUTED_MUTATION_CONTEXT);
+          await this.store.moveTask(task.id, await resolveReboundTargetForTask(this.store, task.id), { preserveProgress: true, preserveWorktree: true, moveSource: "engine", recoveryRehome: true }, UNATTRIBUTED_MUTATION_CONTEXT);
           continue;
         }
 
@@ -8390,7 +8539,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
               lane: "self-healing-finalize-no-op-review",
             });
             // #1411: backward recovery — skip order-derived adjacency.
-            await this.store.moveTask(task.id, await resolveReboundTargetForTask(this.store, task.id), { preserveProgress: true, moveSource: "engine", recoveryRehome: true }, UNATTRIBUTED_MUTATION_CONTEXT);
+            await this.store.moveTask(task.id, await resolveReboundTargetForTask(this.store, task.id), { preserveProgress: true, preserveWorktree: true, moveSource: "engine", recoveryRehome: true }, UNATTRIBUTED_MUTATION_CONTEXT);
             recovered++;
             continue;
           }
@@ -8410,7 +8559,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
               baseRef: classification.baseRef,
             });
             // #1411: backward recovery — skip order-derived adjacency.
-            await this.store.moveTask(task.id, await resolveReboundTargetForTask(this.store, task.id), { preserveProgress: true, moveSource: "engine", recoveryRehome: true }, UNATTRIBUTED_MUTATION_CONTEXT);
+            await this.store.moveTask(task.id, await resolveReboundTargetForTask(this.store, task.id), { preserveProgress: true, preserveWorktree: true, moveSource: "engine", recoveryRehome: true }, UNATTRIBUTED_MUTATION_CONTEXT);
             recovered++;
             continue;
           }
@@ -9223,7 +9372,7 @@ const movedTask = await this.store.moveTask(task.id, completeLane, undefined, UN
             "Auto-recovered: in-review task still had incomplete steps — moved back to todo for retry", undefined, UNATTRIBUTED_MUTATION_CONTEXT,
           );
           // #1411: backward recovery — skip order-derived adjacency.
-          await this.store.moveTask(task.id, await resolveReboundTargetForTask(this.store, task.id), { preserveProgress: true, moveSource: "engine", recoveryRehome: true }, UNATTRIBUTED_MUTATION_CONTEXT);
+          await this.store.moveTask(task.id, await resolveReboundTargetForTask(this.store, task.id), { preserveProgress: true, preserveWorktree: true, moveSource: "engine", recoveryRehome: true }, UNATTRIBUTED_MUTATION_CONTEXT);
           log.log(`Recovered stale incomplete review task ${task.id}: moved back to todo`);
           recovered++;
         } catch (err: unknown) { const errorMessage = err instanceof Error ? err.message : String(err);
@@ -9711,7 +9860,7 @@ const movedTask = await this.store.moveTask(task.id, completeLane, undefined, UN
             "Auto-recovered: in-review task idle past stuck-task timeout — kicked back to todo", undefined, UNATTRIBUTED_MUTATION_CONTEXT,
           );
           // #1411: backward recovery — skip order-derived adjacency.
-          await this.store.moveTask(task.id, await resolveReboundTargetForTask(this.store, task.id), { preserveProgress: true, moveSource: "engine", recoveryRehome: true }, UNATTRIBUTED_MUTATION_CONTEXT);
+          await this.store.moveTask(task.id, await resolveReboundTargetForTask(this.store, task.id), { preserveProgress: true, preserveWorktree: true, moveSource: "engine", recoveryRehome: true }, UNATTRIBUTED_MUTATION_CONTEXT);
           log.log(`Kicked ghost review task ${task.id} back to todo`);
           recovered++;
         } catch (err: unknown) {
@@ -10917,8 +11066,19 @@ const movedTask = await this.store.moveTask(task.id, completeLane, undefined, UN
       });
       if (candidates.length === 0) return 0;
 
+      /*
+      FNXC:DoneMetadataRepairBound 2026-08-13-04:10 (RUFU-076):
+      Bound the per-cycle git work. Only a bounded candidate batch is processed each maintenance pass;
+      the rest are picked up on later cycles (FIFO, eventually covering all candidates without the
+      O(done_tasks) x git subprocess churn per cycle). We deliberately do NOT skip "already-complete"
+      mergeConfirmed rows based on their stored field presence: FN-4646 proves a fully-populated
+      mergeConfirmed row can still carry STALE `landedFiles`/stats that diverge from the git-derived
+      truth, so "looks complete" is not "provably correct" — only the git derivation can tell. The cap
+      is therefore the full storm bound, not a per-row field-presence heuristic.
+      */
+      const batch = candidates.slice(0, DONE_METADATA_REPAIR_CAP);
       let repaired = 0;
-      for (const task of candidates) {
+      for (const task of batch) {
         /*
         FNXC:Workspace 2026-06-22-14:10 (Phase D review F — workspace done-metadata corruption gate):
         This reconciler assumes ONE git repo at `this.options.rootDir` and calls `findLandedTaskCommit`
@@ -13126,7 +13286,7 @@ const movedTask = await this.store.moveTask(task.id, completeLane, undefined, UN
             nextRecoveryAt: new Date(Date.now() + delayMs).toISOString(),
           },
           targetColumn: await resolveReboundTargetForTask(this.store, task.id),
-          moveOptions: { preserveProgress: true, moveSource: "engine" },
+          moveOptions: { preserveProgress: true, preserveWorktree: true, moveSource: "engine" },
         });
         if (applied.outcome === "applied") {
           await this.store.logEntry(task.id, `Auto-recovered generic terminal failure (attempt ${claim.attempt}/${MAX_TERMINAL_FAILURE_AUTO_RETRIES})`);
@@ -13355,6 +13515,7 @@ const movedTask = await this.store.moveTask(task.id, completeLane, undefined, UN
           if (route.kind === "node-requeue" && fresh.column !== requeueTarget) {
             await this.store.moveTask(task.id, requeueTarget, {
               preserveProgress: true,
+              preserveWorktree: true,
               moveSource: "engine",
               recoveryRehome: true,
             }, UNATTRIBUTED_MUTATION_CONTEXT);
@@ -13690,6 +13851,7 @@ const movedTask = await this.store.moveTask(task.id, completeLane, undefined, UN
               const leaseRecovered = await this.options.leaseManager.recoverAbandonedLease(
                 task.id,
                 `in-progress limbo: ${describeWorktreeState(task)} + null branch`,
+                // worktree-discard-intended: limbo recovery — the worktree is already missing or its metadata cleared; there is no live checkout to hold.
                 { preserveProgress: true },
               );
               if (!leaseRecovered) {
@@ -13773,6 +13935,7 @@ const movedTask = await this.store.moveTask(task.id, completeLane, undefined, UN
             },
           });
           // #1411: backward recovery — skip order-derived adjacency.
+          // worktree-discard-intended: limbo recovery — the worktree is already missing or its metadata cleared; there is no live checkout to hold.
           await this.store.moveTask(task.id, await resolveReboundTargetForTask(this.store, task.id), { preserveProgress: true, moveSource: "engine", recoveryRehome: true }, UNATTRIBUTED_MUTATION_CONTEXT);
           recovered++;
         } catch (err: unknown) {
@@ -15210,7 +15373,7 @@ const movedTask = await this.store.moveTask(task.id, completeLane, undefined, UN
             `Auto-retry ${nextCount}/${MAX_TASK_DONE_RETRIES}: agent finished without fn_task_done — requeuing to todo to resume partial work`, undefined, UNATTRIBUTED_MUTATION_CONTEXT,
           );
           // #1411: backward recovery — skip order-derived adjacency.
-          await this.store.moveTask(task.id, await resolveReboundTargetForTask(this.store, task.id), { preserveProgress: true, moveSource: "engine", recoveryRehome: true }, UNATTRIBUTED_MUTATION_CONTEXT);
+          await this.store.moveTask(task.id, await resolveReboundTargetForTask(this.store, task.id), { preserveProgress: true, preserveWorktree: true, moveSource: "engine", recoveryRehome: true }, UNATTRIBUTED_MUTATION_CONTEXT);
           recovered++;
         } catch (err: unknown) {
           const errorMessage = err instanceof Error ? err.message : String(err);

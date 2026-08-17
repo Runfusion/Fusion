@@ -161,7 +161,6 @@ export function MainContent({
   handleOpenDetailWithTab,
   handleToggleFavorite,
   handleToggleModelFavorite,
-  taskStuckTimeoutMs,
   staleHighFanoutBlockerAgeThresholdMs,
   lastFetchTimeMs,
   openCreateWorkflowWithNav,
@@ -905,7 +904,6 @@ export function MainContent({
             favoriteModels={favoriteModels}
             onToggleFavorite={handleToggleFavorite}
             onToggleModelFavorite={handleToggleModelFavorite}
-            taskStuckTimeoutMs={taskStuckTimeoutMs}
             staleHighFanoutBlockerAgeThresholdMs={staleHighFanoutBlockerAgeThresholdMs}
             onOpenMission={handleOpenMission}
             lastFetchTimeMs={lastFetchTimeMs}
@@ -1025,7 +1023,6 @@ export function MainContent({
           favoriteModels={favoriteModels}
           onToggleFavorite={handleToggleFavorite}
           onToggleModelFavorite={handleToggleModelFavorite}
-          taskStuckTimeoutMs={taskStuckTimeoutMs}
           staleHighFanoutBlockerAgeThresholdMs={staleHighFanoutBlockerAgeThresholdMs}
           onOpenMission={handleOpenMission}
           lastFetchTimeMs={lastFetchTimeMs}
@@ -1068,7 +1065,6 @@ export function MainContent({
         favoriteModels={favoriteModels}
         onToggleFavorite={handleToggleFavorite}
         onToggleModelFavorite={handleToggleModelFavorite}
-        taskStuckTimeoutMs={taskStuckTimeoutMs}
         searchQuery={searchQuery}
         lastFetchTimeMs={lastFetchTimeMs}
         prAuthAvailable={prAuthAvailable}

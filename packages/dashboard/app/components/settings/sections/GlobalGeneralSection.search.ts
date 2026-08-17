@@ -33,6 +33,15 @@ export const globalGeneralSearchEntries: SettingsSearchEntry[] = [
   },
   {
     sectionId: "global-general",
+    key: "quickAddSubmitOnEnter",
+    labelKey: "settings.globalGeneral.quickAddSubmitOnEnter",
+    labelFallback: " Press Enter to save a task in Quick Add ",
+    helpKey: "settings.globalGeneral.quickAddSubmitOnEnterHint",
+    helpFallback: " Default: enabled. When disabled, Enter inserts a newline and Cmd/Ctrl+Enter saves. ",
+    keywords: ["enter", "keyboard", "quick add", "newline", "submit"],
+  },
+  {
+    sectionId: "global-general",
     key: "persistAgentToolOutput",
     labelKey: "settings.globalGeneral.saveToolOutputInAgentLogs",
     labelFallback: " Save tool output in agent logs ",
