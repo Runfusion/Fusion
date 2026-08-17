@@ -14,6 +14,7 @@ import { executorLog } from "../logger.js";
 import { generateSyntheticRunId, createRunAuditor, type EngineRunContext, type RunAuditor } from "../util/run-audit.js";
 import { acquireTaskWorktree } from "../worktree/worktree-acquisition.js";
 import { captureBaseCommitSha } from "./worktree-git-refs.js";
+import { runContextForTotal } from "./run-context-for.js";
 import { createConfiguredCommandAbortError } from "./task-predicates.js";
 import type { WorktreePool } from "../worktree/worktree-pool.js";
 import { resolveWorkspaceConfigOnce } from "./workspace-config-resolver.js";
@@ -25,6 +26,7 @@ export type EnsureGraphCustomNodeWorktreeDeps = {
   getWorkspaceConfig: () => WorkspaceConfig | null | undefined;
   setWorkspaceConfig: (config: WorkspaceConfig | null) => void;
   getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   pool?: WorktreePool;
   secretsStore?: Parameters<typeof acquireTaskWorktree>[0]["secretsStore"];
   createWorktree: (
@@ -74,7 +76,7 @@ export async function ensureGraphCustomNodeWorktree(
       task.id,
       `Workflow node '${nodeId}' requires a task worktree — acquiring worktree before node execution`,
       undefined,
-      deps.getRunContextFor(task.id),
+      deps.runContextFor(task.id),
     );
     const acquisition = await acquireTaskWorktree({
       task,
@@ -84,7 +86,7 @@ export async function ensureGraphCustomNodeWorktree(
       pool: deps.pool,
       logger: executorLog,
       audit,
-      runContext: deps.getRunContextFor(task.id),
+      runContext: deps.runContextFor(task.id),
       runInitCommand: true,
       createWorktree: deps.createWorktree,
       createWorktreeBackendKind: "native",
@@ -108,7 +110,16 @@ export async function ensureGraphCustomNodeWorktree(
     });
     deps.addActiveWorktree(task.id, acquisition.worktreePath);
     if (!acquisition.isResume) {
-      await captureBaseCommitSha(deps.store, task, acquisition.worktreePath, audit, { isResume: false });
+      // FNXC:Identity 2026-08-14-05:32: attribute the base-SHA write to the graph node's run,
+      // matching every other store write in this function.
+      await captureBaseCommitSha(
+        deps.store,
+        task,
+        acquisition.worktreePath,
+        audit,
+        { isResume: false },
+        runContextForTotal(deps.getRunContextFor, task.id),
+      );
     }
     deps.onStart?.(task, acquisition.worktreePath);
     executorLog.debug(`${task.id}: workflow node '${nodeId}' acquired worktree at ${acquisition.worktreePath}`);
@@ -119,7 +130,7 @@ export async function ensureGraphCustomNodeWorktree(
       task.id,
       `Workflow node '${nodeId}' failed to acquire task worktree: ${message}`,
       undefined,
-      deps.getRunContextFor(task.id),
+      deps.runContextFor(task.id),
     );
     throw error;
   } finally {

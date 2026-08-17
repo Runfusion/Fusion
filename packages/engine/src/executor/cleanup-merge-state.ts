@@ -11,6 +11,7 @@ import { preservePreExecutionWorkflowStepResults } from "./workflow-step-satisfa
 export type CleanupMergeStateDeps = {
   store: TaskStore;
   getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   reopenLastStepForRevision: (
     taskId: string,
     task: Task,
@@ -65,6 +66,6 @@ export async function cleanupMergeStateForReverification(
     }
   }
 
-  await deps.store.logEntry(task.id, logMessage, undefined, deps.getRunContextFor(task.id));
+  await deps.store.logEntry(task.id, logMessage, undefined, deps.runContextFor(task.id));
   return deps.store.getTask(task.id);
 }

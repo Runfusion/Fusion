@@ -13,6 +13,7 @@ import type { ResumeLanes } from "./resolve-resume-lanes.js";
 export type FinalizeAlreadyReviewedTaskDeps = {
   store: TaskStore;
   getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   resolveResumeLanes: (taskId: string, memo?: { lanes?: ResumeLanes }) => Promise<ResumeLanes>;
 };
 
@@ -39,7 +40,7 @@ export async function finalizeAlreadyReviewedTask(
     reviewColumns: new Set([resumeReviewLane ?? "in-review"]),
   });
   if (blocker) {
-    await deps.store.logEntry(taskId, "Task already in-review; merge deferred", blocker, deps.getRunContextFor(taskId));
+    await deps.store.logEntry(taskId, "Task already in-review; merge deferred", blocker, deps.runContextFor(taskId));
     return "blocked";
   }
 
@@ -47,7 +48,7 @@ export async function finalizeAlreadyReviewedTask(
     taskId,
     "Task already in-review after completion — finalizing merge",
     undefined,
-    deps.getRunContextFor(taskId),
+    deps.runContextFor(taskId),
   );
   await deps.store.mergeTask(taskId);
   return "merged";
