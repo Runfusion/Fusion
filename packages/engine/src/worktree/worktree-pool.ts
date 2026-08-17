@@ -1,6 +1,6 @@
 import { exec, execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { constants, copyFileSync, existsSync, linkSync, lstatSync, readdirSync, readFileSync, realpathSync, renameSync, rmdirSync, unlinkSync } from "node:fs";
+import { constants, copyFileSync, existsSync, linkSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmdirSync, unlinkSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve, isAbsolute } from "node:path";
 import type { SecretsStore, Settings, TaskStore, WorktrunkSettings } from "@fusion/core";
@@ -1075,6 +1075,47 @@ function dotGitPointerIsDangling(dotGitPath: string): boolean {
   }
 }
 
+/**
+ * Restore a stashed `.git` pointer at its original pathname, preserving the
+ * stash as a manual-recovery copy when every restore attempt fails for a
+ * reason other than a concurrent pointer (which is authoritative and wins).
+ * Returns `true` when the stash was consumed (restored or superseded by a
+ * concurrent pointer); `false` when the stash was kept for manual recovery.
+ */
+function restoreStashedDotGit(dotGit: string, dotGitStash: string, name: string): boolean {
+  try {
+    linkSync(dotGitStash, dotGit);
+    unlinkSync(dotGitStash);
+    return true;
+  } catch (restoreError) {
+    const restoreCode = restoreError instanceof Error && "code" in restoreError ? (restoreError as { code?: unknown }).code : undefined;
+    if (restoreCode === "EEXIST") {
+      unlinkSync(dotGitStash);
+      return true;
+    }
+    // linkSync failed for a reason other than a concurrent .git
+    // (EPERM/ENOSPC/...): the pointer exists only in the stash. Fail
+    // closed — COPYFILE_EXCL restores it without ever overwriting a
+    // .git that appears concurrently; if one does, EEXIST keeps the
+    // authoritative pointer and drops the stash.
+    try {
+      copyFileSync(dotGitStash, dotGit, constants.COPYFILE_EXCL);
+      unlinkSync(dotGitStash);
+      return true;
+    } catch (fallbackError) {
+      const fallbackCode = fallbackError instanceof Error && "code" in fallbackError ? (fallbackError as { code?: unknown }).code : undefined;
+      if (fallbackCode === "EEXIST") {
+        unlinkSync(dotGitStash);
+        return true;
+      }
+      worktreePoolLog.warn(
+        `reapOrphanWorktrees: failed to restore .git for ${name} — ${restoreError instanceof Error ? restoreError.message : String(restoreError)}; keeping stash for manual recovery: ${dotGitStash}`,
+      );
+      return false;
+    }
+  }
+}
+
 export async function reapOrphanWorktrees(
   projectRoot: string,
   settings?: Pick<Settings, "worktreesDir">,
@@ -1152,6 +1193,7 @@ export async function reapOrphanWorktrees(
     // FNXC:WorktreeCleanup 2026-08-15-20:40: clean Fusion-owned secret residue before removing an empty orphan.
     try {
       let dotGitStash: string | undefined;
+      let targetPath: string | undefined;
       try {
         await cleanupSecretsEnvFile({
           worktreePath: resolvedFull,
@@ -1159,6 +1201,11 @@ export async function reapOrphanWorktrees(
           expectedFingerprint: null,
           filename: ".env",
           allowLegacyCleanupForDanglingGitdir: danglingDotGit,
+          // FNXC:SecretsEnvMaterialization 2026-08-17-16:45: the boolean verdict
+          // predates this awaited cleanup; revalidate the pointer's CURRENT state
+          // at the authorization boundary so a repaired worktree's tracked .env
+          // is never cleaned on the stale flag.
+          isDanglingGitdir: () => dotGitPointerIsDangling(dotGit),
           logger: worktreePoolLog,
         });
       } catch (error) {
@@ -1170,64 +1217,104 @@ export async function reapOrphanWorktrees(
           worktreePoolLog.warn(`Preserving orphan worktree with uncommitted content: ${resolvedFull}`);
           continue;
         }
-        // Move the dangling pointer aside instead of unlinking it: if rmdir below
-        // fails, an atomic rename/link restores the metadata without recreating it
-        // (no content or mode copy, no EEXIST or ENOSPC window). The stash sits next
-        // to the orphan so the directory itself stays empty for rmdir.
+        /*
+         * FNXC:WorktreeCleanup 2026-08-16-21:30:
+         * The dangling verdict above predates the awaited secrets-env cleanup, which gave a
+         * concurrent repair time to recreate the admin entry the pointer references. Revalidate
+         * the pointer immediately before stashing it: a pointer that is no longer positively
+         * dangling (target recreated, .git replaced by a real directory, or the file vanished)
+         * must be preserved — stashing/removing it would delete a repaired worktree.
+         */
+        if (!dotGitPointerIsDangling(dotGit)) {
+          worktreePoolLog.warn(`Preserving orphan worktree whose .git pointer is no longer dangling: ${resolvedFull}`);
+          continue;
+        }
+        // Hard-link the pointer aside, then revalidate its inode before unlinking
+        // the pathname. Unlike rename, this never overwrites a repair that wins
+        // while the stash is being made.
         dotGitStash = join(dirname(resolvedFull), `.${name}.git-reap-stash-${process.pid}-${Date.now().toString(36)}`);
-        renameSync(dotGit, dotGitStash);
+        linkSync(dotGit, dotGitStash);
+        const pointerStat = lstatSync(dotGit);
+        const stashStat = lstatSync(dotGitStash);
+        if (pointerStat.dev !== stashStat.dev || pointerStat.ino !== stashStat.ino || !dotGitPointerIsDangling(dotGit)) {
+          unlinkSync(dotGitStash);
+          dotGitStash = undefined;
+          worktreePoolLog.warn(`Preserving orphan worktree whose .git pointer was repaired during stash: ${resolvedFull}`);
+          continue;
+        }
+        // The stash holds the pointer's original content; derive the admin target
+        // once and reuse it for every pre/post-removal liveness revalidation.
+        const stashedTarget = /^gitdir:\s*(.+)$/m.exec(readFileSync(dotGitStash, "utf8").trim())?.[1]?.trim();
+        targetPath = stashedTarget
+          ? (isAbsolute(stashedTarget) ? stashedTarget : resolve(dirname(dotGit), stashedTarget))
+          : undefined;
+        unlinkSync(dotGit);
+        // A repair can win in the unlink window itself. Restore the pointer and
+        // preserve the worktree before the later rmdir/prune can delete its live
+        // admin target.
+        if (targetPath && existsSync(targetPath)) {
+          linkSync(dotGitStash, dotGit);
+          unlinkSync(dotGitStash);
+          dotGitStash = undefined;
+          worktreePoolLog.warn(`Preserving orphan worktree whose admin target was repaired during unlink: ${resolvedFull}`);
+          continue;
+        }
+      }
+      if (danglingDotGit && dotGitStash && targetPath && existsSync(targetPath)) {
+        linkSync(dotGitStash, dotGit);
+        unlinkSync(dotGitStash);
+        dotGitStash = undefined;
+        worktreePoolLog.warn(`Preserving orphan worktree whose admin target was repaired before removal: ${resolvedFull}`);
+        continue;
       }
       try {
         rmdirSync(resolvedFull);
-        if (dotGitStash) {
-          try {
-            unlinkSync(dotGitStash);
-          } catch (stashError) {
-            worktreePoolLog.warn(`reapOrphanWorktrees: orphan ${name} removed but .git stash cleanup failed — ${stashError instanceof Error ? stashError.message : String(stashError)}`);
-          }
-        }
       } catch (removeError) {
         if (dotGitStash) {
-          try {
-            // linkSync refuses to overwrite a concurrent .git (EEXIST): that pointer
-            // is authoritative, so keep it and drop the stash. Otherwise the stash
-            // becomes the restored pointer with its original content and mode.
-            linkSync(dotGitStash, dotGit);
-            unlinkSync(dotGitStash);
-          } catch (restoreError) {
-            const restoreCode = restoreError instanceof Error && "code" in restoreError ? (restoreError as { code?: unknown }).code : undefined;
-            if (restoreCode === "EEXIST") {
-              unlinkSync(dotGitStash);
-            } else {
-              // linkSync failed for a reason other than a concurrent .git
-              // (EPERM/ENOSPC/...): the pointer exists only in the stash. Fail
-              // closed — COPYFILE_EXCL restores it without ever overwriting a
-              // .git that appears concurrently; if one does, EEXIST keeps the
-              // authoritative pointer and drops the stash.
-              try {
-                copyFileSync(dotGitStash, dotGit, constants.COPYFILE_EXCL);
-                unlinkSync(dotGitStash);
-              } catch (fallbackError) {
-                const fallbackCode = fallbackError instanceof Error && "code" in fallbackError ? (fallbackError as { code?: unknown }).code : undefined;
-                if (fallbackCode === "EEXIST") {
-                  unlinkSync(dotGitStash);
-                } else {
-                  worktreePoolLog.warn(
-                    `reapOrphanWorktrees: failed to restore .git for ${name} after removal failure — ${restoreError instanceof Error ? restoreError.message : String(restoreError)}; keeping stash for manual recovery: ${dotGitStash}`,
-                  );
-                }
-              }
-            }
-          }
+          restoreStashedDotGit(dotGit, dotGitStash, name);
         }
         throw removeError;
       }
-      await pruneWorktreeAdminEntries({
-        rootDir: projectRoot,
-        reason: "pool-reap-orphan",
-        target: resolvedFull,
-        logger: worktreePoolLog,
-      }).catch(() => undefined);
+      /*
+       * FNXC:WorktreeCleanup 2026-08-17-10:30:
+       * The final admin-target check above ran before rmdir; a repair can still land
+       * in the rmdir window, leaving a live `.git/worktrees/<name>` entry that
+       * references the directory just removed. Restore the directory and the stashed
+       * pointer so the repaired worktree survives instead of being destroyed. No
+       * shared lock exists with the repair side (external git / assertValidWorktreeSession),
+       * so this post-removal recovery is the smallest race-safe closing of the window.
+       */
+      if (dotGitStash && targetPath && existsSync(targetPath)) {
+        try {
+          mkdirSync(resolvedFull);
+        } catch {
+          // EEXIST: a concurrent repair already recreated the directory — keep it.
+        }
+        if (restoreStashedDotGit(dotGit, dotGitStash, name)) {
+          dotGitStash = undefined;
+          worktreePoolLog.warn(`Preserving orphan worktree whose admin target was repaired during removal: ${resolvedFull}`);
+        }
+        continue;
+      }
+      if (dotGitStash) {
+        try {
+          unlinkSync(dotGitStash);
+        } catch (stashError) {
+          worktreePoolLog.warn(`reapOrphanWorktrees: orphan ${name} removed but .git stash cleanup failed — ${stashError instanceof Error ? stashError.message : String(stashError)}`);
+        }
+      }
+      // A dangling pointer was removed above, so there is no stale admin entry
+      // to prune. Skipping the separate `git worktree prune` closes the last
+      // window where another process can recreate the admin target after the
+      // final existence check and have Git delete it again.
+      if (!danglingDotGit) {
+        await pruneWorktreeAdminEntries({
+          rootDir: projectRoot,
+          reason: "pool-reap-orphan",
+          target: resolvedFull,
+          logger: worktreePoolLog,
+        }).catch(() => undefined);
+      }
       worktreePoolLog.log(`reapOrphanWorktrees: removed half-initialized orphan ${name}`);
       removed++;
     } catch (err: unknown) {

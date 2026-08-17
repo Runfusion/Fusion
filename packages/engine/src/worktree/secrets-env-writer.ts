@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promises as fs } from "node:fs";
 import path from "node:path";
@@ -13,7 +13,7 @@ const VALID_FINGERPRINT = /^[0-9a-f]{64}$/;
 const execFileAsync = promisify(execFile);
 
 export type WriteSkipReason = "disabled" | "no-secrets" | "not-gitignored" | "skip-existing" | "invalid-filename" | "no-store" | "list-failed" | "record-reconciliation-failed";
-export type CleanupSkipReason = "fingerprint-mismatch" | "file-missing" | "no-record" | "disabled" | "stat-failed" | "ambiguous-record" | "invalid-record" | "tracked-file" | "record-remove-failed";
+export type CleanupSkipReason = "fingerprint-mismatch" | "file-missing" | "file-retained" | "no-record" | "disabled" | "stat-failed" | "ambiguous-record" | "invalid-record" | "tracked-file" | "record-remove-failed";
 export type FingerprintReconciliationOutcome = "clean" | "adopted-legacy" | "removed-legacy" | "recovered-private" | "conflict" | "invalid-record" | "tracked-record" | "git-dir-unavailable" | "private-record-write-failed" | "legacy-remove-failed";
 
 export interface WriteSecretsEnvFileOptions {
@@ -43,10 +43,21 @@ export interface CleanupSecretsEnvFileOptions {
   filename: string;
   /** Allow legacy cleanup only after the orphan reaper has positively proven a dangling gitdir. */
   allowLegacyCleanupForDanglingGitdir?: boolean;
+  /**
+   * Current-state revalidation for legacy orphan cleanup: called at the authorization
+   * boundary (after the awaited private-dir resolution) so the orphan reaper's earlier
+   * dangling verdict cannot authorize deleting a tracked .env from a worktree that a
+   * concurrent repair made live again.
+   */
+  isDanglingGitdir?: () => boolean;
   audit?: Pick<RunAuditor, "filesystem">;
   logger?: { log: (m: string) => void; warn: (m: string) => void };
   /** Test seam for proving cleanup never converts metadata-removal failures into success. */
   removeRecordPaths?: (recordPaths: string[]) => Promise<void>;
+  /** Test seam for proving ownership is revalidated at the deletion boundary. */
+  readFileImpl?: typeof fs.readFile;
+  /** Test seam for proving the pathname is atomically quarantined before removal. */
+  renameFileImpl?: typeof fs.rename;
 }
 
 export interface CleanupSecretsEnvFileResult {
@@ -409,6 +420,8 @@ export async function writeSecretsEnvFile(opts: WriteSecretsEnvFileOptions): Pro
 
 export async function cleanupSecretsEnvFile(opts: CleanupSecretsEnvFileOptions): Promise<CleanupSecretsEnvFileResult> {
   const removeRecords = opts.removeRecordPaths ?? removeRecordPaths;
+  const readFile = opts.readFileImpl ?? fs.readFile;
+  const renameFile = opts.renameFileImpl ?? fs.rename;
   try { await fs.access(opts.worktreePath); } catch { return { outcome: "cleaned", reason: "directory-missing" }; }
   const legacyPath = path.join(opts.worktreePath, FINGERPRINT_FILE);
   let privatePath: string | undefined;
@@ -416,13 +429,16 @@ export async function cleanupSecretsEnvFile(opts: CleanupSecretsEnvFileOptions):
     privatePath = await resolvePrivateRecordPath(opts.worktreePath);
   } catch {
     /*
-     * FNXC:SecretsEnvMaterialization 2026-08-08-03:23:
-     * A Git worktree whose private-dir lookup fails is not an orphan. Fail closed rather than treating its
-     * root record as orphan metadata, because that fallback could delete a tracked project file on a transient
-     * Git failure. Only paths without a .git entry can use legacy orphan cleanup unless the orphan reaper
-     * has already proven that the pointer's private admin entry is gone.
+     * FNXC:SecretsEnvMaterialization 2026-08-17-16:45:
+     * The orphan reaper's dangling verdict predates this awaited git/private-dir
+     * resolution, which gave a concurrent repair time to recreate the admin entry
+     * the pointer references. Legacy cleanup is authorized only while the pointer
+     * is STILL positively dangling at this instant: a repaired worktree is live
+     * again and its tracked .env must never be deleted on a stale verdict (the
+     * tracked-file guard below runs only when a private path resolved).
      */
-    if (!opts.allowLegacyCleanupForDanglingGitdir) {
+    const stillDangling = opts.allowLegacyCleanupForDanglingGitdir && (opts.isDanglingGitdir?.() ?? false);
+    if (!stillDangling) {
       try {
         await fs.lstat(path.join(opts.worktreePath, ".git"));
         return { outcome: "skipped", reason: "invalid-record" };
@@ -447,7 +463,17 @@ export async function cleanupSecretsEnvFile(opts: CleanupSecretsEnvFileOptions):
   if (!record) return { outcome: "skipped", reason: "no-record" };
   const recordPaths = [privateState, legacyState].flatMap((state) => state.kind === "valid" && recordsMatch(state.record, record) ? [state.record.path] : []);
   let body: string;
-  try { body = await fs.readFile(path.join(opts.worktreePath, record.filename), "utf8"); } catch {
+  try { body = await readFile(path.join(opts.worktreePath, record.filename), "utf8"); } catch {
+    // A failed quarantine restore leaves the managed inode under this recovery
+    // prefix. Keep its ownership record so a later retry can recover it.
+    try {
+      const entries = await fs.readdir(opts.worktreePath);
+      if (entries.some((entry) => entry.startsWith(`${record.filename}.fusion-cleanup-`))) {
+        return { outcome: "skipped", reason: "file-retained" };
+      }
+    } catch {
+      return { outcome: "skipped", reason: "record-remove-failed" };
+    }
     try {
       await removeRecords(recordPaths);
     } catch {
@@ -456,6 +482,18 @@ export async function cleanupSecretsEnvFile(opts: CleanupSecretsEnvFileOptions):
     return { outcome: "skipped", reason: "file-missing" };
   }
   if (sha256(body) !== record.fingerprint) {
+    try {
+      const quarantinePrefix = `${record.filename}.fusion-cleanup-`;
+      const hasQuarantine = (await fs.readdir(opts.worktreePath)).some((name) => name.startsWith(quarantinePrefix));
+
+      if (hasQuarantine) {
+        return { outcome: "skipped", reason: "file-retained" };
+      }
+    } catch {
+      // Preserve ownership metadata when quarantine state cannot be inspected.
+      return { outcome: "skipped", reason: "file-retained" };
+    }
+
     try {
       await removeRecords(recordPaths);
     } catch {
@@ -471,10 +509,69 @@ export async function cleanupSecretsEnvFile(opts: CleanupSecretsEnvFileOptions):
     // Cleanup cannot prove ownership when Git cannot answer; preserve both content and record for retry.
     return { outcome: "skipped", reason: "tracked-file" };
   }
+  // A pathname cannot be unlinked conditionally by Node: comparing it and then
+  // unlinking it would be TOCTOU-unsafe. Rename the pathname into a private
+  // quarantine name (atomic), re-verify the moved inode's content, then unlink
+  // the quarantine. A concurrent replacement either lands at the freed pathname
+  // (preserved) or is moved into quarantine and restored on mismatch; only the
+  // verified managed inode is ever removed.
+  const envPath = path.join(opts.worktreePath, record.filename);
+  const quarantinePath = `${envPath}.fusion-cleanup-${process.pid}-${randomUUID()}`;
   try {
-    await fs.unlink(path.join(opts.worktreePath, record.filename));
+    await renameFile(envPath, quarantinePath);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      return { outcome: "skipped", reason: "record-remove-failed" };
+    }
+    try {
+      await removeRecords(recordPaths);
+    } catch {
+      return { outcome: "skipped", reason: "record-remove-failed" };
+    }
+    return { outcome: "skipped", reason: "file-missing" };
+  }
+  // Put the quarantined inode back at envPath without ever clobbering a newer
+  // occupant (link fails with EEXIST); if the occupant already won, the
+  // quarantined file is dropped. Returns false when the restore link failed for
+  // a reason other than EEXIST: the quarantine is then the only surviving copy
+  // of this content and must be preserved as a recovery file, never unlinked.
+  const restoreQuarantine = async (): Promise<boolean> => {
+    try {
+      await fs.link(quarantinePath, envPath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
+        opts.logger?.warn(`secrets-env: restore link failed for quarantined ${record.filename}; preserved recovery copy at ${quarantinePath}`);
+        return false;
+      }
+      // The pathname is occupied, but the quarantined inode is unverified.
+      // Keep it as recovery evidence; EEXIST is not proof it is safe to delete.
+      return false;
+    }
+    await fs.unlink(quarantinePath).catch(() => undefined);
+    return true;
+  };
+  try {
+    if (sha256(await readFile(quarantinePath, "utf8")) !== record.fingerprint) {
+      // A concurrent replacement was moved into quarantine: restore it and drop
+      // the stale bookkeeping (the managed content is already gone).
+      if (!await restoreQuarantine()) return { outcome: "skipped", reason: "file-retained" };
+      try {
+        await removeRecords(recordPaths);
+      } catch {
+        return { outcome: "skipped", reason: "record-remove-failed" };
+      }
+      return { outcome: "skipped", reason: "fingerprint-mismatch" };
+    }
+  } catch (error) {
+    // The quarantined inode cannot be read (permissions): restore it and fail closed.
+    await restoreQuarantine();
+    return { outcome: "skipped", reason: "record-remove-failed" };
+  }
+  try {
+    await fs.unlink(quarantinePath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      await restoreQuarantine();
       return { outcome: "skipped", reason: "record-remove-failed" };
     }
   }
