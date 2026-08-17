@@ -17,7 +17,7 @@
  * - onTerminated: Called when a heartbeat run is terminated
  */
 
-import { DEFAULT_PROVIDER_INSTANCE_ID, toRunMutationContext, type AgentStore, type AgentHeartbeatRun, type HeartbeatInvocationSource, type AgentHeartbeatConfig, type AgentBudgetStatus, type Message, type MessageStore, type TaskStore, type TaskDetail, type AgentRole, type Agent, type InboxTask, type RunMutationContext, type Settings, type AgentConfigRevision, type ReflectionStore, type ChatStore, type ChatRoom, type ChatRoomMessage, type AgentMemoryInclusionMode } from "@fusion/core";
+import { DEFAULT_PROVIDER_INSTANCE_ID, type AgentStore, type AgentHeartbeatRun, type HeartbeatInvocationSource, type AgentHeartbeatConfig, type AgentBudgetStatus, type Message, type MessageStore, type TaskStore, type TaskDetail, type AgentRole, type Agent, type InboxTask, type RunMutationContext, type Settings, type AgentConfigRevision, type ReflectionStore, type ChatStore, type ChatRoom, type ChatRoomMessage, type AgentMemoryInclusionMode } from "@fusion/core";
 import { AutoClaimSnapshotManager, resolveFreshAutoClaimCandidates, type AutoClaimCandidate } from "./scheduling/auto-claim-snapshot.js";
 import {
   ApprovalRequestStore,
@@ -41,6 +41,9 @@ import {
   resolveWorkflowIrForTask,
   columnsWithFlag,
   resolveTaskLifecycleColumns,
+  /* FNXC:Identity 2026-08-09-03:04 (U18 Stage B): the gating helpers know the agent whose tool call
+     they are pausing for approval, so they derive from it rather than marking. */
+  mutationContextForAgent,
 } from "@fusion/core";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "@earendil-works/pi-ai";
@@ -96,6 +99,8 @@ heartbeat-model-unavailable parks from assignment/on-demand runs were terminal u
 import { acquireTaskWorktree, WorktreeBaseRefreshError } from "./worktree/worktree-acquisition.js";
 import { createRunAuditor, generateSyntheticRunId, type DatabaseMutationType, type EngineRunContext } from "./util/run-audit.js";
 import { promptWithFallback } from "./pi.js";
+// FNXC:Identity 2026-08-09-03:04: actor threading for the required RunMutationContext.actor field.
+import { actorContextForAgent } from "@fusion/core";
 import { withRateLimitRetry } from "./errors/rate-limit-retry.js";
 import type { CredentialInstanceRotator } from "./credential-instance-rotation.js";
 import { buildAgentGatedActionSummary } from "./agents/permanent-agent-gating.js";
@@ -1116,7 +1121,7 @@ export class HeartbeatMonitor {
           await this.taskStore.pauseTask(taskId, true, undefined, { pausedByAgentId: agent.id, pausedReason: AWAITING_APPROVAL_PAUSE_REASON });
           await this.taskStore.logEntry(
             taskId,
-            `Approval required for ${decision.toolName}. Request ${approvalRequestId} created; task and agent paused awaiting decision.`,
+            `Approval required for ${decision.toolName}. Request ${approvalRequestId} created; task and agent paused awaiting decision.`, undefined, mutationContextForAgent(agent.id, runId),
           );
         }
         void emitApprovalMail({ messageStore: this.messageStore, approvalRequestId, toolName: decision.toolName, taskId, agentId: agent.id, agentName: agent.name });
@@ -1187,7 +1192,7 @@ export class HeartbeatMonitor {
           await this.taskStore.pauseTask(taskId, true, undefined, { pausedByAgentId: agent.id, pausedReason: AWAITING_APPROVAL_PAUSE_REASON });
           await this.taskStore.logEntry(
             taskId,
-            `Approval required for ${toolName}. Request ${approvalRequestId} created; task and agent paused awaiting decision.`,
+            `Approval required for ${toolName}. Request ${approvalRequestId} created; task and agent paused awaiting decision.`, undefined, mutationContextForAgent(agent.id, runId),
           );
         }
         await this.store.updateAgentState(agent.id, "paused");
@@ -2175,24 +2180,21 @@ export class HeartbeatMonitor {
       });
 
       // Build run context for mutation correlation
-      /*
-      FNXC:Identity 2026-08-24-02:20:
-      Heartbeat already knows the acting agent; derive `actor` rather than leaving the 1/5-required
-      field off the carrier (which fails typecheck against main).
-      */
-      const runContext: RunMutationContext = toRunMutationContext({
+      const runContext: RunMutationContext = {
         runId: run.id,
         agentId,
         source,
-      });
+        // FNXC:Identity 2026-08-09-03:04: a heartbeat run acts as its own agent; nothing is delegated (R28).
+        actor: actorContextForAgent(agentId),
+      };
 
       // Build engine run context for audit instrumentation
-      const engineRunContext: EngineRunContext = toRunMutationContext({
+      const engineRunContext: EngineRunContext = {
         runId: run.id,
         agentId,
         source,
         phase: "heartbeat",
-      });
+      };
 
       // Create run auditor for audit trail (FN-1404)
       // Uses TaskStore.recordRunAuditEvent when available; no-ops otherwise
@@ -2757,7 +2759,7 @@ export class HeartbeatMonitor {
             sourceAgentId: agentId,
             requireMissionLineage: true,
           }));
-          heartbeatTools.push(createTaskAssignTool(this.store, taskStore));
+          heartbeatTools.push(createTaskAssignTool(this.store, taskStore, runContext));
           heartbeatTools.push(createGetAgentConfigTool(this.store, agentId));
           heartbeatTools.push(createUpdateAgentConfigTool(this.store, agentId));
           // FNXC:AgentProvisioningGate 2026-07-26-13:15: real settings + approval store so the provisioning policy actually gates idle-heartbeat lanes.
@@ -3056,12 +3058,12 @@ export class HeartbeatMonitor {
                 await taskStore.logEntry(
                   taskDetail.id,
                   `Worktree base refresh blocked heartbeat execution (${refreshKind})`,
-                  detail,
+                  detail, runContext,
                 );
                 await taskStore.moveTask(
                   taskDetail.id,
                   await resolveHeartbeatReboundColumn(taskStore, taskDetail.id),
-                  { preserveProgress: true },
+                  { preserveProgress: true }, runContext,
                 );
               }
               await this.completeRun(agentId, run.id, {
@@ -3093,8 +3095,8 @@ export class HeartbeatMonitor {
                   status: "failed",
                   error: exhaustionMessage,
                   recoveryRetryCount: null,
-                });
-                await taskStore.logEntry(taskDetail.id, `Worktree acquisition retry cap reached (${MAX_HEARTBEAT_WORKTREE_ACQUISITION_RETRIES} attempts); task marked failed`, exhaustionMessage);
+                }, runContext);
+                await taskStore.logEntry(taskDetail.id, `Worktree acquisition retry cap reached (${MAX_HEARTBEAT_WORKTREE_ACQUISITION_RETRIES} attempts); task marked failed`, exhaustionMessage, runContext);
                 /*
                  * FNXC:WorktreeAcquisition 2026-07-09-00:00:
                  * `moveTask(..., "todo", ...)` reopen-to-todo semantics clear
@@ -3106,11 +3108,11 @@ export class HeartbeatMonitor {
                  * reassigned and retried from scratch, defeating the terminal-
                  * failure intent of this fix (FN-7721).
                  */
-                await taskStore.moveTask(taskDetail.id, await resolveHeartbeatReboundColumn(taskStore, taskDetail.id), { preserveProgress: true, preserveStatus: true });
+                await taskStore.moveTask(taskDetail.id, await resolveHeartbeatReboundColumn(taskStore, taskDetail.id), { preserveProgress: true, preserveStatus: true }, runContext);
                 this.onTaskAcquisitionExhausted?.(taskDetail.id, exhaustionMessage);
               } else {
-                await taskStore.updateTask(taskDetail.id, { recoveryRetryCount: attemptsSoFar });
-                await taskStore.moveTask(taskDetail.id, await resolveHeartbeatReboundColumn(taskStore, taskDetail.id), { preserveProgress: true });
+                await taskStore.updateTask(taskDetail.id, { recoveryRetryCount: attemptsSoFar }, runContext);
+                await taskStore.moveTask(taskDetail.id, await resolveHeartbeatReboundColumn(taskStore, taskDetail.id), { preserveProgress: true }, runContext);
               }
             }
             await this.completeRun(agentId, run.id, {
@@ -4173,7 +4175,11 @@ export class HeartbeatMonitor {
    * @param agentId - The agent ID (used for tracking and logging)
    * @param taskStore - TaskStore for task creation and logging
    * @param taskId - The assigned task ID (for fn_task_log context)
-   * @param runContext - Optional run context for mutation correlation
+   * @param runContext - the heartbeat run's mutation context.
+   *
+   * FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage B): REQUIRED, not optional. `executeHeartbeat`
+   * builds the run context before any tool is constructed and is the sole caller, so the optional
+   * marker only ever meant "this run's store writes may go out unattributed".
    * @param audit - Optional run auditor for audit trail (FN-1404)
    * @param messageStore - Optional MessageStore for messaging tools
    * @returns Array of ToolDefinitions for the heartbeat session
@@ -4182,7 +4188,7 @@ export class HeartbeatMonitor {
     agentId: string,
     taskStore: TaskStore,
     taskId: string,
-    runContext?: RunMutationContext,
+    runContext: RunMutationContext,
     audit?: ReturnType<typeof createRunAuditor>,
     messageStore?: MessageStore,
   ): ToolDefinition[] {
@@ -4254,7 +4260,7 @@ export class HeartbeatMonitor {
     // Agent delegation tools — discover and delegate work to other agents
     tools.push(createListAgentsTool(this.store));
     tools.push(createDelegateTaskTool(this.store, taskStore, { rootDir: this.rootDir, sourceTaskId: taskId, sourceAgentId: agentId }));
-    tools.push(createTaskAssignTool(this.store, taskStore));
+    tools.push(createTaskAssignTool(this.store, taskStore, runContext));
     tools.push(createGetAgentConfigTool(this.store, agentId));
     tools.push(createUpdateAgentConfigTool(this.store, agentId));
     // FNXC:AgentProvisioningGate 2026-07-26-13:15: real settings + approval store so the provisioning policy actually gates task-scoped heartbeat lanes.

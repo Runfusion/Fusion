@@ -26,6 +26,7 @@ import type {
   Mission,
   ValidationDiagnostics,
 } from "@fusion/core";
+import { UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 import { MissionRemediationStoppedError, normalizeMissionAssertionType, normalizeValidationDiagnostics, renderValidationFailureDescription,
   resolveTaskLifecycleColumns, resolveWorkflowIrForTask, columnsWithFlag,
 } from "@fusion/core";
@@ -969,12 +970,16 @@ export class MissionExecutionLoop extends EventEmitter {
         },
         taskId: prepared?.taskId ?? task?.id,
         taskTitle: prepared?.taskTitle ?? task?.title,
+        /* FNXC:Identity 2026-08-09-03:04 (U18/KTD2): marker — the mission validation loop runs
+           unattended with no run context and no acting agent id in scope; `agent: "reviewer"` is a
+           lane label. U13 decides whether unattended engine lanes get a real system actor. */
         onFallbackModelUsed: createFallbackModelObserver({
           agent: "reviewer",
           label: "mission validator",
           store: this.taskStore,
           taskId: prepared?.taskId ?? task?.id,
           taskTitle: prepared?.taskTitle ?? task?.title,
+          runContext: UNATTRIBUTED_MUTATION_CONTEXT,
         }),
       });
       session = { session: sessionResult.session, sessionFile: sessionResult.sessionFile };

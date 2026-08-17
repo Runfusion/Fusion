@@ -56,16 +56,13 @@ import {
   ApprovalRequestStore,
   AWAITING_APPROVAL_PAUSE_REASON,
   isEphemeralAgent,
-  toRunMutationContext,
-  actorContextForAgent,
   resolveEffectiveAgentPermissionPolicy,
   MAX_TASK_LIST_TEXT_CHARS,
   deriveFallbackTaskTitle,
   resolveTaskOutputLanguage,
   parsePlanningPlanMd,
   loadWorkspaceConfig,
-  type NearDuplicateCandidate,
-} from "@fusion/core";
+  type NearDuplicateCandidate, UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 
 
 type TaskListClamp = (lines: string[], opts?: { maxChars?: number }) => string;
@@ -651,8 +648,8 @@ export class TriageProcessor {
         return latest ? { id: latest.id, status: latest.status } : null;
       },
       pauseForApproval: async ({ approvalRequestId, decision }) => {
-        await this.store.pauseTask(taskId, true, toRunMutationContext({ runId, agentId: actorId, source: "triage" }), { pausedByAgentId: actorId, pausedReason: AWAITING_APPROVAL_PAUSE_REASON });
-        await this.store.logEntry(taskId, `Approval required for ${decision.toolName}. Request ${approvalRequestId} created; task and agent paused awaiting decision.`);
+        await this.store.pauseTask(taskId, true, { runId, agentId: actorId, source: "triage" }, { pausedByAgentId: actorId, pausedReason: AWAITING_APPROVAL_PAUSE_REASON }, UNATTRIBUTED_MUTATION_CONTEXT);
+        await this.store.logEntry(taskId, `Approval required for ${decision.toolName}. Request ${approvalRequestId} created; task and agent paused awaiting decision.`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
         if (agent && this.options.agentStore) {
           await this.options.agentStore.updateAgentState(agent.id, "paused");
           await this.options.agentStore.updateAgent(agent.id, { pauseReason: "awaiting-approval" });
@@ -721,7 +718,7 @@ export class TriageProcessor {
     let persisted = false;
     await this.store.withPlanningLifecycleLock(task.id, async () => {
       if (this.resetFence.isStale(task.id, planningGeneration)) return;
-      const updated = await this.store.withTaskLock(task.id, () => this.store.updateTaskUnlocked(task.id, { prompt: content }));
+      const updated = await this.store.withTaskLock(task.id, () => this.store.updateTaskUnlocked(task.id, { prompt: content }, UNATTRIBUTED_MUTATION_CONTEXT));
       if (this.store.isBackendMode()) {
         await this.store.reconcileSpecDriftWhilePlanningLocked(updated).catch((error: unknown) => {
           planLog.warn(`[spec-lock] deferred drift reconciliation for ${updated.id}: ${error instanceof Error ? error.message : String(error)}`);
@@ -974,7 +971,7 @@ export class TriageProcessor {
       break the abort.
       */
       if (task.status === "planning") {
-        void Promise.resolve(this.store.updateTask(task.id, { status: null })).catch((err: unknown) => {
+        void Promise.resolve(this.store.updateTask(task.id, { status: null }, UNATTRIBUTED_MUTATION_CONTEXT)).catch((err: unknown) => {
           planLog.warn(`${task.id}: failed to clear planning status after evacuation: ${err instanceof Error ? err.message : String(err)}`);
         });
       }
@@ -1079,11 +1076,10 @@ export class TriageProcessor {
         planLog.warn(
           `Stale 'planning' status on ${t.id} (column=${t.column}, no live planner) — clearing so triage can re-pick it`,
         );
-        await this.store.updateTask(t.id, { status: null });
+        await this.store.updateTask(t.id, { status: null }, UNATTRIBUTED_MUTATION_CONTEXT);
         await this.store.logEntry(
           t.id,
-          "Auto-recovered: cleared stale planning status left by a planner that never finished",
-        ).catch(() => undefined);
+          "Auto-recovered: cleared stale planning status left by a planner that never finished", undefined, UNATTRIBUTED_MUTATION_CONTEXT).catch(() => undefined);
       }
     } catch (err) {
       // Never let a housekeeping sweep break the poll.
@@ -1144,7 +1140,7 @@ export class TriageProcessor {
     });
     for (const t of stale) {
       planLog.log(`Startup sweep: clearing stale 'planning' status on ${t.id}`);
-      await this.store.updateTask(t.id, { status: null });
+      await this.store.updateTask(t.id, { status: null }, UNATTRIBUTED_MUTATION_CONTEXT);
     }
     if (stale.length > 0) {
       planLog.log(`Startup sweep: cleared ${stale.length} stale planning task(s)`);
@@ -1665,7 +1661,7 @@ export class TriageProcessor {
       if (parsedSteps.length === 0) {
         const message = "Planning recovery withheld: PROMPT.md has no executable steps and does not declare no commits expected";
         planLog.warn(`${task.id} ${message}`);
-        await this.store.logEntry(task.id, message);
+        await this.store.logEntry(task.id, message, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
         return false;
       }
     }
@@ -1779,7 +1775,7 @@ export class TriageProcessor {
       );
       await this.store.updateTask(task.id, {
         stuckKillCount: (freshTask.stuckKillCount ?? task.stuckKillCount ?? 0) + 1,
-      }).catch((err: unknown) => {
+      }, UNATTRIBUTED_MUTATION_CONTEXT).catch((err: unknown) => {
         const msg = err instanceof Error ? err.message : String(err);
         planLog.warn(`${task.id}: failed to increment stuckKillCount during deferred stuck-detector ${context} cleanup: ${msg}`);
       });
@@ -1831,7 +1827,7 @@ export class TriageProcessor {
       planLog.log(
         `${task.id} killed by stuck detector after planning handoff completed (column=${freshTask.column}, status=${freshTask.status ?? "null"}) — preserving released state (${context})`,
       );
-      await this.store.updateTask(task.id, { stuckKillCount: nextStuckKillCount }).catch((err: unknown) => {
+      await this.store.updateTask(task.id, { stuckKillCount: nextStuckKillCount }, UNATTRIBUTED_MUTATION_CONTEXT).catch((err: unknown) => {
         const msg = err instanceof Error ? err.message : String(err);
         planLog.warn(`${task.id}: failed to increment stuckKillCount after post-handoff stuck-detector ${context} cleanup: ${msg}`);
       });
@@ -1859,7 +1855,7 @@ export class TriageProcessor {
     if (nextStuckKillCount >= maxKills) {
       const exhaustedError = `STUCK_LOOP_EXHAUSTED: triage stuck detector killed ${task.id} ${nextStuckKillCount}/${maxKills} times without planning completion; task paused for manual intervention.`;
       planLog.error(exhaustedError);
-      await this.store.logEntry(task.id, exhaustedError).catch((err: unknown) => {
+      await this.store.logEntry(task.id, exhaustedError, undefined, UNATTRIBUTED_MUTATION_CONTEXT).catch((err: unknown) => {
         const msg = err instanceof Error ? err.message : String(err);
         planLog.warn(`${task.id}: failed to log stuck-loop exhaustion: ${msg}`);
       });
@@ -1870,7 +1866,7 @@ export class TriageProcessor {
         paused: true,
         pausedReason: "stuck-loop-exhausted-manual-intervention-required",
         pausedByAgentId: "triage",
-      }).catch((err: unknown) => {
+      }, UNATTRIBUTED_MUTATION_CONTEXT).catch((err: unknown) => {
         const msg = err instanceof Error ? err.message : String(err);
         planLog.warn(`${task.id}: failed to persist stuck-loop exhaustion during stuck-detector ${context} cleanup: ${msg}`);
       });
@@ -1880,14 +1876,14 @@ export class TriageProcessor {
     if (draft) {
       const sourceLabel = draft.source === "prompt" ? "PROMPT.md draft" : "plan task document";
       planLog.log(`${task.id} killed by stuck detector — requeueing to resume existing ${sourceLabel} (${nextStuckKillCount}/${maxKills})`);
-      await this.store.logEntry(task.id, TRIAGE_STUCK_RESUME_LOG_ACTION, TRIAGE_STUCK_RESUME_FEEDBACK).catch((err: unknown) => {
+      await this.store.logEntry(task.id, TRIAGE_STUCK_RESUME_LOG_ACTION, TRIAGE_STUCK_RESUME_FEEDBACK, UNATTRIBUTED_MUTATION_CONTEXT).catch((err: unknown) => {
         const msg = err instanceof Error ? err.message : String(err);
         planLog.warn(`${task.id}: failed to log stuck-resume feedback: ${msg}`);
       });
       await this.store.updateTask(task.id, {
         status: "needs-replan",
         stuckKillCount: nextStuckKillCount,
-      }).catch((err: unknown) => {
+      }, UNATTRIBUTED_MUTATION_CONTEXT).catch((err: unknown) => {
         const msg = err instanceof Error ? err.message : String(err);
         planLog.warn(`${task.id}: failed to restore status to 'needs-replan' during stuck-detector ${context} cleanup: ${msg}`);
       });
@@ -1899,7 +1895,7 @@ export class TriageProcessor {
     await this.store.updateTask(task.id, {
       status: restoreStatus,
       stuckKillCount: nextStuckKillCount,
-    }).catch((err: unknown) => {
+    }, UNATTRIBUTED_MUTATION_CONTEXT).catch((err: unknown) => {
       const msg = err instanceof Error ? err.message : String(err);
       planLog.warn(`${task.id}: failed to restore status to '${restoreStatus}' during stuck-detector ${context} cleanup: ${msg}`);
     });
@@ -2246,7 +2242,7 @@ export class TriageProcessor {
     this.fastLanePlanningSkipLogged.add(task.id);
     const message = "Fast mode intentionally skips specification planning";
     planLog.log(`${task.id}: ${message}`);
-    await this.store.logEntry(task.id, message).catch(() => undefined);
+    await this.store.logEntry(task.id, message, undefined, UNATTRIBUTED_MUTATION_CONTEXT).catch(() => undefined);
   }
 
   private startAdmittedPlanning(task: Task): void {
@@ -2518,7 +2514,7 @@ export class TriageProcessor {
               shared board/API log silent. Mirror genuine live-cap exhaustion onto each queued
               candidate without awaiting it in the poll; the signature prevents poll spam.
               */
-              void Promise.all(eligibleIds.map((taskId) => this.store.logEntry(taskId, capacityReason)))
+              void Promise.all(eligibleIds.map((taskId) => this.store.logEntry(taskId, capacityReason, undefined, UNATTRIBUTED_MUTATION_CONTEXT)))
                 .catch((logErr: unknown) => {
                   planLog.warn(`Failed to write planning capacity reason: ${logErr instanceof Error ? logErr.message : String(logErr)}`);
                 });
@@ -2609,7 +2605,7 @@ export class TriageProcessor {
         return;
       }
       const fallbackTitle = deriveFallbackTaskTitle(current.description || task.description);
-      await this.store.updateTask(task.id, { title: fallbackTitle });
+      await this.store.updateTask(task.id, { title: fallbackTitle }, UNATTRIBUTED_MUTATION_CONTEXT);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       planLog.warn(`${task.id}: failed to backfill blank title after terminal triage failure: ${msg}`);
@@ -2670,12 +2666,11 @@ export class TriageProcessor {
           nearDuplicateScore: canonical.score,
           nearDuplicateSharedTokens: canonical.sharedTokens,
         },
-      } as Parameters<typeof this.store.updateTask>[1]);
+      } as Parameters<typeof this.store.updateTask>[1], UNATTRIBUTED_MUTATION_CONTEXT);
       await this.store.logEntry(
         task.id,
         `Flagged as near-duplicate of ${canonical.id} before planning (imported issue; awaiting user decision)`,
-        `Shared tokens: ${canonical.sharedTokens.join(", ")}`,
-      );
+        `Shared tokens: ${canonical.sharedTokens.join(", ")}`, UNATTRIBUTED_MUTATION_CONTEXT);
       await this.store.recordActivity({
         type: "task:near-duplicate-flagged",
         taskId: task.id,
@@ -2875,14 +2870,14 @@ export class TriageProcessor {
           ? await this.options.agentStore.getAgent(task.assignedAgentId).catch(() => null)
           : null;
 
-        const triageRunContext = toRunMutationContext({
+        const triageRunContext = {
           runId: generateSyntheticRunId("triage", task.id),
           agentId: assignedAgent?.id ?? "triage",
           taskId: task.id,
           taskLineageId: task.lineageId,
           phase: "plan",
           source: "triage",
-        });
+        };
 
         /*
         FNXC:WorkflowAgentRouting 2026-08-07-06:27:
@@ -2943,14 +2938,13 @@ export class TriageProcessor {
               workflowRole: routed.role,
               authorityKind: currentTask.assignedAgentId ? "task-assignee" : null,
             });
-            await this.store.logEntry(task.id, `Planning held: workflow-principal-${routed.reason}:${routed.role}`);
+            await this.store.logEntry(task.id, `Planning held: workflow-principal-${routed.reason}:${routed.role}`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
             await this.updatePlanningStateIfStillCurrent(task, { status: "needs-replan" });
             return;
           }
           if (routed.status === "routed") {
             assignedAgent = routed.route.agent;
             triageRunContext.agentId = assignedAgent.id;
-            triageRunContext.actor = actorContextForAgent(assignedAgent.id);
             workflowCapacityAttemptId = `${triageRunContext.runId}:${planningNode.id}`;
             workflowCapacityProjectId = this.options.agentStore.workflowProjectId ?? this.rootDir;
             /*
@@ -2969,7 +2963,7 @@ export class TriageProcessor {
               attemptId: workflowCapacityAttemptId,
             });
             if (capacity.status === "held") {
-              await this.store.logEntry(task.id, `Planning held: workflow-principal-${capacity.reason}:triage`);
+              await this.store.logEntry(task.id, `Planning held: workflow-principal-${capacity.reason}:triage`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
               await this.updatePlanningStateIfStillCurrent(task, { status: "needs-replan" });
               return;
             }
@@ -3065,7 +3059,10 @@ export class TriageProcessor {
           }),
           ...createIdeationTools(this.store),
           ...createGoalRetrievalTools(this.store, {
-            runContext: triageRunContext,
+            runContext: {
+              runId: triageRunContext.runId,
+              agentId: triageRunContext.agentId,
+            },
             taskId: task.id,
           }),
           ...createMemoryTools(this.rootDir, settings, assignedAgent
@@ -3383,7 +3380,7 @@ export class TriageProcessor {
         Engine TUI line `using model` fires on every planning session start and is steady-state — planLog.debug (FUSION_DEBUG=plan). Task activity (logEntry/appendAgentLog) stays so the board still shows which model planned.
         */
         planLog.debug(`${task.id}: using model ${modelDesc}`);
-        await this.store.logEntry(task.id, `Planning using model: ${modelDesc}`);
+        await this.store.logEntry(task.id, `Planning using model: ${modelDesc}`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
         await this.store.appendAgentLog(
           task.id,
           `Planning using model: ${modelDesc}`,
@@ -3395,7 +3392,7 @@ export class TriageProcessor {
         // FNXC:TaskTiming 2026-08-01-10:00: triage owns the initial planning lane;
         // first-start wins so a crash between ownership and persistence cannot open a second segment.
         const planningStart = startPlanningSegment(task);
-        if (planningStart.planningStartedAt) await this.store.updateTask(task.id, planningStart);
+        if (planningStart.planningStartedAt) await this.store.updateTask(task.id, planningStart, UNATTRIBUTED_MUTATION_CONTEXT);
         // Register session so the global pause listener can terminate it
         this.activeSessions.set(task.id, session);
 
@@ -3564,8 +3561,7 @@ export class TriageProcessor {
               planLog.warn(`${task.id}: planning turn exceeded ${planningTimeoutMs}ms — disposing session`);
               await this.store.logEntry(
                 task.id,
-                `Planning turn timed out after ${Math.round(planningTimeoutMs / 60_000)} min — aborting session`,
-              ).catch(() => undefined);
+                `Planning turn timed out after ${Math.round(planningTimeoutMs / 60_000)} min — aborting session`, undefined, UNATTRIBUTED_MUTATION_CONTEXT).catch(() => undefined);
               try { session.dispose(); } catch { /* best-effort */ }
               // Phrased to match the provider-timeout transient pattern so this routes into the
               // bounded planning retry budget instead of the unclassified-failure park.
@@ -3671,8 +3667,7 @@ export class TriageProcessor {
           if (planPersistence.outcome === "recovered") {
             await this.store.logEntry(
               task.id,
-              "Recovered the plan written inside the task worktree into the project .fusion folder",
-            ).catch(() => undefined);
+              "Recovered the plan written inside the task worktree into the project .fusion folder", undefined, UNATTRIBUTED_MUTATION_CONTEXT).catch(() => undefined);
           }
 
           let written = await readFile(
@@ -3721,8 +3716,7 @@ export class TriageProcessor {
                 planLog.log(`${task.id}: recovered duplicate verdict ${recoveredMarker.canonicalId} from the planner's reply (no PROMPT.md was written)`);
                 await this.store.logEntry(
                   task.id,
-                  `Recovered duplicate verdict from the planning reply — the planner reported ${recoveredMarker.canonicalId} without writing PROMPT.md`,
-                ).catch(() => undefined);
+                  `Recovered duplicate verdict from the planning reply — the planner reported ${recoveredMarker.canonicalId} without writing PROMPT.md`, undefined, UNATTRIBUTED_MUTATION_CONTEXT).catch(() => undefined);
               }
             }
           }
@@ -3754,7 +3748,7 @@ export class TriageProcessor {
             if (decision.shouldRetry) {
               const retryMessage = `${failure} — retry ${decision.nextState.recoveryRetryCount}/${MAX_RECOVERY_RETRIES} in ${formatDelay(decision.delayMs)}.`;
               planLog.warn(`${task.id} ${retryMessage}`);
-              await this.store.logEntry(task.id, retryMessage);
+              await this.store.logEntry(task.id, retryMessage, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
               await this.updatePlanningStateIfStillCurrent(task, {
                 status: this.restoreStatusAfterInterruptedTriageWork(task),
                 error: null,
@@ -3766,7 +3760,7 @@ export class TriageProcessor {
 
             const failureMessage = `${failure} after ${MAX_RECOVERY_RETRIES} retries. Retry after adjusting the task prompt or model.`;
             planLog.error(`${task.id} clean planning attempt retry budget exhausted`);
-            await this.store.logEntry(task.id, failureMessage);
+            await this.store.logEntry(task.id, failureMessage, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
             if (await this.updatePlanningStateIfStillCurrent(task, (live) => {
               const customFields = { ...(live.customFields ?? {}) };
               delete customFields[PLANNING_LIFECYCLE_LOCK_TRANSPORT_FAILURE_KEY];
@@ -3796,7 +3790,7 @@ export class TriageProcessor {
               const retryMessage =
                 `Generated plan failed deterministic validation (${deterministicSpecFailure}) — retry ${attempt}/${MAX_RECOVERY_RETRIES} in ${delay}.`;
               planLog.warn(`${task.id} ${retryMessage}`);
-              await this.store.logEntry(task.id, retryMessage);
+              await this.store.logEntry(task.id, retryMessage, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
               const restoreStatus = this.restoreStatusAfterInterruptedTriageWork(task);
               await this.updatePlanningStateIfStillCurrent(task, {
                 status: restoreStatus,
@@ -3815,8 +3809,7 @@ export class TriageProcessor {
             );
             await this.store.logEntry(
               task.id,
-              failureMessage,
-            );
+              failureMessage, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
             if (await this.updatePlanningStateIfStillCurrent(task, {
               status: "failed",
               error: failureMessage,
@@ -3867,7 +3860,7 @@ export class TriageProcessor {
           const livePlanningTask = await this.store.getTask(task.id);
           if (livePlanningTask) {
             const planningEnd = finalizePlanningSegment(livePlanningTask);
-            if (planningEnd.planningStartedAt === null) await this.store.updateTask(task.id, planningEnd);
+            if (planningEnd.planningStartedAt === null) await this.store.updateTask(task.id, planningEnd, UNATTRIBUTED_MUTATION_CONTEXT);
           }
           session.dispose();
         }
@@ -3877,7 +3870,7 @@ export class TriageProcessor {
         onRetry: (attempt, delayMs, error) => {
           const delaySec = Math.round(delayMs / 1000);
           planLog.warn(`⏳ ${task.id} rate limited — retry ${attempt} in ${delaySec}s: ${error.message}`);
-          this.store.logEntry(task.id, `Rate limited — retry ${attempt} in ${delaySec}s`).catch((err: unknown) => {
+          this.store.logEntry(task.id, `Rate limited — retry ${attempt} in ${delaySec}s`, undefined, UNATTRIBUTED_MUTATION_CONTEXT).catch((err: unknown) => {
             const msg = err instanceof Error ? err.message : String(err);
             planLog.warn(`${task.id}: failed to log rate-limit retry entry: ${msg}`);
           });
@@ -3940,7 +3933,7 @@ export class TriageProcessor {
           const failureMessage =
             `Triage failed: unable to select a usable model after ${err.attempts} attempt${err.attempts === 1 ? "" : "s"}. ${err.message}`;
           planLog.error(`✗ ${task.id} planner model fallback exhausted: ${failureMessage}`);
-          await this.store.logEntry(task.id, failureMessage).catch((logErr: unknown) => {
+          await this.store.logEntry(task.id, failureMessage, undefined, UNATTRIBUTED_MUTATION_CONTEXT).catch((logErr: unknown) => {
             const msg = logErr instanceof Error ? logErr.message : String(logErr);
             planLog.warn(`${task.id}: failed to log planner fallback exhaustion: ${msg}`);
           });
@@ -3968,7 +3961,7 @@ export class TriageProcessor {
           */
           const failureMessage = `Specification failed: ${errorMessage}`;
           planLog.error(`✗ ${task.id} planning needs operator action: ${errorDetail}`);
-          await this.store.logEntry(task.id, failureMessage, errorStack).catch((logErr: unknown) => {
+          await this.store.logEntry(task.id, failureMessage, errorStack, UNATTRIBUTED_MUTATION_CONTEXT).catch((logErr: unknown) => {
             const msg = logErr instanceof Error ? logErr.message : String(logErr);
             planLog.warn(`${task.id}: failed to persist operator-actionable specification failure: ${msg}`);
           });
@@ -4011,7 +4004,7 @@ export class TriageProcessor {
           if (decision.shouldRetry) {
             const retryMessage = `${failureMessage} — retry ${decision.nextState.recoveryRetryCount}/${MAX_RECOVERY_RETRIES} in ${formatDelay(decision.delayMs)}.`;
             planLog.warn(`${task.id} ${retryMessage}`);
-            await this.store.logEntry(task.id, retryMessage).catch(() => undefined);
+            await this.store.logEntry(task.id, retryMessage, undefined, UNATTRIBUTED_MUTATION_CONTEXT).catch(() => undefined);
             await this.updatePlanningStateIfStillCurrent(task, (live) => ({
               ...persistMarker(live),
               status: this.restoreStatusAfterInterruptedTriageWork(task),
@@ -4021,7 +4014,7 @@ export class TriageProcessor {
             }));
             return;
           }
-          await this.store.logEntry(task.id, failureMessage).catch(() => undefined);
+          await this.store.logEntry(task.id, failureMessage, undefined, UNATTRIBUTED_MUTATION_CONTEXT).catch(() => undefined);
           await this.updatePlanningStateIfStillCurrent(task, (live) => {
             const customFields = { ...(live.customFields ?? {}) };
             delete customFields[PLANNING_LIFECYCLE_LOCK_TRANSPORT_FAILURE_KEY];
@@ -4042,7 +4035,7 @@ export class TriageProcessor {
             // Silent transient errors (e.g., "request was aborted") are noisy — skip logging
             if (!isSilentTransientError(errorMessage)) {
               planLog.warn(`⚡ ${task.id} transient error during triage — retry ${attempt}/${MAX_RECOVERY_RETRIES} in ${delay}: ${errorMessage}`);
-              await this.store.logEntry(task.id, `Transient error during specification (retry ${attempt}/${MAX_RECOVERY_RETRIES} in ${delay}): ${errorMessage}`).catch((err: unknown) => {
+              await this.store.logEntry(task.id, `Transient error during specification (retry ${attempt}/${MAX_RECOVERY_RETRIES} in ${delay}): ${errorMessage}`, undefined, UNATTRIBUTED_MUTATION_CONTEXT).catch((err: unknown) => {
                 const msg = err instanceof Error ? err.message : String(err);
                 planLog.warn(`${task.id}: failed to log transient-error retry entry: ${msg}`);
               });
@@ -4061,7 +4054,7 @@ export class TriageProcessor {
 
           // Recovery budget exhausted — freeze in triage with error for manual intervention
           planLog.error(`✗ ${task.id} transient error retries exhausted (${MAX_RECOVERY_RETRIES} attempts): ${errorMessage}`);
-          await this.store.logEntry(task.id, `Specification failed after ${MAX_RECOVERY_RETRIES} transient errors: ${errorMessage}`).catch((err: unknown) => {
+          await this.store.logEntry(task.id, `Specification failed after ${MAX_RECOVERY_RETRIES} transient errors: ${errorMessage}`, undefined, UNATTRIBUTED_MUTATION_CONTEXT).catch((err: unknown) => {
             const msg = err instanceof Error ? err.message : String(err);
             planLog.warn(`${task.id}: failed to log transient-error retries-exhausted entry: ${msg}`);
           });
@@ -4107,7 +4100,7 @@ export class TriageProcessor {
         });
         planLog.error(`✗ ${task.id} planning failed:`, errorDetail);
         if (errorStack) {
-          await this.store.logEntry(task.id, `Specification failed: ${errorMessage}`, errorStack).catch((logErr: unknown) => {
+          await this.store.logEntry(task.id, `Specification failed: ${errorMessage}`, errorStack, UNATTRIBUTED_MUTATION_CONTEXT).catch((logErr: unknown) => {
             const msg = logErr instanceof Error ? logErr.message : String(logErr);
             planLog.warn(`${task.id}: failed to persist specification-failure stack trace: ${msg}`);
           });
@@ -4119,8 +4112,7 @@ export class TriageProcessor {
           planLog.warn(`⚡ ${task.id} planning failed — retry ${attempt}/${MAX_RECOVERY_RETRIES} in ${delay}: ${errorMessage}`);
           await this.store.logEntry(
             task.id,
-            `Specification failed (retry ${attempt}/${MAX_RECOVERY_RETRIES} in ${delay}): ${errorMessage}`,
-          ).catch((logErr: unknown) => {
+            `Specification failed (retry ${attempt}/${MAX_RECOVERY_RETRIES} in ${delay}): ${errorMessage}`, undefined, UNATTRIBUTED_MUTATION_CONTEXT).catch((logErr: unknown) => {
             const msg = logErr instanceof Error ? logErr.message : String(logErr);
             planLog.warn(`${task.id}: failed to log planning-failure retry entry: ${msg}`);
           });
@@ -4146,7 +4138,7 @@ export class TriageProcessor {
         */
         const exhaustedMessage = `PLANNING_FAILED_EXHAUSTED: specification failed ${MAX_RECOVERY_RETRIES} times — last error: ${errorMessage}`;
         planLog.error(`✗ ${task.id} planning retries exhausted (${MAX_RECOVERY_RETRIES} attempts) — parking failed: ${errorMessage}`);
-        await this.store.logEntry(task.id, exhaustedMessage).catch((logErr: unknown) => {
+        await this.store.logEntry(task.id, exhaustedMessage, undefined, UNATTRIBUTED_MUTATION_CONTEXT).catch((logErr: unknown) => {
           const msg = logErr instanceof Error ? logErr.message : String(logErr);
           planLog.warn(`${task.id}: failed to log planning-retries-exhausted entry: ${msg}`);
         });
@@ -4428,7 +4420,7 @@ export class TriageProcessor {
       if (!isTaskStillInPlanningStage(liveTask)) {
         return false;
       }
-      await this.store.updateTask(task.id, typeof patch === "function" ? patch(liveTask) : patch);
+      await this.store.updateTask(task.id, typeof patch === "function" ? patch(liveTask) : patch, UNATTRIBUTED_MUTATION_CONTEXT);
       return true;
     }
 
@@ -4449,7 +4441,7 @@ export class TriageProcessor {
       }
       persisted = true;
       return typeof patch === "function" ? patch(liveTask) : patch;
-    });
+    }, UNATTRIBUTED_MUTATION_CONTEXT);
     return persisted;
   }
 
@@ -4522,7 +4514,7 @@ export class TriageProcessor {
     if (headingNumbers.length > 0 && !headingNumbers.every((heading, index) => heading === index)) {
       const diagnostic = `Step headings must be contiguous 0-based execution indices (observed: ${headingNumbers.join(", ")}). Renumber from Step 0 and update prose cross-references.`;
       planLog.warn(`${taskId}: ${diagnostic}`);
-      await this.store.logEntry(taskId, "Generated plan validation failed: invalid step heading numbering");
+      await this.store.logEntry(taskId, "Generated plan validation failed: invalid step heading numbering", undefined, UNATTRIBUTED_MUTATION_CONTEXT);
       return diagnostic;
     }
 
@@ -4533,7 +4525,7 @@ export class TriageProcessor {
     if (danglingRefs.length > 0) {
       const diagnostic = formatDanglingDiagnostic(danglingRefs);
       planLog.warn(`${taskId}: ${diagnostic}`);
-      await this.store.logEntry(taskId, "Generated plan validation failed: dangling task-document references");
+      await this.store.logEntry(taskId, "Generated plan validation failed: dangling task-document references", undefined, UNATTRIBUTED_MUTATION_CONTEXT);
       return diagnostic;
     }
 
@@ -4719,7 +4711,7 @@ export class TriageProcessor {
 
     if (decision.shouldRetry) {
       const message = `PROMPT.md disappeared before planning release — retry ${attempt}/${MAX_RECOVERY_RETRIES} in ${formatDelay(decision.delayMs)}.`;
-      await this.store.logEntry(task.id, message);
+      await this.store.logEntry(task.id, message, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
       await this.updatePlanningStateIfStillCurrent(task, {
         status: this.restoreStatusAfterInterruptedTriageWork(task),
         error: null,
@@ -4730,7 +4722,7 @@ export class TriageProcessor {
     }
 
     const error = `REQUIRED_ARTIFACT_RECOVERY_EXHAUSTED: PROMPT.md remained missing after ${MAX_RECOVERY_RETRIES} automatic planning retries.`;
-    await this.store.logEntry(task.id, error);
+    await this.store.logEntry(task.id, error, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
     await this.updatePlanningStateIfStillCurrent(task, {
       status: "failed",
       error,
@@ -4772,7 +4764,7 @@ export class TriageProcessor {
       }
       // Same-ID dual-source redirects are one decision; clear both exact sources together.
       if (resolveExplicitDuplicateMarker(null, task.title).marker?.canonicalId === canonicalId) {
-        await this.store.updateTask(task.id, { title: `Duplicate redirect cleared: ${canonicalId}` });
+        await this.store.updateTask(task.id, { title: `Duplicate redirect cleared: ${canonicalId}` }, UNATTRIBUTED_MUTATION_CONTEXT);
       }
     })) return false;
 
@@ -4780,7 +4772,7 @@ export class TriageProcessor {
     if (options?.exhausted) {
       const error = buildDuplicateReplanExhaustedError(canonicalId);
       try {
-        await Promise.resolve(this.store.logEntry(task.id, error, feedback));
+        await Promise.resolve(this.store.logEntry(task.id, error, feedback, UNATTRIBUTED_MUTATION_CONTEXT));
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
         planLog.warn(`${task.id}: failed to log exhausted duplicate replan: ${msg}`);
@@ -4793,7 +4785,7 @@ export class TriageProcessor {
     }
 
     try {
-      await Promise.resolve(this.store.logEntry(task.id, TRIAGE_MARKER_CLEARED_REPLAN_LOG_ACTION, feedback));
+      await Promise.resolve(this.store.logEntry(task.id, TRIAGE_MARKER_CLEARED_REPLAN_LOG_ACTION, feedback, UNATTRIBUTED_MUTATION_CONTEXT));
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       planLog.warn(`${task.id}: failed to log marker-clear replan feedback: ${msg}`);
@@ -4827,7 +4819,7 @@ export class TriageProcessor {
       duplicate decision.
       */
       await this.updatePlanningStateIfStillCurrent(task, { status: "needs-replan", error: null });
-      await this.store.logEntry(task.id, "Duplicate redirect sources conflict", "PROMPT.md and task title name different canonical tasks; correct one exact redirect before planning.");
+      await this.store.logEntry(task.id, "Duplicate redirect sources conflict", "PROMPT.md and task title name different canonical tasks; correct one exact redirect before planning.", UNATTRIBUTED_MUTATION_CONTEXT);
       return;
     }
     // A title-only redirect is authoritative even when there is no prompt file to recover.
@@ -4912,7 +4904,7 @@ export class TriageProcessor {
         const result = await deleteTaskIf.call(this.store, task.id, isTaskStillInPlanningStage, {
           removeLineageReferences: true,
           // FNXC:TaskDeleteAttribution 2026-07-26-14:30: duplicate-resolution delete is engine-driven.
-          auditContext: toRunMutationContext({ agentId: task.assignedAgentId ?? "triage", runId: generateSyntheticRunId("triage-delete", task.id), callerKind: "engine" as const }),
+          auditContext: { agentId: task.assignedAgentId ?? "triage", runId: generateSyntheticRunId("triage-delete", task.id), callerKind: "engine" },
         });
         if (!result.deleted) return;
         await this.store.recordActivity({
@@ -4929,7 +4921,7 @@ export class TriageProcessor {
           sourceMetadataPatch: { nearDuplicateOf: canonicalId, nearDuplicateScore: 1, duplicateSource: "triage-marker", nearDuplicateDismissed: false },
         });
         if (!applied) return;
-        await this.store.logEntry(task.id, "Flagged as triage duplicate", `Duplicate marker points to ${canonicalId}; awaiting operator decision`);
+        await this.store.logEntry(task.id, "Flagged as triage duplicate", `Duplicate marker points to ${canonicalId}; awaiting operator decision`, UNATTRIBUTED_MUTATION_CONTEXT);
         await this.store.recordActivity({ type: "task:auto-archived-duplicate", taskId: task.id, details: "Flagged (not deleted) as triage-marker duplicate", metadata: { canonicalTaskId: canonicalId, source: "triage-marker-flagged" } });
         return;
       }
@@ -5252,8 +5244,7 @@ export class TriageProcessor {
             await this.store.logEntry(
               task.id,
               `Flagged as near-duplicate of ${canonical.id} (awaiting user decision)`,
-              `Shared tokens: ${canonical.sharedTokens.join(", ")}`,
-            );
+              `Shared tokens: ${canonical.sharedTokens.join(", ")}`, UNATTRIBUTED_MUTATION_CONTEXT);
             await this.store.recordActivity({
               type: "task:near-duplicate-flagged",
               taskId: task.id,
@@ -5298,8 +5289,7 @@ export class TriageProcessor {
       if (!await this.updatePlanningStateIfStillCurrent(task, { status: restoreStatus })) return;
       await this.store.logEntry(
         task.id,
-        "Specification approved but task is paused — leaving in triage, will resume on unpause",
-      );
+        "Specification approved but task is paused — leaving in triage, will resume on unpause", undefined, UNATTRIBUTED_MUTATION_CONTEXT);
       planLog.log(`${task.id} specified task paused — leaving in triage, will resume on unpause`);
       return;
     }
@@ -5356,8 +5346,7 @@ export class TriageProcessor {
       if (priorFingerprint && priorFingerprint === currentFingerprint) {
         await this.store.logEntry(
           task.id,
-          "Plan unchanged since prior approval — proceeding without re-approval",
-        );
+          "Plan unchanged since prior approval — proceeding without re-approval", undefined, UNATTRIBUTED_MUTATION_CONTEXT);
         planLog.log(`${task.id} plan unchanged since prior approval — proceeding without re-approval`);
       } else {
         /*
@@ -5375,8 +5364,7 @@ export class TriageProcessor {
         if (!await this.updatePlanningStateIfStillCurrent(task, approvalUpdates)) return;
         await this.store.logEntry(
           task.id,
-          options.recoveryLogAction ?? "Specification approved by AI — awaiting manual approval",
-        );
+          options.recoveryLogAction ?? "Specification approved by AI — awaiting manual approval", undefined, UNATTRIBUTED_MUTATION_CONTEXT);
         planLog.log(`✓ ${task.id} specified and awaiting manual approval`);
         return;
       }
@@ -5506,28 +5494,28 @@ export class TriageProcessor {
         }
         // Leave needs-replan/failed/awaiting-approval and other durable statuses alone.
         return null;
-      });
+      }, UNATTRIBUTED_MUTATION_CONTEXT);
     } else {
       const live = await Promise.resolve(this.store.getTask(task.id)).catch(() => null);
       if (
         live
         && (live.status === "planning" || live.status === "plan-review-unavailable" || live.status == null)
       ) {
-        await this.store.updateTask(task.id, { status: null, error: null });
+        await this.store.updateTask(task.id, { status: null, error: null }, UNATTRIBUTED_MUTATION_CONTEXT);
       } else if (!live) {
         // Minimal test stores often omit getTask; still clear the mid-handoff planning stamp.
-        await this.store.updateTask(task.id, { status: null, error: null });
+        await this.store.updateTask(task.id, { status: null, error: null }, UNATTRIBUTED_MUTATION_CONTEXT);
       }
     }
 
     if (options.recoveryLogAction) {
-      await this.store.logEntry(task.id, options.recoveryLogAction);
+      await this.store.logEntry(task.id, options.recoveryLogAction, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
       planLog.log(`✓ ${task.id} recovered and moved to todo`);
       return;
     }
 
     if (options.isReplan) {
-      await this.store.logEntry(task.id, "Spec revised by AI", options.feedback);
+      await this.store.logEntry(task.id, "Spec revised by AI", options.feedback, UNATTRIBUTED_MUTATION_CONTEXT);
       planLog.log(`✓ ${task.id} re-planned and moved to todo`);
     } else {
       planLog.log(`✓ ${task.id} specified and moved to todo`);

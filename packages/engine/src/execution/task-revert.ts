@@ -50,7 +50,7 @@
 import { exec } from "node:child_process";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { isWorkspaceTask, type Settings, type Task, type TaskCommitAssociation, type TaskCreateInput, type TaskStore } from "@fusion/core";
+import { isWorkspaceTask, type RunMutationContext, type Settings, type Task, type TaskCommitAssociation, type TaskCreateInput, type TaskStore } from "@fusion/core";
 import { collectOwnTaskCommitsForRange } from "./branch-attribution.js";
 import { type IntegrationBranchSettings } from "../merge/integration-branch.js";
 import { recordWorkspaceBaseBranchDecision, resolveWorkspaceRepoBaseBranch } from "../worktree/workspace-base-branch.js";
@@ -1713,7 +1713,21 @@ export function buildAiUndoTaskDescription(params: {
  * that misrepresents the relationship in dependency UIs.
  */
 export interface CreateAiUndoTaskDeps {
-  createTask(input: TaskCreateInput): Promise<Task>;
+  /*
+  FNXC:Identity 2026-08-09-03:04 (U18/KTD2 — the seam restates the required context):
+  Hand-declared at one argument, so it inherits neither of U18's `TaskStore.createTask` overloads.
+  Creating a board task is the most attributable mutation there is — an operator pressed Undo — and
+  at the old arity that authorship was structurally impossible to record no matter what the sweep
+  did. The shape below mirrors the CANONICAL store arity, which is also what keeps a real
+  `TaskStore.createTask` assignable here.
+  */
+  createTask(input: TaskCreateInput, options: undefined, runContext: RunMutationContext): Promise<Task>;
+  /*
+  FNXC:Identity 2026-08-09-03:04 (U18/KTD2):
+  Required. The only caller is the dashboard's task-revert route, where the actor is the human who
+  pressed Undo; U9 supplies it there and the marker holds the place until then.
+  */
+  runContext: RunMutationContext;
   /** Idempotency lookup — see `REVERT_OF_METADATA_KEY`. Implemented by `TaskStore.findOpenRevertTaskForSource` (core). */
   findOpenRevertTaskForSource(sourceTaskId: string): Promise<Task | null>;
   sourceTask: Pick<Task, "id" | "title" | "description" | "prompt" | "mergeDetails" | "priority">;
@@ -1761,7 +1775,7 @@ export async function createAiUndoTask(deps: CreateAiUndoTaskDeps): Promise<AiUn
       sourceMetadata: { [REVERT_OF_METADATA_KEY]: sourceTask.id },
     },
     ...(workflowId !== undefined ? { workflowId } : {}),
-  });
+  }, undefined, deps.runContext);
 
   return { mode: "ai", createdTaskId: created.id };
 }
