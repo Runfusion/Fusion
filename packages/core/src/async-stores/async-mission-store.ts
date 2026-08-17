@@ -1664,10 +1664,78 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
     const feature = await getFeature(this.db, featureId);
     if (!feature) throw new Error(`Feature ${featureId} not found`);
     const { taskId } = feature;
+    if (!taskId) throw new Error(`Feature ${featureId} is not linked to any task`);
     const updated = await this.updateFeature(featureId, { taskId: undefined, status: "defined" });
-    if (taskId) await clearTaskMissionLinkage(this.db, taskId);
+    await clearTaskMissionLinkage(this.db, taskId);
     await this.recomputeSliceStatus(updated.sliceId);
     return updated;
+  }
+
+  /**
+   * Atomically re-point a feature's single-valued taskId to a different live
+   * target task, preserving the forward-link model's invariants. Re-point is the
+   * supported way to correct a feature pinned to the wrong task without the
+   * status-lossy unlink→link two-step.
+   */
+  async repointFeatureToTask(featureId: string, taskId: string): Promise<MissionFeature> {
+    /*
+    FNXC:FeatureRepoint 2026-08-17-09:59:
+    Re-point is the supported way to correct a mis-pinned single-valued feature taskId
+    without the status-lossy unlink→link two-step. Single-valuedness is enforced at the
+    application layer (no DB unique constraint on mission_features.task_id): the
+    conflicting-feature query guards the target, and the feature row lock via
+    getFeatureForStatusWrite serializes concurrent re-points so two writers cannot
+    both observe the same pre-image.
+    */
+    const outcome = await this.layer.transactionImmediate(async (tx) => {
+      const feature = await this.getFeatureForStatusWrite(tx, featureId);
+      if (!feature) throw new Error(`Feature ${featureId} not found`);
+      const fromTaskId = feature.taskId;
+      if (fromTaskId === taskId) return { feature, event: undefined, fromTaskId } as const;
+      const liveTask = await getLiveTaskById(tx, taskId);
+      if (!liveTask) {
+        throw new Error(
+          `Cannot re-point feature ${featureId} to task ${taskId}: task is not on the active board (it may be archived, deleted, or never existed). Only active tasks can be linked to features.`,
+        );
+      }
+      const conflictingFeature = await getConflictingFeatureByTaskId(tx, taskId, featureId);
+      if (conflictingFeature) {
+        throw new Error(`Task ${taskId} is already linked to feature ${conflictingFeature.id}`);
+      }
+      const slice = await getSlice(tx, feature.sliceId);
+      const milestone = slice ? await getMilestone(tx, slice.milestoneId) : undefined;
+      if (!slice || !milestone) throw new Error(`Feature ${featureId} has incomplete mission hierarchy`);
+      const now = new Date().toISOString();
+      /*
+      FNXC:FeatureRepoint 2026-08-17-09:59:
+      Loop/status transition reuses the link method's rule: a feature promoted out of
+      unlinked (idle/absent loopState) starts an implementing loop; an already-linked
+      feature keeps its status/loop/attempts when re-pointed. This contrasts with
+      unlink→link, which demotes to defined before the link re-promotes and therefore
+      discards loop progress.
+      */
+      const transitioningFromUnlinked = !fromTaskId;
+      const shouldTransitionLoop = transitioningFromUnlinked && (!feature.loopState || feature.loopState === "idle");
+      const updated: MissionFeature = {
+        ...feature,
+        taskId,
+        status: transitioningFromUnlinked ? "triaged" : feature.status,
+        ...(shouldTransitionLoop ? { loopState: "implementing", implementationAttemptCount: 1 } : {}),
+        updatedAt: now,
+      };
+      await updateFeature(tx, updated);
+      const event = transitioningFromUnlinked
+        ? await this.recordFeatureStatusChange(tx, feature, "triaged", { type: "system", id: "mission-store", source: "mission-repoint" })
+        : undefined;
+      if (fromTaskId) await clearTaskMissionLinkage(tx, fromTaskId);
+      await setTaskMissionLinkage(tx, taskId, milestone.missionId, slice.id);
+      return { feature: updated, event, fromTaskId: fromTaskId as string | undefined };
+    });
+    this.emit("feature:updated", outcome.feature);
+    if (outcome.event) this.emit("mission:event", outcome.event);
+    if (outcome.fromTaskId !== taskId) this.emit("feature:linked", { feature: outcome.feature, taskId });
+    await this.recomputeSliceStatus(outcome.feature.sliceId);
+    return outcome.feature;
   }
 
   // ════════════════ VALIDATOR RUNS ════════════════

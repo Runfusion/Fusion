@@ -526,6 +526,23 @@ Link a feature to a fn task for implementation. Updates the feature status to 't
 | `featureId` | string | ✓ | Feature ID to link (e.g., F-001) |
 | `taskId` | string | ✓ | Task ID to link to (e.g., FN-001) |
 
+### fn_feature_repoint_task
+
+Atomically re-point an already-linked feature's single-valued taskId to a different task. Corrects a feature pinned to the wrong task (for example a shared vision doc) without the status-lossy unlink then link two-step. The target task must be live; same-task re-point is an idempotent no-op.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `featureId` | string | ✓ | Feature ID to re-point (e.g., F-001) |
+| `taskId` | string | ✓ | Task ID to re-point to (e.g., FN-001) |
+
+### fn_feature_unlink_task
+
+Detach a feature from its linked task entirely, clearing its single-valued taskId and demoting its status to 'defined'. Use before the documented safe duplicate-cleanup and reconcile-done flow. Returns a clear error if the feature is not currently linked to any task.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `featureId` | string | ✓ | Feature ID to unlink (e.g., F-001) |
+
 ### fn_feature_set_status
 
 Set a feature lifecycle status.

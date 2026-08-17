@@ -5181,6 +5181,115 @@ export default function kbExtension(pi: ExtensionAPI) {
     },
   });
 
+  // ── fn_feature_repoint_task ────────────────────────────────────
+  pi.registerTool({
+    name: "fn_feature_repoint_task",
+    label: "fn: Re-point Feature to Task",
+    description:
+      "Atomically re-point an already-linked feature's single-valued taskId to a different task. " +
+      "Corrects a feature pinned to the wrong task (for example a shared vision doc) without the status-lossy " +
+      "unlink then link two-step. The target task must be live; same-task re-point is an idempotent no-op.",
+    promptSnippet: "Re-point a feature to a different task",
+    promptGuidelines: [
+      "Use when a feature is linked to the wrong task and should point at a different delivery task",
+      "The target task must be active; re-point fails with a clear error otherwise",
+      "A task already linked to another feature rejects the re-point with a conflict error",
+      "Same-task re-point is a safe idempotent no-op",
+    ],
+    parameters: Type.Object({
+      featureId: Type.String({ description: "Feature ID to re-point (e.g., F-001)" }),
+      taskId: Type.String({ description: "Task ID to re-point to (e.g., FN-001)" }),
+    }),
+
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const store = await getStore(ctx.cwd);
+      const missionStore = store.getMissionStore();
+
+      const feature = await missionStore.getFeature(params.featureId);
+      if (!feature) {
+        return {
+          content: [{ type: "text", text: `Feature ${params.featureId} not found` }],
+          isError: true,
+          details: { error: "Feature not found" },
+        };
+      }
+
+      try {
+        const updated = await missionStore.repointFeatureToTask(params.featureId, params.taskId);
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Re-pointed ${updated.id}: "${updated.title}" → ${params.taskId}\nStatus: ${updated.status}`,
+            },
+          ],
+          details: { featureId: updated.id, taskId: params.taskId, title: updated.title, status: updated.status },
+        };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return {
+          content: [{ type: "text", text: message }],
+          isError: true,
+          details: { error: message },
+        };
+      }
+    },
+  });
+
+  // ── fn_feature_unlink_task ─────────────────────────────────────
+  pi.registerTool({
+    name: "fn_feature_unlink_task",
+    label: "fn: Unlink Feature from Task",
+    description:
+      "Detach a feature from its linked task entirely, clearing its single-valued taskId and demoting its status " +
+      "to 'defined'. Use before the documented safe duplicate-cleanup and reconcile-done flow. Returns a clear error " +
+      "if the feature is not currently linked to any task.",
+    promptSnippet: "Unlink a feature from its task",
+    promptGuidelines: [
+      "Use to fully detach a feature from its current task before re-linking or cleaning up a duplicate",
+      "Fails with a clear error if the feature is not linked to any task",
+      "Clears the old task's reverse mission/slice linkage and demotes the feature to 'defined'",
+      "Prefer fn_feature_repoint_task to move a link directly without the status loss",
+    ],
+    parameters: Type.Object({
+      featureId: Type.String({ description: "Feature ID to unlink (e.g., F-001)" }),
+    }),
+
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const store = await getStore(ctx.cwd);
+      const missionStore = store.getMissionStore();
+
+      const feature = await missionStore.getFeature(params.featureId);
+      if (!feature) {
+        return {
+          content: [{ type: "text", text: `Feature ${params.featureId} not found` }],
+          isError: true,
+          details: { error: "Feature not found" },
+        };
+      }
+
+      try {
+        const updated = await missionStore.unlinkFeatureFromTask(params.featureId);
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Unlinked ${updated.id}: "${updated.title}" from its task\nStatus: ${updated.status}`,
+            },
+          ],
+          details: { featureId: updated.id, title: updated.title, status: updated.status },
+        };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return {
+          content: [{ type: "text", text: message }],
+          isError: true,
+          details: { error: message },
+        };
+      }
+    },
+  });
+
   // ── fn_feature_set_status ───────────────────────────────────────
   /* FNXC:MissionStatusWrites 2026-08-10-12:47: Dedicated tools keep the linked-task execution-status guard unambiguous instead of widening generic updates. */
   pi.registerTool({

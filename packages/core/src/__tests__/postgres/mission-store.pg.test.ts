@@ -336,6 +336,69 @@ pgTest("MissionStore (PostgreSQL backend mode)", () => {
     ]));
   });
 
+  it("repointFeatureToTask atomically re-points the single-valued taskId", async () => {
+    const m = missions();
+    const mission = await m.createMission({ title: "Repoint" });
+    const milestone = await m.addMilestone(mission.id, { title: "MS" });
+    const slice = await m.addSlice(milestone.id, { title: "SL" });
+    const feature = await m.addFeature(slice.id, { title: "F" });
+    const wrongTask = await h.store().createTask({ description: "wrong task" });
+    const rightTask = await h.store().createTask({ description: "right delivery task" });
+    const store = h.store();
+
+    // Link feature to the wrong task (reproduces the original symptom: a feature
+    // pinned to the wrong task via fn_feature_link_task).
+    await m.linkFeatureToTask(feature.id, wrongTask.id);
+    expect((await m.getFeature(feature.id))?.taskId).toBe(wrongTask.id);
+    const wrongTaskRow = (await store.getTask(wrongTask.id)) as any;
+    expect(wrongTaskRow.missionId).toBe(mission.id);
+    expect(wrongTaskRow.sliceId).toBe(slice.id);
+
+    // Re-point to the right delivery task.
+    const repointed = await m.repointFeatureToTask(feature.id, rightTask.id);
+    expect(repointed.taskId).toBe(rightTask.id);
+    const persisted = await m.getFeature(feature.id);
+    expect(persisted?.taskId).toBe(rightTask.id);
+    expect(persisted?.status).toBe("triaged");
+
+    // The old task's reverse linkage is cleared; the new task's is set.
+    const oldTaskRow = (await store.getTask(wrongTask.id)) as any;
+    expect(oldTaskRow.missionId).toBeUndefined();
+    expect(oldTaskRow.sliceId).toBeUndefined();
+    const rightTaskRow = (await store.getTask(rightTask.id)) as any;
+    expect(rightTaskRow.missionId).toBe(mission.id);
+    expect(rightTaskRow.sliceId).toBe(slice.id);
+
+    // Same-task re-point is an idempotent no-op preserving status/loop/attempts.
+    await m.updateFeatureStatus(feature.id, "in-progress");
+    const beforeSame = await m.getFeature(feature.id);
+    const same = await m.repointFeatureToTask(feature.id, rightTask.id);
+    const afterSame = await m.getFeature(feature.id);
+    expect(same.taskId).toBe(rightTask.id);
+    expect(afterSame?.taskId).toBe(rightTask.id);
+    expect(beforeSame?.status).toBe("in-progress");
+    expect(afterSame?.status).toBe("in-progress");
+
+    // Conflict: re-point to a task already owned by another feature is rejected.
+    const otherFeature = await m.addFeature(slice.id, { title: "Other" });
+    await m.linkFeatureToTask(otherFeature.id, wrongTask.id);
+    await expect(m.repointFeatureToTask(feature.id, wrongTask.id))
+      .rejects.toThrow(`Task ${wrongTask.id} is already linked to feature ${otherFeature.id}`);
+
+    // Unlink after re-point clears the (new) task.
+    const finalUnlink = await m.unlinkFeatureFromTask(feature.id);
+    expect(finalUnlink.taskId).toBeUndefined();
+    expect(finalUnlink.status).toBe("defined");
+    const rightTaskAfterUnlink = (await store.getTask(rightTask.id)) as any;
+    expect(rightTaskAfterUnlink.missionId).toBeUndefined();
+    expect(rightTaskAfterUnlink.sliceId).toBeUndefined();
+
+    // Unlink of an already-unlinked feature returns a clear error.
+    await expect(m.unlinkFeatureFromTask(feature.id)).rejects.toThrow(
+      `Feature ${feature.id} is not linked to any task`,
+    );
+  });
+
   it("audits defined-feature bootstrap claims inside their task transaction", async () => {
     const m = missions();
     const mission = await m.createMission({ title: "Claim audit" });

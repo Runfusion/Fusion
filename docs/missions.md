@@ -444,6 +444,15 @@ Use this endpoint when a feature's delivery task has already shipped and is now 
 <!-- FNXC:MissionReconciliation 2026-07-20-08:34: Operators need a supported atomic terminal-evidence repair because unarchive/move workarounds enter ordinary task lifecycle observers and can wake a parked mission or generate duplicate work. -->
 **Safe duplicate cleanup:** preserve the first `409`; verify through supported APIs that the current linked task is generated duplicate work with no unique delivery or lineage value; call `POST /api/missions/features/:featureId/unlink-task`; archive only the proven duplicate through the supported task archive API; then call `reconcile-done` with the canonical terminal task. Never overwrite a mismatched link, unarchive/move canonical delivery evidence, or use direct storage edits. If the duplicate is ambiguous, leave it untouched and escalate for evidence.
 
+## Unlink / Re-point a feature's task link
+
+A mission feature's forward `taskId` link is single-valued and pinned: `fn_feature_link_task` / `linkFeatureToTask` refuse to re-point an already-linked feature (`Feature … is already linked to task …`). To correct a feature pinned to the wrong task (for example a shared vision document instead of the deterministic delivery task), use the re-point or unlink surface rather than the status-lossy unlink-then-link two-step:
+
+- **Re-point** moves the single-valued `taskId` directly with no status loss: `fn_feature_repoint_task` (engine tool) and the corresponding `fn_feature_repoint_task` CLI/pi-extension tool call the `repointFeatureToTask` store primitive. It atomically clears the old task's reverse `missionId`/`sliceId` linkage, sets the new task's, keeps an already-linked feature's status/loop/attempts, and preserves single-valuedness via the same conflicting-feature guard as linking. Same-task re-point is an idempotent no-op.
+- **Unlink** detaches the feature entirely: `fn_feature_unlink_task` (engine and CLI tools) and the write surface `POST /api/missions/features/:featureId/unlink-task` call the `unlinkFeatureFromTask` store primitive, which clears `taskId`, clears the old task's reverse linkage, and demotes the feature to `defined`. Unlink of a feature not currently linked to any task returns a clear error.
+
+Both tools are classified as permanent-task-agent mutation surfaces (action gating and readonly workflow-step denial behave like `fn_feature_link_task`). Re-point is preferred over unlink-then-link because it preserves loop/status progress; unlink remains the correct path before the documented safe duplicate-cleanup + `reconcile-done` flow above.
+
 **How this differs from `PATCH /api/missions/features/:featureId`:**
 
 - `PATCH` keeps the execution-status guard and rejects `done`/`triaged`/`in-progress`/`blocked` when no linked task exists.

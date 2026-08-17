@@ -77,6 +77,8 @@ All skill/extension tool invocations in this catalog use the public `fn_*` names
 | `fn_milestone_delete` | Delete a milestone and all descendant slices/features. Rejects deletion when child features link to live tasks unless force=true. |
 | `fn_slice_activate` | Activate a pending slice for implementation. Sets status to 'active' and enables task linking for its features. |
 | `fn_feature_link_task` | Link a feature to a fn task for implementation. Updates the feature status to 'triaged' and associates it with the task. If the target task is not on the active board (for example archived, deleted, or never created), the tool returns a clear validation error indicating that only active tasks can be linked. |
+| `fn_feature_repoint_task` | Atomically re-point an already-linked feature's single-valued taskId to a different task. Corrects a feature pinned to the wrong task (for example a shared vision doc) without the status-lossy unlink then link two-step. The target task must be live; same-task re-point is an idempotent no-op. |
+| `fn_feature_unlink_task` | Detach a feature from its linked task entirely, clearing its single-valued taskId and demoting its status to 'defined'. Use before the documented safe duplicate-cleanup and reconcile-done flow. Returns a clear error if the feature is not currently linked to any task. |
 | `fn_feature_set_status` | Set a feature lifecycle status. |
 | `fn_mission_reconcile` | Reconcile mission state against deterministic delivery ground truth. |
 | `fn_feature_repair_validation` | Clear a stale validation badge or re-run validation. |

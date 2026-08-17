@@ -2733,6 +2733,9 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
 
     // Get the taskId before clearing it
     const { taskId } = feature;
+    if (!taskId) {
+      throw new Error(`Feature ${featureId} is not linked to any task`);
+    }
 
     const updated = this.db.transaction(() => {
       const featureUpdate = this.updateFeature(featureId, {
@@ -2741,15 +2744,98 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
       });
 
       // Clear the task's mission/slice linkage together.
-      if (taskId) {
-        this.db.prepare(`
-          UPDATE tasks SET missionId = NULL, sliceId = NULL WHERE id = ? AND "deletedAt" IS NULL
-        `).run(taskId);
-        this.db.bumpLastModified();
-      }
+      this.db.prepare(`
+        UPDATE tasks SET missionId = NULL, sliceId = NULL WHERE id = ? AND "deletedAt" IS NULL
+      `).run(taskId);
+      this.db.bumpLastModified();
 
       return featureUpdate;
     });
+
+    // Recompute slice status
+    this.recomputeSliceStatus(updated.sliceId);
+
+    return updated;
+  }
+
+  /**
+   * Atomically re-point a feature's single-valued taskId to a different live
+   * target task, preserving the forward-link model's invariants. Re-point is the
+   * supported way to correct a feature pinned to the wrong task without the
+   * status-lossy unlink→link two-step.
+   *
+   * @param featureId - Feature ID
+   * @param taskId - Task ID to re-point to
+   * @returns The updated feature
+   * @throws Error if feature not found, task not live, or task owned by another feature
+   */
+  repointFeatureToTask(featureId: string, taskId: string): MissionFeature {
+    /*
+    FNXC:FeatureRepoint 2026-08-17-09:59:
+    Re-point is the supported way to correct a mis-pinned single-valued feature taskId
+    without the status-lossy unlink→link two-step. Single-valuedness is enforced at the
+    application layer (no DB unique constraint on mission_features.task_id): the
+    conflicting-feature query guards the target, and same-task re-point is an idempotent
+    no-op preserving status/loop/attempts.
+    */
+    const feature = this.getFeature(featureId);
+    if (!feature) {
+      throw new Error(`Feature ${featureId} not found`);
+    }
+    const fromTaskId = feature.taskId;
+    if (fromTaskId === taskId) return feature;
+
+    const liveTask = this.db
+      .prepare(`SELECT id FROM tasks WHERE id = ? AND "deletedAt" IS NULL`)
+      .get(taskId) as { id: string } | undefined;
+    if (!liveTask) {
+      throw new Error(
+        `Cannot re-point feature ${featureId} to task ${taskId}: task is not on the active board (it may be archived, deleted, or never existed). Only active tasks can be linked to features.`,
+      );
+    }
+    const conflictingFeature = this.db
+      .prepare(`SELECT id FROM mission_features WHERE taskId = ? AND id != ? LIMIT 1`)
+      .get(taskId, featureId) as { id: string } | undefined;
+    if (conflictingFeature) {
+      throw new Error(`Task ${taskId} is already linked to feature ${conflictingFeature.id}`);
+    }
+
+    const linkage = this.resolveTaskLinkage(feature.sliceId);
+
+    /*
+    FNXC:FeatureRepoint 2026-08-17-09:59:
+    Loop/status transition reuses the link method's rule: a feature promoted out of
+    unlinked (idle/absent loopState) starts an implementing loop; an already-linked
+    feature keeps its status/loop/attempts when re-pointed.
+    */
+    const transitioningFromUnlinked = !fromTaskId;
+    const shouldTransitionLoop = transitioningFromUnlinked && (!feature.loopState || feature.loopState === "idle");
+    const loopStateUpdates: Partial<MissionFeature> = shouldTransitionLoop
+      ? { loopState: "implementing", implementationAttemptCount: 1 }
+      : {};
+
+    const updated = this.db.transaction(() => {
+      const featureUpdate = this.updateFeature(featureId, {
+        taskId,
+        ...(transitioningFromUnlinked ? { status: "triaged" as const } : {}),
+        ...loopStateUpdates,
+      });
+
+      // Move the reverse mission/slice linkage: clear the old task, set the new one.
+      if (fromTaskId) {
+        this.db.prepare(`
+          UPDATE tasks SET missionId = NULL, sliceId = NULL WHERE id = ? AND "deletedAt" IS NULL
+        `).run(fromTaskId);
+      }
+      this.db.prepare(`
+        UPDATE tasks SET missionId = ?, sliceId = ? WHERE id = ? AND "deletedAt" IS NULL
+      `).run(linkage.missionId, linkage.sliceId, taskId);
+      this.db.bumpLastModified();
+
+      return featureUpdate;
+    });
+
+    if (transitioningFromUnlinked) this.emit("feature:linked", { feature: updated, taskId });
 
     // Recompute slice status
     this.recomputeSliceStatus(updated.sliceId);

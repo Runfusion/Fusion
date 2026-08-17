@@ -4391,6 +4391,8 @@ export const featureUpdateParams = Type.Object({ id: Type.String(), title: Type.
 export const featureDeleteParams = Type.Object({ featureId: Type.String(), force: Type.Optional(Type.Boolean()) });
 export const featureSetStatusParams = Type.Object({ id: Type.String(), status: Type.Union(fusionCore.FEATURE_STATUSES.map((status) => Type.Literal(status))), reason: Type.Optional(Type.String()) });
 export const featureLinkTaskParams = Type.Object({ featureId: Type.String(), taskId: Type.String() });
+export const featureRepointTaskParams = featureLinkTaskParams;
+export const featureUnlinkTaskParams = Type.Object({ featureId: Type.String() });
 export const featureRepairValidationParams = Type.Object({ id: Type.String(), action: Type.Union([Type.Literal("clear"), Type.Literal("re_run")]), reason: Type.Optional(Type.String()) });
 export const researchFindingPromoteParams = Type.Object({
   runId: Type.String(),
@@ -4587,6 +4589,8 @@ export function createMissionTools(store: TaskStore, context: MissionToolActorCo
     }),
     tool("fn_feature_delete", "Delete Feature", "Delete a feature, respecting linked-task guards.", featureDeleteParams, async (p) => { await store.getMissionStore().deleteFeature(p.featureId, p.force ===true); return missionToolResult(`Deleted ${p.featureId}`, { featureId: p.featureId }); }),
     tool("fn_feature_link_task", "Link Feature to Task", "Link a feature to a live project-scoped task.", featureLinkTaskParams, async (p) => { const feature = await store.getMissionStore().linkFeatureToTask(p.featureId, p.taskId); return missionToolResult(`Linked ${feature.id} to ${p.taskId}`, { feature }); }),
+    tool("fn_feature_repoint_task", "Re-point Feature to Task", "Atomically re-point an already-linked feature's single-valued taskId to a different live project-scoped task, correcting a mis-pinned link without the status-lossy unlink then link two-step. Same-task re-point is an idempotent no-op.", featureRepointTaskParams, async (p) => { const feature = await store.getMissionStore().repointFeatureToTask(p.featureId, p.taskId); return missionToolResult(`Re-pointed ${feature.id} to ${p.taskId}`, { feature }); }),
+    tool("fn_feature_unlink_task", "Unlink Feature from Task", "Detach a feature from its linked task entirely, clearing its single-valued taskId and demoting its status to defined (for use before the documented safe duplicate-cleanup flow). Fails if the feature is not currently linked.", featureUnlinkTaskParams, async (p) => { const feature = await store.getMissionStore().unlinkFeatureFromTask(p.featureId); return missionToolResult(`Unlinked ${feature.id} from its task`, { feature }); }),
     tool("fn_research_promote_finding", "Promote Research Finding", "Promote a completed research finding into a canonical mission feature.", researchFindingPromoteParams, async (p) => {
       const missionStore = store.getMissionStore();
       if (!("addResearchFeature" in missionStore)) return missionToolResult("Research promotion requires the PostgreSQL mission store", { code: "POSTGRES_REQUIRED" }, true);
