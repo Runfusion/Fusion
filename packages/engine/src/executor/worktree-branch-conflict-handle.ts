@@ -30,6 +30,7 @@ export type BranchConflictHandleDeps = {
   rootDir: string;
   store: TaskStore;
   getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   findActiveWorktreeOwner: (worktreePath: string, requestingTaskId: string) => Promise<string | null>;
   normalizeReclaimableWorktreePath: (
     sourcePath: string,
@@ -66,7 +67,7 @@ export async function reclaimExistingWorktree(
     await assertCleanBranchAtBase(deps.rootDir, branch, baseRef, task.id);
   }
   const message = `[recovery] reclaimed existing worktree for ${task.id} at ${normalizedPath} (${count} commits preserved, tip ${tipSha.slice(0, 12)})`;
-  await deps.store.logEntry(task.id, message, undefined, deps.getRunContextFor(task.id));
+  await deps.store.logEntry(task.id, message, undefined, deps.runContextFor(task.id));
   await deps.store.appendAgentLog(task.id, "Branch conflict auto-recovery", "status", message, "executor");
 }
 
@@ -83,7 +84,7 @@ export async function handleBranchConflict(
   if (activeOwner !== null) {
     const refusalMessage = `[FN-4811] Branch conflict on ${error.branchName} deferred: conflicting worktree ${error.conflictingWorktreePath} is actively owned by ${activeOwner}`;
     executorLog.warn(refusalMessage);
-    await deps.store.logEntry(task.id, refusalMessage, undefined, deps.getRunContextFor(task.id));
+    await deps.store.logEntry(task.id, refusalMessage, undefined, deps.runContextFor(task.id));
     return "sticky";
   }
   const settings = await mergeEffectiveSettings(deps.store, task, await deps.store.getSettings());
@@ -102,7 +103,7 @@ export async function handleBranchConflict(
   if (inspection.kind === "stale-resolved") {
     await deps.store.updateTask(task.id, { worktree: null, branch: null, branchWriteOrigin: "engine" as const, baseCommitSha: null });
     const message = `[recovery] ${task.id} stage-A: pruned stale admin entry for ${error.branchName}`;
-    await deps.store.logEntry(task.id, message, undefined, deps.getRunContextFor(task.id));
+    await deps.store.logEntry(task.id, message, undefined, deps.runContextFor(task.id));
     await deps.store.appendAgentLog(task.id, "Branch conflict auto-recovery", "status", message, "executor");
     return "retry";
   }
@@ -131,7 +132,7 @@ export async function handleBranchConflict(
     }
     await deps.store.updateTask(task.id, { worktree: null, branch: null, branchWriteOrigin: "engine" as const, baseCommitSha: null });
     const message = `[recovery] ${task.id} stage-A: tip-already-merged cleanup for ${error.branchName} (${inspection.tipSha.slice(0, 12)} on ${inspection.integrationRef})`;
-    await deps.store.logEntry(task.id, message, undefined, deps.getRunContextFor(task.id));
+    await deps.store.logEntry(task.id, message, undefined, deps.runContextFor(task.id));
     await deps.store.appendAgentLog(task.id, "Branch conflict auto-recovery", "status", message, "executor");
     return "retry";
   }
@@ -168,9 +169,9 @@ export async function handleBranchConflict(
 
   const conflictMessage = `Task branch conflict: ${error.branchName} is already checked out at ${error.conflictingWorktreePath}. ` +
     `Resolve the local branch/worktree conflict with git tooling (inspect/reclaim or discard) before retrying.`;
-  await deps.store.logEntry(task.id, formatBranchConflictLifecycleLog(task.id, error), undefined, deps.getRunContextFor(task.id));
+  await deps.store.logEntry(task.id, formatBranchConflictLifecycleLog(task.id, error), undefined, deps.runContextFor(task.id));
   await deps.store.appendAgentLog(task.id, "Branch conflict recovery required", "tool_error", formatBranchConflictAgentLog(task.id, error), "executor");
-  const autoRecoveryDispatcher = deps.getAutoRecoveryDispatcher(deps.createRunAuditor(deps.getRunContextFor(task.id)));
+  const autoRecoveryDispatcher = deps.getAutoRecoveryDispatcher(deps.createRunAuditor(deps.runContextFor(task.id)));
   const decision = await autoRecoveryDispatcher.dispatch({
     class: "branch-conflict-unrecoverable",
     taskId: task.id,

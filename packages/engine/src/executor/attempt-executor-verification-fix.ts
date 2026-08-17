@@ -40,6 +40,7 @@ export type AttemptExecutorVerificationFixDeps = {
   onAgentText?: ConstructorParameters<typeof AgentLogger>[0]["onAgentText"];
   onAgentTool?: ConstructorParameters<typeof AgentLogger>[0]["onAgentTool"];
   getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   getAssignedAgentRuntimeConfig: (agentId: string | null | undefined) => Promise<Record<string, unknown> | undefined>;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- MCP map shape owned by session helpers
   resolveMcpServers: (agentId?: string | null) => Promise<any>;
@@ -151,7 +152,7 @@ Do not refactor, rename broadly, or make opportunistic improvements.
       fallbackModelId: executorFallback.modelId,
       fallbackThinkingLevel: resolveExecutorFallbackThinkingLevel(task.thinkingLevel, settings),
       defaultThinkingLevel: resolveExecutorThinkingLevel(task.thinkingLevel, settings),
-      runAuditor: createRunAuditor(deps.store, deps.getRunContextFor(task.id)),
+      runAuditor: createRunAuditor(deps.store, deps.runContextFor(task.id)),
       settings,
       taskEnv: extraEnv,
       mcpServers: await deps.resolveMcpServers(undefined),
@@ -170,7 +171,7 @@ Do not refactor, rename broadly, or make opportunistic improvements.
       task.id,
       `Executor verification fix agent started (model: ${describeModel(session)}, attempt ${retryNumber}/${maxRetries})`,
       undefined,
-      deps.getRunContextFor(task.id),
+      deps.runContextFor(task.id),
     );
     await deps.store.appendAgentLog(
       task.id,
@@ -218,7 +219,7 @@ ${failureContext.output.slice(0, VERIFICATION_LOG_MAX_CHARS)}
         task.id,
         `Re-running deterministic verification (attempt ${retryNumber}/${maxRetries})`,
         undefined,
-        deps.getRunContextFor(task.id),
+        deps.runContextFor(task.id),
       );
       await deps.store.appendAgentLog(
         task.id,
@@ -241,7 +242,7 @@ ${failureContext.output.slice(0, VERIFICATION_LOG_MAX_CHARS)}
       task.id,
       `Executor verification fix agent encountered an error`,
       errorMessage,
-      deps.getRunContextFor(task.id),
+      deps.runContextFor(task.id),
     );
     await deps.store.appendAgentLog(
       task.id,

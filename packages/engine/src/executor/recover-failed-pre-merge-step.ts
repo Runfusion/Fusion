@@ -44,6 +44,7 @@ export type RecoverFailedPreMergeStepOutcome =
 export type RecoverFailedPreMergeStepDeps = {
   store: TaskStore;
   getRunContextFor?: (taskId: string) => EngineRunContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   resolveFailedPreMergeWorkflowStepBudget: (
     task: Task,
     target: CoreWorkflowStepResult,
@@ -217,7 +218,7 @@ export async function recoverFailedPreMergeWorkflowStepDetailed(
         liveTask.id,
         "Failed pre-merge step recovery not scheduled — revision budget zero/invalid",
         `Step: ${stepName}\nAttempts: ${budget.attempts}\nMax: ${String(budget.max)}`,
-        deps.getRunContextFor?.(liveTask.id),
+        deps.runContextFor?.(liveTask.id),
       );
       return { kind: "skipped" };
     }
@@ -253,7 +254,7 @@ export async function recoverFailedPreMergeWorkflowStepDetailed(
       });
       if (outcome === "escalated" || outcome === "arbitrated") return { kind: "scheduled" };
       executorLog.warn(`${liveTask.id}: failed pre-merge step recovery NOT scheduled for "${stepName}" — revision budget exhausted (attempts=${budget.attempts}, max=${String(budget.max)}). Card left parked.`);
-      await deps.store.logEntry(liveTask.id, "Failed pre-merge step recovery not scheduled — revision budget exhausted", `Step: ${stepName}\nAttempts: ${budget.attempts}\nMax: ${String(budget.max)}`, deps.getRunContextFor?.(liveTask.id));
+      await deps.store.logEntry(liveTask.id, "Failed pre-merge step recovery not scheduled — revision budget exhausted", `Step: ${stepName}\nAttempts: ${budget.attempts}\nMax: ${String(budget.max)}`, deps.runContextFor?.(liveTask.id));
       return { kind: "skipped" };
     }
 

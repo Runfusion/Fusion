@@ -13,6 +13,7 @@ import { resolveAuthoritativeExternalExecutionRoute } from "./resolve-authoritat
 export type SendTaskBackForFixDeps = {
   store: TaskStore;
   getRunContextFor?: (taskId: string) => EngineRunContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   clearCompletedTaskWatchdog: (taskId: string) => void;
   injectWorkflowStepFailureInstructions: (
     task: Task,

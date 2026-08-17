@@ -37,17 +37,18 @@ export type TokenUsageBaseline = {
 export type PersistTokenUsageDeps = {
   store: TaskStore;
   getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   tokenUsageBaselines: Map<string, TokenUsageBaseline>;
   /** Optional session from activeSessions when caller omits an explicit session. */
   getActiveSession: (taskId: string) => AgentSession | undefined;
 };
 
 export async function persistTaskTokenUsage(
-  deps: Pick<PersistTokenUsageDeps, "store" | "getRunContextFor">,
+  deps: Pick<PersistTokenUsageDeps, "store" | "getRunContextFor" | "runContextFor">,
   taskId: string,
   tokenUsage: TaskTokenUsage,
 ): Promise<void> {
-  const runContext = deps.getRunContextFor(taskId);
+  const runContext = deps.runContextFor(taskId);
   await deps.store.updateTask(taskId, { tokenUsage }, runContext);
   await enforceTaskTokenBudgetForPersist(deps.store, taskId, runContext);
 }

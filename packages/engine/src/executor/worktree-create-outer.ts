@@ -14,6 +14,7 @@ import { resolveIntegrationBranch } from "../merge/integration-branch.js";
 import { executorLog } from "../logger.js";
 import { quoteShellArg } from "./shell-quote.js";
 import { NonRetryableWorktreeError } from "./worktree-registry-helpers.js";
+import { runContextForTotal } from "./run-context-for.js";
 
 const execAsync = promisify(exec);
 
@@ -56,11 +57,24 @@ export type WorktreeOuterCreateDeps = {
     depTip: string,
     label: string,
   ) => Promise<void>;
+  /*
+  FNXC:Identity 2026-08-14-08:10 (review finding — the remote-rebase breadcrumbs were unattributed):
+  The dep type stopped at `settingsOverride`, so the sole production caller COULD NOT pass a run
+  context even though `createWorktree` resolves one for its other writes. That silently sent the
+  skip/fetch/success/failure breadcrumbs through `safeLog` with `runContext === undefined`.
+  */
+  /**
+   * FNXC:Identity 2026-08-16-05:10: the partial run getter this bag's writes attribute through.
+   * Dropped by the rebase, which left the caller below referencing `deps.getRunContextFor` against a
+   * type that no longer declared it.
+   */
+  getRunContextFor: (taskId: string) => import("../util/run-audit.js").EngineRunContext | undefined;
   rebaseNewWorktreeOntoRemote: (
     worktreePath: string,
     branch: string,
     taskId: string,
     settingsOverride?: Settings,
+    runContext?: RunMutationContext,
   ) => Promise<void>;
 };
 
@@ -200,6 +214,16 @@ export async function rebaseNewWorktreeOntoRemote(
   branch: string,
   taskId: string,
   settingsOverride?: Settings,
+  /*
+  FNXC:Identity 2026-08-15-22:52:
+  The run making these breadcrumb writes. This previously claimed to be "REQUIRED so an unwired
+  caller is a compile error" while being declared OPTIONAL — and the one production caller was in
+  fact unwired, which is exactly the failure the claim promised to prevent. It stays optional
+  because the U18 conversion keeps the context optional until the final stage makes it required
+  everywhere at once; the comment now describes the code instead of contradicting it. The caller in
+  `createWorktree` passes a resolved context.
+  */
+  runContext?: RunMutationContext,
 ): Promise<void> {
   let settings: Settings | Partial<Settings> | undefined = settingsOverride;
   if (!settings) {
@@ -218,7 +242,9 @@ export async function rebaseNewWorktreeOntoRemote(
   */
   const safeLog = (action: string) => {
     try {
-      void Promise.resolve(store.logEntry(taskId, action, undefined, undefined)).catch(() => undefined);
+      // FNXC:Identity 2026-08-16-05:10: the rebase replaced the carrier with `undefined`, re-opening the
+      // very finding this parameter exists to close (unattributed remote-rebase breadcrumbs).
+      void Promise.resolve(store.logEntry(taskId, action, undefined, runContext)).catch(() => undefined);
     } catch {
       // best-effort breadcrumb
     }
@@ -367,7 +393,13 @@ export async function createWorktree(
        * Fetch and rebase the just-created task branch only when the setting is enabled.
        * Failures here never abort task setup.
        */
-      await deps.rebaseNewWorktreeOntoRemote(result.path, result.branch, taskId).catch((err: unknown) => {
+      await deps.rebaseNewWorktreeOntoRemote(
+        result.path,
+        result.branch,
+        taskId,
+        undefined,
+        runContextForTotal(deps.getRunContextFor, taskId),
+      ).catch((err: unknown) => {
         executorLog.warn(
           `Post-create worktree rebase failed for ${taskId} (continuing): ${err instanceof Error ? err.message : String(err)}`,
         );

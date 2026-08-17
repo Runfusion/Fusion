@@ -26,6 +26,8 @@ export type GraphRethinkResetDeps = {
   store: TaskStore;
   graphStepRunOnce: Map<string, Promise<unknown>>;
   graphRethinkNarrations: Map<string, string | undefined>;
+  /** FNXC:Identity 2026-08-16-05:10: total run carrier for the rewind's store writes. */
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
 };
 
 export async function applyGraphRethinkReset(
@@ -75,6 +77,8 @@ export async function applyGraphRethinkReset(
     await resetStepToBaseline(
       {
         store: deps.store,
+        // FNXC:Identity 2026-08-16-05:10: rewind writes attribute to the live run; dropped by the rebase.
+        runContext: deps.runContextFor(taskId),
         worktreePath,
         // No single session ref for graph-owned step-sessions — rewind is skipped
         // when checkpointId resolves but no session is current (KTD-2 partial path).

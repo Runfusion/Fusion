@@ -26,6 +26,7 @@ const execAsync = promisify(exec);
 export type ReconcileStepsFromGitHistoryDeps = {
   store: TaskStore;
   getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   resolveTaskStepSource: (ir: WorkflowIr | undefined) =>
     | { artifact: string; parser: string }
     | undefined;
@@ -122,7 +123,7 @@ export async function reconcileStepsFromGitHistory(
       taskId,
       `Reconciled Step ${stepIndex} as done from git history (resume)`,
       undefined,
-      deps.getRunContextFor(taskId),
+      deps.runContextFor(taskId),
     );
     executorLog.log(`${taskId}: reconciled Step ${stepIndex} as done from git history`);
   }

@@ -84,6 +84,7 @@ export type CreateSpawnAgentToolDeps = {
   ) => Promise<{ path: string; branch: string }>;
   resolveInstructionsForRole: (role: string, settings: Settings) => Promise<string>;
   getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- MCP server map shape is owned by session helpers
   resolveMcpServers: (agentId: string) => Promise<any>;
   runSpawnedChild: (agentId: string, session: AgentSession, taskPrompt: string) => Promise<void>;
@@ -321,7 +322,7 @@ export function createSpawnAgentTool(
             fallbackProvider: childExecutorFallback.provider,
             fallbackModelId: childExecutorFallback.modelId,
             fallbackThinkingLevel: resolveExecutorFallbackThinkingLevel(undefined, settings),
-            runAuditor: createRunAuditor(deps.store, deps.getRunContextFor(taskId)),
+            runAuditor: createRunAuditor(deps.store, deps.runContextFor(taskId)),
             settings,
             taskEnv,
             mcpServers: await deps.resolveMcpServers(agent.id),

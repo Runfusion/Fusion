@@ -13,6 +13,7 @@ export type ParkApprovalSuspensionDeps = {
   store: TaskStore;
   approvalSuspended: Set<string>;
   getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   clearPausedAborted: (taskId: string) => void;
 };
 
@@ -27,7 +28,7 @@ export async function parkApprovalSuspension(
     taskId,
     `Execution suspended for approval — ${surface} disposed; task remains in progress for decision resume`,
     undefined,
-    deps.getRunContextFor(taskId),
+    deps.runContextFor(taskId),
   );
   executorLog.log(`${taskId}: approval suspension parked after ${surface} disposal`);
   return true;

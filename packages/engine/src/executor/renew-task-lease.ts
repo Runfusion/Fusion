@@ -11,6 +11,7 @@ export type RenewTaskLeaseDeps = {
   store: TaskStore;
   options: { agentStore?: AgentStore | null; [k: string]: unknown };
   getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
 };
 
 export async function renewTaskLease(
@@ -32,7 +33,7 @@ export async function renewTaskLease(
         leaseEpoch,
         renewedAt,
       },
-      deps.getRunContextFor(taskId),
+      deps.runContextFor(taskId),
     );
     return;
   }
