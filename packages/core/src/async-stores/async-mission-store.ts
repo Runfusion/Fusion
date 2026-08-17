@@ -1661,14 +1661,30 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
   }
 
   async unlinkFeatureFromTask(featureId: string): Promise<MissionFeature> {
-    const feature = await getFeature(this.db, featureId);
-    if (!feature) throw new Error(`Feature ${featureId} not found`);
-    const { taskId } = feature;
-    if (!taskId) throw new Error(`Feature ${featureId} is not linked to any task`);
-    const updated = await this.updateFeature(featureId, { taskId: undefined, status: "defined" });
-    await clearTaskMissionLinkage(this.db, taskId);
-    await this.recomputeSliceStatus(updated.sliceId);
-    return updated;
+    /*
+    FNXC:MissionFeatureUnlinkEvent 2026-08-17-12:20:
+    Unlink emits the same lifecycle event family as link/re-point (feature:updated + a persisted
+    mission:event + feature:unlinked) using an explicit mission-unlink source so subscribers can
+    distinguish an unlink from a generic feature_status_changed. The status event and the row
+    mutation share one transaction, so there is no incidental default-sourced status event. An
+    idempotent unlink of an already-defined feature suppresses the persisted status event
+    (from===to) but still emits feature:unlinked with taskId undefined.
+    */
+    const outcome = await this.layer.transactionImmediate(async (tx) => {
+      const feature = await this.getFeatureForStatusWrite(tx, featureId);
+      if (!feature) throw new Error(`Feature ${featureId} not found`);
+      const { taskId } = feature;
+      const updated: MissionFeature = { ...feature, taskId: undefined, status: "defined", updatedAt: new Date().toISOString() };
+      await updateFeature(tx, updated);
+      const event = await this.recordFeatureStatusChange(tx, feature, "defined", { type: "system", id: "mission-store", source: "mission-unlink" });
+      return { feature: updated, event, taskId };
+    });
+    this.emit("feature:updated", outcome.feature);
+    if (outcome.event) this.emit("mission:event", outcome.event);
+    this.emit("feature:unlinked", { feature: outcome.feature, taskId: outcome.taskId });
+    if (outcome.taskId) await clearTaskMissionLinkage(this.db, outcome.taskId);
+    await this.recomputeSliceStatus(outcome.feature.sliceId);
+    return outcome.feature;
   }
 
   /**

@@ -22,7 +22,7 @@ import { eq, sql } from "drizzle-orm";
 import { readFile } from "node:fs/promises";
 import type { DbTransaction } from "../../postgres/data-layer.js";
 import type { TaskCreateInput } from "../../types/task/task-core.js";
-import type { MissionEvent } from "../../missions/mission-types.js";
+import type { MissionEvent, FeatureUnlinkedPayload } from "../../missions/mission-types.js";
 
 import {
   pgDescribe,
@@ -312,11 +312,14 @@ pgTest("MissionStore (PostgreSQL backend mode)", () => {
     const feature = await m.addFeature(slice.id, { title: "F" });
     const task = await h.store().createTask({ description: "delivery task" });
     const observedEvents: MissionEvent[] = [];
+    const unlinkedEvents: FeatureUnlinkedPayload[] = [];
     m.on("mission:event", (event) => observedEvents.push(event));
+    m.on("feature:unlinked", (payload) => unlinkedEvents.push(payload));
 
     const linked = await m.linkFeatureToTask(feature.id, task.id);
     expect(linked.taskId).toBe(task.id);
     expect(linked.status).toBe("triaged");
+    expect(unlinkedEvents).toHaveLength(0);
     expect(observedEvents).toEqual(expect.arrayContaining([expect.objectContaining({ eventType: "feature_status_changed", metadata: expect.objectContaining({ source: "mission-link" }) })]));
     expect((await m.getMissionEvents(mission.id, { limit: 10 })).events).toEqual(expect.arrayContaining([
       expect.objectContaining({
@@ -325,13 +328,24 @@ pgTest("MissionStore (PostgreSQL backend mode)", () => {
       }),
     ]));
 
+    /*
+    FNXC:MissionFeatureUnlinkEvent 2026-08-17-12:20:
+    RUFU-116 symptom verification: an unlink must surface as a feature:unlinked EventEmitter
+    event (with the detached taskId) plus a feature_status_changed mission:event sourced
+    mission-unlink, so subscribers observing feature:linked transitions can see unlinks too.
+    */
     const unlinked = await m.unlinkFeatureFromTask(feature.id);
     expect(unlinked.taskId).toBeUndefined();
     expect(unlinked.status).toBe("defined");
+    expect(unlinkedEvents).toHaveLength(1);
+    expect(unlinkedEvents[0]).toEqual(expect.objectContaining({
+      feature: expect.objectContaining({ id: feature.id, taskId: undefined, status: "defined" }),
+      taskId: task.id,
+    }));
     expect((await m.getMissionEvents(mission.id, { limit: 10 })).events).toEqual(expect.arrayContaining([
       expect.objectContaining({
         eventType: "feature_status_changed",
-        metadata: expect.objectContaining({ featureId: feature.id, from: "triaged", to: "defined", source: "mission-store" }),
+        metadata: expect.objectContaining({ featureId: feature.id, from: "triaged", to: "defined", source: "mission-unlink" }),
       }),
     ]));
   });
@@ -392,11 +406,32 @@ pgTest("MissionStore (PostgreSQL backend mode)", () => {
     const rightTaskAfterUnlink = (await store.getTask(rightTask.id)) as any;
     expect(rightTaskAfterUnlink.missionId).toBeUndefined();
     expect(rightTaskAfterUnlink.sliceId).toBeUndefined();
+  });
 
-    // Unlink of an already-unlinked feature returns a clear error.
-    await expect(m.unlinkFeatureFromTask(feature.id)).rejects.toThrow(
-      `Feature ${feature.id} is not linked to any task`,
-    );
+  it("unlinkFeatureFromTask of an already-unlinked feature still emits feature:unlinked", async () => {
+    const m = missions();
+    const mission = await m.createMission({ title: "Idempotent-unlink" });
+    const milestone = await m.addMilestone(mission.id, { title: "MS" });
+    const slice = await m.addSlice(milestone.id, { title: "SL" });
+    const feature = await m.addFeature(slice.id, { title: "F" });
+    const observedEvents: MissionEvent[] = [];
+    const unlinkedEvents: FeatureUnlinkedPayload[] = [];
+    m.on("mission:event", (event) => observedEvents.push(event));
+    m.on("feature:unlinked", (payload) => unlinkedEvents.push(payload));
+
+    // The feature was never linked, so it is already defined with no taskId.
+    const unlinked = await m.unlinkFeatureFromTask(feature.id);
+    expect(unlinked.taskId).toBeUndefined();
+    expect(unlinked.status).toBe("defined");
+    // Consumers must still observe the unlink; taskId is undefined because there was no live link.
+    expect(unlinkedEvents).toHaveLength(1);
+    expect(unlinkedEvents[0]).toEqual(expect.objectContaining({
+      feature: expect.objectContaining({ id: feature.id, taskId: undefined, status: "defined" }),
+      taskId: undefined,
+    }));
+    // Persisted status event is suppressed because from===to (defined -> defined).
+    expect(observedEvents).toHaveLength(0);
+    expect((await m.getMissionEvents(mission.id, { limit: 10 })).events).toEqual([]);
   });
 
   it("audits defined-feature bootstrap claims inside their task transaction", async () => {

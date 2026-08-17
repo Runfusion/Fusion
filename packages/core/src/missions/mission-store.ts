@@ -58,6 +58,7 @@ import type {
   ValidationDiagnostics,
   MissionTransitionActor,
   MissionUpdateOptions,
+  FeatureUnlinkedPayload,
 } from "./mission-types.js";
 import { reconcileDeterministicDuplicate, runDeterministicDuplicateGuard } from "../duplicates/duplicate-guard.js";
 import { resolveEntryPointBranchAssignment } from "../branch/branch-assignment.js";
@@ -202,6 +203,16 @@ export interface MissionStoreEvents {
   "feature:deleted": [string];
   /** Emitted when a feature is linked to a task */
   "feature:linked": [{ feature: MissionFeature; taskId: string }];
+  /*
+  FNXC:MissionFeatureUnlinkEvent 2026-08-17-12:20:
+  The unlink primitive must emit the same lifecycle event family as link/re-point so SSE
+  subscribers and automation observe feature→task unlinks. Previously an unlink was only
+  observable as an incidental default-sourced `feature_status_changed` mission:event, so
+  consumers reacting to feature:linked missed unlink transitions entirely. Mirrors
+  feature:linked; taskId is undefined when the feature had no live link (idempotent unlink).
+  */
+  /** Emitted when a feature is unlinked from a task */
+  "feature:unlinked": [FeatureUnlinkedPayload];
   /** Emitted when a mission lifecycle event is persisted */
   "mission:event": [MissionEvent];
   /** Emitted when a contract assertion is created */
@@ -2733,9 +2744,6 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
 
     // Get the taskId before clearing it
     const { taskId } = feature;
-    if (!taskId) {
-      throw new Error(`Feature ${featureId} is not linked to any task`);
-    }
 
     const updated = this.db.transaction(() => {
       const featureUpdate = this.updateFeature(featureId, {
@@ -2744,13 +2752,20 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
       });
 
       // Clear the task's mission/slice linkage together.
-      this.db.prepare(`
-        UPDATE tasks SET missionId = NULL, sliceId = NULL WHERE id = ? AND "deletedAt" IS NULL
-      `).run(taskId);
-      this.db.bumpLastModified();
+      if (taskId) {
+        this.db.prepare(`
+          UPDATE tasks SET missionId = NULL, sliceId = NULL WHERE id = ? AND "deletedAt" IS NULL
+        `).run(taskId);
+        this.db.bumpLastModified();
+      }
 
       return featureUpdate;
     });
+
+    // FNXC:MissionFeatureUnlinkEvent 2026-08-17-12:20:
+    // Sync parity for feature:unlinked, mirroring the feature:linked emit in linkFeatureToTask.
+    // The sync store does not persist mission events; the EventEmitter emit is the parity surface.
+    this.emit("feature:unlinked", { feature: updated, taskId });
 
     // Recompute slice status
     this.recomputeSliceStatus(updated.sliceId);

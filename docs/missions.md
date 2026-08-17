@@ -31,6 +31,8 @@ Interactive/user-supervised, task-scoped heartbeat, executor, triage, and workfl
 
 A valid active lineage may name a hand-authored `defined` feature only for its first task. Fusion atomically claims the feature, links that exact task, and promotes the feature to `triaged`; an already-linked feature rejects rather than overwriting its canonical task. This bootstrap exception does not make `defined` executable: later scheduler and symbol-lock admission still uses the stricter contract below.
 
+Both feature→task link transitions emit lifecycle events observable via mission-store subscribers and the dashboard SSE. Linking (`linkFeatureToTask` / claims) emits `feature:updated`, a `feature_status_changed` `mission:event` sourced `mission-link`, and `feature:linked`. Unlinking (`unlinkFeatureFromTask`) mirrors that family: it emits `feature:updated`, a `feature_status_changed` `mission:event` sourced `mission-unlink`, and `feature:unlinked` (the payload carries the detached `taskId`, which is `undefined` when the feature had no live link). Consumers that react to `feature:linked` for feature→task automation see unlinks too via `feature:unlinked`, and the `mission-unlink` source distinguishes an unlink from a generic feature status edit.
+
 ## Canonical lineage approval for autonomous symbol locks
 
 Before autonomous scheduler work may acquire a symbol lock, it resolves the task's Mission → Milestone → Slice → Feature lineage and evaluates the single `@fusion/core` contract: `evaluateMissionLineageApproval`. Resolution and lock acquisition remain scheduler responsibilities; downstream schedulers must not redefine the approval rule.
