@@ -20,6 +20,7 @@ import { WORKFLOW_NODE_ENGINE_PAUSE_ABORT_KIND } from "../workflows/workflow-gra
 export type HandleStaleInReviewPlanPauseAbortReplayDeps = {
   store: TaskStore;
   getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   resolveResumeLanes: (taskId: string, memo?: { lanes?: ResumeLanes }) => Promise<ResumeLanes>;
   isLiveSharedBranchGroupMember: (live: TaskDetail) => Promise<boolean>;
   clearPausedAborted: (taskId: string) => void;
@@ -72,10 +73,10 @@ export async function handleStaleInReviewPlanPauseAbortReplay(
     deps.activeWorktrees.delete(live.id);
     const message = "Workflow graph plan node pause/resume replay surfaced after task was already in-review — stale replay ignored, in-review state preserved";
     executorLog.log(`${live.id}: ${message}`);
-    await deps.store.logEntry(live.id, message, undefined, deps.getRunContextFor(live.id));
+    await deps.store.logEntry(live.id, message, undefined, deps.runContextFor(live.id));
     if (staleParkedFailure) {
-      await deps.store.updateTask(live.id, { status: null, error: null }, deps.getRunContextFor(live.id));
-      await deps.store.logEntry(live.id, "Auto-recovered: cleared stale in-review plan pause/resume replay failure — failure notification suppressed", undefined, deps.getRunContextFor(live.id));
+      await deps.store.updateTask(live.id, { status: null, error: null }, deps.runContextFor(live.id));
+      await deps.store.logEntry(live.id, "Auto-recovered: cleared stale in-review plan pause/resume replay failure — failure notification suppressed", undefined, deps.runContextFor(live.id));
     }
     try {
       await deps.store.recordRunAuditEvent?.({

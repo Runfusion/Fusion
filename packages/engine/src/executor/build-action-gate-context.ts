@@ -47,6 +47,7 @@ import type { ActiveWorkflowAuthority } from "./workflow-principal-before-node.j
 export type BuildActionGateContextDeps = {
   store: TaskStore;
   getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   approvalSuspended: Set<string>;
   awaitAbortInFlightTaskWork: (taskId: string, reason: string) => Promise<void>;
   agentStore?: AgentStore | null;
@@ -165,7 +166,7 @@ export function buildActionGateContext(
       if (taskId) {
         deps.approvalSuspended.add(taskId);
         try {
-          await deps.store.pauseTask(taskId, true, deps.getRunContextFor(taskId), { pausedByAgentId: actorId, pausedReason: AWAITING_APPROVAL_PAUSE_REASON });
+          await deps.store.pauseTask(taskId, true, deps.runContextFor(taskId), { pausedByAgentId: actorId, pausedReason: AWAITING_APPROVAL_PAUSE_REASON });
         } catch (error) {
           deps.approvalSuspended.delete(taskId);
           throw error;
@@ -174,7 +175,7 @@ export function buildActionGateContext(
           taskId,
           `Approval required for ${decision.toolName}. Request ${approvalRequestId} created; task and agent paused awaiting decision.`,
           undefined,
-          deps.getRunContextFor(taskId),
+          deps.runContextFor(taskId),
         );
         void deps.awaitAbortInFlightTaskWork(taskId, `awaiting-approval:${decision.toolName}`).catch((error) => {
           executorLog.warn(`${taskId}: failed to suspend in-flight session while awaiting approval: ${error instanceof Error ? error.message : String(error)}`);

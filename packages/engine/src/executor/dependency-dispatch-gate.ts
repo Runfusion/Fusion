@@ -16,6 +16,7 @@ import { clearDispatchBlockedLogState, logDispatchBlockedOnce } from "./dispatch
 export type DependencyDispatchGateDeps = {
   store: TaskStore;
   getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
 };
 
 export async function blockOuterDispatchWhenDependenciesUnmet(
@@ -54,7 +55,7 @@ export async function blockOuterDispatchWhenDependenciesUnmet(
       preserveResumeState: true,
       moveSource: "engine",
       recoveryRehome: true,
-    });
+    }, deps.runContextFor(liveTask.id));
   }
   /*
   FNXC:DependencyGating 2026-08-07-12:10:
@@ -69,15 +70,15 @@ export async function blockOuterDispatchWhenDependenciesUnmet(
       overlapBlockedBy: liveTask.overlapBlockedBy ?? null,
       action: `queued — unmet dependencies: ${unmetDeps.join(", ")}`,
       outcome: "Executor pre-dispatch dependency gate blocked workflow/authoritative execution.",
-      runContext: deps.getRunContextFor(liveTask.id),
+      runContext: deps.runContextFor(liveTask.id),
     });
   } else {
-    await deps.store.updateTask(liveTask.id, { status: "queued", blockedBy: unmetDeps[0] }, deps.getRunContextFor(liveTask.id));
+    await deps.store.updateTask(liveTask.id, { status: "queued", blockedBy: unmetDeps[0] }, deps.runContextFor(liveTask.id));
     await deps.store.logEntry(
       liveTask.id,
       `queued — unmet dependencies: ${unmetDeps.join(", ")}`,
       "Executor pre-dispatch dependency gate blocked workflow/authoritative execution.",
-      deps.getRunContextFor(liveTask.id),
+      deps.runContextFor(liveTask.id),
     );
   }
   logDispatchBlockedOnce(

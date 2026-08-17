@@ -18,6 +18,7 @@ export type MergeConfirmedFinalizeDeps = {
   rootDir: string;
   store: TaskStore;
   getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
 };
 
 export async function finalizeMergeConfirmedWorkflowGraphTask(
@@ -32,7 +33,7 @@ export async function finalizeMergeConfirmedWorkflowGraphTask(
     taskId,
     `Workflow graph observed confirmed merge while task was '${live.column}' — finalizing to done (${reason})`,
     undefined,
-    deps.getRunContextFor(taskId),
+    deps.runContextFor(taskId),
   );
   const finalization = await finalizeProvenAutoMergeTask({
     store: deps.store,
@@ -65,7 +66,7 @@ export async function finalizeMergeConfirmedWorkflowGraphTask(
       taskId,
       `Workflow graph merge-confirmed finalization blocked — ${finalization.reason ?? "unknown"}`,
       undefined,
-      deps.getRunContextFor(taskId),
+      deps.runContextFor(taskId),
     );
     if (finalization.reason === "task has incomplete steps" && live.mergeDetails?.noOpMerge === true && !live.mergeDetails?.commitSha) {
       return false;
