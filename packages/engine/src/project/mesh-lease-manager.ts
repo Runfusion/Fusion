@@ -1,4 +1,6 @@
 import { resolveReboundTarget, resolveWorkflowIrForTask } from "@fusion/core";
+/* FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage B): mutation-context constructors for this lane. */
+import { mutationContextForAgent } from "@fusion/core";
 import type {
   AgentStore,
   CentralClaimStore,
@@ -172,20 +174,22 @@ export class MeshLeaseManager {
         checkoutLeaseRenewedAt: null,
         checkoutLeaseEpoch: nextEpoch,
       },
-      context.runContext,
+      /* FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage B): the recovering lane, derived from the id this
+         manager already stamps on its own lease-audit rows (`agentId: "mesh-lease-manager"`). */
+      context.runContext ?? mutationContextForAgent("mesh-lease-manager"),
     );
     await this.options.taskStore.logEntry(
       task.id,
       "Recovered abandoned lease",
       `${reason}; epoch=${nextEpoch}`,
-      context.runContext,
+      context.runContext ?? mutationContextForAgent("mesh-lease-manager"),
     );
     if (task.column !== reboundColumn) {
       await this.options.taskStore.moveTask(task.id, reboundColumn, {
         preserveProgress:
           context.preserveProgress ??
           (task.currentStep > 0 || task.steps.some((step) => step.status !== "pending")),
-      });
+      }, context.runContext ?? mutationContextForAgent("mesh-lease-manager"));
     }
   }
 
@@ -285,7 +289,7 @@ export class MeshLeaseManager {
         checkoutRunId: null,
         checkoutLeaseRenewedAt: null,
         checkoutLeaseEpoch: nextEpoch,
-      });
+      }, mutationContextForAgent("mesh-lease-manager"));
       await this.emitLeaseAudit(task, "task:auto-recover-lease-reconciled", {
         direction: "central-cleared->local-cleared",
         priorEpoch: task.checkoutLeaseEpoch ?? 0,

@@ -1,4 +1,5 @@
 import type { Settings, WorkflowWorkItem, WorkflowWorkItemKind, WorkflowWorkItemState } from "@fusion/core";
+import { UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 import { claimDueWorkflowWorkItem, type WorkflowWorkSchedulerStore } from "./workflow-work-scheduler.js";
 import { WorkflowTaskRuntime, type WorkflowTaskRuntimeResult } from "./workflow-task-runtime.js";
 
@@ -51,7 +52,10 @@ export async function processDueWorkflowWorkItem(
       void store.renewSymbolLocks!(dispatch.symbolLocks!, dispatch.taskId, 10 * 60_000)
         .then(async (result) => {
           if (result.lost.length > 0) {
-            await store.logEntry?.(dispatch.taskId, `workflow symbol-lock renewal lost: ${result.lost.join(", ")}`);
+            /* FNXC:Identity 2026-08-09-03:04 (U18/KTD2): marker — a lease-renewal loss is written by
+               a timer with no run and no acting agent; `dispatch.runId` names the claim, not an
+               author. U13 owns whether unattended sweeps get a real system actor. */
+            await store.logEntry?.(dispatch.taskId, `workflow symbol-lock renewal lost: ${result.lost.join(", ")}`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
           }
         })
         .catch(() => undefined);

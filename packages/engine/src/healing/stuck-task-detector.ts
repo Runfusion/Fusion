@@ -31,6 +31,15 @@ capacity / slot in this file. Live and wired (in-process-runtime.ts).
  * default while keeping workflow-step execution timeouts independent.
  */
 
+/*
+FNXC:Identity 2026-08-09-03:04 (U18/KTD2):
+Extracted helper of the unattended self-healing / scheduler sweeps, so its store writes carry
+the same MARKER as the sweeps that call it: a timer-driven repair has no session, no request,
+and no acting agent, and the only ids in scope name the SUBJECT of the write rather than its
+author. Counted by `unattributed-actor-census.test.ts`; U13 owns whether these lanes get a real
+system actor.
+*/
+import { UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 import { createHash } from "node:crypto";
 import type { TaskStore, Settings } from "@fusion/core";
 import { createLogger } from "../logger.js";
@@ -701,7 +710,7 @@ export class StuckTaskDetector {
         `no progress for ~${noProgressMin}min, ` +
         `no activity for ~${elapsedMin}min, ` +
         `${activitySinceProgress} events since last progress, ` +
-        `${ignoredStepUpdateCount} ignored step-update rebuffs)`,
+        `${ignoredStepUpdateCount} ignored step-update rebuffs)`, undefined, UNATTRIBUTED_MUTATION_CONTEXT,
       );
     } catch (err) {
       stuckLog.error(`Failed to log stuck event for ${canonicalId}:`, err);

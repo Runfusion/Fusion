@@ -31,6 +31,7 @@ in-txn by `moveTaskInternal` is the store-level half of that guarantee.
 */
 
 import {
+  type RunMutationContext,
   type WorkflowIr,
   type WorkflowIrNode,
   type WorkflowIrPin,
@@ -158,6 +159,15 @@ writes — exactly the pre-wiring inert posture, so legacy harnesses are untouch
 /** The minimal task-row surface the pin persistence needs. Structural on purpose
  *  so real stores and test fakes both fit without importing the full TaskStore. */
 export interface WorkflowIrPinStoreSurface {
+  /*
+  FNXC:Identity 2026-08-09-03:04 (U18/KTD2 — the seam restates the required context):
+  Hand-declared rather than picked off `TaskStore`, so it does not inherit U18's canonical/deprecated
+  overload pair; at the two-argument arity it would keep writing the pin fields unattributed after
+  the engine sweep and the census would still read clean. The shape mirrors the CANONICAL store
+  arity (required trailing `runContext`), which is also what keeps a real `TaskStore` assignable —
+  the deprecated overload cannot absorb a `RunMutationContext` in a trailing optional slot that the
+  canonical one requires.
+  */
   updateTask?: (
     id: string,
     updates: {
@@ -165,6 +175,7 @@ export interface WorkflowIrPinStoreSurface {
       workflowIrPinNodeId?: string | null;
       workflowIrPinColumnId?: string | null;
     },
+    runContext: RunMutationContext,
   ) => unknown;
   getTask?: (id: string) => Promise<{
     workflowIrPin?: string;
@@ -177,6 +188,13 @@ export interface WorkflowIrPinStoreSurface {
 export function createStoreIrPinPersistence(
   store: WorkflowIrPinStoreSurface,
   taskId: string,
+  /*
+  FNXC:Identity 2026-08-09-03:04 (U18/KTD2):
+  Required and third, so every construction site — production `createExecutorColumnBoundaryHooks`
+  and every harness — has to answer who is writing the pin rather than inheriting an implicit
+  unattributed write from the seam.
+  */
+  runContext: RunMutationContext,
 ): {
   pinNodeEntry: (pin: WorkflowIrPin) => Promise<void>;
   loadPriorPin: () => Promise<WorkflowIrPin | undefined>;
@@ -195,7 +213,7 @@ export function createStoreIrPinPersistence(
         workflowIrPin: pin.irHash,
         workflowIrPinNodeId: pin.nodeId,
         workflowIrPinColumnId: pin.columnId ?? null,
-      });
+      }, runContext);
       lastPin = pin;
     },
     loadPriorPin: async () => {
@@ -225,7 +243,7 @@ export function createStoreIrPinPersistence(
         workflowIrPin: null,
         workflowIrPinNodeId: null,
         workflowIrPinColumnId: null,
-      });
+      }, runContext);
       lastPin = undefined;
     },
   };
