@@ -57,7 +57,7 @@ import {
 import { mergeEffectiveSettings } from "./project/effective-settings.js";
 import { RemovalReason, classifyTaskWorktree, getRegisteredWorktreeBranchMap, getRegisteredWorktreePaths, isUsableTaskWorktree, relocateReclaimableWorktreeIntoRoot, removeWorktree, resolveWorktreeBackend, scanIdleWorktrees, scanOrphanedBranches } from "./worktree/worktree-pool.js";
 import { cleanupSecretsEnvFile } from "./worktree/secrets-env-writer.js";
-import { preserveGeneratedResidue } from "./worktree/worktree-generated-residue.js";
+import { preserveCorruptRegisteredRoot, preserveGeneratedResidue } from "./worktree/worktree-generated-residue.js";
 import {
   isMissingWorktreeSessionStartFailure,
   isMergeActiveMissingWorktreeSessionStartFailure,
@@ -16061,11 +16061,12 @@ const movedTask = await this.store.moveTask(task.id, completeLane);
         continue;
       }
       try {
-        rmSync(path, { recursive: true, force: true });
-        log.log(`Cleaned unregistered worktree dir: ${path}`);
+        const preservedPath = await preserveCorruptRegisteredRoot(path, this.options.rootDir);
+        await execAsync("git worktree prune", { cwd: this.options.rootDir, timeout: 30_000 });
+        log.log(`Preserved unregistered worktree dir: ${path} -> ${preservedPath}`);
         cleaned++;
       } catch (err: unknown) {
-        log.warn(`Failed to remove unregistered worktree dir ${path}: ${err instanceof Error ? err.message : String(err)}`);
+        log.warn(`Failed to preserve unregistered worktree dir ${path}: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
 

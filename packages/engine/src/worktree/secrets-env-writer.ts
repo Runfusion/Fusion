@@ -468,14 +468,9 @@ export async function cleanupSecretsEnvFile(opts: CleanupSecretsEnvFileOptions):
     // the inode (rename) before crashing; restore it to the pathname via an
     // exclusive link so the content is never stranded under the recovery prefix.
     // With no quarantine the managed file is simply gone and the record can drop.
-    let quarantinePath: string | undefined;
-    try {
-      const entry = (await fs.readdir(opts.worktreePath)).find((name) => name.startsWith(`${record.filename}.fusion-cleanup-`));
-      if (entry) quarantinePath = path.join(opts.worktreePath, entry);
-    } catch {
-      return { outcome: "skipped", reason: "record-remove-failed" };
-    }
-    if (!quarantinePath) {
+    const quarantineEntries = (await fs.readdir(opts.worktreePath)).filter((name) => name.startsWith(`${record.filename}.fusion-cleanup-`));
+    if (quarantineEntries.length !== 1) {
+      if (quarantineEntries.length > 1) return { outcome: "skipped", reason: "file-retained" };
       try {
         await removeRecords(recordPaths);
       } catch {
@@ -483,6 +478,7 @@ export async function cleanupSecretsEnvFile(opts: CleanupSecretsEnvFileOptions):
       }
       return { outcome: "skipped", reason: "file-missing" };
     }
+    const quarantinePath = path.join(opts.worktreePath, quarantineEntries[0]);
     try {
       await fs.link(quarantinePath, path.join(opts.worktreePath, record.filename));
     } catch {

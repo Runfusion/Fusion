@@ -807,6 +807,23 @@ describe("secrets-env-writer", () => {
     expect(readdirSync(dir).filter((entry) => entry.startsWith(".env.fusion-cleanup-"))).toHaveLength(0);
   });
 
+  it("fails closed when multiple quarantine artifacts match the record", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "secrets-env-retry-"));
+    dirs.push(dir);
+    const original = "MANAGED=1\n";
+    const fingerprint = createHash("sha256").update(original).digest("hex");
+    writeFileSync(join(dir, `.env.fusion-cleanup-${process.pid}-a`), original);
+    writeFileSync(join(dir, `.env.fusion-cleanup-${process.pid}-b`), original);
+    writeFileSync(join(dir, ".fusion-secrets-env.fingerprint"), `${fingerprint}\n.env\n`);
+
+    const result = await cleanupSecretsEnvFile({ worktreePath: dir, taskId: "retry", expectedFingerprint: null, filename: ".env" });
+
+    expect(result).toEqual({ outcome: "skipped", reason: "file-retained" });
+    expect(existsSync(join(dir, ".env"))).toBe(false);
+    expect(readdirSync(dir).filter((entry) => entry.startsWith(".env.fusion-cleanup-")).sort()).toHaveLength(2);
+    expect(existsSync(join(dir, ".fusion-secrets-env.fingerprint"))).toBe(true);
+  });
+
   it("never deletes a tracked env even when its fingerprint matches", async () => {
     const dir = tmpWorktree();
     const secretsStore = { listEnvExportable: vi.fn().mockResolvedValue([{ id: "1", key: "A", exportKey: "ALPHA", scope: "project", plaintextValue: "v" }]) } as any;
