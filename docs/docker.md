@@ -86,6 +86,20 @@ docker run -p 4040:4040 \
 The named volume `fusion-home` persists the embedded database across
 `docker run` invocations; a host directory bind mount works too.
 
+The image pre-creates `/home/node/.fusion` owned by `node`, so a fresh **named
+volume** inherits that ownership and embedded PostgreSQL can initialize on first
+run. A **bind mount** does not inherit it — the host directory's ownership wins —
+so a host path mounted there must already be writable by uid `1000`:
+
+```bash
+mkdir -p /path/to/fusion-home && sudo chown -R 1000:1000 /path/to/fusion-home
+```
+
+Symptom when this is wrong: `initdb: error: could not create directory
+"/home/node/.fusion/embedded-postgres": Permission denied`, followed by the
+dashboard supervisor exhausting its restarts and the container reporting
+`unhealthy`.
+
 ## Complete example
 
 ```bash
@@ -102,6 +116,11 @@ docker run --rm \
 ## Notes
 
 - The container runs as the non-root `node` user.
+- The builder stage runs `pnpm build` with `NODE_OPTIONS=--max-old-space-size=6144`. The dashboard's
+  `vite build` exceeds V8's default old-space on a stock Docker Desktop VM and aborts the image build
+  with `FATAL ERROR: Ineffective mark-compacts near heap limit` (exit 134). The value is a ceiling,
+  not a reservation. If your Docker VM has less than ~8GB, raise its memory allocation rather than
+  lowering this number.
 - `git` must be available in the container runtime. The mounted project volume must preserve `.git` metadata and repository history for worktree operations; Fusion initializes missing repositories during project registration.
 - The root `Dockerfile` installs with `pnpm install --frozen-lockfile` before copying full source, so every current workspace package/plugin manifest selected by `pnpm-workspace.yaml` must be covered by a builder-stage `COPY` before that install. Keep the manifest-only dependency-cache layer; the runner's intentionally filtered production install does not provide builder coverage.
 - `scripts/__tests__/dockerfile-workspace-manifests.test.mjs` expands the current workspace entries and rejects missing or duplicate builder pre-install COPY sources. Run it with `pnpm test:scripts -- scripts/__tests__/dockerfile-workspace-manifests.test.mjs` whenever workspace membership or Docker manifest copies change.

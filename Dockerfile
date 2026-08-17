@@ -53,7 +53,13 @@ COPY plugins/fusion-plugin-reports/package.json ./plugins/fusion-plugin-reports/
 RUN pnpm install --frozen-lockfile
 
 COPY . .
-RUN pnpm build
+# FNXC:DockerBuild 2026-08-17-23:18: The dashboard's `vite build` transforms ~5.7k modules and
+# exceeded V8's default old-space on a stock Docker Desktop VM (8GB), aborting the whole image
+# build with "FATAL ERROR: Ineffective mark-compacts near heap limit" (exit 134). The ceiling is
+# a cap, not a reservation — V8 only grows to what the build needs — so raising it here costs
+# nothing on larger hosts and is the difference between a working and a failing `docker build`
+# on a default install. Scoped to this RUN so it never leaks into the runner stage's env.
+RUN NODE_OPTIONS=--max-old-space-size=6144 pnpm build
 
 FROM node:22-slim AS runner
 LABEL org.opencontainers.image.source="https://github.com/gsxdsm/fusion"
@@ -96,9 +102,17 @@ COPY --from=builder /app/node_modules/.pnpm/typebox@*/node_modules/typebox /app/
 # the user's project and the container working directory, so `fn dashboard` operates
 # on the mounted project. It must stay empty in the image so a bind mount never
 # shadows application code.
+# FNXC:DockerRun 2026-08-17-23:18: /home/node/.fusion must exist node-owned IN THE IMAGE, because
+# Docker seeds a fresh NAMED volume from the image's content and ownership at the mount path. The
+# documented `-v fusion-home:/home/node/.fusion` invocation previously mounted a root-owned empty
+# volume over a path that did not exist, so embedded Postgres `initdb` failed with "could not create
+# directory ... Permission denied", the dashboard supervisor burned its 4 restarts, and the container
+# went unhealthy on first run. Pre-creating it makes the documented command work with no host-side
+# chown. NOTE: this fixes named volumes only — a BIND mount keeps the host directory's ownership, so
+# a host path bound here must already be writable by uid 1000 (node).
 RUN chown node:node /app \
-  && mkdir -p /workspace \
-  && chown node:node /workspace
+  && mkdir -p /workspace /home/node/.fusion \
+  && chown node:node /workspace /home/node/.fusion
 
 USER node
 
