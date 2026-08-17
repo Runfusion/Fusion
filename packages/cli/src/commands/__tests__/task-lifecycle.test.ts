@@ -1,3 +1,4 @@
+import { UNATTRIBUTED_CONTEXT_MATCHER } from "../../__tests__/mutation-context-matchers.js";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { EventEmitter } from "node:events";
 
@@ -741,8 +742,8 @@ describe("processPullRequestMergeTask", () => {
     const result = await processPullRequestMergeTask(store as never, "/repo", taskA.id, github as never, () => undefined);
 
     expect(result).toBe("merged");
-    expect(store.moveTask).toHaveBeenCalledWith(taskA.id, "done");
-    expect(store.moveTask).toHaveBeenCalledWith(taskB.id, "done");
+    expect(store.moveTask).toHaveBeenCalledWith(taskA.id, "done", undefined, UNATTRIBUTED_CONTEXT_MATCHER);
+    expect(store.moveTask).toHaveBeenCalledWith(taskB.id, "done", undefined, UNATTRIBUTED_CONTEXT_MATCHER);
     expect(store.updateBranchGroup).toHaveBeenCalledWith("BG-4", expect.objectContaining({
       status: "finalized",
       prState: "merged",
@@ -887,7 +888,7 @@ describe("processPullRequestMergeTask", () => {
     expect(store.updateTask).toHaveBeenCalledWith(task.id, {
       status: "awaiting-pr-checks",
       mergeRetries: 2,
-    });
+    }, UNATTRIBUTED_CONTEXT_MATCHER);
   });
 
   it("holds a branch-protected review-required PR without a merge attempt or conflict retry", async () => {
@@ -919,7 +920,7 @@ describe("processPullRequestMergeTask", () => {
     const result = await processPullRequestMergeTask(store as never, "/repo", task.id, github as never, () => undefined);
 
     expect(result).toBe("waiting");
-    expect(store.updateTask).toHaveBeenCalledWith(task.id, { status: "awaiting-pr-checks" });
+    expect(store.updateTask).toHaveBeenCalledWith(task.id, { status: "awaiting-pr-checks" }, UNATTRIBUTED_CONTEXT_MATCHER);
     expect(github.mergePr).not.toHaveBeenCalled();
   });
 
@@ -1170,11 +1171,20 @@ describe("processPullRequestMergeTask", () => {
     expect(store.updateTask).toHaveBeenCalledWith(task.id, {
       status: null,
       mergeRetries: 0,
-    });
-    expect(store.moveTask).toHaveBeenCalledWith(task.id, "done");
+    }, UNATTRIBUTED_CONTEXT_MATCHER);
+    expect(store.moveTask).toHaveBeenCalledWith(task.id, "done", undefined, UNATTRIBUTED_CONTEXT_MATCHER);
+    /*
+    FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage D — do not leave a negative assertion vacuous):
+    Every `updateTask` in this lane now passes a third argument, so the two-argument form of this
+    NEGATIVE assertion can no longer match any real call and would pass even if the no-op merge did
+    park the task `failed`. Extended with the trailing context so it keeps asserting what it was
+    written to assert; the third argument is `expect.anything()` rather than the marker because the
+    claim under test is "no failed-status write happened", not "who made it".
+    */
     expect(store.updateTask).not.toHaveBeenCalledWith(
       task.id,
       expect.objectContaining({ status: "failed" }),
+      expect.anything(),
     );
   });
 
@@ -1225,8 +1235,8 @@ describe("processPullRequestMergeTask", () => {
 
     expect(result).toBe("merged");
     expect(github.mergePr).not.toHaveBeenCalled();
-    expect(store.updateTask).toHaveBeenCalledWith("FN-9004", { status: null, mergeRetries: 0 });
-    expect(store.moveTask).toHaveBeenCalledWith("FN-9004", "done");
+    expect(store.updateTask).toHaveBeenCalledWith("FN-9004", { status: null, mergeRetries: 0 }, UNATTRIBUTED_CONTEXT_MATCHER);
+    expect(store.moveTask).toHaveBeenCalledWith("FN-9004", "done", undefined, UNATTRIBUTED_CONTEXT_MATCHER);
   });
 
   it("reconciles to done when PR merges after readiness check but before merge command completes", async () => {
@@ -1297,13 +1307,14 @@ describe("processPullRequestMergeTask", () => {
     expect(github.getPrMergeStatus).toHaveBeenNthCalledWith(1, "owner", "repo", 124);
     expect(github.getPrMergeStatus).toHaveBeenNthCalledWith(2, "owner", "repo", 124);
     expect(store.updatePrInfo).toHaveBeenLastCalledWith("FN-9104", expect.objectContaining({ status: "merged" }));
-    expect(store.updateTask).toHaveBeenCalledWith("FN-9104", { mergeRetries: 0 });
-    expect(store.updateTask).toHaveBeenCalledWith("FN-9104", { status: null, mergeRetries: 0 });
-    expect(store.moveTask).toHaveBeenCalledWith("FN-9104", "done");
+    expect(store.updateTask).toHaveBeenCalledWith("FN-9104", { mergeRetries: 0 }, UNATTRIBUTED_CONTEXT_MATCHER);
+    expect(store.updateTask).toHaveBeenCalledWith("FN-9104", { status: null, mergeRetries: 0 }, UNATTRIBUTED_CONTEXT_MATCHER);
+    expect(store.moveTask).toHaveBeenCalledWith("FN-9104", "done", undefined, UNATTRIBUTED_CONTEXT_MATCHER);
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-9104",
       "Pull request already merged after merge command failed; reconciled task state from GitHub",
       "PR #124: https://github.com/x/y/pull/124",
+      UNATTRIBUTED_CONTEXT_MATCHER,
     );
   });
 

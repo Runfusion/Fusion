@@ -1,5 +1,5 @@
-import { createLogger, isTaskLogWriteRefusal } from "@fusion/core";
-import type { TaskStore } from "@fusion/core";
+import { createLogger, isTaskLogWriteRefusal, UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
+import type { RunMutationContext, TaskStore } from "@fusion/core";
 
 const taskLogSafetyLog = createLogger("dashboard-task-log-safety");
 type WarningLogger = { warn(message: string): void };
@@ -34,9 +34,15 @@ export async function safeLogTaskEntry(
   action: string,
   details: string,
   options: { logger: WarningLogger; context: string } = { logger: taskLogSafetyLog, context: "task-log" },
+  /*
+  FNXC:Identity 2026-09-19-00:00:
+  Defaults to the unattributed marker so unattended reconcile/listener callers (no session, no run, no
+  acting agent) stay honest about attribution without every call site needing to say so explicitly.
+  */
+  runContext: RunMutationContext = UNATTRIBUTED_MUTATION_CONTEXT,
 ): Promise<void> {
   try {
-    await store.logEntry(taskId, action, details);
+    await store.logEntry(taskId, action, details, runContext);
   } catch (error) {
     if (!isTaskLogWriteRefusal(error, taskId)) throw error;
     options.logger.warn(`[${options.context}] Unable to write log entry for deleted task ${taskId}: ${action}`);

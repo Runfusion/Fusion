@@ -12,6 +12,24 @@
  * - JSON response parsing with robust extraction and repair
  */
 
+/*
+FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage D — why every mutation context in this file is the MARKER):
+
+The actor for these writes is the authenticated human on the other end of the HTTP request. That actor
+does not exist yet: U9 is the unit that resolves it from the session and threads it through the route
+layer. Until then each write says so explicitly with the unattributed marker, which the U18
+census counts and ratchets DOWN.
+
+Two things this must NOT become. It is not `BOOTSTRAP_ACTOR_CONTEXT`: that means "written while
+identity was off" and is real attribution, so using it here would make an unwired route
+indistinguishable from a genuine pre-enablement write and leave U9 with no work list. And it is not a
+place to stop at one marker per file — the marker sits at the call site because U9's work is per
+handler, and one alias would hide every new unattributed route added between now and then.
+
+U9: replace these with the request's resolved actor. Nothing else about the call sites changes.
+*/
+// FNXC:Identity 2026-08-09-03:04: one-line import on purpose — the U18 census counts any non-`import`-prefixed line naming the marker, so a multi-line import block would score as debt it is not.
+import { UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 import type {
   PlanningQuestion,
   PlanningSummary,
@@ -4483,7 +4501,7 @@ export async function createTaskFromPlanSession(
       ...(sourceContext ? { sourceIssue: sourceContext.sourceIssue, source: { sourceType: "github_import" as const, sourceMetadata: sourceContext.sourceMetadata }, ...(trackingDecision?.githubTracking ? { githubTracking: trackingDecision.githubTracking } : {}) } : { source: { sourceType: options?.sourceType ?? "cli" } }),
       ...(options?.baseBranch?.trim() ? { baseBranch: options.baseBranch.trim() } : {}),
       proposalClaimId: currentProposalClaimId(),
-    });
+    }, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
     insertedTask = task;
     // FNXC:PlanningMultiTask 2026-07-24-03:20: best-effort side effects must be LOUD on failure (review finding) — a task missing its plan document with no signal is undebuggable.
     const sideEffect = async (label: string, work: () => Promise<unknown> | unknown): Promise<void> => {
@@ -4494,7 +4512,7 @@ export async function createTaskFromPlanSession(
       }
     };
     if (summary.suggestedSize) {
-      await sideEffect("Planning create-task size update failed", () => store.updateTask?.(task.id, { size: summary.suggestedSize }));
+      await sideEffect("Planning create-task size update failed", () => store.updateTask?.(task.id, { size: summary.suggestedSize }, UNATTRIBUTED_MUTATION_CONTEXT));
     }
     await sideEffect("Planning create-task plan document write failed", () => store.upsertTaskDocument?.(task.id, { key: "plan", content: planMd, author: "planning", metadata: { planningSessionId: sessionId, source: "planning-mode" } }));
     if (originalRequest) {
@@ -4502,17 +4520,17 @@ export async function createTaskFromPlanSession(
     }
     if (sourceContext) {
       await sideEffect("Planning create-task GitHub issue document write failed", () => store.upsertTaskDocument?.(task.id, { key: "github-issue", content: sourceContext.markdown, author: "planning", metadata: { planningSessionId: sessionId, source: "github-source-issue" } }));
-      await sideEffect("Planning create-task GitHub source log failed", () => store.logEntry?.(task.id, "Imported from GitHub", sourceContext.sourceIssue.url));
+      await sideEffect("Planning create-task GitHub source log failed", () => store.logEntry?.(task.id, "Imported from GitHub", sourceContext.sourceIssue.url, UNATTRIBUTED_MUTATION_CONTEXT));
       const images = resolvePlanningIssueImageUrls(session);
       /* FNXC:GitHubPlanningSourceIssue 2026-08-09-14:09: CLI planning shares post-create best-effort image download and never reads GitHub at creation time. */
       await sideEffect("Planning create-task GitHub image import failed", async () => {
         const result = await importIssueImagesFromUrls(store, task.id, images.urls, githubImagePolicy());
-        if (result.attached) await store.logEntry?.(task.id, `Imported ${result.attached} image attachment${result.attached === 1 ? "" : "s"} from GitHub issue`, sourceContext.sourceIssue.url);
+        if (result.attached) await store.logEntry?.(task.id, `Imported ${result.attached} image attachment${result.attached === 1 ? "" : "s"} from GitHub issue`, sourceContext.sourceIssue.url, UNATTRIBUTED_MUTATION_CONTEXT);
       });
       if (images.commentsUnavailable || images.droppedBodyCount) diagnostics.warn("Planning GitHub image capture was partial", { taskId: task.id, issueUrl: sourceContext.sourceIssue.url, commentsUnavailable: images.commentsUnavailable, droppedBodyCount: images.droppedBodyCount });
     }
-    if (trackingDecision?.suppressedByTaskId) await sideEffect("Planning create-task duplicate source issue log failed", () => store.logEntry?.(task.id, `Source issue already tracked by ${trackingDecision.suppressedByTaskId}`));
-    await sideEffect("Planning create-task log entry failed", () => store.logEntry?.(task.id, "Created via Planning Mode", `Initial plan: ${(session?.initialPlan ?? "").slice(0, 200)}`));
+    if (trackingDecision?.suppressedByTaskId) await sideEffect("Planning create-task duplicate source issue log failed", () => store.logEntry?.(task.id, `Source issue already tracked by ${trackingDecision.suppressedByTaskId}`, undefined, UNATTRIBUTED_MUTATION_CONTEXT));
+    await sideEffect("Planning create-task log entry failed", () => store.logEntry?.(task.id, "Created via Planning Mode", `Initial plan: ${(session?.initialPlan ?? "").slice(0, 200)}`, UNATTRIBUTED_MUTATION_CONTEXT));
     await finalizePlanningTaskCreation(sessionId, claimOwnerToken, task.id, claimEpoch);
     await markSessionComplete();
     return { task, alreadyCreated: false };

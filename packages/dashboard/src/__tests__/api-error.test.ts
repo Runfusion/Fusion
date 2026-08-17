@@ -7,6 +7,8 @@ import {
   badRequest,
   catchHandler,
   conflict,
+  FORBIDDEN_REASON,
+  forbidden,
   internalError,
   notFound,
   rateLimited,
@@ -230,6 +232,47 @@ describe("error factories", () => {
     const error = unauthorized("msg");
     expect(error.statusCode).toBe(401);
     expect(error.message).toBe("msg");
+  });
+
+  /*
+  FNXC:Authorization 2026-08-09-03:04:
+  403 and 401 must be TELLABLE APART by the client, not just by status number. Before `forbidden`
+  existed, a permission denial was emitted as `unauthorized(401)`, which the dashboard's fetch
+  wrapper reads as "your token is bad" and answers with a re-auth prompt that cannot possibly fix
+  a missing grant. Lock both halves: the 403 carries the machine-readable `reason` discriminant,
+  and the 401 does not — so the two payloads can never be confused structurally.
+  */
+  it("forbidden creates ApiError(403) with a payload shape distinct from unauthorized(401)", () => {
+    const denial = forbidden("actor-7 is not permitted to tasks:delete");
+    expect(denial.statusCode).toBe(403);
+    expect(denial.message).toBe("actor-7 is not permitted to tasks:delete");
+    expect(denial.details).toEqual({ reason: FORBIDDEN_REASON });
+    expect(FORBIDDEN_REASON).toBe("permission-denied");
+
+    const expired = unauthorized("Valid bearer token required");
+    expect(expired.statusCode).toBe(401);
+    expect(expired.details).toBeUndefined();
+
+    // The discriminant is what distinguishes them — not the status alone.
+    expect(denial.details?.reason).not.toBe(expired.details?.reason);
+  });
+
+  it("forbidden merges caller details without losing the reason discriminant", () => {
+    const origin = new Error("origin");
+    const denial = forbidden("denied", { permission: "tasks:delete", actorId: "actor-7" }, origin);
+
+    expect(denial.statusCode).toBe(403);
+    expect(denial.details).toEqual({
+      permission: "tasks:delete",
+      actorId: "actor-7",
+      reason: FORBIDDEN_REASON,
+    });
+    expect((denial as { cause?: unknown }).cause).toBe(origin);
+  });
+
+  it("forbidden's reason cannot be overwritten by caller details", () => {
+    const denial = forbidden("denied", { reason: "session-invalid" });
+    expect(denial.details?.reason).toBe(FORBIDDEN_REASON);
   });
 
   it("notFound creates ApiError(404)", () => {
