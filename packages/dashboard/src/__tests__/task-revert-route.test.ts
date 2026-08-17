@@ -9,6 +9,7 @@ this suite stubs `performTaskRevert` at the route boundary and asserts:
   - the response contract shapes for clean / alreadyReverted / conflicting outcomes;
   - error mapping (TaskRevertError -> 409 for dirty-working-tree, 500 otherwise).
 */
+import { UNATTRIBUTED_CONTEXT_MATCHER } from "./mutation-context-matchers.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import express from "express";
 import { mkdirSync, mkdtempSync } from "node:fs";
@@ -265,7 +266,7 @@ describe("POST /tasks/:id/revert", () => {
     expect(res.body).toMatchObject({ mode: "git", clean: true, revertCommitSha: "abc123" });
     expect(store.updateTask as ReturnType<typeof vi.fn>).toHaveBeenCalledWith(task.id, {
       sourceMetadataPatch: expect.objectContaining({ revertedAt: expect.any(String), revertedCommitSha: "abc123" }),
-    });
+    }, UNATTRIBUTED_CONTEXT_MATCHER);
     expect(performTaskRevertMock).toHaveBeenCalledTimes(1);
   });
 
@@ -279,7 +280,7 @@ describe("POST /tasks/:id/revert", () => {
     expect(res.body).toMatchObject({ mode: "git", clean: true, alreadyReverted: true });
     expect(store.updateTask as ReturnType<typeof vi.fn>).toHaveBeenCalledWith(task.id, {
       sourceMetadataPatch: expect.objectContaining({ revertedAt: expect.any(String) }),
-    });
+    }, UNATTRIBUTED_CONTEXT_MATCHER);
   });
 
   it("mode:'git' returns a conflicting result without creating an AI-undo follow-up task (FN-7524: default mode is now 'auto', which DOES fall back to AI on conflict — explicit 'git' is required to preserve the FN-7523 git-only contract)", async () => {
@@ -450,7 +451,7 @@ describe("POST /tasks/:id/revert", () => {
     expect(revertWorkspaceTaskMock).toHaveBeenCalledTimes(1);
     expect(store.updateTask as ReturnType<typeof vi.fn>).toHaveBeenCalledWith(task.id, {
       sourceMetadataPatch: expect.objectContaining({ revertedAt: expect.any(String) }),
-    });
+    }, UNATTRIBUTED_CONTEXT_MATCHER);
     expect(performTaskRevertMock).not.toHaveBeenCalled();
   });
 
@@ -805,7 +806,7 @@ describe("POST /tasks/:id/revert — FN-7554 mode:'pr' (autoMerge:false)", () =>
     expect(res.body).toMatchObject({ mode: "git", clean: true, alreadyReverted: true });
     expect(store.updateTask as ReturnType<typeof vi.fn>).toHaveBeenCalledWith(task.id, {
       sourceMetadataPatch: expect.objectContaining({ revertedAt: expect.any(String) }),
-    });
+    }, UNATTRIBUTED_CONTEXT_MATCHER);
     expect(createPrMock).not.toHaveBeenCalled();
   });
 
@@ -1099,7 +1100,7 @@ describe("POST /tasks/:id/revert — FN-7577 workspace mode:'pr' (autoMerge:fals
     expect(res.body).toMatchObject({ mode: "git", clean: true, workspace: { repos: [] } });
     expect(store.updateTask as ReturnType<typeof vi.fn>).toHaveBeenCalledWith(task.id, {
       sourceMetadataPatch: expect.objectContaining({ revertedAt: expect.any(String) }),
-    });
+    }, UNATTRIBUTED_CONTEXT_MATCHER);
     expect(createPrMock).not.toHaveBeenCalled();
     expect(findPrForBranchMock).not.toHaveBeenCalled();
   });

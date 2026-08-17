@@ -1,3 +1,4 @@
+import { UNATTRIBUTED_CONTEXT_MATCHER } from "./mutation-context-matchers.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const taskStoreCtorMock = vi.hoisted(() => vi.fn());
@@ -127,7 +128,7 @@ describe("fn task import GitHub tracking defaults", () => {
         repository: "owner/repo",
         issueNumber: 1,
       }),
-    }));
+    }), undefined, UNATTRIBUTED_CONTEXT_MATCHER);
   });
 
   it("sets githubTracking.enabled for fn task import when global tracking defaults are on", async () => {
@@ -138,7 +139,7 @@ describe("fn task import GitHub tracking defaults", () => {
     expect(createTask).toHaveBeenCalledWith(expect.objectContaining({
       githubTracking: { enabled: true },
       sourceIssue: expect.objectContaining({ issueNumber: 1 }),
-    }));
+    }), undefined, UNATTRIBUTED_CONTEXT_MATCHER);
   });
 
   it("sets githubTracking.enabled for fn task import when import linking is on and new-task defaults are off", async () => {
@@ -154,7 +155,7 @@ describe("fn task import GitHub tracking defaults", () => {
     expect(createTask).toHaveBeenCalledWith(expect.objectContaining({
       githubTracking: { enabled: true },
       sourceIssue: expect.objectContaining({ provider: "github", repository: "owner/repo", issueNumber: 1 }),
-    }));
+    }), undefined, UNATTRIBUTED_CONTEXT_MATCHER);
   });
 
   it("does not force githubTracking for fn task import when tracking defaults are off", async () => {
@@ -164,6 +165,6 @@ describe("fn task import GitHub tracking defaults", () => {
 
     expect(createTask).toHaveBeenCalledWith(expect.not.objectContaining({
       githubTracking: expect.anything(),
-    }));
+    }), undefined, UNATTRIBUTED_CONTEXT_MATCHER);
   });
 });

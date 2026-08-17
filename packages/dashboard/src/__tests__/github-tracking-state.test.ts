@@ -1,3 +1,4 @@
+import { UNATTRIBUTED_CONTEXT_MATCHER } from "./mutation-context-matchers.js";
 import { EventEmitter } from "node:events";
 import { beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import type { TaskStore } from "@fusion/core";
@@ -291,7 +292,7 @@ describe("GitHubTrackingStateService", () => {
     await flushAsync();
 
     expect(mockSetIssueState).toHaveBeenCalledWith("owner", "repo", 42, "closed", "completed");
-    expect(store.logEntry).toHaveBeenCalledWith("FN-1", "Closed linked GitHub tracking issue", "owner/repo#42");
+    expect(store.logEntry).toHaveBeenCalledWith("FN-1", "Closed linked GitHub tracking issue", "owner/repo#42", UNATTRIBUTED_CONTEXT_MATCHER);
   });
 
   it("reopens on archived -> done", async () => {
@@ -310,7 +311,7 @@ describe("GitHubTrackingStateService", () => {
     await flushAsync();
 
     expect(mockSetIssueState).toHaveBeenCalledWith("owner", "repo", 42, "open", "reopened");
-    expect(store.logEntry).toHaveBeenCalledWith("FN-1", "Reopened linked GitHub tracking issue", "owner/repo#42");
+    expect(store.logEntry).toHaveBeenCalledWith("FN-1", "Reopened linked GitHub tracking issue", "owner/repo#42", UNATTRIBUTED_CONTEXT_MATCHER);
   });
 
   it("closes on done -> archived", async () => {
@@ -320,7 +321,7 @@ describe("GitHubTrackingStateService", () => {
     await flushAsync();
 
     expect(mockSetIssueState).toHaveBeenCalledWith("owner", "repo", 42, "closed", "completed");
-    expect(store.logEntry).toHaveBeenCalledWith("FN-1", "Closed linked GitHub tracking issue", "owner/repo#42");
+    expect(store.logEntry).toHaveBeenCalledWith("FN-1", "Closed linked GitHub tracking issue", "owner/repo#42", UNATTRIBUTED_CONTEXT_MATCHER);
   });
 
   it("closes triage -> archived with not_planned", async () => {
@@ -330,7 +331,7 @@ describe("GitHubTrackingStateService", () => {
     await flushAsync();
 
     expect(mockSetIssueState).toHaveBeenCalledWith("owner", "repo", 42, "closed", "not_planned");
-    expect(store.logEntry).toHaveBeenCalledWith("FN-1", "Closed linked GitHub tracking issue", "owner/repo#42");
+    expect(store.logEntry).toHaveBeenCalledWith("FN-1", "Closed linked GitHub tracking issue", "owner/repo#42", UNATTRIBUTED_CONTEXT_MATCHER);
   });
 
   it("does nothing for non-done transitions", async () => {
@@ -394,6 +395,7 @@ describe("GitHubTrackingStateService", () => {
       "FN-1",
       "Failed to update GitHub tracking issue state",
       "Linked issue metadata is incomplete",
+      UNATTRIBUTED_CONTEXT_MATCHER,
     );
   });
 
@@ -406,7 +408,7 @@ describe("GitHubTrackingStateService", () => {
     }).not.toThrow();
     await flushAsync();
 
-    expect(store.logEntry).toHaveBeenCalledWith("FN-1", "Failed to close GitHub tracking issue", "close failed");
+    expect(store.logEntry).toHaveBeenCalledWith("FN-1", "Failed to close GitHub tracking issue", "close failed", UNATTRIBUTED_CONTEXT_MATCHER);
 
     mockSetIssueState.mockResolvedValueOnce(undefined);
     store.emit("task:moved", { task: createTask(), from: "done", to: "todo" });
@@ -434,7 +436,7 @@ describe("GitHubTrackingStateService", () => {
     await flushAsync();
 
     expect(mockSetIssueState).not.toHaveBeenCalled();
-    expect(store.logEntry).toHaveBeenCalledWith("FN-1", "Linked GitHub tracking issue already closed", "owner/repo#42");
+    expect(store.logEntry).toHaveBeenCalledWith("FN-1", "Linked GitHub tracking issue already closed", "owner/repo#42", UNATTRIBUTED_CONTEXT_MATCHER);
   });
 
   it("swallows reopen failures", async () => {
@@ -444,7 +446,7 @@ describe("GitHubTrackingStateService", () => {
     store.emit("task:moved", { task: createTask(), from: "done", to: "todo" });
     await flushAsync();
 
-    expect(store.logEntry).toHaveBeenCalledWith("FN-1", "Failed to reopen GitHub tracking issue", "reopen failed");
+    expect(store.logEntry).toHaveBeenCalledWith("FN-1", "Failed to reopen GitHub tracking issue", "reopen failed", UNATTRIBUTED_CONTEXT_MATCHER);
   });
 
   it("resolves auth per call", async () => {
@@ -504,7 +506,7 @@ describe("GitHubTrackingStateService", () => {
 
       expect(mockDeleteIssue).toHaveBeenCalledWith("owner", "repo", 42);
       expect(mockSetIssueState).not.toHaveBeenCalled();
-      expect(store.logEntry).toHaveBeenCalledWith("FN-1", "Deleted linked GitHub tracking issue", "owner/repo#42");
+      expect(store.logEntry).toHaveBeenCalledWith("FN-1", "Deleted linked GitHub tracking issue", "owner/repo#42", UNATTRIBUTED_CONTEXT_MATCHER);
     });
 
     it("leaves linked issue untouched when githubIssueAction is leave", async () => {
@@ -519,6 +521,7 @@ describe("GitHubTrackingStateService", () => {
         "FN-1",
         "Left linked GitHub tracking issue unchanged on task delete",
         "owner/repo#42",
+        UNATTRIBUTED_CONTEXT_MATCHER,
       );
     });
 
@@ -535,6 +538,7 @@ describe("GitHubTrackingStateService", () => {
           "FN-source",
           "Left linked source GitHub issue unchanged on task delete",
           "acme/widgets#42",
+          UNATTRIBUTED_CONTEXT_MATCHER,
         );
       });
 
@@ -555,7 +559,7 @@ describe("GitHubTrackingStateService", () => {
         await flushAsync();
 
         expect(mockSetIssueState).not.toHaveBeenCalled();
-        expect(store.logEntry).toHaveBeenCalledWith("FN-source", "Linked source GitHub issue already closed", "acme/widgets#42");
+        expect(store.logEntry).toHaveBeenCalledWith("FN-source", "Linked source GitHub issue already closed", "acme/widgets#42", UNATTRIBUTED_CONTEXT_MATCHER);
       });
 
       it("retries transient source close errors once", async () => {
@@ -637,6 +641,7 @@ describe("GitHubTrackingStateService", () => {
           "FN-source",
           "Failed to close linked source GitHub issue",
           "Invalid source issue repository: no-slash",
+          UNATTRIBUTED_CONTEXT_MATCHER,
         );
       });
 
@@ -673,7 +678,7 @@ describe("GitHubTrackingStateService", () => {
         await flushAsync();
 
         expect(mockSetIssueState).toHaveBeenCalledWith("acme", "widgets", 42, "closed", "completed");
-        expect(store.logEntry).toHaveBeenCalledWith("FN-source", "Failed to post GitHub source issue split comment", "comment failed");
+        expect(store.logEntry).toHaveBeenCalledWith("FN-source", "Failed to post GitHub source issue split comment", "comment failed", UNATTRIBUTED_CONTEXT_MATCHER);
       });
 
       it.each([
@@ -790,7 +795,7 @@ describe("GitHubTrackingStateService", () => {
       }).not.toThrow();
       await flushAsync();
 
-      expect(store.logEntry).toHaveBeenCalledWith("FN-1", "Failed to close linked GitHub tracking issue", "delete close failed");
+      expect(store.logEntry).toHaveBeenCalledWith("FN-1", "Failed to close linked GitHub tracking issue", "delete close failed", UNATTRIBUTED_CONTEXT_MATCHER);
     });
 
     it("still attempts close and emits failure event when logEntry rejects for deleted task", async () => {
@@ -833,7 +838,7 @@ describe("GitHubTrackingStateService", () => {
       }).not.toThrow();
       await flushAsync();
 
-      expect(store.logEntry).toHaveBeenCalledWith("FN-1", "Failed to delete linked GitHub tracking issue", "delete failed");
+      expect(store.logEntry).toHaveBeenCalledWith("FN-1", "Failed to delete linked GitHub tracking issue", "delete failed", UNATTRIBUTED_CONTEXT_MATCHER);
     });
 
     it("still attempts delete and emits failure event when logEntry rejects for deleted task", async () => {
