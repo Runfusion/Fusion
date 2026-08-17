@@ -2657,6 +2657,30 @@ export const chatRoomMessages = projectSchema.table("chat_room_messages", {
   index("idxChatRoomMessagesRoomId").on(t.projectId, t.roomId),
 ]);
 
+// ── Identity: project-scoped role grants ─────────────────────────────
+/*
+FNXC:Identity 2026-08-09-03:04:
+KTD7 — actors are central but their AUTHORITY is per project, so grants live here.
+KTD17 — `actorId` is a plain column, NOT a foreign key to central.actors: no central table has RLS,
+every existing REFERENCES central.* is central→central, and R4 requires a tombstoned actor to still
+resolve, so ON DELETE CASCADE would be wrong. Referential integrity is enforced in core.
+The PK is (projectId, actorId, role) because the steady-state ownership audit in schema-applier.ts
+throws on every subsequent boot unless each PK/unique key on a project table includes project_id.
+Materialized by migration 0066_fn_identity_actors.sql.
+*/
+export const actorRoleGrants = projectSchema.table("actor_role_grants", {
+  projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
+  actorId: text("actor_id").notNull(),
+  role: text("role").notNull(),
+  grantedByActorId: text("granted_by_actor_id"),
+  grantedAt: text("granted_at").notNull(),
+  revokedAt: text("revoked_at"),
+}, (t) => [
+  primaryKey({ columns: [t.projectId, t.actorId, t.role] }),
+  index("idx_actor_role_grants_role").on(t.projectId, t.role),
+  index("idx_actor_role_grants_actor").on(t.projectId, t.actorId),
+]);
+
 /**
  * FNXC:PostgresSchema 2026-06-24-02:30:
  * Registry of all project-schema table names. Used by the migration applier
@@ -2713,4 +2737,6 @@ export const projectTableNames = [
   "task_lifecycle_consumer_receipts", "task_lifecycle_consumer_registrations",
   "task_lifecycle_event_seq", "task_lifecycle_events", "task_verification_requests",
   "unplanned_execution_blocks", "workflow_agent_capacity_leases", "task_overlap_waits",
+  /* FNXC:Identity 2026-08-09-03:04: registered so the PG test harness TRUNCATEs and vacuums grants; omitting it lets identity rows leak between tests as an order-dependent flake. */
+  "actor_role_grants",
 ] as const;

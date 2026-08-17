@@ -9,6 +9,7 @@ import { emitBoundedRunAudit } from "../run-audit/emit-bounded-run-audit.js";
  * instance as its first parameter and performs byte-identical work.
  */
 import {TaskStore, storeLog} from "../store.js";
+import { UNATTRIBUTED_MUTATION_CONTEXT } from "../identity/mutation-context.js";
 import type {Task, Column, MergeResult, MergeQueueReleaseOutcome, MergeRequestState} from "../types.js";
 import "../builtin-traits.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
@@ -192,7 +193,8 @@ export async function applyPrMergedTransitionImpl(store: TaskStore, taskId: stri
       preserveProgress: true,
       preserveWorktree: true,
       skipMergeBlocker: true,
-    });
+      // FNXC:Identity 2026-08-09-03:04 (U18): merger-lane transition; the merger run/actor arrives with U13.
+    }, UNATTRIBUTED_MUTATION_CONTEXT);
 
     store.emit("task:merged", {
       task: movedTask,

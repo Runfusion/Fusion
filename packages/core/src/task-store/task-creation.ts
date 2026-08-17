@@ -6,14 +6,14 @@
  * behavior-preserving refactor. Each function receives the TaskStore
  * instance as its first parameter and performs byte-identical work.
  */
-import {TaskStore, storeLog} from "../store.js";
+import {TaskStore, storeLog, type CreateTaskOptions, type InternalCreateTaskOptions} from "../store.js";
 import {InvalidFileScopeError, SelfDefeatingDependencyError, detectSelfDefeatingDependency, TombstonedTaskResurrectionError} from "./errors.js";
 import {and, eq, inArray, isNull, sql} from "drizzle-orm";
 import {mkdir, readFile, rename, rm} from "node:fs/promises";
 import {join} from "node:path";
 import {existsSync} from "node:fs";
 import {randomUUID} from "node:crypto";
-import type {Task, TaskCreateInput, Settings} from "../types.js";
+import type {Task, TaskCreateInput, Settings, RunMutationContext} from "../types.js";
 import "../builtin-traits.js";
 import {applyReviewLevelPreset} from "../tasks/review-level-preset.js";
 import {normalizeTaskPriority} from "../tasks/task-priority.js";
@@ -248,8 +248,8 @@ async function persistDeferredTaskTitleIfUntitled(
   return true;
 }
 
-export async function createTaskBackendImpl(store: TaskStore, input: TaskCreateInput, options?: {
- onSummarize?: (description: string) => Promise<string | null>; settings?: { autoSummarizeTitles?: boolean }; invokeTaskCreatedHook?: boolean; onProposalClaimConflict?: (task: Task) => void; ownershipExemption?: IntakeOwnershipExemption; },): Promise<Task> {
+export async function createTaskBackendImpl(store: TaskStore, input: TaskCreateInput, options?: CreateTaskOptions & { runContext?: RunMutationContext },): Promise<Task> {
+
   /* FNXC:CredentialInstanceSelection 2026-08-01-05:43: validate task authoring input before persistence; ids are stored but runtime credential resolution remains unchanged. */
   input = normalizeCreateBranchProvenance(input);
   for (const key of ["credentialInstanceId", "validatorCredentialInstanceId", "planningCredentialInstanceId", "mergerCredentialInstanceId"] as const) {
@@ -467,6 +467,8 @@ export async function createTaskBackendImpl(store: TaskStore, input: TaskCreateI
           resolvedEntryColumn,
           resolvedWorkflowIdForOwnership: pendingWorkflowSelection?.workflowId,
           ownershipExemption: options?.ownershipExemption,
+          // FNXC:Identity 2026-08-15-22:52 (U18): carry the acting actor down to the "Task created" log entry.
+          runContext: options?.runContext,
         },
       );
       if (!insertedTask) {
@@ -548,6 +550,7 @@ export async function createTaskBackendImpl(store: TaskStore, input: TaskCreateI
               const normalizedTitle = normalizeTitleForTaskId(sanitizedTitle, id);
               if (normalizedTitle.title && !store.closing) {
                 await persistDeferredTaskTitleIfUntitled(store, id, normalizedTitle.title);
+
               }
             });
           }
@@ -597,8 +600,9 @@ export class TaskIntakeOwnerResolutionError extends Error {
   }
 }
 
-export async function _createTaskInternalBackendImpl(store: TaskStore, input: TaskCreateInput, title: string | undefined, resolvedWorkflowSteps: string[] | undefined, id: string, options?: { createdAt?: string; updatedAt?: string; promptOverride?: string; invokeTaskCreatedHook?: boolean; resolvedEntryColumn?: string; resolvedWorkflowIdForOwnership?: string; onProposalClaimConflict?: (task: Task) => void; deferTaskCreatedEvent?: boolean; onTaskInserted?: (task: Task) => void; ownershipExemption?: IntakeOwnershipExemption; },): Promise<Task> {
+export async function _createTaskInternalBackendImpl(store: TaskStore, input: TaskCreateInput, title: string | undefined, resolvedWorkflowSteps: string[] | undefined, id: string, options?: InternalCreateTaskOptions,): Promise<Task> {
     input = normalizeCreateBranchProvenance(input);
+
     const layer = store.asyncLayer!;
     const now = options?.createdAt ?? new Date().toISOString();
     /*
@@ -773,7 +777,14 @@ export async function _createTaskInternalBackendImpl(store: TaskStore, input: Ta
       sliceId: input.sliceId,
       steps: [],
       currentStep: 0,
-      log: [{ timestamp: now, action: "Task created" }],
+      /*
+      FNXC:Identity 2026-08-09-03:04 (U18):
+      The creation log entry is the first row of a task's audit trail and previously carried no
+      `runContext`, so nothing recorded WHO created a task. `runContext` is spread conditionally
+      because the deprecated staging overload still admits callers that pass none, and writing an
+      `undefined` key would serialize a null field into task.json for every legacy caller.
+      */
+      log: [{ timestamp: now, action: "Task created", ...(options?.runContext ? { runContext: options.runContext } : {}) }],
       columnMovedAt: now,
       createdAt: now,
       updatedAt: options?.updatedAt ?? now,
@@ -1031,7 +1042,7 @@ export async function _createTaskInternalBackendImpl(store: TaskStore, input: Ta
     return task;
   }
 
-export async function createTaskImpl(store: TaskStore, input: TaskCreateInput, options?: { onSummarize?: (description: string) => Promise<string | null>; settings?: { autoSummarizeTitles?: boolean }; invokeTaskCreatedHook?: boolean; onProposalClaimConflict?: (task: Task) => void; ownershipExemption?: IntakeOwnershipExemption; }): Promise<Task> {
+export async function createTaskImpl(store: TaskStore, input: TaskCreateInput, options?: CreateTaskOptions & { runContext?: RunMutationContext }): Promise<Task> {
     // U8/R6: apply the reviewLevel creation-time preset (maps level -> enabledWorkflowSteps; explicit wins).
     input = applyReviewLevelPreset(input);
     // FNXC:RuntimeTaskOrchestrationAsync 2026-06-24-13:10:

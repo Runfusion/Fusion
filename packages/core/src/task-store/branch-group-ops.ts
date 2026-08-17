@@ -9,6 +9,7 @@ import { emitBoundedRunAudit } from "../run-audit/emit-bounded-run-audit.js";
  * instance as its first parameter and performs byte-identical work.
  */
 import {TaskStore} from "../store.js";
+import { UNATTRIBUTED_MUTATION_CONTEXT } from "../identity/mutation-context.js";
 import {resolveTaskLifecycleColumns, columnsWithFlag} from "../workflows/workflow-lifecycle-traits.js";
 import {resolveWorkflowIrForTask} from "../workflows/workflow-ir-resolver.js";
 import type {WorkflowIr} from "../workflows/workflow-ir-types.js";
@@ -112,6 +113,7 @@ export async function clearNearDuplicateReferencesToImpl(store: TaskStore, canon
 
     const updatedTasks: Task[] = [];
     for (const row of rows) {
+      // FNXC:Identity 2026-08-09-03:04 (U18): canonical-inactive sweep runs store-side with no caller actor (U13).
       await store.logEntry(
         row.id,
         `Near-duplicate canonical ${canonicalId} is now inactive (${inactiveState.reason}); cleared duplicate flag (informational, no decision required)`,
@@ -458,7 +460,8 @@ export async function rehomeOccupantImpl(store: TaskStore, taskId: string, targe
         preserveResumeState: true,
         preserveWorktree: true,
         allowDirectInReviewMove: true,
-      });
+        // FNXC:Identity 2026-08-09-03:04 (U18): workflow-reconciliation recovery move; U13 owns its actor.
+      }, UNATTRIBUTED_MUTATION_CONTEXT);
       moved = true;
     } catch (err) {
       error = err instanceof Error ? err.message : String(err);
