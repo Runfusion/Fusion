@@ -732,7 +732,7 @@ describe("secrets-env-writer", () => {
     }
   });
 
-  it("preserves ownership metadata when retry finds only a quarantine recovery file", async () => {
+  it("restores a quarantined recovery file to the env path and finishes cleanup on retry", async () => {
     const dir = mkdtempSync(join(tmpdir(), "secrets-env-retry-"));
     dirs.push(dir);
     const original = "MANAGED=1\n";
@@ -741,14 +741,45 @@ describe("secrets-env-writer", () => {
     writeFileSync(quarantine, original);
     writeFileSync(join(dir, ".fusion-secrets-env.fingerprint"), `${fingerprint}\n.env\n`);
 
-    await expect(cleanupSecretsEnvFile({
+    const result = await cleanupSecretsEnvFile({
       worktreePath: dir,
       taskId: "retry",
       expectedFingerprint: null,
       filename: ".env",
-    })).resolves.toEqual({ outcome: "skipped", reason: "file-retained" });
-    expect(existsSync(quarantine)).toBe(true);
-    expect(readFileSync(join(dir, ".fusion-secrets-env.fingerprint"), "utf8")).toBe(`${fingerprint}\n.env\n`);
+    });
+
+    // A previous cleanup crashed after quarantining the managed inode; the retry
+    // must put the content back at the env path (exclusive link, never clobbering)
+    // and then complete the removal instead of stranding it under the recovery prefix.
+    expect(result).toEqual({ outcome: "cleaned", reason: "fingerprint-match" });
+    expect(existsSync(join(dir, ".env"))).toBe(false);
+    expect(existsSync(join(dir, ".fusion-secrets-env.fingerprint"))).toBe(false);
+    expect(readdirSync(dir).filter((entry) => entry.startsWith(".env.fusion-cleanup-"))).toHaveLength(0);
+  });
+
+  it("restores unverified quarantined content to the env path and drops only the stale record on retry", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "secrets-env-retry-"));
+    dirs.push(dir);
+    const original = "MANAGED=1\n";
+    const replacement = "USER_REPLACEMENT=1\n";
+    const fingerprint = createHash("sha256").update(original).digest("hex");
+    const quarantine = join(dir, `.env.fusion-cleanup-${process.pid}-recovery`);
+    writeFileSync(quarantine, replacement);
+    writeFileSync(join(dir, ".fusion-secrets-env.fingerprint"), `${fingerprint}\n.env\n`);
+
+    const result = await cleanupSecretsEnvFile({
+      worktreePath: dir,
+      taskId: "retry",
+      expectedFingerprint: null,
+      filename: ".env",
+    });
+
+    // The quarantined inode is unverified (concurrent replacement): restore it to
+    // the env path as user content, never delete it, and retire only the stale record.
+    expect(result).toEqual({ outcome: "skipped", reason: "fingerprint-mismatch" });
+    expect(readFileSync(join(dir, ".env"), "utf8")).toBe(replacement);
+    expect(existsSync(join(dir, ".fusion-secrets-env.fingerprint"))).toBe(false);
+    expect(readdirSync(dir).filter((entry) => entry.startsWith(".env.fusion-cleanup-"))).toHaveLength(0);
   });
 
   it("never deletes a tracked env even when its fingerprint matches", async () => {

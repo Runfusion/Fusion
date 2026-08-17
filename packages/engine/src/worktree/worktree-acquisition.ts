@@ -75,15 +75,36 @@ async function readPersistedWorktreeBackendKind(worktreePath: string): Promise<W
   }
 }
 
-async function removeGeneratedPinnedResidue(worktreePath: string): Promise<void> {
+async function removeGeneratedPinnedResidue(
+  worktreePath: string,
+  rootDir: string,
+  logger?: { warn: (m: string) => void },
+): Promise<void> {
   for (const name of ["node_modules", "dist"] as const) {
     const path = join(worktreePath, name);
     if (!existsSync(path)) continue;
     try {
       await execAsync(`git check-ignore -q -- ${JSON.stringify(name)}`, { cwd: worktreePath });
-      await rm(path, { recursive: true, force: true });
     } catch {
-      // Keep non-ignored content; removeWorktree will fail closed below.
+      // Tracked or otherwise non-ignored content is user content: preserve it in
+      // place and let removeWorktree's dirty probe fail closed below.
+      continue;
+    }
+    // The directory holds only ignored content, but that may still be user-authored
+    // (files dropped under dist/). Preserve the whole directory in the worktree
+    // recovery area instead of deleting it; reclaim only needs the path free,
+    // which the rename guarantees.
+    try {
+      const canonicalRoot = await realpath(rootDir);
+      const fusionRoot = await ensureContainedDirectory(canonicalRoot, ".fusion");
+      const recoveryRoot = await ensureContainedDirectory(fusionRoot, "recovery");
+      const worktreesRecovery = await ensureContainedDirectory(recoveryRoot, "worktrees");
+      const preservedPath = join(worktreesRecovery, `residue-${randomUUID()}`);
+      await rename(path, preservedPath);
+      await prunePreservedOrphanDirectories(worktreesRecovery, logger);
+    } catch (error) {
+      // Preserve in place on any failure; removeWorktree's dirty probe fails closed.
+      logger?.warn(`Failed to preserve generated residue at ${path}: ${formatError(error).message}`);
     }
   }
 }
@@ -954,7 +975,7 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
               audit: undefined,
               logger,
             });
-            await removeGeneratedPinnedResidue(pinnedPath);
+            await removeGeneratedPinnedResidue(pinnedPath, rootDir, logger);
             await removeWorktree({
               rootDir,
               worktreePath: pinnedPath,

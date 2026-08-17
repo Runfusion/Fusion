@@ -464,22 +464,38 @@ export async function cleanupSecretsEnvFile(opts: CleanupSecretsEnvFileOptions):
   const recordPaths = [privateState, legacyState].flatMap((state) => state.kind === "valid" && recordsMatch(state.record, record) ? [state.record.path] : []);
   let body: string;
   try { body = await readFile(path.join(opts.worktreePath, record.filename), "utf8"); } catch {
-    // A failed quarantine restore leaves the managed inode under this recovery
-    // prefix. Keep its ownership record so a later retry can recover it.
+    // The managed pathname is missing. A previous cleanup may have quarantined
+    // the inode (rename) before crashing; restore it to the pathname via an
+    // exclusive link so the content is never stranded under the recovery prefix.
+    // With no quarantine the managed file is simply gone and the record can drop.
+    let quarantinePath: string | undefined;
     try {
-      const entries = await fs.readdir(opts.worktreePath);
-      if (entries.some((entry) => entry.startsWith(`${record.filename}.fusion-cleanup-`))) {
-        return { outcome: "skipped", reason: "file-retained" };
+      const entry = (await fs.readdir(opts.worktreePath)).find((name) => name.startsWith(`${record.filename}.fusion-cleanup-`));
+      if (entry) quarantinePath = path.join(opts.worktreePath, entry);
+    } catch {
+      return { outcome: "skipped", reason: "record-remove-failed" };
+    }
+    if (!quarantinePath) {
+      try {
+        await removeRecords(recordPaths);
+      } catch {
+        return { outcome: "skipped", reason: "record-remove-failed" };
       }
-    } catch {
-      return { outcome: "skipped", reason: "record-remove-failed" };
+      return { outcome: "skipped", reason: "file-missing" };
     }
     try {
-      await removeRecords(recordPaths);
+      await fs.link(quarantinePath, path.join(opts.worktreePath, record.filename));
+    } catch {
+      // The pathname is occupied or the link failed: keep the recovery copy and
+      // ownership record so a later retry can converge.
+      return { outcome: "skipped", reason: "file-retained" };
+    }
+    await fs.unlink(quarantinePath).catch(() => undefined);
+    try {
+      body = await readFile(path.join(opts.worktreePath, record.filename), "utf8");
     } catch {
       return { outcome: "skipped", reason: "record-remove-failed" };
     }
-    return { outcome: "skipped", reason: "file-missing" };
   }
   if (sha256(body) !== record.fingerprint) {
     try {
