@@ -8,7 +8,7 @@ and, because the converted sweeps resolve intake by ROLE, would have quietly
 asserted that the sweeps do nothing.
 */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { ANY_MUTATION_CONTEXT } from "./mutation-context-matchers.js";
+import { ANY_MUTATION_CONTEXT, UNATTRIBUTED_CONTEXT_MATCHER } from "./mutation-context-matchers.js";
 /*
 FNXC:Identity 2026-08-09-03:04 (U18/KTD2):
 These call-arg assertions now include the mutation context the converted sweep passes.
@@ -5480,7 +5480,7 @@ describe("SelfHealingManager", () => {
       store.updateTaskAtomic = undefined;
 
       expect(await managerWithRecovery.recoverStaleMergingStatus()).toBe(1);
-      expect(store.updateTask).toHaveBeenCalledWith(task.id, { status: null });
+      expect(store.updateTask).toHaveBeenCalledWith(task.id, { status: null }, UNATTRIBUTED_CONTEXT_MATCHER);
       expect(enqueueMerge).not.toHaveBeenCalled();
       managerWithRecovery.stop();
     });
@@ -7042,7 +7042,7 @@ describe("SelfHealingManager", () => {
       (store.updateTask as ReturnType<typeof vi.fn>).mockClear();
 
       expect(await managerWithRecovery.recoverStaleMergingStatus()).toBe(1);
-      expect(store.updateTask).toHaveBeenCalledWith("FN-stuck", { status: null });
+      expect(store.updateTask).toHaveBeenCalledWith("FN-stuck", { status: null }, UNATTRIBUTED_CONTEXT_MATCHER);
       expect(clearMergeActive).toHaveBeenCalledWith("FN-stuck");
       expect(enqueueMerge).not.toHaveBeenCalled();
 
@@ -9441,7 +9441,7 @@ describe("SelfHealingManager", () => {
       vi.setSystemTime(new Date("2026-01-01T00:00:01.000Z"));
 
       await expect(recovery.finalizeOrphanedPlanningSegments()).resolves.toBe(1);
-      expect(updateTask).toHaveBeenCalledWith(healthy.id, expect.objectContaining({ planningStartedAt: null, cumulativePlanningMs: 1050 }));
+      expect(updateTask).toHaveBeenCalledWith(healthy.id, expect.objectContaining({ planningStartedAt: null, cumulativePlanningMs: 1050 }), UNATTRIBUTED_CONTEXT_MATCHER);
       expect(getTask).not.toHaveBeenCalledWith(firstPoison.id);
       expect(getSelfHealingLogger().warn).toHaveBeenCalledWith(expect.stringContaining("orphaned planning segment FN-POISON-2 could not be finalized: errorType="));
 
@@ -9636,10 +9636,12 @@ describe("SelfHealingManager", () => {
       await expect(recovery.recoverOrphanedPlanningTasks()).resolves.toBe(1);
       expect(recoverApprovedTriageTask).toHaveBeenCalledWith(task);
       expect(recoverApprovedTriageTask).toHaveBeenCalledTimes(1);
-      expect(fallbackStore.updateTask).toHaveBeenCalledWith(task.id, { status: null });
+      expect(fallbackStore.updateTask).toHaveBeenCalledWith(task.id, { status: null }, UNATTRIBUTED_CONTEXT_MATCHER);
       expect(fallbackStore.logEntry).toHaveBeenCalledWith(
         task.id,
         "Auto-recovered orphaned planning task — agent session lost, cleared for re-planning",
+        undefined,
+        UNATTRIBUTED_CONTEXT_MATCHER,
       );
 
       recovery.stop();

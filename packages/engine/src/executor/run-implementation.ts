@@ -2187,7 +2187,9 @@ export async function runImplementation(
             ...(skillContext.additionalSkillPaths.length > 0 ? { additionalSkillPaths: skillContext.additionalSkillPaths } : {}),
             onSkillSummary: async (summary) => {
               const unavailable = summary.unresolvedForcedSkills.length ? `; forced-unavailable: [${summary.unresolvedForcedSkills.map((entry) => `${entry.requestedName} (${entry.reason})`).join(", ")}]` : "";
-              await deps.store.logEntry(task.id, `[skills] [executor] ${summary.availableCount} skill(s) available; forced: ${summary.forcedSkillNames.length ? `[${summary.forcedSkillNames.join(", ")}]` : "none"}${unavailable}`);
+              // FNXC:Identity 2026-08-17-04:30: main added this skills-summary breadcrumb after U18 converted the
+              // file, so it arrived unattributed; it writes to the task log like every other write here.
+              await deps.store.logEntry(task.id, `[skills] [executor] ${summary.availableCount} skill(s) available; forced: ${summary.forcedSkillNames.length ? `[${summary.forcedSkillNames.join(", ")}]` : "none"}${unavailable}`, undefined, runContextForTotal(deps.getRunContextFor, task.id));
             },
             // Column-agent principal alignment (plan U5, R5): action gating is
             // computed for the agent ACTUALLY RUNNING. When the governing execute
