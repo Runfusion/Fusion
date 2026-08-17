@@ -17,10 +17,12 @@ export class TerminalFailureApplyRejected extends Error {
   }
 }
 import {and, eq, sql} from "drizzle-orm";
-import type {Task, Column, ColumnId, HandoffToReviewOptions} from "../types.js";
+import type {Task, Column, ColumnId, HandoffToReviewOptions, RunMutationContext} from "../types.js";
 import {VALID_TRANSITIONS, COLUMNS} from "../types.js";
 import {serializeWorkflowIr} from "../workflows/workflow-ir.js";
 import {emitWorkflowLifecycleEvent} from "../workflow-events.js";
+import {actorContextForAgent} from "../identity/actor.js";
+import { UNATTRIBUTED_MUTATION_CONTEXT } from "../identity/mutation-context.js";
 import {resolveAllowedColumns, workflowHasColumn} from "../workflows/workflow-transitions.js";
 import {isBuiltinWorkflowId, getBuiltinWorkflow, resolveDefaultWorkflowIr, DEFAULT_WORKFLOW_ID} from "../workflows/builtin-workflows.js";
 import {parseWorkflowIr} from "../workflows/workflow-ir.js";
@@ -253,7 +255,16 @@ function enforcePooledColumnCapacity(args: {
   return step(0, 0);
 }
 
-export async function moveTaskImpl(store: TaskStore, id: string, toColumn: ColumnId, options?: MoveTaskOptions,): Promise<Task> {
+/*
+FNXC:Identity 2026-08-09-03:04 (U18):
+`MoveTaskInternalOptions.runContext` already exists and is read at ~20 sites below to attribute the
+move audit rows, but the PUBLIC `moveTask` had no way to supply it - it always called
+`moveTaskInternal` with `{ fromHandoff, movePolicyPreflight }` only, so every operator/engine move
+fell back to the synthetic `agentId: "system" / runId: "unknown"` pair. U18's required parameter is
+wired straight into that carrier here, which is what turns the new argument into real attribution
+rather than a seam nobody read.
+*/
+export async function moveTaskImpl(store: TaskStore, id: string, toColumn: ColumnId, options?: MoveTaskOptions, runContext?: RunMutationContext,): Promise<Task> {
     // FNXC:RuntimeTaskOrchestrationAsync 2026-06-24-14:15:
     // Backend-mode moveTask: the moveTaskInternal orchestration now handles
     // backend mode by using layer.transactionImmediate(async (tx) => ...) instead
@@ -265,7 +276,7 @@ export async function moveTaskImpl(store: TaskStore, id: string, toColumn: Colum
     // runtime-validate: flag-ON against the task's resolved workflow, flag-OFF
     // via the VALID_TRANSITIONS lookup (non-legacy ids reject as before).
     const movePolicyPreflight = await store.prepareWorkflowMovePolicyPreflight(id, toColumn, options, { fromHandoff: false });
-    return store.withTaskLock(id, () => store.moveTaskInternal(id, toColumn, options, { fromHandoff: false, movePolicyPreflight }));
+    return store.withTaskLock(id, () => store.moveTaskInternal(id, toColumn, options, { fromHandoff: false, movePolicyPreflight, ...(runContext ? { runContext } : {}) }));
   }
 
 export interface MoveTaskIfResult {
@@ -403,9 +414,29 @@ export async function handoffToReviewImpl(store: TaskStore, taskId: string, opts
         },
         {
           fromHandoff: true,
+          /*
+          FNXC:Identity 2026-08-09-03:04:
+          `evidence.runId`/`agentId` are optional, and the widened `runContext` union used to accept
+          that by structurally accepting `{}` — so a handoff with no evidence at all produced a
+          context that claimed to identify a run and identified nothing. The same "unknown"/"system"
+          sentinels the audit writers already fall back to are applied here instead, and the acting
+          actor is the handing-off agent (bootstrap when there is no agent id — an unattributed
+          internal write, said out loud).
+          */
           runContext: {
-            runId: opts.evidence.runId,
-            agentId: opts.evidence.agentId,
+            runId: opts.evidence.runId ?? "unknown",
+            agentId: opts.evidence.agentId ?? "system",
+            /*
+          FNXC:Identity 2026-08-15-06:20 (review finding — bootstrap is not "unattributed"):
+          `actorContextForAgent(undefined)` returns the BOOTSTRAP actor, whose meaning is specific:
+          a pre-enablement internal write from before identity existed. An evidence-free handoff is
+          a present-day write whose actor we simply do not know, which is what the unattributed
+          marker is for. Using bootstrap here filed today's unknown writes under a historical
+          category and made both unreadable in audit.
+          */
+          actor: opts.evidence.agentId?.trim()
+            ? actorContextForAgent(opts.evidence.agentId)
+            : UNATTRIBUTED_MUTATION_CONTEXT.actor,
           },
           ownerAgentId: opts.ownerAgentId,
           evidence: opts.evidence,

@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { resolve } from "node:path";
 import { realpathSync } from "node:fs";
+import { isIdentityEnabled } from "./identity/identity-enabled.js";
 
 /*
 FNXC:SessionIdentity 2026-07-26-12:05:
@@ -16,12 +17,31 @@ versioned key.
 
 Trust model: only the engine process can write this registry (agents cannot
 reach the engine's globalThis), so a PRESENT entry is authoritative proof that
-the cwd belongs to an engine-managed agent session. An ABSENT entry means the
-process is an operator-driven CLI (interactive pi), which is the correct
-default: a human terminal has no engine registration. Ambiguity (two live
+the cwd belongs to an engine-managed agent session. Ambiguity (two live
 sessions sharing one cwd, e.g. heartbeat lanes at the project root) fails
 CLOSED — callers must treat "ambiguous" as an agent principal, never as an
-operator.
+operator. The `runWithFusionSessionIdentity` async-context path takes
+precedence over the cwd registry entirely.
+
+FNXC:Identity 2026-08-09-03:04 (KTD16):
+The ABSENT case is the one that changed, and it is the only one that changed.
+It used to return `{kind:"operator"}` by documented design — "a human terminal
+has no engine registration". Under an actor model that reads as: an
+UNREGISTERED CALLER IS SILENTLY AN ADMINISTRATOR, and an agent running in a cwd
+the engine failed to register is classified as a human. Absence of evidence was
+being treated as evidence of a human.
+
+So absence now resolves to `{kind:"unresolved"}` — we do not know who this is —
+but ONLY while `identity.enabled` is on. The gate is a dependency-order
+requirement, not caution: the operator-as-absence default is load-bearing for
+human CLI pass-through, and its replacement is U11's CLI credential, which
+depends on U9 -> U5 -> this unit. Inverting ungated here would deny human CLI
+users for three phases. When identity is off, absence still resolves to
+`operator` and today's behavior is bit-for-bit preserved.
+
+Note for accuracy: this resolver never failed open uniformly. Ambiguity already
+failed closed and the context path already took precedence; only the
+unregistered-cwd branch defaulted to operator, and only that branch is inverted.
 */
 
 export interface FusionSessionIdentity {
@@ -45,6 +65,13 @@ export interface FusionSessionIdentity {
 
 export type FusionSessionPrincipal =
   | { kind: "operator" }
+  /**
+   * FNXC:Identity 2026-08-09-03:04 (KTD16):
+   * No registration and identity is ON: the caller is unknown. Distinct from `operator` precisely
+   * so a consumer cannot keep treating "nobody registered this cwd" as "a human is at the
+   * keyboard". Callers must treat it as UNAUTHORIZED, not as a weaker agent.
+   */
+  | { kind: "unresolved" }
   | { kind: "agent"; identity: FusionSessionIdentity }
   | { kind: "ambiguous"; identities: FusionSessionIdentity[] };
 
@@ -125,7 +152,9 @@ export function registerFusionSessionIdentity(
 
 /**
  * Resolve the acting principal for a session working directory.
- * - No registration → operator (human CLI process; engine never registered it).
+ * - Active invocation context → that agent (takes precedence over the registry).
+ * - No registration → `unresolved` when `identity.enabled` is on, `operator` when it is off (KTD16;
+ *   see the module trust-model note for why the inversion is gated).
  * - Exactly one live registration → that agent.
  * - Multiple registrations → ambiguous; callers must fail CLOSED (treat as
  *   agent, withhold operator-only capabilities).
@@ -139,7 +168,8 @@ export function resolveFusionSessionPrincipal(cwd: string): FusionSessionPrincip
   const registry = getRegistry();
   const list = registry.get(canonicalCwd);
   if (!list || list.length === 0) {
-    return { kind: "operator" };
+    // KTD16: absence is "we do not know", not "a human is here" — but only once identity is on.
+    return isIdentityEnabled() ? { kind: "unresolved" } : { kind: "operator" };
   }
   if (list.length === 1) {
     return { kind: "agent", identity: list[0] };

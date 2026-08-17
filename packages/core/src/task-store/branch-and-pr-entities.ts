@@ -9,6 +9,7 @@
  */
 
 import { TaskStore } from "../store.js";
+import { UNATTRIBUTED_MUTATION_CONTEXT } from "../identity/mutation-context.js";
 import { filterTasksByBranchGroup } from "../branch/branch-assignment.js";
 import { BUILTIN_WORKFLOW_SETTINGS } from "../workflows/builtin-workflow-settings.js";
 import { isBuiltinWorkflowId } from "../workflows/builtin-workflows.js";
@@ -709,11 +710,17 @@ async function updateTaskWithTaskLockImpl(store: TaskStore,
           throw new Error(validation.message);
         }
         if (validation.requiresFinalize) {
+          /*
+          FNXC:Identity 2026-08-09-03:04 (U18):
+          DERIVED, not marked: this finalize-move is a side effect of the enclosing `updateTask`, so
+          the actor that requested the update is the actor that caused the move. It falls back to the
+          marker only when the update itself arrived unattributed.
+          */
           await store.moveTask(id, (await resolveTaskLifecycleColumns(store, id))?.complete ?? "done", {
             moveSource: "engine",
             recoveryRehome: true,
             preserveProgress: true,
-          });
+          }, runContext ?? UNATTRIBUTED_MUTATION_CONTEXT);
         }
       }
     }

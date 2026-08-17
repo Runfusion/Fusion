@@ -327,6 +327,88 @@ export const globalRoutines = centralSchema.table("global_routines", {
   updatedAt: text("updated_at").notNull(),
 });
 
+// ── Identity: actors, credentials, sessions, provider links ──────────
+/*
+FNXC:Identity 2026-08-09-03:04:
+KTD7 — the actor registry is central, not per-project: one daemon serves N projects from a shared
+Postgres and a solo developer needs ONE identity with different authority per project. Role grants
+therefore live in `project` (project.actorRoleGrants). No `central` table has RLS.
+Materialized by migration 0066_fn_identity_actors.sql.
+*/
+export const actors = centralSchema.table("actors", {
+  id: text("id").primaryKey(),
+  kind: text("kind").notNull(),
+  displayName: text("display_name").notNull(),
+  status: text("status").notNull().default("provisioned"),
+  /** R4: a tombstoned actor is retained, never deleted, so audit rows keep resolving to a name. */
+  tombstonedAt: text("tombstoned_at"),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+}, (t) => [
+  check("actors_kind_check", sql`${t.kind} IN ('human', 'agent', 'system')`),
+  check("actors_status_check", sql`${t.status} IN ('provisioned', 'active', 'suspended', 'tombstoned')`),
+  index("idx_actors_status").on(t.status),
+  index("idx_actors_kind").on(t.kind),
+]);
+
+/** FNXC:Identity 2026-08-09-03:04: only a lookup id plus a hash of the secret is stored — the raw credential never lands in the database or a backup dump. */
+export const actorCredentials = centralSchema.table("actor_credentials", {
+  id: text("id").primaryKey(),
+  actorId: text("actor_id").notNull(),
+  providerId: text("provider_id").notNull(),
+  lookupId: text("lookup_id").notNull(),
+  secretHash: text("secret_hash").notNull(),
+  kind: text("kind").notNull(),
+  expiresAt: text("expires_at"),
+  revokedAt: text("revoked_at"),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+}, (t) => [
+  foreignKey({ columns: [t.actorId], foreignColumns: [actors.id] }).onDelete("cascade"),
+  unique("actor_credentials_provider_lookup_unique").on(t.providerId, t.lookupId),
+  index("idx_actor_credentials_actor").on(t.actorId),
+  index("idx_actor_credentials_active").on(t.providerId, t.revokedAt),
+]);
+
+/*
+FNXC:Identity 2026-08-09-03:04:
+Sessions persist a lookup id plus an HMAC of the secret — NEVER the raw session value. Plaintext
+bearer tokens would upgrade the accepted "local shell user reaches Postgres" residual from *reads
+data* to *impersonates any administrator over HTTP*, and the same applies to a backup dump.
+`kind` carries the R29 human/agent split: the two have different idle/absolute lifetime policies.
+*/
+export const actorSessions = centralSchema.table("actor_sessions", {
+  id: text("id").primaryKey(),
+  actorId: text("actor_id").notNull(),
+  lookupId: text("lookup_id").notNull(),
+  secretHash: text("secret_hash").notNull(),
+  kind: text("kind").notNull(),
+  issuedAt: text("issued_at").notNull(),
+  idleExpiresAt: text("idle_expires_at"),
+  absoluteExpiresAt: text("absolute_expires_at").notNull(),
+  revokedAt: text("revoked_at"),
+  providerId: text("provider_id"),
+}, (t) => [
+  foreignKey({ columns: [t.actorId], foreignColumns: [actors.id] }).onDelete("cascade"),
+  check("actor_sessions_kind_check", sql`${t.kind} IN ('human', 'agent')`),
+  unique("actor_sessions_lookup_unique").on(t.lookupId),
+  index("idx_actor_sessions_actor").on(t.actorId),
+  index("idx_actor_sessions_absolute_expiry").on(t.absoluteExpiresAt),
+]);
+
+/** FNXC:Identity 2026-08-09-03:04: one external subject maps to at most one actor per provider, so a repeated provider callback cannot mint a second actor. */
+export const actorProviderLinks = centralSchema.table("actor_provider_links", {
+  id: text("id").primaryKey(),
+  providerId: text("provider_id").notNull(),
+  externalSubjectId: text("external_subject_id").notNull(),
+  actorId: text("actor_id").notNull(),
+  linkedAt: text("linked_at").notNull(),
+}, (t) => [
+  foreignKey({ columns: [t.actorId], foreignColumns: [actors.id] }).onDelete("cascade"),
+  unique("actor_provider_links_provider_subject_unique").on(t.providerId, t.externalSubjectId),
+  index("idx_actor_provider_links_actor").on(t.actorId),
+]);
+
 // ── Schema version meta ──────────────────────────────────────────────
 export const centralMeta = centralSchema.table("__meta", {
   key: text("key").primaryKey(),
@@ -342,5 +424,8 @@ export const centralTableNames = [
   "central_activity_log", "central_settings",
   "peer_nodes", "settings_sync_state", "managed_docker_nodes",
   "plugin_installs", "project_plugin_states", "mesh_shared_snapshots",
-  "mesh_write_queue", "secrets_global", "task_claims", "global_routines", "__meta",
+  "mesh_write_queue", "secrets_global", "task_claims", "global_routines",
+  /* FNXC:Identity 2026-08-09-03:04: the identity tables must be registered here or the PG test harness never TRUNCATEs them, and actor rows leak between tests as an order-dependent flake. */
+  "actors", "actor_credentials", "actor_sessions", "actor_provider_links",
+  "__meta",
 ] as const;

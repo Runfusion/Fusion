@@ -53,6 +53,105 @@ export const PLUGIN_DESTRUCTIVE_TASK_STORE_METHODS = [
 export type PluginDestructiveTaskStoreMethod =
   (typeof PLUGIN_DESTRUCTIVE_TASK_STORE_METHODS)[number];
 
+/*
+FNXC:PluginTaskStoreGate 2026-08-09-03:04:
+DENY-BY-DEFAULT (U5 step 4, R14). The gate was a DENYLIST: 8 named methods blocked, everything else
+on a 299-method TaskStore passing through via `Reflect.get`. That inverts the security default —
+every method added to TaskStore since was silently plugin-callable, and `pluginId` was used only in
+the throw message, never to decide anything.
+
+The surface splits by risk rather than by hand-enumerating all 299, because a hand-maintained
+allowlist of ~180 write methods rots immediately and its rot is invisible:
+
+  - READS pass (see {@link isPluginReadableTaskStoreMember}). They are the bulk of legitimate plugin
+    use and cannot corrupt state.
+  - WRITES are denied unless listed in {@link PLUGIN_ALLOWED_WRITE_METHODS}. This is the branch that
+    actually changes behavior: ~180 mutating methods that used to pass now throw.
+  - DESTRUCTIVE writes still additionally require `permissions.destructiveTaskOps`.
+
+Honest limits, so this is not mistaken for a sandbox:
+
+1. `getAsyncLayer()` is still reachable — four in-repo plugins depend on it, and it hands out a raw
+   drizzle handle that can run arbitrary SQL straight past every rule above. Migration 0066 revokes
+   write on `project.actor_role_grants` from the `fusion_runtime` role that handle connects as, which
+   closes the grant-yourself-a-role escalation specifically; it does NOT make the handle safe in
+   general. A scoped/read-only data layer is the real fix and remains a follow-up.
+2. A read can still leak. This gate governs mutation, not confidentiality.
+
+`destructiveTaskOps` no longer returns the RAW store. It previously short-circuited the entire gate,
+so the single most privileged class of plugin was the one class with no deny-by-default at all;
+declaring it now widens the destructive set only.
+*/
+
+/**
+ * FNXC:PluginTaskStoreGate 2026-08-09-03:04:
+ * Writes a plugin may perform without declaring anything. Deliberately short, and derived from what
+ * the in-repo plugins actually call — not from what seems reasonable. Every entry is a method whose
+ * blast radius is a single task or the plugin's own settings, and each is reversible through the UI.
+ *
+ * `init`/`close` are lifecycle, not data: a plugin holding its own store handle must be able to open
+ * and release it.
+ *
+ * Adding to this list is a security decision. Anything bulk, anything that bypasses a review gate,
+ * and anything that deletes belongs in {@link PLUGIN_DESTRUCTIVE_TASK_STORE_METHODS} instead.
+ */
+export const PLUGIN_ALLOWED_WRITE_METHODS: ReadonlySet<string> = new Set([
+  "createTask",
+  "updateTask",
+  "moveTask",
+  "archiveTask",
+  "unarchiveTask",
+  "updateSettings",
+  "init",
+  "close",
+]);
+
+/**
+ * FNXC:PluginTaskStoreGate 2026-08-09-03:04:
+ * Read classification by verb prefix. A prefix rule is used instead of a 115-entry list because the
+ * list would silently fall behind every new read method, and a plugin failing on a harmless getter
+ * is a bug report that costs more than it prevents.
+ *
+ * The prefix is not trusted blindly: `getDatabase` is read-shaped and hands out a raw SQLite handle,
+ * so it stays in the destructive set and is checked BEFORE this function ever runs.
+ */
+export function isPluginReadableTaskStoreMember(prop: string): boolean {
+  return /^(get|list|find|has|count|is|resolve|load|read|query|search|select|fetch|peek)[A-Z]?/.test(prop);
+}
+
+/**
+ * FNXC:PluginTaskStoreGate 2026-08-09-03:04:
+ * Language intrinsics, never gated. These are how JavaScript itself interrogates an object, not
+ * plugin API: denying `toString` replaces it with a thrower, so `String(store)` and every template
+ * literal or log line containing the store throw an authorization error from code that never called
+ * a store method. Caught by the awaitable/inspectable test — the failure surfaces nowhere near its
+ * cause, which is exactly why it is pinned.
+ *
+ * `hasOwnProperty` / `isPrototypeOf` are not listed because the read-prefix rule already admits them.
+ */
+const OBJECT_INTRINSIC_MEMBERS: ReadonlySet<string> = new Set([
+  "toString",
+  "toLocaleString",
+  "valueOf",
+  "inspect",
+]);
+
+/*
+FNXC:PluginTaskStoreGate 2026-08-14-08:40 (review finding — two ways out of the gate):
+
+`constructor` USED to be on the intrinsic list above, which handed a plugin the class itself:
+`store.constructor.prototype.deleteTask` yields the unbound method, and `.call(store, ...)` then runs
+it having never passed through the `get` trap that decides anything. That defeats the whole gate with
+one property read, so `constructor` is now classified like any other non-read member and denied.
+It was listed for `console.log(store)` ergonomics, but that path uses `toString` and
+`Symbol.toStringTag`, which still pass.
+
+The mutating traps below were simply absent. A Proxy with only a `get` trap forwards `set`,
+`defineProperty`, and `deleteProperty` straight to the target, so a plugin could overwrite a store
+method with its own function — including replacing a denied method with an undenied one — or delete
+state outright. Deny-by-default on reads means little while the object itself is writable.
+*/
+
 export interface PluginTaskStoreGateOptions {
   pluginId: string;
   permissions?: PluginPermissions;
@@ -60,10 +159,13 @@ export interface PluginTaskStoreGateOptions {
 
 /**
  * FNXC:PluginTaskStoreGate 2026-07-26-12:20:
- * Wrap a TaskStore for hand-off to a plugin context. When the plugin manifest
- * declares `permissions.destructiveTaskOps: true` the raw store is returned
- * unchanged. Otherwise a Proxy intercepts the denylisted methods and throws a
- * clear declaration-pointing error.
+ * Wrap a TaskStore for hand-off to a plugin context. A Proxy classifies every member access and
+ * throws a declaration-pointing error for anything not permitted.
+ *
+ * FNXC:PluginTaskStoreGate 2026-08-09-03:04:
+ * Superseded the original two-outcome shape. `permissions.destructiveTaskOps: true` no longer
+ * returns the raw store — it widens the destructive set and nothing else, so a declaring plugin is
+ * still subject to deny-by-default on the rest of the write surface.
  *
  * Implementation notes:
  * - Non-denylisted function properties are bound to the RAW store (and cached per
@@ -78,26 +180,92 @@ export function createPluginGatedTaskStore(
   store: TaskStore,
   options: PluginTaskStoreGateOptions,
 ): TaskStore {
-  if (options.permissions?.destructiveTaskOps === true) return store;
-  const denied = new Set<PropertyKey>(PLUGIN_DESTRUCTIVE_TASK_STORE_METHODS);
+  const destructive = new Set<PropertyKey>(PLUGIN_DESTRUCTIVE_TASK_STORE_METHODS);
+  const destructiveDeclared = options.permissions?.destructiveTaskOps === true;
   const boundMethodCache = new Map<PropertyKey, unknown>();
+
+  const deny = (prop: PropertyKey, hint: string): (() => never) => {
+    return () => {
+      throw new Error(
+        `Plugin ${options.pluginId} is not permitted to call ${String(prop)}; ${hint}`,
+      );
+    };
+  };
+
   return new Proxy(store, {
     get(target, prop) {
-      if (denied.has(prop)) {
-        return () => {
-          throw new Error(
-            `Plugin ${options.pluginId} is not permitted to call ${String(prop)}; ` +
-              `declare permissions.destructiveTaskOps in the plugin manifest`,
-          );
-        };
+      /*
+      FNXC:PluginTaskStoreGate 2026-08-09-03:04:
+      Symbols pass through untouched and are never gated. They are not plugin API — they are how the
+      language and the runtime interrogate the object (`Symbol.toStringTag`, `Symbol.iterator`,
+      node's inspect hook). Gating them breaks `console.log(taskStore)` and similar in ways that look
+      like unrelated bugs. The same reasoning covers `then`: returning a function for `then` makes
+      the proxy look thenable, so `await`ing anything that resolves to this store would hang or
+      recurse.
+      */
+      if (typeof prop === "symbol" || prop === "then" || OBJECT_INTRINSIC_MEMBERS.has(prop)) {
+        return Reflect.get(target, prop, target);
       }
+
       const value = Reflect.get(target, prop, target);
+
+      /*
+      FNXC:PluginTaskStoreGate 2026-08-09-03:04:
+      Only FUNCTIONS are gated. A denial is expressed by returning a thrower, so applying it to a
+      data property would silently substitute a function for a value — `store.someCounter` would stop
+      being 7 and start being a function that never gets called, turning a denial into corrupted data
+      at the read site instead of a loud error at the call site. Data properties are reads, and reads
+      pass (see the limits note above).
+      */
       if (typeof value !== "function") return value;
+
+      if (destructive.has(prop)) {
+        if (!destructiveDeclared) {
+          return deny(prop, "declare permissions.destructiveTaskOps in the plugin manifest");
+        }
+      } else if (!isPluginReadableTaskStoreMember(prop) && !PLUGIN_ALLOWED_WRITE_METHODS.has(prop)) {
+        /*
+        R14 deny-by-default. Reached only for a member that is neither a read, an allowed write, nor
+        a declared-destructive call — i.e. one of the ~180 mutating methods no plugin has ever been
+        granted. Before this branch existed, every one of them passed through.
+        */
+        return deny(
+          prop,
+          "the plugin TaskStore gate allows reads and a fixed set of writes; this method is not one " +
+            "of them. If a plugin genuinely needs it, add it to PLUGIN_ALLOWED_WRITE_METHODS with a " +
+            "reason rather than widening the gate",
+        );
+      }
+
       const cached = boundMethodCache.get(prop);
       if (cached) return cached;
       const bound = (value as (...args: unknown[]) => unknown).bind(target);
       boundMethodCache.set(prop, bound);
       return bound;
+    },
+
+    /*
+    The store is READ-ONLY as an object. These throw rather than returning `false` because a silent
+    `false` is only observable in strict mode and reads as success everywhere else — a plugin that
+    monkey-patches a method would otherwise believe it succeeded while the gate quietly discarded it.
+    */
+    set(_target, prop) {
+      throw new Error(
+        `Plugin ${options.pluginId} may not assign to ${String(prop)} on the task store; ` +
+          "the gated store is read-only as an object. Call a permitted method instead.",
+      );
+    },
+    defineProperty(_target, prop) {
+      throw new Error(
+        `Plugin ${options.pluginId} may not define ${String(prop)} on the task store; ` +
+          "the gated store is read-only as an object.",
+      );
+    },
+    deleteProperty(_target, prop) {
+      throw new Error(
+        `Plugin ${options.pluginId} may not delete ${String(prop)} from the task store; ` +
+          "the gated store is read-only as an object.",
+      );
     },
   }) as TaskStore;
 }

@@ -77,7 +77,13 @@ startup died with "this binary only knows up to 0064" on fresh and upgraded data
 marker is ONLY the binary's "highest migration I know" claim — bumping it applies no SQL and
 touches no data; it must advance in the same change that ships a new migration file.
 */
-export const SCHEMA_BASELINE_VERSION = "0065";
+/*
+FNXC:Identity 2026-08-23-22:39:
+Identity actors/credentials/sessions/grants cannot reuse 0060-0065 — those identities already
+shipped on main (workspace leases through review-convergence). Two migrations sharing one
+bookkeeping identity would skip identity tables on upgraded databases. Ceiling is 0066.
+*/
+export const SCHEMA_BASELINE_VERSION = "0066";
 /** FNXC:SymbolLock 2026-07-20-10:00: upgrades need durable task declarations before admission resolves symbols. */
 export const TASK_DECLARED_SYMBOLS_VERSION = "0028";
 const INITIAL_SCHEMA_VERSION = "0000";
@@ -246,6 +252,18 @@ export const AI_MERGE_REVIEW_RECONCILIATION_VERSION = "0063";
 export const TASK_REPOSITORY_SCOPE_VERSION = "0064";
 /** FNXC:ReviewConvergence 2026-08-22-05:42: explicit migration registration preserves bounded review recovery state on upgraded projects. */
 export const REVIEW_CONVERGENCE_STAGE_VERSION = "0065";
+
+/**
+ * FNXC:Identity 2026-08-15-22:52:
+ * The identity schema's own immutable bookkeeping identity. Renumbered 0047 -> 0059 -> 0060 -> 0061
+ * across refreshes from main, each time because main had landed its own migration at the number this
+ * branch was holding. Two migrations sharing one identity means whichever check runs first records
+ * the version and marks the OTHER already-applied, so the identity tables would silently never be
+ * created on an upgraded database while a fresh one looked fine. A per-migration identity is
+ * immutable only once RELEASED; this one has not been.
+ * FNXC:Identity 2026-08-23-22:39: main shipped 0061-0065 after this slice, so identity is 0066.
+ */
+export const IDENTITY_ACTORS_VERSION = "0066";
 
 /** SECURITY DEFINER helper that only inserts LEGACY_ADOPTION_DRAINED_MARKER. */
 export const LEGACY_ADOPTION_DRAINED_MARKER_FUNCTION = "fusion_mark_legacy_adoption_drained";
@@ -485,6 +503,7 @@ const REMOVE_TASK_SUBTASK_SPLITTING_MIGRATION_PATH = join(MIGRATIONS_DIR, "0062_
 const AI_MERGE_REVIEW_RECONCILIATION_MIGRATION_PATH = join(MIGRATIONS_DIR, "0063_fn_090_ai_merge_review_reconciliation.sql");
 const TASK_REPOSITORY_SCOPE_MIGRATION_PATH = join(MIGRATIONS_DIR, "0064_fn_094_task_repository_scope.sql");
 const REVIEW_CONVERGENCE_STAGE_MIGRATION_PATH = join(MIGRATIONS_DIR, "0065_fn_149_review_convergence_stage.sql");
+const IDENTITY_ACTORS_MIGRATION_PATH = join(MIGRATIONS_DIR, "0066_fn_identity_actors.sql");
 
 /**
  * Ensure the migration bookkeeping table exists. Lives in the public schema so
@@ -620,6 +639,7 @@ export async function applySchemaBaseline(
     const aiMergeReviewReconciliationAlreadyApplied = applied.includes(AI_MERGE_REVIEW_RECONCILIATION_VERSION);
     const taskRepositoryScopeAlreadyApplied = applied.includes(TASK_REPOSITORY_SCOPE_VERSION);
     const reviewConvergenceStageAlreadyApplied = applied.includes(REVIEW_CONVERGENCE_STAGE_VERSION);
+    const identityActorsAlreadyApplied = applied.includes(IDENTITY_ACTORS_VERSION);
     assertBinaryNotOlderThanDatabase(applied);
     let schemaChanged = false;
 
@@ -1369,6 +1389,19 @@ export async function applySchemaBaseline(
       const migrationSql = await readFile(REVIEW_CONVERGENCE_STAGE_MIGRATION_PATH, "utf8");
       await tx.execute(sql.raw(migrationSql));
       await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${REVIEW_CONVERGENCE_STAGE_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+    /*
+    FNXC:Identity 2026-08-23-22:39:
+    Identity storage is additive: it never touches the dead-looking project_auth_* tables, whose live
+    writer is the SQLite→Postgres cutover migrator (a missing target there is a fail-closed startup
+    error, so dropping them would brick legacy upgrades). Apply AFTER main's 0065 review-convergence
+    so upgraded databases that already recorded 0060-0065 still receive the identity tables as 0066.
+    */
+    if (!identityActorsAlreadyApplied) {
+      const migrationSql = await readFile(IDENTITY_ACTORS_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${IDENTITY_ACTORS_VERSION}) ON CONFLICT (version) DO NOTHING`);
       schemaChanged = true;
     }
     return { applied: schemaChanged, pluginHooksRun: pluginHooks.length };
