@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { ANY_MUTATION_CONTEXT } from "../mutation-context-matchers.js";
 import { EventEmitter } from "node:events";
 import type { Settings, Task, TaskStore } from "@fusion/core";
 import * as worktreePool from "../../worktree/worktree-pool.js";
@@ -79,8 +80,12 @@ describe("reliability interaction (FN-4766): PR changes-requested re-execution",
       "please fix Y",
     );
 
-    expect((s as any).moveTask).toHaveBeenCalledWith(t.id, "in-progress");
-    expect((s as any).moveTask.mock.calls[0].length).toBe(2);
+    expect((s as any).moveTask).toHaveBeenCalledWith(t.id, "in-progress", undefined, ANY_MUTATION_CONTEXT);
+    /* FNXC:Identity 2026-08-09-03:04 (U18 Stage B): the pin is "no options object was passed", not "two
+       arguments" — the call now carries the required mutation context in the 4th slot, so assert the
+       options slot is still undefined rather than dropping the check. */
+    expect((s as any).moveTask.mock.calls[0].length).toBe(4);
+    expect((s as any).moveTask.mock.calls[0][2]).toBeUndefined();
     expect(t.branch).toBe("fusion/fn-4992");
     expect(t.worktree).toBe("/tmp/test/.worktrees/fn-4992");
     expect(t.paused).toBe(true);

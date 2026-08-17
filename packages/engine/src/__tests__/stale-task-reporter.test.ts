@@ -1,4 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
+/*
+FNXC:Identity 2026-08-09-03:04 (U18/KTD2):
+These call-arg assertions now include the mutation context the converted sweep passes.
+Adding it is what keeps them load-bearing: left at the old arity every
+`toHaveBeenCalledWith` here would fail, and every `.not.toHaveBeenCalledWith` would pass
+vacuously — an assertion that can no longer fail is worse than one that is red.
+*/
+import { UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 import type { Task, TaskStore } from "@fusion/core";
 import { StaleTaskReporter } from "../healing/stale-task-reporter.js";
 
@@ -189,7 +197,7 @@ describe("stale-task reporting resolves the board's own lanes", () => {
 
     expect(result.surfaced).toBeGreaterThan(0);
     /* Path-specific: the surfacing side effect names the lane the card is actually in. */
-    expect(store.logEntry).toHaveBeenCalledWith("FN-R", expect.stringContaining("column=signoff"));
+    expect(store.logEntry).toHaveBeenCalledWith("FN-R", expect.stringContaining("column=signoff"), undefined, UNATTRIBUTED_MUTATION_CONTEXT);
   });
 
   it("keeps surfacing legacy-board cards when no workflow resolves", async () => {

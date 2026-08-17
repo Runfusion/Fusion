@@ -11,6 +11,14 @@ introduced on purpose — it was three places to remember, and the fix for one
 (the at-most-once dedup, the fresh-row skip) silently not reaching the others.
 */
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
+/*
+FNXC:Identity 2026-08-09-03:04 (U18/KTD2):
+These call-arg assertions now include the mutation context the converted sweep passes.
+Adding it is what keeps them load-bearing: left at the old arity every
+`toHaveBeenCalledWith` here would fail, and every `.not.toHaveBeenCalledWith` would pass
+vacuously — an assertion that can no longer fail is worse than one that is red.
+*/
+import { UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 import type { Task, TaskStore, WorkflowIr } from "@fusion/core";
 
 import { SelfHealingManager } from "../self-healing.js";
@@ -163,7 +171,7 @@ describe("surfacing family — shared invariants (one row per sweep)", () => {
       );
 
       expect(await run(h.manager)).toBe(1);
-      expect(h.logEntry).toHaveBeenCalledWith("FN-1", expect.stringContaining(spec.logPrefix));
+      expect(h.logEntry).toHaveBeenCalledWith("FN-1", expect.stringContaining(spec.logPrefix), undefined, UNATTRIBUTED_MUTATION_CONTEXT);
     });
 
     it("does NOT fire under the built-in default, so the threshold source is observable", async () => {
@@ -231,7 +239,7 @@ describe("surfacing family — shared invariants (one row per sweep)", () => {
       );
 
       expect(await run(h.manager)).toBe(1);
-      expect(h.logEntry).toHaveBeenCalledWith("FN-1", expect.stringContaining(spec.logPrefix));
+      expect(h.logEntry).toHaveBeenCalledWith("FN-1", expect.stringContaining(spec.logPrefix), undefined, UNATTRIBUTED_MUTATION_CONTEXT);
     });
 
     it("still fires for a card in the FIRST role column when the role is split", async () => {

@@ -1,4 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+/*
+FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage C):
+`createTaskPromptWriteTool` takes a REQUIRED mutation context now that `executor.ts` — its last
+context-less caller — carries one. The test passes a real agent context and asserts the DERIVED actor
+reaches the store, so re-adding an optional marker fallback to the factory fails here.
+*/
+import { mutationContextForAgent } from "@fusion/core";
+import { mutationContextFor } from "./mutation-context-matchers.js";
+
+const TEST_PROMPT_WRITE_CONTEXT = mutationContextForAgent("agent-prompt-writer");
 import { TaskDocumentPreconditionFailedError, type TaskDocument, type TaskStore } from "@fusion/core";
 import {
   createChatTaskDocumentTools,
@@ -189,11 +199,11 @@ describe("task_prompt_write tool", () => {
     const getTask = vi.fn().mockResolvedValue({ id: TASK_ID, prompt: "# Verified plan" });
     const store = { updateTask, getTask } as unknown as TaskStore;
 
-    const result = await runTool(createTaskPromptWriteTool(store, TASK_ID), "call-prompt", {
+    const result = await runTool(createTaskPromptWriteTool(store, TASK_ID, TEST_PROMPT_WRITE_CONTEXT), "call-prompt", {
       content: "# Verified plan",
     });
 
-    expect(updateTask).toHaveBeenCalledWith(TASK_ID, { prompt: "# Verified plan" }, undefined);
+    expect(updateTask).toHaveBeenCalledWith(TASK_ID, { prompt: "# Verified plan" }, mutationContextFor("agent-prompt-writer"));
     expect(getTask).toHaveBeenCalledWith(TASK_ID);
     expect(getText(result)).toBe(`Updated PROMPT.md for ${TASK_ID}.`);
   });
@@ -203,7 +213,7 @@ describe("task_prompt_write tool", () => {
     const getTask = vi.fn().mockResolvedValue({ id: TASK_ID, prompt: "" });
     const store = { updateTask, getTask } as unknown as TaskStore;
 
-    const result = await runTool(createTaskPromptWriteTool(store, TASK_ID), "call-prompt", {
+    const result = await runTool(createTaskPromptWriteTool(store, TASK_ID, TEST_PROMPT_WRITE_CONTEXT), "call-prompt", {
       content: "# Plan that must persist",
     });
 

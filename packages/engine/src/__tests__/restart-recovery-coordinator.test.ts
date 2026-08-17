@@ -1,4 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
+/*
+FNXC:Identity 2026-08-09-03:04 (U18/KTD2):
+These call-arg assertions now include the mutation context the converted sweep passes.
+Adding it is what keeps them load-bearing: left at the old arity every
+`toHaveBeenCalledWith` here would fail, and every `.not.toHaveBeenCalledWith` would pass
+vacuously — an assertion that can no longer fail is worse than one that is red.
+*/
+import { UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 import type { TaskStore, Task } from "@fusion/core";
 import {
   RestartRecoveryCoordinator,
@@ -179,8 +187,8 @@ describe("RestartRecoveryCoordinator", () => {
     const coordinator = new RestartRecoveryCoordinator(store, executor);
     await coordinator.recoverInterruptedRuns();
 
-    expect(store.updateTask).toHaveBeenCalledWith("FN-1", expect.objectContaining({ status: "stuck-killed" }));
-    expect(store.moveTask).toHaveBeenCalledWith("FN-1", "todo");
+    expect(store.updateTask).toHaveBeenCalledWith("FN-1", expect.objectContaining({ status: "stuck-killed" }), UNATTRIBUTED_MUTATION_CONTEXT);
+    expect(store.moveTask).toHaveBeenCalledWith("FN-1", "todo", undefined, UNATTRIBUTED_MUTATION_CONTEXT);
     expect(executor.resumeOrphaned).toHaveBeenCalledTimes(1);
   });
 
@@ -266,7 +274,7 @@ describe("restart recovery resolves the board's own wip lane", () => {
 
     await coordinator.recoverInterruptedRuns();
 
-    expect(store.updateTask).toHaveBeenCalledWith("FN-1", expect.objectContaining({ status: "stuck-killed" }));
+    expect(store.updateTask).toHaveBeenCalledWith("FN-1", expect.objectContaining({ status: "stuck-killed" }), UNATTRIBUTED_MUTATION_CONTEXT);
   });
 
   it("still skips a PAUSED task — the only thing the deleted filter contributed", async () => {

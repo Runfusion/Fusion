@@ -1,4 +1,12 @@
 import { EventEmitter } from "node:events";
+/*
+FNXC:Identity 2026-08-09-03:04 (U18/KTD2):
+These call-arg assertions now include the mutation context the converted sweep passes.
+Adding it is what keeps them load-bearing: left at the old arity every
+`toHaveBeenCalledWith` here would fail, and every `.not.toHaveBeenCalledWith` would pass
+vacuously — an assertion that can no longer fail is worse than one that is red.
+*/
+import { UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { TaskStore } from "@fusion/core";
 
@@ -63,9 +71,9 @@ describe("self-healing ghost branch reclaim", () => {
     const recovered = await manager.reclaimSelfOwnedBranchConflicts();
 
     expect(recovered).toBe(1);
-    expect(store.updateTask).toHaveBeenCalledWith("FN-9001", expect.objectContaining({ worktree: null, branch: null, baseCommitSha: null }));
-    expect(store.moveTask).toHaveBeenCalledWith("FN-9001", "todo", expect.objectContaining({ preserveProgress: true, preserveResumeState: true }));
-    expect(store.logEntry).toHaveBeenCalledWith("FN-9001", expect.stringContaining("[recovery] tip-already-merged FN-9001"));
+    expect(store.updateTask).toHaveBeenCalledWith("FN-9001", expect.objectContaining({ worktree: null, branch: null, baseCommitSha: null }), UNATTRIBUTED_MUTATION_CONTEXT);
+    expect(store.moveTask).toHaveBeenCalledWith("FN-9001", "todo", expect.objectContaining({ preserveProgress: true, preserveResumeState: true }), UNATTRIBUTED_MUTATION_CONTEXT);
+    expect(store.logEntry).toHaveBeenCalledWith("FN-9001", expect.stringContaining("[recovery] tip-already-merged FN-9001"), undefined, UNATTRIBUTED_MUTATION_CONTEXT);
     expect((store as any).recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({ mutationType: "branch:auto-reclaim", metadata: expect.objectContaining({ phase: "tip-already-merged" }) }));
   });
 
@@ -75,7 +83,7 @@ describe("self-healing ghost branch reclaim", () => {
 
     await manager.reclaimSelfOwnedBranchConflicts();
 
-    expect(store.updateTask).toHaveBeenCalledWith("FN-9001", { worktree: null, branch: null, baseCommitSha: null });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-9001", { worktree: null, branch: null, baseCommitSha: null }, UNATTRIBUTED_MUTATION_CONTEXT);
     expect(execMock).not.toHaveBeenCalledWith(expect.stringContaining("git branch -D"), expect.anything());
   });
 
@@ -96,7 +104,7 @@ describe("self-healing ghost branch reclaim", () => {
 
     await manager.reclaimSelfOwnedBranchConflicts();
 
-    expect(store.updateTask).toHaveBeenCalledWith("FN-9001", expect.objectContaining({ pausedReason: "branch-conflict-unrecoverable", status: "failed" }));
+    expect(store.updateTask).toHaveBeenCalledWith("FN-9001", expect.objectContaining({ pausedReason: "branch-conflict-unrecoverable", status: "failed" }), UNATTRIBUTED_MUTATION_CONTEXT);
   });
 
   it("is idempotent after tip-already-merged cleanup", async () => {
@@ -128,7 +136,7 @@ describe("self-healing ghost branch reclaim", () => {
 
     const nullingCalls = (store.updateTask as any).mock.calls.filter((c: any[]) => c[1]?.baseCommitSha === null);
     expect(nullingCalls).toHaveLength(0);
-    expect(store.logEntry).toHaveBeenCalledWith("FN-9001", expect.stringContaining("tip-already-merged cleanup failed"));
+    expect(store.logEntry).toHaveBeenCalledWith("FN-9001", expect.stringContaining("tip-already-merged cleanup failed"), undefined, UNATTRIBUTED_MUTATION_CONTEXT);
   });
 
   /*
@@ -267,8 +275,8 @@ describe("self-healing ghost branch reclaim", () => {
       const recovered = await manager.reclaimSelfOwnedBranchConflicts();
 
       expect(recovered).toBe(1);
-      expect(store.updateTask).toHaveBeenCalledWith("FN-1406", expect.objectContaining({ worktree: null, branch: null, baseCommitSha: null }));
-      expect(store.logEntry).toHaveBeenCalledWith("FN-1406", expect.stringContaining("[recovery] tip-already-merged FN-1406"));
+      expect(store.updateTask).toHaveBeenCalledWith("FN-1406", expect.objectContaining({ worktree: null, branch: null, baseCommitSha: null }), UNATTRIBUTED_MUTATION_CONTEXT);
+      expect(store.logEntry).toHaveBeenCalledWith("FN-1406", expect.stringContaining("[recovery] tip-already-merged FN-1406"), undefined, UNATTRIBUTED_MUTATION_CONTEXT);
       // The symptom line must be gone entirely.
       expect((store.logEntry as any).mock.calls.some((c: any[]) => String(c[1]).includes("already-merged rejected"))).toBe(false);
       expect((store as any).recordRunAuditEvent).not.toHaveBeenCalledWith(
@@ -288,7 +296,7 @@ describe("self-healing ghost branch reclaim", () => {
 
       await manager.reclaimSelfOwnedBranchConflicts();
 
-      expect(store.updateTask).toHaveBeenCalledWith("FN-1406", expect.objectContaining({ worktree: null, branch: null, baseCommitSha: null }));
+      expect(store.updateTask).toHaveBeenCalledWith("FN-1406", expect.objectContaining({ worktree: null, branch: null, baseCommitSha: null }), UNATTRIBUTED_MUTATION_CONTEXT);
       expect((store.logEntry as any).mock.calls.some((c: any[]) => String(c[1]).includes("already-merged rejected"))).toBe(false);
     });
 
@@ -307,13 +315,13 @@ describe("self-healing ghost branch reclaim", () => {
       expect(recovered).toBe(0);
       expect(store.logEntry).toHaveBeenCalledWith(
         "FN-1406",
-        expect.stringContaining("[recovery] already-merged rejected FN-1406"),
+        expect.stringContaining("[recovery] already-merged rejected FN-1406"), undefined, UNATTRIBUTED_MUTATION_CONTEXT,
       );
       expect((store as any).recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
         mutationType: "task:auto-recover-already-merged-rejected",
         metadata: expect.objectContaining({ reason: "foreign-task-tip", candidateOwner: "FN-1401", phase: "tip-already-merged" }),
       }));
-      expect(store.updateTask).not.toHaveBeenCalledWith("FN-1406", expect.objectContaining({ branch: null }));
+      expect(store.updateTask).not.toHaveBeenCalledWith("FN-1406", expect.objectContaining({ branch: null }), UNATTRIBUTED_MUTATION_CONTEXT);
       expect(execMock).not.toHaveBeenCalledWith(expect.stringContaining("git branch -D"), expect.anything());
     });
   });

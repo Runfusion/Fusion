@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { ANY_MUTATION_CONTEXT } from "./mutation-context-matchers.js";
 
 vi.mock("../pi.js", () => ({
   describeModel: vi.fn().mockReturnValue("mock-provider/mock-model"),
@@ -82,8 +83,7 @@ describe("FN-4068 baseline — plan review UNAVAILABLE", () => {
     expect(mockedCreateResolvedAgentSession).toHaveBeenCalledTimes(2);
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-4092",
-      expect.stringContaining("review retry with fallback model after UNAVAILABLE verdict"),
-    );
+      expect.stringContaining("review retry with fallback model after UNAVAILABLE verdict"), undefined, ANY_MUTATION_CONTEXT);
   });
 
   it("retries on the same model with stricter verdict instruction when fallback model is not configured", async () => {

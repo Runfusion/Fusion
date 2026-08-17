@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { ANY_MUTATION_CONTEXT } from "./mutation-context-matchers.js";
 import "./executor-test-helpers.js";
 import { TaskExecutor } from "../executor.js";
 import { createMockStore, mockedCreateFnAgent, mockedExec, resetExecutorMocks } from "./executor-test-helpers.js";
@@ -279,7 +280,7 @@ describe("branch cross-contamination recovery (FN-4428/FN-4499)", () => {
     await executor.execute(makeTask());
 
     expect(recoverySpy).not.toHaveBeenCalled();
-    expect(store.updateTask).toHaveBeenCalledWith("FN-4428", expect.objectContaining({ status: "failed", paused: true, pausedReason: "branch-cross-contamination" }));
+    expect(store.updateTask).toHaveBeenCalledWith("FN-4428", expect.objectContaining({ status: "failed", paused: true, pausedReason: "branch-cross-contamination" }), ANY_MUTATION_CONTEXT);
   });
 
   it("drops already-upstream + misrouted together then escalates on second contamination", async () => {
@@ -344,6 +345,6 @@ describe("branch cross-contamination recovery (FN-4428/FN-4499)", () => {
     const executor = new TaskExecutor(store, "/tmp/test");
     await executor.execute({ ...makeTask(), id: "FN-4488", branch: "fusion/fn-4488" } as any);
 
-    expect(store.updateTask).toHaveBeenCalledWith("FN-4488", expect.objectContaining({ status: "failed", paused: true, pausedReason: "branch-cross-contamination" }));
+    expect(store.updateTask).toHaveBeenCalledWith("FN-4488", expect.objectContaining({ status: "failed", paused: true, pausedReason: "branch-cross-contamination" }), ANY_MUTATION_CONTEXT);
   });
 });

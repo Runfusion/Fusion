@@ -1,4 +1,5 @@
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { ANY_MUTATION_CONTEXT } from "./mutation-context-matchers.js";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -210,12 +211,10 @@ describe("triage finalize duplicate lineage", () => {
       "FN-001",
       expect.objectContaining({
         sourceMetadataPatch: expect.objectContaining({ nearDuplicateOf: "FN-4894", duplicateSource: "triage-marker" }),
-      }),
-    );
+      }), ANY_MUTATION_CONTEXT);
     expect(store.updateTask).toHaveBeenCalledWith(
       "FN-001",
-      expect.objectContaining({ paused: true, pausedReason: "duplicate-decision-required" }),
-    );
+      expect.objectContaining({ paused: true, pausedReason: "duplicate-decision-required" }), ANY_MUTATION_CONTEXT);
     expect(store.deleteTask).not.toHaveBeenCalled();
   });
 });
