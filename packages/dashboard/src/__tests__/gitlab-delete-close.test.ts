@@ -1,3 +1,4 @@
+import { UNATTRIBUTED_CONTEXT_MATCHER } from "./mutation-context-matchers.js";
 import { EventEmitter } from "node:events";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -85,7 +86,7 @@ describe("GitLabDeleteCloseService", () => {
     const s = store(); new GitLabDeleteCloseService(s as any).start();
     emit(s, sourceTask({ id: "FN-leave" }), { githubIssueAction: "leave" }); await flush(); expect(fetch).not.toHaveBeenCalled();
     emit(s, sourceTask(), { githubIssueAction: "delete" }); await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
-    expect(s.logEntry).toHaveBeenCalledWith("FN-8687", "GitLab issue deletion is not supported; closed instead", "group/project#42");
+    expect(s.logEntry).toHaveBeenCalledWith("FN-8687", "GitLab issue deletion is not supported; closed instead", "group/project#42", UNATTRIBUTED_CONTEXT_MATCHER);
   });
 
   it("does nothing for non-GitLab, unlinked, or already-closed issues", async () => {

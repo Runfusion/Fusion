@@ -1,5 +1,6 @@
 // @vitest-environment node
 
+import { UNATTRIBUTED_CONTEXT_MATCHER } from "./mutation-context-matchers.js";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -92,7 +93,7 @@ describe("resolvePrConflicts", () => {
     expect(result.message).toContain("already merged");
     expect(mockRunGitCommand).not.toHaveBeenCalledWith(expect.arrayContaining(["commit"]), expect.anything(), expect.anything());
     expect(mockRunGitCommand).not.toHaveBeenCalledWith(expect.arrayContaining(["push"]), expect.anything(), expect.anything());
-    expect(store.logEntry).toHaveBeenCalledWith("FN-001", "Skipped PR conflict-free merge commit", "main already merged into fusion/fn-001");
+    expect(store.logEntry).toHaveBeenCalledWith("FN-001", "Skipped PR conflict-free merge commit", "main already merged into fusion/fn-001", UNATTRIBUTED_CONTEXT_MATCHER);
   });
 
   it("commits and pushes a conflict-free merge when staged changes exist", async () => {
@@ -130,7 +131,7 @@ describe("resolvePrConflicts", () => {
       "Fusion-Task-Id: FN-001",
     ], expect.stringContaining("conflict-fn-001"), 60000);
     expect(mockRunGitCommand).toHaveBeenCalledWith(["push", "-u", "origin", "fusion/fn-001"], expect.stringContaining("conflict-fn-001"), 60000);
-    expect(store.logEntry).toHaveBeenCalledWith("FN-001", "Pushed PR branch after conflict-free merge", "fusion/fn-001");
+    expect(store.logEntry).toHaveBeenCalledWith("FN-001", "Pushed PR branch after conflict-free merge", "fusion/fn-001", UNATTRIBUTED_CONTEXT_MATCHER);
   });
 
   /*

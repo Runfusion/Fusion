@@ -1,3 +1,24 @@
+/*
+FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage D — why every mutation context in this file is the MARKER):
+The operator asks for a conflict resolution from the PR view; the AI session that edits the worktree is
+not the actor for the store write, the human who requested it is.
+
+
+The actor for these writes is the authenticated human on the other end of the HTTP request. That actor
+does not exist yet: U9 is the unit that resolves it from the session and threads it through the route
+layer. Until then each write says so explicitly with the unattributed marker, which the U18
+census counts and ratchets DOWN.
+
+Two things this must NOT become. It is not `BOOTSTRAP_ACTOR_CONTEXT`: that means "written while
+identity was off" and is real attribution, so using it here would make an unwired route
+indistinguishable from a genuine pre-enablement write and leave U9 with no work list. And it is not a
+place to stop at one marker per file — the marker sits at the call site because U9's work is per
+handler, and one alias would hide every new unattributed route added between now and then.
+
+U9: replace these with the request's resolved actor. Nothing else about the call sites changes.
+*/
+// FNXC:Identity 2026-08-09-03:04: one-line import on purpose — the U18 census counts any non-`import`-prefixed line naming the marker, so a multi-line import block would score as debt it is not.
+import { UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 import { access, mkdir, readFile, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import type { Settings, TaskStore } from "@fusion/core";
@@ -246,7 +267,7 @@ export async function resolvePrConflicts(input: ResolvePrConflictsInput): Promis
         throw new Error(`Failed to merge ${baseRef} into ${branchName}: ${message}`);
       }
 
-      await store.logEntry(taskId, "Started AI PR conflict resolution", `${conflictedFiles.length} conflicted file(s)`);
+      await store.logEntry(taskId, "Started AI PR conflict resolution", `${conflictedFiles.length} conflicted file(s)`, UNATTRIBUTED_MUTATION_CONTEXT);
       try {
         await runResolutionAgent({
           cwd,
@@ -264,6 +285,7 @@ export async function resolvePrConflicts(input: ResolvePrConflictsInput): Promis
             taskId,
             "AI PR conflict resolution left unresolved markers",
             `Merge aborted. Worktree may still contain partial AI edits for manual review: ${unresolvedFiles.join(", ")}`,
+            UNATTRIBUTED_MUTATION_CONTEXT,
           );
           return {
             resolved: false,
@@ -273,7 +295,7 @@ export async function resolvePrConflicts(input: ResolvePrConflictsInput): Promis
           };
         }
 
-        await store.logEntry(taskId, "AI PR conflict resolution completed", `${conflictedFiles.length} conflicted file(s) resolved`);
+        await store.logEntry(taskId, "AI PR conflict resolution completed", `${conflictedFiles.length} conflicted file(s) resolved`, UNATTRIBUTED_MUTATION_CONTEXT);
         const committed = await stageAndCommitIfNeeded(cwd, [
           "-m",
           `fix(FN-5949): resolve PR conflicts for ${taskId}`,
@@ -282,7 +304,7 @@ export async function resolvePrConflicts(input: ResolvePrConflictsInput): Promis
         ]);
         if (!committed) {
           await abortMerge(cwd);
-          await store.logEntry(taskId, "Skipped PR conflict resolution commit", "No staged changes after AI conflict resolution");
+          await store.logEntry(taskId, "Skipped PR conflict resolution commit", "No staged changes after AI conflict resolution", UNATTRIBUTED_MUTATION_CONTEXT);
           return {
             resolved: true,
             pushed: false,
@@ -291,7 +313,7 @@ export async function resolvePrConflicts(input: ResolvePrConflictsInput): Promis
           };
         }
         await runGitCommand(["push", "-u", "origin", branchName], cwd, GIT_TIMEOUT_MS);
-        await store.logEntry(taskId, "Pushed PR branch after AI conflict resolution", branchName);
+        await store.logEntry(taskId, "Pushed PR branch after AI conflict resolution", branchName, UNATTRIBUTED_MUTATION_CONTEXT);
 
         return {
           resolved: true,
@@ -312,7 +334,7 @@ export async function resolvePrConflicts(input: ResolvePrConflictsInput): Promis
       `Fusion-Task-Id: ${taskId}`,
     ]);
     if (!committed) {
-      await store.logEntry(taskId, "Skipped PR conflict-free merge commit", `${baseRef} already merged into ${branchName}`);
+      await store.logEntry(taskId, "Skipped PR conflict-free merge commit", `${baseRef} already merged into ${branchName}`, UNATTRIBUTED_MUTATION_CONTEXT);
       return {
         resolved: true,
         pushed: false,
@@ -321,7 +343,7 @@ export async function resolvePrConflicts(input: ResolvePrConflictsInput): Promis
       };
     }
     await runGitCommand(["push", "-u", "origin", branchName], cwd, GIT_TIMEOUT_MS);
-    await store.logEntry(taskId, "Pushed PR branch after conflict-free merge", branchName);
+    await store.logEntry(taskId, "Pushed PR branch after conflict-free merge", branchName, UNATTRIBUTED_MUTATION_CONTEXT);
 
     return {
       resolved: true,

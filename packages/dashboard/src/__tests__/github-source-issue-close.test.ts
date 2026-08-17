@@ -1,3 +1,4 @@
+import { UNATTRIBUTED_CONTEXT_MATCHER } from "./mutation-context-matchers.js";
 import { EventEmitter } from "node:events";
 import { beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import type { TaskStore } from "@fusion/core";
@@ -92,7 +93,7 @@ describe("GitHubSourceIssueCloseService", () => {
     store.emit("task:moved", createEvent({ sourceIssue: { provider: "github", repository: "bad", issueNumber: 42 } }));
     await flushAsync();
     expect(mockSetIssueState).not.toHaveBeenCalled();
-    expect(store.logEntry).toHaveBeenCalledWith("FN-1", "Failed to close linked GitHub source issue", "Invalid GitHub source issue metadata: bad#42");
+    expect(store.logEntry).toHaveBeenCalledWith("FN-1", "Failed to close linked GitHub source issue", "Invalid GitHub source issue metadata: bad#42", UNATTRIBUTED_CONTEXT_MATCHER);
   });
 
   it("short-circuits when already closed", async () => {
@@ -101,7 +102,7 @@ describe("GitHubSourceIssueCloseService", () => {
     store.emit("task:moved", createEvent());
     await flushAsync();
     expect(mockSetIssueState).not.toHaveBeenCalled();
-    expect(store.logEntry).toHaveBeenCalledWith("FN-1", "Skipped closing GitHub source issue - issue not found or already closed", "owner/repo#42");
+    expect(store.logEntry).toHaveBeenCalledWith("FN-1", "Skipped closing GitHub source issue - issue not found or already closed", "owner/repo#42", UNATTRIBUTED_CONTEXT_MATCHER);
   });
 
   it("skips when source issue is missing from GitHub", async () => {
@@ -110,7 +111,7 @@ describe("GitHubSourceIssueCloseService", () => {
     store.emit("task:moved", createEvent());
     await flushAsync();
     expect(mockSetIssueState).not.toHaveBeenCalled();
-    expect(store.logEntry).toHaveBeenCalledWith("FN-1", "Skipped closing GitHub source issue - issue not found or already closed", "owner/repo#42");
+    expect(store.logEntry).toHaveBeenCalledWith("FN-1", "Skipped closing GitHub source issue - issue not found or already closed", "owner/repo#42", UNATTRIBUTED_CONTEXT_MATCHER);
   });
 
   it("closes open github source issue", async () => {
@@ -118,7 +119,7 @@ describe("GitHubSourceIssueCloseService", () => {
     store.emit("task:moved", createEvent());
     await flushAsync();
     expect(mockSetIssueState).toHaveBeenCalledWith("owner", "repo", 42, "closed", "completed");
-    expect(store.logEntry).toHaveBeenCalledWith("FN-1", "Closed linked GitHub source issue", "owner/repo#42");
+    expect(store.logEntry).toHaveBeenCalledWith("FN-1", "Closed linked GitHub source issue", "owner/repo#42", UNATTRIBUTED_CONTEXT_MATCHER);
   });
 
   it.each([
@@ -130,7 +131,7 @@ describe("GitHubSourceIssueCloseService", () => {
     store.emit("task:moved", { ...createEvent(), from, to: "archived" });
     await flushAsync();
     expect(mockSetIssueState).toHaveBeenCalledWith("owner", "repo", 42, "closed", stateReason);
-    expect(store.logEntry).toHaveBeenCalledWith("FN-1", "Closed linked GitHub source issue", "owner/repo#42");
+    expect(store.logEntry).toHaveBeenCalledWith("FN-1", "Closed linked GitHub source issue", "owner/repo#42", UNATTRIBUTED_CONTEXT_MATCHER);
   });
 
   it("reopens source issue when unarchived to done", async () => {
@@ -139,7 +140,7 @@ describe("GitHubSourceIssueCloseService", () => {
     store.emit("task:moved", { ...createEvent(), from: "archived", to: "done" });
     await flushAsync();
     expect(mockSetIssueState).toHaveBeenCalledWith("owner", "repo", 42, "open", "reopened");
-    expect(store.logEntry).toHaveBeenCalledWith("FN-1", "Reopened linked GitHub source issue", "owner/repo#42");
+    expect(store.logEntry).toHaveBeenCalledWith("FN-1", "Reopened linked GitHub source issue", "owner/repo#42", UNATTRIBUTED_CONTEXT_MATCHER);
   });
 
   it("reopens source issue when moved out of done", async () => {
@@ -148,7 +149,7 @@ describe("GitHubSourceIssueCloseService", () => {
     store.emit("task:moved", { ...createEvent(), from: "done", to: "todo" });
     await flushAsync();
     expect(mockSetIssueState).toHaveBeenCalledWith("owner", "repo", 42, "open", "reopened");
-    expect(store.logEntry).toHaveBeenCalledWith("FN-1", "Reopened linked GitHub source issue", "owner/repo#42");
+    expect(store.logEntry).toHaveBeenCalledWith("FN-1", "Reopened linked GitHub source issue", "owner/repo#42", UNATTRIBUTED_CONTEXT_MATCHER);
   });
 
   it("does nothing for archived source issue transition when setting is disabled", async () => {
@@ -194,7 +195,7 @@ describe("GitHubSourceIssueCloseService", () => {
     mockSetIssueState.mockRejectedValueOnce(new Error("bad request"));
     store.emit("task:moved", createEvent());
     await flushAsync();
-    expect(store.logEntry).toHaveBeenCalledWith("FN-1", "Failed to close linked GitHub source issue", "bad request");
+    expect(store.logEntry).toHaveBeenCalledWith("FN-1", "Failed to close linked GitHub source issue", "bad request", UNATTRIBUTED_CONTEXT_MATCHER);
   });
 
   it("no-ops for non-actionable transitions", async () => {
@@ -224,7 +225,7 @@ describe("GitHubSourceIssueCloseService", () => {
     store.emit("task:moved", createEvent());
     await flushAsync();
     expect(mockSetIssueState).not.toHaveBeenCalled();
-    expect(store.logEntry).toHaveBeenCalledWith("FN-1", "Skipped closing GitHub source issue", "no auth");
+    expect(store.logEntry).toHaveBeenCalledWith("FN-1", "Skipped closing GitHub source issue", "no auth", UNATTRIBUTED_CONTEXT_MATCHER);
   });
 
   it("attach adds listener for additional project store", async () => {

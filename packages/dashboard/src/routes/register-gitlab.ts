@@ -1,3 +1,21 @@
+/*
+FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage D — why every mutation context in this file is the MARKER):
+
+The actor for these writes is the authenticated human on the other end of the HTTP request. That actor
+does not exist yet: U9 is the unit that resolves it from the session and threads it through the route
+layer. Until then each write says so explicitly with the unattributed marker, which the U18
+census counts and ratchets DOWN.
+
+Two things this must NOT become. It is not `BOOTSTRAP_ACTOR_CONTEXT`: that means "written while
+identity was off" and is real attribution, so using it here would make an unwired route
+indistinguishable from a genuine pre-enablement write and leave U9 with no work list. And it is not a
+place to stop at one marker per file — the marker sits at the call site because U9's work is per
+handler, and one alias would hide every new unattributed route added between now and then.
+
+U9: replace these with the request's resolved actor. Nothing else about the call sites changes.
+*/
+// FNXC:Identity 2026-08-09-03:04: one-line import on purpose — the U18 census counts any non-`import`-prefixed line naming the marker, so a multi-line import block would score as debt it is not.
+import { UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 import { createLogger } from "@fusion/core";
 
 const severityAuditLog = createLogger("dashboard-register-gitlab");
@@ -120,8 +138,8 @@ async function importItem(ctx: ApiRoutesContext, req: Parameters<ApiRoutesContex
     sourceIssue: provenance.sourceIssue,
     gitlabTracking: provenance.gitlabTracking,
     source: { sourceType: "gitlab_import", sourceMetadata: provenance.sourceMetadata },
-  });
-  await store.logEntry(task.id, args.resourceType === "merge_request" ? "Imported merge request from GitLab" : "Imported from GitLab", args.item.webUrl);
+  }, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
+  await store.logEntry(task.id, args.resourceType === "merge_request" ? "Imported merge request from GitLab" : "Imported from GitLab", args.item.webUrl, UNATTRIBUTED_MUTATION_CONTEXT);
 
   /*
   FNXC:IssueImportAttachments 2026-07-15-13:40:
@@ -160,6 +178,7 @@ async function importItem(ctx: ApiRoutesContext, req: Parameters<ApiRoutesContex
         task.id,
         `Imported ${imageImport.attached} image attachment${imageImport.attached === 1 ? "" : "s"} from GitLab`,
         args.item.webUrl,
+        UNATTRIBUTED_MUTATION_CONTEXT,
       );
     } catch (error) {
       // FNXC:IssueImportAttachments 2026-07-15-14:10: The task and files are

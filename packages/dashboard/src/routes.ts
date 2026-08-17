@@ -304,8 +304,6 @@ async function discoverDashboardPiExtensions(cwd: string): Promise<PiExtensionSe
 
 import {
   createFnAgent as engineCreateFnAgentForRefine,
-  getExemptToolNames as engineGetExemptToolNames,
-  reloadExemptTools as engineReloadExemptTools,
   resolveIntegrationBranch,
 } from "@fusion/engine";
 
@@ -1174,32 +1172,13 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
   registrarMounter.mount("registerConfigMcpPiSettingsRoutes", () => registerConfigMcpPiSettingsRoutes(routeContext));
 
-  /**
-   * POST /api/action-gate/reload
-   * Reloads action-gate exempt tools from defaults or a provided override list.
-   */
-  router.post("/action-gate/reload", async (req, res) => {
-    try {
-      const body = (req.body && typeof req.body === "object") ? (req.body as Record<string, unknown>) : {};
-      const hasTools = Object.hasOwn(body, "tools");
-      if (hasTools) {
-        const tools = body.tools;
-        if (!Array.isArray(tools) || tools.some((tool) => typeof tool !== "string")) {
-          throw badRequest("Request body must provide tools as string[] when present");
-        }
-        engineReloadExemptTools(tools);
-      } else {
-        engineReloadExemptTools();
-      }
-
-      res.json({ ok: true, tools: engineGetExemptToolNames() });
-    } catch (err: unknown) {
-      if (err instanceof ApiError) {
-        throw err;
-      }
-      rethrowAsApiError(err);
-    }
-  });
+  /*
+  FNXC:AgentGating 2026-08-09-03:04:
+  `POST /api/action-gate/reload` is DELETED and must not return.
+  It accepted `{ tools: string[] }` and replaced the action gate's module-global exempt-tool set process-wide. Because `evaluateAgentActionGate` maps the `exempt` class straight to `allow`, one unauthenticated-in-practice request could disable agent action gating for EVERY agent in EVERY project — at any preset, including `locked-down` — with no audit row, no project scoping, and no persistence to make the change visible afterward.
+  That defeats the `require-approval` and `block` dispositions that real ApprovalRequest flows depend on, which is the opposite of what the gate exists for. The route existed only for tool-discovery convenience; the in-process `reloadExemptTools()` / `addToExemptTools()` helpers remain for engine-internal use and test setup, where they are not remotely reachable.
+  If a reload surface is ever genuinely needed again, it must be permission-gated, project-scoped, persisted, and emit a run-audit row — not restored as-is.
+  */
 
   /**
    * GET /api/executor/stats

@@ -1,3 +1,21 @@
+/*
+FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage D — why every mutation context in this file is the MARKER):
+
+The actor for these writes is the authenticated human on the other end of the HTTP request. That actor
+does not exist yet: U9 is the unit that resolves it from the session and threads it through the route
+layer. Until then each write says so explicitly with the unattributed marker, which the U18
+census counts and ratchets DOWN.
+
+Two things this must NOT become. It is not `BOOTSTRAP_ACTOR_CONTEXT`: that means "written while
+identity was off" and is real attribution, so using it here would make an unwired route
+indistinguishable from a genuine pre-enablement write and leave U9 with no work list. And it is not a
+place to stop at one marker per file — the marker sits at the call site because U9's work is per
+handler, and one alias would hide every new unattributed route added between now and then.
+
+U9: replace these with the request's resolved actor. Nothing else about the call sites changes.
+*/
+// FNXC:Identity 2026-08-09-03:04: one-line import on purpose — the U18 census counts any non-`import`-prefixed line naming the marker, so a multi-line import block would score as debt it is not.
+import { UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 import {
   DEFAULT_TASK_PRIORITY,
   resolveEffectiveSettingsDetailedById,
@@ -9,6 +27,7 @@ import {
   type TaskStore,
   type ThinkingLevel,
 } from "@fusion/core";
+import { BOOTSTRAP_ACTOR_CONTEXT } from "@fusion/core";
 import { createAgentTask } from "@fusion/engine";
 import { normalizePlanningSummaryPayload } from "../planning.js";
 import { extractIssueImageUrls, githubImagePolicy, importIssueImagesFromUrls } from "../issue-image-attachments.js";
@@ -364,7 +383,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
         wasDuplicateByIndex.push(wasDuplicate);
 
         if (!wasDuplicate && (item.size === "S" || item.size === "M" || item.size === "L")) {
-          await scopedStore.updateTask(task.id, { size: item.size });
+          await scopedStore.updateTask(task.id, { size: item.size }, UNATTRIBUTED_MUTATION_CONTEXT);
         }
       }
 
@@ -405,7 +424,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
         }
 
         if (resolvedDependencies.length > 0) {
-          const updated = await scopedStore.updateTask(created.id, { dependencies: resolvedDependencies });
+          const updated = await scopedStore.updateTask(created.id, { dependencies: resolvedDependencies }, UNATTRIBUTED_MUTATION_CONTEXT);
           createdTasks[index] = updated;
         }
         if (dropped.length > 0) {
@@ -413,10 +432,11 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
           await scopedStore.logEntry(
             created.id,
             `Subtask breakdown: dropped invalid dependencies [${dropped.join(", ")}] (parent-id or unknown task id)`,
+            undefined, UNATTRIBUTED_MUTATION_CONTEXT,
           );
         }
 
-        await scopedStore.logEntry(created.id, "Created via subtask breakdown", `Source: ${session.initialDescription.slice(0, 200)}`);
+        await scopedStore.logEntry(created.id, "Created via subtask breakdown", `Source: ${session.initialDescription.slice(0, 200)}`, UNATTRIBUTED_MUTATION_CONTEXT);
       }
 
       let parentTaskClosed = false;
@@ -431,8 +451,10 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
               runId: `synthetic-planning-delete-${normalizedParentId}-${Date.now()}`,
               sessionId,
               callerKind: "engine",
+              // FNXC:Identity 2026-08-09-03:04: no authenticated HTTP actor until the identity middleware lands; the bootstrap actor is the honest, audit-visible pre-enablement value (never derived from `callerKind` — R21).
+              actor: BOOTSTRAP_ACTOR_CONTEXT,
             },
-          });
+          }, UNATTRIBUTED_MUTATION_CONTEXT);
           parentTaskClosed = true;
         } catch (err: unknown) {
           // deleteTask refuses when live tasks still reference the parent id.
@@ -1521,13 +1543,13 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
         */
         ...(workflowId !== undefined ? { workflowId: workflowId as string | null } : {}),
         proposalClaimId: currentProposalClaimId(),
-      });
+      }, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
 
       // Update task with suggested size if provided.
       if (summary.suggestedSize) {
         await runPlanningCreateSideEffect(
           "Planning create-task size update failed",
-          () => scopedStore.updateTask(task.id, { size: summary.suggestedSize }),
+          () => scopedStore.updateTask(task.id, { size: summary.suggestedSize }, UNATTRIBUTED_MUTATION_CONTEXT),
           { taskId: task.id, sessionId },
         );
       }
@@ -1571,7 +1593,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
       // Log the planning mode creation.
       await runPlanningCreateSideEffect(
         "Planning create-task log entry failed",
-        () => scopedStore.logEntry(task.id, "Created via Planning Mode", `Initial plan: ${(initialPlan ?? "").slice(0, 200)}`),
+        () => scopedStore.logEntry(task.id, "Created via Planning Mode", `Initial plan: ${(initialPlan ?? "").slice(0, 200)}`, UNATTRIBUTED_MUTATION_CONTEXT),
         { taskId: task.id, sessionId },
       );
 
@@ -1830,7 +1852,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
           Multi-task Planning Mode creation must apply the selected workflow to every generated child so saved tasks do not jump to the main board first.
           */
           ...(workflowId !== undefined ? { workflowId: workflowId as string | null } : {}),
-        });
+        }, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
 
         tempIdToTaskId.set(item.id, task.id);
         createdTasks.push(task);
@@ -1858,7 +1880,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
         if (item.suggestedSize === "S" || item.suggestedSize === "M" || item.suggestedSize === "L") {
           await runPlanningCreateSideEffect(
             "Planning create-tasks size update failed",
-            () => scopedStore.updateTask(task.id, { size: item.suggestedSize }),
+            () => scopedStore.updateTask(task.id, { size: item.suggestedSize }, UNATTRIBUTED_MUTATION_CONTEXT),
             { taskId: task.id, planningSessionId },
           );
         }
@@ -1875,7 +1897,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
           await runPlanningCreateSideEffect(
             "Planning create-tasks dependency update failed",
             async () => {
-              const updated = await scopedStore.updateTask(created.id, { dependencies: resolvedDependencies });
+              const updated = await scopedStore.updateTask(created.id, { dependencies: resolvedDependencies }, UNATTRIBUTED_MUTATION_CONTEXT);
               createdTasks[index] = updated;
             },
             { taskId: created.id, planningSessionId },
@@ -1884,7 +1906,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
 
         await runPlanningCreateSideEffect(
           "Planning create-tasks log entry failed",
-          () => scopedStore.logEntry(created.id, "Created via Planning Mode (multi-task)", logDetails),
+          () => scopedStore.logEntry(created.id, "Created via Planning Mode (multi-task)", logDetails, UNATTRIBUTED_MUTATION_CONTEXT),
           { taskId: created.id, planningSessionId },
         );
       }

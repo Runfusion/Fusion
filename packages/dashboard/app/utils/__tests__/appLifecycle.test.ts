@@ -106,6 +106,46 @@ describe("resolveDesktopShellRedirectTarget", () => {
     expect(target).toBe("http://127.0.0.1:50123");
   });
 
+  /*
+  FNXC:DesktopHostAuth 2026-08-09-03:04:
+  The embedded desktop server is now bearer-gated (it used to serve `/api/*`, terminal WebSocket
+  included, unauthenticated on every network interface). This "Switch server" -> Local redirect is
+  the SECOND navigation into the runtime origin after DesktopLaunchGate, so it must carry the
+  token; without it the renderer lands on the dashboard and 401s on every API call.
+  */
+  it("carries the local runtime's bearer token as ?token= when switching remote -> local", () => {
+    const target = resolveDesktopShellRedirectTarget(
+      {
+        host: "desktop-shell",
+        desktopMode: "local",
+        activeProfileId: "remote-1",
+        profiles: [remoteProfile],
+        localRuntime: {
+          state: "running",
+          baseUrl: "http://127.0.0.1:50123",
+          port: 50123,
+          authToken: "fn_0123456789abcdef0123456789abcdef",
+        },
+      },
+      "https://fusionstudio:4040/",
+    );
+    expect(target).toBe("http://127.0.0.1:50123/?token=fn_0123456789abcdef0123456789abcdef");
+  });
+
+  it("carries the token on the localhost:<port> fallback too", () => {
+    const target = resolveDesktopShellRedirectTarget(
+      {
+        host: "desktop-shell",
+        desktopMode: "local",
+        activeProfileId: null,
+        profiles: [],
+        localRuntime: { state: "running", port: 50123, authToken: "fn_0123456789abcdef0123456789abcdef" },
+      },
+      "https://fusionstudio:4040/",
+    );
+    expect(target).toBe("http://localhost:50123/?token=fn_0123456789abcdef0123456789abcdef");
+  });
+
   it("falls back to localhost:<port> when localRuntime has no baseUrl", () => {
     const target = resolveDesktopShellRedirectTarget(
       {
