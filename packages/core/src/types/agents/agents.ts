@@ -854,14 +854,33 @@ export interface AgentUpdateInput {
   heartbeatProcedurePath?: string;
 }
 
+/*
+FNXC:Identity 2026-08-09-03:04:
+U6/KTD4 — this key's FORMAT was migrated; the table was kept.
+
+Keys minted before U6 were `randomBytes(32)` hex hashed with a bare unsalted SHA-256, carrying no
+prefix, no lookup id, and no expiry. The unsalted SHA-256 is not itself weak at 256 bits of entropy —
+the defect is the MISSING LOOKUP ID, which forces verification to hash the presented value and scan
+every row. New keys are minted in the `fnk_lookupid_secret` shape (see
+`packages/core/src/identity/tokens.ts`) and verified by a single lookup on `lookupId` plus a
+constant-time HMAC compare.
+
+`tokenHash` is therefore now the LEGACY field, present only on pre-U6 rows and never written again.
+`lookupId`/`secretHash` are the current pair. Both are optional so old rows keep deserializing —
+tombstoning the old field rather than dropping it is what keeps an existing install's keys readable.
+*/
 /** An API key associated with an agent for bearer token authentication. */
 export interface AgentApiKey {
   /** Unique key identifier (e.g., "key-a1b2c3d4") */
   id: string;
   /** The agent this key belongs to */
   agentId: string;
-  /** SHA-256 hash of the plaintext token (hex-encoded, 64 chars) */
-  tokenHash: string;
+  /** LEGACY (pre-U6): bare SHA-256 of the plaintext token. Never written by new mints; scan-only. */
+  tokenHash?: string;
+  /** KTD4: the public, non-secret handle embedded in the token. Verification looks up on this. */
+  lookupId?: string;
+  /** KTD4: HMAC-SHA256 of the token's secret segment under the server key. Never the raw secret. */
+  secretHash?: string;
   /** Optional human-readable label for the key */
   label?: string;
   /** ISO-8601 timestamp when the key was created */

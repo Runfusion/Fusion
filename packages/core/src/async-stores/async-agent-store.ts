@@ -735,6 +735,47 @@ export async function insertApiKey(
 }
 
 /**
+ * FNXC:Identity 2026-08-09-03:04:
+ * KTD4 — resolve an API key by the PUBLIC lookup id embedded in its token.
+ *
+ * This is the query that replaces the pre-U6 table scan: verification parses `fnk_lookupid_secret`,
+ * fetches the single row whose `lookupId` matches, and compares HMACs in constant time. The match is
+ * an equality on `data->>'lookupId'` because the key record lives in a jsonb column; a supporting
+ * expression index on that path is a follow-up migration, not a correctness condition — the
+ * single-row semantics are what the verification path depends on.
+ *
+ * Legacy pre-U6 rows carry no `lookupId` and are therefore unreachable here by construction.
+ */
+export async function findApiKeyByLookupId(
+  handle: QueryHandle,
+  lookupId: string,
+  projectId?: string,
+): Promise<AgentApiKey | null> {
+  if (!lookupId) return null;
+  const rows = await handle
+    .select({ data: schema.project.agentApiKeys.data })
+    .from(schema.project.agentApiKeys)
+    /*
+    FNXC:Identity 2026-08-15-06:20 (review finding — verification was NOT project-scoped):
+    This predicate was a bare `lookupId` equality while both siblings (`readApiKeys`,
+    `insertApiKey`) scope on `projectId`. On a shared cluster — which is the deployment the central
+    database exists for — a token minted in project A resolved against project B's store and was
+    then treated as a valid credential there, because the caller only checks the HMAC afterwards and
+    the HMAC is valid: it is the SAME key row. Scoping is what makes the token mean "valid HERE"
+    rather than "valid somewhere".
+
+    Do not rely on lookup ids being unique across projects: `limit(1)` over an unscoped, unordered
+    match would otherwise pick an arbitrary row.
+    */
+    .where(and(
+      sql`${schema.project.agentApiKeys.data}->>'lookupId' = ${lookupId}`,
+      projectScopeFor(schema.project.agentApiKeys.projectId, projectId),
+    ))
+    .limit(1);
+  return (rows[0]?.data as AgentApiKey | null) ?? null;
+}
+
+/**
  * Update an API key's data + revokedAt timestamp (by id + agentId).
  */
 export async function revokeApiKeyRow(
