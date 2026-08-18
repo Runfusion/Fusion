@@ -1,15 +1,4 @@
 {
-  "$comment": "Flaky-test quarantine ledger (deletion ratchet — see AGENTS.md 'Flaky tests: quarantine on sight' and docs/testing.md 'Quarantine ledger and the deletion ratchet'). A test observed failing without a corresponding real bug is quarantined ON SIGHT: add an entry here AND a matching one-line `exclude` entry in that package's vitest config, in the same commit. Every entry needs a non-empty `reason` (link the failing run) and a `quarantinedAt` date — the entry expires 14 days later, at which point the test file is DELETED unless someone rescues it with evidence it catches real regressions plus a root-cause fix (never appeasement). There is deliberately no loader module and no automation around this file: it is a dated record, the vitest config is the enforcement.",
-  "entries": [
-    {
-      "file": "packages/engine/src/__tests__/plugin-runner.test.ts",
-      "reason": "FN-9125: first-sighting register entry 3; failure evidence https://github.com/Runfusion/Fusion/pull/2799#issuecomment-5134921769 captures seven loaded-engine failures on the PR #2799 merged-with-main tree, but only `PluginRunner > task lifecycle hooks > should invoke onTaskCompleted when the complete lane is RENAMED` survived because the original dot output was truncated. FN-9125 confirmed the file is in-memory/mocked and not PostgreSQL-backed; no current structural failure was reproducible. Quarantined under the deletion ratchet rather than weakening lifecycle assertions.",
-      "quarantinedAt": "2026-08-16"
-    },
-    {
-      "file": "packages/engine/src/notification/__tests__/task-wedge-notification.test.ts",
-      "reason": "RUFU-072 run-time OOM: RUNNING this file inside engine-default drives superlinear RSS 64G->120G in ~90s and trips the operator watchdog; the machine was halted 4+ times by it before the watchdog. `vitest list` proves the file correctly maps to [engine-default] (single-file, 25 tests) so whole-workspace discovery is NOT the cause — it is a retained-object leak (NotificationService/scheduler/registry) in the execute path. Quarantined per deletion ratchet so RUFU-069's verification never re-halts the box; do NOT widen limits/retries (anti-appeasement). Requires a non-appeasement root-cause fix to rescue: https://github.com/Runfusion/Fusion (RUFU-072) — isolated reproduction: engine-scoped `vitest run src/notification/__tests__/task-wedge-notification.test.ts` under `--max-old-space-size=1900` + 95% watchdog trips the watchdog, not the heap cap.",
-      "quarantinedAt": "2026-08-11"
-    }
-  ]
+  "$comment": "Flaky-test quarantine ledger (deletion ratchet — see AGENTS.md 'Flaky tests: quarantine on sight' and docs/testing.md 'Quarantine ledger and the deletion ratchet'). A test observed failing without a corresponding real bug is quarantined ON SIGHT: add an entry here AND a matching one-line `exclude` entry in that package's vitest config, in the same commit. Every entry needs a non-empty `reason` (link the failing run) and a `quarantinedAt` date — the entry expires 14 days later, at which point the test file is DELETED unless someone rescues it with evidence it catches real regressions plus a root-cause fix (never appeasement). scripts/check-quarantine-ledger.mjs mechanically verifies this ledger and concrete `exclude:` array entries stay in lockstep.",
+  "entries": []
 }
