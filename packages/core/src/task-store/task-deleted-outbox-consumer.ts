@@ -80,6 +80,18 @@ function assertTaskDeletedOutboxEvent(event: OutboxEventForValidation): void {
  * before the durable receipt/cursor acknowledgement, intentionally yielding at-least-once
  * observed notifications in the crash window; observed dispatch has no writer-owned effects.
  */
+
+/**
+ * Tri-state poll outcome that drives the idle backoff. Only "idle" (the outbox was genuinely
+ * empty) extends the delay toward the 60s cap. "active" means at least one event was
+ * delivered/processed. "waiting" covers retry-backoff windows, lease contention, fencing,
+ * errors, and shutdown races: none of those mean the outbox is idle, so none may extend the
+ * backoff. Resetting to the fast base on "waiting" keeps transient failures on a 5s recovery
+ * cadence instead of letting an error streak masquerade as an idle streak and hide recovery
+ * behind the 60s cap.
+ */
+export type TaskDeletedOutboxPollOutcome = "active" | "idle" | "waiting";
+
 export class TaskDeletedOutboxConsumer {
   private pollTimer: ReturnType<typeof setTimeout> | null = null;
   private renewalTimer: ReturnType<typeof setInterval> | null = null;
@@ -101,16 +113,23 @@ export class TaskDeletedOutboxConsumer {
   new event mid-backoff resets the cadence to 5s, bounding delivery latency. Cursor fencing, lease
   advance, per-event ordering, and at-least-once delivery are unchanged — backoff only changes when
   poll() runs, never the poll/dispatch/ack logic.
+
+  FNXC:TaskLifecycleConsumerIdleBackoff 2026-08-18-00:55 (RUFU-074 review fix):
+  Review feedback: retry and error outcomes must not be classified as idle polls. The outcome is
+  now tri-state (TaskDeletedOutboxPollOutcome): only a genuinely empty outbox reports "idle" and
+  extends the backoff. Retry-backoff windows (cursor.retryBackoffUntil), lease contention, fencing,
+  and poll errors report "waiting" and reset the idle streak to the fast 5s base, so a transient
+  failure recovers at 5s cadence instead of an error streak growing the delay to the 60s cap and
+  hiding recovery behind it.
   */
   async start(): Promise<void> {
     if (this.running || !this.store.asyncLayer || !this.store.consumerId) return;
     this.running = true;
-    /* Drain any backlog with the immediate poll, then feed its idle/active outcome into the first
-    scheduled delay so a fresh idle consumer backs off from the very first timer (not after one
-    wasted 5s tick). */
-    const active = await this.pollSafely();
-    if (active) this.idlePollsSinceEvent = 0;
-    else this.idlePollsSinceEvent += 1;
+    /* Drain any backlog with the immediate poll, then feed its outcome into the first scheduled
+    delay so a fresh idle consumer backs off from the very first timer (not after one wasted 5s
+    tick). */
+    const outcome = await this.pollSafely();
+    this.recordPollOutcome(outcome);
     this.scheduleNextPoll();
   }
 
@@ -139,26 +158,28 @@ export class TaskDeletedOutboxConsumer {
     }
   }
 
-  private async pollSafely(): Promise<boolean> {
+  private async pollSafely(): Promise<TaskDeletedOutboxPollOutcome> {
     try {
       return await this.poll();
     } catch (error) {
       outboxConsumerLog.warn("Task:deleted outbox poll failed; delivery will retry", error);
-      return false;
+      return "waiting";
     }
   }
 
   /**
-   * Idle/active backoff contract: returns `true` when the poll delivered/processed at least one
-   * lifecycle event (the consumer is active), `false` when it found the outbox empty or took a
-   * non-delivering early return (the consumer is idle). The rescheduling loop uses this to extend
-   * the next poll delay toward the 60s cap while idle and reset to the fast 5s base once events
-   * flow again.
+   * Idle/active/waiting backoff contract: returns "active" when the poll delivered/processed at
+   * least one lifecycle event, "idle" when it found the outbox genuinely empty, and "waiting" when
+   * it took a non-delivering early return that does NOT mean the outbox is idle (retry-backoff
+   * window, lease contention, fencing, errors, shutdown races). The rescheduling loop extends the
+   * next poll delay toward the 60s cap on "idle" only and resets to the fast 5s base on "active"
+   * and "waiting", so transient failures recover quickly instead of being hidden behind an idle
+   * cap grown out of an error streak.
    */
-  async poll(): Promise<boolean> {
+  async poll(): Promise<TaskDeletedOutboxPollOutcome> {
     const layer = this.store.asyncLayer;
     const consumerId = this.store.consumerId;
-    if (!this.running || !layer || !consumerId) return false;
+    if (!this.running || !layer || !consumerId) return "waiting";
     await registerTaskLifecycleConsumer(layer, consumerId);
     /*
     FNXC:CrossProcessDeleteObservation 2026-08-01-12:14:
@@ -167,7 +188,7 @@ export class TaskDeletedOutboxConsumer {
     */
     if (!this.running) {
       await setTaskLifecycleConsumerActive(layer, consumerId, false);
-      return false;
+      return "waiting";
     }
     const now = new Date();
     const acquired = await acquireTaskLifecycleLease(
@@ -177,27 +198,29 @@ export class TaskDeletedOutboxConsumer {
       new Date(now.getTime() + TASK_DELETED_OUTBOX_LEASE_MS).toISOString(),
       now.toISOString(),
     );
-    if (!acquired) return false;
+    if (!acquired) return "waiting";
     if (!this.running) {
       await releaseTaskLifecycleLease(layer, consumerId, acquired);
-      return false;
+      return "waiting";
     }
     this.lease = acquired;
     this.startRenewal(acquired);
     try {
       const cursor = await readTaskLifecycleConsumerCursor(layer, consumerId);
-      if (!cursor) return false;
-      if (cursor.retryBackoffUntil && Date.parse(cursor.retryBackoffUntil) > Date.now()) return false;
+      if (!cursor) return "waiting";
+      // In the per-event retry window: the cursor already scheduled when the failed event may be
+      // retried. This is a retry wait, not an idle outbox — the next probe stays on the fast base.
+      if (cursor.retryBackoffUntil && Date.parse(cursor.retryBackoffUntil) > Date.now()) return "waiting";
       const reconciliationReason = await this.needsReconciliation(cursor.lastAckedSeq, cursor.updatedAt);
       if (reconciliationReason) {
         const reconciled = await this.reconcile(cursor.lastAckedSeq, acquired, reconciliationReason);
         if (!reconciled) {
           await this.recordLeaseFenced(acquired, 0);
-          return false;
+          return "waiting";
         }
       }
       const currentCursor = await readTaskLifecycleConsumerCursor(layer, consumerId);
-      if (!currentCursor) return false;
+      if (!currentCursor) return "waiting";
       const events = await listTaskLifecycleEvents(layer, currentCursor.lastAckedSeq, TASK_DELETED_OUTBOX_BATCH_SIZE);
       let priorSeq = currentCursor.lastAckedSeq;
       let dispatchedCount = 0;
@@ -269,7 +292,7 @@ export class TaskDeletedOutboxConsumer {
         });
       }
       if (this.running) await setTaskLifecycleConsumerActive(layer, consumerId, true);
-      return events.length > 0;
+      return events.length > 0 ? "active" : "idle";
     } finally {
       if (this.renewalTimer) clearInterval(this.renewalTimer);
       this.renewalTimer = null;
@@ -302,19 +325,30 @@ export class TaskDeletedOutboxConsumer {
   /**
    * Reschedule the next poll with a setTimeout whose delay reflects the previous poll's outcome,
    * replacing the old fixed-interval setInterval so an idle consumer stops thundering against the
-   * DB. pollSafely always resolves (it swallows errors), so the reschedule chain never stalls.
+   * DB. pollSafely always resolves (it maps errors to "waiting"), so the reschedule chain never
+   * stalls.
    */
   private scheduleNextPoll(): void {
     if (!this.running) return;
     if (this.pollTimer) clearTimeout(this.pollTimer);
     this.pollTimer = setTimeout(() => {
       this.pollTimer = null;
-      void this.pollSafely().then((active) => {
-        if (active) this.idlePollsSinceEvent = 0;
-        else this.idlePollsSinceEvent += 1;
+      void this.pollSafely().then((outcome) => {
+        this.recordPollOutcome(outcome);
         this.scheduleNextPoll();
       });
     }, this.nextPollDelayMs());
+  }
+
+  /**
+   * FNXC:TaskLifecycleConsumerIdleBackoff 2026-08-18-00:55 (RUFU-074 review fix):
+   * Only a genuinely idle poll (empty outbox) extends the backoff. Active and waiting outcomes
+   * reset the idle streak so the next poll lands on the fast 5s base — an error or retry streak
+   * must never masquerade as an idle streak and push the cadence toward the 60s cap.
+   */
+  private recordPollOutcome(outcome: TaskDeletedOutboxPollOutcome): void {
+    if (outcome === "idle") this.idlePollsSinceEvent += 1;
+    else this.idlePollsSinceEvent = 0;
   }
 
   /** Jittered delay for the upcoming poll, derived from the accumulated idle-poll count. */

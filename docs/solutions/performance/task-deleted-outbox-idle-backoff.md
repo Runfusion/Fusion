@@ -60,14 +60,20 @@ project automatically.
 ### The rescheduling loop
 
 The consumer no longer uses a fixed `setInterval(5s)`. It now **self-reschedules with a `setTimeout`**,
-feeding each poll's outcome back into the next delay:
+feeding each poll's tri-state outcome (`active` / `idle` / `waiting`) back into the next delay:
 
-- **Idle poll** (outbox empty / cursor not advancing): `idlePollsSinceEvent` increments, and the next
+- **Idle poll** (the outbox was genuinely empty): `idlePollsSinceEvent` increments, and the next
   delay grows by `TASK_DELETED_OUTBOX_BACKOFF_STEP_MS` (10s) per idle poll, toward
   `TASK_DELETED_OUTBOX_MAX_POLL_MS` (60s):
-  `5s → 15s → 25s → ... → 60s` (capped).
+  `5s → 15s → 25s → ... → 60s` (capped). This is the ONLY outcome that extends the backoff.
 - **Active poll** (delivered ≥1 event): `idlePollsSinceEvent = 0`, next delay resets to the fast
   `TASK_DELETED_OUTBOX_POLL_MS` (5s) base — so a new event mid-backoff is delivered on the next poll after the cadence resets to 5s (bounded by that next poll; not immediate, but not stuck at the 60s cap).
+- **Waiting poll** (retry-backoff window `cursor.retryBackoffUntil`, lease contention, fencing,
+  poll errors mapped by `pollSafely`, shutdown races): `idlePollsSinceEvent = 0` as well. Review
+  feedback (2026-08-18): retry and error outcomes must not be classified as idle polls — they do
+  not mean the outbox is empty, so they must not extend the backoff. Resetting to the fast base
+  keeps a transient failure on a 5s recovery cadence instead of an error streak growing the delay
+  to the 60s cap and hiding recovery behind it.
 - **Jitter:** `applyPollJitter` applies ±20% multiplicative jitter so the ~44 consumers de-synchronize
   and don't thunder on the same cadence; the delay never falls below the fast 5s base.
 
@@ -93,8 +99,15 @@ fakes + fake timers, no real DB, no waits) proves:
 3. An idle engine consumer backs off **independently** from a concurrent active dashboard consumer.
 4. A burst arriving **mid-backoff** is delivered in order with fenced acks (`fencingToken` honored,
    sequence `1n,2n,3n`) and resets the cadence to the fast 5s base.
-5. `stop()` disarms the timer (no orphaned post-stop poll).
+5. `stop()` disarms the timer (no orphaned post-stop poll); a manual post-stop `poll()` reports
+   `"waiting"` and reads nothing.
 6. The deterministic growth curve `5s→15s→...→60s` holds and never falls below base.
+7. A transient outbox-reader **error streak** is classified `"waiting"`, not `"idle"`: the cadence
+   stays on the fast 5s base through the failures and the next poll after recovery delivers the
+   pending event.
+8. A cursor inside its **per-event retry-backoff window** takes the `"waiting"` early return before
+   reading the outbox and stays on the fast 5s base (the outbox read is skipped while the window
+   holds).
 
 ## Symptom-verification (operator deploy)
 
