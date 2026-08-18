@@ -2878,3 +2878,4 @@ export * from "./memory/recall-capture.js";
  * filesystem-dependent spawn factory remains available only at @fusion/core/mcp-builtin-servers.
  */
 export * from "./config/mcp-builtin-descriptor.js";
+export * from "./cloud-link/index.js";

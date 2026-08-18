@@ -20,7 +20,16 @@ import type {
   AgentLogEntry,
   RunAuditEvent,
 } from "@fusion/core";
-import { AgentStore, ChatStore, queryRunAuditEvents, resolveGlobalDir, resolveReboundTargetForTask, setRunningAgentCountSource } from "@fusion/core";
+import {
+  AgentStore,
+  ChatStore,
+  cloudRedeemTicket,
+  loadCloudLinkState,
+  queryRunAuditEvents,
+  resolveGlobalDir,
+  resolveReboundTargetForTask,
+  setRunningAgentCountSource,
+} from "@fusion/core";
 import type { AuthStorageLike, ModelRegistryLike } from "./routes.js";
 import { createApiRoutes } from "./routes.js";
 import { createSSE, disconnectSSEClient, markSSEClientAlive } from "./sse.js";
@@ -74,7 +83,7 @@ import { setupCliSessionWebSocket } from "./cli-session-ws.js";
 import { createCliSessionsRouter } from "./routes/cli-sessions.js";
 import { getProjectIdFromRequest, resolveStoreForProjectId } from "./routes/context.js";
 import type { CliRelaunchRegistry } from "./cli-session-transport.js";
-import { validateRemoteAuthToken } from "./remote-auth.js";
+import { issueRemoteAuthToken, validateRemoteAuthToken } from "./remote-auth.js";
 import { getCliPackageVersion, isUnresolvedCliPackageVersion } from "./cli-package-version.js";
 import { performUpdateCheck } from "./update-check.js";
 import { buildAutoUpdateDeps, startAutoUpdateWatcher } from "./auto-update.js";
@@ -2155,6 +2164,14 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
 
   app.get("/remote-login", async (req, res) => {
     const remoteToken = typeof req.query.rt === "string" ? req.query.rt : undefined;
+    /*
+    FNXC:CloudLink 2026-08-17-23:45:
+    Mode A handoff from Fusion Cloud console uses cloudTicket=jti.secret.
+    Redeem against the control plane, then issue a short-lived local remote token (rt)
+    and redirect through the existing remote-login path so daemon auth still works.
+    */
+    const cloudTicket =
+      typeof req.query.cloudTicket === "string" ? req.query.cloudTicket : undefined;
 
     let settings: Awaited<ReturnType<typeof store.getSettings>>;
     try {
@@ -2168,6 +2185,50 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
     if (!remoteAccess) {
       res.status(401).json({ error: "Unauthorized", code: "remote_token_invalid" });
       return;
+    }
+
+    if (cloudTicket) {
+      try {
+        const linked = loadCloudLinkState();
+        const httpBase =
+          linked?.httpBaseUrl ||
+          process.env.FUSION_CLOUD_HTTP_URL?.trim() ||
+          "";
+        if (!httpBase) {
+          res.status(401).json({
+            error: "Unauthorized",
+            code: "cloud_ticket_cloud_url_missing",
+          });
+          return;
+        }
+        await cloudRedeemTicket(httpBase, {
+          ticket: cloudTicket,
+          engineId: linked?.engineId,
+        });
+        if (!remoteAccess.tokenStrategy.shortLived.enabled) {
+          const daemonTokenForRedirect = getDaemonToken(options);
+          if (daemonTokenForRedirect) {
+            const redirectUrl = new URL("/", `${req.protocol}://${req.get("host")}`);
+            redirectUrl.searchParams.set("token", daemonTokenForRedirect);
+            res.redirect(302, redirectUrl.pathname + redirectUrl.search);
+            return;
+          }
+          res.redirect(302, "/");
+          return;
+        }
+        const issued = issueRemoteAuthToken("short-lived", remoteAccess);
+        const redirectUrl = new URL("/remote-login", `${req.protocol}://${req.get("host")}`);
+        redirectUrl.searchParams.set("rt", issued.token);
+        res.redirect(302, redirectUrl.pathname + redirectUrl.search);
+        return;
+      } catch (err) {
+        res.status(401).json({
+          error: "Unauthorized",
+          code: "cloud_ticket_invalid",
+          message: err instanceof Error ? err.message : "redeem failed",
+        });
+        return;
+      }
     }
 
     const result = validateRemoteAuthToken(remoteToken, remoteAccess);
