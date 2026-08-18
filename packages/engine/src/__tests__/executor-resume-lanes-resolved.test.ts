@@ -255,17 +255,20 @@ describe("resumeOrphaned filters by the board's OWN wip lane, not the literal", 
     widened.listTasks = vi.fn(async (options?: { column?: string }) =>
       (options?.column === undefined || options.column === column ? [task] : []));
     widened.listWorkflowDefinitions = async () => [{ ir: RENAMED_IR }];
-    const isTaskWorkComplete = vi.fn(() => true);
-    Object.assign(executor, { isTaskWorkComplete, recoverCompletedTask: vi.fn(async () => undefined) });
-    return { executor, isTaskWorkComplete };
+    // FNXC:CodeOrganization 2026-08-18-05:47: resumeOrphaned now calls its extracted
+    // task predicate directly, so observe the injected dispatch seam instead of shadowing
+    // the removed TaskExecutor method.
+    const execute = vi.fn(async () => undefined);
+    Object.assign(executor, { execute, recoverCompletedTask: vi.fn(async () => undefined) });
+    return { executor, execute };
   }
 
   it("reaches an orphan sitting in the RENAMED wip lane", async () => {
-    const { executor, isTaskWorkComplete } = orphanHarness("building");
+    const { executor, execute } = orphanHarness("building");
 
     await executor.resumeOrphaned();
 
-    expect(isTaskWorkComplete).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-ORPHAN-RESUME" }));
+    expect(execute).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-ORPHAN-RESUME" }));
   });
 
   it("does not resume a card outside the wip lane", async () => {
@@ -273,10 +276,10 @@ describe("resumeOrphaned filters by the board's OWN wip lane, not the literal", 
     Non-vacuous companion: a card in the board's REVIEW lane is not an orphaned execution — it has no
     session to resume, and re-dispatching it would restart finished work.
     */
-    const { executor, isTaskWorkComplete } = orphanHarness("checking");
+    const { executor, execute } = orphanHarness("checking");
 
     await executor.resumeOrphaned();
 
-    expect(isTaskWorkComplete).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
   });
 });
