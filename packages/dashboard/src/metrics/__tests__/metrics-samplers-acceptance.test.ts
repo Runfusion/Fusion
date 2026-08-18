@@ -148,22 +148,23 @@ describe("orchestrator render() acceptance", () => {
   });
 
   it("maps a pre/post PG-reader pair to a bounded per-second rate and nulls on NaN input", async () => {
-    function makeSampler(reader: () => Promise<{ xactCommit: number; xactRollback: number } | null>) {
+    type PgCounters = Array<{ datname: string; xactCommit: number; xactRollback: number }>;
+    function makeSampler(reader: () => Promise<PgCounters | null>) {
       return createMetricsSampler({
         runtime: inertRuntime(),
         domain: { pgStatsReader: reader },
       });
     }
 
-    // Pre/post reader pair; the sampler derives a per-second rate from its own
-    // clock (elapsed may be ~0 on a tight loop, so the rate is finite and
+    // Pre/post reader pair (per-database rows); the sampler derives a per-second rate from its
+    // own clock (elapsed may be ~0 on a tight loop, so the rate is finite and
     // non-negative rather than a pinned value — the exact delta math is owned
     // by RUFU-081's domain-sampler unit suite).
     const reader = vi
       .fn()
-      .mockResolvedValueOnce({ xactCommit: 100, xactRollback: 0 })
-      .mockResolvedValueOnce({ xactCommit: 150, xactRollback: 0 })
-      .mockResolvedValueOnce({ xactCommit: 220, xactRollback: 0 });
+      .mockResolvedValueOnce([{ datname: "fusion", xactCommit: 100, xactRollback: 0 }])
+      .mockResolvedValueOnce([{ datname: "fusion", xactCommit: 150, xactRollback: 0 }])
+      .mockResolvedValueOnce([{ datname: "fusion", xactCommit: 220, xactRollback: 0 }]);
     const sampler = makeSampler(reader);
     await sampler.domain.samplePgRate(); // first sample (no prior delta) -> 0
     await sampler.domain.samplePgRate(); // delta over the real elapsed window

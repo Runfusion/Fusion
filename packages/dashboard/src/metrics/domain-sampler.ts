@@ -5,7 +5,10 @@
  *
  * The PG rate closes the "poll-storm" diagnosis gap: `pg_stat_database`
  * xact_commit/xact_rollback delta, normalized to a per-second rate on the
- * tick. The Fusion-domain gauges answer the "how busy is the board" questions
+ * tick. The baseline tracks counters PER DATABASE so a stats reset in one
+ * database is detected even when the cross-database sum stays positive,
+ * and a failed-probe gap invalidates the baseline so a reset that lands
+ * inside the gap can never produce a cross-epoch (fabricated) rate. The Fusion-domain gauges answer the "how busy is the board" questions
  * (active/paused project split, running agents, tasks per column) from stores
  * the dashboard has ALREADY opened — never by opening a store, starting an
  * engine, or starting a watcher just to answer a scrape.
@@ -30,15 +33,20 @@ import type { MetricFamily } from "./prometheus-text.js";
 const sql = drizzleSql;
 import { listRegisteredProjectStores, countRunningAgentsInStore } from "../project-store-resolver.js";
 
-/** A single `pg_stat_database` cumulative counter sample. */
-export interface PgStats {
-  /** Cumulative transactions committed since stats reset. */
+/** Per-database cumulative counters for one `pg_stat_database` probe row. */
+export interface PgDbStats {
+  /** `pg_stat_database.datname` — per-DB identity for baseline tracking. */
+  datname: string;
+  /** Cumulative transactions committed since the last stats reset (this database). */
   xactCommit: number;
-  /** Cumulative transactions rolled back since stats reset. */
+  /** Cumulative transactions rolled back since the last stats reset (this database). */
   xactRollback: number;
 }
 
-/** Reads the cumulative PG counter pair, or resolves `null` when no layer exists. */
+/** One probe sample: the per-database cumulative counters (one entry per `pg_stat_database` row). */
+export type PgStats = PgDbStats[];
+
+/** Reads the per-database cumulative PG counters, or resolves `null` when no layer exists. */
 export type PgStatsReader = () => Promise<PgStats | null>;
 
 /**
@@ -89,21 +97,18 @@ export interface DomainSampler {
   readonly started: boolean;
   /** Read the PG rate + domain gauges into the pre-read snapshot now. */
   samplePgRate(): Promise<void>;
+  /** Read the domain gauges into the pre-read snapshot now. */
   sampleDomain(): Promise<void>;
   /** Start interval timers (unref'd so they never keep the process alive). */
   start(): void;
-  /** Clear interval timers. */
+  /** Clear interval timers and fence out any in-flight sample. */
   stopTimers(): void;
   /** Assemble the domain metric families for a scrape (synchronous, O(metric count)). */
   buildSnapshot(nowMs?: number): MetricFamily[];
 }
 
-/** Current cumulative PG counters + when they were read, for delta math. Careful constructor. */
-interface PgSample {
-  xactCommit: number;
-  xactRollback: number;
-  atMs: number;
-}
+/** Per-database cumulative counter baseline values (one entry per `pg_stat_database.datname`). */
+type PgBaseline = Map<string, { xactCommit: number; xactRollback: number }>;
 
 /** Default timers from the global scope (fake-timer injectable). */
 function defaultTimers(): DomainSamplerInit["timers"] {
@@ -130,11 +135,10 @@ async function defaultListTasks(store: unknown): Promise<SlimTaskLike[]> {
   return anyStore.listTasks({ slim: true });
 }
 
-/**
- * Default PG cumulative-counter reader. Reads `pg_stat_database` on the first
- * registered store that exposes a live async layer. Best-effort: a missing
- * layer, privilege-fenced PG, or pool error resolves `null` so the sampler
- * keeps the last-known rate instead of throwing.
+/** Default PG cumulative-counter reader. Reads `pg_stat_database` (one row per database) on the
+ * first registered store that exposes a live async layer. Best-effort: a missing layer,
+ * privilege-fenced PG, or pool error resolves `null` so the sampler keeps the last-known rate
+ * instead of throwing.
  */
 export function defaultPgStatsReader(): PgStatsReader {
   return async (): Promise<PgStats | null> => {
@@ -145,18 +149,15 @@ export function defaultPgStatsReader(): PgStatsReader {
       try {
         const rows = (await layer.db.execute(
           sql.raw(`
-            SELECT
-              COALESCE(SUM(xact_commit), 0)::float8 AS xact_commit,
-              COALESCE(SUM(xact_rollback), 0)::float8 AS xact_rollback
-            FROM pg_stat_database
+            SELECT datname, xact_commit, xact_rollback FROM pg_stat_database
           `),
-        )) as Array<{ xact_commit: number; xact_rollback: number }>;
-        const row = rows[0];
-        if (!row) return null;
-        return {
+        )) as Array<{ datname: string; xact_commit: number; xact_rollback: number }>;
+        if (!rows || rows.length === 0) return null;
+        return rows.map((row) => ({
+          datname: String(row.datname ?? ""),
           xactCommit: Number(row.xact_commit) || 0,
           xactRollback: Number(row.xact_rollback) || 0,
-        };
+        }));
       } catch {
         // Privilege-fenced / transient — degrade to null, never throw.
         return null;
@@ -181,20 +182,43 @@ export function createDomainSampler(init: DomainSamplerInit = {}): DomainSampler
     runningAgentsByProject: {},
     columnCounts: {},
   };
-  let previousPg: PgSample | undefined;
+  let previousPg: PgBaseline | undefined;
+  let previousPgAtMs: number | null = null;
+  /*
+   * FNXC:MetricsSampler 2026-08-18 (RUFU-081 Greptile P1, RUFU-106 review fix):
+   * A failed probe marks the retained baseline STALE: a stats reset landing inside the failed
+   * gap is invisible to the next successful probe (the counter may already have grown past the
+   * retained total, so the cross-epoch delta would read positive), so the first success after a
+   * failed gap re-baselines and keeps the last-known rate instead of emitting a fabricated rate.
+   */
+  let pgBaselineStale = false;
+  let pgEverBaselined = false;
+  /*
+   * FNXC:MetricsSampler 2026-08-18 (RUFU-081 Greptile P1, RUFU-106 review fix):
+   * Restart fencing: stopTimers() bumps the generation, and a sample that started before the
+   * stop (its pre-close read still awaiting) must not write its stale result after the sampler
+   * restarts. The in-flight guard below is factory-scoped so it SURVIVES restarts — a pre-close
+   * sample still running at restart keeps blocking new ticks until it resolves (and is then
+   * fenced out of the write).
+   */
+  let sampleGeneration = 0;
+  const inFlight = new Set<string>();
   let started = false;
 
   const timersMap = new Map<string, { unref?: () => void }>();
 
   async function samplePgRate(): Promise<void> {
+    const gen = sampleGeneration;
     let stats: PgStats | null = null;
     try {
       stats = await pgReader();
     } catch {
       stats = null;
     }
+    // Restarted mid-sample: discard this read — its write would be stale (Greptile P1 review fix).
+    if (gen !== sampleGeneration) return;
     const now = Date.now();
-    if (!stats) {
+    if (!stats || stats.length === 0) {
       /*
        * FNXC:MetricsSampler 2026-08-16 (RUFU-081 Greptile P1 #1, RUFU-106):
        * A transient reader failure (null or thrown) must NOT reset the PG baseline. Resetting
@@ -203,19 +227,55 @@ export function createDomainSampler(init: DomainSamplerInit = {}): DomainSampler
        * `previousPg` and `state.pgQueriesPerSecond`; only a successful counter read
        * establishes/advances the baseline (a first-ever failure still leaves the rate at 0).
        */
+      pgBaselineStale = true;
       return;
     }
-    const currentTotal = stats.xactCommit + stats.xactRollback;
-    if (!previousPg) {
-      previousPg = { ...stats, atMs: now };
-      state.pgQueriesPerSecond = 0;
+    const current: PgBaseline = new Map();
+    for (const row of stats) {
+      if (typeof row?.datname !== "string" || row.datname.length === 0) continue;
+      current.set(row.datname, {
+        xactCommit: Number(row.xactCommit) || 0,
+        xactRollback: Number(row.xactRollback) || 0,
+      });
+    }
+    if (current.size === 0) {
+      pgBaselineStale = true;
       return;
     }
-    const prevTotal = previousPg.xactCommit + previousPg.xactRollback;
-    const elapsedMs = now - previousPg.atMs;
-    const delta = currentTotal - prevTotal;
-    previousPg = { ...stats, atMs: now };
-    if (elapsedMs <= 0 || delta < 0) {
+    if (!previousPg || !previousPgAtMs || pgBaselineStale) {
+      previousPg = current;
+      previousPgAtMs = now;
+      pgBaselineStale = false;
+      if (!pgEverBaselined) {
+        state.pgQueriesPerSecond = 0;
+        pgEverBaselined = true;
+      }
+      // A re-baseline after a stale gap keeps the last-known rate (see pgBaselineStale comment).
+      return;
+    }
+    const elapsedMs = now - previousPgAtMs;
+    let delta = 0;
+    let reset = false;
+    for (const [datname, cur] of current) {
+      const prev = previousPg.get(datname);
+      if (!prev) continue; // database appeared mid-window: join the baseline, no delta yet
+      const d = cur.xactCommit + cur.xactRollback - (prev.xactCommit + prev.xactRollback);
+      if (d < 0) {
+        /*
+         * FNXC:MetricsSampler 2026-08-18 (RUFU-081 Greptile P1, RUFU-106 review fix):
+         * A PER-DB counter went backward: a stats reset in this database. The cross-database sum
+         * can stay positive when other databases grew in the same window, so an aggregate-only
+         * reset check would accept the cross-epoch delta — the per-DB check is the only detector.
+         */
+        reset = true;
+        break;
+      }
+      delta += d;
+    }
+    previousPg = current;
+    previousPgAtMs = now;
+    pgBaselineStale = false;
+    if (reset || elapsedMs <= 0) {
       // Clock skew or a stats reset (pg_stat_reset) — keep the last-known rate.
       return;
     }
@@ -223,6 +283,7 @@ export function createDomainSampler(init: DomainSamplerInit = {}): DomainSampler
   }
 
   async function sampleDomain(): Promise<void> {
+    const gen = sampleGeneration;
     // Registry entries are keyed by projectId; dedupe so a duplicate/undefined
     // project id can never produce duplicate or malformed metric lines.
     const entries = new Map<string, { store: unknown }>();
@@ -265,6 +326,9 @@ export function createDomainSampler(init: DomainSamplerInit = {}): DomainSampler
       }),
     );
 
+    // Restarted mid-sample: discard this read — its write would be stale (Greptile P1 review fix).
+    if (gen !== sampleGeneration) return;
+
     const total = projectIds.length;
     const active = projectIds.filter((id) => (runningByProject[id] ?? 0) > 0).length;
     state.runningAgentsByProject = runningByProject;
@@ -275,10 +339,13 @@ export function createDomainSampler(init: DomainSamplerInit = {}): DomainSampler
   function start(): void {
     if (started) return;
     started = true;
-    // Per-sampler in-flight flags so a tick that fires while the previous one is
-    // still awaiting is SKIPPED: samplers never run concurrently and a slow
-    // sample never queues (RUFU-081 Greptile P1 #2, RUFU-106).
-    const inFlight = new Set<string>();
+    /*
+     * FNXC:MetricsSampler 2026-08-16 (RUFU-081 Greptile P1 #2, RUFU-106):
+     * In-flight flags are FACTORY-SCOPED (not created here) so the guard survives a
+     * stopTimers()+start() restart: a sample still running from before the restart keeps
+     * blocking ticks of the same arm until it resolves, where it is fenced out of its write
+     * by the generation check (Greptile P1 review fix 2026-08-18).
+     */
     const arm = (key: string, intervalMs: number, run: () => Promise<void>): void => {
       const timer = timers!.setInterval(() => {
         /*
@@ -302,6 +369,9 @@ export function createDomainSampler(init: DomainSamplerInit = {}): DomainSampler
 
   function stopTimers(): void {
     started = false;
+    // Fence out any in-flight sample: it started before this stop, so its write (if it
+    // resolves after a restart) must be discarded (Greptile P1 review fix 2026-08-18).
+    sampleGeneration += 1;
     for (const key of [...timersMap.keys()]) {
       const timer = timersMap.get(key);
       if (timer) {
