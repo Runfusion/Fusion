@@ -40,6 +40,7 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { testMutationContext } from "./mutation-context-fixture.js";
 import { Worker } from "node:worker_threads";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
@@ -1290,7 +1291,7 @@ export function createSharedPgTaskStoreTestHarness(options?: {
     },
     createTestTask: async () => {
       if (!store) throw new Error("SharedPgTaskStoreHarness: beforeAll not called yet");
-      return store.createTask({ description: "Test task" });
+      return store.createTask({ description: "Test task" }, undefined, testMutationContext());
     },
     /*
      * FNXC:SqliteFinalRemoval 2026-06-26:
@@ -1299,14 +1300,14 @@ export function createSharedPgTaskStoreTestHarness(options?: {
      */
     createTaskWithSteps: async () => {
       if (!store || !harness) throw new Error("SharedPgTaskStoreHarness: beforeAll not called yet");
-      const task = await store.createTask({ description: "Task with steps" });
+      const task = await store.createTask({ description: "Task with steps" }, undefined, testMutationContext());
       const dir = join(harness.rootDir, ".fusion", "tasks", task.id);
       await writeFile(
         join(dir, "PROMPT.md"),
         `# ${task.id}: Task with steps\n## Steps\n### Step 0: Preflight\n### Step 1: Implementation\n### Step 2: Verification\n`,
       );
       const parsed = await store.parseStepsFromPrompt(task.id);
-      await store.updateTask(task.id, { steps: parsed });
+      await store.updateTask(task.id, { steps: parsed }, testMutationContext());
       return store.getTask(task.id);
     },
     teardown: async () => {

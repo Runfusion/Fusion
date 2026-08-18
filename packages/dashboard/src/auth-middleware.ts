@@ -144,6 +144,35 @@ export function authenticateUpgradeRequest(token: string, req: IncomingMessage):
   return constantTimeEqual(provided, expectedBuffer);
 }
 
+/*
+FNXC:DaemonAuth 2026-08-09-03:04:
+A no-token launch used to be a SECOND, SILENT no-auth mode. Auth mounted only `if (daemonToken)`, so whether `/api/*` was protected depended on how the process happened to be launched rather than on any deliberate choice — and the desktop host (which passed no token) served the entire API, including the shell-capable terminal WebSocket, unauthenticated on every network interface.
+Absence of a token must never imply open access. Serving `/api/*` without authentication is now an explicit opt-in via `noAuth: true` (`fn serve --no-auth`); a launch with neither a token nor that flag refuses `/api/*` with this middleware instead of serving it open.
+The refusal is 503, not 401: the client is not unauthorized, the server is misconfigured, and no credential the caller could supply would help. The message names the two ways out so an operator hitting this mid-launch gets the fix rather than a bare status code.
+*/
+export function createUnconfiguredAuthRefusalMiddleware() {
+  return function unconfiguredAuthRefusal(req: Request, res: Response, next: NextFunction): void {
+    // Same public surface as the real gate: the SPA shell and static assets load,
+    // so a browser can still render an error rather than showing a blank page.
+    if (!isApiPath(req.path)) {
+      next();
+      return;
+    }
+
+    // Liveness probes stay reachable so orchestrators can observe the misconfiguration.
+    if (isExemptPath(req.path)) {
+      next();
+      return;
+    }
+
+    res.status(503).json({
+      error: "AuthNotConfigured",
+      message:
+        "Refusing to serve /api/* without authentication. Start with a daemon token, or pass --no-auth to explicitly run unauthenticated.",
+    });
+  };
+}
+
 /**
  * Create Express middleware that enforces bearer token authentication.
  *

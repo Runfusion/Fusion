@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { ANY_MUTATION_CONTEXT } from "./mutation-context-matchers.js";
 import type { Settings, Task, TaskStore } from "@fusion/core";
 
 import { TriageProcessor } from "../triage.js";
@@ -106,8 +107,8 @@ describe("triage explicit duplicate marker short-circuit", () => {
     });
     await expect(runExplicitDuplicateMarker(store, task, "DUPLICATE: FN-001\n")).resolves.toBe(true);
     expect(store.deleteTask).not.toHaveBeenCalled();
-    expect(store.updateTask).toHaveBeenCalledWith("FN-002", expect.objectContaining({ paused: true, pausedReason: "duplicate-decision-required" }));
-    expect(store.updateTask).toHaveBeenCalledWith("FN-002", expect.objectContaining({ sourceMetadataPatch: expect.objectContaining({ nearDuplicateOf: "FN-001", duplicateSource: "triage-marker" }) }));
+    expect(store.updateTask).toHaveBeenCalledWith("FN-002", expect.objectContaining({ paused: true, pausedReason: "duplicate-decision-required" }), ANY_MUTATION_CONTEXT);
+    expect(store.updateTask).toHaveBeenCalledWith("FN-002", expect.objectContaining({ sourceMetadataPatch: expect.objectContaining({ nearDuplicateOf: "FN-001", duplicateSource: "triage-marker" }) }), ANY_MUTATION_CONTEXT);
   });
 
   it("still pauses a user-authored task when the duplicate target is active", async () => {
@@ -122,7 +123,7 @@ describe("triage explicit duplicate marker short-circuit", () => {
     expect(store.updateTask).toHaveBeenCalledWith("FN-002", expect.objectContaining({
       paused: true,
       pausedReason: "duplicate-decision-required",
-    }));
+    }), ANY_MUTATION_CONTEXT);
   });
 
   it("keeps a marker duplicate by clearing its system pause for replanning", async () => {
@@ -141,12 +142,11 @@ describe("triage explicit duplicate marker short-circuit", () => {
       pausedReason: null,
       status: "needs-replan",
       sourceMetadataPatch: expect.objectContaining({ nearDuplicateOf: "FN-001", nearDuplicateDismissed: true }),
-    }));
+    }), ANY_MUTATION_CONTEXT);
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-002",
       "Duplicate marker cleared for re-specification",
-      expect.stringContaining("FN-001"),
-    );
+      expect.stringContaining("FN-001"), ANY_MUTATION_CONTEXT);
   });
 
   it("keeps an executable prompt when clearing a title-only redirect", async () => {
@@ -196,7 +196,7 @@ describe("triage explicit duplicate marker short-circuit", () => {
       pausedReason: null,
       status: "needs-replan",
       sourceMetadataPatch: expect.objectContaining({ nearDuplicateOf: "FN-001", nearDuplicateDismissed: true }),
-    }));
+    }), ANY_MUTATION_CONTEXT);
     expect(store.updateTask).not.toHaveBeenCalledWith("FN-002", expect.objectContaining({ paused: true }));
   });
 
@@ -215,7 +215,7 @@ describe("triage explicit duplicate marker short-circuit", () => {
       paused: true,
       pausedReason: "duplicate-decision-required",
       sourceMetadataPatch: expect.objectContaining({ nearDuplicateDismissed: false, nearDuplicateOf: "FN-001" }),
-    }));
+    }), ANY_MUTATION_CONTEXT);
   });
 
   it("preserves a user pause when reprocessing an acknowledged marker", async () => {
@@ -260,12 +260,11 @@ describe("triage explicit duplicate marker short-circuit", () => {
         duplicateSource: "triage-marker",
         duplicateMarkerClearCount: 1,
       }),
-    }));
+    }), ANY_MUTATION_CONTEXT);
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-002",
       "Duplicate marker cleared for re-specification",
-      expect.stringMatching(/FN-001.*do not re-emit/i),
-    );
+      expect.stringMatching(/FN-001.*do not re-emit/i), ANY_MUTATION_CONTEXT);
     expect(store.updateTask).not.toHaveBeenCalledWith("FN-002", expect.objectContaining({ paused: true }));
     expect(store.deleteTask).not.toHaveBeenCalled();
   });
@@ -292,7 +291,7 @@ describe("triage explicit duplicate marker short-circuit", () => {
       status: "needs-replan",
       error: null,
       sourceMetadataPatch: expect.objectContaining({ duplicateMarkerClearCount: 2 }),
-    }));
+    }), ANY_MUTATION_CONTEXT);
   });
 
   it("replans a user-authored task when the planner re-emits a completed duplicate", async () => {
@@ -318,7 +317,7 @@ describe("triage explicit duplicate marker short-circuit", () => {
       status: "needs-replan",
       error: null,
       sourceMetadataPatch: expect.objectContaining({ duplicateMarkerClearCount: 2 }),
-    }));
+    }), ANY_MUTATION_CONTEXT);
     expect(store.updateTask).not.toHaveBeenCalledWith("FN-002", expect.objectContaining({
       status: "failed",
     }));

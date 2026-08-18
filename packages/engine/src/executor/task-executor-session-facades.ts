@@ -12,6 +12,7 @@ import { getTaskCompletionBlockerForStore } from "../execution/task-completion.j
 import { buildWorkflowFailureScopeGuard } from "./workflow-failure-scope-guard.js";
 import { resolveAuthoritativeExternalExecutionRoute } from "./resolve-authoritative-external-execution-route.js";
 import { TaskExecutorWorktreePureFacades } from "./task-executor-worktree-pure-facades.js";
+import { runContextForTotal } from "./run-context-for.js";
 
 export abstract class TaskExecutorSessionFacades extends TaskExecutorWorktreePureFacades {
   protected addActiveWorktree(taskId: string, worktreePath: string): void { impl.addActiveWorktreeImpl(this.activeWorktrees, taskId, worktreePath); }
@@ -31,6 +32,16 @@ export abstract class TaskExecutorSessionFacades extends TaskExecutorWorktreePur
   protected unregisterSubagentSession(taskId: string, session: Parameters<typeof impl.unregisterSubagentSessionImpl>[2]): void { impl.unregisterSubagentSessionImpl(this.activeSubagentSessions, taskId, session); }
   protected disposeSubagentsForTask(taskId: string, reason: string): void { impl.disposeSubagentsForTaskImpl(this.activeSubagentSessions, taskId, reason); }
   protected getRunContextFor(taskId: string) { return this.currentRunContexts.get(taskId); }
+  /*
+  FNXC:Identity 2026-08-15-22:52 (U18/KTD2 Stage C — the executor's run carrier):
+  `getRunContextFor` is PARTIAL and must stay that way: ~20 call sites use `?.runId` / `?.agentId`
+  as a liveness probe. Collapsing the two forms would turn those probes into unconditional truths.
+  `runContextFor` is the TOTAL form every store mutation should pass. The fallback is DERIVED from
+  the same `"executor"` lane id this class already stamps on its own run context and audit rows.
+  */
+  protected runContextFor(taskId: string, fallbackAgentId?: string | null) {
+    return runContextForTotal((id) => this.currentRunContexts.get(id), taskId, fallbackAgentId);
+  }
   protected safeLogEntry(taskId: string, message: string): void { impl.safeLogEntryImpl(bags.buildStoreRunContextDeps(this), taskId, message); }
   protected markPausedAborted(...args: FacadeRestArgs<typeof impl.markPausedAbortedImpl>): void { impl.markPausedAbortedImpl(bags.buildMarkPausedAbortedDeps(this), ...args); }
   protected markCompletionFinalized(taskId: string): void { impl.markCompletionFinalizedImpl(bags.buildPauseAbortMarkerDeps(this), taskId); }

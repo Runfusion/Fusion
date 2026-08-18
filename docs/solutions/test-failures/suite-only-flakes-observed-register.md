@@ -345,3 +345,18 @@ AssertionError: expected [ 'approved', 'created' ] to deeply equal [ 'created', 
 This resolves the previously unclassified “unrelated satellite-store ordering failure” mentions in entry 1's 12-worker verification table, entry 2's 12-worker verification table, and entry 11's FN-9129 4-worker run table. Those sightings are now classified separately from their entries' identity and DDL investigations.
 
 **Terminal negative 2026-08-17 (FN-9131):** The reproduced 27-worker PostgreSQL-directory symptom was investigated with a cluster-shared connection-budget primitive. The first harness wiring and a follow-up that queued registry over-subscription while retaining leases both made the loaded run worse (135 failed files in 174.1s, then 144 failed files in 223.3s); the subject itself was not the only failure. The harness wiring was reverted, the primitive remains characterized independently, and FN-9139 owns a setup-safe admission boundary. No quarantine, timeout change, test retry, skip, worker cap, or assertion change was made.
+
+## 8. Self-healing pending wedge notification — suite-only failure
+
+- **File:** `packages/engine/src/__tests__/self-healing-pending-wedge-notification.test.ts`
+- **Exact test:** `reconcile pending wedge notifications > selects elapsed markers and audits the completion outcome verbatim`
+- **Observed tree/SHA:** `de024dcdcc` (`feature/user-accounts`, U18 review-feedback pass).
+- **Observed frequency:** 1 sighting, in a full `engine-default` project run only. The file is **unmodified** by the change under test (`git status` clean for this path).
+
+| run | result |
+|---|---|
+| full `--project engine-default` (821 files), earlier pass in same session | passed |
+| full `--project engine-default` (821 files), later pass in same session | **1 failed** |
+| targeted file, isolated | 4 passed |
+
+Recorded rather than quarantined under the first-sighting exception: it reproduces only under full-project concurrency, never in isolation, and the file's remaining coverage of the FN-8953 pending-wedge reconcile contract is substantial. Non-determinism across two runs of the *same* tree with no intervening edit rules out the review-feedback change as the cause. A second sighting is an ordinary on-sight file-level quarantine with no further discretion.

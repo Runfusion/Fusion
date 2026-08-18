@@ -45,7 +45,7 @@ const MIGRATION_STALL_TIMEOUT_MS = 120_000;
 async function waitForLocalRuntime(
   shell: NonNullable<ReturnType<typeof getFusionShell>>,
   options: { timeoutMs?: number; onMigrationProgress?: (label: string) => void } = {},
-): Promise<{ baseUrl: string }> {
+): Promise<{ baseUrl: string; authToken?: string }> {
   const timeoutMs = options.timeoutMs ?? 30_000;
   let deadline = Date.now() + timeoutMs;
   let lastMigrationLabel: string | null = null;
@@ -56,7 +56,12 @@ async function waitForLocalRuntime(
     const rt = state.localRuntime;
     if (rt?.state === "running" && (rt.baseUrl || rt.port)) {
       const baseUrl = rt.baseUrl ?? `http://127.0.0.1:${rt.port}`;
-      return { baseUrl };
+      /*
+      FNXC:DesktopHostAuth 2026-08-09-03:04:
+      The embedded runtime publishes its bearer token alongside baseUrl (packages/desktop/src/
+      local-runtime.ts). Carry it through so the navigation below can hand it to the SPA.
+      */
+      return { baseUrl, ...(rt.authToken ? { authToken: rt.authToken } : {}) };
     }
     if (rt?.state === "error") {
       throw new Error(rt.error ?? "Local runtime failed to start");
@@ -72,7 +77,7 @@ async function waitForLocalRuntime(
   throw new Error("Local runtime did not become ready in time");
 }
 
-function navigateToLocalRuntimeOrigin(baseUrl: string): void {
+function navigateToLocalRuntimeOrigin(baseUrl: string, authToken?: string): void {
   /*
    * FNXC:DesktopLaunchGate 2026-07-03-02:10:
    * Load the UI FROM the embedded runtime's own origin (http://127.0.0.1:<port>/) rather than
@@ -85,6 +90,17 @@ function navigateToLocalRuntimeOrigin(baseUrl: string): void {
   const target = new URL("/", baseUrl);
   target.searchParams.set("shellKind", "desktop-shell");
   target.searchParams.set("shellMode", "local");
+  /*
+   * FNXC:DesktopHostAuth 2026-08-09-03:04:
+   * The embedded server no longer serves `/api/*` unauthenticated (it used to bind every interface
+   * with no token, exposing the shell-capable terminal API to the LAN), so this navigation must
+   * hand the renderer the process token. `?token=` is the existing carrier: app/auth.ts's
+   * captureTokenFromUrl() stores it under `fn.authToken`, strips it from history, and the patched
+   * fetch injects `Authorization: Bearer` on every same-origin /api/* call from then on.
+   */
+  if (authToken) {
+    target.searchParams.set("token", authToken);
+  }
   window.location.replace(target.toString());
 }
 
@@ -166,7 +182,7 @@ export function DesktopLaunchGate({ children }: PropsWithChildren) {
             }
             if (cancelled) return;
           }
-          const { baseUrl } = await waitForLocalRuntime(shell, {
+          const { baseUrl, authToken } = await waitForLocalRuntime(shell, {
             /* FNXC:MigrationHoldingPage 2026-07-17-13:30: swap the static "Starting…" copy for live migration progress while the first-boot database migration runs. */
             onMigrationProgress: (label) => {
               if (cancelled) return;
@@ -178,7 +194,7 @@ export function DesktopLaunchGate({ children }: PropsWithChildren) {
             },
           });
           if (cancelled) return;
-          navigateToLocalRuntimeOrigin(baseUrl);
+          navigateToLocalRuntimeOrigin(baseUrl, authToken);
           return;
         }
 
@@ -264,7 +280,7 @@ export function DesktopLaunchGate({ children }: PropsWithChildren) {
           try {
             await shell.setDesktopMode(mode);
             if (mode === "local") {
-              const { baseUrl } = await waitForLocalRuntime(shell, {
+              const { baseUrl, authToken } = await waitForLocalRuntime(shell, {
                 /* FNXC:MigrationHoldingPage 2026-07-17-13:30: first "Run Fusion Locally" pick is exactly when the one-time database migration runs — show its progress. */
                 onMigrationProgress: (label) =>
                   setPhase({
@@ -273,7 +289,7 @@ export function DesktopLaunchGate({ children }: PropsWithChildren) {
                     detail: label,
                   }),
               });
-              navigateToLocalRuntimeOrigin(baseUrl);
+              navigateToLocalRuntimeOrigin(baseUrl, authToken);
               return;
             }
             await shell.openConnectionManager();

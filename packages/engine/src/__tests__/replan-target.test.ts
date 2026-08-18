@@ -1,4 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
+/*
+FNXC:Identity 2026-08-09-03:04 (U18/KTD2):
+These call-arg assertions now include the mutation context the converted sweep passes.
+Adding it is what keeps them load-bearing: left at the old arity every
+`toHaveBeenCalledWith` here would fail, and every `.not.toHaveBeenCalledWith` would pass
+vacuously — an assertion that can no longer fail is worse than one that is red.
+*/
+import { UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 import type { Task, TaskStep, TaskStore } from "@fusion/core";
 import { hasAdvancedPastPlanning, isTaskStillInPlanningStage, moveTaskToReplanColumn, resolveReplanTargetColumn } from "../execution/replan-target.js";
 import { resolveWorkflowIrForTask } from "@fusion/core";
@@ -345,7 +353,7 @@ describe("moveTaskToReplanColumn", () => {
     const store = storeWithSelection("builtin:coding-ideas");
     const target = await moveTaskToReplanColumn(store, { id: "FN-1", column: "in-progress" });
     expect(target).toBe("todo");
-    expect(store.moveTask).toHaveBeenCalledWith("FN-1", "todo", { preserveWorktree: true });
+    expect(store.moveTask).toHaveBeenCalledWith("FN-1", "todo", { preserveWorktree: true }, UNATTRIBUTED_MUTATION_CONTEXT);
   });
 
   it("skips the move when the card is already in the replan column (plan-in-place)", async () => {
@@ -391,7 +399,7 @@ describe("replan bounces preserve the task worktree (FN-8603)", () => {
         expect(store.moveTask).toHaveBeenCalledWith(
           "FN-8603",
           shape.expected,
-          expect.objectContaining({ preserveWorktree: true }),
+          expect.objectContaining({ preserveWorktree: true }), UNATTRIBUTED_MUTATION_CONTEXT,
         );
       });
     }
@@ -406,7 +414,7 @@ describe("replan bounces preserve the task worktree (FN-8603)", () => {
     expect(store.moveTask).toHaveBeenCalledWith(
       "FN-8603",
       "triage",
-      expect.objectContaining({ preserveWorktree: true }),
+      expect.objectContaining({ preserveWorktree: true }), UNATTRIBUTED_MUTATION_CONTEXT,
     );
   });
 });
@@ -461,6 +469,6 @@ describe("the no-declared-lane contract", () => {
     const moved = await moveTaskToReplanColumn(store, { id: "FN-1", column: "building" });
 
     expect(moved).toBe("drafting");
-    expect(store.moveTask).toHaveBeenCalledWith("FN-1", "drafting", { preserveWorktree: true });
+    expect(store.moveTask).toHaveBeenCalledWith("FN-1", "drafting", { preserveWorktree: true }, UNATTRIBUTED_MUTATION_CONTEXT);
   });
 });

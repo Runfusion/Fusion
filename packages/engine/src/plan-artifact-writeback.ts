@@ -2,6 +2,8 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import type { TaskStore } from "@fusion/core";
+/* FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage B): mutation-context constructors for this lane. */
+import { UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 
 /*
 FNXC:PlanArtifactPersistence 2026-07-26-03:55:
@@ -109,7 +111,7 @@ export async function reconcileWorktreePlanArtifact(
 
   try {
     // The single validated persistence path: File Scope validation + root PROMPT.md write + task.json sync.
-    await store.updateTask(taskId, { prompt: worktreeContent });
+    await store.updateTask(taskId, { prompt: worktreeContent }, UNATTRIBUTED_MUTATION_CONTEXT);
     logger?.log?.(
       `${taskId}: recovered a worktree-local PROMPT.md into the project .fusion folder (${planningCwd})`,
     );

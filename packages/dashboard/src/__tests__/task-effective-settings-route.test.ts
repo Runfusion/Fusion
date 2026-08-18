@@ -53,7 +53,7 @@ class MockStore extends EventEmitter {
 }
 
 function createApp(store = new MockStore()) {
-  return { app: createServer(store as unknown as TaskStore), store };
+  return { app: createServer(store as unknown as TaskStore, { noAuth: true }), store };
 }
 
 describe("GET /tasks/:id/effective-settings", () => {

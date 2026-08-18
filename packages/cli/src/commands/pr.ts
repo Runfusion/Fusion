@@ -1,3 +1,4 @@
+import { cliOperatorMutationContext } from "../identity/cli-operator-mutation-context.js";
 import {
   TaskStore,
   resolveReviewColumns,
@@ -379,7 +380,7 @@ export async function runPrCreate(id: string, options: PrCreateOptions = {}, pro
             prUrl: prInfo.url,
           });
 
-          await store.logEntry(task.id, "Created PR", `PR #${prInfo.number}: ${prInfo.url}`);
+          await store.logEntry(task.id, "Created PR", `PR #${prInfo.number}: ${prInfo.url}`, cliOperatorMutationContext());
         },
         { id, action: "record created PR" },
       );

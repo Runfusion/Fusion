@@ -1,6 +1,9 @@
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
 import type { Settings, Task, TaskStore } from "@fusion/core";
+/* FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage B): the refresh takes the caller's context as a required
+   input rather than minting one — worktree acquisition, its only caller, has already resolved it. */
+import type { RunMutationContext } from "@fusion/core";
 import { resolveIntegrationBranch } from "./merge/integration-branch.js";
 import type { GitAuditInput } from "./util/run-audit.js";
 
@@ -46,6 +49,8 @@ export interface RefreshReusedWorktreeBaseInput {
   /** Audit is intentionally structural so acquisition can use its run-scoped auditor. */
   audit?: { git?: (event: GitAuditInput) => Promise<void> };
   logger?: { warn: (message: string) => void };
+  /** FNXC:Identity 2026-08-09-03:04 (U18 Stage B): required — worktree acquisition resolves one before calling. */
+  runContext: RunMutationContext;
 }
 
 function quote(value: string): string {
@@ -108,7 +113,7 @@ conflict resolution — the merge lane owns conflict arbitration and deliberatel
 (see merger.ts). Dispatch-time rebase had no conflict resolution at all, so it could only ever fail.
 */
 export async function refreshReusedWorktreeBase(input: RefreshReusedWorktreeBaseInput): Promise<WorktreeBaseRefreshResult> {
-  const { task, rootDir, worktreePath, store, settings, audit, logger } = input;
+  const { task, rootDir, worktreePath, store, settings, audit, logger, runContext } = input;
   if (settings.worktrunk?.enabled) {
     return { kind: "worktrunk-refresh-unsupported", executionSafe: true, skipped: true, durableBaseSha: task.baseCommitSha ?? null };
   }
@@ -145,7 +150,7 @@ export async function refreshReusedWorktreeBase(input: RefreshReusedWorktreeBase
   if (headCurrent) {
     if (baselineMatches) return { kind: "up-to-date", executionSafe: true, observedHead: originalHead, ...common };
     try {
-      await store.updateTask(task.id, { baseCommitSha: baseSha });
+      await store.updateTask(task.id, { baseCommitSha: baseSha }, runContext);
       await audit?.git?.({ type: "worktree:base-refresh-reconciled", target: worktreePath, metadata: { taskId: task.id, outcome: "reconciled" } });
       return { kind: "up-to-date", executionSafe: true, observedHead: originalHead, ...common };
     } catch (error) {
@@ -214,7 +219,7 @@ export async function refreshReusedWorktreeBase(input: RefreshReusedWorktreeBase
 
   const observedHead = await git(worktreePath, "rev-parse HEAD").catch(() => undefined);
   try {
-    await store.updateTask(task.id, { baseCommitSha: baseSha });
+    await store.updateTask(task.id, { baseCommitSha: baseSha }, runContext);
     await audit?.git?.({ type: "worktree:base-refreshed", target: worktreePath, metadata: { taskId: task.id, outcome: kind } });
     return { kind, executionSafe: true, observedHead, ...common };
   } catch (error) {

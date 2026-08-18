@@ -35,6 +35,7 @@ export type MissingSessionRecoveryDeps = {
   rootDir: string;
   store: TaskStore;
   getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   hasActiveWorktreeBinding: (taskId: string, worktreePath: string) => boolean;
   markGraphExecuteSelfRequeued: (taskId: string) => void;
 };
@@ -112,14 +113,14 @@ export async function recoverMissingWorktreeSessionStartFailure(
       task.id,
       `Worktree session-start auto-recovery exhausted (${recovery.retries}/${MAX_WORKTREE_SESSION_RETRIES}); task left for human inspection`,
       undefined,
-      deps.getRunContextFor(task.id),
+      deps.runContextFor(task.id),
     );
   } else {
     await deps.store.logEntry(
       task.id,
       `Worktree was ${classification} at session start; requeued to todo for clean retry (attempt ${recovery.retries}/${MAX_WORKTREE_SESSION_RETRIES})`,
       undefined,
-      deps.getRunContextFor(task.id),
+      deps.runContextFor(task.id),
     );
   }
   return recovery.outcome === "escalate-exhausted" ? "escalate-exhausted" : "requeue-todo";

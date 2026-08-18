@@ -50,6 +50,7 @@ import {
   ApprovalRequestStore,
   DEFAULT_PROVIDER_INSTANCE_ID,
   RetryStormError,
+  actorContextForAgent,
   columnsWithFlag,
   isEphemeralAgent,
   resolveEphemeralTaskCreationPolicy,
@@ -190,7 +191,8 @@ import { compactSessionContext, describeModel, formatModelMarkerDetails, promptW
 import { resolveDedicatedPlannerColumnsForTask } from "../planner-lane-resolution.js";
 import { mergeEffectiveSettings } from "../project/effective-settings.js";
 import { buildStepFailureMessage, emitProactiveStatus, sanitizeFailureReason } from "../project/proactive-status.js";
-import { createRunAuditor, generateSyntheticRunId, type EngineRunContext } from "../util/run-audit.js";
+import { createRunAuditor, generateSyntheticRunId, toRunMutationContext, type EngineRunContext } from "../util/run-audit.js";
+import { runContextForTotal } from "./run-context-for.js";
 import { acquireTaskWorktree, WorktreeBaseRefreshError } from "../worktree/worktree-acquisition.js";
 import { resolveWorktreesDir } from "../worktree/worktree-paths.js";
 import {
@@ -244,6 +246,7 @@ export type RunImplementationDeps = {
   BRANCH_CONFLICT_TRIPWIRE_THRESHOLD: number;
   MAX_AUTO_RECOVERY_ATTEMPTS: number;
   getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   addActiveWorktree: AnyFn;
   attemptExecutorVerificationFix: AnyFn;
   buildActionGateContext: AnyFn;
@@ -396,7 +399,7 @@ export async function runImplementation(
     const settings = await mergeEffectiveSettings(deps.store, task, await deps.store.getSettings());
     if (externalExecutionRoute.configured && !externalExecutionRoute.valid) {
       const message = `Persisted external execution checkout is invalid: ${externalExecutionRoute.reason ?? "unknown error"}`;
-      await deps.store.logEntry(task.id, message, undefined, deps.getRunContextFor(task.id));
+      await deps.store.logEntry(task.id, message, undefined, deps.runContextFor(task.id));
       deps.executing.delete(task.id);
       executingTaskLock.release(task.id);
       if (dropPreHeldExecutorSlot(task.id)) deps.options.semaphore?.release();
@@ -418,6 +421,8 @@ export async function runImplementation(
     deps.currentRunContexts.set(task.id, {
       runId: syntheticRunId,
       agentId: task.assignedAgentId ?? "executor",
+      // FNXC:Identity 2026-08-15-22:52: an execution run acts as the assigned agent (or the generic executor lane); autonomous work leaves `actingFor` unset (R28).
+      actor: actorContextForAgent(task.assignedAgentId ?? "executor"),
     });
     // FNXC:AgentActivityStream 2026-08-09-09:09 (restored 2026-08-15-22:15 after wave-18 shell-ification dropped it):
     // FN-8864 durable task:started activity at the implementation entry; monitoring never blocks execution.
@@ -500,7 +505,7 @@ export async function runImplementation(
         // enters it with needs-replan (workflows without "triage" replan in place in todo).
         await moveTaskToReplanColumn(deps.store, task);
         await deps.store.updateTask(task.id, { status: "needs-replan" });
-        await deps.store.logEntry(task.id, staleness.reason, undefined, deps.getRunContextFor(task.id));
+        await deps.store.logEntry(task.id, staleness.reason, undefined, deps.runContextFor(task.id));
         // FNXC:GlobalConcurrencyControls 2026-07-15-02:55: replan handoff never starts agent work — free any re-registered pre-held slot before leaving execute().
         if (dropPreHeldExecutorSlot(task.id)) deps.options.semaphore?.release();
         return;
@@ -550,7 +555,7 @@ export async function runImplementation(
         task.id,
         "Drift detected: in-progress with no worktree — creating fresh worktree to recover",
         undefined,
-        deps.getRunContextFor(task.id),
+        deps.runContextFor(task.id),
       );
     }
 
@@ -681,7 +686,7 @@ export async function runImplementation(
             pool: deps.options.pool,
             logger: executorLog,
             audit,
-            runContext: deps.getRunContextFor(task.id),
+            runContext: deps.runContextFor(task.id),
             runInitCommand: true,
             createWorktree: deps.createWorktree,
             // FNXC:WorktreeAcquisition 2026-08-09-03:30: This injected creator is native even when project settings
@@ -747,7 +752,7 @@ export async function runImplementation(
             if (setupResult.spawnError || setupResult.timedOut || setupResult.exitCode !== 0) {
               throw new Error(configuredCommandErrorMessage(setupResult));
             }
-            await deps.store.logEntry(task.id, `[timing] Setup script '${settings.setupScript}' completed in ${Date.now() - setupStartedAt}ms`, scriptCommand, deps.getRunContextFor(task.id));
+            await deps.store.logEntry(task.id, `[timing] Setup script '${settings.setupScript}' completed in ${Date.now() - setupStartedAt}ms`, scriptCommand, deps.runContextFor(task.id));
           } catch (err: unknown) {
             if (err instanceof Error && err.name === "AbortError") {
               throw err;
@@ -756,12 +761,12 @@ export async function runImplementation(
             const message = "stderr" in execError && typeof (execError as Record<string, unknown>).stderr === "string"
               ? String((execError as Record<string, unknown>).stderr)
               : execError.message;
-            await deps.store.logEntry(task.id, `Setup script '${settings.setupScript}' failed: ${message}`, undefined, deps.getRunContextFor(task.id));
+            await deps.store.logEntry(task.id, `Setup script '${settings.setupScript}' failed: ${message}`, undefined, deps.runContextFor(task.id));
           } finally {
             deps.unregisterConfiguredCommandController(task.id, setupAbortController);
           }
         } else {
-          await deps.store.logEntry(task.id, `Setup script '${settings.setupScript}' not found in scripts map — skipping`, undefined, deps.getRunContextFor(task.id));
+          await deps.store.logEntry(task.id, `Setup script '${settings.setupScript}' not found in scripts map — skipping`, undefined, deps.runContextFor(task.id));
         }
       }
 
@@ -773,7 +778,20 @@ export async function runImplementation(
       An operator-routed checkout still needs the read-only base snapshot used by modified-file capture. It must not enter contamination or managed-worktree liveness checks: the persisted checkout is deliberately operator-owned and lives outside Fusion's worktree directory.
       */
       if (!deps.workspaceConfig && !acquisition.isResume) {
-        await captureBaseCommitSha(deps.store, task, worktreePath, audit, { isResume: false });
+        /*
+        FNXC:Identity 2026-08-14-05:32:
+        The base-SHA write is attributed to the run that captures it. Omitting the context here made
+        `captureBaseCommitSha` fall back to an executor-lane actor with run id `unknown`, even though
+        this caller resolves a real context for every other write on the path.
+        */
+        await captureBaseCommitSha(
+          deps.store,
+          task,
+          worktreePath,
+          audit,
+          { isResume: false },
+          runContextForTotal(deps.getRunContextFor, task.id),
+        );
       }
 
       if (!deps.workspaceConfig && !externalExecutionRoute.configured) {
@@ -828,7 +846,7 @@ export async function runImplementation(
           const reanchor = await detectNestedWorktreeRoot(deps.rootDir, worktreePath, settings);
           if (reanchor.reanchored) {
             await deps.store.updateTask(task.id, { worktree: reanchor.root });
-            await deps.store.logEntry(task.id, `Re-anchored nested task.worktree from ${worktreePath} to ${reanchor.root}`, undefined, deps.getRunContextFor(task.id));
+            await deps.store.logEntry(task.id, `Re-anchored nested task.worktree from ${worktreePath} to ${reanchor.root}`, undefined, deps.runContextFor(task.id));
             await deps.emitWorktreeReanchoredAudit(task.id, worktreePath, reanchor.root, "executor-liveness-gate");
             worktreePath = reanchor.root;
             observedWorktreeRealpath = canonicalizePath(reanchor.root);
@@ -858,7 +876,7 @@ export async function runImplementation(
         const reasonSection = livenessFailureReason ? ` (${livenessFailureReason})` : "";
         const failureMessage = `worktree liveness assertion failed: ${livenessFailure}${reasonSection} — observed=${observed}, expected=${expected}${registeredSection}`;
         executorLog.error(`${task.id}: ${failureMessage}`);
-        await deps.store.logEntry(task.id, failureMessage, undefined, deps.getRunContextFor(task.id));
+        await deps.store.logEntry(task.id, failureMessage, undefined, deps.runContextFor(task.id));
 
         const priorRequeues = task.taskDoneRetryCount ?? 0;
         const nextRequeueCount = priorRequeues + 1;
@@ -910,7 +928,7 @@ export async function runImplementation(
             task.id,
             `${failureMessage} — requeued to todo immediately (${nextRequeueCount}/${MAX_TASK_DONE_REQUEUE_RETRIES})`,
             undefined,
-            deps.getRunContextFor(task.id),
+            deps.runContextFor(task.id),
           );
           deps.markGraphExecuteSelfRequeued(task.id);
           await deps.store.moveTask(task.id, await resolveReboundColumnFor(deps.store, task.id), { preserveProgress: true });
@@ -925,7 +943,7 @@ export async function runImplementation(
             paused: false,
             pausedByAgentId: null,
           });
-          await deps.store.logEntry(task.id, `${failureMessage} — execution failed after worktree liveness retry budget was exhausted`, undefined, deps.getRunContextFor(task.id));
+          await deps.store.logEntry(task.id, `${failureMessage} — execution failed after worktree liveness retry budget was exhausted`, undefined, deps.runContextFor(task.id));
           await deps.persistTokenUsage(task.id);
           executorLog.log(`✗ ${task.id} worktree liveness failed`);
         }
@@ -1229,7 +1247,7 @@ export async function runImplementation(
             }
             if (await deps.parkApprovalSuspension(task.id, "step sessions")) return;
             deps.clearPausedAborted(task.id);
-            await deps.store.logEntry(task.id, "Execution paused — step sessions terminated, moved to todo", undefined, deps.getRunContextFor(task.id));
+            await deps.store.logEntry(task.id, "Execution paused — step sessions terminated, moved to todo", undefined, deps.runContextFor(task.id));
             deps.markGraphExecuteSelfRequeued(task.id);
             await deps.store.moveTask(task.id, await resolveReboundColumnFor(deps.store, task.id), { preserveResumeState: true });
             return;
@@ -1273,7 +1291,7 @@ export async function runImplementation(
                     if (hasAnomaly) {
                       const summary = `branch-attribution anomalies on ${repoRel}@${repo.branch}: foreign=${attribution.foreign.length}, unattributed=${attribution.unattributed.length}, ownUntrailed=${attribution.ownUntrailed.length}, ownTrailed=${attribution.ownTrailed}`;
                       executorLog.warn(`${task.id}: ${summary}`);
-                      await deps.store.logEntry(task.id, `[branch-attribution] ${summary}`, undefined, deps.getRunContextFor(task.id));
+                      await deps.store.logEntry(task.id, `[branch-attribution] ${summary}`, undefined, deps.runContextFor(task.id));
                       await audit.git({
                         type: "branch:attribution-anomaly",
                         target: repo.branch,
@@ -1322,7 +1340,7 @@ export async function runImplementation(
                 if (hasAnomaly) {
                   const summary = `branch-attribution anomalies on ${updatedTask.branch}: foreign=${attribution.foreign.length}, unattributed=${attribution.unattributed.length}, ownUntrailed=${attribution.ownUntrailed.length}, ownTrailed=${attribution.ownTrailed}`;
                   executorLog.warn(`${task.id}: ${summary}`);
-                  await deps.store.logEntry(task.id, `[branch-attribution] ${summary}`, undefined, deps.getRunContextFor(task.id));
+                  await deps.store.logEntry(task.id, `[branch-attribution] ${summary}`, undefined, deps.runContextFor(task.id));
                   await audit.git({
                     type: "branch:attribution-anomaly",
                     target: updatedTask.branch,
@@ -1367,7 +1385,7 @@ export async function runImplementation(
                     task.id,
                     `[verification] ${failedType} command failed (exit ${failedResult.exitCode}). Attempting fix agent...`,
                     summary,
-                    deps.getRunContextFor(task.id),
+                    deps.runContextFor(task.id),
                   );
 
                   const maxFixRetries = Math.min(settings.verificationFixRetries ?? 3, 3);
@@ -1407,7 +1425,7 @@ export async function runImplementation(
                         task.id,
                         `[verification] Fix agent succeeded on attempt ${attempt}/${maxFixRetries}. Verification now passing.`,
                         undefined,
-                        deps.getRunContextFor(task.id),
+                        deps.runContextFor(task.id),
                       );
                       break;
                     }
@@ -1416,7 +1434,7 @@ export async function runImplementation(
                       task.id,
                       `[verification] Fix agent attempt ${attempt}/${maxFixRetries} failed`,
                       undefined,
-                      deps.getRunContextFor(task.id),
+                      deps.runContextFor(task.id),
                     );
                   }
 
@@ -1457,7 +1475,7 @@ export async function runImplementation(
             const failedSteps = results.filter(r => !r.success);
             const errorSummary = failedSteps.map(r => `Step ${r.stepIndex}: ${r.error || "unknown error"}`).join("; ");
             await deps.store.updateTask(task.id, { status: null, error: null });
-            await deps.store.logEntry(task.id, `Step-session failed — requeued for execution resume: ${errorSummary}`, undefined, deps.getRunContextFor(task.id));
+            await deps.store.logEntry(task.id, `Step-session failed — requeued for execution resume: ${errorSummary}`, undefined, deps.runContextFor(task.id));
             deps.markGraphExecuteSelfRequeued(task.id);
             await deps.store.moveTask(task.id, await resolveReboundColumnFor(deps.store, task.id), { preserveProgress: true, moveSource: "engine", recoveryRehome: true });
             executorLog.log(`✗ ${task.id} step-session failed → todo resume: ${errorSummary}`);
@@ -1474,7 +1492,7 @@ export async function runImplementation(
           onRetry: (attempt, delayMs, error) => {
             const delaySec = Math.round(delayMs / 1000);
             executorLog.warn(`⏳ ${task.id} rate limited — retry ${attempt} in ${delaySec}s: ${error.message}`);
-            deps.store.logEntry(task.id, `Rate limited — retry ${attempt} in ${delaySec}s`, undefined, deps.getRunContextFor(task.id)).catch((err: unknown) => {
+            deps.store.logEntry(task.id, `Rate limited — retry ${attempt} in ${delaySec}s`, undefined, deps.runContextFor(task.id)).catch((err: unknown) => {
               const msg = err instanceof Error ? err.message : String(err);
               executorLog.warn(`${task.id} failed to log rate-limit retry: ${msg}`);
             });
@@ -1499,7 +1517,7 @@ export async function runImplementation(
             }
             if (await deps.parkApprovalSuspension(task.id, "step session")) return;
             deps.clearPausedAborted(task.id);
-            await deps.store.logEntry(task.id, "Execution paused during step-session", undefined, deps.getRunContextFor(task.id));
+            await deps.store.logEntry(task.id, "Execution paused during step-session", undefined, deps.runContextFor(task.id));
             deps.markGraphExecuteSelfRequeued(task.id);
             await deps.store.moveTask(task.id, await resolveReboundColumnFor(deps.store, task.id), { preserveResumeState: true });
           } else if (deps.stuckAborted.has(task.id)) {
@@ -1518,7 +1536,7 @@ export async function runImplementation(
               const delay = formatDelay(decision.delayMs);
               if (!isSilentTransientError(errorMessage)) {
                 executorLog.warn(`⚡ ${task.id} transient error — retry ${attempt}/${MAX_RECOVERY_RETRIES} in ${delay}: ${errorMessage}`);
-                await deps.store.logEntry(task.id, `Transient error (retry ${attempt}/${MAX_RECOVERY_RETRIES} in ${delay}): ${errorMessage}`, undefined, deps.getRunContextFor(task.id));
+                await deps.store.logEntry(task.id, `Transient error (retry ${attempt}/${MAX_RECOVERY_RETRIES} in ${delay}): ${errorMessage}`, undefined, deps.runContextFor(task.id));
               }
               if (!externalExecutionRoute.configured && worktreePath && existsSync(worktreePath)) {
                 try {
@@ -1552,7 +1570,7 @@ export async function runImplementation(
 
             executorLog.error(`✗ ${task.id} transient error retries exhausted: ${errorDetail}`);
             if (errorStack) {
-              await deps.store.logEntry(task.id, `Transient error retries exhausted: ${errorMessage}`, errorStack, deps.getRunContextFor(task.id));
+              await deps.store.logEntry(task.id, `Transient error retries exhausted: ${errorMessage}`, errorStack, deps.runContextFor(task.id));
             }
             await deps.store.updateTask(task.id, {
               status: "failed",
@@ -1584,7 +1602,7 @@ export async function runImplementation(
               return;
             }
             executorLog.error(`✗ ${task.id} step-session execution failed:`, errorDetail);
-            await deps.store.logEntry(task.id, `Step-session execution failed: ${errorMessage}`, errorStack ?? errorDetail, deps.getRunContextFor(task.id));
+            await deps.store.logEntry(task.id, `Step-session execution failed: ${errorMessage}`, errorStack ?? errorDetail, deps.runContextFor(task.id));
             await deps.store.updateTask(task.id, { status: null, error: null });
             deps.markGraphExecuteSelfRequeued(task.id);
             await deps.store.moveTask(task.id, await resolveReboundColumnFor(deps.store, task.id), { preserveProgress: true, moveSource: "engine", recoveryRehome: true });
@@ -1909,10 +1927,8 @@ export async function runImplementation(
         }),
         ...createIdeationTools(deps.store),
         ...createGoalRetrievalTools(deps.store, {
-          runContext: {
-            runId: engineRunContext.runId,
-            agentId: engineRunContext.agentId,
-          },
+          // FNXC:Identity 2026-08-15-22:52: one boundary conversion instead of a hand-built partial context.
+          runContext: toRunMutationContext(engineRunContext),
           taskId: task.id,
         }),
         createWebFetchTool(),
@@ -1957,7 +1973,7 @@ export async function runImplementation(
           settings,
           logger: executorLog,
           secretsStore: deps.options.secretsStore,
-          runContext: engineRunContext,
+          runContext: toRunMutationContext(engineRunContext),
           audit,
           // FNXC:Workspace 2026-06-21-22:30: F2 — register each freshly-acquired sub-repo worktree path in this task's activeWorktrees Set (KTD2) so owner/liveness checks see live per-repo worktrees, not just the browse-only root.
           onAcquired: (worktreePath: string) => deps.addActiveWorktree(task.id, worktreePath),
@@ -2087,7 +2103,7 @@ export async function runImplementation(
               task.id,
               `Detected stale persisted session metadata (worktree mismatch: ${persistedWorktreePath} vs ${worktreePath}) — discarded resume state and started fresh session`,
               undefined,
-              deps.getRunContextFor(task.id),
+              deps.runContextFor(task.id),
             );
             await deps.store.updateTask(task.id, { sessionFile: null });
             isResuming = false;
@@ -2171,7 +2187,9 @@ export async function runImplementation(
             ...(skillContext.additionalSkillPaths.length > 0 ? { additionalSkillPaths: skillContext.additionalSkillPaths } : {}),
             onSkillSummary: async (summary) => {
               const unavailable = summary.unresolvedForcedSkills.length ? `; forced-unavailable: [${summary.unresolvedForcedSkills.map((entry) => `${entry.requestedName} (${entry.reason})`).join(", ")}]` : "";
-              await deps.store.logEntry(task.id, `[skills] [executor] ${summary.availableCount} skill(s) available; forced: ${summary.forcedSkillNames.length ? `[${summary.forcedSkillNames.join(", ")}]` : "none"}${unavailable}`);
+              // FNXC:Identity 2026-08-17-04:30: main added this skills-summary breadcrumb after U18 converted the
+              // file, so it arrived unattributed; it writes to the task log like every other write here.
+              await deps.store.logEntry(task.id, `[skills] [executor] ${summary.availableCount} skill(s) available; forced: ${summary.forcedSkillNames.length ? `[${summary.forcedSkillNames.join(", ")}]` : "none"}${unavailable}`, undefined, runContextForTotal(deps.getRunContextFor, task.id));
             },
             // Column-agent principal alignment (plan U5, R5): action gating is
             // computed for the agent ACTUALLY RUNNING. When the governing execute
@@ -2187,6 +2205,8 @@ export async function runImplementation(
               agent: "executor",
               label: "executor",
               store: deps.store,
+              // FNXC:Identity 2026-08-16-05:10: the observer logs to the task; attribute it to this run.
+              runContext: runContextForTotal(deps.getRunContextFor, task.id),
               taskId: task.id,
               taskTitle: detail.title,
             }),
@@ -2213,10 +2233,10 @@ export async function runImplementation(
         const executorModelMarker = `Executor using model: ${executorModelDetails}`;
         if (isResuming) {
           executorLog.debug(`${task.id}: resumed session from ${task.sessionFile}`);
-          await deps.store.logEntry(task.id, `Resumed agent session after unpause (model: ${executorModelDesc})`, undefined, deps.getRunContextFor(task.id));
+          await deps.store.logEntry(task.id, `Resumed agent session after unpause (model: ${executorModelDesc})`, undefined, deps.runContextFor(task.id));
         } else {
           executorLog.debug(`${task.id}: using model ${executorModelDesc}`);
-          await deps.store.logEntry(task.id, executorModelMarker, undefined, deps.getRunContextFor(task.id));
+          await deps.store.logEntry(task.id, executorModelMarker, undefined, deps.runContextFor(task.id));
           // Persist session file path so pause/resume can reopen it
           if (sessionFile) {
             await deps.store.updateTask(task.id, { sessionFile });
@@ -2343,7 +2363,7 @@ export async function runImplementation(
                     task.id,
                     `Context compacted at ${compactResult.tokensBefore} tokens (token cap: ${settings.tokenCap})`,
                     undefined,
-                    deps.getRunContextFor(task.id),
+                    deps.runContextFor(task.id),
                   );
                 }
                 return compactResult;
@@ -2364,7 +2384,7 @@ export async function runImplementation(
           if (loopState?.pending) {
             loopState.pending = false;
             executorLog.log(`${task.id} consuming loop recovery — resuming with fresh context`);
-            await deps.store.logEntry(task.id, "Resuming execution after context compaction — taking a different approach", undefined, deps.getRunContextFor(task.id));
+            await deps.store.logEntry(task.id, "Resuming execution after context compaction — taking a different approach", undefined, deps.runContextFor(task.id));
 
             // Reset activity tracking so the detector doesn't immediately re-trigger
             stuckDetector?.recordProgress(task.id);
@@ -2477,7 +2497,7 @@ export async function runImplementation(
               }
               taskDone = true;
               executorLog.log(`${task.id} all steps done — treating as implicit fn_task_done`);
-              await deps.store.logEntry(task.id, "All steps complete — implicit fn_task_done (agent did not call tool explicitly)", undefined, deps.getRunContextFor(task.id));
+              await deps.store.logEntry(task.id, "All steps complete — implicit fn_task_done (agent did not call tool explicitly)", undefined, deps.runContextFor(task.id));
               deps.scheduleCompletedTaskWatchdog(task.id, "implicit fn_task_done");
             }
           }
@@ -2518,7 +2538,7 @@ export async function runImplementation(
               if (liveTask.status === "failed") {
                 const parkMessage = `${task.id}: task parked failed during no-fn_task_done retry — honoring park, not retrying`;
                 executorLog.log(parkMessage);
-                await deps.store.logEntry(task.id, parkMessage, undefined, deps.getRunContextFor(task.id));
+                await deps.store.logEntry(task.id, parkMessage, undefined, deps.runContextFor(task.id));
                 deps.deleteActiveSession(task.id);
                 deps.tokenUsageBaselines.delete(task.id);
                 session.dispose();
@@ -2536,7 +2556,7 @@ export async function runImplementation(
               if (!worktreeContractIntact) {
                 const reclaimMessage = `${task.id}: worktree/branch reclaimed during no-fn_task_done retry — aborting retry and requeueing`;
                 executorLog.log(reclaimMessage);
-                await deps.store.logEntry(task.id, reclaimMessage, undefined, deps.getRunContextFor(task.id));
+                await deps.store.logEntry(task.id, reclaimMessage, undefined, deps.runContextFor(task.id));
                 deps.deleteActiveSession(task.id);
                 deps.tokenUsageBaselines.delete(task.id);
                 session.dispose();
@@ -2553,7 +2573,7 @@ export async function runImplementation(
                   task.id,
                   `Agent finished without calling fn_task_done but Step ${pendingReviewBlock.stepIndex} is blocked on pending review (${pendingReviewBlock.reason}) — skipping retry session`,
                   undefined,
-                  deps.getRunContextFor(task.id),
+                  deps.runContextFor(task.id),
                 );
                 deps.deleteActiveSession(task.id);
                 deps.tokenUsageBaselines.delete(task.id);
@@ -2587,7 +2607,7 @@ export async function runImplementation(
                 task.id,
                 `Agent finished without calling fn_task_done — retrying with new session (${taskDoneSessionRetries}/${MAX_TASK_DONE_SESSION_RETRIES})`,
                 undefined,
-                deps.getRunContextFor(task.id),
+                deps.runContextFor(task.id),
               );
 
               // Capture and analyse the previous session's text before resetting.
@@ -2600,7 +2620,7 @@ export async function runImplementation(
                   task.id,
                   `Pseudo-pause detected (kind=${pseudoPause.kind}, matched='${shortMatch}')`,
                   undefined,
-                  deps.getRunContextFor(task.id),
+                  deps.runContextFor(task.id),
                 );
                 executorLog.log(`${task.id} pseudo-pause detected (kind=${pseudoPause.kind}): ${shortMatch}`);
               }
@@ -2766,7 +2786,7 @@ export async function runImplementation(
                   }
                   taskDone = true;
                   executorLog.log(`${task.id} all steps done — treating as implicit fn_task_done`);
-                  await deps.store.logEntry(task.id, "All steps complete — implicit fn_task_done (agent did not call tool explicitly)", undefined, deps.getRunContextFor(task.id));
+                  await deps.store.logEntry(task.id, "All steps complete — implicit fn_task_done (agent did not call tool explicitly)", undefined, deps.runContextFor(task.id));
                   deps.scheduleCompletedTaskWatchdog(task.id, "implicit fn_task_done");
                 }
               }
@@ -2816,7 +2836,7 @@ export async function runImplementation(
                 task.id,
                 "Worktree/branch reclaimed mid-retry — requeued to todo (engine self-heal, no failure)",
                 undefined,
-                deps.getRunContextFor(task.id),
+                deps.runContextFor(task.id),
               );
               // Clear any stale binding so the next pickup creates a fresh worktree.
               // baseCommitSha is also cleared because it pinned to the now-reclaimed worktree;
@@ -2849,14 +2869,14 @@ export async function runImplementation(
                   task.id,
                   `${errorMessage} — requeued to todo immediately (${nextRequeueCount}/${MAX_TASK_DONE_REQUEUE_RETRIES})`,
                   undefined,
-                  deps.getRunContextFor(task.id),
+                  deps.runContextFor(task.id),
                 );
                 deps.markGraphExecuteSelfRequeued(task.id);
                 await deps.store.moveTask(task.id, await resolveReboundColumnFor(deps.store, task.id), { preserveProgress: true });
                 executorLog.log(`✗ ${task.id} failed after ${MAX_TASK_DONE_SESSION_RETRIES} retries — requeued to todo (${nextRequeueCount}/${MAX_TASK_DONE_REQUEUE_RETRIES})`);
               } else {
                 await deps.store.updateTask(task.id, { status: "failed", error: errorMessage });
-                await deps.store.logEntry(task.id, `${errorMessage} — execution failed after task-done retry budget was exhausted`, undefined, deps.getRunContextFor(task.id));
+                await deps.store.logEntry(task.id, `${errorMessage} — execution failed after task-done retry budget was exhausted`, undefined, deps.runContextFor(task.id));
                 await deps.persistTokenUsage(task.id);
                 executorLog.log(`✗ ${task.id} failed after ${MAX_TASK_DONE_SESSION_RETRIES} retries — no fn_task_done`);
               }
@@ -2952,7 +2972,7 @@ export async function runImplementation(
         onRetry: (attempt, delayMs, error) => {
           const delaySec = Math.round(delayMs / 1000);
           executorLog.warn(`⏳ ${task.id} rate limited — retry ${attempt} in ${delaySec}s: ${error.message}`);
-          deps.store.logEntry(task.id, `Rate limited — retry ${attempt} in ${delaySec}s`, undefined, deps.getRunContextFor(task.id)).catch((err: unknown) => {
+          deps.store.logEntry(task.id, `Rate limited — retry ${attempt} in ${delaySec}s`, undefined, deps.runContextFor(task.id)).catch((err: unknown) => {
             const msg = err instanceof Error ? err.message : String(err);
             executorLog.warn(`${task.id} failed to log rate-limit retry: ${msg}`);
           });
@@ -2983,7 +3003,7 @@ export async function runImplementation(
           task.id,
           `Worktree base refresh blocked execution (${err.refresh.kind}) — task left queued for a later clean acquisition`,
           err.refresh.detail,
-          deps.getRunContextFor(task.id),
+          deps.runContextFor(task.id),
         ).catch(() => undefined);
         await deps.persistTokenUsage(task.id);
         return;
@@ -3013,7 +3033,7 @@ export async function runImplementation(
             task.id,
             `Stale assistant-continuation fresh-session retries exhausted after ${MAX_RECOVERY_RETRIES} attempts: ${errorMessage}`,
             errorStack ?? errorDetail,
-            deps.getRunContextFor(task.id),
+            deps.runContextFor(task.id),
           );
           await deps.store.updateTask(task.id, {
             status: "failed",
@@ -3034,7 +3054,7 @@ export async function runImplementation(
           task.id,
           `Detected stale assistant-continuation session — fresh-session retry ${attempt}/${MAX_RECOVERY_RETRIES} in ${delay} with progress preserved: ${errorMessage}`,
           undefined,
-          deps.getRunContextFor(task.id),
+          deps.runContextFor(task.id),
         );
         await deps.store.updateTask(task.id, {
           sessionFile: null,
@@ -3050,7 +3070,7 @@ export async function runImplementation(
         const toColumn = transitionMatch?.[2] ?? "unknown";
         const logMessage = `Task already moved from '${fromColumn}' — skipping transition to '${toColumn}'`;
         executorLog.log(`${task.id} ${logMessage}`);
-        await deps.store.logEntry(task.id, logMessage, errorMessage, deps.getRunContextFor(task.id));
+        await deps.store.logEntry(task.id, logMessage, errorMessage, deps.runContextFor(task.id));
         /*
         FNXC:WorkflowResolvedColumns 2026-07-31-09:25 (fleet: executor lifecycle roles):
         `fromColumn`/`toColumn` are parsed out of the store's rejection message, so they carry
@@ -3097,7 +3117,7 @@ export async function runImplementation(
             task.id,
             "Execution abort cleanup skipped — incomplete stuck-loop task is already parked with progress preserved",
             undefined,
-            deps.getRunContextFor(task.id),
+            deps.runContextFor(task.id),
           );
           return;
         }
@@ -3107,7 +3127,7 @@ export async function runImplementation(
             return;
           }
           executorLog.log(`${task.id} paused after completion — finalizing to in-review`);
-          await deps.store.logEntry(task.id, "Execution paused after completion — finalizing to in-review", undefined, deps.getRunContextFor(task.id));
+          await deps.store.logEntry(task.id, "Execution paused after completion — finalizing to in-review", undefined, deps.runContextFor(task.id));
           await deps.persistTokenUsage(task.id);
           /*
           FNXC:WorkflowLifecycle 2026-06-17-23:33:
@@ -3189,7 +3209,7 @@ export async function runImplementation(
               ? "Execution paused — agent terminated, parked in todo (pause preserved, awaiting explicit unpause)"
               : "Execution paused — agent terminated, moved to todo",
             undefined,
-            deps.getRunContextFor(task.id),
+            deps.runContextFor(task.id),
           );
           deps.markGraphExecuteSelfRequeued(task.id);
           await deps.store.moveTask(task.id, await resolveReboundColumnFor(deps.store, task.id), {
@@ -3229,7 +3249,7 @@ export async function runImplementation(
           const activeEntry = deps.activeSessions.get(task.id);
           if (activeEntry) {
             executorLog.log(`${task.id} context limit error after auto-compaction — attempting reduced-prompt retry (${loopAttempts + 1}/${MAX_REDUCED_PROMPT_ATTEMPTS})`);
-            await deps.store.logEntry(task.id, `Context limit error after auto-compaction — attempting reduced-prompt retry (${loopAttempts + 1}/${MAX_REDUCED_PROMPT_ATTEMPTS}): ${errorMessage}`, undefined, deps.getRunContextFor(task.id));
+            await deps.store.logEntry(task.id, `Context limit error after auto-compaction — attempting reduced-prompt retry (${loopAttempts + 1}/${MAX_REDUCED_PROMPT_ATTEMPTS}): ${errorMessage}`, undefined, deps.runContextFor(task.id));
 
             deps.loopRecoveryState.set(task.id, { attempts: loopAttempts + 1, pending: false });
 
@@ -3253,19 +3273,19 @@ export async function runImplementation(
               // Reduced-prompt retry succeeded — return to let the finally block clean up
               // without marking the task as failed.
               executorLog.log(`${task.id} reduced-prompt recovery succeeded — continuing`);
-              await deps.store.logEntry(task.id, "Reduced-prompt recovery succeeded — continuing execution", undefined, deps.getRunContextFor(task.id));
+              await deps.store.logEntry(task.id, "Reduced-prompt recovery succeeded — continuing execution", undefined, deps.runContextFor(task.id));
               return;
             } catch (reducedErr: unknown) {
               const reducedErrorMessage = reducedErr instanceof Error ? reducedErr.message : String(reducedErr);
               if (!isContextLimitError(reducedErrorMessage)) {
                 executorLog.error(`${task.id} reduced-prompt recovery also failed: ${reducedErrorMessage}`);
-                await deps.store.logEntry(task.id, `Reduced-prompt recovery failed: ${reducedErrorMessage}`, undefined, deps.getRunContextFor(task.id));
+                await deps.store.logEntry(task.id, `Reduced-prompt recovery failed: ${reducedErrorMessage}`, undefined, deps.runContextFor(task.id));
                 // Non-context failure — fall through to mark task as failed
               } else {
                 // Still a context error — the session is saturated beyond recovery.
                 // Fall through to the fresh-session requeue path below.
                 executorLog.warn(`${task.id} session still saturated after reduced-prompt retry — will attempt fresh-session requeue`);
-                await deps.store.logEntry(task.id, `Reduced-prompt retry still over context — will attempt fresh-session requeue`, undefined, deps.getRunContextFor(task.id));
+                await deps.store.logEntry(task.id, `Reduced-prompt retry still over context — will attempt fresh-session requeue`, undefined, deps.runContextFor(task.id));
               }
             }
           }
@@ -3284,7 +3304,7 @@ export async function runImplementation(
             const attempt = decision.nextState.recoveryRetryCount;
             const delay = formatDelay(decision.delayMs);
             executorLog.warn(`⚡ ${task.id} context-overflow fresh-session requeue ${attempt}/${MAX_RECOVERY_RETRIES} in ${delay}`);
-            await deps.store.logEntry(task.id, `Context-overflow fresh-session requeue (${attempt}/${MAX_RECOVERY_RETRIES} in ${delay}): ${errorMessage}`, undefined, deps.getRunContextFor(task.id));
+            await deps.store.logEntry(task.id, `Context-overflow fresh-session requeue (${attempt}/${MAX_RECOVERY_RETRIES} in ${delay}): ${errorMessage}`, undefined, deps.runContextFor(task.id));
             // Retain the worktree and accumulated step progress so the fresh
             // session resumes where the saturated one left off, but clear
             // sessionFile synchronously here so the next dispatch is forced
@@ -3305,7 +3325,7 @@ export async function runImplementation(
           }
 
           executorLog.error(`✗ ${task.id} context-overflow requeue budget exhausted (${MAX_RECOVERY_RETRIES} attempts): ${errorMessage}`);
-          await deps.store.logEntry(task.id, `Context-overflow requeues exhausted after ${MAX_RECOVERY_RETRIES} attempts: ${errorMessage}`, undefined, deps.getRunContextFor(task.id));
+          await deps.store.logEntry(task.id, `Context-overflow requeues exhausted after ${MAX_RECOVERY_RETRIES} attempts: ${errorMessage}`, undefined, deps.runContextFor(task.id));
           // Reset so downstream failure path can persist cleanly
           await deps.store.updateTask(task.id, {
             recoveryRetryCount: null,
@@ -3319,7 +3339,7 @@ export async function runImplementation(
           const details = err.foreignCommits
             .map((commit) => `${commit.sha.slice(0, 12)}:${commit.foreignTaskId}`)
             .join(", ");
-          await deps.store.logEntry(task.id, `[recovery] branch cross-contamination detected on ${err.branchName} since ${err.baseSha}: ${details}`, undefined, deps.getRunContextFor(task.id));
+          await deps.store.logEntry(task.id, `[recovery] branch cross-contamination detected on ${err.branchName} since ${err.baseSha}: ${details}`, undefined, deps.runContextFor(task.id));
 
           try {
             const recoveredBootstrapMisbinding = await deps.tryBootstrapMisbindingRecovery(task, err, audit);
@@ -3397,7 +3417,7 @@ export async function runImplementation(
                   task.id,
                   `[recovery] rehomed orphan-our-advance commit ${commit.sha.slice(0, 12)} (source ${orphanClass.sourceTaskId}) onto ${integrationBranchForOrphan} via fast-forward; dropping from branch`,
                   undefined,
-                  deps.getRunContextFor(task.id),
+                  deps.runContextFor(task.id),
                 );
               } else {
                 const hint = "cherryPickHint" in rehome && rehome.cherryPickHint
@@ -3407,7 +3427,7 @@ export async function runImplementation(
                   task.id,
                   `[recovery] orphan-our-advance commit ${commit.sha.slice(0, 12)} (source ${orphanClass.sourceTaskId}) refused auto-rehome: ${rehome.reason}${hint}`,
                   undefined,
-                  deps.getRunContextFor(task.id),
+                  deps.runContextFor(task.id),
                 );
                 genuinelyUnique.push(commit);
               }
@@ -3421,7 +3441,7 @@ export async function runImplementation(
               task.id,
               `[recovery] contamination classification: already-upstream=[${alreadyShas}] misrouted=[${misroutedShas}] rehomed-orphan=[${rehomedShas}] unique=[${uniqueShas}]`,
               undefined,
-              deps.getRunContextFor(task.id),
+              deps.runContextFor(task.id),
             );
 
             const alreadyAttemptedRecovery = (task.recoveryRetryCount ?? 0) > 0;
@@ -3450,7 +3470,7 @@ export async function runImplementation(
                 task.id,
                 `[recovery] auto-recovered branch-cross-contamination: dropped ${recovery.droppedShas.length} commits (already-upstream + misrouted, SHAs: ${recovery.droppedShas.map((sha) => sha.slice(0, 12)).join(", ")}); new tip ${recovery.newTipSha.slice(0, 12)}`,
                 undefined,
-                deps.getRunContextFor(task.id),
+                deps.runContextFor(task.id),
               );
 
               for (const dropped of misrouted) {
@@ -3492,19 +3512,19 @@ export async function runImplementation(
                 task.id,
                 "[recovery] auto-recovery already attempted; escalating to human adjudication",
                 undefined,
-                deps.getRunContextFor(task.id),
+                deps.runContextFor(task.id),
               );
             } else if (genuinelyUnique.length > 0) {
               await deps.store.logEntry(
                 task.id,
                 `[recovery] unique foreign commits require human adjudication: ${genuinelyUnique.map((commit) => commit.sha.slice(0, 12)).join(", ")}`,
                 undefined,
-                deps.getRunContextFor(task.id),
+                deps.runContextFor(task.id),
               );
             }
           } catch (recoveryError: unknown) {
             const recoveryMessage = recoveryError instanceof Error ? recoveryError.message : String(recoveryError);
-            await deps.store.logEntry(task.id, `[recovery] contamination auto-recovery failed: ${recoveryMessage}`, undefined, deps.getRunContextFor(task.id));
+            await deps.store.logEntry(task.id, `[recovery] contamination auto-recovery failed: ${recoveryMessage}`, undefined, deps.runContextFor(task.id));
           }
 
           const autoRecoveryDispatcher = deps.getAutoRecoveryDispatcher(audit);
@@ -3555,7 +3575,7 @@ export async function runImplementation(
               `startPoint=${err.startPoint}`,
             ].join(" ");
             const tripwireMessage = `Branch conflict tripwire fired after ${conflictCount} events (threshold ${deps.BRANCH_CONFLICT_TRIPWIRE_THRESHOLD}). ${details}`;
-            await deps.store.logEntry(task.id, `[recovery] ${tripwireMessage}`, undefined, deps.getRunContextFor(task.id));
+            await deps.store.logEntry(task.id, `[recovery] ${tripwireMessage}`, undefined, deps.runContextFor(task.id));
             const autoRecoveryDispatcher = deps.getAutoRecoveryDispatcher(audit);
             const decision = await autoRecoveryDispatcher.dispatch({
               class: "branch-conflict-tripwire",
@@ -3587,7 +3607,7 @@ export async function runImplementation(
           for (let attempt = 1; attempt <= deps.MAX_AUTO_RECOVERY_ATTEMPTS; attempt += 1) {
             outcome = await deps.handleBranchConflict(task, err);
             if (outcome !== "retry") break;
-            await deps.store.logEntry(task.id, `[recovery] ${task.id} branch-conflict auto-retry requested (${attempt}/${deps.MAX_AUTO_RECOVERY_ATTEMPTS})`, undefined, deps.getRunContextFor(task.id));
+            await deps.store.logEntry(task.id, `[recovery] ${task.id} branch-conflict auto-retry requested (${attempt}/${deps.MAX_AUTO_RECOVERY_ATTEMPTS})`, undefined, deps.runContextFor(task.id));
             const taskForRetry = await deps.store.getTask(task.id);
             await recordRetry({
               store: deps.store,
@@ -3646,7 +3666,7 @@ export async function runImplementation(
             // Silent transient errors (e.g., "request was aborted") are noisy — skip logging
             if (!isSilentTransientError(errorMessage)) {
               executorLog.warn(`⚡ ${task.id} transient error — retry ${attempt}/${MAX_RECOVERY_RETRIES} in ${delay}: ${errorMessage}`);
-              await deps.store.logEntry(task.id, `Transient error (retry ${attempt}/${MAX_RECOVERY_RETRIES} in ${delay}): ${errorMessage}`, undefined, deps.getRunContextFor(task.id));
+              await deps.store.logEntry(task.id, `Transient error (retry ${attempt}/${MAX_RECOVERY_RETRIES} in ${delay}): ${errorMessage}`, undefined, deps.runContextFor(task.id));
             }
             // Clean up the old worktree so the retry gets a fresh one
             if (!externalExecutionRoute.configured && worktreePath && existsSync(worktreePath)) {
@@ -3681,7 +3701,7 @@ export async function runImplementation(
 
           // Recovery budget exhausted — escalate to real failure
           executorLog.error(`✗ ${task.id} transient error retries exhausted (${MAX_RECOVERY_RETRIES} attempts): ${errorDetail}`);
-          await deps.store.logEntry(task.id, `Transient error retries exhausted after ${MAX_RECOVERY_RETRIES} attempts: ${errorMessage}`, errorStack ?? errorDetail, deps.getRunContextFor(task.id));
+          await deps.store.logEntry(task.id, `Transient error retries exhausted after ${MAX_RECOVERY_RETRIES} attempts: ${errorMessage}`, errorStack ?? errorDetail, deps.runContextFor(task.id));
           await deps.store.updateTask(task.id, {
             status: "failed",
             error: errorMessage,
@@ -3697,7 +3717,7 @@ export async function runImplementation(
           ? JSON.stringify(serializeRetryStormError(err))
           : errorMessage;
         executorLog.error(`✗ ${task.id} execution failed:`, errorDetail);
-        await deps.store.logEntry(task.id, `Execution failed: ${terminalError}`, errorStack ?? errorDetail, deps.getRunContextFor(task.id));
+        await deps.store.logEntry(task.id, `Execution failed: ${terminalError}`, errorStack ?? errorDetail, deps.runContextFor(task.id));
         await deps.store.updateTask(task.id, { status: "failed", error: terminalError });
         await deps.persistTokenUsage(task.id);
         executorLog.log(`✗ ${task.id} execution failed`);

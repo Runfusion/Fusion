@@ -23,6 +23,7 @@ export type AwaitInputNodeResult = {
 export type AwaitInputNodeDeps = {
   store: TaskStore;
   getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
 };
 
 export async function runAwaitInputNode(
@@ -69,18 +70,18 @@ export async function runAwaitInputNode(
       // visit re-asks instead of silently consuming a stale comment.
       const latest = replies[replies.length - 1] as { text?: string; comment?: string };
       const answer = (latest?.text ?? latest?.comment ?? "").toString();
-      await deps.store.updateTask(live.id, { status: null, pausedReason: null }, deps.getRunContextFor(live.id));
-      await deps.store.logEntry(live.id, `Workflow input received for node '${node.id}'`, undefined, deps.getRunContextFor(live.id));
+      await deps.store.updateTask(live.id, { status: null, pausedReason: null }, deps.runContextFor(live.id));
+      await deps.store.logEntry(live.id, `Workflow input received for node '${node.id}'`, undefined, deps.runContextFor(live.id));
       return { outcome: "success", value: "input-received", contextPatch: { [`input:${node.id}`]: answer } };
     }
     // Unpaused but no post-pause reply yet — re-park below and keep waiting.
   }
 
-  await deps.store.logEntry(live.id, `Workflow paused for user input: ${question}`, undefined, deps.getRunContextFor(live.id));
+  await deps.store.logEntry(live.id, `Workflow paused for user input: ${question}`, undefined, deps.runContextFor(live.id));
   await deps.store.updateTask(
     live.id,
     { status: "awaiting-user-input", paused: true, pausedReason: `${marker}@${Date.now()}: ${question}` },
-    deps.getRunContextFor(live.id),
+    deps.runContextFor(live.id),
   );
   // Failure outcome ends the walk; handleGraphFailure leaves paused tasks
   // untouched, so the task sits awaiting input until the user responds.
@@ -98,11 +99,11 @@ export async function pauseForCliApproval(
   command: string,
 ): Promise<AwaitInputNodeResult> {
   const marker = `workflow-cli-approval:${node.id}`;
-  await deps.store.logEntry(live.id, `Workflow paused for CLI command approval: ${command}`, undefined, deps.getRunContextFor(live.id));
+  await deps.store.logEntry(live.id, `Workflow paused for CLI command approval: ${command}`, undefined, deps.runContextFor(live.id));
   await deps.store.updateTask(
     live.id,
     { status: "awaiting-cli-approval", paused: true, pausedReason: `${marker}: ${command}` },
-    deps.getRunContextFor(live.id),
+    deps.runContextFor(live.id),
   );
   return { outcome: "failure", value: "awaiting-cli-approval" };
 }

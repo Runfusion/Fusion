@@ -11,6 +11,14 @@ parameter at all, so FN-7648 still holds for automatic releases), and the
 agent-native `fn_task_promote` tool (same two outcomes through the tool surface).
 */
 import { describe, expect, it, vi } from "vitest";
+/*
+FNXC:Identity 2026-08-09-03:04 (U18/KTD2):
+These call-arg assertions now include the mutation context the converted sweep passes.
+Adding it is what keeps them load-bearing: left at the old arity every
+`toHaveBeenCalledWith` here would fail, and every `.not.toHaveBeenCalledWith` would pass
+vacuously — an assertion that can no longer fail is worse than one that is red.
+*/
+import { UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 import type { WorkflowIr } from "@fusion/core";
 import { promoteHeldTask, releaseHeldTaskByEvent } from "../execution/hold-release.js";
 import { createTaskPromoteTool } from "../agent-tools.js";
@@ -72,7 +80,7 @@ describe("force-promote past the unplanned-for-execution gate", () => {
     expect(store.moveTaskIf).toHaveBeenCalledTimes(1);
     // The replan signal must be gone, or triage rediscovery pulls the card back
     // into the very replan the operator just waived.
-    expect(store.updateTask).toHaveBeenCalledWith("FN-1403", { status: null });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-1403", { status: null }, UNATTRIBUTED_MUTATION_CONTEXT);
     expect(store.task.status).toBeNull();
     expect(store.recordRunAuditEvent).toHaveBeenCalledWith(
       expect.objectContaining({ mutationType: "task:promote-forced-unplanned", taskId: "FN-1403" }),

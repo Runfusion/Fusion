@@ -13,6 +13,7 @@ Invariant under test:
  5. the sweep skips young, active, waiting, and executed tasks, and reclaims only 30-day-idle parked ones.
 */
 import { describe, expect, it, vi } from "vitest";
+import { ANY_MUTATION_CONTEXT } from "./mutation-context-matchers.js";
 import { EventEmitter } from "node:events";
 import type { Task, TaskStore } from "@fusion/core";
 import { TriageProcessor } from "../triage.js";
@@ -57,7 +58,7 @@ describe("withdrawing a card from planning", () => {
     expect(session.dispose).toHaveBeenCalled();
     expect((processor as any).activeSessions.has("FN-1403")).toBe(false);
     // The badge is `status: "planning"` — clearing it is what makes the card read as a plain idea.
-    expect(store.updateTask).toHaveBeenCalledWith("FN-1403", { status: null });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-1403", { status: null }, ANY_MUTATION_CONTEXT);
   });
 
   it.each([

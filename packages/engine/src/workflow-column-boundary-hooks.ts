@@ -15,7 +15,7 @@ exercise the real thing; the Executor now delegates and owns only what is genuin
 
 Behavior is byte-identical to the method it replaces — this is a move, not a rewrite.
 */
-import type { Task, TaskStore, WorkflowWorkItemState } from "@fusion/core";
+import type { RunMutationContext, Task, TaskStore, WorkflowWorkItemState } from "@fusion/core";
 import { ACTIVE_WORKFLOW_WORK_ITEM_STATES } from "@fusion/core";
 
 import { createStoreIrPinPersistence, type WorkflowIrPinStoreSurface } from "./workflows/workflow-column-boundary.js";
@@ -38,6 +38,14 @@ export interface ExecutorColumnBoundaryHooksDeps {
   clearMoveInFlight?: (taskId: string) => void;
   /** Diagnostics sink for the boundary controller's warnings. */
   onWarn?: (message: string, detail: Record<string, unknown>) => void;
+  /*
+  FNXC:Identity 2026-08-09-03:04 (U18/KTD2):
+  Required. This factory is the ONE production copy of the boundary wiring, so the durable IR-pin
+  write it builds is attributed exactly once here rather than per hand-rolled harness. The Executor
+  passes its own per-task run context (`getRunContextFor`), which carries a real `runId`/`agentId`
+  and is therefore derived attribution, not a marker.
+  */
+  runContext: RunMutationContext;
 }
 
 /**
@@ -47,15 +55,17 @@ export interface ExecutorColumnBoundaryHooksDeps {
 export function createExecutorColumnBoundaryHooks(
   deps: ExecutorColumnBoundaryHooksDeps,
 ): WorkflowColumnBoundaryHooks {
-  const { store, task, workflowRunId } = deps;
+  const { store, task, workflowRunId, runContext } = deps;
   // KTD-3 (U9b): store-backed durable IR pin. The cast is the same posture as
   // buildBranchPersistence — structural probe of the row surface so a store
   // lacking the pin fields degrades to the inert no-pin seam.
   const pinPersistence = createStoreIrPinPersistence(
     store as unknown as WorkflowIrPinStoreSurface,
     task.id,
+    runContext,
   );
   return {
+    runContext,
     pinNodeEntry: pinPersistence.pinNodeEntry,
     loadPriorPin: pinPersistence.loadPriorPin,
     // KTD-3 drift-park loop fix (PR #2342): detectDrift clears the stale pin
@@ -96,13 +106,15 @@ export function createExecutorColumnBoundaryHooks(
     moveTask: async (toColumn, ctx) => {
       deps.markMoveInFlight?.(task.id);
       try {
+        // FNXC:Identity 2026-08-09-03:04 (U18/KTD2): the graph-owned lifecycle move is attributed
+        // to the run that built these hooks, so a column transition names its author in audit.
         await store.moveTask(task.id, toColumn, {
           moveSource: "engine",
           workflowMoveSource: "workflow-graph",
           bypassGuards: true,
           preserveProgress: true,
           workflowMoveMetadata: { fromColumn: ctx.fromColumn, nodeId: ctx.nodeId },
-        });
+        }, runContext);
       } finally {
         deps.clearMoveInFlight?.(task.id);
       }

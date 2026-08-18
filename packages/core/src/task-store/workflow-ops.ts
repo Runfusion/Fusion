@@ -7,6 +7,7 @@
  * instance as its first parameter and performs byte-identical work.
  */
 import {TaskStore} from "../store.js";
+import { UNATTRIBUTED_MUTATION_CONTEXT } from "../identity/mutation-context.js";
 import type {Settings} from "../types.js";
 import { parseWorkflowIr, downgradeIrToV1IfPure } from "../workflows/workflow-ir.js";
 import {OccupiedColumnsError, assertRehomeTargetValid, computeRemovedOccupiedColumns, computeIncompatibleFieldChanges, IncompatibleFieldChangeError, resolveEntryColumnId} from "../workflows/workflow-reconciliation.js";
@@ -435,7 +436,8 @@ export async function deleteWorkflowDefinitionImpl(store: TaskStore, id: string)
       }
        await layer.db.delete(schema.project.taskWorkflowSelection).where(eq(schema.project.taskWorkflowSelection.taskId, row.taskId)); 
       try {
-        await store.updateTask(row.taskId, { enabledWorkflowSteps: [] });
+        // FNXC:Identity 2026-08-09-03:04 (U18): orphaned-selection cleanup is a store-side sweep (U13).
+        await store.updateTask(row.taskId, { enabledWorkflowSteps: [] }, UNATTRIBUTED_MUTATION_CONTEXT);
       } catch {
         // Task may be deleted/archived; dangling step ids resolve to undefined
         // at execution time and are skipped.

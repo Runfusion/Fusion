@@ -25,6 +25,7 @@ export const SESSION_CONTENTION_HOLD_MAX_BACKOFF_MS = 60_000;
 export type SessionContentionHoldDeps = {
   store: TaskStore;
   getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   getHoldAttempts: (taskId: string) => number;
   setHoldAttempts: (taskId: string, attempt: number) => void;
   clearHold: (taskId: string) => void;
@@ -50,9 +51,9 @@ export async function holdForSessionContention(
     deps.clearHold(task.id);
     const message = `Still waiting on another task to release a shared session path after ${MAX_SESSION_CONTENTION_HOLD_RETRIES} attempts — leaving the task queued for normal re-dispatch (not a failure)${detail ? `: ${detail}` : ""}`;
     executorLog.warn(`${task.id}: ${message}`);
-    await deps.store.logEntry(task.id, message, undefined, deps.getRunContextFor(task.id));
+    await deps.store.logEntry(task.id, message, undefined, deps.runContextFor(task.id));
     if (live.status != null || live.error != null) {
-      await deps.store.updateTask(task.id, { status: null, error: null }, deps.getRunContextFor(task.id));
+      await deps.store.updateTask(task.id, { status: null, error: null }, deps.runContextFor(task.id));
     }
     return;
   }
@@ -60,11 +61,11 @@ export async function holdForSessionContention(
   deps.setHoldAttempts(task.id, attempt);
   const message = `Waiting on another task to release a shared session path — retrying in place (${attempt}/${MAX_SESSION_CONTENTION_HOLD_RETRIES})${detail ? `: ${detail}` : ""}`;
   executorLog.warn(`${task.id}: ${message}`);
-  await deps.store.logEntry(task.id, message, undefined, deps.getRunContextFor(task.id));
+  await deps.store.logEntry(task.id, message, undefined, deps.runContextFor(task.id));
   // A contention hold is not a failure state: clear any stale park so the row never shows as failed
   // while it is simply waiting its turn.
   if (live.status != null || live.error != null) {
-    await deps.store.updateTask(task.id, { status: null, error: null }, deps.getRunContextFor(task.id));
+    await deps.store.updateTask(task.id, { status: null, error: null }, deps.runContextFor(task.id));
   }
 
   const delayMs = SESSION_CONTENTION_HOLD_BACKOFF_MS === 0

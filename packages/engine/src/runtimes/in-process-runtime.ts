@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+/* FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage B): mutation-context constructors for this lane. */
+import { UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 import { EventEmitter } from "node:events";
 import type {
   TaskStore,
@@ -1582,7 +1584,7 @@ export class InProcessRuntime
                 const requeueWip = requeueLifecycle?.wip ?? "in-progress";
                 const requeueHold = requeueLifecycle ? requeueLifecycle.hold : "todo";
                 if (latest?.column === requeueWip && requeueHold !== undefined) {
-                  await this.taskStore.moveTask(task.id, requeueHold as never);
+                  await this.taskStore.moveTask(task.id, requeueHold as never, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
                 }
               } catch (moveErr) {
                 runtimeLog.warn(`Failed to requeue mission task ${task.id} after error:`, moveErr);
@@ -1621,7 +1623,7 @@ export class InProcessRuntime
             });
             await this.taskStore.logEntry(
               violation.requestingTaskId,
-              `Worktree pool invariant violation (${violation.phase}): ${violation.path} is held by ${violation.existingHolder}`,
+              `Worktree pool invariant violation (${violation.phase}): ${violation.path} is held by ${violation.existingHolder}`, undefined, UNATTRIBUTED_MUTATION_CONTEXT,
             );
           } catch (error) {
             runtimeLog.warn(`Failed to process worktree pool invariant violation: ${error instanceof Error ? error.message : String(error)}`);

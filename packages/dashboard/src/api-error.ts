@@ -176,6 +176,17 @@ export function unauthorized(message: string, cause?: unknown): ApiError {
   return new ApiError(401, message, undefined, cause);
 }
 
+/*
+FNXC:Authorization 2026-08-09-03:04:
+There was no 403 factory, only `unauthorized(401)`. That collapsed two different answers into one status: "your session is invalid, re-authenticate" and "your session is fine, you may not do this". The dashboard acted on the conflation — a denial fired the token-recovery flow and told the user to re-authenticate for a permission they simply do not hold.
+`details.reason` carries the machine-readable discriminant the client keys on (its 401 counterpart is `SESSION_INVALID_REASON` in packages/dashboard/app/auth.ts), so the browser never has to match on prose.
+*/
+export const FORBIDDEN_REASON = "permission-denied" as const;
+
+export function forbidden(message: string, details?: Record<string, unknown>, cause?: unknown): ApiError {
+  return new ApiError(403, message, { ...details, reason: FORBIDDEN_REASON }, cause);
+}
+
 export function notFound(message: string, cause?: unknown): ApiError {
   return new ApiError(404, message, undefined, cause);
 }

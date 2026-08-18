@@ -65,6 +65,7 @@ export type CreateAuthoritativeWorkflowSeamsDeps = {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   mergeRequester?: ((taskId: string, opts?: any) => Promise<any>) | null;
   getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   persistTokenUsage: AnyFn;
   runImplementationPhase: AnyFn;
   handoffTaskToReview: AnyFn;
@@ -214,7 +215,7 @@ export function createAuthoritativeWorkflowSeams(
             mergeTask.id,
             `Workflow merge blocked before requester: ${missingImplementationProof}`,
             undefined,
-            deps.getRunContextFor(mergeTask.id),
+            deps.runContextFor(mergeTask.id),
           );
           return { outcome: "failure", value: "implementation-incomplete" };
         }

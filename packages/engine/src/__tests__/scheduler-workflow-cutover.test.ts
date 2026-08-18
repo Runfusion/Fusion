@@ -1,4 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+/*
+FNXC:Identity 2026-08-09-03:04 (U18/KTD2):
+These call-arg assertions now include the mutation context the converted sweep passes.
+Adding it is what keeps them load-bearing: left at the old arity every
+`toHaveBeenCalledWith` here would fail, and every `.not.toHaveBeenCalledWith` would pass
+vacuously — an assertion that can no longer fail is worse than one that is red.
+*/
+import { UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 import { makeTransitionRejection, TransitionRejectionError, buildBootstrapPrompt, type Task, type TaskStore, type WorkflowIr } from "@fusion/core";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
@@ -260,7 +268,7 @@ describe("Scheduler workflow cutover", () => {
       mergeRetries: 0,
       effectiveNodeId: null,
       effectiveNodeSource: "local",
-    }));
+    }), UNATTRIBUTED_MUTATION_CONTEXT);
     expect(onSchedule).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-100", column: "in-progress" }));
   });
 
@@ -410,10 +418,10 @@ describe("Scheduler workflow cutover", () => {
     expect(store.updateTask).toHaveBeenCalledWith("FN-202", expect.objectContaining({
       status: null,
       effectiveNodeSource: "local",
-    }));
+    }), UNATTRIBUTED_MUTATION_CONTEXT);
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-202",
-      "Node routing resolved: local (source: local)",
+      "Node routing resolved: local (source: local)", undefined, UNATTRIBUTED_MUTATION_CONTEXT,
     );
   });
 
@@ -553,7 +561,7 @@ describe("Scheduler workflow cutover", () => {
     await scheduler.schedule();
 
     expect(store.moveTaskIf).not.toHaveBeenCalledWith("FN-002", "in-progress", expect.anything(), expect.anything());
-    expect(store.updateTask).not.toHaveBeenCalledWith("FN-002", expect.objectContaining({ status: null }));
+    expect(store.updateTask).not.toHaveBeenCalledWith("FN-002", expect.objectContaining({ status: null }), UNATTRIBUTED_MUTATION_CONTEXT);
     expect(onSchedule).not.toHaveBeenCalledWith(expect.objectContaining({ id: "FN-002" }));
     expect(ready.column).toBe("todo");
   });
@@ -569,14 +577,14 @@ describe("Scheduler workflow cutover", () => {
     await scheduler.schedule();
 
     expect(store.moveTaskIf).not.toHaveBeenCalledWith("FN-002", "in-progress", expect.anything(), expect.anything());
-    expect(store.updateTask).not.toHaveBeenCalledWith("FN-002", expect.objectContaining({ status: null }));
+    expect(store.updateTask).not.toHaveBeenCalledWith("FN-002", expect.objectContaining({ status: null }), UNATTRIBUTED_MUTATION_CONTEXT);
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-002",
-      expect.stringContaining("gate=maxWorktrees; maxConcurrent used=1/4"),
+      expect.stringContaining("gate=maxWorktrees; maxConcurrent used=1/4"), undefined, UNATTRIBUTED_MUTATION_CONTEXT,
     );
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-002",
-      expect.stringContaining("maxWorktrees used=1/1"),
+      expect.stringContaining("maxWorktrees used=1/1"), undefined, UNATTRIBUTED_MUTATION_CONTEXT,
     );
     expect(onSchedule).not.toHaveBeenCalledWith(expect.objectContaining({ id: "FN-002" }));
     expect(ready.column).toBe("todo");
@@ -593,14 +601,14 @@ describe("Scheduler workflow cutover", () => {
     await scheduler.schedule();
 
     expect(store.moveTaskIf).not.toHaveBeenCalledWith("FN-200", "in-progress", expect.anything(), expect.anything());
-    expect(store.updateTask).toHaveBeenCalledWith("FN-200", { status: "queued" });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-200", { status: "queued" }, UNATTRIBUTED_MUTATION_CONTEXT);
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-200",
-      expect.stringContaining("gate=maxWorktrees; maxConcurrent used=5/10"),
+      expect.stringContaining("gate=maxWorktrees; maxConcurrent used=5/10"), undefined, UNATTRIBUTED_MUTATION_CONTEXT,
     );
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-200",
-      expect.stringContaining("maxWorktrees used=5/4"),
+      expect.stringContaining("maxWorktrees used=5/4"), undefined, UNATTRIBUTED_MUTATION_CONTEXT,
     );
     expect(onSchedule).not.toHaveBeenCalled();
     expect(ready.column).toBe("todo");
@@ -746,7 +754,7 @@ describe("Scheduler workflow cutover", () => {
     expect(store.moveTaskIf).not.toHaveBeenCalledWith("FN-402", "in-progress", expect.anything(), expect.anything());
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-402",
-      expect.stringContaining("gate=maxWorktrees; maxConcurrent used=4/10"),
+      expect.stringContaining("gate=maxWorktrees; maxConcurrent used=4/10"), undefined, UNATTRIBUTED_MUTATION_CONTEXT,
     );
     expect(onSchedule).toHaveBeenCalledTimes(1);
   });
@@ -764,7 +772,7 @@ describe("Scheduler workflow cutover", () => {
     expect(store.moveTaskIf).toHaveBeenCalledTimes(1);
     expect(store.moveTaskIf).toHaveBeenCalledWith("FN-001", "in-progress", expect.any(Function), expect.anything());
     expect(store.moveTaskIf).not.toHaveBeenCalledWith("FN-002", "in-progress", expect.anything(), expect.anything());
-    expect(store.updateTask).not.toHaveBeenCalledWith("FN-002", expect.objectContaining({ status: null }));
+    expect(store.updateTask).not.toHaveBeenCalledWith("FN-002", expect.objectContaining({ status: null }), UNATTRIBUTED_MUTATION_CONTEXT);
     expect(onSchedule).toHaveBeenCalledTimes(1);
     expect(onSchedule).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-001", column: "in-progress" }));
     expect(second.column).toBe("todo");
@@ -874,10 +882,10 @@ describe("Scheduler workflow cutover", () => {
     await scheduler.schedule();
 
     expect(store.moveTaskIf).toHaveBeenCalledWith("FN-002", "in-progress", expect.any(Function), expect.anything());
-    expect(store.updateTask).not.toHaveBeenCalledWith("FN-002", expect.objectContaining({ status: null }));
+    expect(store.updateTask).not.toHaveBeenCalledWith("FN-002", expect.objectContaining({ status: null }), UNATTRIBUTED_MUTATION_CONTEXT);
     expect(store.logEntry).not.toHaveBeenCalledWith(
       "FN-002",
-      expect.stringContaining("Node routing resolved"),
+      expect.stringContaining("Node routing resolved"), undefined, UNATTRIBUTED_MUTATION_CONTEXT,
     );
     expect(onSchedule).not.toHaveBeenCalled();
     expect(ready.column).toBe("todo");
@@ -928,7 +936,7 @@ describe("Scheduler workflow cutover", () => {
     }
 
     expect(store.moveTaskIf).not.toHaveBeenCalledWith("FN-002", "in-progress", expect.anything(), expect.anything());
-    expect(store.updateTask).not.toHaveBeenCalledWith("FN-002", expect.objectContaining({ status: null }));
+    expect(store.updateTask).not.toHaveBeenCalledWith("FN-002", expect.objectContaining({ status: null }), UNATTRIBUTED_MUTATION_CONTEXT);
     expect(onSchedule).not.toHaveBeenCalled();
     expect(ready.column).toBe("todo");
   });

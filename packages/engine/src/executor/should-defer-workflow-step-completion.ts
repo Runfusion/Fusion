@@ -14,6 +14,7 @@ import type { EngineRunContext } from "../util/run-audit.js";
 export type ShouldDeferWorkflowStepCompletionDeps = {
   store: TaskStore;
   getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   pausedAborted: { has(taskId: string): boolean };
   userCanceledTaskIds: Set<string>;
   clearCompletedTaskWatchdog: (taskId: string) => void;
@@ -40,7 +41,7 @@ export async function shouldDeferWorkflowStepCompletion(
       taskId,
       `Completion handoff deferred — task paused (${context})`,
       undefined,
-      deps.getRunContextFor(taskId),
+      deps.runContextFor(taskId),
     ).catch(() => undefined);
     return true;
   }
@@ -52,7 +53,7 @@ export async function shouldDeferWorkflowStepCompletion(
       taskId,
       `Completion handoff deferred — task no longer active (${context})`,
       undefined,
-      deps.getRunContextFor(taskId),
+      deps.runContextFor(taskId),
     ).catch(() => undefined);
     return true;
   }

@@ -19,7 +19,7 @@ import { existsSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import type { AgentHeartbeatRun, AgentStore, MessageStore, PermanentAgentGatingContext, ProviderInstanceRef, ResolvedMcpServerDefinition, TaskDetail, Settings, SteeringComment, TaskStore } from "@fusion/core";
-import { isValidProviderInstanceId, resolvePersistAgentThinkingLog, resolveExecutorFallbackModel } from "@fusion/core";
+import { isValidProviderInstanceId, mutationContextForAgent, resolvePersistAgentThinkingLog, resolveExecutorFallbackModel } from "@fusion/core";
 
 import {
   createResolvedAgentSession,
@@ -1389,7 +1389,9 @@ export class StepSessionExecutor {
           // Task log and create tools — task context for step sessions.
           const taskLogTool = this.options.store
             ? [
-                createTaskLogTool(this.options.store, taskDetail.id),
+                /* FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage C): same derivation this file already
+                   uses for `createTaskAssignTool` below — the agent RUNNING the step session. */
+                createTaskLogTool(this.options.store, taskDetail.id, mutationContextForAgent(this.options.effectiveAgentId ?? taskDetail.assignedAgentId ?? "executor")),
                 createTaskLogsReadTool(this.options.store, taskDetail.id),
               ]
             : [];
@@ -1416,7 +1418,7 @@ export class StepSessionExecutor {
                 ...(isAgentDelegateTaskToolAvailable(settings, this.options.callerIsEphemeral)
                   ? [createDelegateTaskTool(this.options.agentStore, this.options.store!, { rootDir: this.options.rootDir, sourceTaskId: this.options.sourceTaskId ?? taskDetail.id, sourceAgentId: this.options.sourceAgentId ?? taskDetail.assignedAgentId, callerIsEphemeral: this.options.callerIsEphemeral })]
                   : []),
-                createTaskAssignTool(this.options.agentStore, this.options.store!),
+                createTaskAssignTool(this.options.agentStore, this.options.store!, mutationContextForAgent(this.options.effectiveAgentId ?? taskDetail.assignedAgentId ?? "executor")),
               ]
             : [];
 
@@ -1537,12 +1539,18 @@ Follow instructions precisely and avoid unrelated changes.`,
               permanentAgentGating: this.options.permanentAgentGating,
               taskId: taskDetail.id,
               taskTitle: taskDetail.title,
+              /* FNXC:Identity 2026-08-09-03:04 (U18/KTD2): derived — the step session resolves a
+                 REAL acting agent (column/effective agent, else the task's assignee), which is the
+                 agent doing the write, not the agent being written about. */
               onFallbackModelUsed: createFallbackModelObserver({
                 agent: "executor",
                 label: "workflow step agent",
                 store: this.store,
                 taskId: taskDetail.id,
                 taskTitle: taskDetail.title,
+                runContext: mutationContextForAgent(
+                  this.options.effectiveAgentId ?? taskDetail.assignedAgentId ?? "executor",
+                ),
               }),
               taskEnv: this.options.taskEnv,
             });

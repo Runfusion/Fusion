@@ -106,6 +106,7 @@ export type WireExecutorLifecycleDeps = {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   getModelRegistry: () => Promise<any>;
   getRunContextFor: (taskId: string) => RunMutationContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   isBackwardMoveOutOfPlanning: (taskId: string, from: string, to: string, lanes: TaskMoveLanes | undefined) => boolean;
   markPausedAborted: (taskId: string, provenance?: PausedAbortProvenance, source?: string) => void;
    
@@ -504,7 +505,7 @@ export function wireExecutorLifecycle(deps: WireExecutorLifecycleDeps): WireExec
             task.id,
             "Column-agent binding released — session reverts to its own model/agent resolution",
             undefined,
-            deps.getRunContextFor(task.id),
+            deps.runContextFor(task.id),
           ).catch((err: unknown) => executorLog.warn(`${task.id}: failed to log column-agent release: ${err instanceof Error ? err.message : String(err)}`));
           const settings = await deps.store.getSettings();
           const assignedRuntimeConfig = await deps.getAssignedAgentRuntimeConfig(task.assignedAgentId);
@@ -546,7 +547,7 @@ export function wireExecutorLifecycle(deps: WireExecutorLifecycleDeps): WireExec
                   task.id,
                   `Column agent '${effective.agentId}' deleted mid-session — falling back to current model, no restart (R8)`,
                   undefined,
-                  deps.getRunContextFor(task.id),
+                  deps.runContextFor(task.id),
                 ).catch((err: unknown) => executorLog.warn(`${task.id}: failed to log column-agent deletion fallback: ${err instanceof Error ? err.message : String(err)}`));
                 activeEntry.lastEffectiveColumnAgentId = null;
                 // Release the reverse heartbeat guard for the deleted agent
@@ -583,7 +584,7 @@ export function wireExecutorLifecycle(deps: WireExecutorLifecycleDeps): WireExec
                     if (model) {
                       await activeEntry.session.setModel(model);
                       executorLog.log(`${task.id}: column-agent hot-swap → agent '${newAgent.id}' model ${newProvider}/${newModelId}`);
-                      await deps.store.logEntry(task.id, `Column agent changed — model now ${newProvider}/${newModelId} (agent ${newAgent.id})`, undefined, deps.getRunContextFor(task.id));
+                      await deps.store.logEntry(task.id, `Column agent changed — model now ${newProvider}/${newModelId} (agent ${newAgent.id})`, undefined, deps.runContextFor(task.id));
                     } else {
                       executorLog.log(`${task.id}: column-agent model ${newProvider}/${newModelId} not found in registry for hot-swap`);
                     }
@@ -592,7 +593,7 @@ export function wireExecutorLifecycle(deps: WireExecutorLifecycleDeps): WireExec
                     executorLog.error(`${task.id}: failed to column-agent hot-swap: ${errorMessage}`);
                     // Fire-and-forget audit (see ~3582): a logEntry failure here must
                     // not abort the tick and skip later model-change detection.
-                    deps.store.logEntry(task.id, `Column-agent change failed: ${errorMessage}`, undefined, deps.getRunContextFor(task.id))
+                    deps.store.logEntry(task.id, `Column-agent change failed: ${errorMessage}`, undefined, deps.runContextFor(task.id))
                       .catch((logErr: unknown) => executorLog.warn(`${task.id}: failed to log column-agent change failure: ${logErr instanceof Error ? logErr.message : String(logErr)}`));
                   }
                 }
@@ -654,14 +655,14 @@ export function wireExecutorLifecycle(deps: WireExecutorLifecycleDeps): WireExec
               if (model) {
                 await activeEntry.session.setModel(model);
                 executorLog.log(`${task.id}: executor model hot-swapped to ${newProvider}/${newModelId}`);
-                await deps.store.logEntry(task.id, `Model changed to ${newProvider}/${newModelId}`, undefined, deps.getRunContextFor(task.id));
+                await deps.store.logEntry(task.id, `Model changed to ${newProvider}/${newModelId}`, undefined, deps.runContextFor(task.id));
               } else {
                 executorLog.log(`${task.id}: model ${newProvider}/${newModelId} not found in registry for hot-swap`);
               }
             } catch (err: unknown) {
               const errorMessage = err instanceof Error ? err.message : String(err);
               executorLog.error(`${task.id}: failed to hot-swap model: ${errorMessage}`);
-              await deps.store.logEntry(task.id, `Model change failed: ${errorMessage}`, undefined, deps.getRunContextFor(task.id));
+              await deps.store.logEntry(task.id, `Model change failed: ${errorMessage}`, undefined, deps.runContextFor(task.id));
             }
           }
         }
