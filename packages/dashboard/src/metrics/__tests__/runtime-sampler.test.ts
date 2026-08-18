@@ -238,11 +238,12 @@ describe("process + git gauges (injected probes)", () => {
 
 describe("overlap guard (RUFU-081 Greptile P1 #2)", () => {
   /*
-  FNXC:MetricsSampler 2026-08-16 (RUFU-081 Greptile P1 #2, RUFU-106):
-  An async `sampleProcessAndGit` that outlasts its arm's interval must never overlap the next tick of
-  that SAME arm. These fake-timer tests hold the `psProbe` promise pending while a second interval
-  fires and assert the probe is invoked once (the tick was skipped). The `process` and `git` arms have
-  independent guards, so neither blocks the other.
+  FNXC:MetricsSampler 2026-08-18-11:53 (RUFU-081 CodeRabbit Major, RUFU-106 review fix):
+  An async `sampleProcessAndGit` that outlasts its arm's interval must never overlap the next tick
+  under the same guard key. These fake-timer tests hold the `psProbe` promise pending while a
+  second interval fires and assert the probe is invoked once (the tick was skipped). The `process`
+  and `git` arms SHARE one guard key (both call sampleProcessAndGit), so a coinciding tick on the
+  other arm is skipped too instead of double-probing (CodeRabbit Major review fix 2026-08-18-11:53).
   */
   it("skips a process tick still in flight — the ps probe is invoked at most once per completed window", async () => {
     vi.useFakeTimers();
@@ -295,6 +296,47 @@ describe("overlap guard (RUFU-081 Greptile P1 #2)", () => {
     await vi.advanceTimersByTimeAsync(0);
 
     await vi.advanceTimersByTimeAsync(15_000);
+    expect(psProbe).toHaveBeenCalledTimes(2);
+
+    sampler.stopTimers();
+  });
+
+  /*
+   * FNXC:MetricsSampler 2026-08-18-11:53 (RUFU-081 CodeRabbit Major, RUFU-106 review fix):
+   * With the DEFAULT 5000/15000 ms cadence the process and git arms coincide at t=15000; the
+   * shared guard must skip the coinciding git tick instead of launching a second concurrent
+   * `ps` probe. This test keeps both arms at their defaults (no pushed-out interval).
+   */
+  it("skips the coinciding git tick under the shared guard at default cadence — one probe per completed window", async () => {
+    vi.useFakeTimers();
+    let resolveProbe: (r: PsProbeResult) => void = () => {};
+    const pending = new Promise<PsProbeResult>((res) => {
+      resolveProbe = res;
+    });
+    const psProbe = vi.fn(() => pending);
+    // Default cadence: process 5000 ms, git 15000 ms — the arms coincide at t=15000.
+    const sampler = createRuntimeSampler({ psProbe });
+    sampler.start();
+
+    // t=5000: the process arm fires -> probe #1 (still pending).
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(psProbe).toHaveBeenCalledTimes(1);
+
+    // t=10000: the process tick is skipped (same guard key, in flight).
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(psProbe).toHaveBeenCalledTimes(1);
+
+    // t=15000: the git tick coincides while the process sample is still pending ->
+    // the SHARED guard skips it; no second probe.
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(psProbe).toHaveBeenCalledTimes(1);
+
+    // Resolve the in-flight sample; the shared guard clears in `finally`.
+    resolveProbe({ ok: false, childCommands: [], reason: "probe-error" });
+    await vi.advanceTimersByTimeAsync(0);
+
+    // t=20000: the process arm fires again -> probe #2.
+    await vi.advanceTimersByTimeAsync(5000);
     expect(psProbe).toHaveBeenCalledTimes(2);
 
     sampler.stopTimers();

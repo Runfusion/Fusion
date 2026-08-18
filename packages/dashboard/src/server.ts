@@ -2390,8 +2390,19 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
 
     // RUFU-081: start the /metrics samplers (spawn-count hook + unref'd tick
     // timers). Synchronous and best-effort; a failure here must never break
-    // server startup or the request pipeline.
-    metricsSampler.start();
+    // server startup or the request pipeline. The guard IS the failure
+    // isolation the comment promises — `runtime.installSpawnHook()` patches
+    // node:child_process members, and an unguarded throw would propagate out
+    // of listen() and abort startup (CodeRabbit Minor review fix 2026-08-18-11:53,
+    // matching the adjacent OTLP exporter pattern).
+    try {
+      metricsSampler.start();
+    } catch (error) {
+      runtimeLogger.warn("Metrics sampler failed to start", {
+        message: "Metrics sampler failed to start",
+        ...normalizeErrorForLog(error),
+      });
+    }
 
     if (!providerHealthMonitor && (options?.engineManager || options?.engine)) {
       const providerHealthLogger = runtimeLogger.child("provider-health");
@@ -2417,8 +2428,17 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
       otelExporter?.stop();
       otelExporter = null;
       // RUFU-081: stop the /metrics samplers and remove the spawn hook so no
-      // timer or wrapper outlives the server on restart/test teardown.
-      metricsSampler.stop();
+      // timer or wrapper outlives the server on restart/test teardown. Guarded
+      // so a teardown throw cannot skip providerHealthMonitor?.stop() and the
+      // remaining close handlers (CodeRabbit Minor review fix 2026-08-18-11:53).
+      try {
+        metricsSampler.stop();
+      } catch (error) {
+        runtimeLogger.warn("Metrics sampler failed to stop", {
+          message: "Metrics sampler failed to stop",
+          ...normalizeErrorForLog(error),
+        });
+      }
       providerHealthMonitor?.stop();
       providerHealthMonitor = null;
       (apiRouter as Router & { dispose?: () => void }).dispose?.();

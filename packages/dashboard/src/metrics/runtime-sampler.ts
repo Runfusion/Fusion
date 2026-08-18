@@ -411,38 +411,42 @@ export function createRuntimeSampler(init: RuntimeSamplerInit = {}): RuntimeSamp
   function start(): void {
     if (started) return;
     started = true;
-    // Per-sampler in-flight flags (one per arm) so a process/git tick that fires
-    // while the previous one is still awaiting is SKIPPED: samplers never run
-    // concurrently and a slow sample never queues (RUFU-081 Greptile P1 #2, RUFU-106).
+    // Per-sampler in-flight flags so a tick that fires while the previous sample is still
+    // awaiting is SKIPPED: samplers never run concurrently and a slow sample never queues
+    // (RUFU-081 Greptile P1 #2, RUFU-106). The `process` and `git` arms both invoke
+    // sampleProcessAndGit, so they SHARE one guard key ("process-git"): with the default
+    // 5000/15000 ms cadence the arms coincide every 15 seconds and independent keys would
+    // launch two concurrent `ps` probes on the coinciding tick (CodeRabbit Major review fix
+    // 2026-08-18-11:53).
     const inFlight = new Set<string>();
-    const arm = (key: string, intervalMs: number, run: () => Promise<void>): void => {
+    const arm = (key: string, guardKey: string, intervalMs: number, run: () => Promise<void>): void => {
       const timer = timers.setInterval(() => {
         /*
-         * FNXC:MetricsSampler 2026-08-16 (RUFU-081 Greptile P1 #2, RUFU-106):
-         * An async sample that outlasts its interval must never overlap the next tick of the
-         * same arm. If this sampler's previous run is still awaiting, skip the tick; otherwise
-         * set the flag, run the sample, and clear it in `finally` so the next interval fires again.
+         * FNXC:MetricsSampler 2026-08-17-01:01 (RUFU-081 Greptile P1 #2, RUFU-106):
+         * An async sample that outlasts its interval must never overlap the next tick under the
+         * same guard key. If a run is still awaiting, skip the tick; otherwise set the flag,
+         * run the sample, and clear it in `finally` so the next interval fires again.
          */
-        if (inFlight.has(key)) return;
-        inFlight.add(key);
+        if (inFlight.has(guardKey)) return;
+        inFlight.add(guardKey);
         void run()
           .catch(() => {
             /* best-effort */
           })
-          .finally(() => inFlight.delete(key));
+          .finally(() => inFlight.delete(guardKey));
       }, intervalMs);
       // Best-effort unref; fake timers may not expose it, but default timers
       // are unref'd so a running sampler never keeps the process alive.
       timer.unref?.();
       timersMap.set(key, timer);
     };
-    arm("latency", tick.latencyMs, () => {
+    arm("latency", "latency", tick.latencyMs, () => {
       // The latency "sampler" tick is a no-op marker: the useful measurements
       // already live in the ring from actual served requests.
       return Promise.resolve();
     });
-    arm("process", tick.processMs, sampleProcessAndGit);
-    arm("git", tick.gitMs, sampleProcessAndGit);
+    arm("process", "process-git", tick.processMs, sampleProcessAndGit);
+    arm("git", "process-git", tick.gitMs, sampleProcessAndGit);
   }
 
   function stopTimers(): void {

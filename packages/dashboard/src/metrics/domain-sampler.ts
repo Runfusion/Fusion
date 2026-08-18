@@ -185,7 +185,7 @@ export function createDomainSampler(init: DomainSamplerInit = {}): DomainSampler
   let previousPg: PgBaseline | undefined;
   let previousPgAtMs: number | null = null;
   /*
-   * FNXC:MetricsSampler 2026-08-18 (RUFU-081 Greptile P1, RUFU-106 review fix):
+   * FNXC:MetricsSampler 2026-08-18-04:20 (RUFU-081 Greptile P1, RUFU-106 review fix):
    * A failed probe marks the retained baseline STALE: a stats reset landing inside the failed
    * gap is invisible to the next successful probe (the counter may already have grown past the
    * retained total, so the cross-epoch delta would read positive), so the first success after a
@@ -194,7 +194,7 @@ export function createDomainSampler(init: DomainSamplerInit = {}): DomainSampler
   let pgBaselineStale = false;
   let pgEverBaselined = false;
   /*
-   * FNXC:MetricsSampler 2026-08-18 (RUFU-081 Greptile P1, RUFU-106 review fix):
+   * FNXC:MetricsSampler 2026-08-18-04:20 (RUFU-081 Greptile P1, RUFU-106 review fix):
    * Restart fencing: stopTimers() bumps the generation, and a sample that started before the
    * stop (its pre-close read still awaiting) must not write its stale result after the sampler
    * restarts. The in-flight guard below is factory-scoped so it SURVIVES restarts — a pre-close
@@ -220,7 +220,7 @@ export function createDomainSampler(init: DomainSamplerInit = {}): DomainSampler
     const now = Date.now();
     if (!stats || stats.length === 0) {
       /*
-       * FNXC:MetricsSampler 2026-08-16 (RUFU-081 Greptile P1 #1, RUFU-106):
+       * FNXC:MetricsSampler 2026-08-16-23:35 (RUFU-081 Greptile P1 #1, RUFU-106):
        * A transient reader failure (null or thrown) must NOT reset the PG baseline. Resetting
        * `previousPg = undefined` here made the next good sample look like a FIRST sample and
        * report rate 0, even though real queries kept flowing. On failure we keep the last-known
@@ -262,7 +262,7 @@ export function createDomainSampler(init: DomainSamplerInit = {}): DomainSampler
       const d = cur.xactCommit + cur.xactRollback - (prev.xactCommit + prev.xactRollback);
       if (d < 0) {
         /*
-         * FNXC:MetricsSampler 2026-08-18 (RUFU-081 Greptile P1, RUFU-106 review fix):
+         * FNXC:MetricsSampler 2026-08-18-04:20 (RUFU-081 Greptile P1, RUFU-106 review fix):
          * A PER-DB counter went backward: a stats reset in this database. The cross-database sum
          * can stay positive when other databases grew in the same window, so an aggregate-only
          * reset check would accept the cross-epoch delta — the per-DB check is the only detector.
@@ -340,7 +340,7 @@ export function createDomainSampler(init: DomainSamplerInit = {}): DomainSampler
     if (started) return;
     started = true;
     /*
-     * FNXC:MetricsSampler 2026-08-16 (RUFU-081 Greptile P1 #2, RUFU-106):
+     * FNXC:MetricsSampler 2026-08-17-01:01 (RUFU-081 Greptile P1 #2, RUFU-106):
      * In-flight flags are FACTORY-SCOPED (not created here) so the guard survives a
      * stopTimers()+start() restart: a sample still running from before the restart keeps
      * blocking ticks of the same arm until it resolves, where it is fenced out of its write
@@ -349,7 +349,7 @@ export function createDomainSampler(init: DomainSamplerInit = {}): DomainSampler
     const arm = (key: string, intervalMs: number, run: () => Promise<void>): void => {
       const timer = timers!.setInterval(() => {
         /*
-         * FNXC:MetricsSampler 2026-08-16 (RUFU-081 Greptile P1 #2, RUFU-106):
+         * FNXC:MetricsSampler 2026-08-17-01:01 (RUFU-081 Greptile P1 #2, RUFU-106):
          * An async sample that outlasts its interval must never overlap the next tick. If this
          * sampler's previous run is still awaiting, skip the tick entirely; otherwise set the flag,
          * run the sample, and clear it in `finally` so the next interval arm is armed again.
@@ -372,6 +372,14 @@ export function createDomainSampler(init: DomainSamplerInit = {}): DomainSampler
     // Fence out any in-flight sample: it started before this stop, so its write (if it
     // resolves after a restart) must be discarded (Greptile P1 review fix 2026-08-18).
     sampleGeneration += 1;
+    /*
+     * FNXC:MetricsSampler 2026-08-18-11:53 (RUFU-081 Greptile P1, RUFU-106 review fix):
+     * The retained PG baseline is STALE on stop too: if PostgreSQL statistics reset during
+     * the stop gap, counters regrow past the retained totals and the first post-restart
+     * success would emit a cross-epoch delta as a positive rate. Marking the baseline stale
+     * makes the first post-restart success re-baseline and keep the last-known rate.
+     */
+    pgBaselineStale = true;
     for (const key of [...timersMap.keys()]) {
       const timer = timersMap.get(key);
       if (timer) {

@@ -47,40 +47,54 @@ function sampleByName(families: MetricFamily[], name: string): MetricFamily | un
 }
 
 describe("PG query-rate sampler", () => {
-  it("first sample yields 0 (no prior delta), a later delta yields a per-second rate", async () => {
-    let stat: PgStats = [{ datname: "fusion", xactCommit: 1000, xactRollback: 10 }];
-    const sampler = helper({
-      pgStatsReader: async () => stat,
-    });
-    await sampler.samplePgRate();
-    expect(sampler.state.pgQueriesPerSecond).toBe(0); // first sample, no prior
+  it("first sample yields 0 (no prior delta), a later delta yields the exact per-second rate", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(Date.parse("2026-08-18T00:00:00Z"));
+      let stat: PgStats = [{ datname: "fusion", xactCommit: 1000, xactRollback: 10 }];
+      const sampler = helper({
+        pgStatsReader: async () => stat,
+      });
+      await sampler.samplePgRate();
+      expect(sampler.state.pgQueriesPerSecond).toBe(0); // first sample, no prior
 
-    // Advance counters by 500 transactions over a fake elapsed window. We
-    // cannot control Date.now() here directly, so re-sample immediately: the
-    // sampler derives rate from its own clock. To keep the test deterministic
-    // we inject a tiny elapsed by sampling twice with a short await.
-    stat = [{ datname: "fusion", xactCommit: 1500, xactRollback: 10 }];
-    await sampler.samplePgRate();
-    // The rate should now be finite and >= 0 (delta 500 over some positive ms).
-    expect(sampler.state.pgQueriesPerSecond).toBeGreaterThanOrEqual(0);
-    expect(Number.isFinite(sampler.state.pgQueriesPerSecond)).toBe(true);
+      // Deterministic clock: 500 commits over exactly 5 s -> exactly 100/s. An
+      // implementation that always returned 0 would fail the exact assertion
+      // (CodeRabbit Major review fix 2026-08-18-11:53: the rate tests must drive
+      // the clock and assert the documented invariants, not just non-NaN).
+      vi.setSystemTime(Date.parse("2026-08-18T00:00:05Z"));
+      stat = [{ datname: "fusion", xactCommit: 1500, xactRollback: 10 }];
+      await sampler.samplePgRate();
+      expect(sampler.state.pgQueriesPerSecond).toBeCloseTo(100, 10);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
-  it("a backward / stats-reset delta keeps the last-known rate (never throws, never negative)", async () => {
-    const stats: PgStats[] = [
-      [{ datname: "fusion", xactCommit: 1000, xactRollback: 0 }],
-      [{ datname: "fusion", xactCommit: 1500, xactRollback: 0 }],
-      [{ datname: "fusion", xactCommit: 1400, xactRollback: 0 }], // reset: counters went backward
-    ];
-    let idx = 0;
-    const sampler = helper({ pgStatsReader: async () => stats[Math.min(idx++, stats.length - 1)] });
-    await sampler.samplePgRate(); // baseline
-    await sampler.samplePgRate(); // computes a rate
-    const priorRate = sampler.state.pgQueriesPerSecond;
-    expect(priorRate).toBeGreaterThanOrEqual(0);
-    await sampler.samplePgRate(); // backward delta -> keep from not below 0
-    expect(sampler.state.pgQueriesPerSecond).toBeGreaterThanOrEqual(0);
-    expect(sampler.state.pgQueriesPerSecond).not.toBeNaN();
+  it("a backward / stats-reset delta keeps the last-known rate exactly (deterministic clock)", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(Date.parse("2026-08-18T00:00:00Z"));
+      const stats: PgStats[] = [
+        [{ datname: "fusion", xactCommit: 1000, xactRollback: 0 }],
+        [{ datname: "fusion", xactCommit: 1500, xactRollback: 0 }],
+        [{ datname: "fusion", xactCommit: 1400, xactRollback: 0 }], // reset: counters went backward
+      ];
+      let idx = 0;
+      const sampler = helper({ pgStatsReader: async () => stats[Math.min(idx++, stats.length - 1)] });
+      await sampler.samplePgRate(); // baseline @ t0
+      vi.setSystemTime(Date.parse("2026-08-18T00:00:05Z"));
+      await sampler.samplePgRate(); // (1500-1000)/5s = exactly 100/s
+      const priorRate = sampler.state.pgQueriesPerSecond;
+      expect(priorRate).toBeCloseTo(100, 10);
+      vi.setSystemTime(Date.parse("2026-08-18T00:00:10Z"));
+      await sampler.samplePgRate(); // 1400 < 1500: per-DB backward delta = stats reset
+      // The reset branch preserves the prior rate EXACTLY (not just >= 0):
+      expect(sampler.state.pgQueriesPerSecond).toBeCloseTo(priorRate, 10);
+      expect(sampler.state.pgQueriesPerSecond).not.toBeNaN();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("an unreadable PG reader degrades to last-known / 0 without throwing", async () => {
@@ -116,7 +130,7 @@ describe("PG query-rate sampler", () => {
   });
 
   /*
-  FNXC:MetricsSampler 2026-08-16 (RUFU-081 Greptile P1 #1, RUFU-106) + 2026-08-18 review fix:
+  FNXC:MetricsSampler 2026-08-16-23:35 (RUFU-081 Greptile P1 #1, RUFU-106) + 2026-08-18-04:20 review fix:
   A TRANSIENT PG probe failure must never reset the sampler's baseline, AND the retained baseline
   is STALE across the failed gap: a stats reset can land inside the gap (invisible to the next
   probe, which may see counters already grown past the retained total), so the first success after
@@ -167,7 +181,7 @@ describe("PG query-rate sampler", () => {
   });
 
   /*
-  FNXC:MetricsSampler 2026-08-18 (RUFU-081 Greptile P1, RUFU-106 review fix):
+  FNXC:MetricsSampler 2026-08-18-04:20 (RUFU-081 Greptile P1, RUFU-106 review fix):
   A pg_stat_reset that lands inside a FAILED probe gap is invisible to the aggregate reset check:
   the counter drops to 0 during the gap and regrows PAST the retained total before the next
   successful probe, so the cross-epoch delta reads positive. The stale-gap guard must re-baseline
@@ -207,7 +221,7 @@ describe("PG query-rate sampler", () => {
   });
 
   /*
-  FNXC:MetricsSampler 2026-08-18 (RUFU-081 Greptile P1, RUFU-106 review fix):
+  FNXC:MetricsSampler 2026-08-18-04:20 (RUFU-081 Greptile P1, RUFU-106 review fix):
   A per-database stats reset can be HIDDEN by the cross-database sum: database A resets and
   partially recovers while database B grows, so the aggregate delta stays positive. The per-DB
   baseline check (any per-DB backward delta) is the only detector and must trigger the reset
@@ -322,7 +336,7 @@ describe("defaultPgStatsReader", () => {
 
 describe("overlap guard (RUFU-081 Greptile P1 #2)", () => {
   /*
-  FNXC:MetricsSampler 2026-08-16 (RUFU-081 Greptile P1 #2, RUFU-106):
+  FNXC:MetricsSampler 2026-08-17-01:01 (RUFU-081 Greptile P1 #2, RUFU-106):
   An async sample that outlasts its interval must never overlap the next tick of the same arm. These
   fake-timer tests hold a reader's promise pending while a SECOND interval fires and assert the reader
   is invoked once (the tick was skipped). Samplers therefore never run concurrently and a slow sample
@@ -419,7 +433,7 @@ describe("overlap guard (RUFU-081 Greptile P1 #2)", () => {
 
 describe("restart fence (RUFU-081 Greptile P1 review fix)", () => {
   /*
-  FNXC:MetricsSampler 2026-08-18 (RUFU-081 Greptile P1, RUFU-106 review fix):
+  FNXC:MetricsSampler 2026-08-18-04:20 (RUFU-081 Greptile P1, RUFU-106 review fix):
   A dashboard close+re-listen calls stopTimers() then start() while a pre-close sample may still
   be awaiting. The fix: (a) the in-flight guard is factory-scoped so it survives the restart — a
   pre-close sample still running keeps blocking ticks of the same arm until it resolves; (b) the
@@ -468,6 +482,45 @@ describe("restart fence (RUFU-081 Greptile P1 review fix)", () => {
     await vi.advanceTimersByTimeAsync(5000);
     expect(reader).toHaveBeenCalledTimes(3);
     expect(sampler.state.pgQueriesPerSecond).toBe(100);
+
+    sampler.stopTimers();
+  });
+
+  /*
+   * FNXC:MetricsSampler 2026-08-18-11:53 (RUFU-081 Greptile P1 "Restart retains stale PG
+   * baseline", RUFU-106 review fix): stopTimers() marks the retained PG baseline STALE, so the
+   * first post-restart success re-baselines and keeps the last-known rate instead of diffing
+   * against a pre-stop counter — otherwise a stats reset landing inside the stop gap regrows
+   * the counters past the retained total and the first post-restart sample emits a positive
+   * cross-epoch delta as a fabricated rate.
+   */
+  it("re-baselines after a restart even when counters regrew past the stale pre-stop baseline", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(Date.parse("2026-08-18T00:00:00Z"));
+    const values: PgStats[] = [
+      [{ datname: "fusion", xactCommit: 1000, xactRollback: 0 }],
+      [{ datname: "fusion", xactCommit: 1200, xactRollback: 0 }],
+      [{ datname: "fusion", xactCommit: 2500, xactRollback: 0 }], // regrown past the retained 1200 during the stop gap
+    ];
+    let idx = 0;
+    const reader = vi.fn(async (): Promise<PgStats | null> => values[Math.min(idx++, values.length - 1)]);
+    const sampler = helper({ tick: { pgMs: 5000, domainMs: 60_000 }, pgStatsReader: reader });
+    sampler.start();
+
+    await vi.advanceTimersByTimeAsync(5000); // t5s: first sample, baseline 1000
+    await vi.advanceTimersByTimeAsync(5000); // t10s: (1200-1000)/5s = 40/s
+    expect(sampler.state.pgQueriesPerSecond).toBeCloseTo(40, 10);
+
+    // Restart; statistics reset during the stop gap and counters regrow to 2500 (> 1200).
+    sampler.stopTimers();
+    vi.setSystemTime(Date.parse("2026-08-18T00:01:00Z"));
+    sampler.start();
+
+    // First post-restart tick: the stale flag forces a re-baseline that KEEPS 40/s; without
+    // it the sample would emit the cross-epoch (2500-1200)/55s ≈ 23.6/s.
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(reader).toHaveBeenCalledTimes(3);
+    expect(sampler.state.pgQueriesPerSecond).toBeCloseTo(40, 10);
 
     sampler.stopTimers();
   });
