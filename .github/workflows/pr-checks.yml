@@ -37,6 +37,16 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          # The pre.json anchor check needs the newest `chore(release):` commit
+          # that touched .changeset/pre.json (its ledger baseline) and the `v*`
+          # stable tags. Bounded depth, not fetch-depth: 0 — releases land every
+          # few days, so 200 commits always reaches one, and a full 486MB clone
+          # on every PR is not worth it. The check falls back to `git ls-remote
+          # --tags` for the tags and reports the ledger rule SKIPPED (never
+          # silently passed) if the baseline is out of range.
+          fetch-depth: 200
+          fetch-tags: true
 
       - name: Setup Node.js and pnpm
         uses: ./.github/actions/setup-node-pnpm
@@ -46,6 +56,16 @@ jobs:
 
       - name: Changeset format
         run: pnpm check:changesets
+
+      # PR #3472 resolved a .changeset/pre.json rebase conflict against a copy
+      # predating the v0.76.0 stable. Nothing failed at PR time; days later
+      # `pnpm release` saw the cycle anchored below the shipped stable, fired its
+      # stale-cycle re-anchor, and proposed 0.77.0-beta.0 — below the published
+      # 0.77.0-beta.1. pre.json is generated, hand-edited by nobody, and conflicts
+      # in nearly every long-lived branch, so a wrong resolution is invisible
+      # until release day. ~50ms.
+      - name: Beta cycle anchor (pre.json)
+        run: pnpm check:pre-json
 
       - name: Dashboard route modularity
         run: pnpm check:routes-modular
