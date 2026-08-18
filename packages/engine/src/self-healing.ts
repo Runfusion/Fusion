@@ -15978,8 +15978,9 @@ const movedTask = await this.store.moveTask(task.id, completeLane);
         } catch (error) {
           log.warn(`[self-healing] secrets-env cleanup failed for idle worktree ${worktreePath}: ${error instanceof Error ? error.message : String(error)}`);
         }
+        let restoreGeneratedResidue: (() => Promise<void>) | undefined;
         try {
-          await preserveGeneratedResidue(worktreePath, this.options.rootDir, log);
+          restoreGeneratedResidue = await preserveGeneratedResidue(worktreePath, this.options.rootDir, log);
         } catch (error) {
           log.warn(`[self-healing] generated-residue preservation failed for idle worktree ${worktreePath}: ${error instanceof Error ? error.message : String(error)}`);
         }
@@ -15992,6 +15993,11 @@ const movedTask = await this.store.moveTask(task.id, completeLane);
           });
           cleaned++;
         } catch (err: unknown) {
+          try {
+            await restoreGeneratedResidue?.();
+          } catch (restoreError) {
+            log.warn(`[self-healing] generated-residue restore failed for idle worktree ${worktreePath}: ${restoreError instanceof Error ? restoreError.message : String(restoreError)}`);
+          }
           const errorMessage = err instanceof Error ? err.message : String(err);
           log.warn(`Failed to remove orphaned worktree ${worktreePath}: ${errorMessage} — non-fatal`);
           // Individual failure is non-fatal
@@ -16401,8 +16407,9 @@ const movedTask = await this.store.moveTask(task.id, completeLane);
         } catch (error) {
           log.warn(`[self-healing] secrets-env cleanup failed for idle worktree ${worktreePath} during cap enforcement: ${error instanceof Error ? error.message : String(error)}`);
         }
+        let restoreGeneratedResidue: (() => Promise<void>) | undefined;
         try {
-          await preserveGeneratedResidue(worktreePath, this.options.rootDir, log);
+          restoreGeneratedResidue = await preserveGeneratedResidue(worktreePath, this.options.rootDir, log);
         } catch (error) {
           log.warn(`[self-healing] generated-residue preservation failed for idle worktree ${worktreePath} during cap enforcement: ${error instanceof Error ? error.message : String(error)}`);
         }
@@ -16415,6 +16422,11 @@ const movedTask = await this.store.moveTask(task.id, completeLane);
           });
           removed++;
         } catch (err: unknown) {
+          try {
+            await restoreGeneratedResidue?.();
+          } catch (restoreError) {
+            log.warn(`[self-healing] generated-residue restore failed for cap worktree ${worktreePath}: ${restoreError instanceof Error ? restoreError.message : String(restoreError)}`);
+          }
           const errorMessage = err instanceof Error ? err.message : String(err);
           log.warn(`Failed to remove idle worktree ${worktreePath} during cap enforcement: ${errorMessage} — non-fatal`);
           // Individual failure is non-fatal

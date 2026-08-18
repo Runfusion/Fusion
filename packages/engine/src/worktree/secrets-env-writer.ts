@@ -529,6 +529,10 @@ export async function cleanupSecretsEnvFile(opts: CleanupSecretsEnvFileOptions):
   // verified managed inode is ever removed.
   const envPath = path.join(opts.worktreePath, record.filename);
   const quarantinePath = `${envPath}.fusion-cleanup-${process.pid}-${randomUUID()}`;
+  // Follows the verified inode across its own quarantine rename so a recovery
+  // restore after the deletion-shaped move still finds the content (the original
+  // quarantinePath name is gone once quarantined under the .deleting pathname).
+  let activeQuarantinePath = quarantinePath;
   try {
     await renameFile(envPath, quarantinePath);
   } catch (error) {
@@ -549,17 +553,17 @@ export async function cleanupSecretsEnvFile(opts: CleanupSecretsEnvFileOptions):
   // of this content and must be preserved as a recovery file, never unlinked.
   const restoreQuarantine = async (): Promise<boolean> => {
     try {
-      await fs.link(quarantinePath, envPath);
+      await fs.link(activeQuarantinePath, envPath);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
-        opts.logger?.warn(`secrets-env: restore link failed for quarantined ${record.filename}; preserved recovery copy at ${quarantinePath}`);
+        opts.logger?.warn(`secrets-env: restore link failed for quarantined ${record.filename}; preserved recovery copy at ${activeQuarantinePath}`);
         return false;
       }
       // The pathname is occupied, but the quarantined inode is unverified.
       // Keep it as recovery evidence; EEXIST is not proof it is safe to delete.
       return false;
     }
-    await fs.unlink(quarantinePath).catch(() => undefined);
+    await fs.unlink(activeQuarantinePath).catch(() => undefined);
     return true;
   };
   try {
@@ -574,20 +578,29 @@ export async function cleanupSecretsEnvFile(opts: CleanupSecretsEnvFileOptions):
       }
       return { outcome: "skipped", reason: "fingerprint-mismatch" };
     }
-  } catch (error) {
+  } catch {
     // The quarantined inode cannot be read (permissions): restore it and fail closed.
     await restoreQuarantine();
     return { outcome: "skipped", reason: "record-remove-failed" };
   }
+  const quarantinedStat = await fs.lstat(quarantinePath);
+  // ponytail: rename the verified inode away before unlink; the old pathname cannot be swapped under us.
   if (!privatePath && opts.allowLegacyCleanupForDanglingGitdir && !(opts.isDanglingGitdir?.() ?? false)) {
     await restoreQuarantine();
     return { outcome: "skipped", reason: "invalid-record" };
   }
+  const deletionPath = `${quarantinePath}.deleting`;
   try {
-    await fs.unlink(quarantinePath);
+    await fs.rename(quarantinePath, deletionPath);
+    activeQuarantinePath = deletionPath;
+    const deletionStat = await fs.lstat(deletionPath);
+    if (deletionStat.dev !== quarantinedStat.dev || deletionStat.ino !== quarantinedStat.ino) {
+      return { outcome: "skipped", reason: "file-retained" };
+    }
+    await fs.unlink(deletionPath);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-      await restoreQuarantine();
+      try { await restoreQuarantine(); } catch { /* retain recovery copy */ }
       return { outcome: "skipped", reason: "record-remove-failed" };
     }
   }

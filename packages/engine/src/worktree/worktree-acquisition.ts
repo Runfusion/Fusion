@@ -865,15 +865,24 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
               audit: undefined,
               logger,
             });
-            await preserveGeneratedResidue(pinnedPath, rootDir, logger);
-            await removeWorktree({
-              rootDir,
-              worktreePath: pinnedPath,
-              settings,
-              reason: RemovalReason.PoolPrune,
-              taskId: task.id,
-              audit: undefined,
-            });
+            const restoreGeneratedResidue = await preserveGeneratedResidue(pinnedPath, rootDir, logger);
+            try {
+              await removeWorktree({
+                rootDir,
+                worktreePath: pinnedPath,
+                settings,
+                reason: RemovalReason.PoolPrune,
+                taskId: task.id,
+                audit: undefined,
+              });
+            } catch (error) {
+              try {
+                await restoreGeneratedResidue();
+              } catch (restoreError) {
+                logger?.warn(`${task.id}: generated-residue restore failed for stale pinned worktree ${pinnedPath}: ${formatError(restoreError).message}`);
+              }
+              throw error;
+            }
           }
         } catch (removeErr) {
           /*

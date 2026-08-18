@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, realpath, rename, stat } from "node:fs/promises";
 import { exec } from "node:child_process";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { isAbsolute, join, relative } from "node:path";
 import { promisify } from "node:util";
 import { formatError } from "../logger.js";
 
@@ -47,7 +47,8 @@ export async function preserveGeneratedResidue(
   worktreePath: string,
   rootDir: string,
   logger?: { warn: (m: string) => void },
-): Promise<void> {
+): Promise<() => Promise<void>> {
+  const moved: Array<{ source: string; preserved: string }> = [];
   for (const name of ["node_modules", "dist"] as const) {
     const path = join(worktreePath, name);
     if (!existsSync(path)) continue;
@@ -65,11 +66,32 @@ export async function preserveGeneratedResidue(
       const worktreesRecovery = await ensureContainedDirectory(recoveryRoot, "worktrees");
       const preservedPath = join(worktreesRecovery, `residue-${randomUUID()}`);
       await rename(path, preservedPath);
+      moved.push({ source: path, preserved: preservedPath });
     } catch (error) {
       // Preserve in place on any failure; removeWorktree's dirty probe fails closed.
       logger?.warn(`Failed to preserve generated residue at ${path}: ${formatError(error).message}`);
     }
   }
+  return async () => {
+    const failures: string[] = [];
+    // Greptile: attempt EVERY moved entry so a conflicted/recreating source does not
+    // strand its sibling dirs in recovery; report all failures after the loop.
+    for (const { source, preserved } of moved.reverse()) {
+      if (!existsSync(preserved)) continue;
+      if (existsSync(source)) {
+        failures.push(`Failed to restore generated residue at ${source}: source was recreated`);
+        continue;
+      }
+      try {
+        await rename(preserved, source);
+      } catch (error) {
+        failures.push(`Failed to restore generated residue at ${source}: ${formatError(error).message}`);
+      }
+    }
+    if (failures.length > 0) {
+      throw new Error(failures.join("\n"));
+    }
+  };
 }
 
 /**

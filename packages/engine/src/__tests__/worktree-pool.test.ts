@@ -52,23 +52,31 @@ vi.mock("../worktree/worktree-desktop-artifacts.js", () => ({
 
 vi.mock("node:fs", () => ({
   chmodSync: vi.fn(),
+  copyFileSync: vi.fn(),
   existsSync: vi.fn().mockReturnValue(true),
   linkSync: vi.fn(),
   lstatSync: vi.fn().mockReturnValue({ isDirectory: () => true, isSymbolicLink: () => false }),
+  mkdirSync: vi.fn(),
   readdirSync: vi.fn().mockReturnValue([]),
   readFileSync: vi.fn().mockReturnValue(""),
   renameSync: vi.fn(),
   rmdirSync: vi.fn(),
   unlinkSync: vi.fn(),
   writeFileSync: vi.fn(),
+  constants: { COPYFILE_EXCL: 1 },
 }));
 
 vi.mock("../worktree/worktree-prune.js", () => ({
   pruneWorktreeAdminEntries: vi.fn().mockResolvedValue(undefined),
 }));
 
+vi.mock("../worktree/worktree-generated-residue.js", () => ({
+  preserveGeneratedResidue: vi.fn(),
+}));
+
 import * as desktopArtifacts from "../worktree/worktree-desktop-artifacts.js";
 import * as worktreePrune from "../worktree/worktree-prune.js";
+import * as generatedResidue from "../worktree/worktree-generated-residue.js";
 import {
   WorktreePool,
   detectGitRepository,
@@ -82,7 +90,7 @@ import {
 import { BranchConflictError } from "../execution/branch-conflicts.js";
 import * as branchConflictModule from "../execution/branch-conflicts.js";
 import { execSync } from "node:child_process";
-import { existsSync, linkSync, lstatSync, readdirSync, readFileSync, renameSync, rmdirSync, unlinkSync } from "node:fs";
+import { existsSync, linkSync, lstatSync, readdirSync, readFileSync, renameSync, rmdirSync, unlinkSync, mkdirSync, copyFileSync } from "node:fs";
 import type { Task, Column } from "@fusion/core";
 
 const mockedExecSync = vi.mocked(execSync);
@@ -94,7 +102,10 @@ const mockedRmdirSync = vi.mocked(rmdirSync);
 const mockedRenameSync = vi.mocked(renameSync);
 const mockedLinkSync = vi.mocked(linkSync);
 const mockedUnlinkSync = vi.mocked(unlinkSync);
+const mockedMkdirSync = vi.mocked(mkdirSync);
+const mockedCopyFileSync = vi.mocked(copyFileSync);
 const mockedPruneWorktreeAdminEntries = vi.mocked(worktreePrune.pruneWorktreeAdminEntries);
+const mockedPreserveGeneratedResidue = vi.mocked(generatedResidue.preserveGeneratedResidue);
 const TEST_TASK_ID = "FN-test";
 
 let errorSpy: ReturnType<typeof vi.spyOn>;
@@ -995,6 +1006,7 @@ describe("cleanupOrphanedWorktrees", () => {
     mockedExistsSync.mockReturnValue(true);
     mockRegisteredWorktrees("/root", []);
     mockedPruneWorktreeAdminEntries.mockResolvedValue(undefined);
+    mockedPreserveGeneratedResidue.mockResolvedValue(async () => {});
   });
 
   it("removes worktrees not assigned to any active task", async () => {
@@ -1049,6 +1061,51 @@ describe("cleanupOrphanedWorktrees", () => {
       (c) => typeof c[0] === "string" && (c[0] as string).includes("worktree remove"),
     );
     expect(removeCalls).toHaveLength(0);
+  });
+
+  it("does not mask the removal failure when generated-residue restoration itself fails", async () => {
+    mockedReaddirSync.mockReturnValue([
+      makeDirEntry("dirty-wt"),
+    ] as any);
+    mockRegisteredWorktrees("/root", ["dirty-wt"]);
+    mockedExecSync.mockImplementation((cmd: any) => {
+      if (String(cmd) === "git worktree list --porcelain") {
+        return [
+          "worktree /root",
+          "HEAD abc123",
+          "branch refs/heads/main",
+          "",
+          "worktree /root/.worktrees/dirty-wt",
+          "HEAD def456",
+          "branch refs/heads/fusion/dirty-wt",
+          "",
+        ].join("\n") as any;
+      }
+      if (String(cmd).includes("status --porcelain")) {
+        return " M src/file.ts\n" as any;
+      }
+      return Buffer.from("");
+    });
+    mockedPreserveGeneratedResidue.mockResolvedValue(async () => {
+      throw new Error("restore exploded");
+    });
+
+    const store = createMockStore([]);
+
+    const cleaned = await cleanupOrphanedWorktrees("/root", store);
+
+    expect(cleaned).toBe(0);
+    // The original removal refusal is the failure reported — a restore error
+    // must never replace it in the removal log (masking).
+    const removalLog = errorSpy.mock.calls
+      .map((c: unknown[]) => String(c[0]))
+      .find((m: string) => m.includes("Failed to remove orphaned worktree /root/.worktrees/dirty-wt"));
+    expect(removalLog).toBeDefined();
+    expect(removalLog).toContain("refusing to remove dirty worktree");
+    expect(removalLog).not.toContain("restore exploded");
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("generated-residue restore failed for registered orphan /root/.worktrees/dirty-wt: restore exploded"),
+    );
   });
 
   it("removes registered orphaned worktrees when status probe is clean", async () => {
@@ -1382,5 +1439,186 @@ describe("reapOrphanWorktrees", () => {
     expect(removed).toBe(0);
     expect(mockedRmdirSync).not.toHaveBeenCalledWith("/root/.worktrees/maybe-wt");
   });
+
+
+  // Greptile (find: failed pointer restore accepted): when the removed orphan's admin
+  // target is repaired in the removal window, the reaper recreates the directory and
+  // restores the stashed .git pointer. If BOTH restore methods fail with a non-EEXIST
+  // filesystem error, restoreStashedDotGit returns false — the previous code silently
+  // continued, leaving the recreated checkout without a canonical .git pointer. It must
+  // fail closed: keep the stash for manual recovery and surface it.
+  it("fails closed when the stashed pointer cannot be restored to the repaired checkout", async () => {
+    mockedReaddirSync.mockImplementation((p: any) =>
+      String(p) === "/root/.worktrees" ? [makeDirEntry("failclose-wt")] as any : [".git"] as any,
+    );
+    mockedLstatSync.mockImplementation((p: any) => {
+      const s = String(p);
+      return {
+        dev: 11,
+        ino: s.endsWith("/.git") || s.includes(".git-reap-stash") || s.includes(".git-reap-del") ? 22 : 11,
+        isDirectory: () => !s.endsWith("/.git"),
+        isSymbolicLink: () => false,
+      } as any;
+    });
+    mockedReadFileSync.mockReturnValue("gitdir: /root/.git/worktrees/failclose-wt\n" as any);
+    // Admin target exists in the post-removal window (repaired before probe #6) so the
+    // "repaired during removal" restore path is taken; but the restore fails.
+    let probe = 0;
+    mockedExistsSync.mockImplementation((p: any) => {
+      const s = String(p);
+      if (s !== "/root/.git/worktrees/failclose-wt") {
+        return s === "/root/.worktrees" || s === "/root/.worktrees/failclose-wt/.git";
+      }
+      probe++;
+      if (probe >= 6) return true;
+      return false;
+    });
+    // Force both restoration methods to fail with a non-EEXIST code.
+    mockedMkdirSync.mockImplementation(() => undefined);
+    mockedLinkSync.mockImplementation((src: any, dest: any) => {
+      if (String(src).includes(".git-reap-stash")) {
+        const err: NodeJS.ErrnoException = new Error("fake EPERM");
+        err.code = "EPERM";
+        throw err;
+      }
+    });
+    mockedCopyFileSync.mockImplementation(() => {
+      const err: NodeJS.ErrnoException = new Error("fake EPERM");
+      err.code = "EPERM";
+      throw err;
+    });
+
+    const removed = await reapOrphanWorktrees("/root");
+
+    expect(removed).toBe(0);
+    // Fail closed: the stash is retained for manual recovery (kept, not unlinked).
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("admin target repaired during removal but .git pointer restore failed"),
+    );
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("keeping stash for manual recovery"),
+    );
+  });
+
+  // Greptile (find: concurrent pointer overwrite): restoreReplacedDotGit's last-resort
+  // restore path checks `existsSync(dotGit)` and then `renameSync(dotGitDelete, dotGit)`.
+  // renameSync ALWAYS overwrites the destination, so an authoritative `.git` pointer
+  // created between the existsSync check and the rename is silently destroyed while the
+  // captured (stale) pointer wins. The restore must be atomic and non-overwriting:
+  // never call renameSync to place a captured pointer back over dotGit; fail closed and
+  // keep the captured pointer for manual recovery when link/copy-EXCL both error.
+  it("does NOT overwrite an authoritative .git pointer via renameSync in the replacement-restore fallback", async () => {
+    mockedReaddirSync.mockImplementation((p: any) =>
+      String(p) === "/root/.worktrees" ? [makeDirEntry("concurrent-win")] as any : [".git"] as any,
+    );
+    // Real flow: after capture the occupant is renamed to the private delete path, so the
+    // canonical `.git` pathname is absent again — exactly the window where a concurrent
+    // authoritative pointer can be recreated and then clobbered by a rename fallback.
+    let dotGitMoved = false;
+    mockedRenameSync.mockImplementation((src: any, dest: any) => {
+      if (String(src) === "/root/.worktrees/concurrent-win/.git" && String(dest).includes(".git-reap-del")) {
+        dotGitMoved = true;
+      }
+    });
+    mockedLstatSync.mockImplementation((p: any) => {
+      const s = String(p);
+      if (s.includes(".git-reap-del-")) return { dev: 11, ino: 33, isDirectory: () => false, isSymbolicLink: () => false } as any;
+      if (s.endsWith("/.git") || s.includes(".git-reap-stash-")) return { dev: 11, ino: 22, isDirectory: () => false, isSymbolicLink: () => false } as any;
+      return { dev: 11, ino: 11, isDirectory: () => true, isSymbolicLink: () => false } as any;
+    });
+    mockedReadFileSync.mockReturnValue("gitdir: /root/.git/worktrees/concurrent-win\n" as any);
+    mockedExistsSync.mockImplementation((p) => {
+      const s = String(p);
+      if (s === "/root/.worktrees/concurrent-win/.git") return !dotGitMoved;
+      return s === "/root/.worktrees";
+    });
+    // Force both atomic non-overwriting restores to fail with a non-EEXIST code so the
+    // buggy renameSync fallback is the only path left open.
+    mockedLinkSync.mockImplementation((src: any) => {
+      if (String(src).includes(".git-reap-del-")) {
+        const err: NodeJS.ErrnoException = new Error("fake EPERM");
+        err.code = "EPERM";
+        throw err;
+      }
+    });
+    mockedCopyFileSync.mockImplementation(() => {
+      const err: NodeJS.ErrnoException = new Error("fake EPERM");
+      err.code = "EPERM";
+      throw err;
+    });
+
+    const removed = await reapOrphanWorktrees("/root");
+
+    expect(removed).toBe(0);
+    // The captured replacement pointer must never be renameSync'd back over dotGit:
+    // renameSync cannot be made non-overwriting and would clobber a concurrent winner.
+    expect(mockedRenameSync).not.toHaveBeenCalledWith(
+      expect.stringMatching(/\.git-reap-del-/),
+      "/root/.worktrees/concurrent-win/.git",
+    );
+    // Fail closed: keep the captured pointer as a manual-recovery copy instead of
+    // dropping it after a failed non-overwriting restore.
+    expect(mockedUnlinkSync).not.toHaveBeenCalledWith(
+      expect.stringMatching(/\.git-reap-del-/),
+    );
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("failed to restore replacement .git"),
+    );
+  });
+
+  // Greptile (find: stale target after re-registration): `targetPath` is derived once from
+  // the STASHED original dangling pointer. A concurrent repair can RE-REGISTER the orphan,
+  // recreating `.git` to point at a DIFFERENT, live admin while the original target stays
+  // missing. The reaper must re-read the CURRENT `.git` pointer before its destructive
+  // rmdir and preserve on the freshly-resolved live target — otherwise it deletes a live
+  // worktree it reclassified against a stale path.
+  it("preserves an orphan re-registered to a different live admin target (re-reads current .git pointer)", async () => {
+    mockedReaddirSync.mockImplementation((p: any) =>
+      String(p) === "/root/.worktrees" ? [makeDirEntry("rereg-wt")] as any : [".git"] as any,
+    );
+    // The re-registration lands right after the reaper renames the dangling `.git` aside:
+    // the canonical `.git` path is recreated to point at a DIFFERENT live admin target.
+    let pointerReplaced = false;
+    mockedRenameSync.mockImplementation((src: any, dest: any) => {
+      if (String(src) === "/root/.worktrees/rereg-wt/.git" && String(dest).includes(".git-reap-del")) {
+        pointerReplaced = true;
+      }
+    });
+    // stash, captured occupant, and the `.git` pathname all share the dangling original's
+    // inode until the re-registration replaces the pointer's CONTENT (readFileSync flip).
+    mockedLstatSync.mockImplementation((p: any) => {
+      const s = String(p);
+      if (s.endsWith("/.git") || s.includes(".git-reap-stash-") || s.includes(".git-reap-del-")) {
+        return { dev: 11, ino: 22, isDirectory: () => false, isSymbolicLink: () => false } as any;
+      }
+      return { dev: 11, ino: 11, isDirectory: () => true, isSymbolicLink: () => false } as any;
+    });
+    const ORIGINAL = "gitdir: /root/.git/worktrees/rereg-wt\n";
+    const RE_REGISTERED = "gitdir: /root/.git/worktrees/reregistered\n";
+    mockedReadFileSync.mockImplementation((p: any) => {
+      const s = String(p);
+      if (s.includes(".git-reap-stash-")) return ORIGINAL as any; // stash always holds the dangling original
+      if (pointerReplaced && s.endsWith("/.git")) return RE_REGISTERED as any;
+      if (s.endsWith("/.git")) return ORIGINAL as any;
+      return "" as any;
+    });
+    mockedExistsSync.mockImplementation((p) => {
+      const s = String(p);
+      // Re-registered admin (B) is live; the original dangling admin (A) is gone.
+      if (s === "/root/.git/worktrees/reregistered") return true;
+      if (s === "/root/.git/worktrees/rereg-wt") return false;
+      return s === "/root/.worktrees" || s === "/root/.worktrees/rereg-wt/.git" || s === "/root/.worktrees/rereg-wt";
+    });
+
+    const removed = await reapOrphanWorktrees("/root");
+
+    expect(removed).toBe(0);
+    // The live re-registered worktree must NOT be destroyed:
+    expect(mockedRmdirSync).not.toHaveBeenCalledWith("/root/.worktrees/rereg-wt");
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Preserving orphan worktree"),
+    );
+  });
+
 });
 

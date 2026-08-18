@@ -217,17 +217,20 @@ describe("SelfHealingManager worktrees-dir sweeps", () => {
     expect(fsState.rmCalls).not.toContain(orphan);
   });
 
-  it("prepares generated residue before cap enforcement removes an idle worktree", async () => {
+  it("prepares generated residue before cap enforcement and restores it when the worktree survives a refused removal", async () => {
     const worktreesDir = join(projectRoot, ".worktrees");
     const idle = join(worktreesDir, "idle-wt");
-    mkdirSync(join(idle, "node_modules"), { recursive: true });
+    const nodeModules = join(idle, "node_modules");
+    mkdirSync(nodeModules, { recursive: true });
     childState.execStdout = gitWorktreeList(["idle-wt"]);
     const { manager } = makeManager({ maxWorktrees: 0 });
 
     await expect((manager as any).enforceWorktreeCap()).resolves.toBeUndefined();
 
-    expect(existsSync(join(idle, "node_modules"))).toBe(false);
-    expect(readdirSync(join(projectRoot, ".fusion", "recovery", "worktrees"))).toHaveLength(1);
+    // The removal leaves the idle dir in place (no real git registration to prune), so the
+    // generated residue must be put back for the surviving worktree — never stranded in recovery.
+    expect(existsSync(nodeModules)).toBe(true);
+    expect(readdirSync(join(projectRoot, ".fusion", "recovery", "worktrees"))).toHaveLength(0);
   });
 });
 

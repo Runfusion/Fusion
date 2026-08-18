@@ -824,6 +824,59 @@ describe("secrets-env-writer", () => {
     expect(existsSync(join(dir, ".fusion-secrets-env.fingerprint"))).toBe(true);
   });
 
+  it("restores a quarantined recovery file stranded under .deleting and converges on retry", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "secrets-env-deleting-"));
+    dirs.push(dir);
+    const envPath = join(dir, ".env");
+    const original = "MANAGED=1\n";
+    writeFileSync(envPath, original);
+    writeFileSync(join(dir, ".fusion-secrets-env.fingerprint"), `${createHash("sha256").update(original).digest("hex")}\n.env\n`);
+
+    // Deletion-shaped flows: the quarantine rename to the .deleting pathname
+    // SUCCEEDS, but the final unlink of that moved inode fails (EACCES). The
+    // failure must not strand the content under .deleting while restoreQuarantine
+    // keeps reading the old quarantinePath (now gone) — the restore must follow
+    // the inode to its moved .deleting pathname and put it back at the env path.
+    const originalRename = fsPromises.rename.bind(fsPromises);
+    const originalUnlink = fsPromises.unlink.bind(fsPromises);
+    const renameSpy = vi.spyOn(fsPromises, "rename");
+    let deletingRenameCount = 0;
+    renameSpy.mockImplementation(async (from: any, to: any) => {
+      if (String(to).endsWith(".deleting")) {
+        deletingRenameCount++;
+      }
+      return originalRename(from, to);
+    });
+    let failedDeletingUnlink = false;
+    const unlinkSpy = vi.spyOn(fsPromises, "unlink").mockImplementation(async (p: any) => {
+      const s = String(p);
+      // Fail the FIRST unlink of the moved .deleting inode; later restores pass.
+      if (s.endsWith(".deleting") && deletingRenameCount >= 1 && !failedDeletingUnlink) {
+        failedDeletingUnlink = true;
+        throw Object.assign(new Error("permission denied"), { code: "EACCES" });
+      }
+      return originalUnlink(p);
+    });
+
+    try {
+      const result = await cleanupSecretsEnvFile({ worktreePath: dir, taskId: "orphan", expectedFingerprint: null, filename: ".env" });
+      // Fails closed: content and ownership metadata survive under the recovery copy.
+      expect(result).toEqual({ outcome: "skipped", reason: "record-remove-failed" });
+      expect(readFileSync(envPath, "utf8")).toBe(original);
+      expect(existsSync(join(dir, ".fusion-secrets-env.fingerprint"))).toBe(true);
+
+      // A retry converges: the recovered content is deleted and the record drops.
+      const again = await cleanupSecretsEnvFile({ worktreePath: dir, taskId: "orphan", expectedFingerprint: null, filename: ".env" });
+      expect(again).toEqual({ outcome: "cleaned", reason: "fingerprint-match" });
+      expect(existsSync(envPath)).toBe(false);
+      expect(existsSync(join(dir, ".fusion-secrets-env.fingerprint"))).toBe(false);
+      expect(readdirSync(dir).filter((entry) => entry.startsWith(".env.fusion-cleanup-"))).toHaveLength(0);
+    } finally {
+      unlinkSpy.mockRestore();
+      renameSpy.mockRestore();
+    }
+  });
+
   it("never deletes a tracked env even when its fingerprint matches", async () => {
     const dir = tmpWorktree();
     const secretsStore = { listEnvExportable: vi.fn().mockResolvedValue([{ id: "1", key: "A", exportKey: "ALPHA", scope: "project", plaintextValue: "v" }]) } as any;
