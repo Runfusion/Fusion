@@ -240,6 +240,34 @@ describe("ensureContextWithinCompactionThreshold", () => {
     expect(compact).toHaveBeenCalledTimes(1);
   });
 
+  /*
+  FNXC:ChatContextGuard 2026-08-19-15:05:
+  RUFU-118: operator opt-out — enabled: false no-ops the gate even when the loaded
+  context is above the threshold (no measurement, no compaction, no throw). The gate
+  is a selectable feature (Settings.chatPreOverflowCompactionEnabled), on by default.
+  */
+  it("no-ops (no compact, no throw) when explicitly disabled, even above threshold", async () => {
+    const { session, compact } = makeFakePiSession({
+      usage: { tokens: 120000, contextWindow: 128000, percent: 93.75 },
+    });
+    const result = await ensureContextWithinCompactionThreshold(session, {
+      tokenCap: undefined,
+      enabled: false,
+    });
+    expect(result).toEqual({ compacted: false, contextTokens: null, threshold: null });
+    expect(compact).not.toHaveBeenCalled();
+  });
+
+  it("still compacts when enabled: true is passed explicitly (default-on opt-out)", async () => {
+    const { session, compact, usageState } = makeFakePiSession({
+      usage: { tokens: 102400, contextWindow: 128000, percent: 80 },
+      compactImpl: async () => compactToSummary(session, usageState, 2000, 102400),
+    });
+    const result = await ensureContextWithinCompactionThreshold(session, { tokenCap: undefined, enabled: true });
+    expect(result.compacted).toBe(true);
+    expect(compact).toHaveBeenCalledTimes(1);
+  });
+
   it("compacts when the loaded context is above the threshold and fits after compaction", async () => {
     const { session, compact, usageState } = makeFakePiSession({
       usage: { tokens: 120000, contextWindow: 128000, percent: 93.75 },

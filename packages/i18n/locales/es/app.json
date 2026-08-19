@@ -6342,6 +6342,10 @@
       "perTurnRecallTopK": "Top K de recuperación por turno",
       "perTurnRecallHelp": "Antes de cada chat de agente o prompt de paso, se antepone una recuperación acotada del tema actual para que la memoria relevante esté en contexto incluso si las pistas anteriores fueron eliminadas por compactación. Predeterminado: habilitado.",
       "perTurnRecallTopKHelp": "Máximo de fragmentos de memoria antepor por prompt. Predeterminado: 3 (límite 10).",
+
+      "preOverflowCompaction": "",
+
+      "preOverflowCompactionHelp": "",
       "failedToLoadBackendStatus": "",
       "for": "",
       "installing": "Instalando…",
