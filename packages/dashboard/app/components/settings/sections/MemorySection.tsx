@@ -87,6 +87,43 @@ export function MemorySection({ form, setForm, memory }: MemorySectionProps) {
         onChange={(v) => setForm((f) => ({ ...f, memoryEnabled: v === true }))}
       />
 
+      {/*
+      FNXC:StashSessionCapture 2026-08-19-04:37:
+      (RUFU-122) Task-terminal transcript upload controls, shown only when the
+      backend is Stash (same condition as the other stash rows — the feature is
+      inert for every other backend) and disabled (not hidden) when memory is
+      off. The toggle gates the transcript upload only (the RUFU-068 terminal
+      anchor still fires when off) and defaults ON; the number row caps
+      transcript events per task (min 100 / max 100000 / step 1000, default
+      20000, most recent events kept). executorSessionCaptureIncludeStatus is
+      schema-only by design and deliberately has NO row here.
+      */}
+      {form.memoryBackendType === "stash" && (<SettingsToggleRow
+          descriptor={{
+            key: "executorSessionCaptureEnabled",
+            label: t("settings.memory.executorSessionCapture", "Executor session capture"),
+            help: t("settings.memory.uploadTaskAgentLogTranscriptToStash", "Upload each task's agent-log transcript (agent-log.jsonl) to Stash when the task terminalizes (done or failed). Off: only the completion/failure anchor event is captured. Default: enabled."),
+            scope: "project",
+            disabled: !isMemoryEnabled,
+          }}
+          value={form.executorSessionCaptureEnabled ?? true}
+          onChange={(v) => setForm((f) => ({ ...f, executorSessionCaptureEnabled: v === true }))}
+        />)}
+      {form.memoryBackendType === "stash" && (<SettingsNumberRow
+          descriptor={{
+            key: "executorSessionCaptureMaxEvents",
+            label: t("settings.memory.maxTranscriptEventsPerTask", "Max transcript events per task"),
+            help: t("settings.memory.capOnTranscriptEventsUploadedPerTask", "Cap on transcript events uploaded per task (default 20000). The most recent events are kept."),
+            scope: "project",
+            min: 100,
+            max: 100000,
+            step: 1000,
+            disabled: !isMemoryEnabled,
+          }}
+          value={typeof form.executorSessionCaptureMaxEvents === "number" ? form.executorSessionCaptureMaxEvents : 20000}
+          onChange={(v) => setForm((f) => ({ ...f, executorSessionCaptureMaxEvents: v === null ? 20000 : v }))}
+        />)}
+
       {backendLoading ? (<div className="form-group">
           <small className="settings-muted">{t("settings.memory.checkingMemoryWriteAccess", "Checking memory write access...")}</small>
         </div>) : backendError ? (<div className="form-group">

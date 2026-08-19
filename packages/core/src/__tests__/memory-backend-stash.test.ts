@@ -164,7 +164,16 @@ describe("StashMemoryBackend", () => {
       expect(results[1].score).toBeLessThanOrEqual(results[0].score);
       const req = log.find((r) => r.path.includes("/api/v1/me/sessions/events/search"));
       expect(req).toBeTruthy();
-      expect(req!.path).toContain("q=api%20design");
+      /*
+      FNXC:RUFU122StaleSearchExpectation 2026-08-19-04:40:
+      RUFU-122: this expectation predates RUFU-121's query normalization and was
+      left stale on the RUFU-121 branch (red on its own HEAD — verified by
+      stashing RUFU-122's changes and re-running at d52ecfdba). RUFU-121's
+      normalizeStashSearchQuery intentionally keeps only the FIRST word token
+      in default mode (websearch_to_tsquery safety; see its
+      FNXC:RUFU121QueryNormalization note), so "api design" sends q=api.
+      */
+      expect(req!.path).toContain("q=api&limit=5");
       expect(req!.method).toBe("GET");
       expect(String(req!.headers.Authorization)).toBe("Bearer test-key");
     });
@@ -435,6 +444,93 @@ describe("StashMemoryBackend", () => {
       await deliver();
       const fail = await p2;
       expect(fail.ok).toBe(false);
+    });
+  });
+
+  /*
+  FNXC:RUFU122ChunkedUpload 2026-08-19-04:30:
+  RUFU-122 Step 2: capture() uploads in sequential 100-event chunks (Stash's
+  verified per-POST cap). 250 events -> 3 POSTs (100+100+50); a mid-stream
+  chunk failure returns the partial leading-chunk counts with ok:false and
+  never throws; an empty list issues no POST; the under-cap path stays a
+  single POST (byte-identical wire contract to the pre-RUFU-122 single-upload).
+  */
+  describe("capture chunked upload (RUFU-122)", () => {
+    const batchEventsIn = (body: string | undefined): number =>
+      body ? (JSON.parse(body) as { events: unknown[] }).events.length : 0;
+
+    const transcriptEvents = (n: number, prefix: string) =>
+      Array.from({ length: n }, (_, i) => ({ event_type: "text", content: `${prefix}-${i}` }));
+
+    /*
+    fakeIncoming delivers its data/end events via setImmediate, so a
+    deliver() returns BEFORE the response reaches the backend's promise. For
+    sequential chunk uploads the next POST is only issued once the previous
+    response lands, so each deliver() must be followed by one macrotask wait
+    before the next deliver().
+    */
+    const macrotask = () => new Promise<void>((resolve) => setImmediate(resolve));
+
+    it("250 events -> 3 sequential POSTs (100+100+50) with summed counts and ok:true", async () => {
+      responder = (_opts, body) => ({
+        statusCode: 200,
+        body: { inserted: batchEventsIn(body), deduped: 0 },
+      });
+      const promise = backend().capture("fusion-task-RUFU-122", transcriptEvents(250, "e"), { projectRoot: "/proj" });
+      await deliver();
+      await macrotask();
+      await deliver();
+      await macrotask();
+      await deliver();
+      await macrotask();
+      const res = await promise;
+      const batchPosts = log.filter((r) => r.path.includes("/api/v1/me/sessions/events/batch"));
+      expect(batchPosts).toHaveLength(3);
+      expect(batchPosts.map((r) => batchEventsIn(r.body))).toEqual([100, 100, 50]);
+      expect(res).toEqual({ inserted: 250, deduped: 0, ok: true });
+    });
+
+    it("partial failure (2nd of 3 chunks fails) -> {inserted: 100, ok: false}, never throws, no 3rd POST", async () => {
+      let batchPostCount = 0;
+      responder = (_opts, body) => {
+        batchPostCount += 1;
+        if (batchPostCount === 2) {
+          return { statusCode: 500, body: "internal error" };
+        }
+        return { statusCode: 200, body: { inserted: batchEventsIn(body), deduped: 0 } };
+      };
+      const promise = backend().capture("fusion-task-RUFU-122", transcriptEvents(250, "e"), { projectRoot: "/proj" });
+      await deliver();
+      await macrotask();
+      await deliver();
+      await macrotask();
+      // Chunk 2 failed: capture must have stopped (no 3rd chunk in flight) and
+      // resolved with the leading chunk's counts, not rejected.
+      const res = await promise;
+      expect(res).toEqual({ inserted: 100, deduped: 0, ok: false });
+      const batchPosts = log.filter((r) => r.path.includes("/api/v1/me/sessions/events/batch"));
+      expect(batchPosts).toHaveLength(2);
+    });
+
+    it("empty event list -> no POST and {0, 0, ok: true}", async () => {
+      const res = await backend().capture("fusion-task-RUFU-122", [], { projectRoot: "/proj" });
+      expect(res).toEqual({ inserted: 0, deduped: 0, ok: true });
+      expect(log).toHaveLength(0);
+    });
+
+    it("under-cap upload (<= 100 events) stays a single POST with every event in order", async () => {
+      responder = (_opts, body) => ({ statusCode: 200, body: { inserted: batchEventsIn(body), deduped: 0 } });
+      const events = transcriptEvents(100, "e");
+      const promise = backend().capture("fusion-task-RUFU-122", events, { projectRoot: "/proj" });
+      await deliver();
+      const res = await promise;
+      const batchPosts = log.filter((r) => r.path.includes("/api/v1/me/sessions/events/batch"));
+      expect(batchPosts).toHaveLength(1);
+      const sent = (JSON.parse(batchPosts[0].body ?? "") as { events: Array<{ content: string }> }).events;
+      expect(sent).toHaveLength(100);
+      expect(sent[0].content).toBe("e-0");
+      expect(sent[99].content).toBe("e-99");
+      expect(res).toEqual({ inserted: 100, deduped: 0, ok: true });
     });
   });
 });

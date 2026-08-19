@@ -77,6 +77,16 @@ export abstract class TaskExecutorSessionFacades extends TaskExecutorWorktreePur
   protected tokenUsageWithModelSnapshot(...args: Parameters<typeof impl.tokenUsageWithModelSnapshotImpl>): ReturnType<typeof impl.tokenUsageWithModelSnapshotImpl> { return impl.tokenUsageWithModelSnapshotImpl(...args); }
   protected async extractSessionTokenUsage(...args: Parameters<typeof impl.extractSessionTokenUsageImpl>): ReturnType<typeof impl.extractSessionTokenUsageImpl> { return impl.extractSessionTokenUsageImpl(...args); }
   protected signalTaskComplete(task: import("@fusion/core").Task): ReturnType<typeof impl.signalTaskCompleteImpl> { return impl.signalTaskCompleteImpl(bags.buildSignalTaskCompleteDeps(this), task); }
+  /*
+  FNXC:StashSessionCapture 2026-08-19-05:09:
+  (RUFU-122) Terminal-failure capture seam (RUFU-122 requirement 3): the executor
+  post-loop finally calls this for terminally failed runs. It fires ONLY the
+  memory capture (no post-task reflection, no onComplete — those belong to the
+  genuine completion seam), sharing the capturedMemoryTaskIds gate with
+  signalTaskComplete so a task is captured at most once across both seams.
+  Fire-and-forget: triggerTaskMemoryCapture never throws.
+  */
+  protected signalTaskTerminalFailed(task: import("@fusion/core").Task): ReturnType<typeof impl.triggerTaskMemoryCaptureImpl> { return impl.triggerTaskMemoryCaptureImpl(bags.buildSignalTaskTerminalFailedDeps(this), task, "failure"); }
   protected triggerPostTaskReflectionCapture(task: import("@fusion/core").Task): ReturnType<typeof impl.triggerPostTaskReflectionCaptureImpl> { return impl.triggerPostTaskReflectionCaptureImpl(bags.buildTriggerPostTaskReflectionCaptureDeps(this), task); }
   /** Live complete-chat memory capture: subscribes this executor to the project ChatStore so
    * every conversation's messages are captured (best-effort) into the Stash memory backend.

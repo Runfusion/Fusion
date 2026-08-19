@@ -13,6 +13,7 @@
  * the memory backend only — never to run-audit (FN-7158 ids/counts/outcome rule).
  */
 import type {
+  AgentLogEntry,
   ChatMessage,
   ChatSession,
   MemoryBackendSettings,
@@ -23,6 +24,7 @@ import type {
   TaskStore,
 } from "@fusion/core";
 import { captureMemory, resolveStashMemorySettings } from "@fusion/core";
+import { basename } from "node:path";
 import { executorLog } from "../logger.js";
 
 /*
@@ -38,11 +40,152 @@ here for the existing engine import sites; no behavior change.
 export { STASH_SECRET_KEY, STASH_SECRET_SCOPE, resolveStashMemorySettings } from "@fusion/core";
 export type { MemoryBackendSettings, StashSecretsReader } from "@fusion/core";
 
+/*
+FNXC:StashSessionCapture 2026-08-19-04:37:
+(RUFU-122) Task-terminal transcript builder. On task terminalization (done +
+failed/parked) the task's agent log (agent-log.jsonl, read via the public
+TaskStore.getAgentLogs) is uploaded as an ordered transcript to the per-task
+Stash session fusion-task-<taskId>, in front of the RUFU-068 terminal anchor
+event (task_completion/task_failure). Mapping (operator-settled, do not
+re-litigate): consecutive `text` streamed deltas are glued into ONE
+`assistant_message` event (join with ""; created_at and metadata.line come
+from the run's FIRST entry); `tool` -> `tool_use` (content and tool_name are
+the tool name); `tool_result` -> `tool_result`; `tool_error` -> `tool_error`
+with the content prefixed "ERROR: " so the error marker is visible in stored
+events; `thinking` is always skipped; `status` entries are skipped by default
+and only surface as `status` events when the caller passes includeStatus=true
+(executorSessionCaptureIncludeStatus, schema-only setting). Every event:
+content truncated client-side to 4000 chars, created_at = the entry's
+ISO timestamp, metadata = { taskId, status, line, project, project_name }
+where line is the entry's 1-based position in the returned log array
+(getAgentLogs strips lineNo/sourceRef, so the array index IS the log line).
+The builder is pure and deterministic — no I/O, no clock, no settings reads.
+*/
+export const TRANSCRIPT_CONTENT_MAX_CHARS = 4000;
+
+/** Per-event project identity stamped into transcript + anchor metadata. */
+export type TaskTranscriptProject = {
+  project: string;
+  project_name: string;
+};
+
+export function buildTaskTranscriptEvents(
+  entries: AgentLogEntry[],
+  taskId: string,
+  status: string,
+  project: TaskTranscriptProject,
+): MemoryCaptureEvent[] {
+  return buildTaskTranscriptEventsWithStatus(entries, taskId, status, project, false);
+}
+
+/**
+ * Builder implementation with the `status`-entry flag. The public
+ * {@link buildTaskTranscriptEvents} is the spec-fixed default (status entries
+ * skipped); the trigger calls this directly so inclusion is applied by the
+ * caller around the builder per executorSessionCaptureIncludeStatus.
+ */
+function buildTaskTranscriptEventsWithStatus(
+  entries: AgentLogEntry[],
+  taskId: string,
+  status: string,
+  project: TaskTranscriptProject,
+  includeStatus: boolean,
+): MemoryCaptureEvent[] {
+  const metaFor = (line: number): Record<string, unknown> => ({
+    taskId,
+    status,
+    line,
+    project: project.project,
+    project_name: project.project_name,
+  });
+  const events: MemoryCaptureEvent[] = [];
+  let i = 0;
+  while (i < entries.length) {
+    const entry = entries[i];
+    const line = i + 1;
+    if (entry.type === "text") {
+      // Glue the run of consecutive text deltas into a single assistant message;
+      // the event inherits the run's first entry timestamp/line.
+      let j = i;
+      let joined = "";
+      while (j < entries.length && entries[j].type === "text") {
+        joined += entries[j].text ?? "";
+        j += 1;
+      }
+      events.push({
+        event_type: "assistant_message",
+        content: joined.slice(0, TRANSCRIPT_CONTENT_MAX_CHARS),
+        created_at: entry.timestamp,
+        metadata: metaFor(line),
+      });
+      i = j;
+    } else if (entry.type === "tool") {
+      const toolName = (entry.text ?? "").slice(0, TRANSCRIPT_CONTENT_MAX_CHARS);
+      events.push({
+        event_type: "tool_use",
+        content: toolName,
+        tool_name: toolName,
+        created_at: entry.timestamp,
+        metadata: metaFor(line),
+      });
+      i += 1;
+    } else if (entry.type === "tool_result") {
+      events.push({
+        event_type: "tool_result",
+        content: (entry.text ?? "").slice(0, TRANSCRIPT_CONTENT_MAX_CHARS),
+        created_at: entry.timestamp,
+        metadata: metaFor(line),
+      });
+      i += 1;
+    } else if (entry.type === "tool_error") {
+      events.push({
+        event_type: "tool_error",
+        content: `ERROR: ${entry.text ?? ""}`.slice(0, TRANSCRIPT_CONTENT_MAX_CHARS),
+        created_at: entry.timestamp,
+        metadata: metaFor(line),
+      });
+      i += 1;
+    } else if (entry.type === "status" && includeStatus) {
+      events.push({
+        event_type: "status",
+        content: (entry.text ?? "").slice(0, TRANSCRIPT_CONTENT_MAX_CHARS),
+        created_at: entry.timestamp,
+        metadata: metaFor(line),
+      });
+      i += 1;
+    } else {
+      // `thinking` (and any unrecognized type): never uploaded.
+      i += 1;
+    }
+  }
+  return events;
+}
+
 /**
  * FNXC:MemoryCapture 2026-08-13-18:05:
  * Per-task memory capture (task_completion). Completion-gated: runs at most once per task
  * (`capturedMemoryTaskIds`), only when a genuine task record exists, and is best-effort —
  * failures are logged and never block or fail task completion.
+ *
+ * FNXC:StashSessionCapture 2026-08-19-04:37:
+ * (RUFU-122) The capture now uploads the full agent-log transcript (most recent
+ * executorSessionCaptureMaxEvents entries, default 20000, capped with a warn
+ * log) IN FRONT OF the terminal anchor event in a single captureMemory call:
+ * session fusion-task-<taskId>, content = task.title, metadata =
+ * { taskId, status, project, project_name }. The anchor kind is passed by the
+ * SEAM, not inferred from task.status: completion seam -> task_completion,
+ * terminal-failure seam -> task_failure (see the TaskCaptureAnchorKind note
+ * below). The
+ * executorSessionCaptureEnabled setting (default true) gates ONLY the
+ * transcript — when off, only the anchor is captured. Per-event identity:
+ * `project` resolves through the store's duck-typed getWorkflowSettingsProjectId
+ * (same pattern as the no-task heartbeat patrol), falling back to "default";
+ * `project_name` uses the RUFU-121 runtime identity (deps.projectIdentity)
+ * falling back to basename(rootDir) || "project". A missing or pruned
+ * agent-log.jsonl degrades to a warn log with an anchor-only capture — never
+ * a throw. The captureMemory meta keeps the RUFU-121 folder identity
+ * (projectId/projectName forwarded only when explicitly present, so the
+ * session folder resolves by external_key exactly as before).
  */
 export type TaskMemoryCaptureDeps = {
   store: TaskStore;
@@ -57,15 +200,40 @@ export type TaskMemoryCaptureDeps = {
   projectIdentity?: RuntimeProjectIdentity;
 };
 
+/*
+FNXC:StashSessionCapture 2026-08-19-06:24:
+(RUFU-122 review fix) The terminal anchor's event type is decided by the
+SEAM that fires the capture, never by task.status: the engine never writes
+status "done" onto the task row (completion is column-based — the row stays
+null/unset until the merge lane), so a status-derived anchor classified every
+COMPLETED task as task_failure with status "unknown" metadata, inverting the
+RUFU-068 anchor contract and polluting fn_memory_search recall. The completion
+seam (signalTaskComplete — the task's work handed off to review) always means
+task_completion / status "done"; the terminal-failure seam (runImplementation
+post-loop finally, which only fires on a freshly-read status "failed") means
+task_failure / the fresh failed status. Callers pass the kind explicitly.
+*/
+export type TaskCaptureAnchorKind = "completion" | "failure";
+
 export async function triggerTaskMemoryCapture(
   deps: TaskMemoryCaptureDeps,
   task: Task,
+  anchorKind: TaskCaptureAnchorKind = "completion",
 ): Promise<void> {
   const { store, capturedMemoryTaskIds, rootDir } = deps;
   if (!task || !task.id) return;
+  // Terminal-state label for transcript + anchor metadata. The kind decides it
+  // (see the TaskCaptureAnchorKind FNXC above): completion -> "done" even when
+  // the in-scope row still carries a stale non-done status (the post-completion
+  // non-continuable seam clears the row but passes the pre-clear object); the
+  // failure seam carries the freshly-read "failed" status from the finally.
+  const taskStatus = anchorKind === "failure" ? (task.status ?? "failed") : "done";
+  const taskTitle = task.title ?? "";
 
   // Completion-gated synchronously BEFORE any await: two back-to-back completions of the same
   // task must never both attempt capture (the gate must not race across the settings read).
+  // RUFU-122: the gate covers the WHOLE capture (transcript + anchor) — the single
+  // captureMemory call below is the only write, so one gate pass is sufficient.
   if (capturedMemoryTaskIds.has(task.id)) return;
   capturedMemoryTaskIds.add(task.id);
 
@@ -87,18 +255,80 @@ export async function triggerTaskMemoryCapture(
     const projectId = deps.projectIdentity?.projectId ?? store.getProjectId?.() ?? null;
     const projectName = deps.projectIdentity?.projectName ?? null;
 
+    /*
+    FNXC:StashSessionCapture 2026-08-19-04:37:
+    (RUFU-122) Per-event project identity for transcript + anchor metadata:
+    `project` via the store's duck-typed getWorkflowSettingsProjectId (the
+    no-task heartbeat patrol pattern — "default" when the store lacks the
+    seam), `project_name` from the RUFU-121 runtime identity with a
+    basename(rootDir) || "project" fallback so every captured event carries a
+    non-empty project_name like chat-captured events do. These feed EVENT
+    metadata only; the folder identity params above stay explicit-or-null so
+    the RUFU-121 session-folder resolution is untouched.
+    */
+    const project = (typeof store.getWorkflowSettingsProjectId === "function"
+      ? store.getWorkflowSettingsProjectId()
+      : undefined) || "default";
+    const projectNameMeta = projectName || basename(rootDir) || "project";
+
+    // Transcript gates (operator-fixed setting names). The enabled flag
+    // defaults ON; the max keeps the MOST RECENT N transcript events (tail),
+    // never truncating an event mid-stream — the full log stays on disk.
+    const sessionCaptureEnabled = settings.executorSessionCaptureEnabled !== false;
+    const includeStatus = settings.executorSessionCaptureIncludeStatus === true;
+    const rawMaxEvents = settings.executorSessionCaptureMaxEvents;
+    const maxEvents =
+      typeof rawMaxEvents === "number" && Number.isFinite(rawMaxEvents) && rawMaxEvents > 0
+        ? Math.floor(rawMaxEvents)
+        : 20_000;
+
+    let transcript: MemoryCaptureEvent[] = [];
+    if (sessionCaptureEnabled) {
+      // Public reader only (TaskStore.getAgentLogs); minimal mock stores may
+      // lack the seam — degrade to an empty transcript (anchor-only capture).
+      const entries = (await store.getAgentLogs?.(task.id)) ?? [];
+      if (entries.length === 0) {
+        executorLog.warn(
+          `${task.id}: agent-log.jsonl missing or pruned; transcript capture no-op (anchor still fires)`,
+        );
+      } else {
+        transcript = buildTaskTranscriptEventsWithStatus(
+          entries,
+          task.id,
+          taskStatus,
+          { project, project_name: projectNameMeta },
+          includeStatus,
+        );
+        if (transcript.length > maxEvents) {
+          executorLog.warn(
+            `${task.id}: transcript has ${transcript.length} events, exceeds executorSessionCaptureMaxEvents=${maxEvents}; keeping the most recent ${maxEvents} (full log remains on disk)`,
+          );
+          transcript = transcript.slice(-maxEvents);
+        }
+      }
+    }
+
+    /*
+    FNXC:StashSessionCapture 2026-08-19-04:37:
+    (RUFU-122) The terminal anchor is the LAST event of the single capture:
+    task_completion from the completion seam, task_failure from the
+    terminal-failure seam (anchorKind — never derived from task.status, which
+    is never "done" on the completion seam; see the TaskCaptureAnchorKind
+    note), content = task.title, metadata = { taskId, status, project,
+    project_name }. The server stamps created_at; the legacy client
+    timestamp field is dropped.
+    */
+    const anchor: MemoryCaptureEvent = {
+      event_type: anchorKind === "failure" ? "task_failure" : "task_completion",
+      content: taskTitle,
+      metadata: { taskId: task.id, status: taskStatus, project, project_name: projectNameMeta },
+    };
+
     const result = await captureMemory(
       rootDir,
       resolved,
       `fusion-task-${task.id}`,
-      [
-        {
-          event_type: "task_completion",
-          timestamp: new Date().toISOString(),
-          content: task.title,
-          metadata: { taskId: task.id, status: task.status },
-        } as MemoryCaptureEvent,
-      ],
+      [...transcript, anchor],
       {
         taskId: task.id,
         projectRoot: rootDir,
@@ -108,7 +338,18 @@ export async function triggerTaskMemoryCapture(
     );
     if (!result.ok) {
       // No-op backend / transient failure — do not fail the run.
-      executorLog.debug(`${task.id}: task memory capture no-op (ok=false, non-blocking)`);
+      //
+      // FNXC:StashSessionCapture 2026-08-19-07:30:
+      // (RUFU-122 review fix) The operator's best-effort contract (2026-08-18
+      // request, requirement 2) is a WARN log when a task's capture upload fails
+      // mid-stream. The Stash sink has no logger of its own; it reports the
+      // outcome through MemoryCaptureResult (ok=false, inserted = leading
+      // successful chunks), so this branch is where that warn must surface —
+      // at debug level a partial transcript upload (tail lost, only the first
+      // 100-event chunks stored) would be invisible at default log levels.
+      executorLog.warn(
+        `${task.id}: task memory capture incomplete (ok=false, inserted=${result.inserted}, non-blocking)`,
+      );
     }
   } catch (error) {
     executorLog.warn(

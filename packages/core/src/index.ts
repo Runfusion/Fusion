@@ -2199,6 +2199,9 @@ export {
 export {
   StashMemoryBackend,
   DEFAULT_STASH_URL,
+  // FNXC:RUFU122ChunkedUpload 2026-08-19-04:30: verified per-POST event cap; the engine
+  // transcript builder and the sink share this bound.
+  STASH_EVENT_BATCH_CHUNK_SIZE,
   // FNXC:RUFU121CoreExports 2026-08-18-19:53: RUFU-121 recall + delete-sync helpers.
   normalizeStashSearchQuery,
   queryStashEvents,

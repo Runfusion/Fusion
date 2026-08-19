@@ -832,6 +832,19 @@ export const DEFAULT_PROJECT_SETTINGS = {
   // value wins over global. TencentDB's URL setting is intentionally NOT ported.
   stashUrl: "",
   stashApiKey: "",
+  /*
+  FNXC:StashSessionCapture 2026-08-19-04:37:
+  (RUFU-122) Task-terminal transcript upload defaults. All are inert unless
+  memoryBackendType === "stash". executorSessionCaptureEnabled gates ONLY the
+  transcript upload (the RUFU-068 terminal anchor event still fires when it is
+  off) and defaults ON. executorSessionCaptureMaxEvents caps transcript events
+  per task; the engine keeps the most recent N (default 20000). 
+  executorSessionCaptureIncludeStatus is the schema-only "keep a setting" for
+  uploading `status` log entries (default off; no UI row).
+  */
+  executorSessionCaptureEnabled: true,
+  executorSessionCaptureMaxEvents: 20_000,
+  executorSessionCaptureIncludeStatus: false,
   memoryAutoSummarizeEnabled: false,
   memoryAutoSummarizeThresholdChars: 50_000,
   memoryAutoSummarizeSchedule: "0 3 * * *",

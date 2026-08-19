@@ -160,6 +160,16 @@ export function stashHttpJsonRequest<T>(
 
 export const DEFAULT_STASH_URL = "http://127.0.0.1:3457";
 
+/*
+FNXC:RUFU122ChunkedUpload 2026-08-19-04:30:
+RUFU-122: Stash's /events/batch endpoint rejects a POST carrying more than 100
+events (verified against the live instance in preflight — the 200 cap from the
+earlier RUFU-068 spec was wrong). capture() therefore uploads transcripts in
+sequential chunks of this size; any single capture exceeding it (the task
+terminal transcript, up to 20000 events) is split, never silently truncated.
+*/
+export const STASH_EVENT_BATCH_CHUNK_SIZE = 100;
+
 /**
  * FNXC:RUFU121FolderCache 2026-08-18-19:53:
  * RUFU-121 per-process session-folder cache. Key `${baseUrl}::${projectId}`
@@ -581,17 +591,46 @@ export class StashMemoryBackend implements MemoryBackend {
         ...(chatTitle ? { chat_title: chatTitle } : {}),
       },
     }));
-    try {
-      const raw = (await this.batchUpload(discriminator, tagged)) as unknown;
-      // Stash returns a JSON array ([HistoryEventResponse]) for /events/batch;
-      // older/FFI mocks return { inserted, deduped }. Accept both so the count
-      // is meaningful and unit tests stay green (FNXC:StashEventShape).
-      const inserted = Array.isArray(raw) ? raw.length : ((raw as StashBatchResponse).inserted ?? (raw as StashBatchResponse).count ?? 0);
-      const deduped = Array.isArray(raw) ? 0 : ((raw as StashBatchResponse).deduped ?? 0);
-      return { inserted, deduped, ok: true };
-    } catch {
-      return { inserted: 0, deduped: 0, ok: false };
+    if (tagged.length === 0) {
+      // The captureMemory facade already no-ops on an empty list; keep the sink
+      // safe for direct callers too (an empty POST is never issued).
+      return { inserted: 0, deduped: 0, ok: true };
     }
+    /*
+    FNXC:RUFU122ChunkedUpload 2026-08-19-04:30:
+    RUFU-122: Stash caps events per /events/batch POST at 100 (verified against
+    the live instance in preflight); the task terminal transcript (up to 20000
+    events) must therefore upload in sequential 100-event chunks — one chunk
+    per POST, no retries, stop at the first failed chunk. `inserted`/`deduped`
+    accumulate the LEADING successful chunks (the partial result); ok:true only
+    when EVERY chunk succeeded, so a partial upload is always distinguishable
+    from a full one. The pre-cap path (tagged.length <= 100) issues exactly one
+    POST of the full tagged array — byte-identical to the previous single-upload
+    wire contract. Dedup remains server-side per-event content addressing: each
+    chunk is an ordinary batch POST. Never throws.
+    */
+    let inserted = 0;
+    let deduped = 0;
+    let allChunksSucceeded = true;
+    for (let start = 0; start < tagged.length; start += STASH_EVENT_BATCH_CHUNK_SIZE) {
+      const chunk = tagged.slice(start, start + STASH_EVENT_BATCH_CHUNK_SIZE);
+      try {
+        const raw = (await this.batchUpload(discriminator, chunk)) as unknown;
+        // Stash returns a JSON array ([HistoryEventResponse]) for /events/batch;
+        // older/FFI mocks return { inserted, deduped }. Accept both so the count
+        // is meaningful and unit tests stay green (FNXC:StashEventShape).
+        inserted += Array.isArray(raw)
+          ? raw.length
+          : ((raw as StashBatchResponse).inserted ?? (raw as StashBatchResponse).count ?? 0);
+        deduped += Array.isArray(raw) ? 0 : ((raw as StashBatchResponse).deduped ?? 0);
+      } catch {
+        // Partial failure: keep the leading chunks' counts, stop, and mark the
+        // upload incomplete — no retries, no further chunks.
+        allChunksSucceeded = false;
+        break;
+      }
+    }
+    return { inserted, deduped, ok: allChunksSucceeded };
   }
 
   /** End session — no-op for a stateless REST backend. */
