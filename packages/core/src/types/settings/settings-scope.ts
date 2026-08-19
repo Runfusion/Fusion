@@ -2331,10 +2331,29 @@ export interface ProjectSettings {
   /** Cron expression for dream processing. Only used when memoryDreamsEnabled
    *  is true. Default: "0 4 * * *" (daily at 4 AM). */
   memoryDreamsSchedule?: string;
-  /** Maximum token count before auto-compact triggers. When undefined, compact
-   *  only on overflow errors. When set, the engine monitors token usage after
-   *  each prompt and proactively compacts context when the token count reaches
-   *  this threshold. */
+  /** Token compaction threshold — dual-lane semantics:
+   *
+   *  - Executor/agent tasks (TokenCapDetector): optional pre-overflow cap.
+   *    When undefined the detector is disabled and context compacts only on
+   *    overflow errors. When set, the engine monitors token usage after each
+   *    prompt and proactively compacts context when the token count reaches
+   *    this threshold.
+   *  - Chat/CLI sessions (RUFU-118 pre-overflow compaction gate): upper bound
+   *    on the effective compaction threshold. When undefined the gate defaults
+   *    to 80% of the per-model context window; when set, the effective
+   *    threshold is `min(tokenCap, contextWindow − max(16,384, maxTokens))`,
+   *    so a value above the hard limit compacts at the hard limit rather than
+   *    letting a prompt exceed the window. (The 80% default only applies when
+   *    tokenCap is unset; a set tokenCap is never reduced by the 80% figure.)
+   *
+   * FNXC:ChatContextGuard 2026-08-18-18:06:
+   * RUFU-118 added the chat/CLI lane because pi's own threshold compaction is
+   * blind when the provider omits usage (dsai1 zero-usage blind spot) — the
+   * engine now re-measures the loaded context and compacts BEFORE the prompt.
+   * This value is an upper bound on that threshold, not a hard cap; the hard
+   * limit remains `contextWindow − reserve`. The executor lane is unchanged:
+   * empty = no cap (compact only on overflow errors).
+   */
   tokenCap?: number;
   /** Optional per-task token budget defaults (soft/hard with optional size overrides). */
   taskTokenBudget?: TaskTokenBudget;

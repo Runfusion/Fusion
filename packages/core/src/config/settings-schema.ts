@@ -847,6 +847,12 @@ export const DEFAULT_PROJECT_SETTINGS = {
   memoryAutoSummarizeSchedule: "0 3 * * *",
   memoryDreamsEnabled: false,
   memoryDreamsSchedule: "0 4 * * *",
+  // FNXC:ChatContextGuard 2026-08-18-18:06:
+  // RUFU-118: the chat/CLI lane's 80%-of-context-window compaction default is
+  // applied in the engine guard (packages/engine/src/chat-context-guard.ts),
+  // not here — this value stays `undefined` so "no explicit tokenCap" means
+  // "use the engine default" for chat/CLI sessions and "no cap" for
+  // executor/agent tasks (TokenCapDetector).
   tokenCap: undefined,
   taskTokenBudget: undefined,
   // runStepsInNewSessions / maxParallelSteps MOVED to workflow settings (U4) —

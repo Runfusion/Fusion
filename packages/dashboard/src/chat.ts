@@ -60,6 +60,8 @@ import {
   createFnAgent as engineCreateFnAgent,
   createResolvedAgentSession as engineCreateResolvedAgentSession,
   promptWithFallback as enginePromptWithFallback,
+  ChatContextOverflowError,
+  ensureContextWithinCompactionThreshold,
   extractRuntimeHint,
   extractRuntimeModel,
   buildSessionSkillContextSync,
@@ -2368,6 +2370,20 @@ export class ChatManager {
     });
 
     try {
+      /*
+      FNXC:ChatContextGuard 2026-08-18-18:06:
+      RUFU-118: same deterministic pre-overflow compaction gate as sendMessage, on the room
+      responder seam. tokenCap is the operator's upper bound on the effective threshold;
+      unset means the engine default of 80% of the per-model context window. A
+      ChatContextOverflowError thrown here propagates through the responder catch into
+      responderFailures (and RoomReplyGenerationError → ApiError 502 when every responder
+      fails) — the existing room failure pattern — so the operator sees which responder's
+      context overflowed instead of receiving a doomed 1-token reply.
+      */
+      await ensureContextWithinCompactionThreshold(resolvedSession.session, {
+        tokenCap: chatModelSettings.tokenCap,
+      });
+
       await enginePromptWithFallback(
         resolvedSession.session,
         roomPrompt,
@@ -3066,6 +3082,21 @@ export class ChatManager {
         throw new Error("Generation cancelled");
       }
 
+      /*
+      FNXC:ChatContextGuard 2026-08-18-18:06:
+      RUFU-118: deterministic pre-overflow compaction gate on the dashboard chat model seam.
+      Re-measure the loaded context and compact BEFORE the prompt so a context that no
+      longer fits the model window never becomes an over-window provider call (pi's own
+      threshold compaction is blind when the provider omits usage — see Step 1 root cause).
+      tokenCap is the operator's upper bound on the effective threshold; unset means the
+      engine default of 80% of the per-model context window. The gate throws
+      ChatContextOverflowError instead of sending a doomed prompt; that error is caught
+      in the dedicated branch below and surfaced through the existing failure pattern.
+      */
+      await ensureContextWithinCompactionThreshold(agentResult.session, {
+        tokenCap: chatModelSettings.tokenCap,
+      });
+
       // Send user message and get response
       await enginePromptWithFallback(
         agentResult.session,
@@ -3258,6 +3289,37 @@ export class ChatManager {
 
       if (abortController.signal.aborted) {
         await this.flushInFlightGenerationPersist(sessionId, null, generationId);
+        return;
+      }
+
+      /*
+      FNXC:ChatContextGuard 2026-08-18-18:06:
+      RUFU-118: the pre-overflow gate's fail-loud error gets a dedicated branch with a
+      descriptive summary instead of the generic "AI processing failed". The prompt was
+      NOT sent. buildChatFailureInfo carries code CHAT_CONTEXT_OVERFLOW and errorClass
+      ChatContextOverflowError so the client can distinguish an overflow from a provider
+      failure; the message persists and broadcasts exactly like the generic failure path.
+      */
+      if (err instanceof ChatContextOverflowError) {
+        const failureInfo = addModelContextToFailureInfo(
+          buildChatFailureInfo(err, "Chat context overflow"),
+          failureContextProvider,
+          failureContextModelId,
+        );
+        diagnostics.error(`Chat context overflow in sendMessage for session ${sessionId}:`, err);
+
+        try {
+          await persistFailureMessage(this.chatStore, sessionId, failureInfo);
+        } catch (persistErr) {
+          diagnostics.error(`Failed to persist context-overflow failure for session ${sessionId}:`, persistErr);
+        }
+
+        this.flushInFlightGenerationPersist(sessionId, null);
+
+        chatStreamManager.broadcast(sessionId, {
+          type: "error",
+          data: failureInfo,
+        }, broadcastOptions);
         return;
       }
 

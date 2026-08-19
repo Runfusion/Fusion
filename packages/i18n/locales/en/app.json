@@ -6684,7 +6684,7 @@
       "advancedWorkflowPolicy": " Advanced workflow policy ",
       "aIMergeCommitSummaries": " AI merge commit summaries ",
       "aITitleAndGitCommitMessageSummarization": " AI Title and Git Commit Message Summarization ",
-      "automaticallyCompactContextWhenApproachingThisTokenCount": "Automatically compact context when approaching this token count. Leave empty for no cap (compact only on overflow errors). Set a number to proactively compact when reaching this token count. No default — unset (no cap).",
+      "automaticallyCompactContextWhenApproachingThisTokenCount": "Upper bound on the context-compaction threshold. Chat sessions compact by default when they reach 80% of the model's context window; a smaller value compacts earlier, and values above the model's hard limit are clamped. Executor/agent tasks: empty = no cap (compact only on overflow errors). No default — unset.",
       "autoSelectPresetBasedOnTaskSize": " Auto-select preset based on task size ",
       "autoSummarizeLongDescriptionsAsTitles": " Auto-summarize task titles ",
       "taskOutputLanguage": "AI-authored task language",
