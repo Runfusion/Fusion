@@ -2394,6 +2394,7 @@ export class ChatManager {
       */
       await ensureContextWithinCompactionThreshold(resolvedSession.session, {
         tokenCap: chatModelSettings.tokenCap,
+        enabled: chatModelSettings.chatPreOverflowCompactionEnabled !== false,
       });
 
       await enginePromptWithFallback(
@@ -3116,9 +3117,13 @@ export class ChatManager {
       engine default of 80% of the per-model context window. The gate throws
       ChatContextOverflowError instead of sending a doomed prompt; that error is caught
       in the dedicated branch below and surfaced through the existing failure pattern.
+      RUFU-118 (2026-08-19-15:05): the gate is an opt-out project option (selectable
+      feature, not always-on) — chatPreOverflowCompactionEnabled === false bypasses it
+      entirely for the project.
       */
       await ensureContextWithinCompactionThreshold(agentResult.session, {
         tokenCap: chatModelSettings.tokenCap,
+        enabled: chatModelSettings.chatPreOverflowCompactionEnabled !== false,
       });
 
       // Send user message and get response

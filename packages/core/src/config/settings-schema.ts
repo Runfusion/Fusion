@@ -854,6 +854,13 @@ export const DEFAULT_PROJECT_SETTINGS = {
   // top-K (default 3, Volt parity) and a session-scoped cue dedup.
   memoryPerTurnRecallEnabled: true,
   memoryPerTurnRecallTopK: 3,
+  // FNXC:ChatContextGuard 2026-08-19-15:05:
+  // RUFU-118: the RUFU-118 pre-overflow compaction gate is an opt-out project option,
+  // not always-on — user requirement: „ak to chceme mat len ako volitelnu featuru — to
+  // nemusi kazdy chciet". On by default: without the gate a context at the model wall
+  // degrades to 1-token replies (pi threshold compaction never fires for zero-usage
+  // providers, earendil-works/pi#8328). `false` bypasses the gate entirely per project.
+  chatPreOverflowCompactionEnabled: true,
   // FNXC:ChatContextGuard 2026-08-18-18:06:
   // RUFU-118: the chat/CLI lane's 80%-of-context-window compaction default is
   // applied in the engine guard (packages/engine/src/chat-context-guard.ts),

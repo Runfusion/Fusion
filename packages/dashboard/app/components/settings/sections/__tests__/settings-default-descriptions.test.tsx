@@ -200,6 +200,14 @@ const SETTING_DESCRIPTION_KEYS: Record<string, string> = {
   */
   memoryPerTurnRecallEnabled: "memory.perTurnRecallHelp",
   memoryPerTurnRecallTopK: "memory.perTurnRecallTopKHelp",
+  /*
+  FNXC:ChatContextGuard 2026-08-19-15:05:
+  RUFU-118 follow-up (2026-08-19): the pre-overflow compaction guard is an opt-out
+  project option (selectable feature, not always-on). Surfaced as a toggle in the
+  Settings Memory section beside the B.2 recall rows; help states the schema
+  default (on), matching DEFAULT_SETTINGS in settings-schema.ts.
+  */
+  chatPreOverflowCompactionEnabled: "memory.preOverflowCompactionHelp",
   memoryAutoSummarizeEnabled: "memory.automaticallyCompactMemoryWhenItExceedsTheThreshold",
   memoryAutoSummarizeThresholdChars: "memory.memoryWillBeCompactedWhenItExceedsThis",
   memoryAutoSummarizeSchedule: "memory.cronExpressionForAutoSummarizeScheduleDefaultDaily",

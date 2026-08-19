@@ -2343,6 +2343,15 @@ export interface ProjectSettings {
    *  Only used when memoryPerTurnRecallEnabled is true.
    *  Default: 3 (Volt topK=3 parity). */
   memoryPerTurnRecallTopK?: number;
+  /** When true (default), the deterministic chat pre-overflow compaction gate (RUFU-118,
+   *  LCM phase 1) measures the loaded chat context before each prompt and compacts it
+   *  once the context reaches the effective threshold (80% of the model window by
+   *  default, bounded by tokenCap), so a prompt never exceeds the model window. Set
+   *  false to disable the gate for this project (the raw pi-only behavior: prompts are
+   *  sent even when the loaded context already exceeds the threshold). The gate is an
+   *  opt-out selectable feature, not always-on — not every operator wants it.
+   *  Default: true. */
+  chatPreOverflowCompactionEnabled?: boolean;
   /** Token compaction threshold — dual-lane semantics:
    *
    *  - Executor/agent tasks (TokenCapDetector): optional pre-overflow cap.

@@ -6376,6 +6376,8 @@
       "perTurnRecallTopK": " Max snippets per turn ",
       "perTurnRecallHelp": "Recalls the most relevant memory snippets for the current topic before each chat or task step turn and injects a short, deduped cue into the prompt. Default: enabled.",
       "perTurnRecallTopKHelp": "Maximum number of memory snippets injected per turn. Default: 3.",
+      "preOverflowCompaction": "Pre-overflow compaction guard",
+      "preOverflowCompactionHelp": "Compacts the chat context at ~80% of the model window before a turn would overflow it, preventing single-token replies at the context wall. Default: enabled.",
       "failedToLoadBackendStatus": "Failed to load backend status: ",
       "for": "for \"",
       "installing": "Installing…",

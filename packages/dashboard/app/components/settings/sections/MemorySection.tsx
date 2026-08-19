@@ -122,6 +122,26 @@ export function MemorySection({ form, setForm, memory }: MemorySectionProps) {
         />
       )}
 
+      {/*
+      FNXC:ChatContextGuard 2026-08-19-15:05:
+      RUFU-118: LCM B.1 as an opt-out project option (selectable feature, not
+      always-on — user requirement: not every operator wants the pre-overflow
+      compaction gate). On by default: without it a context at the model wall
+      degrades to 1-token replies (pi threshold compaction never fires for
+      zero-usage providers — earendil-works/pi#8328). Sits next to the B.2 recall
+      toggle because operators think of LCM as one feature pair.
+      */}
+      <SettingsToggleRow
+        descriptor={{
+          key: "chatPreOverflowCompactionEnabled",
+          label: t("settings.memory.preOverflowCompaction", "Pre-overflow compaction guard"),
+          help: t("settings.memory.preOverflowCompactionHelp", "Compacts the chat context at ~80% of the model window before a turn would overflow it, preventing single-token replies at the context wall. Default: enabled."),
+          scope: "project",
+        }}
+        value={form.chatPreOverflowCompactionEnabled !== false}
+        onChange={(v) => setForm((f) => ({ ...f, chatPreOverflowCompactionEnabled: v === true }))}
+      />
+
       {backendLoading ? (<div className="form-group">
           <small className="settings-muted">{t("settings.memory.checkingMemoryWriteAccess", "Checking memory write access...")}</small>
         </div>) : backendError ? (<div className="form-group">
