@@ -52,6 +52,7 @@ vi.mock("../worktree/worktree-desktop-artifacts.js", () => ({
 
 vi.mock("node:fs", () => ({
   chmodSync: vi.fn(),
+  cpSync: vi.fn(),
   copyFileSync: vi.fn(),
   existsSync: vi.fn().mockReturnValue(true),
   linkSync: vi.fn(),
@@ -60,6 +61,7 @@ vi.mock("node:fs", () => ({
   readdirSync: vi.fn().mockReturnValue([]),
   readFileSync: vi.fn().mockReturnValue(""),
   renameSync: vi.fn(),
+  rmSync: vi.fn(),
   rmdirSync: vi.fn(),
   unlinkSync: vi.fn(),
   writeFileSync: vi.fn(),
@@ -90,7 +92,7 @@ import {
 import { BranchConflictError } from "../execution/branch-conflicts.js";
 import * as branchConflictModule from "../execution/branch-conflicts.js";
 import { execSync } from "node:child_process";
-import { existsSync, linkSync, lstatSync, readdirSync, readFileSync, renameSync, rmdirSync, unlinkSync, mkdirSync, copyFileSync } from "node:fs";
+import { cpSync, existsSync, linkSync, lstatSync, readdirSync, readFileSync, renameSync, rmdirSync, unlinkSync, mkdirSync, copyFileSync, rmSync } from "node:fs";
 import type { Task, Column } from "@fusion/core";
 
 const mockedExecSync = vi.mocked(execSync);
@@ -104,6 +106,8 @@ const mockedLinkSync = vi.mocked(linkSync);
 const mockedUnlinkSync = vi.mocked(unlinkSync);
 const mockedMkdirSync = vi.mocked(mkdirSync);
 const mockedCopyFileSync = vi.mocked(copyFileSync);
+const mockedCpSync = vi.mocked(cpSync);
+const mockedRmSync = vi.mocked(rmSync);
 const mockedPruneWorktreeAdminEntries = vi.mocked(worktreePrune.pruneWorktreeAdminEntries);
 const mockedPreserveGeneratedResidue = vi.mocked(generatedResidue.preserveGeneratedResidue);
 const TEST_TASK_ID = "FN-test";
@@ -1029,6 +1033,46 @@ describe("cleanupOrphanedWorktrees", () => {
     expect(removeCalls[1][0]).toContain("/root/.worktrees/orphan-2");
   });
 
+  it("removes registered orphaned worktrees when status probe reports only Fusion's own env quarantine artifact", async () => {
+    mockedReaddirSync.mockReturnValue([
+      makeDirEntry("owned-q-wt"),
+    ] as any);
+    mockedExecSync.mockImplementation((cmd: any) => {
+      if (String(cmd) === "git worktree list --porcelain") {
+        return [
+          "worktree /root",
+          "HEAD abc123",
+          "branch refs/heads/main",
+          "",
+          "worktree /root/.worktrees/owned-q-wt",
+          "HEAD def456",
+          "branch refs/heads/fusion/owned-q-wt",
+          "",
+        ].join("\n") as any;
+      }
+      if (String(cmd).includes("status --porcelain")) {
+        // FNXC:WorktreeCleanup 2026-08-19-15:09: a fingerprint-owned .env parked
+        // mid-cleanup under `.env.fusion-cleanup-*.deleting` is Fusion's own
+        // internal quarantine inode (Greptile: \"Quarantine blocks generated-only
+        // reclaim\"), not user dirt — the dirty probe must ignore it so reclaiming a
+        // generated-only pinned worktree converges instead of refusing forever.
+        return "?? .env.fusion-cleanup-4242-00000000-0000-4000-8000-000000000000.deleting\n" as any;
+      }
+      return Buffer.from("");
+    });
+
+    const store = createMockStore([]);
+
+    const cleaned = await cleanupOrphanedWorktrees("/root", store);
+
+    expect(cleaned).toBe(1);
+    const removeCalls = mockedExecSync.mock.calls.filter(
+      (c) => typeof c[0] === "string" && (c[0] as string).includes("worktree remove"),
+    );
+    expect(removeCalls).toHaveLength(1);
+    expect(removeCalls[0][0]).toContain("/root/.worktrees/owned-q-wt");
+  });
+
   it("preserves registered orphaned worktrees that have uncommitted changes", async () => {
     mockedReaddirSync.mockReturnValue([
       makeDirEntry("dirty-wt"),
@@ -1566,6 +1610,50 @@ describe("reapOrphanWorktrees", () => {
     );
   });
 
+  // Greptile (find: concurrent metadata copy corrupts repair): the directory restore
+  // must be an ATOMIC non-overwriting move, not a recursive copy. cpSync into dotGit
+  // let a concurrent repair that recreates `.git` mid-copy receive PARTIAL stale
+  // metadata before errorOnExist threw — mixed/unusable Git metadata in the
+  // authoritative directory. renameSync of the captured directory refuses a non-empty
+  // destination (ENOTEMPTY), so a concurrently recreated authoritative `.git` always
+  // wins untouched and the captured copy is moved to contained recovery instead.
+  it("restores a concurrently captured .git directory with an atomic non-overwriting rename", async () => {
+    mockedReaddirSync.mockImplementation((p: any) =>
+      String(p) === "/root/.worktrees" ? [makeDirEntry("directory-win")] as any : [".git"] as any,
+    );
+    let dotGitMoved = false;
+    mockedRenameSync.mockImplementation((src: any, dest: any) => {
+      if (String(src) === "/root/.worktrees/directory-win/.git" && String(dest).includes(".git-reap-del")) {
+        dotGitMoved = true;
+      }
+    });
+    mockedLstatSync.mockImplementation((p: any) => {
+      const s = String(p);
+      if (s.includes(".git-reap-del-")) return { dev: 11, ino: 33, isDirectory: () => true, isSymbolicLink: () => false } as any;
+      if (s.endsWith("/.git") || s.includes(".git-reap-stash-")) return { dev: 11, ino: 22, isDirectory: () => false, isSymbolicLink: () => false } as any;
+      return { dev: 11, ino: 11, isDirectory: () => true, isSymbolicLink: () => false } as any;
+    });
+    mockedReadFileSync.mockReturnValue("gitdir: /root/.git/worktrees/directory-win\n" as any);
+    mockedExistsSync.mockImplementation((p) => {
+      const s = String(p);
+      if (s === "/root/.worktrees/directory-win/.git") return !dotGitMoved;
+      return s === "/root/.worktrees";
+    });
+
+    const removed = await reapOrphanWorktrees("/root");
+
+    expect(removed).toBe(0);
+    // The captured directory is moved back atomically — never copied into place.
+    expect(mockedRenameSync).toHaveBeenCalledWith(
+      expect.stringMatching(/\.git-reap-del-/),
+      "/root/.worktrees/directory-win/.git",
+    );
+    expect(mockedCpSync).not.toHaveBeenCalled();
+    // A directory restore is a rename, never a recursive delete of the capture.
+    expect(mockedRmSync).not.toHaveBeenCalledWith(expect.stringMatching(/\.git-reap-del-/), { recursive: true });
+    expect(mockedCopyFileSync).not.toHaveBeenCalled();
+  });
+
   // Greptile (find: stale target after re-registration): `targetPath` is derived once from
   // the STASHED original dangling pointer. A concurrent repair can RE-REGISTER the orphan,
   // recreating `.git` to point at a DIFFERENT, live admin while the original target stays
@@ -1617,6 +1705,114 @@ describe("reapOrphanWorktrees", () => {
     expect(mockedRmdirSync).not.toHaveBeenCalledWith("/root/.worktrees/rereg-wt");
     expect(warnSpy).toHaveBeenCalledWith(
       expect.stringContaining("Preserving orphan worktree"),
+    );
+  });
+
+  // Greptile (find: replacement Git directory stays unrecognized): after the dangling
+  // pointer is moved aside, a concurrent repair can install a REAL `.git` DIRECTORY at
+  // the canonical pathname. `resolveCurrentAdminTarget` returns no pointer for a directory,
+  // so without an explicit guard the reaper fell back to the stale missing `targetPath` and
+  // `rmdirSync`'d a populated, repaired checkout. A present `.git` directory is authoritative
+  // and live — the orphan must be preserved, never reaped.
+  it("preserves an orphan whose .git is replaced by a real directory during removal", async () => {
+    mockedReaddirSync.mockImplementation((p: any) =>
+      String(p) === "/root/.worktrees" ? [makeDirEntry("dir-repair")] as any : [".git"] as any,
+    );
+    // The dangling pointer is a FILE until a concurrent repair replaces the canonical `.git`
+    // with a real DIRECTORY after the reaper moved the original aside.
+    let dotGitReplaced = false;
+    mockedRenameSync.mockImplementation((src: any, dest: any) => {
+      if (String(src) === "/root/.worktrees/dir-repair/.git" && String(dest).includes(".git-reap-del")) {
+        dotGitReplaced = true;
+      }
+    });
+    mockedLstatSync.mockImplementation((p: any) => {
+      const s = String(p);
+      if (s.endsWith("/.git") && dotGitReplaced) return { dev: 11, ino: 44, isDirectory: () => true, isSymbolicLink: () => false } as any;
+      if (s.includes(".git-reap-del-")) return { dev: 11, ino: 22, isDirectory: () => false, isSymbolicLink: () => false } as any;
+      if (s.endsWith("/.git") || s.includes(".git-reap-stash-")) return { dev: 11, ino: 22, isDirectory: () => false, isSymbolicLink: () => false } as any;
+      return { dev: 11, ino: 11, isDirectory: () => true, isSymbolicLink: () => false } as any;
+    });
+    mockedReadFileSync.mockReturnValue("gitdir: /root/.git/worktrees/dir-repair\n" as any);
+    mockedExistsSync.mockImplementation((p) => {
+      const s = String(p);
+      if (s === "/root/.git/worktrees/dir-repair") return false;
+      return s === "/root/.worktrees" || s === "/root/.worktrees/dir-repair" || s === "/root/.worktrees/dir-repair/.git";
+    });
+
+    const removed = await reapOrphanWorktrees("/root");
+
+    expect(removed).toBe(0);
+    // The repaired checkout with a real `.git` directory is never rmdir'd:
+    expect(mockedRmdirSync).not.toHaveBeenCalledWith("/root/.worktrees/dir-repair");
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Preserving orphan worktree"),
+    );
+  });
+
+  // Greptile (find: recovery directory remains scannable): when a concurrently
+  // captured `.git` directory cannot be restored back to the canonical path, the
+  // previous branch left the captured recovery copy directly under the worktrees
+  // directory. The next orphan scan then treated it as an ordinary orphan
+  // candidate, repeatedly reaping (and never completing) the only metadata copy of
+  // a preserved checkout. The reaper must move a failed directory restore into the
+  // contained `.fusion-recovery/worktrees` namespace that orphan scans skip.
+  it("moves a failed replacement-directory restore into contained recovery so it is not re-scanned as an orphan", async () => {
+    mockedReaddirSync.mockImplementation((p: any) =>
+      String(p) === "/root/.worktrees" ? [makeDirEntry("dir-fail-move")] as any : [".git"] as any,
+    );
+    let dotGitMoved = false;
+    mockedRenameSync.mockImplementation((src: any, dest: any) => {
+      if (String(src) === "/root/.worktrees/dir-fail-move/.git" && String(dest).includes(".git-reap-del")) {
+        dotGitMoved = true;
+        return;
+      }
+      // Greptile (find: concurrent metadata copy corrupts repair): the restore is an
+      // atomic non-overwriting rename; a concurrent repair that recreates `.git` as a
+      // non-empty directory makes it fail with ENOTEMPTY. The captured directory must
+      // then go to contained recovery — never be partially copied into the winner.
+      if (String(src).includes(".git-reap-del") && String(dest).endsWith("/.git")) {
+        const err: NodeJS.ErrnoException = new Error("fake ENOTEMPTY");
+        err.code = "ENOTEMPTY";
+        throw err;
+      }
+    });
+    mockedLstatSync.mockImplementation((p: any) => {
+      const s = String(p);
+      if (s.includes(".git-reap-del-")) return { dev: 11, ino: 33, isDirectory: () => true, isSymbolicLink: () => false } as any;
+      if (s.endsWith("/.git") || s.includes(".git-reap-stash-")) return { dev: 11, ino: 22, isDirectory: () => false, isSymbolicLink: () => false } as any;
+      return { dev: 11, ino: 11, isDirectory: () => true, isSymbolicLink: () => false } as any;
+    });
+    mockedReadFileSync.mockReturnValue("gitdir: /root/.git/worktrees/dir-fail-move\n" as any);
+    mockedExistsSync.mockImplementation((p) => {
+      const s = String(p);
+      if (s === "/root/.worktrees/dir-fail-move/.git") return !dotGitMoved;
+      return s === "/root/.worktrees" || s === "/root/.worktrees/dir-fail-move";
+    });
+    // The atomic restore rename fails with ENOTEMPTY (a concurrent repair recreated
+    // `.git` as a non-empty directory), so the reaper takes the contained-recovery
+    // branch instead of consuming the capture in place.
+    mockedCpSync.mockImplementation(() => {
+      const err: NodeJS.ErrnoException = new Error("should not be used for directory restore");
+      err.code = "EINVAL";
+      throw err;
+    });
+
+    const removed = await reapOrphanWorktrees("/root");
+
+    expect(removed).toBe(0);
+    // The captured directory is staged into the contained recovery namespace that
+    // orphan scans skip, never left directly scannable under the worktrees root.
+    expect(mockedMkdirSync).toHaveBeenCalledWith(
+      "/root/.worktrees/.fusion-recovery/worktrees",
+      { recursive: true },
+    );
+    expect(mockedRenameSync).toHaveBeenCalledWith(
+      expect.stringContaining(".git-reap-del-"),
+      expect.stringContaining("/root/.worktrees/.fusion-recovery/worktrees/replaced-dir-fail-move-"),
+    );
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("moved captured directory to contained recovery"),
     );
   });
 

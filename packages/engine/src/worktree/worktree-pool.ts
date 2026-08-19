@@ -8,7 +8,7 @@ import { assertCleanBranchAtBase, inspectBranchConflict } from "../execution/bra
 import { worktreePoolLog } from "../logger.js";
 /*
 */
-import { isInsideConfiguredWorktreesDir, isWorktreeContainerDir, resolveWorktreesDir } from "./worktree-paths.js";
+import { isInsideConfiguredWorktreesDir, isWorktreeContainerDir, WORKTREE_RECOVERY_DIRNAME, resolveWorktreesDir } from "./worktree-paths.js";
 import { canonicalFusionBranchName } from "./worktree-names.js";
 import {
   resolveWorktrunkBinary,
@@ -1126,6 +1126,11 @@ function resolveCurrentAdminTarget(dotGit: string): string | undefined {
  * the original admin without recreating the `.git` pointer).
  */
 function adminTargetIsLive(targetPath: string | undefined, dotGit: string): boolean {
+  // Greptile (find: replacement Git directory stays unrecognized): a concurrent repair can
+  // install a REAL `.git` DIRECTORY after the dangling pointer was moved aside. That is a
+  // populated, authoritative checkout — never reap it via the stale `targetPath` fallback.
+  // A present real `.git` directory is live regardless of any admin-target pointer.
+  if (existsSync(dotGit) && lstatSync(dotGit).isDirectory()) return true;
   const current = resolveCurrentAdminTarget(dotGit);
   if (current !== undefined) return existsSync(current);
   return targetPath !== undefined && existsSync(targetPath);
@@ -1174,6 +1179,28 @@ function restoreStashedDotGit(dotGit: string, dotGitStash: string, name: string)
 
 /** Restore a captured replacement pointer without overwriting a concurrent winner. */
 function restoreReplacedDotGit(dotGit: string, dotGitDelete: string, dotGitStash: string | undefined, name: string): boolean {
+  try {
+    if (lstatSync(dotGitDelete).isDirectory()) {
+      // FNXC:WorktreeCleanup 2026-08-19-15:34: A concurrent repair can replace the dangling pointer with a real .git directory.
+      // Restore it with an ATOMIC non-overwriting rename (POSIX refuses a non-empty directory destination with ENOTEMPTY), so a
+      // concurrently recreated authoritative .git always wins untouched. The previous cpSync approach could copy PART of the
+      // captured stale metadata into the authoritative directory before errorOnExist threw (Greptile P1: "Concurrent metadata
+      // copy corrupts repair"); renameSync never leaves partial or mixed metadata behind.
+      renameSync(dotGitDelete, dotGit);
+      return true;
+    }
+  } catch (directoryRestoreError) {
+    const recoveryRoot = join(dirname(dotGitDelete), WORKTREE_RECOVERY_DIRNAME, "worktrees");
+    const recoveryPath = join(recoveryRoot, `replaced-${name}-${process.pid}-${Date.now().toString(36)}`);
+    try {
+      mkdirSync(recoveryRoot, { recursive: true });
+      renameSync(dotGitDelete, recoveryPath);
+      worktreePoolLog.warn(`reapOrphanWorktrees: failed to restore replacement .git directory for ${name} — ${directoryRestoreError instanceof Error ? directoryRestoreError.message : String(directoryRestoreError)}; moved captured directory to contained recovery: ${recoveryPath}`);
+    } catch (recoveryError) {
+      worktreePoolLog.warn(`reapOrphanWorktrees: failed to restore replacement .git directory for ${name} — ${directoryRestoreError instanceof Error ? directoryRestoreError.message : String(directoryRestoreError)}; keeping captured directory for manual recovery: ${dotGitDelete}; recovery move failed: ${recoveryError instanceof Error ? recoveryError.message : String(recoveryError)}`);
+    }
+    return false;
+  }
   try {
     linkSync(dotGitDelete, dotGit);
     unlinkSync(dotGitDelete);

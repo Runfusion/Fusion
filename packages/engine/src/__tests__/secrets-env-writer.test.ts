@@ -5,7 +5,7 @@ import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { cleanupSecretsEnvFile, reconcileSecretsEnvFingerprint, writeSecretsEnvFile } from "../worktree/secrets-env-writer.js";
+import { cleanupSecretsEnvFile, FINGERPRINT_FILE, isOwnedEnvQuarantineArtifactPath, reconcileSecretsEnvFingerprint, writeSecretsEnvFile } from "../worktree/secrets-env-writer.js";
 
 const dirs: string[] = [];
 
@@ -33,6 +33,26 @@ describe("secrets-env-writer", () => {
     });
     expect(result).toEqual({ outcome: "skipped", filename: ".env", reason: "disabled" });
     expect(filesystem).not.toHaveBeenCalled();
+  });
+
+  it("owns a quarantine artifact only when its content matches the recorded fingerprint (Issue 1)", async () => {
+    const dir = tmpWorktree();
+    const body = "# Managed by Fusion — do not edit by hand.\nKEY=value\n";
+    const fingerprint = createHash("sha256").update(body, "utf8").digest("hex");
+    mkdirSync(join(dir, ".git"), { recursive: true });
+    writeFileSync(join(dir, ".git", FINGERPRINT_FILE), `${fingerprint}\n.env\n`, "utf8");
+    // Fusion's own parked cleanup inode: quarantine-shaped name, matching content.
+    const ownedName = ".env.fusion-cleanup-4567-aaaa-bbbb.deleting";
+    writeFileSync(join(dir, ownedName), body, "utf8");
+    // User-authored ignored file that merely borrows the predictable quarantine name
+    // (the Greptile P1 "Quarantine name bypasses dirty check" case).
+    const userFile = ".env.fusion-cleanup-4567-eeee-ffff";
+    writeFileSync(join(dir, userFile), "anything-else", "utf8");
+
+    await expect(isOwnedEnvQuarantineArtifactPath(dir, ownedName)).resolves.toBe(true);
+    await expect(isOwnedEnvQuarantineArtifactPath(dir, userFile)).resolves.toBe(false);
+    // A non-quarantine path is never considered owned.
+    await expect(isOwnedEnvQuarantineArtifactPath(dir, "USER-NOTES.txt")).resolves.toBe(false);
   });
 
   it("skips when no store", async () => {
@@ -807,7 +827,7 @@ describe("secrets-env-writer", () => {
     expect(readdirSync(dir).filter((entry) => entry.startsWith(".env.fusion-cleanup-"))).toHaveLength(0);
   });
 
-  it("fails closed when multiple quarantine artifacts match the record", async () => {
+  it("reconciles multiple identical quarantine artifacts without stranding recovery", async () => {
     const dir = mkdtempSync(join(tmpdir(), "secrets-env-retry-"));
     dirs.push(dir);
     const original = "MANAGED=1\n";
@@ -818,10 +838,28 @@ describe("secrets-env-writer", () => {
 
     const result = await cleanupSecretsEnvFile({ worktreePath: dir, taskId: "retry", expectedFingerprint: null, filename: ".env" });
 
-    expect(result).toEqual({ outcome: "skipped", reason: "file-retained" });
+    expect(result).toEqual({ outcome: "cleaned", reason: "fingerprint-match" });
     expect(existsSync(join(dir, ".env"))).toBe(false);
-    expect(readdirSync(dir).filter((entry) => entry.startsWith(".env.fusion-cleanup-")).sort()).toHaveLength(2);
-    expect(existsSync(join(dir, ".fusion-secrets-env.fingerprint"))).toBe(true);
+    expect(readdirSync(dir).filter((entry) => entry.startsWith(".env.fusion-cleanup-")).sort()).toHaveLength(0);
+    expect(existsSync(join(dir, ".fusion-secrets-env.fingerprint"))).toBe(false);
+  });
+
+  it("reclaims an owned cleanup artifact without treating a user-authored similarly named file as owned", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "secrets-env-owned-recovery-"));
+    dirs.push(dir);
+    const original = "MANAGED=1\n";
+    const fingerprint = createHash("sha256").update(original).digest("hex");
+    writeFileSync(join(dir, ".env"), "USER=1\n");
+    writeFileSync(join(dir, `.env.fusion-cleanup-${process.pid}-recovery`), original);
+    writeFileSync(join(dir, ".env.fusion-cleanup-user-notes"), "KEEP=1\n");
+    writeFileSync(join(dir, ".fusion-secrets-env.fingerprint"), `${fingerprint}\n.env\n`);
+
+    const result = await cleanupSecretsEnvFile({ worktreePath: dir, taskId: "retry", expectedFingerprint: null, filename: ".env" });
+
+    expect(result).toEqual({ outcome: "skipped", reason: "fingerprint-mismatch" });
+    expect(existsSync(join(dir, `.env.fusion-cleanup-${process.pid}-recovery`))).toBe(false);
+    expect(readFileSync(join(dir, ".env.fusion-cleanup-user-notes"), "utf8")).toBe("KEEP=1\n");
+    expect(readFileSync(join(dir, ".env"), "utf8")).toBe("USER=1\n");
   });
 
   it("restores a quarantined recovery file stranded under .deleting and converges on retry", async () => {
@@ -875,6 +913,29 @@ describe("secrets-env-writer", () => {
       unlinkSpy.mockRestore();
       renameSpy.mockRestore();
     }
+  });
+
+  it("revalidates dangling authorization after the deletion inode lstat", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "secrets-env-late-repair-"));
+    dirs.push(dir);
+    const envPath = join(dir, ".env");
+    const original = "MANAGED=1\n";
+    writeFileSync(envPath, original);
+    writeFileSync(join(dir, ".fusion-secrets-env.fingerprint"), `${createHash("sha256").update(original).digest("hex")}\n.env\n`);
+    let danglingChecks = 0;
+
+    const result = await cleanupSecretsEnvFile({
+      worktreePath: dir,
+      taskId: "late-repair",
+      expectedFingerprint: null,
+      filename: ".env",
+      allowLegacyCleanupForDanglingGitdir: true,
+      isDanglingGitdir: () => ++danglingChecks < 2,
+    });
+
+    expect(result).toEqual({ outcome: "skipped", reason: "invalid-record" });
+    expect(readFileSync(envPath, "utf8")).toBe(original);
+    expect(existsSync(join(dir, ".fusion-secrets-env.fingerprint"))).toBe(true);
   });
 
   it("never deletes a tracked env even when its fingerprint matches", async () => {

@@ -58,6 +58,8 @@ export interface CleanupSecretsEnvFileOptions {
   readFileImpl?: typeof fs.readFile;
   /** Test seam for proving the pathname is atomically quarantined before removal. */
   renameFileImpl?: typeof fs.rename;
+  /** Run the destructive worktree removal while the managed inode is quarantined. */
+  onVerifiedBeforeDelete?: () => Promise<void>;
 }
 
 export interface CleanupSecretsEnvFileResult {
@@ -142,6 +144,49 @@ async function resolvePrivateRecordPath(worktreePath: string): Promise<string> {
   const gitDir = stdout.trim();
   if (!gitDir) throw new Error("git-dir-empty");
   return path.join(path.isAbsolute(gitDir) ? gitDir : path.resolve(worktreePath, gitDir), FINGERPRINT_FILE);
+}
+
+function isOwnedQuarantineArtifact(name: string, filename: string): boolean {
+  return name.startsWith(`${filename}.fusion-cleanup-`) && /^.+\.fusion-cleanup-\d+-(?:[0-9a-f-]+(?:\.deleting)?|recovery)$/u.test(name);
+}
+
+/**
+ * True when a worktree-relative porcelain path refers to a Fusion-owned env
+ * quarantine artifact (`.env.fusion-cleanup-<pid>-<uuid>[.deleting]`). The
+ * dirty probe uses this so removal never treats its own verified, parked
+ * cleanup inode as user content.
+ *
+ * Ownership is NOT inferred from the predictable basename: a user-authored
+ * ignored file could carry that quarantine-shaped name. The parked inode's
+ * on-disk content must match the recorded fingerprint for the managed `.env`
+ * (private git-dir record, falling back to the legacy root sidecar). Any
+ * quarantine-named file that is not fingerprint-proven stays dirty (fail
+ * closed) so a defensive removal refuses instead of deleting user content.
+ */
+export async function isOwnedEnvQuarantineArtifactPath(
+  worktreePath: string,
+  relativePath: string,
+): Promise<boolean> {
+  const unquoted = relativePath.trim().replace(/^"(.*)"$/u, "$1");
+  if (!isOwnedQuarantineArtifact(path.basename(unquoted), ".env")) return false;
+  if (path.isAbsolute(unquoted)) return false;
+  let body: string;
+  try {
+    body = await fs.readFile(path.join(worktreePath, unquoted), "utf8");
+  } catch {
+    return false;
+  }
+  const candidate = sha256(body);
+  const recordPaths: Array<[string, RecordFormat]> = [[path.join(worktreePath, FINGERPRINT_FILE), "legacy"]];
+  const privatePath = await resolvePrivateRecordPath(worktreePath).catch(() => undefined);
+  if (privatePath) recordPaths.unshift([privatePath, "private"]);
+  for (const [recordPath, format] of recordPaths) {
+    const state = await readRecord(recordPath, format);
+    if (state.kind === "valid" && state.record.filename === ".env" && state.record.fingerprint === candidate) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function recordsMatch(left: FingerprintRecord, right: FingerprintRecord): boolean {
@@ -468,9 +513,8 @@ export async function cleanupSecretsEnvFile(opts: CleanupSecretsEnvFileOptions):
     // the inode (rename) before crashing; restore it to the pathname via an
     // exclusive link so the content is never stranded under the recovery prefix.
     // With no quarantine the managed file is simply gone and the record can drop.
-    const quarantineEntries = (await fs.readdir(opts.worktreePath)).filter((name) => name.startsWith(`${record.filename}.fusion-cleanup-`));
-    if (quarantineEntries.length !== 1) {
-      if (quarantineEntries.length > 1) return { outcome: "skipped", reason: "file-retained" };
+    const quarantineEntries = (await fs.readdir(opts.worktreePath)).filter((name) => isOwnedQuarantineArtifact(name, record.filename));
+    if (quarantineEntries.length === 0) {
       try {
         await removeRecords(recordPaths);
       } catch {
@@ -478,15 +522,26 @@ export async function cleanupSecretsEnvFile(opts: CleanupSecretsEnvFileOptions):
       }
       return { outcome: "skipped", reason: "file-missing" };
     }
-    const quarantinePath = path.join(opts.worktreePath, quarantineEntries[0]);
+    const quarantinePaths = quarantineEntries.map((name) => path.join(opts.worktreePath, name));
+    let recoveredBody: string;
     try {
-      await fs.link(quarantinePath, path.join(opts.worktreePath, record.filename));
+      recoveredBody = await readFile(quarantinePaths[0], "utf8");
+      const recoveredBodies = await Promise.all(quarantinePaths.map((quarantinePath) => readFile(quarantinePath, "utf8")));
+      if (recoveredBodies.some((candidate) => sha256(candidate) !== sha256(recoveredBody))) {
+        return { outcome: "skipped", reason: "file-retained" };
+      }
+    } catch {
+      return { outcome: "skipped", reason: "file-retained" };
+    }
+    try {
+      await fs.link(quarantinePaths[0], path.join(opts.worktreePath, record.filename));
     } catch {
       // The pathname is occupied or the link failed: keep the recovery copy and
       // ownership record so a later retry can converge.
       return { outcome: "skipped", reason: "file-retained" };
     }
-    await fs.unlink(quarantinePath).catch(() => undefined);
+    // FNXC:SecretsEnvMaterialization 2026-08-18-19: Duplicate owned recovery copies may be left by interrupted cleanup. Reconcile only identical copies, then consume the recovery set after restoring one inode.
+    await Promise.all(quarantinePaths.map((quarantinePath) => fs.unlink(quarantinePath).catch(() => undefined)));
     try {
       body = await readFile(path.join(opts.worktreePath, record.filename), "utf8");
     } catch {
@@ -495,11 +550,18 @@ export async function cleanupSecretsEnvFile(opts: CleanupSecretsEnvFileOptions):
   }
   if (sha256(body) !== record.fingerprint) {
     try {
-      const quarantinePrefix = `${record.filename}.fusion-cleanup-`;
-      const hasQuarantine = (await fs.readdir(opts.worktreePath)).some((name) => name.startsWith(quarantinePrefix));
-
-      if (hasQuarantine) {
-        return { outcome: "skipped", reason: "file-retained" };
+      const quarantineEntries = (await fs.readdir(opts.worktreePath)).filter((name) => isOwnedQuarantineArtifact(name, record.filename));
+      for (const name of quarantineEntries) {
+        const quarantinePath = path.join(opts.worktreePath, name);
+        try {
+          if (sha256(await readFile(quarantinePath, "utf8")) === record.fingerprint) {
+            await fs.unlink(quarantinePath);
+          } else {
+            return { outcome: "skipped", reason: "file-retained" };
+          }
+        } catch {
+          return { outcome: "skipped", reason: "file-retained" };
+        }
       }
     } catch {
       // Preserve ownership metadata when quarantine state cannot be inspected.
@@ -597,6 +659,13 @@ export async function cleanupSecretsEnvFile(opts: CleanupSecretsEnvFileOptions):
     if (deletionStat.dev !== quarantinedStat.dev || deletionStat.ino !== quarantinedStat.ino) {
       return { outcome: "skipped", reason: "file-retained" };
     }
+    // FNXC:SecretsEnvMaterialization 2026-08-18-15: Revalidate after every awaited
+    // boundary so a repaired dangling worktree cannot lose its managed inode.
+    if (!privatePath && opts.allowLegacyCleanupForDanglingGitdir && !(opts.isDanglingGitdir?.() ?? false)) {
+      await restoreQuarantine();
+      return { outcome: "skipped", reason: "invalid-record" };
+    }
+    await opts.onVerifiedBeforeDelete?.();
     await fs.unlink(deletionPath);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") {

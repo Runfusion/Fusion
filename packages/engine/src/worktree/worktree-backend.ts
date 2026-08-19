@@ -11,11 +11,12 @@ import {
   type ProcessActiveProbe,
 } from "../agents/active-session-registry.js";
 import type { RunAuditor } from "../util/run-audit.js";
-import { resolveTaskWorktreePath } from "./worktree-paths.js";
+import { resolveTaskWorktreePath, resolveWorktreesDir } from "./worktree-paths.js";
 import { inspectBareBranchCollision, inspectBranchConflict } from "../execution/branch-conflicts.js";
 import { resolveIntegrationBranch } from "../merge/integration-branch.js";
 import { formatError } from "../logger.js";
 import { preserveCorruptRegisteredRoot } from "./worktree-generated-residue.js";
+import { isOwnedEnvQuarantineArtifactPath } from "./secrets-env-writer.js";
 import { installTaskWorktreeIdentityGuard } from "./worktree-hooks.js";
 import { pruneWorktreeAdminEntries } from "./worktree-prune.js";
 import {
@@ -1210,7 +1211,28 @@ export async function removeWorktree(input: {
         timeout: 15_000,
         maxBuffer: MAX_BUFFER,
       });
-      const hasUnsafeStatus = statusOutput.trim().length > 0;
+      // FNXC:WorktreeCleanup 2026-08-19-15:09: a fingerprint-owned managed .env
+      // parked mid-cleanup under `.env.fusion-cleanup-<pid>-<uuid>.deleting` is
+      // Fusion's own quarantine inode, not user content. The pinned-reclaim flow
+      // runs this probe from cleanupSecretsEnvFile's onVerifiedBeforeDelete while
+      // the verified inode still carries the quarantine name; counting it as dirty
+      // makes a generated-only reclaim refuse forever (Greptile P1: "Quarantine
+      // blocks generated-only reclaim"). Ownership must be fingerprint/content
+      // verified (not guessed from the predictable basename): a user-authored
+      // ignored file that merely carries a quarantine-shaped name stays dirty so
+      // removal refuses (Greptile P1: "Quarantine name bypasses dirty check"). All
+      // other porcelain lines (tracked edits, untracked files, ignored residue)
+      // still refuse as before.
+      const unsafeStatusLines: string[] = [];
+      for (const line of statusOutput.split("\n")) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        // porcelain v1 line: "XY <path>" — strip the two status chars + space.
+        const relativePath = trimmed.length > 3 ? trimmed.slice(3) : trimmed;
+        if (await isOwnedEnvQuarantineArtifactPath(input.worktreePath, relativePath)) continue;
+        unsafeStatusLines.push(line);
+      }
+      const hasUnsafeStatus = unsafeStatusLines.length > 0;
       if (hasUnsafeStatus) {
         throw new Error(`refusing to remove dirty worktree: ${input.worktreePath}`);
       }
@@ -1228,7 +1250,11 @@ export async function removeWorktree(input: {
   if (allowCorruptRegisteredRemoval && backend.kind === "native") {
     let preservedPath: string;
     try {
-      preservedPath = await preserveCorruptRegisteredRoot(input.worktreePath, input.rootDir);
+      preservedPath = await preserveCorruptRegisteredRoot(
+        input.worktreePath,
+        input.rootDir,
+        resolveWorktreesDir(input.rootDir, input.settings),
+      );
     } catch (error) {
       await input.audit?.git({
         type: "worktree:corrupt-preserve-failed",

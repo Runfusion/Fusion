@@ -857,31 +857,34 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
               logger?.warn(`${task.id}: failed to log preserved orphan ${preservedPath}: ${formatError(error).message}`);
             }
           } else {
-            await cleanupSecretsEnvFile({
+            const restoreGeneratedResidue = await preserveGeneratedResidue(pinnedPath, rootDir, logger);
+            const removeStalePinnedWorktree = () => removeWorktree({
+              rootDir,
+              worktreePath: pinnedPath,
+              settings,
+              reason: RemovalReason.PoolPrune,
+              taskId: task.id,
+              audit: undefined,
+            }).then(() => undefined);
+            const cleanupResult = await cleanupSecretsEnvFile({
               worktreePath: pinnedPath,
               taskId: task.id,
               expectedFingerprint: null,
               filename: ".env",
               audit: undefined,
               logger,
+              onVerifiedBeforeDelete: removeStalePinnedWorktree,
             });
-            const restoreGeneratedResidue = await preserveGeneratedResidue(pinnedPath, rootDir, logger);
-            try {
-              await removeWorktree({
-                rootDir,
-                worktreePath: pinnedPath,
-                settings,
-                reason: RemovalReason.PoolPrune,
-                taskId: task.id,
-                audit: undefined,
-              });
-            } catch (error) {
+            if (cleanupResult.outcome === "cleaned") {
+              await restoreGeneratedResidue(true);
+            } else {
               try {
+                await removeStalePinnedWorktree();
+              } catch (error) {
                 await restoreGeneratedResidue();
-              } catch (restoreError) {
-                logger?.warn(`${task.id}: generated-residue restore failed for stale pinned worktree ${pinnedPath}: ${formatError(restoreError).message}`);
+                throw error;
               }
-              throw error;
+              await restoreGeneratedResidue(true);
             }
           }
         } catch (removeErr) {

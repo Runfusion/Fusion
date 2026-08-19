@@ -15978,7 +15978,7 @@ const movedTask = await this.store.moveTask(task.id, completeLane);
         } catch (error) {
           log.warn(`[self-healing] secrets-env cleanup failed for idle worktree ${worktreePath}: ${error instanceof Error ? error.message : String(error)}`);
         }
-        let restoreGeneratedResidue: (() => Promise<void>) | undefined;
+        let restoreGeneratedResidue: ((removedSuccessfully?: boolean) => Promise<void>) | undefined;
         try {
           restoreGeneratedResidue = await preserveGeneratedResidue(worktreePath, this.options.rootDir, log);
         } catch (error) {
@@ -15991,12 +15991,20 @@ const movedTask = await this.store.moveTask(task.id, completeLane);
             settings,
             reason: RemovalReason.SelfHealingIdleSweep,
           });
+          await restoreGeneratedResidue?.(true);
           cleaned++;
         } catch (err: unknown) {
           try {
             await restoreGeneratedResidue?.();
           } catch (restoreError) {
-            log.warn(`[self-healing] generated-residue restore failed for idle worktree ${worktreePath}: ${restoreError instanceof Error ? restoreError.message : String(restoreError)}`);
+            // Greptile (restore fail-closed): a refused removal PLUS a residue restore
+            // failure leaves the SURVIVING checkout missing node_modules/dist. This must
+            // never be swallowed as a benign non-fatal skip — escalate so supervision
+            // records the worktree as broken (its residue stays recoverable in the
+            // contained recovery area) instead of pretending the checkout is valid.
+            log.error(`[self-healing] generated-residue restore failed for idle worktree ${worktreePath}; surviving checkout is missing preserved generated dirs: ${restoreError instanceof Error ? restoreError.message : String(restoreError)}`);
+            const errorMessage = err instanceof Error ? err.message : String(err);
+            throw new Error(`generated-residue restore failed for ${worktreePath}: ${errorMessage}; ${restoreError instanceof Error ? restoreError.message : String(restoreError)}`);
           }
           const errorMessage = err instanceof Error ? err.message : String(err);
           log.warn(`Failed to remove orphaned worktree ${worktreePath}: ${errorMessage} — non-fatal`);
@@ -16407,7 +16415,7 @@ const movedTask = await this.store.moveTask(task.id, completeLane);
         } catch (error) {
           log.warn(`[self-healing] secrets-env cleanup failed for idle worktree ${worktreePath} during cap enforcement: ${error instanceof Error ? error.message : String(error)}`);
         }
-        let restoreGeneratedResidue: (() => Promise<void>) | undefined;
+        let restoreGeneratedResidue: ((removedSuccessfully?: boolean) => Promise<void>) | undefined;
         try {
           restoreGeneratedResidue = await preserveGeneratedResidue(worktreePath, this.options.rootDir, log);
         } catch (error) {
@@ -16420,12 +16428,17 @@ const movedTask = await this.store.moveTask(task.id, completeLane);
             settings,
             reason: RemovalReason.SelfHealingIdleSweep,
           });
+          await restoreGeneratedResidue?.(true);
           removed++;
         } catch (err: unknown) {
           try {
             await restoreGeneratedResidue?.();
           } catch (restoreError) {
-            log.warn(`[self-healing] generated-residue restore failed for cap worktree ${worktreePath}: ${restoreError instanceof Error ? restoreError.message : String(restoreError)}`);
+            // Greptile (restore fail-closed): escalate rather than leave the surviving
+            // checkout missing its preserved generated dirs; residue stays recoverable.
+            log.error(`[self-healing] generated-residue restore failed for cap worktree ${worktreePath}; surviving checkout is missing preserved generated dirs: ${restoreError instanceof Error ? restoreError.message : String(restoreError)}`);
+            const errorMessage = err instanceof Error ? err.message : String(err);
+            throw new Error(`generated-residue restore failed for ${worktreePath}: ${errorMessage}; ${restoreError instanceof Error ? restoreError.message : String(restoreError)}`);
           }
           const errorMessage = err instanceof Error ? err.message : String(err);
           log.warn(`Failed to remove idle worktree ${worktreePath} during cap enforcement: ${errorMessage} — non-fatal`);
