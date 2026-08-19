@@ -1328,7 +1328,7 @@
     "noSkillsFound": "No skills found",
     "openQuickChat": "Open quick chat",
     "preserveToStash": "Preserve to Stash",
-    "preserveToStashDone": "Uploaded {{uploaded}} messages to Stash ({{inserted}} new, {{deduped}} already stored)",
+    "preserveToStashDone": "Uploaded {{uploaded}} messages to Stash ({{skipped}} already stored)",
     "preserveToStashFailed": "Stash upload failed: {{error}}",
     "preserveToStashWorking": "Uploading to Stash…",
     "questionAnsweredLabel": "Answered",

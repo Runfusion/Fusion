@@ -253,7 +253,7 @@ export function deleteChatSession(id: string, projectId?: string): Promise<{ suc
 export interface ChatStashBackfillResponse {
   ok: boolean;
   inserted: number;
-  deduped: number;
+  skipped: number;
   uploaded: number;
   error?: string;
 }
@@ -261,8 +261,10 @@ export interface ChatStashBackfillResponse {
 /**
  * FNXC:ChatStashBackfill 2026-08-19-16:28:
  * Backfill a chat's full message history into Stash (operator action, only meaningful
- * when the project memory backend is Stash). Idempotent — Stash dedupes by content hash,
- * so re-running after partial live capture never double-writes.
+ * when the project memory backend is Stash). Idempotent: the route pre-checks the
+ * session's existing Stash events and skips already-stored content, so re-runs and
+ * backfill-after-live-capture insert nothing new (Stash's batch endpoint itself has
+ * no server-side dedupe).
  */
 export function backfillChatSessionToStash(id: string, projectId?: string): Promise<ChatStashBackfillResponse> {
   return api<ChatStashBackfillResponse>(

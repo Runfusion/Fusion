@@ -9,17 +9,26 @@ import { registerChatRoutes } from "../routes/register-chat-routes.js";
 /*
 FNXC:ChatStashBackfill 2026-08-19-16:28:
 (operator request 2026-08-19) POST /api/chat/sessions/:id/backfill-stash backfills a
-chat's full message history into Stash on demand. These tests mock captureMemory (no
-real network) while keeping resolveStashMemorySettings REAL, and assert the contract:
-(a) 200 {ok,inserted,deduped,uploaded} with per-message REAL created_at timestamps,
-role-mapped event types, and default agent_name; (b) memory-disabled / non-stash /
-unconfigured-key / empty-chat / unknown-session all 400/404 WITHOUT calling capture;
-(c) a captureMemory ok:false degrades to a visible 502, never a success; (d) the
-global stash-api-key secret path (listSecrets → revealSecret) threads the resolved key
-into the capture settings.
+chat's full message history into Stash on demand. These tests mock captureMemory AND
+queryStashEvents (no real network) while keeping resolveStashMemorySettings REAL, and
+assert the contract: (a) 200 {ok,inserted,skipped,uploaded} with per-message REAL
+created_at timestamps, role-mapped event types, and default agent_name; (b) memory-
+disabled / non-stash / unconfigured-key / empty-chat / unknown-session all 400/404
+WITHOUT calling capture; (c) a captureMemory ok:false degrades to a visible 502, never
+a success; (d) the global stash-api-key secret path (listSecrets → revealSecret)
+threads the resolved key into the capture settings.
+FNXC:ChatStashBackfillIdempotency 2026-08-19-22:35:
+Stash's /events/batch is a bare INSERT (no server-side dedupe — verified against the
+backend source and live: 4 -> 8 -> 12 events across two identical backfills), so
+idempotency is client-side: the route pages the session's existing events via
+queryStashEvents and skips already-stored content. (i) asserts a pre-check hit skips
+those messages (capture receives only the fresh ones; skipped is reported); (j)
+asserts a pre-check transport failure fails CLOSED (502, no capture) rather than
+uploading duplicates.
 */
 const mocks = vi.hoisted(() => ({
   captureMemory: vi.fn(),
+  queryStashEvents: vi.fn(),
 }));
 
 vi.mock("@fusion/core", async (importOriginal) => {
@@ -27,6 +36,7 @@ vi.mock("@fusion/core", async (importOriginal) => {
   return {
     ...actual,
     captureMemory: mocks.captureMemory,
+    queryStashEvents: mocks.queryStashEvents,
   };
 });
 
@@ -127,14 +137,18 @@ function buildApp(opts: BuildOpts) {
 
 describe("POST /api/chat/sessions/:id/backfill-stash (ChatStashBackfill)", () => {
   beforeEach(() => {
-    // The happy-path default must exist BEFORE the first test — vi.fn() has no
+    // The happy-path defaults must exist BEFORE the first test — vi.fn() has no
     // implementation until the first afterEach would set one, so test (a) (first to
-    // run) would otherwise receive undefined and 500 on `result.ok`.
+    // run) would otherwise receive undefined and 500 on `result.ok`. Same applies to
+    // the queryStashEvents pre-check: an empty existing-events set is the fresh-chat
+    // default (nothing stored yet -> nothing skipped).
     mocks.captureMemory.mockResolvedValue({ ok: true, inserted: 2, deduped: 1 });
+    mocks.queryStashEvents.mockResolvedValue({ events: [], hasMore: false });
   });
 
   afterEach(() => {
     mocks.captureMemory.mockReset();
+    mocks.queryStashEvents.mockReset();
   });
 
   it("(a) 200 with counts; events carry REAL created_at, role-mapped types, default agent_name", async () => {
@@ -143,7 +157,13 @@ describe("POST /api/chat/sessions/:id/backfill-stash (ChatStashBackfill)", () =>
     const res = await request(app, "POST", "/api/chat/sessions/chat-abc12345/backfill-stash");
 
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ ok: true, inserted: 2, deduped: 1, uploaded: 4 });
+    expect(res.body).toEqual({ ok: true, inserted: 2, skipped: 0, uploaded: 4 });
+    expect(mocks.queryStashEvents).toHaveBeenCalledTimes(1);
+    expect(mocks.queryStashEvents.mock.calls[0][2]).toMatchObject({
+      sessionId: "chat-abc12345",
+      order: "asc",
+      limit: 200,
+    });
     expect(mocks.captureMemory).toHaveBeenCalledTimes(1);
     const [rootDir, resolved, sessionId, events, meta] = mocks.captureMemory.mock.calls[0];
     expect(rootDir).toBe("/route-project");
@@ -220,7 +240,51 @@ describe("POST /api/chat/sessions/:id/backfill-stash (ChatStashBackfill)", () =>
     expect(res.status).toBe(502);
     expect(res.body.ok).toBe(false);
     expect(res.body.uploaded).toBe(4);
+    expect(res.body.skipped).toBe(0);
     expect(res.body.error).toContain("Stash upload failed");
+  });
+
+  /*
+  FNXC:ChatStashBackfillIdempotency 2026-08-19-22:35:
+  (i) The pre-check found two of the four message contents already stored in Stash
+  (a re-run, or a chat that was partially live-captured): those two are skipped and
+  only the fresh two reach captureMemory. The response reports skipped:2 so the UI
+  toast can say "2 already stored" instead of a misleading insert count.
+  (j) A pre-check transport failure (Stash unreachable during the read) must fail
+  CLOSED — 502 with a pre-check error, and captureMemory never called. Blindly
+  uploading without the pre-check would insert duplicates (Stash has no server-side
+  dedupe), so the read failure must block the write.
+  */
+  it("(i) pre-check finds existing content -> those messages are skipped, only fresh ones uploaded", async () => {
+    const { app } = buildApp({ settings: STASH_OK_SETTINGS });
+    mocks.queryStashEvents.mockResolvedValue({
+      events: [
+        { content: "hello old chat", created_at: "2026-07-01T10:00:00.000Z" },
+        { content: "old reply", created_at: "2026-07-01T10:00:30.000Z" },
+      ],
+      hasMore: false,
+    });
+
+    const res = await request(app, "POST", "/api/chat/sessions/chat-abc12345/backfill-stash");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ ok: true, inserted: 2, skipped: 2, uploaded: 2 });
+    expect(mocks.captureMemory).toHaveBeenCalledTimes(1);
+    const [, , , events] = mocks.captureMemory.mock.calls[0];
+    expect(events).toHaveLength(2);
+    expect(events.map((e: { content: string }) => e.content)).toEqual(["follow-up", "second reply"]);
+  });
+
+  it("(j) pre-check transport failure -> 502, capture never called (fail closed, no duplicate upload)", async () => {
+    const { app } = buildApp({ settings: STASH_OK_SETTINGS });
+    mocks.queryStashEvents.mockRejectedValue(new Error("ECONNREFUSED"));
+
+    const res = await request(app, "POST", "/api/chat/sessions/chat-abc12345/backfill-stash");
+
+    expect(res.status).toBe(502);
+    expect(res.body.ok).toBe(false);
+    expect(res.body.error).toContain("Stash pre-check failed");
+    expect(mocks.captureMemory).not.toHaveBeenCalled();
   });
 
   /*
@@ -242,8 +306,34 @@ describe("POST /api/chat/sessions/:id/backfill-stash (ChatStashBackfill)", () =>
     const res = await request(app, "POST", "/api/chat/sessions/chat-abc12345/backfill-stash");
 
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ ok: true, inserted: 2, deduped: 1, uploaded: 4 });
+    expect(res.body).toEqual({ ok: true, inserted: 2, skipped: 0, uploaded: 4 });
     const resolved = mocks.captureMemory.mock.calls[0][1];
     expect(resolved.stashApiKey).toBe("secret-key-999");
+  });
+
+  /*
+  FNXC:ChatStashBackfillIdempotency 2026-08-19-22:35:
+  Fully backfilled chat (every message content already in Stash): the route is a
+  success no-op — nothing uploaded, nothing inserted, nothing captured. This is the
+  re-run contract the changeset promises: re-running "Preserve to Stash" after a
+  successful backfill must not create duplicate rows.
+  */
+  it("(k) all content already stored -> idempotent no-op success, capture never called", async () => {
+    const { app } = buildApp({ settings: STASH_OK_SETTINGS });
+    mocks.queryStashEvents.mockResolvedValue({
+      events: [
+        { content: "hello old chat", created_at: "2026-07-01T10:00:00.000Z" },
+        { content: "old reply", created_at: "2026-07-01T10:00:30.000Z" },
+        { content: "follow-up", created_at: "2026-07-02T09:00:00.000Z" },
+        { content: "second reply", created_at: "2026-07-02T09:00:45.000Z" },
+      ],
+      hasMore: false,
+    });
+
+    const res = await request(app, "POST", "/api/chat/sessions/chat-abc12345/backfill-stash");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ ok: true, inserted: 0, skipped: 4, uploaded: 0 });
+    expect(mocks.captureMemory).not.toHaveBeenCalled();
   });
 });
