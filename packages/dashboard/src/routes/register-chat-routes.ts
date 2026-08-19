@@ -6,13 +6,16 @@ import { basename, join, resolve } from "node:path";
 import {
   THINKING_LEVELS,
   createLogger,
+  captureMemory,
   deleteStashChatSession,
   DEFAULT_STASH_URL,
   resolvePermanentAgentEffectiveModel,
   resolvePermanentAgentEffectiveThinkingLevel,
   resolveStashMemorySettings,
+  type ChatMessage,
   type EnrichedChatSession,
   type ChatAttachment,
+  type MemoryCaptureEvent,
 } from "@fusion/core";
 import { ApiError, badRequest, notFound } from "../api-error.js";
 /*
@@ -892,6 +895,110 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
    * Get messages for a chat session with pagination.
    * Query params: limit? (default 50, max 200), offset? (default 0), before? (ISO timestamp), order? ('asc'|'desc')
    */
+  /*
+  FNXC:ChatStashBackfill 2026-08-19-16:28:
+  (operator request 2026-08-19) Backfill a chat's full message history into Stash as a
+  first-class action — "nahrat starsie chaty do stashu" — surfaced in the chat session
+  context menu only when the project's memory backend is Stash. Reuses the live-capture
+  write path (captureMemory) so backfilled transcripts land in the same per-project
+  session folder, dedupe identically (Stash content_hash), and stay searchable/recallable
+  exactly like live-captured events. Event timestamps use each message's REAL created_at
+  (not the capture time) — old transcripts must keep their original chronology for
+  after/before filtering and Stash title generation. The chatMessageToMemoryCaptureEvent
+  mapping is inlined (not reused) precisely because the live helper stamps now() — a
+  backfill that re-stamped every old message with the upload time would destroy the
+  transcript's chronology.
+  Contract: 200 {ok,inserted,deduped,uploaded} on success; 404 unknown session; 400 for
+  memory-disabled / non-stash backend / unconfigured key / empty chat; 502 when the Stash
+  upload itself fails — captureMemory never throws, it degrades to ok:false, and the
+  route must surface that as a visible failure, never a success.
+  */
+  router.post("/chat/sessions/:id/backfill-stash", rateLimit(RATE_LIMITS.mutation), async (req, res) => {
+    try {
+      const { store, chatStore } = await resolveScopedChatStore(req.query.projectId as string | undefined);
+      const sessionId = String(req.params.id);
+
+      const session = await chatStore.getSession(sessionId);
+      if (!session) {
+        throw notFound(`Chat session ${sessionId} not found`);
+      }
+
+      const settings = await store.getSettings();
+      const resolved = await resolveStashMemorySettings(store, settings);
+      if (!resolved || resolved.memoryEnabled === false) {
+        throw badRequest("Memory is disabled for this project — enable it in Settings → Memory");
+      }
+      if (resolved.memoryBackendType !== "stash") {
+        throw badRequest("The Stash memory backend is not enabled for this project");
+      }
+      if (!resolved.stashApiKey) {
+        throw badRequest("Stash API key is not configured — add the global stash-api-key secret");
+      }
+
+      // Full history in ascending order, paginated to the tail (the store caps page
+      // sizes; the loop safety cap of 50k messages is far beyond any real chat).
+      const messages: ChatMessage[] = [];
+      const PAGE_SIZE = 500;
+      for (let offset = 0; offset < 100 * PAGE_SIZE; offset += PAGE_SIZE) {
+        const page = await chatStore.getMessages(sessionId, { limit: PAGE_SIZE, offset, order: "asc" });
+        messages.push(...page);
+        if (page.length < PAGE_SIZE) break;
+      }
+      if (messages.length === 0) {
+        throw badRequest("Chat has no messages to upload");
+      }
+
+      const rootDir = store.getRootDir();
+      // store.getProjectId() is string | null — the ternary below narrows to string
+      // for captureMemory's meta.projectId; a null guard keeps the type honest.
+      const projectId = store.getProjectId();
+      const events = messages.map((message) => {
+        const metadata = message.metadata ?? {};
+        const agentName = typeof metadata.agent_name === "string"
+          ? metadata.agent_name
+          : typeof metadata.agentName === "string"
+            ? metadata.agentName
+            : "fusion";
+        const base: Record<string, unknown> = {
+          event_type: message.role === "user" ? "user_message" : message.role === "assistant" ? "assistant_message" : "tool_use",
+          agent_name: agentName,
+          timestamp: message.createdAt || new Date().toISOString(),
+          content: message.content ?? "",
+        };
+        const toolName = typeof metadata.tool_name === "string"
+          ? metadata.tool_name
+          : typeof metadata.toolName === "string"
+            ? metadata.toolName
+            : undefined;
+        if (message.role === "system" && toolName) base.tool_name = toolName;
+        return base as unknown as MemoryCaptureEvent;
+      });
+
+      const result = await captureMemory(rootDir, resolved, sessionId, events, {
+        projectRoot: rootDir,
+        ...(projectId ? { projectId } : {}),
+        ...(session.title ? { chatTitle: session.title } : {}),
+      });
+
+      if (!result.ok) {
+        res.status(502).json({
+          ok: false,
+          inserted: 0,
+          deduped: 0,
+          uploaded: messages.length,
+          error: "Stash upload failed — is the Stash server reachable?",
+        });
+        return;
+      }
+      res.json({ ok: true, inserted: result.inserted, deduped: result.deduped, uploaded: messages.length });
+    } catch (err: unknown) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err, "Failed to backfill chat to Stash");
+    }
+  });
+
   router.get("/chat/sessions/:id/messages", async (req, res) => {
     try {
       const { chatStore } = await resolveScopedChatStore(req);

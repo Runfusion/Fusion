@@ -21,6 +21,7 @@ import {
   MoreHorizontal,
   Tag,
   FileText,
+  Bookmark,
 } from "lucide-react";
 import { FN_AGENT_ID, TASK_PLANNER_CHAT_AGENT_ID_PREFIX, useChat, type ChatMessageInfo } from "../hooks/useChat";
 import { RoomMessageDeliveredButReplyFailedError, useChatRooms } from "../hooks/useChatRooms";
@@ -642,6 +643,7 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
     setSessionModel,
     setSessionThinkingLevel,
     deleteSession,
+    backfillStashSession,
     tags = [],
     selectedTagId,
     setSelectedTagId,
@@ -693,6 +695,14 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
     return getPersistedChatDraft(initialDraftKey);
   });
   const [contextMenu, setContextMenu] = useState<{ sessionId: string; anchorX: number; anchorY: number; anchorRight: boolean; x: number; y: number } | null>(null);
+  /*
+  FNXC:ChatStashBackfill 2026-08-19-16:28:
+  (operator request 2026-08-19) Busy marker for the "Preserve to Stash" context-menu
+  action — a backfill of a long chat is a chunked batch upload (Stash caps /events/batch
+  at 100 events), so the button stays disabled for its duration instead of allowing a
+  double-fire from the menu.
+  */
+  const [stashBackfillBusyId, setStashBackfillBusyId] = useState<string | null>(null);
   const [showArchivedSessions, setShowArchivedSessions] = useState(false);
   const contextMenuRef = useRef<HTMLDivElement>(null);
   /*
@@ -2606,6 +2616,44 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
     [deleteSession, addToast],
   );
 
+  /*
+  FNXC:ChatStashBackfill 2026-08-19-16:28:
+  (operator request 2026-08-19) "Preserve to Stash" context-menu action: backfills this
+  chat's FULL message history into Stash (old chats predate the live per-turn capture).
+  Rendered only when the project memory backend is Stash (chatSettings gate); the route
+  re-validates the same gates server-side, so the UI gate is affordance, not security.
+  */
+  const handleBackfillStash = useCallback(
+    async (id: string) => {
+      setContextMenu(null);
+      if (stashBackfillBusyId) return;
+      setStashBackfillBusyId(id);
+      try {
+        const result = await backfillStashSession(id);
+        addToast(
+          result.ok
+            ? t("chat.preserveToStashDone", "Uploaded {{uploaded}} messages to Stash ({{inserted}} new, {{deduped}} already stored)", {
+                uploaded: result.uploaded,
+                inserted: result.inserted,
+                deduped: result.deduped,
+              })
+            : t("chat.preserveToStashFailed", "Stash upload failed: {{error}}", { error: result.error ?? "unknown error" }),
+          result.ok ? "success" : "error",
+        );
+      } catch (err) {
+        addToast(
+          t("chat.preserveToStashFailed", "Stash upload failed: {{error}}", {
+            error: err instanceof Error ? err.message : String(err),
+          }),
+          "error",
+        );
+      } finally {
+        setStashBackfillBusyId(null);
+      }
+    },
+    [addToast, backfillStashSession, stashBackfillBusyId, t],
+  );
+
   // Handle session click
   const handleSessionClick = useCallback(
     (id: string) => {
@@ -3554,6 +3602,19 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
             <Archive size={14} />
             {t("chat.archive", "Archive")}
           </button>
+          {chatSettings?.memoryBackendType === "stash" && chatSettings.memoryEnabled !== false ? (
+            <button
+              onClick={() => void handleBackfillStash(contextMenu.sessionId)}
+              data-testid="chat-context-stash-backfill"
+              disabled={stashBackfillBusyId !== null}
+              title={stashBackfillBusyId ? t("chat.preserveToStashWorking", "Uploading to Stash…") : undefined}
+            >
+              <Bookmark size={14} />
+              {stashBackfillBusyId === contextMenu.sessionId
+                ? t("chat.preserveToStashWorking", "Uploading to Stash…")
+                : t("chat.preserveToStash", "Preserve to Stash")}
+            </button>
+          ) : null}
           <button
             onClick={() => {
               setContextMenu(null);
@@ -3566,7 +3627,6 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
           </button>
         </div>
       )}
-
       {/* Rename Dialog */}
       {renameDialog && (
         <ChatDialogBackdrop onClose={() => setRenameDialog(null)}>
