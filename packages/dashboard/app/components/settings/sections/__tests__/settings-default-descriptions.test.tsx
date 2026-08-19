@@ -192,6 +192,14 @@ const SETTING_DESCRIPTION_KEYS: Record<string, string> = {
   embeddedPostgresMaxConnections: "database.embeddedConnectionCapHelp",
   // MemorySection
   memoryEnabled: "memory.agentsGetMemorySearchMemoryGetAndMemory",
+  /*
+  FNXC:PerTurnMemoryRecall 2026-08-19-01:15:
+  RUFU-120 (B.2 LCM phase 2): per-turn proactive memory recall surfaced in the
+  Settings Memory section. Both keys state their schema defaults (enabled / 3),
+  matching the DEFAULT_SETTINGS pair in settings-schema.ts.
+  */
+  memoryPerTurnRecallEnabled: "memory.perTurnRecallHelp",
+  memoryPerTurnRecallTopK: "memory.perTurnRecallTopKHelp",
   memoryAutoSummarizeEnabled: "memory.automaticallyCompactMemoryWhenItExceedsTheThreshold",
   memoryAutoSummarizeThresholdChars: "memory.memoryWillBeCompactedWhenItExceedsThis",
   memoryAutoSummarizeSchedule: "memory.cronExpressionForAutoSummarizeScheduleDefaultDaily",

@@ -4375,3 +4375,116 @@ describe("ChatManager generation isolation", () => {
   });
 
 });
+
+/*
+FNXC:PerTurnMemoryRecall 2026-08-19-01:05:
+RUFU-120 (B.2 LCM phase 2): ChatManager forwards the per-turn recall inputs at BOTH prompt
+assembly seams — sendMessage (topic = user message content, sessionId = chat session id) and
+the room-responder path (topic = room reply input, sessionId = room:<roomId>). The prompt
+builder (engine buildAgentChatPrompt) owns the actual recall search/injection; this seam test
+asserts the forwarding contract via the __setBuildAgentChatPrompt hook so a regression that
+drops any of topic/sessionId/settings would leave the model without a recall cue.
+*/
+describe("ChatManager per-turn memory recall forwarding (RUFU-120 B.2)", () => {
+  const RECALL_SETTINGS = {
+    memoryEnabled: true,
+    memoryBackendType: "stash",
+    memoryPerTurnRecallEnabled: true,
+    memoryPerTurnRecallTopK: 3,
+  };
+
+  let capturedPromptOptions: any;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    __resetChatState();
+
+    mockChatStore.getSession.mockReturnValue({
+      id: "chat-001",
+      agentId: "agent-001",
+      status: "active",
+    });
+    mockChatStore.addMessage.mockReturnValue({
+      id: "msg-001",
+      sessionId: "chat-001",
+      role: "assistant",
+      content: "",
+    });
+    mockChatStore.getMessages.mockReturnValue([]);
+    mockChatStore.getRoomMessages.mockReturnValue([]);
+    mockAgentStore.init.mockResolvedValue(undefined);
+    mockAgentStore.getAgent.mockResolvedValue({
+      id: "agent-001",
+      name: "Avery",
+      role: "executor",
+      state: "idle",
+    });
+    mockAgentStore.listAgents.mockResolvedValue([{ id: "agent-001", name: "Avery", role: "executor", state: "idle" }]);
+
+    capturedPromptOptions = undefined;
+    __setBuildAgentChatPrompt(async (options: any) => {
+      capturedPromptOptions = options;
+      return options.basePrompt;
+    });
+    __setCreateResolvedAgentSession(async () => ({
+      session: {
+        prompt: vi.fn().mockResolvedValue(undefined),
+        dispose: vi.fn(),
+        state: { messages: [{ role: "assistant", content: "Done" }] },
+      },
+    }) as any);
+  });
+
+  afterEach(() => {
+    __setChatDiagnostics(null);
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  function managerWithSettings(): ChatManager {
+    return new ChatManager(
+      mockChatStore as any,
+      "/tmp/test",
+      mockAgentStore as any,
+      undefined,
+      async () => RECALL_SETTINGS,
+    );
+  }
+
+  it("sendMessage forwards topic (user content), chat sessionId, and settings to the prompt builder", async () => {
+    const manager = managerWithSettings();
+    await manager.sendMessage("chat-001", "čo sme diskutovali o LCM B.1");
+
+    expect(capturedPromptOptions).toBeDefined();
+    // Topic is the user message content (skill-command-stripped; raw content here).
+    expect(capturedPromptOptions.topic).toContain("čo sme diskutovali o LCM B.1");
+    // Stable per-chat session key for the session-scoped cue dedup.
+    expect(capturedPromptOptions.sessionId).toBe("chat-001");
+    // Settings forwarded so the enable/topK/memoryEnabled gates apply.
+    expect(capturedPromptOptions.settings).toEqual(RECALL_SETTINGS);
+    // Existing options untouched (compose, don't replace).
+    expect(capturedPromptOptions.includeProjectMemory).toBe(true);
+    expect(capturedPromptOptions.agent.id).toBe("agent-001");
+  });
+
+  it("sendRoomMessage forwards topic (room input), room-scoped sessionId, and settings", async () => {
+    (mockChatStore as any).getRoom = vi.fn().mockReturnValue({ id: "room-1", name: "team" });
+    (mockChatStore as any).listRoomMembers = vi.fn().mockReturnValue([
+      { roomId: "room-1", agentId: "agent-001", role: "member", addedAt: "2026-01-01" },
+    ]);
+    (mockChatStore as any).addRoomMessage = vi.fn().mockImplementation((_roomId: string, input: any) => ({
+      id: "room-msg",
+      roomId: "room-1",
+      ...input,
+    }));
+
+    const manager = managerWithSettings();
+    await manager.sendRoomMessage("room-1", "hello @Avery what is the merge gate status");
+
+    expect(capturedPromptOptions).toBeDefined();
+    expect(capturedPromptOptions.topic).toContain("what is the merge gate status");
+    // Stable per-room session key.
+    expect(capturedPromptOptions.sessionId).toBe("room:room-1");
+    expect(capturedPromptOptions.settings).toEqual(RECALL_SETTINGS);
+  });
+});

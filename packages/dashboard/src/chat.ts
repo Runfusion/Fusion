@@ -2223,12 +2223,24 @@ export class ChatManager {
     let systemPrompt = CHAT_SYSTEM_PROMPT;
     if (buildAgentChatPromptFn) {
       try {
+        /*
+        FNXC:PerTurnMemoryRecall 2026-08-19-01:05:
+        RUFU-120 (B.2): room-responder replies rebuild the system prompt per reply, so
+        passing the reply input as the recall topic gives each responder a deduped, bounded
+        per-turn memory cue for the current topic (sessionKey room:<roomId> keeps dedup
+        scoped per room). This composes with, never replaces, RUFU-118's between-turn
+        compaction gate (chat-context-guard) — recall runs inside prompt assembly, strictly
+        before that turn's LLM call, and is additive (recall failures leave the prompt unchanged).
+        */
         systemPrompt = await buildAgentChatPromptFn({
           agent: input.responder,
           rootDir: this.rootDir,
           agentStore: this.agentStore,
           basePrompt: CHAT_SYSTEM_PROMPT,
           includeProjectMemory: true,
+          topic: input.content,
+          sessionId: `room:${input.roomId}`,
+          settings: await this.getSettings?.(),
         });
       } catch (error) {
         diagnostics.warn(`Failed to build chat prompt for room responder ${input.responder.id}: ${error instanceof Error ? error.message : String(error)}`);
@@ -2685,12 +2697,24 @@ export class ChatManager {
 
       if (agent && buildAgentChatPromptFn) {
         try {
+          /*
+          FNXC:PerTurnMemoryRecall 2026-08-19-01:05:
+          RUFU-120 (B.2 LCM phase 2): this prompt is rebuilt before EVERY chat turn's LLM
+          call, so the per-turn recall topic is the user message of this turn
+          (skill-command-parsed content, falling back to the raw content). sessionKey
+          chat:<session.id> dedupes identical cues within the session only. Composes with,
+          never replaces, RUFU-118's between-turn compaction gate: recall is part of prompt
+          assembly (before this turn's LLM call) and any recall failure leaves the prompt unchanged.
+          */
           systemPrompt = await buildAgentChatPromptFn({
             agent,
             rootDir: this.rootDir,
             agentStore: this.agentStore,
             basePrompt: CHAT_SYSTEM_PROMPT,
             includeProjectMemory: true,
+            topic: parsedSkillCommands.strippedContent || content,
+            sessionId: session.id,
+            settings: await this.getSettings?.(),
           });
           systemPrompt = `${systemPrompt}\n\n${CHAT_AGENT_MESSAGE_ROUTING_GUIDANCE}`;
         } catch (promptBuildError) {

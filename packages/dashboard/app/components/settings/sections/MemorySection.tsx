@@ -86,6 +86,42 @@ export function MemorySection({ form, setForm, memory }: MemorySectionProps) {
         onChange={(v) => setForm((f) => ({ ...f, memoryEnabled: v === true }))}
       />
 
+      {/*
+      FNXC:PerTurnMemoryRecall 2026-08-19-01:15:
+      RUFU-120 (B.2 LCM phase 2): per-turn proactive memory recall. Before every
+      agent chat/step prompt, a bounded recall for the current topic is prepended
+      so relevant memory stays in context even when older cues were evicted by
+      compaction. On by default (memoryPerTurnRecallEnabled: true); recall costs
+      nothing when there is no topical memory to surface, and the top-K row is
+      gated on the toggle (same pattern as the auto-summarize threshold below).
+      */}
+      <SettingsToggleRow
+        descriptor={{
+          key: "memoryPerTurnRecallEnabled",
+          label: t("settings.memory.perTurnRecall", " Per-turn memory recall "),
+          help: t("settings.memory.perTurnRecallHelp", "Recalls the most relevant memory snippets for the current topic before each chat or task step turn and injects a short, deduped cue into the prompt. Default: enabled."),
+          scope: "project",
+        }}
+        value={form.memoryPerTurnRecallEnabled !== false}
+        onChange={(v) => setForm((f) => ({ ...f, memoryPerTurnRecallEnabled: v === true }))}
+      />
+
+      {(form.memoryPerTurnRecallEnabled !== false) && (
+        <SettingsNumberRow
+          descriptor={{
+            key: "memoryPerTurnRecallTopK",
+            label: t("settings.memory.perTurnRecallTopK", " Max snippets per turn "),
+            help: t("settings.memory.perTurnRecallTopKHelp", "Maximum number of memory snippets injected per turn. Default: 3."),
+            scope: "project",
+            min: 1,
+            max: 10,
+            step: 1,
+          }}
+          value={form.memoryPerTurnRecallTopK ?? 3}
+          onChange={(v) => setForm((f) => ({ ...f, memoryPerTurnRecallTopK: v || 3 }))}
+        />
+      )}
+
       {backendLoading ? (<div className="form-group">
           <small className="settings-muted">{t("settings.memory.checkingMemoryWriteAccess", "Checking memory write access...")}</small>
         </div>) : backendError ? (<div className="form-group">
