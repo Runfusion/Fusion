@@ -814,14 +814,22 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
    *
    * FNXC:RUFU121DeleteSync 2026-08-18-20:50:
    * RUFU-121 Step 5: AFTER the local delete reports success, fire-and-forget a best-effort
-   * Stash session delete sync (GET /sessions?limit=200 → match session_id → DELETE row).
+   * Stash session delete sync (GET /api/v1/me/sessions/{session_id} → payload row uuid →
+   * DELETE /api/v1/me/sessions/{row-uuid}).
    * NOT awaited — the response emits exactly as today, and the sync must never throw into
    * the route (deleteStashChatSession is itself never-throwing; the wrapper also catches).
    * Silently skipped (no Stash call, no error) when memory is disabled, the backend is not
-   * `stash`, or the stash API key is unresolvable. Known limitations (accepted per
+   * `stash`, or the stash API key is unresolvable. Known limitation (accepted per
    * the best-effort contract): an in-flight capture flush can recreate the Stash session
-   * after a delete sync (watermark not yet flushed), and the GET /sessions lookup is a
-   * global recent window (max 200) — very old sessions may not be found.
+   * after a delete sync (watermark not yet flushed).
+   *
+   * FNXC:RUFU130ByIdLookup 2026-08-19-16:43:
+   * RUFU-130: the sync resolves the row via the single-shot by-id lookup (verified
+   * deployed on the live backend — RUFU-129 Step 1) instead of the windowed
+   * session-list scan, so the "very old sessions may not be found" recent-window
+   * residual is gone from this path; a lookup 404 keeps the not-found (absent)
+   * semantics and the route's response contract is unchanged. The bulk archival
+   * path (RUFU-125) remains paged until RUFU-131.
    *
    * FNXC:RUFU121DeleteSyncUrl 2026-08-18-21:59:
    * RUFU-121 (code-review remediation): the stashUrl resolves exactly the way the

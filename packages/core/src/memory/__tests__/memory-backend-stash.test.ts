@@ -439,26 +439,25 @@ describe("queryStashEvents (RUFU-121 Step 2)", () => {
   });
 });
 
-describe("deleteStashChatSession (RUFU-121 Step 2)", () => {
-  it("soft-deletes the Stash session row matching session_id (two-step lookup)", async () => {
+describe("deleteStashChatSession (RUFU-130 by-id lookup)", () => {
+  it("soft-deletes the row found by the single-shot by-id lookup (no list call)", async () => {
     const fake = makeFakeHttp((path) => {
-      if (path === "/api/v1/me/sessions?limit=200") {
-        return { sessions: [{ id: "row-1", session_id: "chat-ses-1" }, { id: "row-2", session_id: "other" }] };
-      }
-      if (path === "/api/v1/me/sessions/row-1") return null; // 204
+      if (path === "/api/v1/me/sessions/chat-ses-1") return { id: "row-1", session_id: "chat-ses-1" };
+      // Any session-list call (a regression to the scan) gets the null
+      // default → not-found → this exact-sequence assertion goes red.
       return null;
     });
     const result = await deleteStashChatSession("http://stash.test", "k", "chat-ses-1", fake.client);
     expect(result).toEqual({ deleted: true, status: "ok" });
     expect(fake.calls.map((c) => `${c.method} ${c.path}`)).toEqual([
-      "GET /api/v1/me/sessions?limit=200",
+      "GET /api/v1/me/sessions/chat-ses-1",
       "DELETE /api/v1/me/sessions/row-1",
     ]);
   });
 
-  it("accepts a numeric row id", async () => {
+  it("accepts a numeric row id from the lookup payload", async () => {
     const fake = makeFakeHttp((path) => {
-      if (path === "/api/v1/me/sessions?limit=200") return { sessions: [{ id: 42, session_id: "s" }] };
+      if (path === "/api/v1/me/sessions/s") return { id: 42, session_id: "s" };
       return null;
     });
     const result = await deleteStashChatSession("http://stash.test", "k", "s", fake.client);
@@ -466,36 +465,69 @@ describe("deleteStashChatSession (RUFU-121 Step 2)", () => {
     expect(fake.calls[1].path).toBe("/api/v1/me/sessions/42");
   });
 
-  it("resolves not-found when no session row matches (no DELETE issued)", async () => {
-    const fake = makeFakeHttp((path) => {
-      if (path === "/api/v1/me/sessions?limit=200") return { sessions: [{ id: "row-1", session_id: "other" }] };
-      return null;
-    });
-    const result = await deleteStashChatSession("http://stash.test", "k", "missing", fake.client);
-    expect(result).toEqual({ deleted: false, status: "not-found" });
-    expect(fake.calls).toHaveLength(1);
-  });
-
-  it("resolves not-found on a 404 and skipped on other errors — never throws", async () => {
-    const fake404 = makeFakeHttp(() => { throw new Error("Stash returned 404: Not Found"); });
-    await expect(deleteStashChatSession("http://stash.test", "k", "s", fake404.client)).resolves.toEqual({
+  it("resolves not-found on a lookup 404 — exactly one call, no DELETE", async () => {
+    const fake = makeFakeHttp(() => { throw new Error("Stash returned 404: Not Found"); });
+    await expect(deleteStashChatSession("http://stash.test", "k", "s", fake.client)).resolves.toEqual({
       deleted: false,
       status: "not-found",
     });
-    const fake500 = makeFakeHttp(() => { throw new Error("network down"); });
-    await expect(deleteStashChatSession("http://stash.test", "k", "s", fake500.client)).resolves.toEqual({
+    expect(fake.calls).toHaveLength(1);
+    expect(fake.calls[0]).toMatchObject({ method: "GET", path: "/api/v1/me/sessions/s" });
+  });
+
+  it("resolves skipped on a lookup network/500 error — never throws", async () => {
+    const fake = makeFakeHttp(() => { throw new Error("Stash returned 500: Internal"); });
+    await expect(deleteStashChatSession("http://stash.test", "k", "s", fake.client)).resolves.toEqual({
       deleted: false,
       status: "skipped",
     });
-    // DELETE-side failure (after a found row) is also a skip, not a throw.
-    const fakeDeleteFail = makeFakeHttp((path) => {
-      if (path === "/api/v1/me/sessions?limit=200") return { sessions: [{ id: "row-1", session_id: "s" }] };
+    expect(fake.calls).toHaveLength(1);
+  });
+
+  it.each([
+    ["a missing id", {}],
+    ["a null id", { id: null, session_id: "s" }],
+  ])("resolves not-found WITHOUT a DELETE when the lookup 200 has %s", async (_label, payload) => {
+    const fake = makeFakeHttp((path) => (path === "/api/v1/me/sessions/s" ? payload : null));
+    const result = await deleteStashChatSession("http://stash.test", "k", "s", fake.client);
+    expect(result).toEqual({ deleted: false, status: "not-found" });
+    expect(fake.calls).toHaveLength(1);
+    expect(fake.calls[0].method).toBe("GET");
+  });
+
+  it("classifies DELETE-side failures after a found row: 404 → not-found, 500 → skipped", async () => {
+    const fakeDelete404 = makeFakeHttp((path) => {
+      if (path === "/api/v1/me/sessions/s") return { id: "row-1", session_id: "s" };
+      throw new Error("Stash returned 404: Not Found");
+    });
+    await expect(deleteStashChatSession("http://stash.test", "k", "s", fakeDelete404.client)).resolves.toEqual({
+      deleted: false,
+      status: "not-found",
+    });
+    expect(fakeDelete404.calls.map((c) => `${c.method} ${c.path}`)).toEqual([
+      "GET /api/v1/me/sessions/s",
+      "DELETE /api/v1/me/sessions/row-1",
+    ]);
+    const fakeDelete500 = makeFakeHttp((path) => {
+      if (path === "/api/v1/me/sessions/s") return { id: "row-1", session_id: "s" };
       throw new Error("Stash returned 500: Internal");
     });
-    await expect(deleteStashChatSession("http://stash.test", "k", "s", fakeDeleteFail.client)).resolves.toEqual({
+    await expect(deleteStashChatSession("http://stash.test", "k", "s", fakeDelete500.client)).resolves.toEqual({
       deleted: false,
       status: "skipped",
     });
+    expect(fakeDelete500.calls).toHaveLength(2);
+  });
+
+  it("percent-encodes the session id in the lookup path", async () => {
+    const fake = makeFakeHttp(() => { throw new Error("Stash returned 404: Not Found"); });
+    await expect(deleteStashChatSession("http://stash.test", "k", "chat a b", fake.client)).resolves.toEqual({
+      deleted: false,
+      status: "not-found",
+    });
+    expect(fake.calls.map((c) => `${c.method} ${c.path}`)).toEqual([
+      "GET /api/v1/me/sessions/chat%20a%20b",
+    ]);
   });
 });
 

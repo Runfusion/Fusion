@@ -755,11 +755,27 @@ export interface StashChatSessionDeleteResult {
  * RUFU-121: soft-delete the Stash session row whose top-level `session_id`
  * matches a Fusion chat session id. Best-effort: NEVER throws.
  *
- * Two-step lookup: Stash's DELETE takes the ROW id (uuid pk), not the
- * top-level session_id string — so first GET /api/v1/me/sessions (limit=200)
- * and match row.session_id, then DELETE /api/v1/me/sessions/<row.id> (204).
- * Missing row / 404 → "not-found" (nothing to delete); network/5xx →
- * "skipped" (session remains in Stash — acceptable, best-effort contract).
+ * Single-shot by-id lookup (RUFU-130): GET /api/v1/me/sessions/<session_id>
+ * returns the row directly (scope-bound, read-gated); on 200 take the row
+ * uuid from the payload `id` field and issue
+ * DELETE /api/v1/me/sessions/<row-uuid> (204) — the per-row delete
+ * contract is unchanged. 404 → "not-found" (identical semantics to the
+ * old windowed-scan miss: absent, unreadable, or already soft-deleted);
+ * network/5xx → "skipped" (session remains in Stash — acceptable,
+ * best-effort contract).
+ *
+ * FNXC:RUFU130ByIdLookup 2026-08-19-16:43:
+ * RUFU-130: replaces RUFU-121's windowed session-list scan (client-side
+ * session_id matching over the global recent window) by the single-shot
+ * by-id lookup, removing the bounded-sync residual where sessions outside
+ * the recent window were never found and deleted chats leaked into Stash.
+ * The by-id lookup GET /api/v1/me/sessions/{session_id} is verified
+ * deployed on the live backend (RUFU-129 Step 1); it returns the row with
+ * `id` (the row uuid, always a string) or 404 when absent. A 200 payload
+ * without a usable `id` is treated as not-found WITHOUT issuing a DELETE
+ * (defense in depth — mirrors the old null-row-id behavior). The per-row
+ * delete contract is unchanged, and the RUFU-125 bulk path remains paged
+ * until RUFU-131 adopts the upstream bulk soft-delete endpoint.
  */
 export async function deleteStashChatSession(
   baseUrl: string,
@@ -771,11 +787,8 @@ export async function deleteStashChatSession(
   const client: StashHttpClient =
     http ?? ((path, method, payload) => stashHttpJsonRequest(base, apiKey, path, method, payload));
   try {
-    const resp = await client("/api/v1/me/sessions?limit=200", "GET");
-    const raw = (resp as { sessions?: unknown } | null)?.sessions;
-    const rows = Array.isArray(raw) ? (raw as Array<Record<string, unknown>>) : [];
-    const row = rows.find((r) => r && r.session_id === sessionId);
-    const rowId = row?.id;
+    const resp = await client(`/api/v1/me/sessions/${encodeURIComponent(sessionId)}`, "GET");
+    const rowId = (resp as { id?: unknown } | null)?.id;
     const rowIdStr = typeof rowId === "string" ? rowId : typeof rowId === "number" ? String(rowId) : undefined;
     if (!rowIdStr) return { deleted: false, status: "not-found" };
     await client(`/api/v1/me/sessions/${encodeURIComponent(rowIdStr)}`, "DELETE");
@@ -830,10 +843,12 @@ export interface StashBulkChatSessionDeleteResult {
  * sessions via ChatStore.deleteSessionsForAgentId, which bypasses the
  * per-session `DELETE /api/chat/sessions/:id` route RUFU-121 hooks — so
  * the matching Stash rows lingered. This is the batched twin of
- * deleteStashChatSession: RUFU-121's single-page `limit=200` lookup misses
- * targets older than the newest 200 rows, so this one pages
+ * deleteStashChatSession, which RUFU-130 migrated to the single-shot by-id
+ * lookup (GET /api/v1/me/sessions/{session_id}); the bulk path has no such
+ * per-id endpoint yet, so this one pages
  * `GET /api/v1/me/sessions?limit=200&offset=<pages*200>` (rows arrive
- * `last_event_at DESC`) and then
+ * `last_event_at DESC`) until the upstream bulk soft-delete endpoint is
+ * adopted (RUFU-131), then
  * `DELETE /api/v1/me/sessions/<row.id>` (204) per matched row.
  *
  * Contract (best-effort, mirrors RUFU-121):
