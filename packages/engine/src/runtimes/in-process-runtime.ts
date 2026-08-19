@@ -21,6 +21,7 @@ import type {
 } from "@fusion/core";
 import {
   AsyncCentralClaimStore,
+  bulkDeleteStashChatSessions,
   ChatStore,
   isEphemeralAgent,
   isPlanReviewSatisfied,
@@ -3046,10 +3047,64 @@ export class InProcessRuntime
         /* Resolved archive lane UNION the legacy id — the guard already accepted either. */
         const archivedLanes = new Set<string>([archivedColumn, ...LEGACY_ARCHIVE_LANES]);
         if (!archivedLanes.has(data.to)) return;
-        await this.chatStore?.deleteSessionsForAgentId(
-          `${TASK_PLANNER_CHAT_AGENT_ID_PREFIX}${data.task.id}`,
-          { projectId: this.config.projectId },
-        );
+        const plannerAgentId = `${TASK_PLANNER_CHAT_AGENT_ID_PREFIX}${data.task.id}`;
+        try {
+          /*
+          FNXC:RUFU125BulkArchiveSync 2026-08-19-06:07:
+          RUFU-125: snapshot the doomed local session ids BEFORE the local bulk delete, scoped to
+          this runtime's project. The read is fail-open: a listSessions failure degrades to an
+          empty list and must never prevent the local delete below. chatStore optional — an
+          undefined chatStore means no chat calls at all (pre-RUFU-125 behavior preserved).
+          */
+          const doomed = (await this.chatStore?.listSessions({
+            agentId: plannerAgentId,
+            projectId: this.config.projectId,
+          }).catch(() => [])) ?? [];
+          const deletedCount = await this.chatStore?.deleteSessionsForAgentId(plannerAgentId, {
+            projectId: this.config.projectId,
+          });
+          if ((deletedCount ?? 0) === 0 || doomed.length === 0) return;
+          /*
+          FNXC:RUFU125BulkArchiveSync 2026-08-19-06:07:
+          RUFU-125: the bulk local delete above bypasses the per-session DELETE route RUFU-121
+          hooks, so soft-delete the matching Stash rows in a SEPARATE fire-and-forget IIFE — a
+          Stash stall can never delay local archival bookkeeping, and the forwarded task:moved
+          runtime event (emitted after this chain is SCHEDULED, below) is unaffected either way.
+          Mirrors the RUFU-121 route sync (skip-guards, url fallback, never-throws): a skip is
+          debug-logged with its reason, and a partial window match (matched < doomed.length) is
+          debug-logged as a window miss with matched/total + truncated (the bounded lookback's
+          documented residual — rows older than 10 × 200 recent rows remain in Stash).
+          */
+          void (async () => {
+            try {
+              const summary = await bulkDeleteStashChatSessions(this.taskStore, doomed.map((s) => s.id));
+              if (summary.skipped) {
+                runtimeLog.debug(
+                  `[RUFU-125] stash bulk sync skipped on archive task=${data.task.id} reason=${summary.skipReason}`,
+                );
+                return;
+              }
+              if (summary.result.matched < doomed.length) {
+                const r = summary.result;
+                runtimeLog.debug(
+                  `[RUFU-125] stash bulk sync window miss task=${data.task.id} matched=${r.matched}/${doomed.length} deleted=${r.deleted} truncated=${r.truncated} pagesScanned=${r.pagesScanned}`,
+                );
+              }
+            } catch (err: unknown) {
+              // bulkDeleteStashChatSessions never throws by core contract; this is the
+              // never-reject safety net for any future regression.
+              runtimeLog.warn(
+                `[RUFU-125] stash bulk sync failed task=${data.task.id} (best-effort, non-blocking): ${err instanceof Error ? err.message : String(err)}`,
+              );
+            }
+          })();
+        } catch (err: unknown) {
+          // Unexpected failure in the archival chain (e.g. the local delete throwing):
+          // warn, never reject the task:moved chain.
+          runtimeLog.warn(
+            `[RUFU-125] archive chat cleanup failed task=${data.task.id} (non-blocking): ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
       })();
       this.emit("task:moved", data);
     });

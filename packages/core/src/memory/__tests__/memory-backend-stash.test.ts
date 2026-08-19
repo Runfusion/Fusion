@@ -16,14 +16,18 @@
  * - Identity metadata enrichment (`project`/`project_name`/`chat_title`)
  *   appears only when the value is present.
  */
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   StashMemoryBackend,
   __resetStashFolderCacheForTests,
   normalizeStashSearchQuery,
   queryStashEvents,
   deleteStashChatSession,
+  deleteStashChatSessions,
+  bulkDeleteStashChatSessions,
+  DEFAULT_STASH_BULK_MAX_PAGES,
   type StashHttpClient,
+  type StashBulkDeleteStore,
 } from "../memory-backend-stash.js";
 
 type RecordedCall = { path: string; method: string; payload?: unknown };
@@ -492,5 +496,343 @@ describe("deleteStashChatSession (RUFU-121 Step 2)", () => {
       deleted: false,
       status: "skipped",
     });
+  });
+});
+
+/** 200 unrelated filler rows — a full page that keeps the scan moving. */
+function fillerRows(count: number, prefix = "filler") {
+  return Array.from({ length: count }, (_, i) => ({ id: `${prefix}-${i}`, session_id: `${prefix}-${i}` }));
+}
+
+describe("deleteStashChatSessions (RUFU-125 Step 1)", () => {
+  it("returns a zeroed result with ZERO HTTP for empty / all-blank / duplicate-only ids", async () => {
+    const empty = makeFakeHttp();
+    await expect(deleteStashChatSessions("http://stash.test", "k", [], { http: empty.client })).resolves.toEqual({
+      targets: 0, matched: 0, deleted: 0, pagesScanned: 0, truncated: false,
+    });
+    expect(empty.calls).toHaveLength(0);
+
+    const blanks = makeFakeHttp();
+    await expect(
+      deleteStashChatSessions("http://stash.test", "k", ["", "   ", "\t"], { http: blanks.client }),
+    ).resolves.toEqual({ targets: 0, matched: 0, deleted: 0, pagesScanned: 0, truncated: false });
+    expect(blanks.calls).toHaveLength(0);
+  });
+
+  it("collapses duplicate ids into one target before any HTTP", async () => {
+    const fake = makeFakeHttp((path, method) => {
+      if (method === "GET") return { sessions: [{ id: "row-1", session_id: "chat-dup" }] };
+      return null;
+    });
+    const result = await deleteStashChatSessions(
+      "http://stash.test", "k", ["chat-dup", "chat-dup", "chat-dup"], { http: fake.client },
+    );
+    expect(result).toEqual({ targets: 1, matched: 1, deleted: 1, pagesScanned: 1, truncated: false });
+    expect(fake.calls.map((c) => `${c.method} ${c.path}`)).toEqual([
+      "GET /api/v1/me/sessions?limit=200&offset=0",
+      "DELETE /api/v1/me/sessions/row-1",
+    ]);
+  });
+
+  it("single-page match: exact GET path, one percent-encoded DELETE per matched row, unrelated rows untouched", async () => {
+    const fake = makeFakeHttp((path, method) => {
+      if (method === "GET") {
+        expect(path).toBe("/api/v1/me/sessions?limit=200&offset=0");
+        return {
+          sessions: [
+            { id: "row a/b", session_id: "chat-aaa" },
+            { id: "row-2", session_id: "unrelated" },
+            { id: "row-3", session_id: "chat-bbb" },
+          ],
+        };
+      }
+      return null; // DELETE → 204
+    });
+    const result = await deleteStashChatSessions("http://stash.test", "k", ["chat-aaa", "chat-bbb"], { http: fake.client });
+    expect(result).toEqual({ targets: 2, matched: 2, deleted: 2, pagesScanned: 1, truncated: false });
+    const deletes = fake.calls.filter((c) => c.method === "DELETE").map((c) => c.path);
+    expect(deletes).toContain("/api/v1/me/sessions/row%20a%2Fb"); // percent-encoded row id
+    expect(deletes).toContain("/api/v1/me/sessions/row-3");
+    expect(deletes).not.toContain("/api/v1/me/sessions/row-2"); // unrelated row untouched
+    expect(deletes).toHaveLength(2);
+  });
+
+  it("window-limitation proof: a target only present on page 2 (offset=200) is found and deleted", async () => {
+    const page1 = fillerRows(200); // full page, no target
+    const page2 = [{ id: "row-p2", session_id: "chat-page2" }];
+    const fake = makeFakeHttp((path, method) => {
+      if (method !== "GET") return null;
+      const offset = Number(path.match(/offset=(\d+)/)?.[1] ?? 0);
+      return { sessions: offset === 0 ? page1 : page2 };
+    });
+    const result = await deleteStashChatSessions("http://stash.test", "k", ["chat-page2"], { http: fake.client });
+    expect(result).toEqual({ targets: 1, matched: 1, deleted: 1, pagesScanned: 2, truncated: false });
+    const gets = fake.calls.filter((c) => c.method === "GET").map((c) => c.path);
+    expect(gets).toEqual(["/api/v1/me/sessions?limit=200&offset=0", "/api/v1/me/sessions?limit=200&offset=200"]);
+    expect(fake.calls.filter((c) => c.method === "DELETE").map((c) => c.path)).toEqual(
+      ["/api/v1/me/sessions/row-p2"],
+    );
+  });
+
+  it("early stop: all targets matched on page 1 → NO second GET", async () => {
+    const fake = makeFakeHttp((path, method) => {
+      if (method !== "GET") return null;
+      return { sessions: [{ id: "row-1", session_id: "chat-only" }, ...fillerRows(199)] };
+    });
+    const result = await deleteStashChatSessions("http://stash.test", "k", ["chat-only"], { http: fake.client });
+    expect(result).toEqual({ targets: 1, matched: 1, deleted: 1, pagesScanned: 1, truncated: false });
+    expect(fake.calls.filter((c) => c.method === "GET")).toHaveLength(1);
+  });
+
+  it("window exhausted: a short page (< 200 rows) stops the scan, truncated: false", async () => {
+    const fake = makeFakeHttp((path, method) => {
+      if (method !== "GET") return null;
+      const offset = Number(path.match(/offset=(\d+)/)?.[1] ?? 0);
+      return { sessions: offset === 0 ? fillerRows(150) : [] };
+    });
+    const result = await deleteStashChatSessions("http://stash.test", "k", ["never-listed"], { http: fake.client });
+    expect(result).toEqual({ targets: 1, matched: 0, deleted: 0, pagesScanned: 1, truncated: false });
+    // Unmatched target remains un-deleted; the short page proves the window is exhausted.
+    expect(fake.calls.filter((c) => c.method === "GET")).toHaveLength(1);
+    expect(fake.calls.filter((c) => c.method === "DELETE")).toHaveLength(0);
+  });
+
+  it("maxPages cap: default 10 pages, then truncated; opts.maxPages=2 override honored", async () => {
+    // Fake that always returns a full 200-row page of unrelated rows.
+    const makeAlwaysFull = () => makeFakeHttp((path, method) =>
+      method === "GET" ? { sessions: fillerRows(200) } : null);
+
+    const defaultFake = makeAlwaysFull();
+    const defaultResult = await deleteStashChatSessions("http://stash.test", "k", ["never-listed"], { http: defaultFake.client });
+    expect(DEFAULT_STASH_BULK_MAX_PAGES).toBe(10);
+    expect(defaultResult).toEqual({
+      targets: 1, matched: 0, deleted: 0, pagesScanned: 10, truncated: true,
+    });
+    expect(defaultFake.calls.filter((c) => c.method === "GET")).toHaveLength(10);
+    expect(defaultFake.calls.filter((c) => c.method === "GET").at(-1)?.path)
+      .toBe("/api/v1/me/sessions?limit=200&offset=1800");
+
+    const cappedFake = makeAlwaysFull();
+    const cappedResult = await deleteStashChatSessions(
+      "http://stash.test", "k", ["never-listed"], { http: cappedFake.client, maxPages: 2 },
+    );
+    expect(cappedResult).toEqual({ targets: 1, matched: 0, deleted: 0, pagesScanned: 2, truncated: true });
+    expect(cappedFake.calls.filter((c) => c.method === "GET")).toHaveLength(2);
+  });
+
+  it("null-id rows (already soft-deleted) are never matchable: no DELETE, slot still consumed", async () => {
+    const fake = makeFakeHttp((path, method) => {
+      if (method !== "GET") return null;
+      return {
+        sessions: [
+          { id: null, session_id: "chat-gone" }, // already soft-deleted
+          ...fillerRows(199),
+        ],
+      };
+    });
+    const result = await deleteStashChatSessions("http://stash.test", "k", ["chat-gone"], { http: fake.client });
+    expect(result.deleted).toBe(0);
+    expect(result.pagesScanned).toBe(1);
+    expect(fake.calls.filter((c) => c.method === "DELETE")).toHaveLength(0);
+  });
+
+  it("GET failure on page 2 → partial result from page 1, no throw, truncated: true", async () => {
+    const fake = makeFakeHttp((path, method) => {
+      if (method !== "GET") return null;
+      const offset = Number(path.match(/offset=(\d+)/)?.[1] ?? 0);
+      if (offset === 0) {
+        return { sessions: [{ id: "row-1", session_id: "chat-p1" }, ...fillerRows(199)] };
+      }
+      throw new Error("Stash returned 500: boom");
+    });
+    const result = await deleteStashChatSessions(
+      "http://stash.test", "k", ["chat-p1", "chat-p2"], { http: fake.client },
+    );
+    expect(result).toEqual({ targets: 2, matched: 1, deleted: 1, pagesScanned: 2, truncated: true });
+  });
+
+  it("GET failure on page 1 → zeroed partial, no throw, truncated: true", async () => {
+    const fake = makeFakeHttp((path, method) => {
+      if (method !== "GET") return null;
+      throw new Error("network down");
+    });
+    await expect(
+      deleteStashChatSessions("http://stash.test", "k", ["chat-a"], { http: fake.client }),
+    ).resolves.toEqual({ targets: 1, matched: 0, deleted: 0, pagesScanned: 1, truncated: true });
+  });
+
+  it("DELETE 404 on one row → not counted deleted, remaining rows still attempted", async () => {
+    const fake = makeFakeHttp((path, method) => {
+      if (method !== "DELETE") {
+        return { sessions: [
+          { id: "row-a", session_id: "chat-a" },
+          { id: "row-b", session_id: "chat-b" },
+        ] };
+      }
+      if (path === "/api/v1/me/sessions/row-a") throw new Error("Stash returned 404: Not Found");
+      return null; // row-b DELETE → 204
+    });
+    const result = await deleteStashChatSessions("http://stash.test", "k", ["chat-a", "chat-b"], { http: fake.client });
+    expect(result).toEqual({ targets: 2, matched: 2, deleted: 1, pagesScanned: 1, truncated: false });
+    const deletes = fake.calls.filter((c) => c.method === "DELETE").map((c) => c.path);
+    expect(deletes).toEqual(["/api/v1/me/sessions/row-a", "/api/v1/me/sessions/row-b"]);
+  });
+
+  it("DELETE network error on one row → same: not counted, remaining rows still attempted", async () => {
+    const fake = makeFakeHttp((path, method) => {
+      if (method !== "DELETE") {
+        return { sessions: [
+          { id: "row-a", session_id: "chat-a" },
+          { id: "row-b", session_id: "chat-b" },
+        ] };
+      }
+      if (path === "/api/v1/me/sessions/row-a") throw new Error("ECONNRESET");
+      return null;
+    });
+    await expect(
+      deleteStashChatSessions("http://stash.test", "k", ["chat-a", "chat-b"], { http: fake.client }),
+    ).resolves.toEqual({ targets: 2, matched: 2, deleted: 1, pagesScanned: 1, truncated: false });
+    expect(fake.calls.filter((c) => c.method === "DELETE").map((c) => c.path))
+      .toEqual(["/api/v1/me/sessions/row-a", "/api/v1/me/sessions/row-b"]);
+  });
+
+  it("accepts a numeric row id (String-converted) and never rejects even under total transport failure", async () => {
+    const numeric = makeFakeHttp((path, method) => {
+      if (method !== "DELETE") return { sessions: [{ id: 4242, session_id: "chat-num" }] };
+      return null;
+    });
+    const numericResult = await deleteStashChatSessions("http://stash.test", "k", ["chat-num"], { http: numeric.client });
+    expect(numericResult.deleted).toBe(1);
+    expect(numeric.calls.find((c) => c.method === "DELETE")?.path).toBe("/api/v1/me/sessions/4242");
+
+    // Settles (never rejects) under total transport failure.
+    const dead = makeFakeHttp(() => { throw new Error("Stash returned 503"); });
+    await expect(deleteStashChatSessions("http://stash.test", "k", ["chat-x"], { http: dead.client })).resolves.toEqual({
+      targets: 1, matched: 0, deleted: 0, pagesScanned: 1, truncated: true,
+    });
+  });
+});
+
+/** Minimal structural store for the bulkDeleteStashChatSessions wrapper tests. */
+function makeBulkTestStore(
+  settings: Record<string, unknown> | { reject: Error },
+  secrets?: { id: string; key: string },
+) {
+  const store = {
+    getSettings: vi.fn(async () => {
+      if (typeof settings === "object" && "reject" in settings) throw settings.reject;
+      return settings;
+    }),
+  };
+  if (secrets) {
+    store.getSecretsStore = vi.fn(async () => ({
+      listSecrets: vi.fn(async () => [{ id: secrets.id, key: "stash-api-key" }]),
+      revealSecret: vi.fn(async () => ({ plaintextValue: secrets.key })),
+    }));
+  }
+  return store;
+}
+
+describe("bulkDeleteStashChatSessions (RUFU-125 Step 1)", () => {
+  const STASH_SETTINGS = { memoryEnabled: true, memoryBackendType: "stash", stashUrl: "http://stash.test" };
+
+  it("skips memory-disabled with zero HTTP", async () => {
+    const store = makeBulkTestStore({ memoryEnabled: false, memoryBackendType: "stash" });
+    const fake = makeFakeHttp();
+    await expect(
+      bulkDeleteStashChatSessions(store as StashBulkDeleteStore, ["chat-1"], { http: fake.client }),
+    ).resolves.toEqual({ skipped: true, skipReason: "memory-disabled" });
+    expect(fake.calls).toHaveLength(0);
+  });
+
+  it("skips a non-stash backend with zero HTTP", async () => {
+    const store = makeBulkTestStore({ memoryEnabled: true, memoryBackendType: "file" });
+    const fake = makeFakeHttp();
+    await expect(
+      bulkDeleteStashChatSessions(store as StashBulkDeleteStore, ["chat-1"], { http: fake.client }),
+    ).resolves.toEqual({ skipped: true, skipReason: "non-stash-backend" });
+    expect(fake.calls).toHaveLength(0);
+  });
+
+  it("skips unresolvable credentials (stash + url, no key, no secrets store) with zero HTTP", async () => {
+    const store = makeBulkTestStore(STASH_SETTINGS);
+    const fake = makeFakeHttp();
+    await expect(
+      bulkDeleteStashChatSessions(store as StashBulkDeleteStore, ["chat-1"], { http: fake.client }),
+    ).resolves.toEqual({ skipped: true, skipReason: "unresolvable-credentials" });
+    expect(fake.calls).toHaveLength(0);
+  });
+
+  it("explicit settings.stashApiKey → full paged flow reaches the http client", async () => {
+    const store = makeBulkTestStore({ ...STASH_SETTINGS, stashApiKey: "sk-explicit" });
+    const fake = makeFakeHttp((path, method) => {
+      if (method !== "DELETE") return { sessions: [{ id: "row-1", session_id: "chat-1" }] };
+      return null;
+    });
+    const summary = await bulkDeleteStashChatSessions(store as StashBulkDeleteStore, ["chat-1"], { http: fake.client });
+    expect(summary).toEqual({
+      skipped: false,
+      result: { targets: 1, matched: 1, deleted: 1, pagesScanned: 1, truncated: false },
+    });
+    expect(fake.calls.map((c) => `${c.method} ${c.path}`)).toEqual([
+      "GET /api/v1/me/sessions?limit=200&offset=0",
+      "DELETE /api/v1/me/sessions/row-1",
+    ]);
+  });
+
+  it("secrets-store path (listSecrets → revealSecret) resolves the key and invokes http", async () => {
+    const store = makeBulkTestStore(STASH_SETTINGS, { id: "uuid-1", key: "sk-secret" }) as StashBulkDeleteStore & {
+      getSecretsStore: ReturnType<typeof vi.fn>;
+    };
+    const fake = makeFakeHttp((path, method) => {
+      if (method !== "DELETE") return { sessions: [{ id: "row-1", session_id: "chat-1" }] };
+      return null;
+    });
+    const summary = await bulkDeleteStashChatSessions(store, ["chat-1"], { http: fake.client });
+    expect(summary.skipped).toBe(false);
+    expect(store.getSecretsStore).toHaveBeenCalledTimes(1);
+    expect(fake.calls).toHaveLength(2);
+  });
+
+  it("blank/absent stashUrl does NOT skip — the sync proceeds against the resolved default URL", async () => {
+    // RUFU-121's url-fix contract: a blank URL must never turn the sync into
+    // a silent no-op; it falls back to DEFAULT_STASH_URL (mirrors
+    // resolveMemoryBackend). The injected fake observes the path contract;
+    // the base-URL fallback is the same DEFAULT_STASH_URL constant the route
+    // sync and the real transport share.
+    const blank = makeBulkTestStore({ memoryEnabled: true, memoryBackendType: "stash", stashUrl: "   ", stashApiKey: "sk-explicit" });
+    const absent = makeBulkTestStore({ memoryEnabled: true, memoryBackendType: "stash", stashApiKey: "sk-explicit" });
+    for (const store of [blank, absent]) {
+      const fake = makeFakeHttp((path, method) => {
+        if (method !== "DELETE") return { sessions: [{ id: "row-1", session_id: "chat-1" }] };
+        return null;
+      });
+      const summary = await bulkDeleteStashChatSessions(store as StashBulkDeleteStore, ["chat-1"], { http: fake.client });
+      expect(summary.skipped).toBe(false);
+      expect(fake.calls[0]?.path).toBe("/api/v1/me/sessions?limit=200&offset=0");
+    }
+  });
+
+  it("getSettings rejection → skip settings-error, no throw, zero HTTP", async () => {
+    const store = makeBulkTestStore({ reject: new Error("db down") });
+    const fake = makeFakeHttp();
+    await expect(
+      bulkDeleteStashChatSessions(store as StashBulkDeleteStore, ["chat-1"], { http: fake.client }),
+    ).resolves.toEqual({ skipped: true, skipReason: "settings-error" });
+    expect(fake.calls).toHaveLength(0);
+  });
+
+  it("empty / blank-only ids → skip no-sessions (with resolvable credentials), zero HTTP", async () => {
+    const store = makeBulkTestStore({ ...STASH_SETTINGS, stashApiKey: "sk-explicit" });
+    const fake = makeFakeHttp();
+    await expect(
+      bulkDeleteStashChatSessions(store as StashBulkDeleteStore, [], { http: fake.client }),
+    ).resolves.toEqual({ skipped: true, skipReason: "no-sessions" });
+    expect(fake.calls).toHaveLength(0);
+    const blanks = makeFakeHttp();
+    await expect(
+      bulkDeleteStashChatSessions(store as StashBulkDeleteStore, ["", "  "], { http: blanks.client }),
+    ).resolves.toEqual({ skipped: true, skipReason: "no-sessions" });
+    expect(blanks.calls).toHaveLength(0);
   });
 });
