@@ -193,6 +193,17 @@ export interface CompactionGateOptions {
    * engine default of 80% of the per-model context window.
    */
   tokenCap?: number | null;
+  /**
+   * FNXC:ChatContextGuard 2026-08-19-15:05:
+   * RUFU-118: operator opt-out (Settings.chatPreOverflowCompactionEnabled). `false`
+   * disables the gate for this call (no measurement, no compaction, no throw);
+   * `undefined` or `true` keeps it active. The gate ships ON by default (an opt-out,
+   * not an opt-in) because without it a context at the model wall degrades to 1-token
+   * replies — pi's own threshold compaction never fires for zero-usage providers
+   * (earendil-works/pi#8328) — but it is a selectable feature, so a project that
+   * prefers the raw pi-only behavior can turn it off.
+   */
+  enabled?: boolean;
 }
 
 /** Result of a gate evaluation. */
@@ -208,8 +219,9 @@ export interface CompactionGateResult {
 /**
  * Ensure the session's loaded context fits the model window before the next prompt.
  *
- * Skips (diagnostic warn, no throw) for: non-pi session shapes, unknown context window /
- * non-positive hard limit, and unknown loaded-token measurements.
+ * Skips (diagnostic warn, no throw) for: an explicit `enabled: false` opt-out,
+ * non-pi session shapes, unknown context window / non-positive hard limit, and unknown
+ * loaded-token measurements.
  *
  * When the measured context is at or above the threshold: compacts via the existing
  * `compactSessionContext` (session.compact()), re-measures, and throws
@@ -221,6 +233,13 @@ export async function ensureContextWithinCompactionThreshold(
   session: CompactionGateSession,
   options: CompactionGateOptions,
 ): Promise<CompactionGateResult> {
+  if (options.enabled === false) {
+    // Routine per-turn skip (operator opted out via Settings.chatPreOverflowCompactionEnabled).
+    // debug() keeps this out of the steady-state log — a warn/log here would fire on every
+    // chat turn for opted-out projects.
+    piLog.debug("chat-context-guard: pre-overflow gate disabled by project settings — skipping");
+    return { compacted: false, contextTokens: null, threshold: null };
+  }
   if (!session || typeof session.getContextUsage !== "function") {
     piLog.warn("chat-context-guard: non-pi session shape (no getContextUsage) — skipping pre-overflow gate");
     return { compacted: false, contextTokens: null, threshold: null };
