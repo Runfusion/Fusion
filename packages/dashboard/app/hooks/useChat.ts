@@ -7,6 +7,8 @@ import {
   fetchChatMessages,
   updateChatSession,
   deleteChatSession,
+  backfillChatSessionToStash,
+  editChatMessage,
   attachChatStream,
   streamChatResponse,
   cancelChatResponse,
@@ -1494,6 +1496,17 @@ export function useChat(
     [activeSession, getChatMessagesCacheKey, projectId],
   );
 
+  /*
+  FNXC:ChatStashBackfill 2026-08-19-16:28:
+  (operator request 2026-08-19) Backfill a chat's full history into Stash on demand.
+  Thin passthrough — the route owns the gating (Stash backend + API key) and the
+  upload; the hook adds nothing beyond the project scoping.
+  */
+  const backfillStashSession = useCallback(
+    (id: string) => backfillChatSessionToStash(id, projectId),
+    [projectId],
+  );
+
   // Load more messages (pagination — use before cursor for oldest displayed message)
   // messagesRef is assigned on every render; reading from the ref here avoids
   // closing over `messages` and prevents this callback from being recreated on
@@ -2456,6 +2469,7 @@ export function useChat(
     setSessionModel,
     setSessionThinkingLevel,
     deleteSession,
+    backfillStashSession,
     createTag,
     renameTag,
     deleteTag,
