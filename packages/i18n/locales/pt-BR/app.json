@@ -6907,7 +6907,22 @@
       "qmdInstallFailed": "Falha ao instalar o qmd",
       "qmdInstallUnavailable": "A instalação do qmd foi concluída, mas o qmd ainda está indisponível",
       "saveBeforeCompacting": "",
-      "saveBeforeSwitching": ""
+      "saveBeforeSwitching": "",
+      "backendFile": "",
+      "backendHelp": "",
+      "backendLabel": "",
+      "backendQmd": "",
+      "backendReadonly": "",
+      "backendStash": "",
+      "capOnTranscriptEventsUploadedPerTask": "",
+      "executorSessionCapture": "",
+      "preOverflowCompaction": "",
+      "preOverflowCompactionHelp": "",
+      "maxTranscriptEventsPerTask": "",
+      "stashUrlHelp": "",
+      "stashUrlLabel": "",
+      "stashUrlPlaceholder": "",
+      "uploadTaskAgentLogTranscriptToStash": ""
     },
     "backups": {
       "02": "0 2 * * *",

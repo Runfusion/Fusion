@@ -6420,7 +6420,22 @@
       "qmdInstallFailed": "",
       "qmdInstallUnavailable": "",
       "saveBeforeCompacting": "",
-      "saveBeforeSwitching": ""
+      "saveBeforeSwitching": "",
+      "backendFile": "",
+      "backendHelp": "",
+      "backendLabel": "",
+      "backendQmd": "",
+      "backendReadonly": "",
+      "backendStash": "",
+      "capOnTranscriptEventsUploadedPerTask": "",
+      "executorSessionCapture": "",
+      "preOverflowCompaction": "",
+      "preOverflowCompactionHelp": "",
+      "maxTranscriptEventsPerTask": "",
+      "stashUrlHelp": "",
+      "stashUrlLabel": "",
+      "stashUrlPlaceholder": "",
+      "uploadTaskAgentLogTranscriptToStash": ""
     },
     "merge": {
       "abort": "",

@@ -6443,6 +6443,8 @@
       "dreamSchedule": "Dream Schedule",
       "enableMemoryTools": " Enable memory tools ",
       "executorSessionCapture": "Executor session capture",
+      "preOverflowCompaction": "Pre-overflow compaction guard",
+      "preOverflowCompactionHelp": "Compacts the chat context at ~80% of the model window before a turn would overflow it, preventing single-token replies at the context wall. Default: enabled.",
       "failedToLoadBackendStatus": "Failed to load backend status: ",
       "for": "for \"",
       "installing": "Installing…",

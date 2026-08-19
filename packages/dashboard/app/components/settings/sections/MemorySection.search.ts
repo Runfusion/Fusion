@@ -144,4 +144,18 @@ export const memorySearchEntries: SettingsSearchEntry[] = [
       "Base URL of the Stash server (e.g. http://127.0.0.1:3457). Used only when the backend above is Stash. The API key lives in the global secrets store, never in settings.",
     keywords: ["url", "endpoint", "server"],
   },
+  /*
+  FNXC:ChatContextGuard 2026-08-19-15:05:
+  (RUFU-118) Opt-out toggle for the LCM B.1 pre-overflow compaction gate.
+  */
+  {
+    sectionId: "memory",
+    key: "chatPreOverflowCompactionEnabled",
+    labelKey: "settings.memory.preOverflowCompaction",
+    labelFallback: "Pre-overflow compaction guard",
+    helpKey: "settings.memory.preOverflowCompactionHelp",
+    helpFallback:
+      "Compacts the chat context at ~80% of the model window before a turn would overflow it, preventing single-token replies at the context wall. Default: enabled.",
+    keywords: ["compaction", "overflow", "guard", "context", "lcm"],
+  },
 ];

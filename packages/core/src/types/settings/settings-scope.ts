@@ -2378,6 +2378,15 @@ export interface ProjectSettings {
   /** Cron expression for dream processing. Only used when memoryDreamsEnabled
    *  is true. Default: "0 4 * * *" (daily at 4 AM). */
   memoryDreamsSchedule?: string;
+  /** When true (default), the deterministic chat pre-overflow compaction gate (RUFU-118,
+   *  LCM phase 1) measures the loaded chat context before each prompt and compacts it
+   *  once the context reaches the effective threshold (80% of the model window by
+   *  default, bounded by tokenCap), so a prompt never exceeds the model window. Set
+   *  false to disable the gate for this project (the raw pi-only behavior: prompts are
+   *  sent even when the loaded context already exceeds the threshold). The gate is an
+   *  opt-out selectable feature, not always-on — not every operator wants it.
+   *  Default: true. */
+  chatPreOverflowCompactionEnabled?: boolean;
   /** Token compaction threshold — dual-lane semantics:
    *
    *  - Executor/agent tasks (TokenCapDetector): optional pre-overflow cap.
