@@ -29,7 +29,14 @@ export type SignalTaskCompleteDeps = {
 
 export function signalTaskComplete(deps: SignalTaskCompleteDeps, task: Task): void {
   triggerPostTaskReflectionCapture(deps, task);
-  triggerTaskMemoryCapture(deps, task);
+  /*
+  FNXC:StashSessionCapture 2026-08-19-06:24:
+  (RUFU-122 review fix) The completion seam always captures the task_completion
+  anchor — the anchor kind is the seam's identity, not a task.status read (the
+  engine never writes status "done" onto the row; see TaskCaptureAnchorKind in
+  memory-capture.ts).
+  */
+  triggerTaskMemoryCapture(deps, task, "completion");
   deps.onComplete?.(task);
 }
 

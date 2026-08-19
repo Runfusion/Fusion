@@ -2326,6 +2326,30 @@ export interface ProjectSettings {
    *  is never committed; this is an optional escape hatch populated by the
    *  operator through the secrets path. */
   stashApiKey?: string;
+  /*
+  FNXC:StashSessionCapture 2026-08-19-04:37:
+  (RUFU-122) Task-terminal transcript upload to Stash. On task terminalization
+  (done + failed/parked) the engine uploads the task's agent log (agent-log.jsonl)
+  as an ordered, typed transcript to the per-task Stash session
+  fusion-task-<taskId>, extending the RUFU-068 terminal anchor capture
+  (task_completion/task_failure). The operator's 2026-08-18 request fixes these
+  key names: transcript capture is operator-toggleable with a volume cap, and a
+  schema-only setting keeps `status` log entries in or out. All three are inert
+  unless memoryBackendType === "stash" and a Stash API key is present. The
+  RUFU-068 terminal anchor event is unaffected by executorSessionCaptureEnabled.
+  */
+  /** When false, task terminalization skips the agent-log transcript upload to
+   *  the per-task Stash session; the RUFU-068 terminal anchor event
+   *  (task_completion/task_failure) still fires. Default: true. */
+  executorSessionCaptureEnabled?: boolean;
+  /** Per-task cap on transcript events uploaded (the most recent N are kept;
+   *  older entries are dropped, never truncated mid-stream, and the full log
+   *  remains on disk). Default: 20000. */
+  executorSessionCaptureMaxEvents?: number;
+  /** When true, `status` agent-log entries are uploaded as `status` events;
+   *  when false (default) they are skipped. Schema-only setting — deliberately
+   *  NOT surfaced in the settings UI. Default: false. */
+  executorSessionCaptureIncludeStatus?: boolean;
   /** When true, enables automatic AI-powered summarization and compression of the
    *  working memory file when it exceeds the configured size threshold.
    *  Creates an automation schedule that checks memory size and compacts when needed.

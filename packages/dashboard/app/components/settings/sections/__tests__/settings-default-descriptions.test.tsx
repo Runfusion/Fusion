@@ -199,6 +199,12 @@ const SETTING_DESCRIPTION_KEYS: Record<string, string> = {
   memoryDreamsSchedule: "memory.cronExpressionForDreamProcessing",
   memoryBackendType: "memory.agentsGetMemorySearchMemoryGetAndMemory",
   stashUrl: "memory.stashUrlHelp",
+  /*
+  FNXC:StashSessionCapture 2026-08-19-05:09:
+  (RUFU-122) Task-terminal transcript upload controls (Stash backend only).
+  */
+  executorSessionCaptureEnabled: "memory.uploadTaskAgentLogTranscriptToStash",
+  executorSessionCaptureMaxEvents: "memory.capOnTranscriptEventsUploadedPerTask",
   // MergeSection
   autoMerge: "merge.whenEnabledTasksThatPassReviewAreAutomatically",
   // FN-7557: planApprovalMode defaults to auto-approve-all; the "(default)" marker moved to the auto-approve option.
@@ -360,6 +366,14 @@ const NOT_SURFACED_ALLOWLIST: Record<string, string> = {
   // the PRIMARY stash key lives in the global secrets store and any override is handled
   // through the secrets path, so this key has no user-editable Settings description field.
   stashApiKey: "per-project Stash API key override handled via the secrets path, not a Settings UI field",
+  /*
+  FNXC:StashSessionCapture 2026-08-19-05:09:
+  (RUFU-122) Schema-only transcript flag: when enabled, status entries are
+  included in the uploaded agent-log transcript. Deliberately rendered as NO
+  Settings row (operator-managed via the config file), so there is no
+  user-editable description field to document.
+  */
+  executorSessionCaptureIncludeStatus: "schema-only transcript flag (status-entry inclusion); deliberately not rendered as a Settings row",
   // Moved to workflow settings (U4) — see MOVED_SETTINGS_KEYS in `packages/core/src/config/settings-schema.ts`.
   workflowStepTimeoutMs: "moved to workflow settings (U4)",
   workflowStepScopeEnforcement: "moved to workflow settings (U4)",
@@ -649,9 +663,15 @@ const NOT_SURFACED_ALLOWLIST: Record<string, string> = {
    * the guard's canonical-default assertion rejects; their concrete defaults are the
    * http://127.0.0.1 runtime fallbacks conveyed by each row's placeholder/help, not a
    * description-field claim.
+   *
+   * FNXC:StashSessionCapture 2026-08-19-05:09:
+   * (RUFU-122) stashUrl left this allowlist: it is now a genuinely rendered
+   * Settings row whose help copy accurately states its empty-string canonical
+   * default ("Default: empty (uses the built-in default Stash URL)"), so it is
+   * mapped in SETTING_DESCRIPTION_KEYS instead — a key in BOTH maps fails the
+   * overlap assertion below.
    */
   memoryBackendUrl: "project-scoped TencentDB gateway URL row (rendered in MemorySection only for the tencentdb backend); canonical schema default is empty (`''`) = use the runtime DEFAULT_GATEWAY_URL (http://127.0.0.1:8420), conveyed by the row's placeholder/help, not a description-field claim",
-  stashUrl: "project-scoped Stash server URL row (rendered in MemorySection only for the stash backend); canonical schema default is empty (`''`) = use the runtime DEFAULT_STASH_URL (http://127.0.0.1:3457), conveyed by the row's placeholder/help, not a description-field claim",
   stashApiKey: "Stash API-key secret override, not rendered as a settings field (the primary key lives in the global secrets store `stash-api-key` per MemorySection help, never in settings); canonical schema default is empty (`''`) = use the resolved global secret",
 };
 
