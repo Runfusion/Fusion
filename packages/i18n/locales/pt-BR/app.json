@@ -7005,7 +7005,7 @@
       "advancedWorkflowPolicy": " Política avançada de fluxo de trabalho ",
       "aIMergeCommitSummaries": " Resumos de commit de merge por IA ",
       "aITitleAndGitCommitMessageSummarization": " Resumo de título e mensagem de commit do Git por IA ",
-      "automaticallyCompactContextWhenApproachingThisTokenCount": "Compacta o contexto automaticamente ao se aproximar desta contagem de tokens. Deixe em branco para não haver limite (compactação apenas em erros de overflow). Defina um número para compactar proativamente ao atingir essa contagem de tokens. Sem padrão — não definido (sem limite).",
+      "automaticallyCompactContextWhenApproachingThisTokenCount": "Limite superior do limiar de compactação de contexto. Sessões de chat compactam por padrão quando atingem 80% da janela de contexto do modelo; um valor menor compacta mais cedo, e valores acima do limite rígido do modelo são limitados. Tarefas de executor/agent: vazio = sem limite (compacta apenas em erros de overflow). Sem padrão — não definido.",
       "autoSelectPresetBasedOnTaskSize": " Selecionar predefinição automaticamente com base no tamanho da tarefa ",
       "autoSummarizeLongDescriptionsAsTitles": " Resumir automaticamente títulos de tarefas ",
       "taskOutputLanguage": "AI-authored task language",
