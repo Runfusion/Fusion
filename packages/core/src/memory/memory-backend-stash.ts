@@ -46,6 +46,11 @@ import type {
   MemoryCaptureResult,
   MemoryWriteIdentity,
 } from "./memory-backend.js";
+import {
+  resolveStashMemorySettings,
+  type MemoryBackendSettings,
+  type StashSecretsReader,
+} from "./stash-settings.js";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -784,5 +789,215 @@ export async function deleteStashChatSession(
     const msg = err instanceof Error ? err.message : String(err);
     if (msg.includes("404")) return { deleted: false, status: "not-found" };
     return { deleted: false, status: "skipped" };
+  }
+}
+
+// ── Bulk chat-session delete sync (RUFU-125) ─────────────────────────────
+
+/**
+ * FNXC:RUFU125BulkArchiveSync 2026-08-19-06:07:
+ * RUFU-125: default page cap for the bulk session-list scan — 10 pages ×
+ * 200 rows = a 2000-row lookback. Stash's session list has no by-session-id
+ * filter, so the scan pages `GET /api/v1/me/sessions?limit=200&offset=<n*200>`
+ * in `last_event_at DESC` order until every target matched, the server
+ * window is exhausted (a page returns < 200 rows), or the cap is reached.
+ * Rows older than the window are NOT soft-deleted — documented residual,
+ * debug-logged at the call site.
+ */
+export const DEFAULT_STASH_BULK_MAX_PAGES = 10;
+
+/**
+ * FNXC:RUFU125BulkArchiveSync 2026-08-19-06:07:
+ * RUFU-125: counters for the bulk soft-delete sync. `targets` is the
+ * de-duplicated, blank-stripped id count; `matched` counts listed rows whose
+ * top-level `session_id` was a target; `deleted` counts confirmed 2xx
+ * DELETEs; `pagesScanned` counts session-list pages fetched; `truncated`
+ * is true ONLY when the scan stopped (page cap or GET failure) with
+ * unmatched targets still outstanding — those rows remain in Stash.
+ */
+export interface StashBulkChatSessionDeleteResult {
+  targets: number;
+  matched: number;
+  deleted: number;
+  pagesScanned: number;
+  truncated: boolean;
+}
+
+/**
+ * FNXC:RUFU125BulkArchiveSync 2026-08-19-06:07:
+ * RUFU-125: soft-delete the Stash session rows matching a BULK of Fusion
+ * chat session ids. The task-planner archival path bulk-deletes local chat
+ * sessions via ChatStore.deleteSessionsForAgentId, which bypasses the
+ * per-session `DELETE /api/chat/sessions/:id` route RUFU-121 hooks — so
+ * the matching Stash rows lingered. This is the batched twin of
+ * deleteStashChatSession: RUFU-121's single-page `limit=200` lookup misses
+ * targets older than the newest 200 rows, so this one pages
+ * `GET /api/v1/me/sessions?limit=200&offset=<pages*200>` (rows arrive
+ * `last_event_at DESC`) and then
+ * `DELETE /api/v1/me/sessions/<row.id>` (204) per matched row.
+ *
+ * Contract (best-effort, mirrors RUFU-121):
+ * - NEVER throws. Blank/non-string ids are dropped and duplicates collapsed
+ *   before any HTTP; an empty target set returns a zeroed result with ZERO
+ *   HTTP calls.
+ * - A row matches iff its `session_id` is a string still in the target set.
+ *   Only rows with a non-null `id` (string|number → String) are matchable —
+ *   a null row id means the row is already soft-deleted (the endpoint still
+ *   lists such rows with `id: null`); they are skipped but still consume a
+ *   lookback slot (they occupy the page they appear on).
+ * - A GET failure mid-scan stops the scan with a PARTIAL result (no throw);
+ *   a DELETE 404 → row not counted (concurrent delete); any other DELETE
+ *   error → row not counted, remaining rows still attempted.
+ * - `truncated: true` iff the scan stopped at the page cap or on a GET
+ *   failure while unmatched targets remain; `false` when all targets
+ *   matched or the server window was fully scanned.
+ *
+ * Documented residual: rows older than the page-cap window are not
+ * soft-deleted and remain in Stash — the caller debug-logs the miss.
+ */
+export async function deleteStashChatSessions(
+  baseUrl: string,
+  apiKey: string,
+  sessionIds: string[],
+  opts?: { http?: StashHttpClient; maxPages?: number },
+): Promise<StashBulkChatSessionDeleteResult> {
+  const targets = [...new Set(sessionIds.filter((id) => typeof id === "string" && id.trim().length > 0))];
+  if (targets.length === 0) {
+    return { targets: 0, matched: 0, deleted: 0, pagesScanned: 0, truncated: false };
+  }
+  const maxPages = Math.max(1, opts?.maxPages ?? DEFAULT_STASH_BULK_MAX_PAGES);
+  const base = (baseUrl ?? DEFAULT_STASH_URL).replace(/\/+$/, "");
+  const client: StashHttpClient =
+    opts?.http ?? ((path, method, payload) => stashHttpJsonRequest(base, apiKey, path, method, payload));
+
+  const remaining = new Set(targets);
+  let matched = 0;
+  let deleted = 0;
+  let pagesScanned = 0;
+  let windowExhausted = false;
+  try {
+    for (let page = 0; page < maxPages && remaining.size > 0; page += 1) {
+      pagesScanned = page + 1;
+      let resp: unknown = null;
+      try {
+        resp = await client(`/api/v1/me/sessions?limit=200&offset=${page * 200}`, "GET");
+      } catch {
+        break; // GET failure mid-scan → partial result, never throw
+      }
+      const raw = (resp as { sessions?: unknown } | null)?.sessions;
+      const rows = Array.isArray(raw) ? (raw as Array<Record<string, unknown>>) : [];
+      for (const row of rows) {
+        const sessionId = row?.session_id;
+        if (typeof sessionId !== "string" || !remaining.has(sessionId)) continue;
+        remaining.delete(sessionId);
+        matched += 1;
+        const rowId = row?.id;
+        const rowIdStr =
+          typeof rowId === "string" ? rowId : typeof rowId === "number" ? String(rowId) : undefined;
+        if (!rowIdStr) continue; // null id: already soft-deleted — not matchable, slot consumed
+        try {
+          await client(`/api/v1/me/sessions/${encodeURIComponent(rowIdStr)}`, "DELETE");
+          deleted += 1;
+        } catch {
+          // 404 → concurrent delete; 5xx/network → row stays. Either way the
+          // row is not counted deleted and the scan continues with the rest.
+        }
+      }
+      if (rows.length < 200) {
+        windowExhausted = true;
+        break; // server window exhausted — no further pages exist
+      }
+    }
+  } catch {
+    // Defense in depth: every inner call is already caught; this keeps the
+    // never-throw contract honest if a future edit regresses one of them.
+  }
+  return {
+    targets: targets.length,
+    matched,
+    deleted,
+    pagesScanned,
+    truncated: remaining.size > 0 && !windowExhausted,
+  };
+}
+
+/**
+ * FNXC:RUFU125BulkArchiveSync 2026-08-19-06:07:
+ * RUFU-125: structural store surface for bulkDeleteStashChatSessions —
+ * `getSettings()` plus the RUFU-121 StashSecretsReader duck type. A real
+ * TaskStore satisfies it (its `Settings` type carries the
+ * `[key: string]: unknown` index signature, so it is assignable to
+ * MemoryBackendSettings).
+ */
+export interface StashBulkDeleteStore extends StashSecretsReader {
+  getSettings(): Promise<MemoryBackendSettings | undefined>;
+}
+
+/**
+ * FNXC:RUFU125BulkArchiveSync 2026-08-19-06:07:
+ * RUFU-125: outcome of the store-resolving bulk sync wrapper. `skipped`
+ * (with `skipReason`) = the sync deliberately made ZERO Stash calls — the
+ * identical skip conditions as RUFU-121's per-session route sync; `skipped:
+ * false` + `result` = the paged scan ran. `sync-error` covers the
+ * unreachable-by-contract safety net so the never-throw promise survives a
+ * future regression in a dependency.
+ */
+export type StashBulkChatSessionSyncSummary =
+  | {
+      skipped: true;
+      skipReason:
+        | "settings-error"
+        | "memory-disabled"
+        | "non-stash-backend"
+        | "unresolvable-credentials"
+        | "no-sessions"
+        | "sync-error";
+    }
+  | { skipped: false; result: StashBulkChatSessionDeleteResult };
+
+/**
+ * FNXC:RUFU125BulkArchiveSync 2026-08-19-06:07:
+ * RUFU-125: store-resolving wrapper for the bulk sync. Mirrors RUFU-121's
+ * route skip-guards byte-for-byte — settings read, resolveStashMemorySettings
+ * (per-project `stashApiKey` override wins, else the global secrets-store
+ * `stash-api-key`), the same trim + DEFAULT_STASH_URL fallback the route
+ * uses (mirrors resolveMemoryBackend), then the API-key gate. NEVER throws:
+ * a `getSettings` rejection degrades to `settings-error`; the outer catch is
+ * an unreachable safety net (resolveStashMemorySettings and
+ * deleteStashChatSessions both degrade internally).
+ */
+export async function bulkDeleteStashChatSessions(
+  store: StashBulkDeleteStore,
+  sessionIds: string[],
+  opts?: { http?: StashHttpClient; maxPages?: number },
+): Promise<StashBulkChatSessionSyncSummary> {
+  const targets = [...new Set(sessionIds.filter((id) => typeof id === "string" && id.trim().length > 0))];
+  try {
+    let settings: MemoryBackendSettings | undefined;
+    try {
+      settings = await store.getSettings();
+    } catch {
+      return { skipped: true, skipReason: "settings-error" };
+    }
+    const resolved = await resolveStashMemorySettings(store, settings);
+    if (!resolved || resolved.memoryEnabled === false) {
+      return { skipped: true, skipReason: "memory-disabled" };
+    }
+    if (resolved.memoryBackendType !== "stash") {
+      return { skipped: true, skipReason: "non-stash-backend" };
+    }
+    const rawStashUrl = resolved.stashUrl;
+    const stashUrl =
+      typeof rawStashUrl === "string" && rawStashUrl.trim().length > 0
+        ? rawStashUrl.trim()
+        : DEFAULT_STASH_URL;
+    const stashApiKey = resolved.stashApiKey;
+    if (!stashApiKey) return { skipped: true, skipReason: "unresolvable-credentials" };
+    if (targets.length === 0) return { skipped: true, skipReason: "no-sessions" };
+    const result = await deleteStashChatSessions(stashUrl, stashApiKey, targets, opts);
+    return { skipped: false, result };
+  } catch {
+    // Unreachable by contract — both awaited dependencies degrade internally.
+    return { skipped: true, skipReason: "sync-error" };
   }
 }

@@ -2233,6 +2233,10 @@ export {
   normalizeStashSearchQuery,
   queryStashEvents,
   deleteStashChatSession,
+  // FNXC:RUFU125CoreExports 2026-08-19-06:07: RUFU-125 bulk archival delete-sync helpers.
+  DEFAULT_STASH_BULK_MAX_PAGES,
+  deleteStashChatSessions,
+  bulkDeleteStashChatSessions,
 } from "./memory/memory-backend-stash.js";
 export type {
   StashEvent,
@@ -2240,6 +2244,10 @@ export type {
   StashHttpClient,
   StashEventQueryFilters,
   StashChatSessionDeleteResult,
+  // FNXC:RUFU125CoreExports 2026-08-19-06:07: RUFU-125 bulk delete-sync types.
+  StashBulkChatSessionDeleteResult,
+  StashBulkChatSessionSyncSummary,
+  StashBulkDeleteStore,
 } from "./memory/memory-backend-stash.js";
 
 // FNXC:RUFU121StashSettingsInCore 2026-08-18-19:53: (RUFU-121) Stash settings/secret
