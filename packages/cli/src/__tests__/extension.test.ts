@@ -2986,6 +2986,15 @@ pgTest("fn pi extension (runnable structured-output regression slice)", () => {
       expect((await missionStore.getFeature(feature.details.featureId))?.taskId).toBe(taskA.details.taskId);
       const taskARow = (await store.getTask(taskA.details.taskId)) as any;
       expect(taskARow.sliceId).toBe(slice.details.sliceId);
+      /*
+      FNXC:MissionFeatureRepointContract 2026-08-19-23:26 (RUFU-134 / PR #3491):
+      CodeRabbit flagged that this test asserted only ONE reverse field (`sliceId`).
+      `setTaskMissionLinkage` writes BOTH `missionId` AND `sliceId` onto the task row, so
+      the proof that the repoint moved the reverse link must assert BOTH fields on the new
+      task (set) and on the old task (cleared); asserting only `sliceId` would miss a
+      repoint that silently dropped `missionId`.
+      */
+      expect(taskARow.missionId).toBe(mission.details.missionId);
 
       const repoint = await api.tools.get("fn_feature_repoint_task")!.execute("repoint", { featureId: feature.details.featureId, taskId: taskB.details.taskId }, undefined, undefined, context);
       expect(repoint.isError).not.toBe(true);
@@ -2994,11 +3003,13 @@ pgTest("fn pi extension (runnable structured-output regression slice)", () => {
       const afterFeature = (await missionStore.getFeature(feature.details.featureId))!;
       expect(afterFeature.taskId).toBe(taskB.details.taskId);
       expect(afterFeature.status).toBe("triaged");
-      // Old reverse linkage cleared, new set.
+      // Old reverse linkage cleared, new set. BOTH reverse fields (missionId + sliceId).
       const oldTaskRow = (await store.getTask(taskA.details.taskId)) as any;
       expect(oldTaskRow.sliceId).toBeUndefined();
+      expect(oldTaskRow.missionId).toBeUndefined();
       const newTaskRow = (await store.getTask(taskB.details.taskId)) as any;
       expect(newTaskRow.sliceId).toBe(slice.details.sliceId);
+      expect(newTaskRow.missionId).toBe(mission.details.missionId);
     });
 
     it("unlinks a linked feature (clearing taskId and demoting to defined) and errors on an already-unlinked feature", async () => {
