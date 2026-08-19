@@ -1490,6 +1490,66 @@ export async function runAiMerge(
       task.mergeDetails?.mergeConfirmed === true ||
       !!task.mergeDetails?.commitSha ||
       hasPriorAiNoOpFinalizationProof(task, branch, integrationBranch);
+    /*
+     * FNXC:NoCommitsBranchMissing 2026-08-08-19:46:
+     * No-commits tasks (observational audits, non-code deliverables) never create a git
+     * branch with substantive work. If a no-commits task WAS executed (baseCommitSha set)
+     * but its branch is missing and not already merged, route through evaluateNoCommitsNoOpFinalize
+     * BEFORE the "work appears lost" throw: all-done tasks finalize as a no-op (audit.git kind
+     * "no-commits-expected"), incomplete/skipped tasks demote to todo with progress preserved.
+     * Commit-expected tasks STILL throw below (invariant unchanged).
+     * Restored from RUFU-011 (commit 98dc396ec); the noCommitsExpected clause was dropped in
+     * the domain-folder move / dep-sync restructure.
+     */
+    if (wasExecuted && !alreadyMerged && task.noCommitsExpected === true) {
+      const noCommitsFinalize = evaluateNoCommitsNoOpFinalize(task);
+      if (noCommitsFinalize.blocked) {
+        const reason = noCommitsFinalize.reason ?? "no-commits task has incomplete work with no branch changes";
+        await store.updateTask(taskId, { error: reason });
+        const reboundColumn = await resolveFinalizeReboundColumn(store, taskId);
+        await store.logEntry(
+          taskId,
+          `Finalize blocked (no-commits incomplete-work guard): ${reason} — moving back to ${reboundColumn} with progress preserved`,
+          JSON.stringify({
+            doneCount: noCommitsFinalize.doneCount,
+            incompleteCount: noCommitsFinalize.incompleteCount,
+            branch,
+            integrationBranch,
+            lane: "no-commits-branch-missing",
+          }, null, 2),
+        );
+        await audit.database({
+          type: "task:no-commits-finalize-blocked-incomplete-steps" as Parameters<typeof audit.database>[0]["type"],
+          target: taskId,
+          metadata: {
+            reason,
+            doneCount: noCommitsFinalize.doneCount,
+            incompleteCount: noCommitsFinalize.incompleteCount,
+            branch,
+            integrationBranch,
+            lane: "no-commits-branch-missing",
+          },
+        });
+        await store.moveTask(taskId, reboundColumn, { preserveProgress: true, moveSource: "engine" } as Parameters<TaskStore["moveTask"]>[2]);
+        return {
+          task,
+          branch,
+          merged: false,
+          noOp: false,
+          ok: true,
+          reason,
+          error: reason,
+          worktreeRemoved: false,
+          branchDeleted: false,
+        };
+      }
+      await audit.git({
+        type: "merge:ai-no-branch",
+        target: branch,
+        metadata: { taskId, kind: "no-commits-expected", noCommitsExpected: true },
+      });
+      return await finalizeTask(store, taskId, noOpResult(task, branch, "no-commits-expected"), undefined, undefined, projectRootDir);
+    }
     if (wasExecuted && !alreadyMerged) {
       await audit.git({
         type: "merge:ai-no-branch",

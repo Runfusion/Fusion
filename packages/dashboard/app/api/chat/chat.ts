@@ -216,7 +216,12 @@ export function ensureTaskPlannerChatSession(
   );
 }
 
-/** Update a chat session (title, status, thinkingLevel, model, or agent target) */
+/**
+ * Update a chat session (title, status, thinkingLevel, model, agent target, or
+ * memory focus). `memoryFocus` is forwarded verbatim to PATCH
+ * /api/chat/sessions/:id, whose route normalizes empty -> null (whole-project
+ * scope) via ChatStore.setSessionMemoryFocus.
+ */
 export function updateChatSession(
   id: string,
   updates: {
@@ -228,6 +233,7 @@ export function updateChatSession(
     thinkingLevel?: string | null;
     pinned?: boolean;
     tagIds?: string[];
+    memoryFocus?: string | null;
   },
   projectId?: string,
 ): Promise<ChatSessionResponse> {

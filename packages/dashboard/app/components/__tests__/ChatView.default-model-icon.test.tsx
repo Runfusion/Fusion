@@ -38,6 +38,7 @@ vi.mock("../../api", () => ({
   fetchTasks: vi.fn().mockResolvedValue([]),
   updateGlobalSettings: vi.fn(),
   searchFiles: vi.fn().mockResolvedValue({ files: [] }),
+  fetchChatSession: vi.fn().mockResolvedValue({ session: { memoryFocus: null } }),
 }));
 vi.mock("lucide-react", async (importOriginal) => {
   const actual = await importOriginal<typeof import("lucide-react")>();

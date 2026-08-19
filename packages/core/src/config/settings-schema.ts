@@ -824,6 +824,14 @@ export const DEFAULT_PROJECT_SETTINGS = {
   taskEvaluationRetention: undefined,
   memoryEnabled: true,
   memoryBackendType: "qmd",
+  // FNXC:StashConfig 2026-08-13-16:35: (RUFU-068) Optional per-project Stash LCM
+  // memory backend config. stashUrl points at the operator's Stash server
+  // (default http://127.0.0.1:3457). stashApiKey is an override for hard
+  // isolation (separate Stash instance/account); the PRIMARY API key lives in
+  // the global secrets store ("stash-api-key") and is NEVER committed. Project
+  // value wins over global. TencentDB's URL setting is intentionally NOT ported.
+  stashUrl: "",
+  stashApiKey: "",
   memoryAutoSummarizeEnabled: false,
   memoryAutoSummarizeThresholdChars: 50_000,
   memoryAutoSummarizeSchedule: "0 3 * * *",

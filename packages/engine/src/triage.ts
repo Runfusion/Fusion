@@ -2792,6 +2792,11 @@ export class TriageProcessor {
                 agentName: assignedAgent.name,
                 memory: assignedAgent.memory,
               },
+              // FNXC:MemoryFocusEngine 2026-08-13-16:35 (RUFU-068): planning/triage
+              // sessions carry no per-conversation /focus topic → whole-project scope
+              // (project default). The optional focus seam stays wired so a planning
+              // conversation that later acquires a topic can scope recall.
+              focus: undefined,
             }
             : undefined),
           createWebFetchTool(),

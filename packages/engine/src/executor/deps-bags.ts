@@ -1077,6 +1077,8 @@ export function buildSignalTaskCompleteDeps(host: any): any {
   return {
     store: host.store,
     capturedReflectionTaskIds: host.capturedReflectionTaskIds,
+    rootDir: host.rootDir,
+    capturedMemoryTaskIds: host.capturedMemoryTaskIds,
     reflectionService: host.options.reflectionService,
     onComplete: host.options.onComplete,
   };

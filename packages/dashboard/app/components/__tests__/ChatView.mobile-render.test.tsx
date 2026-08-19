@@ -27,6 +27,7 @@ vi.mock("../../api", async (importOriginal) => {
     fetchDiscoveredSkills: vi.fn().mockResolvedValue([]),
     fetchTasks: vi.fn().mockResolvedValue([]),
     searchFiles: vi.fn().mockResolvedValue({ files: [] }),
+    fetchChatSession: vi.fn().mockResolvedValue({ session: { memoryFocus: null } }),
   };
 });
 

@@ -19,7 +19,7 @@
  * callers are responsible for gating dispatch on that (this module has no
  * opinion on task/agent state — it only matches text and executes actions).
  */
-import { addSteeringComment } from "../api";
+import { addSteeringComment, updateChatSession } from "../api";
 
 /** Context passed to a command's `run()` at dispatch time. */
 export interface CommandContext {
@@ -27,6 +27,12 @@ export interface CommandContext {
   taskId: string;
   /** Optional project scope, forwarded to API calls exactly like existing composers do. */
   projectId?: string;
+  /**
+   * ChatMemoryFocus (RUFU-068): the id of the chat session the command is attached
+   * to. Session-scoped commands (e.g. `/focus`) persist per-conversation state on
+   * this session; task-scoped commands (e.g. `/steer`) ignore it.
+   */
+  sessionId: string;
   /** Text following the trigger (and separating space), already trimmed. */
   remainder: string;
 }
@@ -38,6 +44,13 @@ export interface ChatCommand {
   name: string;
   /** Human-readable description shown in the "/" menu. */
   description: string;
+  /**
+   * ChatMemoryFocus (RUFU-068): when true (the default), dispatch requires a
+   * running/active agent and hosts disable the menu item otherwise. Local
+   * session-setting commands (e.g. `/focus`) set this false so they stay
+   * dispatchable regardless of agent state.
+   */
+  requiresAgent: boolean;
   /** Executes the command's action. Resolves/rejects to let the caller show success/error feedback. */
   run(ctx: CommandContext): Promise<unknown>;
 }
@@ -54,8 +67,39 @@ export const CHAT_COMMANDS: readonly ChatCommand[] = [
     trigger: "/steer",
     name: "steer",
     description: "Send context to the running agent without interrupting it",
+    requiresAgent: true,
     run(ctx: CommandContext) {
       return addSteeringComment(ctx.taskId, ctx.remainder, ctx.projectId);
+    },
+  },
+  {
+    /*
+    FNXC:ChatMemoryFocusFocusCommand 2026-08-13:
+    /focus sets the conversation's per-conversation memory FOCUS topic, persisted
+    on chat_sessions.memory_focus via the PATCH /api/chat/sessions/:id route so it
+    survives reconnect. Recall is then scoped to that topic as a WITHIN-project read
+    filter (searchProjectMemory -> backend.search -> Stash REST topic param) NEVER a
+    client-side / post-query in-memory filter, and cross-project A/B isolation is
+    never weakened. Focus unset (empty remainder), "all", or "*" restores
+    whole-project scope. Unlike /steer, /focus is a local session-setting command
+    and requires no running agent, so requiresAgent is false and hosts must never
+    disable it on agentRunning. Capture stays write-anywhere and topic-agnostic.
+    */
+    trigger: "/focus",
+    name: "focus",
+    description: "Set the conversation's memory focus topic; 'all' clears to whole-project scope",
+    requiresAgent: false,
+    run(ctx: CommandContext) {
+      /*
+      FNXC:ChatMemoryFocusFocusCommand 2026-08-13:
+      Persist the trimmed remainder as the per-conversation focus topic. An empty
+      remainder is not dispatchable (matchChatCommand requires non-whitespace), and
+      "all"/"*" (and the session focus absent) all collapse to whole-project scope
+      via setSessionMemoryFocus normalizing empty->null. The client persists the
+      topic on the session; enforcement of the topic scope is the Stash backend's
+      SQL, not this client call.
+      */
+      return updateChatSession(ctx.sessionId, { memoryFocus: ctx.remainder }, ctx.projectId);
     },
   },
 ];

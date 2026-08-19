@@ -121,6 +121,7 @@ export class ChatStore extends EventEmitter<ChatStoreEvents> {
       modelProvider: input.modelProvider ?? null,
       modelId: input.modelId ?? null,
       thinkingLevel: input.thinkingLevel ?? null,
+      memoryFocus: input.memoryFocus ?? null,
       createdAt: now,
       updatedAt: now,
       pinnedAt: null,
@@ -247,6 +248,26 @@ export class ChatStore extends EventEmitter<ChatStoreEvents> {
         throw new Error("You can pin up to 3 conversations per project");
       }
       return asyncChatStore.updateChatSession(tx, id, { pinnedAt: session.pinnedAt ?? new Date().toISOString() });
+    });
+    if (updated) this.emit("chat:session:updated", updated);
+    return updated;
+  }
+
+  /**
+   * Set or clear a session's per-conversation read-time memory FOCUS/TOPIC
+   * (RUFU-068). Persists chat_sessions.memory_focus so the active topic survives
+   * reconnect and scopes fn_memory_search + recall within the project. An empty
+   * string is normalized to null (unset → whole-project scope).
+   *
+   * @param id - Session ID
+   * @param memoryFocus - The active topic, null/empty to clear to whole-project scope
+   * @returns The updated session, or undefined if not found
+   */
+  async setSessionMemoryFocus(id: string, memoryFocus: string | null | undefined): Promise<ChatSession | undefined> {
+    const normalized = memoryFocus == null || memoryFocus.trim() === "" ? null : memoryFocus.trim();
+    // updateChatSession bumps updatedAt internally; we only write the focus.
+    const updated = await asyncChatStore.updateChatSession(this.asyncLayer.db, id, {
+      memoryFocus: normalized,
     });
     if (updated) this.emit("chat:session:updated", updated);
     return updated;

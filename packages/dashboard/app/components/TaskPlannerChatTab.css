@@ -235,6 +235,21 @@ Task Chat keeps model and thinking controls reachable beside the composer, reusi
   flex: 0 0 auto;
 }
 
+/*
+FNXC:ChatMemoryFocus 2026-08-13:
+Spacing row holding the per-conversation memory focus chip above the planner
+composer. The chip inherits its control-size token from the composer below so
+it aligns with the send/stop buttons.
+*/
+.task-planner-chat-focus-row {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: flex-start;
+  padding-inline: var(--space-xs);
+  padding-bottom: var(--space-xs);
+}
+
 .task-planner-chat-composer {
   /* FN-7634: same formula as ChatView.css's `.chat-input-row { --chat-input-control-size: … }` so the Planner stop/send buttons share the regular Chat view's control-size floor. */
   --chat-input-control-size: calc(var(--space-lg) * 2.5);
