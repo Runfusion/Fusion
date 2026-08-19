@@ -62,6 +62,15 @@ vi.mock("@fusion/engine", () => ({
   createFnAgent: vi.fn(),
   createResolvedAgentSession: vi.fn(),
   promptWithFallback: vi.fn(),
+  /*
+  FNXC:DashboardChatTests 2026-08-18-18:06 (RUFU-118):
+  The pre-overflow compaction gate (chat.ts named imports from the engine barrel) needs a
+  resolvable export in this static factory or the whole file fails module load.
+  Default no-op: pass through without compacting, so existing sendMessage cases keep
+  their promptWithFallback expectations.
+  */
+  ChatContextOverflowError: class ChatContextOverflowError extends Error {},
+  ensureContextWithinCompactionThreshold: vi.fn(async () => ({ compacted: false, contextTokens: null, threshold: null })),
   extractRuntimeHint: vi.fn(() => undefined),
   extractRuntimeModel: vi.fn(() => undefined),
   buildSessionSkillContextSync: vi.fn(() => ({ skillSelectionContext: undefined, resolvedSkillNames: [], skillSource: "none" as const })),
