@@ -12,6 +12,7 @@ import {
   resolvePermanentAgentEffectiveModel,
   resolvePermanentAgentEffectiveThinkingLevel,
   resolveStashMemorySettings,
+  queryStashEvents,
   type ChatMessage,
   type EnrichedChatSession,
   type ChatAttachment,
@@ -909,17 +910,23 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
   first-class action — "nahrat starsie chaty do stashu" — surfaced in the chat session
   context menu only when the project's memory backend is Stash. Reuses the live-capture
   write path (captureMemory) so backfilled transcripts land in the same per-project
-  session folder, dedupe identically (Stash content_hash), and stay searchable/recallable
-  exactly like live-captured events. Event timestamps use each message's REAL created_at
-  (not the capture time) — old transcripts must keep their original chronology for
-  after/before filtering and Stash title generation. The chatMessageToMemoryCaptureEvent
-  mapping is inlined (not reused) precisely because the live helper stamps now() — a
-  backfill that re-stamped every old message with the upload time would destroy the
-  transcript's chronology.
-  Contract: 200 {ok,inserted,deduped,uploaded} on success; 404 unknown session; 400 for
-  memory-disabled / non-stash backend / unconfigured key / empty chat; 502 when the Stash
-  upload itself fails — captureMemory never throws, it degrades to ok:false, and the
-  route must surface that as a visible failure, never a success.
+  session folder, and stay searchable/recallable exactly like live-captured events.
+  Idempotency is CLIENT-SIDE: Stash's /events/batch is a bare INSERT (no ON CONFLICT,
+  no unique constraint — verified against the backend source and live: the same
+  backfill run twice took the session 4 -> 8 -> 12 events), so before upload the route
+  pages through the session's existing events (queryStashEvents) and skips messages
+  whose content is already stored — re-runs and backfill-after-live-capture insert
+  nothing new. Event timestamps use each message's REAL created_at (not the capture
+  time) — old transcripts must keep their original chronology for after/before
+  filtering and Stash title generation. The chatMessageToMemoryCaptureEvent mapping is
+  inlined (not reused) precisely because the live helper stamps now() — a backfill that
+  re-stamped every old message with the upload time would destroy the transcript's
+  chronology.
+  Contract: 200 {ok,inserted,skipped,uploaded} on success (skipped = messages already
+  in Stash, omitted by the client-side dedupe); 404 unknown session; 400 for
+  memory-disabled / non-stash backend / unconfigured key / empty chat; 502 when the
+  Stash pre-check or the upload itself fails — captureMemory never throws, it degrades
+  to ok:false, and the route must surface that as a visible failure, never a success.
   */
   router.post("/chat/sessions/:id/backfill-stash", rateLimit(RATE_LIMITS.mutation), async (req, res) => {
     try {
@@ -956,11 +963,73 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
         throw badRequest("Chat has no messages to upload");
       }
 
+      /*
+      FNXC:ChatStashBackfillIdempotency 2026-08-19-22:35:
+      (RUFU-136 fix, discovered during live verification) Stash's /events/batch is a
+      bare INSERT — push_event has no ON CONFLICT and history_events no unique
+      constraint (verified against the backend source; the live probe took the CEO
+      chat 4 -> 8 -> 12 events across two identical backfills). The live backend also
+      stores content untruncated (50k chars round-tripped intact, verified 2026-08-19),
+      so an EXACT content match is the dedupe key. Pre-check: page the session's
+      existing events (structured query, 200/page, ascending, inclusive after-cursor)
+      and skip messages whose content is already stored. Bounded: 50 pages (10k
+      events) plus a no-progress guard — the inclusive `after` re-returns the boundary
+      row (the Set absorbs it), and a frozen cursor signature breaks the loop instead
+      of spinning. A pre-check transport failure fails CLOSED (502) rather than
+      blindly uploading duplicates.
+      */
+      const rawStashUrl = resolved.stashUrl;
+      const stashUrl =
+        typeof rawStashUrl === "string" && rawStashUrl.trim().length > 0
+          ? rawStashUrl.trim()
+          : DEFAULT_STASH_URL;
+      let existingContents: Set<string>;
+      try {
+        existingContents = new Set<string>();
+        let cursor: string | undefined;
+        let lastSignature = "";
+        for (let page = 0; page < 50; page++) {
+          const { events } = await queryStashEvents(stashUrl, resolved.stashApiKey, {
+            sessionId,
+            limit: 200,
+            order: "asc",
+            ...(cursor ? { after: cursor } : {}),
+          });
+          if (events.length === 0) break;
+          for (const event of events) {
+            const content = typeof event.content === "string" ? event.content : "";
+            if (content) existingContents.add(content);
+          }
+          const last = events[events.length - 1];
+          const nextCursor = typeof last?.created_at === "string" ? last.created_at : undefined;
+          const signature = `${nextCursor ?? ""}::${typeof last?.content === "string" ? last.content : ""}`;
+          if (events.length < 200 || !nextCursor || signature === lastSignature) break;
+          cursor = nextCursor;
+          lastSignature = signature;
+        }
+      } catch {
+        res.status(502).json({
+          ok: false,
+          inserted: 0,
+          skipped: 0,
+          uploaded: messages.length,
+          error: "Stash pre-check failed — is the Stash server reachable?",
+        });
+        return;
+      }
+      const freshMessages = messages.filter((message) => !existingContents.has(message.content ?? ""));
+      if (freshMessages.length === 0) {
+        // Idempotent no-op: every message is already in Stash (re-run, or the chat
+        // was live-captured) — success with nothing uploaded, never duplicates.
+        res.json({ ok: true, inserted: 0, skipped: messages.length, uploaded: 0 });
+        return;
+      }
+
       const rootDir = store.getRootDir();
       // store.getProjectId() is string | null — the ternary below narrows to string
       // for captureMemory's meta.projectId; a null guard keeps the type honest.
       const projectId = store.getProjectId();
-      const events = messages.map((message) => {
+      const events = freshMessages.map((message) => {
         const metadata = message.metadata ?? {};
         const agentName = typeof metadata.agent_name === "string"
           ? metadata.agent_name
@@ -982,6 +1051,7 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
         return base as unknown as MemoryCaptureEvent;
       });
 
+      const skipped = messages.length - freshMessages.length;
       const result = await captureMemory(rootDir, resolved, sessionId, events, {
         projectRoot: rootDir,
         ...(projectId ? { projectId } : {}),
@@ -992,13 +1062,13 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
         res.status(502).json({
           ok: false,
           inserted: 0,
-          deduped: 0,
-          uploaded: messages.length,
+          skipped,
+          uploaded: freshMessages.length,
           error: "Stash upload failed — is the Stash server reachable?",
         });
         return;
       }
-      res.json({ ok: true, inserted: result.inserted, deduped: result.deduped, uploaded: messages.length });
+      res.json({ ok: true, inserted: result.inserted, skipped, uploaded: freshMessages.length });
     } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;

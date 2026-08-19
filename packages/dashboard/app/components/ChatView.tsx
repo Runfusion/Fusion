@@ -2632,10 +2632,9 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
         const result = await backfillStashSession(id);
         addToast(
           result.ok
-            ? t("chat.preserveToStashDone", "Uploaded {{uploaded}} messages to Stash ({{inserted}} new, {{deduped}} already stored)", {
+            ? t("chat.preserveToStashDone", "Uploaded {{uploaded}} messages to Stash ({{skipped}} already stored)", {
                 uploaded: result.uploaded,
-                inserted: result.inserted,
-                deduped: result.deduped,
+                skipped: result.skipped,
               })
             : t("chat.preserveToStashFailed", "Stash upload failed: {{error}}", { error: result.error ?? "unknown error" }),
           result.ok ? "success" : "error",
