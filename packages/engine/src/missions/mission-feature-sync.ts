@@ -1,4 +1,4 @@
-import type { DriftAlignment, DriftReport, MissionFeature, Task, TaskStore } from "@fusion/core";
+import type { DriftAlignment, DriftReport, MissionFeature, Task, TaskStore, WorkflowSelectionCache } from "@fusion/core";
 import { getTaskCompletionBlockerForStore } from "../execution/task-completion.js";
 import { resolveLifecycleColumns, resolveTaskLifecycleColumns, resolveWorkflowIrForTask } from "@fusion/core";
 
@@ -198,6 +198,16 @@ export async function reconcileMissionFeatureState(
   task: Task,
   feature: Pick<MissionFeature, "id" | "status" | "lastValidatorStatus" | "specAlignment">,
   context: MissionFeatureSyncContext = {},
+  /*
+  FNXC:MissionReverseLineageSpecAlignment 2026-08-19-21:44 (RUFU-134 / PR #3491):
+  Optional caller-owned IR cache: a reconcile pass that already resolved this task's workflow
+  (the terminal-column snapshot) projects alignment without a second per-task selection read.
+  Single-task callers omit it and keep the original behavior.
+  */
+  caches?: {
+    irCache?: Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>;
+    selectionCache?: WorkflowSelectionCache;
+  },
 ): Promise<MissionFeatureSyncDecision> {
   const alignment = await resolveMissionFeatureAlignment(taskStore, task.id);
 
@@ -247,7 +257,7 @@ export async function reconcileMissionFeatureState(
   The predictor that found it is mechanical rather than clever: grep for two resolver calls inside one
   function.
   */
-  const ir = await resolveWorkflowIrForTask(taskStore, task.id).catch(() => undefined);
+  const ir = await resolveWorkflowIrForTask(taskStore, task.id, caches?.irCache, caches?.selectionCache).catch(() => undefined);
   const roles = ir ? resolveLifecycleColumns(ir) : undefined;
   /*
   FNXC:MissionFeatureSyncLanes 2026-07-30-05:40 (PR #2602 review — greptile P1):

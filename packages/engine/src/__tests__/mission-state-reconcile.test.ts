@@ -473,8 +473,16 @@ describe("reconcileMissionState", () => {
       missionId: "M-1", sliceId: "SL-1", updatedAt: "2026-08-11T00:01:00.000Z",
       sourceMetadata: { missionLineage: { missionId: "M-1", sliceId: "SL-1", featureId: "F-1" } },
     };
+    /*
+    FNXC:MissionReconcileFailedLineage 2026-08-19-21:44 (RUFU-134 / PR #3491):
+    The feature starts in-progress (not done) so the reverse-credit branch is actually REACHABLE
+    for this fixture: if a failed/errored terminal lineage task were (wrongly) treated as a
+    satisfying done delivery, the branch would credit it to done and the assertion below would
+    catch it. With the fixture at status "done" the branch gate (feature.status !== "done")
+    short-circuited and the test passed for the wrong reason.
+    */
     const feature = {
-      id: "F-1", title: "Delivery", sliceId: "SL-1", taskId: forward.id, status: "done",
+      id: "F-1", title: "Delivery", sliceId: "SL-1", taskId: forward.id, status: "in-progress",
       createdAt: "2026-08-11T00:00:00.000Z", updatedAt: "2026-08-11T00:00:00.000Z",
     };
     const updateFeatureStatus = vi.fn();
@@ -495,6 +503,132 @@ describe("reconcileMissionState", () => {
     await reconcileMissionState({ taskStore: taskStore as never, missionStore }, { source: "self-healing" });
 
     expect(updateFeatureStatus).not.toHaveBeenCalledWith("F-1", "done", expect.anything());
+    expect(feature.status).toBe("in-progress");
+  });
+
+  /*
+  FNXC:MissionReverseLineageSpecAlignment 2026-08-19-21:44 (RUFU-134 / PR #3491):
+  A reverse-lineage-credited feature must get the same spec-alignment projection the live path
+  always applies — computed against the SATISFYING delivery task, not the unrelated forward
+  link — and a dry-run pass must preview the write instead of applying it.
+  */
+  it("projects spec alignment from the satisfying delivery task when reverse-crediting a feature", async () => {
+    const forward = {
+      id: "RUFU-101", title: "Vision", column: "in-progress", status: "in-progress",
+      missionId: "M-1", sliceId: "SL-1", updatedAt: "2026-08-11T00:00:00.000Z",
+    };
+    const delivery = {
+      id: "RUFU-108", title: "Delivery", column: "done", status: undefined,
+      missionId: "M-1", sliceId: "SL-1", updatedAt: "2026-08-11T00:01:00.000Z",
+      sourceMetadata: { missionLineage: { missionId: "M-1", sliceId: "SL-1", featureId: "F-1" } },
+    };
+    const feature = {
+      id: "F-1", title: "Delivery", sliceId: "SL-1", taskId: forward.id, status: "in-progress",
+      specAlignment: "on-plan",
+      createdAt: "2026-08-11T00:00:00.000Z", updatedAt: "2026-08-11T00:00:00.000Z",
+    };
+    const updateFeatureStatus = vi.fn();
+    const updateFeature = vi.fn().mockResolvedValue(undefined);
+    const missionStore = {
+      listMissions: vi.fn().mockResolvedValue([{ id: "M-1", status: "active" }]),
+      getMissionWithHierarchy: vi.fn().mockResolvedValue({
+        id: "M-1", milestones: [{ slices: [{ id: "SL-1", features: [feature] }] }],
+      }),
+      listAssertionsForFeature: vi.fn().mockResolvedValue([]),
+      updateFeatureStatus,
+      updateFeature,
+    };
+    const taskStore = {
+      listTasks: vi.fn().mockResolvedValue([forward, delivery]),
+      getTask: vi.fn((taskId: string) => Promise.resolve(taskId === forward.id ? forward : delivery)),
+      getLatestSpecDriftReport: vi.fn().mockResolvedValue({ alignment: "diverged-needs-review" }),
+      getTaskWorkflowSelectionsAsync: vi.fn().mockResolvedValue(new Map([
+        [forward.id, { workflowId: "custom:delivery", stepIds: [] }],
+        [delivery.id, { workflowId: "custom:delivery", stepIds: [] }],
+      ])),
+      getTaskWorkflowSelectionAsync: vi.fn().mockResolvedValue({ workflowId: "custom:delivery", stepIds: [] }),
+      getWorkflowDefinition: vi.fn().mockResolvedValue({
+        ir: {
+          version: "v2", id: "custom:delivery", nodes: [], edges: [],
+          columns: [
+            { id: "in-progress", label: "In Progress", traits: [{ trait: "wip" }] },
+            { id: "todo", label: "Todo", traits: [{ trait: "hold" }] },
+            { id: "done", label: "Done", traits: [{ trait: "complete" }] },
+          ],
+        },
+      }),
+    };
+
+    await reconcileMissionState({ taskStore: taskStore as never, missionStore }, { source: "self-healing" });
+
+    expect(updateFeatureStatus).toHaveBeenCalledWith(
+      "F-1", "done",
+      { actor: { type: "system", id: "mission-reconcile", source: "mission-reconcile:self-healing" } },
+    );
+    // The alignment is projected from the delivery task's drift report, not the forward link's.
+    expect(taskStore.getLatestSpecDriftReport).toHaveBeenCalledWith(delivery.id);
+    expect(updateFeature).toHaveBeenCalledWith(
+      "F-1", { specAlignment: "diverged-needs-review" },
+      { actor: { type: "system", id: "mission-reconcile", source: "mission-reconcile:self-healing" } },
+    );
+  });
+
+  it("previews the reverse-lineage spec-alignment write in a dry run without mutating", async () => {
+    const forward = {
+      id: "RUFU-101", title: "Vision", column: "in-progress", status: "in-progress",
+      missionId: "M-1", sliceId: "SL-1", updatedAt: "2026-08-11T00:00:00.000Z",
+    };
+    const delivery = {
+      id: "RUFU-108", title: "Delivery", column: "done", status: undefined,
+      missionId: "M-1", sliceId: "SL-1", updatedAt: "2026-08-11T00:01:00.000Z",
+      sourceMetadata: { missionLineage: { missionId: "M-1", sliceId: "SL-1", featureId: "F-1" } },
+    };
+    const feature = {
+      id: "F-1", title: "Delivery", sliceId: "SL-1", taskId: forward.id, status: "in-progress",
+      specAlignment: "on-plan",
+      createdAt: "2026-08-11T00:00:00.000Z", updatedAt: "2026-08-11T00:00:00.000Z",
+    };
+    const updateFeatureStatus = vi.fn();
+    const updateFeature = vi.fn().mockResolvedValue(undefined);
+    const missionStore = {
+      listMissions: vi.fn().mockResolvedValue([{ id: "M-1", status: "active" }]),
+      getMissionWithHierarchy: vi.fn().mockResolvedValue({
+        id: "M-1", milestones: [{ slices: [{ id: "SL-1", features: [feature] }] }],
+      }),
+      listAssertionsForFeature: vi.fn().mockResolvedValue([]),
+      updateFeatureStatus,
+      updateFeature,
+    };
+    const taskStore = {
+      listTasks: vi.fn().mockResolvedValue([forward, delivery]),
+      getTask: vi.fn((taskId: string) => Promise.resolve(taskId === forward.id ? forward : delivery)),
+      getLatestSpecDriftReport: vi.fn().mockResolvedValue({ alignment: "diverged-needs-review" }),
+      getTaskWorkflowSelectionsAsync: vi.fn().mockResolvedValue(new Map([
+        [forward.id, { workflowId: "custom:delivery", stepIds: [] }],
+        [delivery.id, { workflowId: "custom:delivery", stepIds: [] }],
+      ])),
+      getTaskWorkflowSelectionAsync: vi.fn().mockResolvedValue({ workflowId: "custom:delivery", stepIds: [] }),
+      getWorkflowDefinition: vi.fn().mockResolvedValue({
+        ir: {
+          version: "v2", id: "custom:delivery", nodes: [], edges: [],
+          columns: [
+            { id: "in-progress", label: "In Progress", traits: [{ trait: "wip" }] },
+            { id: "todo", label: "Todo", traits: [{ trait: "hold" }] },
+            { id: "done", label: "Done", traits: [{ trait: "complete" }] },
+          ],
+        },
+      }),
+    };
+
+    const result = await reconcileMissionState(
+      { taskStore: taskStore as never, missionStore },
+      { source: "self-healing", dryRun: true },
+    );
+
+    expect(result.planned).toContainEqual({ featureId: "F-1", action: "status" });
+    expect(result.planned).toContainEqual({ featureId: "F-1", action: "spec-alignment" });
+    expect(updateFeature).not.toHaveBeenCalled();
+    expect(updateFeatureStatus).not.toHaveBeenCalled();
   });
 
   it("previews a reverse-lineage done credit as a planned status update without mutating", async () => {

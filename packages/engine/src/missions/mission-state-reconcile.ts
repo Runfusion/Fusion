@@ -164,15 +164,22 @@ export async function reconcileMissionState(
   non-failed candidate additionally credits its feature. A feature key is added to
   `featuresWithDoneLineageDelivery` only when none of its candidates is live.
   */
-  const lineageDeliverySnapshot = new Map<string, { hasLive: boolean; hasSatisfyingDoneDelivery: boolean }>();
+  const lineageDeliverySnapshot = new Map<string, { hasLive: boolean; hasSatisfyingDoneDelivery: boolean; satisfyingTask?: Task }>();
   for (let index = 0; index < lineageCandidates.length; index += lineageBatchSize) {
     const batch = lineageCandidates.slice(index, index + lineageBatchSize);
     const snapshot = await Promise.all(batch.map(async ({ task, key }) => {
       const terminalColumns = await resolveTerminalColumnsFor(deps.taskStore, task.id, terminalIrCache, selectionCache);
-      const isLive = !task.deletedAt && !terminalColumns.includes(task.column);
-      const isDoneDelivery = !task.error && task.status !== "failed"
-        && (!task.deletedAt ? terminalColumns.includes(task.column) : true);
-      return { key, isLive, isDoneDelivery };
+      /*
+      FNXC:MissionReconcileLiveTasks 2026-08-19-21:44 (RUFU-134 / PR #3491):
+      liveTasks comes from listTasks({ includeArchived: false }) with includeDeleted UNSET, so
+      soft-deleted rows never reach this loop (VAL-DATA-005: live readers leave tombstoned tasks
+      off the board). The deletedAt arms in isLive/isDoneDelivery were therefore dead and are
+      deleted; a tombstone's retained-evidence classification belongs to the store's terminal
+      evidence query, not this snapshot.
+      */
+      const isLive = !terminalColumns.includes(task.column);
+      const isDoneDelivery = !task.error && task.status !== "failed" && terminalColumns.includes(task.column);
+      return { key, isLive, isDoneDelivery, task };
     }));
     for (const candidate of snapshot) {
       if (candidate.isLive) featuresWithLiveLineageDescendants.add(candidate.key);
@@ -180,11 +187,17 @@ export async function reconcileMissionState(
       lineageDeliverySnapshot.set(candidate.key, {
         hasLive: (prior?.hasLive ?? false) || candidate.isLive,
         hasSatisfyingDoneDelivery: (prior?.hasSatisfyingDoneDelivery ?? false) || candidate.isDoneDelivery,
+        satisfyingTask: candidate.isDoneDelivery ? (prior?.satisfyingTask ?? candidate.task) : prior?.satisfyingTask,
       });
     }
   }
+  /* FNXC:MissionReverseLineageSpecAlignment 2026-08-19-21:44 (RUFU-134 / PR #3491): first satisfying delivery per key, remembered so the reverse-credit branch can project spec alignment against the real delivery task. */
+  const lineageSatisfyingTasks = new Map<string, Task>();
   for (const [key, delivery] of lineageDeliverySnapshot) {
-    if (!delivery.hasLive && delivery.hasSatisfyingDoneDelivery) featuresWithDoneLineageDelivery.add(key);
+    if (!delivery.hasLive && delivery.hasSatisfyingDoneDelivery) {
+      featuresWithDoneLineageDelivery.add(key);
+      if (delivery.satisfyingTask) lineageSatisfyingTasks.set(key, delivery.satisfyingTask);
+    }
   }
   for (const { mission, hierarchy } of selectedHierarchies) {
     result.missionsScanned++;
@@ -225,10 +238,10 @@ export async function reconcileMissionState(
         */
         if (hasDoneLineageDelivery && !hasLiveLineage && feature.status !== "done") {
           const reverseNeedsRepair = feature.status === "blocked" || feature.loopState === "blocked" || feature.loopState === "needs_fix";
+          const assertions = missionApi.listAssertionsForFeature ? await missionApi.listAssertionsForFeature(feature.id) : [];
           if (options.dryRun) result.planned!.push({ featureId: feature.id, action: "status" });
           else { await missionApi.updateFeatureStatus(feature.id, "done", { actor }); result.statusUpdates++; }
           if (reverseNeedsRepair) {
-            const assertions = missionApi.listAssertionsForFeature ? await missionApi.listAssertionsForFeature(feature.id) : [];
             const complete = !assertions.length || feature.lastValidatorStatus === "passed";
             if (complete && !task?.error && task?.status !== "failed") {
               const repair = deps.repairFeatureValidationState ?? (hasRepairCapability(deps.missionStore) ? deps.missionStore.repairFeatureValidationState.bind(deps.missionStore) : undefined);
@@ -240,18 +253,43 @@ export async function reconcileMissionState(
               }
             }
           }
+          /*
+          FNXC:MissionReverseLineageSpecAlignment 2026-08-19-21:44 (RUFU-134 / PR #3491):
+          The reverse-credit branch used to stop at the status credit and skip the spec-alignment
+          projection that the live path always applies, so a reverse-lineage-credited feature kept
+          a stale specAlignment until some other pass touched its forward link. Project the same
+          alignment against the SATISFYING delivery task (the title-matched `task` here may be
+          absent or unrelated — the feature has no forward link to it); only decision.alignment
+          is consumed, the status decision is ignored (the branch already credited done).
+          Fail-soft per the capability guard: no captured delivery task or no write capability
+          skips the projection, exactly like the live path.
+          */
+          const satisfyingTask = lineageSatisfyingTasks.get(featureLineageKey);
+          if (satisfyingTask) {
+            /* FNXC:MissionReverseLineageSpecAlignment 2026-08-19-21:44 (RUFU-134 / PR #3491): the snapshot loop already resolved this delivery's selection and IR (resolveTerminalColumnsFor), so reusing both caches keeps the projection read-free instead of triggering a second per-task selection read. */
+            const plannerColumns = await resolvePlannerLanesForTask(deps.taskStore, satisfyingTask.id, terminalIrCache, selectionCache) ?? [];
+            const decision = await reconcileMissionFeatureState(deps.taskStore, satisfyingTask, feature, {
+              hasLinkedAssertions: assertions.length > 0,
+              hasLiveLineageDescendants: false,
+              plannerColumns,
+            }, { irCache: terminalIrCache, selectionCache });
+            if (feature.specAlignment !== decision.alignment && missionApi.updateFeature) {
+              if (options.dryRun) result.planned!.push({ featureId: feature.id, action: "spec-alignment" });
+              else await missionApi.updateFeature(feature.id, { specAlignment: decision.alignment }, { actor });
+            }
+          }
           await deps.extensionHook?.({ feature, task });
           continue;
         }
         const terminalCandidate = Boolean(explicitTaskId && task && await isArchivedTask(deps.taskStore, task));
         if (!terminalCandidate && task) {
           const assertions = missionApi.listAssertionsForFeature ? await missionApi.listAssertionsForFeature(feature.id) : [];
-          const plannerColumns = await resolvePlannerLanesForTask(deps.taskStore, task.id) ?? [];
+          const plannerColumns = await resolvePlannerLanesForTask(deps.taskStore, task.id, terminalIrCache, selectionCache) ?? [];
           const decision = await reconcileMissionFeatureState(deps.taskStore, task, feature, {
             hasLinkedAssertions: assertions.length > 0,
             hasLiveLineageDescendants: featuresWithLiveLineageDescendants.has(lineageKey(mission.id, slice.id, feature.id)),
             plannerColumns,
-          });
+          }, { irCache: terminalIrCache, selectionCache });
           const needsRepair = feature.status === "blocked" || feature.loopState === "blocked" || feature.loopState === "needs_fix";
           if (decision.kind === "update" && feature.status !== decision.status) {
             if (options.dryRun) result.planned!.push({ featureId: feature.id, action: "status" });
