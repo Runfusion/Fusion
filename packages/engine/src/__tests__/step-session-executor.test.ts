@@ -11,6 +11,7 @@ import { AgentLogger } from "../agents/agent-logger.js";
 import { expectAppendAgentLog } from "./agent-log-assertions.js";
 import * as worktreeBackendModule from "../worktree/worktree-backend.js";
 import type { TaskDetail, Settings, TaskStore } from "@fusion/core";
+import { registerMemoryBackend, __resetPerTurnRecallDedupForTests, MEMORY_PRE_STEERING_MARKER } from "@fusion/core";
 import { installTaskWorktreeIdentityGuard } from "../worktree/worktree-hooks.js";
 
 vi.mock("../worktree/worktree-hooks.js", () => ({
@@ -1117,6 +1118,16 @@ function makeSettings(overrides: Record<string, any> = {}): Settings {
     maxConcurrent: 2,
     maxWorktrees: 4,
     maxParallelSteps: 1,
+    /*
+    FNXC:PerTurnMemoryRecall 2026-08-19-01:20:
+    RUFU-120: executeStep now runs per-turn memory recall against the configured
+    backend before each step prompt. The default qmd backend spawns the real `qmd`
+    CLI (up to a 4s timeout per call), which would add real subprocess latency to
+    every executor test. Pin the neutral readonly backend (search returns [] →
+    silent skip, no I/O); the recall-seam tests register an explicit fake backend
+    instead.
+    */
+    memoryBackendType: "readonly",
     ...overrides,
   } as Settings;
 }
@@ -3541,5 +3552,167 @@ describe("StepSessionExecutor credential-instance retargeting", () => {
 
     await expect(execution).resolves.toEqual([expect.objectContaining({ success: true, retries: 1 })]);
     expect(mockedCreateFnAgent.mock.calls[1]?.[0]).toMatchObject({ credentialInstanceId: "account-b" });
+  });
+});
+
+// ── StepSessionExecutor: per-turn memory recall (RUFU-120 B.2) ─────────────
+
+/*
+FNXC:PerTurnMemoryRecall 2026-08-19-01:15:
+RUFU-120 (B.2 LCM phase 2) symptom-verification seam tests: the executor step
+prompt must carry the deduped per-turn recall cue ONCE per task-scoped topic
+(task:<id>), never on feature-off, and the context-limit reduced-prompt
+recovery path must stay cue-free (it stays minimal by contract). In-memory
+fake backend via registerMemoryBackend (unique type name, no real LLM).
+*/
+describe("executor step-session per-turn memory recall (RUFU-120 B.2)", () => {
+  const RECALL_FAKE_TYPE = "perturn-step-fake";
+
+  function makeRecallFakeBackend() {
+    return {
+      type: RECALL_FAKE_TYPE,
+      name: "Per-turn step recall fake",
+      capabilities: {
+        readable: true,
+        writable: false,
+        supportsAtomicWrite: false,
+        hasConflictResolution: false,
+        persistent: false,
+      },
+      async read() {
+        return { content: "", exists: true, backend: RECALL_FAKE_TYPE };
+      },
+      async write() {
+        return { success: false, backend: RECALL_FAKE_TYPE };
+      },
+      async search() {
+        return [
+          {
+            path: ".fusion/memory/MEMORY.md",
+            lineStart: 12,
+            lineEnd: 14,
+            snippet: "merge gate flake: quarantine on sight, deletion ratchet",
+            score: 0.8,
+            backend: RECALL_FAKE_TYPE,
+          },
+        ];
+      },
+    };
+  }
+
+  function makeRecallExecutor(overrides: { taskDetail?: Partial<TaskDetail>; settings?: Record<string, unknown> } = {}) {
+    const task = makeTaskDetail({
+      prompt: makeStepPrompt("FN-001", 1),
+      steps: [{ name: "Implement merge gate", status: "pending" }],
+      ...(overrides.taskDetail ?? {}),
+    });
+    const settings = makeSettings({
+      memoryBackendType: RECALL_FAKE_TYPE,
+      ...(overrides.settings ?? {}),
+    });
+    mockedCreateFnAgent.mockResolvedValue({ session: makeMockSession() } as any);
+    const store = {
+      appendAgentLog: vi.fn().mockResolvedValue(undefined),
+      emitUsageEvent: vi.fn().mockResolvedValue(undefined),
+    } as unknown as TaskStore;
+    return {
+      task,
+      settings,
+      executor: new StepSessionExecutor({
+        store,
+        taskDetail: task,
+        worktreePath: "/project/.worktrees/main",
+        rootDir: "/project",
+        settings,
+      } as any),
+    };
+  }
+
+  const promptAt = (callIndex: number): string =>
+    vi.mocked(promptWithAutoRetry).mock.calls[callIndex]?.[1] as string;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    mockedGenerateWorktreeName.mockReturnValue("test-worktree");
+    __resetPerTurnRecallDedupForTests();
+    registerMemoryBackend(makeRecallFakeBackend());
+    // Re-establish the factory delegation: later-ordered describes' beforeEach
+    // hooks can replace these mocks' implementations, and vi.clearAllMocks() does
+    // not remove them — pin the module-factory behavior for this block.
+    const { promptWithFallback } = await import("../pi.js");
+    vi.mocked(promptWithFallback).mockImplementation(async (session: any, prompt: string) => {
+      await (session as any).prompt?.(prompt);
+    });
+    vi.mocked(promptWithAutoRetry).mockImplementation(async (session: any, prompt: string, options?: unknown) =>
+      vi.mocked(promptWithFallback)(session, prompt, options as any),
+    );
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    __resetPerTurnRecallDedupForTests();
+  });
+
+  it("injects the deduped recall cue into the first step prompt for the step topic", async () => {
+    const { executor } = makeRecallExecutor();
+
+    const results = await executor.executeAll();
+
+    expect(results).toHaveLength(1);
+    expect(results[0].success).toBe(true);
+    const firstPrompt = promptAt(0);
+    expect(firstPrompt).toContain("## Memory Recall");
+    expect(firstPrompt).toContain(MEMORY_PRE_STEERING_MARKER);
+    expect(firstPrompt).toContain(".fusion/memory/MEMORY.md");
+    expect(firstPrompt).toContain("merge gate flake: quarantine on sight");
+  });
+
+  it("does not re-inject the same cue when the same step topic recurs in the same task (task-scoped dedup)", async () => {
+    const { executor } = makeRecallExecutor();
+
+    const first = await (executor as any).executeStep(0, "/project/.worktrees/main");
+    const second = await (executor as any).executeStep(0, "/project/.worktrees/main");
+
+    expect(first.success).toBe(true);
+    expect(second.success).toBe(true);
+    expect(promptAt(0)).toContain("## Memory Recall");
+    expect(promptAt(1)).not.toContain("## Memory Recall");
+    expect(promptAt(1)).not.toContain(MEMORY_PRE_STEERING_MARKER);
+  });
+
+  it("skips the recall cue entirely when memoryPerTurnRecallEnabled is false", async () => {
+    const { executor } = makeRecallExecutor({ settings: { memoryPerTurnRecallEnabled: false } });
+
+    const results = await executor.executeAll();
+
+    expect(results[0].success).toBe(true);
+    expect(promptAt(0)).not.toContain("## Memory Recall");
+    expect(promptAt(0)).not.toContain(MEMORY_PRE_STEERING_MARKER);
+  });
+
+  it("keeps the context-limit reduced-prompt recovery prompt cue-free", async () => {
+    const { executor } = makeRecallExecutor();
+
+    // Force the main-prompt context-limit failure: first promptWithAutoRetry
+    // call throws, the reduced-prompt recovery call succeeds (same pattern as
+    // the "succeeds with reduced-prompt retry when compact returns null" test).
+    const { promptWithFallback, compactSessionContext } = await import("../pi.js");
+    let callCount = 0;
+    vi.mocked(promptWithFallback).mockImplementation(async () => {
+      callCount++;
+      if (callCount === 1) {
+        throw new Error("context window exceeds limit (2013)");
+      }
+    });
+    vi.mocked(compactSessionContext).mockResolvedValue(null);
+    const results = await executor.executeAll();
+
+    expect(results[0].success).toBe(true);
+    // The main prompt carried the cue for this turn…
+    expect(promptAt(0)).toContain("## Memory Recall");
+    // …and the recovery prompt stayed minimal.
+    expect(promptAt(1)).not.toContain("## Memory Recall");
+    expect(promptAt(1)).not.toContain(MEMORY_PRE_STEERING_MARKER);
   });
 });

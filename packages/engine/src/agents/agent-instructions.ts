@@ -4,11 +4,13 @@ import { isAbsolute, resolve, relative, normalize, sep, dirname } from "node:pat
 import {
   readProjectMemory,
   buildMemoryPreSteeringNudge,
+  buildPerTurnMemoryRecallCue,
   type Agent,
   type AgentMemoryInclusionMode,
   type AgentRatingSummary,
   type AgentStore,
   type PluginPromptSurface,
+  type Settings,
 } from "@fusion/core";
 import type { PluginRunner } from "../plugins/plugin-runner.js";
 import { createLogger } from "../logger.js";
@@ -395,6 +397,16 @@ export async function buildAgentChatPrompt(options: {
   basePrompt: string;
   includeProjectMemory?: boolean;
   inclusionMode?: AgentMemoryInclusionMode;
+  /**
+   * Current-turn topic (last user message / room reply input) used for the B.2
+   * per-turn proactive memory recall cue (RUFU-120). Optional — recall is a no-op
+   * without it.
+   */
+  topic?: string;
+  /** Stable per-chat session id for the session-scoped recall cue dedup. */
+  sessionId?: string;
+  /** Project settings for the recall enable/topK/memoryEnabled gates. */
+  settings?: Partial<Settings>;
 }): Promise<string> {
   const { agent, rootDir, agentStore, basePrompt, includeProjectMemory = false, inclusionMode = "full" } = options;
 
@@ -419,6 +431,34 @@ export async function buildAgentChatPrompt(options: {
       // continue with available identity + agent instructions.
       const message = error instanceof Error ? error.message : String(error);
       log.warn(`Failed to read project memory for agent ${agent.id}: ${message}`);
+    }
+  }
+
+  /*
+  FNXC:PerTurnMemoryRecall 2026-08-19-01:05:
+  RUFU-120 (B.2 LCM phase 2): per-turn proactive memory recall on the chat path. The
+  dashboard chat manager rebuilds this system prompt before EVERY turn's LLM call, so a
+  bounded, keyword-normalized recall for the current topic (2-3 terms, top-K=3, client-side
+  score filter, session-scoped dedup, <=800-char cue under the pre-steering marker) keeps
+  the agent focused across long chats — the once-per-session pre-steering nudge alone left
+  later turns blind to recent memory. Recall is strictly additive: any failure here (or a
+  silent-skip result) degrades to the previous prompt, never to a broken turn.
+  */
+  if (options.topic?.trim() && inclusionMode !== "off") {
+    try {
+      const recallCue = await buildPerTurnMemoryRecallCue({
+        rootDir,
+        topic: options.topic,
+        settings: options.settings,
+        sessionKey: `chat:${options.sessionId ?? "anonymous"}`,
+      });
+      if (recallCue) {
+        instructionParts.push(`## Memory Recall\n\n${recallCue}`);
+      }
+    } catch (error: unknown) {
+      // Additive recall must never break prompt assembly — log and continue without the cue.
+      const message = error instanceof Error ? error.message : String(error);
+      log.warn(`Per-turn memory recall failed for agent ${agent.id}: ${message}`);
     }
   }
 

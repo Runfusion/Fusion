@@ -2324,6 +2324,18 @@ export interface ProjectSettings {
   /** Cron expression for dream processing. Only used when memoryDreamsEnabled
    *  is true. Default: "0 4 * * *" (daily at 4 AM). */
   memoryDreamsSchedule?: string;
+  /** When true, a per-turn proactive memory recall runs before every chat/step prompt on
+   *  the current topic (B.2 LCM phase 2, RUFU-120): derive 2–3 content keywords,
+   *  search the memory backend via MemoryBackend.search, and inject a deduped,
+   *  client-side score-filtered, top-K cue block (<=800 chars) under the pre-steering
+   *  marker. Silent skip on empty/stopword-only topics, fully-deduped sessions, or
+   *  unavailable/unsupported backend search. Only used when memoryEnabled is true.
+   *  Default: true (B.2: on by default). */
+  memoryPerTurnRecallEnabled?: boolean;
+  /** Top-K for the per-turn memory recall cue block; clamped to 1–10 by the core module.
+   *  Only used when memoryPerTurnRecallEnabled is true.
+   *  Default: 3 (Volt topK=3 parity). */
+  memoryPerTurnRecallTopK?: number;
   /** Token compaction threshold — dual-lane semantics:
    *
    *  - Executor/agent tasks (TokenCapDetector): optional pre-overflow cap.
