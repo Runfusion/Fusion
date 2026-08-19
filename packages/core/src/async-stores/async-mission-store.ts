@@ -163,6 +163,7 @@ import {
   listFeaturesForAssertion,
   listLiveLinkedTaskIds,
   getLiveTaskById,
+  lockLiveTaskForClaim,
   setTaskMissionLinkage,
   clearTaskMissionLinkage,
   listFailedTaskIds,
@@ -1377,6 +1378,15 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
         );
       }
 
+      /*
+      FNXC:MissionFeatureClaimRace 2026-08-19-21:24 (RUFU-134 / PR #3491 Greptile P1):
+      A live done target is claimable by concurrent link/re-point; hold its row lock before the
+      conflict check so two claimants cannot both observe it as unclaimed. The archived-tombstone
+      arm is soft-deleted and unclaimable by design, so it needs no lock.
+      */
+      if (evidence.kind === "done") {
+        await lockLiveTaskForClaim(tx, taskId);
+      }
       const taskFeature = await getConflictingFeatureByTaskId(tx, taskId, featureId);
       if (taskFeature) {
         throw new TerminalTaskReconciliationError(
@@ -1508,6 +1518,16 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
     if (task.missionId !== input.missionId || task.sliceId !== input.sliceId) {
       throw new Error(`Cannot bootstrap feature ${input.featureId}: task ${input.taskId} has unrelated mission lineage`);
     }
+    /*
+    FNXC:MissionFeatureClaimRace 2026-08-19-21:24 (RUFU-134 / PR #3491 Greptile P1):
+    No lockLiveTaskForClaim on this check, deliberately: both arms that reach it are already
+    serialized on the target. The afterTaskInsert arm runs inside the creating task's own
+    transaction, which holds the insert row lock on the new task until commit, so a concurrent
+    claimant blocks on that insert. The re-claim arm (claimDefinedFeatureTask,
+    requireExistingFeatureLink) requires this feature to already own the task, and the
+    single-valued invariant means no other feature can — an external claimant sees this link as
+    its conflict and fails. The feature row was locked first, preserving the feature→task order.
+    */
     const conflict = await getConflictingFeatureByTaskId(tx, input.taskId, input.featureId);
     if (conflict) throw new Error(`Task ${input.taskId} is already linked to feature ${conflict.id}`);
 
@@ -1582,6 +1602,13 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
       it here would corrupt that Feature's canonical task. Keep both tasks and
       let each feature retain its own transactional bootstrap claim.
       */
+      /*
+      FNXC:MissionFeatureClaimRace 2026-08-19-21:24 (RUFU-134 / PR #3491 Greptile P1):
+      Hold the duplicate's row lock before the ownership check so a concurrent link/re-point
+      claiming the duplicate cannot commit between the read and the archive write. This path
+      takes no feature lock, so its single task lock cannot join a feature→task cycle.
+      */
+      await lockLiveTaskForClaim(tx, input.duplicateTaskId);
       const duplicateFeature = await getConflictingFeatureByTaskId(tx, input.duplicateTaskId, input.featureId);
       if (duplicateFeature) return;
       /*
@@ -1626,7 +1653,13 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
       if (feature.taskId && feature.taskId !== taskId) {
         throw new Error(`Feature ${featureId} is already linked to task ${feature.taskId}`);
       }
-      const liveTask = await getLiveTaskById(tx, taskId);
+      /*
+      FNXC:MissionFeatureClaimRace 2026-08-19-21:24 (RUFU-134 / PR #3491 Greptile P1):
+      The liveness read IS the claim lock: FOR UPDATE on the live task row serializes concurrent
+      claimants on the same target (see lockLiveTaskForClaim), and the feature row was locked
+      first by getFeatureForStatusWrite, keeping the feature→task order cycle-free.
+      */
+      const liveTask = await lockLiveTaskForClaim(tx, taskId);
       if (!liveTask) {
         throw new Error(
           `Cannot link feature ${featureId} to task ${taskId}: task is not on the active board (it may be archived, deleted, or never existed). Only active tasks can be linked to features.`,
@@ -1721,7 +1754,12 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
       if (!feature) throw new Error(`Feature ${featureId} not found`);
       const fromTaskId = feature.taskId;
       if (fromTaskId === taskId) return { feature, event: undefined, fromTaskId } as const;
-      const liveTask = await getLiveTaskById(tx, taskId);
+      /*
+      FNXC:MissionFeatureClaimRace 2026-08-19-21:24 (RUFU-134 / PR #3491 Greptile P1):
+      Same claim lock as link: the re-point target is locked before the conflict check so a
+      concurrent link/re-point on the same target serializes instead of both committing.
+      */
+      const liveTask = await lockLiveTaskForClaim(tx, taskId);
       if (!liveTask) {
         throw new Error(
           `Cannot re-point feature ${featureId} to task ${taskId}: task is not on the active board (it may be archived, deleted, or never existed). Only active tasks can be linked to features.`,
