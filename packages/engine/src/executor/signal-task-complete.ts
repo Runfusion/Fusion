@@ -12,10 +12,15 @@
  */
 import type { Task, TaskStore } from "@fusion/core";
 import { executorLog } from "../logger.js";
+import { triggerTaskMemoryCapture } from "./memory-capture.js";
 
 export type SignalTaskCompleteDeps = {
   store: TaskStore;
   capturedReflectionTaskIds: Set<string>;
+  /** Root working-directory for the project (used as the capture project root). */
+  rootDir: string;
+  /** Task ids that have already had their memory capture attempted (completion-gated). */
+  capturedMemoryTaskIds: Set<string>;
   reflectionService?: {
     captureTaskPerformance: (agentId: string, taskId: string) => Promise<unknown>;
   } | null;
@@ -24,6 +29,7 @@ export type SignalTaskCompleteDeps = {
 
 export function signalTaskComplete(deps: SignalTaskCompleteDeps, task: Task): void {
   triggerPostTaskReflectionCapture(deps, task);
+  triggerTaskMemoryCapture(deps, task);
   deps.onComplete?.(task);
 }
 

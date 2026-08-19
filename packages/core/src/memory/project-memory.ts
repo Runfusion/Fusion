@@ -297,16 +297,36 @@ export async function readProjectMemoryWithBackend(
   }
 }
 
+// FNXC:MemorySearchTopic 2026-08-13-16:35: (RUFU-035/RUFU-068) search can be
+// scoped to an optional read-time focus/topic. When a topic is supplied it is
+// pushed down to the backend (for Stash the REST search route's `topic` query
+// param enforces SQL-side filtering); topic-agnostic backends (file/qmd/readonly)
+// ignore it. Searching never throws: an availability/auth/parse failure on a
+// remote backend (e.g. Stash down) degrades to an empty result set so
+// fn_memory_search and proactive recall never block an agent task.
 export async function searchProjectMemory(
   rootDir: string,
   options: MemorySearchOptions,
   settings?: MemorySettings,
+  topic?: string,
 ): Promise<MemorySearchResult[]> {
   const backend = resolveMemoryBackend(settings);
   if (!backend.search) {
     return [];
   }
-  return backend.search(rootDir, options);
+  // RUFU-035: fold the optional focus into the search options so the Stash
+  // backend can push it as a &topic= query param for SQL-side filtering.
+  const searchOptions =
+    topic && topic.trim().length > 0 && topic !== "all" && topic !== "*"
+      ? { ...options, topic: topic.trim() }
+      : options;
+  try {
+    return await backend.search(rootDir, searchOptions);
+  } catch {
+    // FNXC:MemoryResilience 2026-08-13-16:35: (RUFU-068) fail closed to empty —
+    // never let a Stash/gateway search failure block a task, chat, or test.
+    return [];
+  }
 }
 
 export async function getProjectMemory(
@@ -318,7 +338,91 @@ export async function getProjectMemory(
   if (!backend.get) {
     throw new Error(`Memory backend '${backend.type}' does not support memory_get`);
   }
-  return backend.get(rootDir, options);
+  try {
+    return await backend.get(rootDir, options);
+  } catch {
+    // FNXC:MemoryResilience 2026-08-13-16:35: (RUFU-068) degrade a remote
+    // backend read/parse failure (e.g. Stash down) to an empty window so
+    // fn_memory_get never blocks the caller. The unsupported-backend throw
+    // above (no `get`) is preserved so agents get a clear message.
+    return {
+      path: options.path,
+      content: "",
+      startLine: 1,
+      endLine: 1,
+      totalLines: 0,
+      backend: backend.type,
+    };
+  }
+}
+
+/**
+ * Proactive pre-response memory cue (LCM / Volt-style ghost cue).
+ *
+ * At the start of a task execution the executor recalls relevant prior context from
+ * the memory backend using the task description as the query, then injects the top
+ * matches directly into the system prompt. The agent does NOT have to remember to
+ * call fn_memory_search — relevant memory arrives proactively.
+ *
+ * Only search-capable backends can be proactively recalled. Fails closed: any recall
+ * error or empty result returns "" so a memory hiccup can never block or bloat a run.
+ *
+ * @param rootDir - Absolute path to the project root directory.
+ * @param query   - The natural-language query (typically the task description).
+ * @param settings - Project settings including memoryBackendType.
+ * @param opts    - Optional limit on the number of recalled cues, and a topic
+ *                  (RUFU-035) to scope the recall to a working topic.
+ *                  undefined/'all'/empty topic → whole-project scope.
+ * @returns A formatted "## Relevant Prior Context" block, or "" when disabled,
+ *          not search-capable, failed, or with nothing to inject.
+ */
+export async function buildProactiveMemoryCueBlock(
+  rootDir: string,
+  query: string,
+  settings?: MemorySettings,
+  opts?: { limit?: number; topic?: string },
+): Promise<string> {
+  if (!rootDir || !query) return "";
+  // FNXC:MemoryResilience 2026-08-13-16:35: (RUFU-068) respect the memory
+  // off-switch so proactive recall never activates when memory is disabled.
+  if (settings?.memoryEnabled === false) return "";
+  const backend = resolveMemoryBackend(settings);
+  // Only search-capable backends can be proactively recalled; the file/readonly
+  // backends have no recall primitive.
+  if (!backend.search) return "";
+  try {
+    const limit = opts?.limit ?? 5;
+    // RUFU-035 Step 3: when the enclosing conversation/task carries an active
+    // topic, scope the proactive pre-response cue to it. This is a WITHIN-project
+    // read filter (Stash pushes it as a &topic= search-route param for SQL-side
+    // filtering once supported); undefined/'all'/empty → whole-project scope.
+    const topic = opts?.topic?.trim();
+    const results = await backend.search(rootDir, {
+      query,
+      limit,
+      ...(topic && topic !== "all" && topic !== "*" ? { topic } : {}),
+    });
+    if (!results || results.length === 0) return "";
+    const items = results
+      .slice(0, limit)
+      .map((r) => {
+        const src = r.path && r.path !== ".memory/recall/" ? r.path : r.backend;
+        const score =
+          typeof r.score === "number" && Number.isFinite(r.score) ? ` (score ${r.score.toFixed(2)})` : "";
+        const snippet = (r.snippet ?? r.path ?? "").replace(/\s+/g, " ").trim().slice(0, 600);
+        return `- ${src}${score}: ${snippet || "(no excerpt)"}`;
+      })
+      .join("\n");
+    return (
+      `\n## Relevant Prior Context (auto-recalled)\n\n` +
+      `The following memories were recalled for this task before execution. ` +
+      `They may contain relevant decisions, constraints, or patterns you should honor. ` +
+      `You may use them without calling fn_memory_search.\n${items}\n`
+    );
+  } catch {
+    // Graceful degradation: never let a recall failure block execution.
+    return "";
+  }
 }
 
 // ── Memory Instructions for Prompts ──────────────────────────────────

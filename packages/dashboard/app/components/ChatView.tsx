@@ -32,13 +32,14 @@ import { RoomMessageDeliveredButReplyFailedError, useChatRooms } from "../hooks/
 import { useChatUnread } from "../hooks/useChatUnread";
 import { useComposerDictation } from "../hooks/useComposerDictation";
 import { useViewportMode } from "./Header";
-import { fetchSettings, updateGlobalSettings, type DiscoveredSkill } from "../api";
+import { fetchSettings, fetchChatSession, updateGlobalSettings, type DiscoveredSkill } from "../api";
 import { type Agent, type ChatTag, type Settings } from "@fusion/core";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import { MicButton } from "./MicButton";
 import { ChatThinkingLevelControl } from "./ChatThinkingLevelControl";
 import { ChatThreadTitleSwitcher } from "./ChatThreadTitleSwitcher";
 import { PendingChatMessageQueue } from "./PendingChatMessageQueue";
+import { ChatFocusSelector } from "./ChatFocusSelector";
 import { AgentMentionPopup } from "./AgentMentionPopup";
 import { AgentAvatar } from "./AgentAvatar";
 import { ProviderIcon } from "./ProviderIcon";
@@ -744,6 +745,44 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
   const [showArchivedSessions, setShowArchivedSessions] = useState(false);
   const contextMenuRef = useRef<HTMLDivElement>(null);
   /*
+  FNXC:ChatMemoryFocus 2026-08-13:
+  RUFU-068: local override of the active session's memoryFocus so a /focus slash
+  dispatch (which persists via the API) reflects instantly on the chip without mutating
+  the shared useChat store. undefined means "no override": fall back to the session's
+  own memoryFocus. Switched/cleared together with the active session so a focus never
+  leaks across conversations.
+  */
+  const [chatFocusOverride, setChatFocusOverride] = useState<string | null | undefined>(undefined);
+  /*
+  FNXC:ChatMemoryFocus 2026-08-13:
+  The active session's persisted memory_focus topic, fetched once from the full session
+  detail when the active session switches (the session-list item the useChat hook manages
+  does not carry memoryFocus). Used only to seed the focus chip; recall scoping itself is
+  enforced server-side by the Stash backend.
+  */
+  const [activeSessionFocus, setActiveSessionFocus] = useState<string | null>(null);
+  const resolvedChatFocus = chatFocusOverride !== undefined ? chatFocusOverride : activeSessionFocus;
+  useEffect(() => {
+    // Reset any prior focus (override + fetched) the moment conversation changes so
+    // a focus never leaks across sessions.
+    setChatFocusOverride(undefined);
+    setActiveSessionFocus(null);
+    const sessionId = activeSession?.id;
+    if (!sessionId) return;
+    let cancelled = false;
+    void fetchChatSession(sessionId, projectId)
+      .then(({ session }) => {
+        if (!cancelled) setActiveSessionFocus(session.memoryFocus ?? null);
+      })
+      .catch(() => {
+        // Focus is a soft display signal; on a detail-fetch failure the chip simply
+        // falls back to the whole-project/cleared state.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeSession?.id, projectId]);
+  /*
   FNXC:ChatSidebar 2026-07-17-00:12:
   FN-8191 positions each conversation-row action menu from its rendered dimensions, rather than a width derived from the default theme. This keeps the trigger edge aligned under alternate spacing themes and clamps all four actions inside both viewport axes.
   */
@@ -1086,7 +1125,7 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
     const commandEntries: SkillMenuEntry[] = filteredCommands.map((command) => ({
       kind: "command",
       command,
-      disabled: !chatCommandContext?.agentRunning,
+      disabled: command.requiresAgent && !chatCommandContext?.agentRunning,
     }));
     const skillEntries: SkillMenuEntry[] = filteredSkills.map((skill) => ({ kind: "skill", skill }));
     return [...commandEntries, ...skillEntries];
@@ -1987,7 +2026,10 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
     if (chatCommandContext) {
       const commandMatch = matchChatCommand(trimmed, CHAT_COMMANDS);
       if (commandMatch) {
-        if (!chatCommandContext.agentRunning) {
+        // FNXC:ChatMemoryFocus (RUFU-068): only agent-gated commands (steer) are
+        // refused without a running agent. /focus is a local session-setting command
+        // and stays dispatchable regardless of agent state.
+        if (commandMatch.command.requiresAgent && !chatCommandContext.agentRunning) {
           // Do not silently fall back to a normal chat message: /steer with no
           // running agent is a no-op with feedback, not a plain send.
           addToast(t("chat.commandNoRunningAgent", "No running agent to steer"), "warning");
@@ -2015,6 +2057,7 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
           .run({
             taskId: chatCommandContext.taskId,
             projectId: chatCommandContext.projectId,
+            sessionId: activeSession?.id ?? "",
             remainder: commandMatch.remainder,
           })
           .then(() => {
@@ -3217,6 +3260,20 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
         >
           <Paperclip size={16} />
         </button>
+        {/*
+        FNXC:ChatMemoryFocus 2026-08-13:
+        RUFU-068: per-conversation memory focus chip for direct chat sessions. Persists
+        on chat_sessions.memory_focus so it survives reconnect; recall scoping is server-side
+        (within-project read filter), never a client post-query filter. Only the direct composer
+        shows it — rooms have no per-conversation focus.
+        */}
+        <ChatFocusSelector
+          sessionId={activeSession?.id ?? null}
+          projectId={projectId}
+          memoryFocus={resolvedChatFocus}
+          onPersist={(focus) => setChatFocusOverride(focus)}
+          addToast={addToast}
+        />
         {/*
         FNXC:Chat-ThinkingLevel 2026-07-16-00:34:
         FN-8030: direct sessions retain model/agent targeting here, while room composers reuse

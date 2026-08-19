@@ -939,6 +939,14 @@ export class InProcessRuntime
   /** FNXC:TaskRecommendations 2026-08-13-03:56: identity-guarded teardown for the store-scoped recommendation notice seam. */
   private unregisterTaskRecommendationNoticeMailbox?: () => void;
   private chatStore?: ChatStore;
+  /**
+   * FNXC:RUFU121RuntimeProjectIdentity 2026-08-18-19:53:
+   * RUFU-121 Step 4: cached project-identity resolution (ONCE per runtime start).
+   * Both attach call sites share this promise so the central-core name lookup
+   * runs a single time; a resolution failure degrades to { projectId, null }
+   * and NEVER blocks runtime start.
+   */
+  private projectIdentityCache: Promise<{ projectId: string | null; projectName: string | null }> | null = null;
   private detachAgentLinkSync?: () => void;
   /**
    * Optional callback the runtime forwards to SelfHealingManager so that
@@ -1650,6 +1658,7 @@ export class InProcessRuntime
         if (!chatLayer) throw new Error("Heartbeat ChatStore requires the project PostgreSQL AsyncDataLayer");
         /* FNXC:PostgresSatelliteCutover 2026-07-14-17:30: Engine chat services share the authoritative project PostgreSQL layer and never reopen SQLite. */
         this.chatStore ??= new ChatStore(chatLayer);
+        await this.attachChatMemoryCaptureToExecutor();
         this.heartbeatMonitor = new HeartbeatMonitor({
           store: this.agentStore,
           agentStore: this.agentStore, // enables per-agent config resolution
@@ -1887,6 +1896,7 @@ export class InProcessRuntime
         const chatLayer2 = this.taskStore.getAsyncLayer();
         if (!chatLayer2) throw new Error("Self-healing ChatStore requires the project PostgreSQL AsyncDataLayer");
         this.chatStore ??= new ChatStore(chatLayer2);
+        await this.attachChatMemoryCaptureToExecutor();
       }
       /*
       FNXC:PlanReviewLease 2026-07-26-20:40:
@@ -2556,6 +2566,62 @@ export class InProcessRuntime
    */
   getChatStore(): import("@fusion/core").ChatStore | undefined {
     return this.chatStore;
+  }
+
+  /**
+   * FNXC:RUFU121RuntimeProjectIdentity 2026-08-18-19:53:
+   * RUFU-121 Step 4: resolve this runtime's project identity ONCE per start —
+   * projectId from the runtime config, projectName from CentralCore.getProject
+   * (the Step 3 central accessor). Best-effort: an unreachable central DB, an
+   * unknown project id, or a name-less row degrades projectName to null; the
+   * per-project Stash session folder still resolves by the stable external_key
+   * fusion-<projectId>. The cached promise is reused by both attach call sites.
+   */
+  private resolveProjectIdentity(): Promise<{ projectId: string | null; projectName: string | null }> {
+    if (!this.projectIdentityCache) {
+      const projectId = this.config.projectId ?? null;
+      this.projectIdentityCache = (async () => {
+        let projectName: string | null = null;
+        if (projectId) {
+          try {
+            const project = await this.centralCore.getProject(projectId);
+            if (project && typeof project.name === "string" && project.name.length > 0) {
+              projectName = project.name;
+            }
+          } catch {
+            // Central DB unreachable or not initialized — never block runtime start.
+            projectName = null;
+          }
+        }
+        return { projectId, projectName };
+      })();
+    }
+    return this.projectIdentityCache;
+  }
+
+  /**
+   * FNXC:MemoryCapture 2026-08-13-18:05:
+   * RUFU-068: Once the project ChatStore exists, wire the executor's complete-chat memory
+   * capture onto it so live conversations flow into the Stash memory backend as they happen
+   * (best-effort / fail-closed). The facade attach is idempotent, so double-invocation from the
+   * two `chatStore ??=` construction sites is safe.
+   *
+   * FNXC:RUFU121AttachIdentity 2026-08-18-19:53:
+   * RUFU-121 Step 4: now async — resolves the project identity (cached, best-effort) and
+   * passes it to the attach so captured events are stamped to the per-project Stash session
+   * folder. Awaited at both runtime-start call sites; a resolution failure degrades to a
+   * null name and never blocks startup.
+   */
+  private async attachChatMemoryCaptureToExecutor(): Promise<void> {
+    if (!this.executor || !this.chatStore) return;
+    try {
+      const projectIdentity = await this.resolveProjectIdentity();
+      this.executor.attachChatMemoryCapture(this.chatStore, projectIdentity);
+    } catch (error) {
+      runtimeLog.warn(
+        `Chat memory capture attach failed (best-effort, non-blocking): ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
   }
 
   /**

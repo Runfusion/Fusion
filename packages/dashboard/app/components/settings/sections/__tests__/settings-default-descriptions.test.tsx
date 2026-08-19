@@ -198,6 +198,7 @@ const SETTING_DESCRIPTION_KEYS: Record<string, string> = {
   memoryDreamsEnabled: "memory.turnsDailyNotesIntoDREAMSMdAndPromotes",
   memoryDreamsSchedule: "memory.cronExpressionForDreamProcessing",
   memoryBackendType: "memory.agentsGetMemorySearchMemoryGetAndMemory",
+  stashUrl: "memory.stashUrlHelp",
   // MergeSection
   autoMerge: "merge.whenEnabledTasksThatPassReviewAreAutomatically",
   // FN-7557: planApprovalMode defaults to auto-approve-all; the "(default)" marker moved to the auto-approve option.
@@ -355,6 +356,10 @@ const NOT_SURFACED_ALLOWLIST: Record<string, string> = {
   nested enabled flag rather than a top-level plain description field.
   */
   voiceInput: "nested Voice Input section object; enable toggle owns Default: off for voiceInput.enabled",
+  // Per-project Stash API key override for hard isolation. Not surfaced in Settings —
+  // the PRIMARY stash key lives in the global secrets store and any override is handled
+  // through the secrets path, so this key has no user-editable Settings description field.
+  stashApiKey: "per-project Stash API key override handled via the secrets path, not a Settings UI field",
   // Moved to workflow settings (U4) — see MOVED_SETTINGS_KEYS in `packages/core/src/config/settings-schema.ts`.
   workflowStepTimeoutMs: "moved to workflow settings (U4)",
   workflowStepScopeEnforcement: "moved to workflow settings (U4)",
@@ -632,6 +637,22 @@ const NOT_SURFACED_ALLOWLIST: Record<string, string> = {
   chatDefaultModelProvider: "chat default model provider, configured via the chat defaults picker, not a plain description field",
   chatDefaultModelId: "chat default model id, configured via the chat defaults picker, not a plain description field",
   chatDefaultThinkingLevel: "chat default thinking level, configured via the chat defaults picker, not a plain description field",
+  /*
+   * FNXC:Rufu043MemoryBackends 2026-08-08-17:38:
+   * RUFU-040 foundation commit 8c595f5cd added three project-scoped Stash/TencentDB
+   * memory-backend settings keys to DEFAULT_PROJECT_SETTINGS without registering them
+   * here, breaking this guard's "every DEFAULT_SETTINGS key is either mapped to a
+   * description or explicitly allowlisted" assertion on any base carrying the
+   * foundation. They are allowlisted (not mapped) because their canonical schema
+   * default is the empty string `""` (meaning "use the runtime localhost constant"),
+   * so a description-field `Default:` claim would be a fabricated-default defect that
+   * the guard's canonical-default assertion rejects; their concrete defaults are the
+   * http://127.0.0.1 runtime fallbacks conveyed by each row's placeholder/help, not a
+   * description-field claim.
+   */
+  memoryBackendUrl: "project-scoped TencentDB gateway URL row (rendered in MemorySection only for the tencentdb backend); canonical schema default is empty (`''`) = use the runtime DEFAULT_GATEWAY_URL (http://127.0.0.1:8420), conveyed by the row's placeholder/help, not a description-field claim",
+  stashUrl: "project-scoped Stash server URL row (rendered in MemorySection only for the stash backend); canonical schema default is empty (`''`) = use the runtime DEFAULT_STASH_URL (http://127.0.0.1:3457), conveyed by the row's placeholder/help, not a description-field claim",
+  stashApiKey: "Stash API-key secret override, not rendered as a settings field (the primary key lives in the global secrets store `stash-api-key` per MemorySection help, never in settings); canonical schema default is empty (`''`) = use the resolved global secret",
 };
 
 describe("FN-7505 settings default-value description guard", () => {

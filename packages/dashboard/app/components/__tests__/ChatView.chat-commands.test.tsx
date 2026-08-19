@@ -44,6 +44,9 @@ vi.mock("../../api", () => ({
   fetchTasks: vi.fn().mockResolvedValue([]),
   searchFiles: vi.fn().mockResolvedValue({ files: [] }),
   addSteeringComment: vi.fn(),
+  // FNXC:ChatMemoryFocus (RUFU-068): ChatView now fetches per-session detail to seed
+  // the focus chip; the harness never asserts on it, so resolve to a whole-project session.
+  fetchChatSession: vi.fn().mockResolvedValue({ session: { memoryFocus: null } }),
 }));
 
 import { addSteeringComment } from "../../api";

@@ -1010,6 +1010,12 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     replayBufferedSSE,
     validateOptionalModelField,
     upload,
+    // FNXC:ChatMemoryCaptureWiring 2026-08-18-14:37: forward engineManager so
+    // resolveProjectChatContext can resolve the engine's ChatStore instance —
+    // the one the RUFU-068 Stash chat-capture subscription is attached to.
+    // Without this every chat request used a dashboard-local ChatStore and
+    // per-message Stash capture silently never fired.
+    engineManager: options?.engineManager,
   }));
   registrarMounter.mount("registerChatRoomRoutes", () => registerChatRoomRoutes(routeContext, { upload }));
   registrarMounter.mount("registerMessagingScriptRoutes", () => registerMessagingScriptRoutes(routeContext));

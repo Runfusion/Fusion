@@ -1061,6 +1061,61 @@ describe("runAiMerge", () => {
     expect(store.moveTask).not.toHaveBeenCalled();
   });
 
+  // FNXC:NoCommitsBranchMissing 2026-08-08-19:53:
+  // RUFU-014 regression coverage for the no-commits escape hatch in the branch-missing
+  // block of runAiMerge. A no-commits task (observational audit, non-code deliverable)
+  // that was executed but whose git branch is missing must NOT throw "work appears lost":
+  // all-done tasks finalize as a no-op to done; incomplete/skipped tasks demote to todo
+  // with progress preserved. The commit-expected invariant above still throws (unchanged).
+  it("finalizes a no-commits all-done task when the branch is missing", async () => {
+    const { dir } = initRepoWithBranch({ branch: "fusion/fn-1" });
+    // branch points at a ref that doesn't exist; task was executed (baseCommitSha) and never merged.
+    const { store, task } = makeStore(dir, {
+      branch: "fusion/ghost",
+      baseCommitSha: "0123456789abcdef",
+      noCommitsExpected: true,
+      steps: [
+        { name: "Preflight", status: "done" },
+        { name: "Report", status: "done" },
+      ],
+    });
+
+    const result = await runAiMerge(store, dir, "FN-1", { manual: true }, {
+      mergeAgent: vi.fn(), reviewAgent: vi.fn(),
+    });
+
+    expect(result.noOp).toBe(true);
+    expect(result.ok).toBe(true);
+    expect(task.column).toBe("done");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-1", "done", expect.objectContaining({ moveSource: "engine", preserveProgress: true }));
+  });
+
+  it("demotes a no-commits task with incomplete/skipped steps when the branch is missing", async () => {
+    const { dir } = initRepoWithBranch({ branch: "fusion/fn-1" });
+    // A skipped verification/QA step blocks unconditionally (matching the empty-merge lane).
+    const { store, task } = makeStore(dir, {
+      branch: "fusion/ghost",
+      baseCommitSha: "0123456789abcdef",
+      noCommitsExpected: true,
+      steps: [
+        { name: "Preflight", status: "done" },
+        { name: "Execute", status: "done" },
+        { name: "Testing & Verification", status: "skipped" },
+      ],
+    });
+
+    const result = await runAiMerge(store, dir, "FN-1", { manual: true }, {
+      mergeAgent: vi.fn(), reviewAgent: vi.fn(),
+    });
+
+    expect(result.merged).toBe(false);
+    expect(result.noOp).toBe(false);
+    expect(result.error).toContain("skipped verification step");
+    expect(task.column).toBe("todo");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-1", "todo", expect.objectContaining({ preserveProgress: true, moveSource: "engine" }));
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-1", "done");
+  });
+
   it("recovers an executed missing-branch task with prior AI no-op finalization proof", async () => {
     const { dir } = initRepoWithBranch({ branch: "fusion/fn-1" });
     const { store } = makeStore(dir, {

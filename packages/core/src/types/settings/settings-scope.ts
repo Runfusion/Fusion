@@ -2310,6 +2310,22 @@ export interface ProjectSettings {
    *  - Any registered custom backend type
    *  Default: "qmd" */
   memoryBackendType?: string;
+  // FNXC:StashConfig 2026-08-13-16:35: (RUFU-068) optional per-project Stash LCM
+  // memory backend config. stashUrl points at the operator's Stash server
+  // (default http://127.0.0.1:3457); stashApiKey is an override for hard
+  // isolation (separate Stash instance/account). The PRIMARY API key lives in
+  // the global secrets store ("stash-api-key") and is NEVER committed here;
+  // project value wins over global.
+  /** Base URL of the Stash server (optional LCM memory backend, e.g. http://127.0.0.1:3457).
+   *  Used only when memoryBackendType === "stash". Per-project override;
+   *  empty uses the built-in default. The API key is NEVER stored here — it
+   *  lives in the global secrets store ("stash-api-key"). */
+  stashUrl?: string;
+  /** Per-project Stash API key override for hard isolation (separate Stash
+   *  instance/account). The primary key lives in the global secrets store and
+   *  is never committed; this is an optional escape hatch populated by the
+   *  operator through the secrets path. */
+  stashApiKey?: string;
   /** When true, enables automatic AI-powered summarization and compression of the
    *  working memory file when it exceeds the configured size threshold.
    *  Creates an automation schedule that checks memory size and compacts when needed.

@@ -5,8 +5,12 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import {
   THINKING_LEVELS,
+  createLogger,
+  deleteStashChatSession,
+  DEFAULT_STASH_URL,
   resolvePermanentAgentEffectiveModel,
   resolvePermanentAgentEffectiveThinkingLevel,
+  resolveStashMemorySettings,
   type EnrichedChatSession,
   type ChatAttachment,
 } from "@fusion/core";
@@ -25,11 +29,29 @@ import { writeSSEEvent, type SessionBufferedEvent } from "../sse-buffer.js";
 import { ChatReplacementError, TASK_PLANNER_CHAT_AGENT_ID_PREFIX } from "../chat.js";
 import type { ApiRoutesContext } from "./types.js";
 
+/*
+FNXC:RUFU121DeleteSync 2026-08-18-20:50:
+Logger for the RUFU-121 best-effort Stash chat-session delete sync (debug for skips,
+warn for failures). Follows the dashboard createLogger("dashboard-...") convention.
+*/
+const chatDeleteSyncLog = createLogger("dashboard-register-chat-routes");
+
 interface ChatRouteDeps {
   parseLastEventId: (req: import("express").Request) => number | undefined;
   replayBufferedSSE: (res: import("express").Response, bufferedEvents: SessionBufferedEvent[]) => boolean;
   validateOptionalModelField: (value: unknown, fieldName: string) => string | undefined;
   upload: import("multer").Multer;
+  /*
+  FNXC:ChatMemoryCaptureWiring 2026-08-18-14:37:
+  RUFU-068's complete-chat Stash capture is attached to the ENGINE's ChatStore
+  (in-process-runtime attachChatMemoryCaptureToExecutor subscribes to
+  chat:message:added on the runtime ChatStore instance). resolveProjectChatContext
+  returns that engine instance only when engineManager is provided; without it
+  every chat request resolves to a dashboard-local ChatStore instance and chat
+  messages never reach the capture subscription — Stash shows no chat transcript
+  at all (observed 2026-08-18: 6 live messages, 0 captured events).
+  */
+  engineManager?: import("@fusion/engine").ProjectEngineManager;
 }
 
 const CHAT_MESSAGE_MAX_ATTACHMENTS = 10;
@@ -611,9 +633,19 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
 
   /**
    * PATCH /api/chat/sessions/:id
-   * Update a chat session (title, status, thinkingLevel, model, or agent target).
+   * Update a chat session (title, status, thinkingLevel, model, agent target,
+   * or per-conversation memory focus).
    * Body: { title?: string, status?: "active" | "archived", thinkingLevel?: string | null,
-   *         modelProvider?: string | null, modelId?: string | null, agentId?: string, pinned?: boolean }
+   *         modelProvider?: string | null, modelId?: string | null, agentId?: string, pinned?: boolean,
+   *         memoryFocus?: string | null }
+   *
+   * FNXC:ChatMemoryFocus 2026-08-13:
+   * RUFU-068: `memoryFocus` delegates to ChatStore.setSessionMemoryFocus, which
+   * trims the topic and normalizes empty/null to null (whole-project scope). An
+   * omitted key leaves the stored value untouched (matching the status/title
+   * pattern); an explicit empty string is an intentional clear back to
+   * whole-project scope. The active topic persists in chat_sessions.memory_focus
+   * so it survives reconnect and scopes recall to it as a WITHIN-project read filter.
    *
    * FNXC:ChatPinned 2026-07-16-12:00:
    * `pinned` delegates to ChatStore's advisory-lock-protected max-three check.
@@ -655,6 +687,7 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
         agentId: rawAgentId,
         pinned: rawPinned,
         tagIds: rawTagIds,
+        memoryFocus: rawMemoryFocus,
       } = req.body as {
         title?: string;
         status?: string;
@@ -664,6 +697,7 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
         agentId?: string;
         pinned?: boolean;
         tagIds?: unknown;
+        memoryFocus?: string | null;
       };
 
       // Validate status if provided
@@ -677,6 +711,13 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
 
       if (rawPinned !== undefined && typeof rawPinned !== "boolean") {
         throw badRequest("pinned must be a boolean");
+      }
+
+      // FNXC:ChatMemoryFocus — memoryFocus must be a string when present; null
+      // is an explicit clear (whole-project scope). setSessionMemoryFocus trims
+      // and normalizes empty->null, so we only type-check here.
+      if (rawMemoryFocus !== undefined && rawMemoryFocus !== null && typeof rawMemoryFocus !== "string") {
+        throw badRequest("memoryFocus must be a string");
       }
 
       // Normalize thinkingLevel before persisting: undefined leaves the field
@@ -743,6 +784,18 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
         if (!session) throw notFound(`Chat session ${sessionId} not found`);
       }
 
+      // FNXC:ChatMemoryFocus — persist the per-conversation memory focus topic.
+      // Only when the key is present in the body (omitted keys stay untouched);
+      // null/empty clear to whole-project scope via setSessionMemoryFocus.
+      if (rawMemoryFocus !== undefined) {
+        try {
+          session = await chatStore.setSessionMemoryFocus(sessionId, rawMemoryFocus);
+        } catch (err) {
+          rethrowAsApiError(err, "Failed to update conversation memory focus");
+        }
+        if (!session) throw notFound(`Chat session ${sessionId} not found`);
+      }
+
       res.json({ session });
     } catch (err: unknown) {
       if (err instanceof ApiError) {
@@ -755,16 +808,75 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
   /**
    * DELETE /api/chat/sessions/:id
    * Delete a chat session and all its messages.
+   *
+   * FNXC:RUFU121DeleteSync 2026-08-18-20:50:
+   * RUFU-121 Step 5: AFTER the local delete reports success, fire-and-forget a best-effort
+   * Stash session delete sync (GET /sessions?limit=200 → match session_id → DELETE row).
+   * NOT awaited — the response emits exactly as today, and the sync must never throw into
+   * the route (deleteStashChatSession is itself never-throwing; the wrapper also catches).
+   * Silently skipped (no Stash call, no error) when memory is disabled, the backend is not
+   * `stash`, or the stash API key is unresolvable. Known limitations (accepted per
+   * the best-effort contract): an in-flight capture flush can recreate the Stash session
+   * after a delete sync (watermark not yet flushed), and the GET /sessions lookup is a
+   * global recent window (max 200) — very old sessions may not be found.
+   *
+   * FNXC:RUFU121DeleteSyncUrl 2026-08-18-21:59:
+   * RUFU-121 (code-review remediation): the stashUrl resolves exactly the way the
+   * engine capture path does (resolveMemoryBackend): an unset/blank stashUrl falls
+   * back to DEFAULT_STASH_URL, so "unresolvable" can never mean "unset" — an unset
+   * URL is resolvable by design (the built-in default is what capture already
+   * targets in the operator's default configuration). The first implementation
+   * gated on `!stashUrl`, which made the sync a silent no-op in that default
+   * configuration (no explicit stashUrl setting), so deleted chats kept leaking
+   * into Stash — the exact symptom this step exists to remove. The API key still
+   * gates: an empty key (missing/undecryptable secret) means the request would
+   * 401 anyway, so the spec's missing-key → no-call contract is preserved.
    */
   router.delete("/chat/sessions/:id", rateLimit(RATE_LIMITS.mutation), async (req, res) => {
     try {
-      const { chatStore } = await resolveScopedChatStore(req);
+      const { store, chatStore } = await resolveScopedChatStore(req);
       const sessionId = String(req.params.id);
 
       const deleted = await chatStore.deleteSession(sessionId);
       if (!deleted) {
         throw notFound(`Chat session ${sessionId} not found`);
       }
+
+      /*
+      FNXC:RUFU121DeleteSync 2026-08-18-20:50:
+      RUFU-121 Step 5: fire-and-forget — the void IIFE never blocks the response and never
+      rejects (every path is try/caught; the helper degrades to not-found/skipped instead of
+      throwing). The session id is passed VERBATIM from req.params.id (it is literally
+      chat-<8hex> — no string surgery). The store satisfies the StashSecretsReader duck type
+      (getSecretsStore) so the engine's resolveStashMemorySettings works unchanged here.
+
+      FNXC:RUFU121DeleteSyncUrl 2026-08-18-21:59:
+      URL fallback mirrors resolveMemoryBackend byte-for-byte (trim + DEFAULT_STASH_URL)
+      so the sync targets the same server capture targets. Only an empty API key skips.
+      */
+      void (async () => {
+        try {
+          const settings = await store.getSettings();
+          const resolved = await resolveStashMemorySettings(store, settings);
+          if (!resolved || resolved.memoryEnabled === false) return;
+          if (resolved.memoryBackendType !== "stash") return;
+          const rawStashUrl = resolved.stashUrl;
+          const stashUrl =
+            typeof rawStashUrl === "string" && rawStashUrl.trim().length > 0
+              ? rawStashUrl.trim()
+              : DEFAULT_STASH_URL;
+          const stashApiKey = resolved.stashApiKey;
+          if (!stashApiKey) return;
+          const result = await deleteStashChatSession(stashUrl, stashApiKey, sessionId);
+          if (result.status !== "ok") {
+            chatDeleteSyncLog.debug(`Stash chat-session delete sync skipped/not-found for ${sessionId}: ${result.status}`);
+          }
+        } catch (err: unknown) {
+          chatDeleteSyncLog.warn(
+            `Stash chat-session delete sync failed for ${sessionId} (best-effort, non-blocking): ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      })();
 
       res.json({ success: true });
     } catch (err: unknown) {

@@ -1,0 +1,20 @@
+-- FNXC:MemoryFocus 2026-08-13-15:57:
+-- RUFU-068: per-conversation read-time memory FOCUS/TOPIC layer over the
+-- per-project Stash scope (ported from clean-rebase's 0049_chat_session_memory_focus.sql
+-- and renumbered to 0060). Adds chat_sessions.memory_focus so the active topic
+-- persists across reconnects and scopes fn_memory_search + proactive recall to a
+-- working topic within the project. NULL/empty ('' normalized to NULL) means the
+-- conversation inherits the whole-project scope. This column is a read-time focus
+-- filter only — capture stays write-anywhere and cross-project isolation is
+-- untouched (Stash owner_user_id SQL scope is orthogonal).
+-- Renumbered again during the rebase onto origin/main (2026-08-14): origin/main
+-- concurrently landed FN-9037's 0059_fn_9037_tasks_source_agent_index.sql under the
+-- same 0059 sequence we had picked, so our chat_session_memory_focus migration is
+-- pinned to 0060 (the next free sequence above both SCHEMA_BASELINE_VERSION "0059"
+-- and FN-9037's source-agent index).
+-- Renumbered to 0066 on 2026-08-23 (rebase onto origin/main 3f448f7292): upstream's
+-- FN-149 shipped 0065_fn_149_review_convergence_stage.sql, claiming 0065 canonically.
+-- Upstream's 0065 is already released, so this migration takes the next free sequence.
+-- Production ledgers that applied the memory-focus SQL under the old row "0065"
+-- (v17-era) need a one-time 0065->0066 ledger remap before first 0066-ceiling boot.
+ALTER TABLE IF EXISTS project.chat_sessions ADD COLUMN IF NOT EXISTS memory_focus text;
