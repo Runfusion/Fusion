@@ -861,6 +861,18 @@ export const DEFAULT_PROJECT_SETTINGS = {
   // degrades to 1-token replies (pi threshold compaction never fires for zero-usage
   // providers, earendil-works/pi#8328). `false` bypasses the gate entirely per project.
   chatPreOverflowCompactionEnabled: true,
+  // FNXC:ChatContextBudget 2026-08-20-16:20:
+  // RUFU-135 kill switch: the chat context budget (bounded memory inlining +
+  // curated chat tool allowlist, see CHAT_MEMORY_CAP_CHARS in the dashboard
+  // chat runner) is an opt-out project option, mirroring the guard toggle
+  // above. On by default: without the budget the static chat floor exceeds
+  // 64K-window models and dead-ends on 128K-window models at the context
+  // wall. `false` restores the pre-RUFU-135 behavior (unbounded memory
+  // injection into the chat prompt, full registered tool set visible to the
+  // chat session) so an operator can disable the budget at runtime without a
+  // redeploy if it ever misbehaves in production (user requirement: every LCM
+  // behavior change must be disableable as a feature).
+  chatContextBudgetEnabled: true,
   // FNXC:ChatContextGuard 2026-08-18-18:06:
   // RUFU-118: the chat/CLI lane's 80%-of-context-window compaction default is
   // applied in the engine guard (packages/engine/src/chat-context-guard.ts),

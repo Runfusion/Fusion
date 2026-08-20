@@ -131,4 +131,14 @@ export const memorySearchEntries: SettingsSearchEntry[] = [
       "Compacts the chat context at ~80% of the model window before a turn would overflow it, preventing single-token replies at the context wall. Default: enabled.",
     keywords: ["compaction", "overflow", "guard", "context", "lcm"],
   },
+  {
+    sectionId: "memory",
+    key: "chatContextBudgetEnabled",
+    labelKey: "settings.memory.chatContextBudget",
+    labelFallback: "Chat context budget (64K window fit)",
+    helpKey: "settings.memory.chatContextBudgetHelp",
+    helpFallback:
+      "Bounds the chat static context: oversized memory becomes a bounded heading index and chat sessions use the curated chat toolset, so agent chat fits 64K-window models. Disable to restore unbounded memory injection and the full tool set (pre-RUFU-135 behavior). Default: enabled.",
+    keywords: ["context", "budget", "memory", "tools", "64k", "lcm", "floor", "kill switch"],
+  },
 ];

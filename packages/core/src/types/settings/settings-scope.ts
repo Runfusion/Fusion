@@ -2352,6 +2352,15 @@ export interface ProjectSettings {
    *  opt-out selectable feature, not always-on — not every operator wants it.
    *  Default: true. */
   chatPreOverflowCompactionEnabled?: boolean;
+  /** Chat context budget (RUFU-135) — opt-out selectable feature, default true.
+   *  When true the chat system prompt is bounded: oversized project/agent
+   *  memory is inlined as a bounded heading index (full content stays
+   *  reachable via fn_memory_search / fn_memory_get) and chat sessions are
+   *  filtered to the curated chat toolset, so agent chat fits 64K-window
+   *  models. When false the pre-RUFU-135 behavior is restored: unbounded
+   *  memory injection and the full registered tool set (runtime kill switch
+   *  — no redeploy needed to disable the budget in production). */
+  chatContextBudgetEnabled?: boolean;
   /** Token compaction threshold — dual-lane semantics:
    *
    *  - Executor/agent tasks (TokenCapDetector): optional pre-overflow cap.

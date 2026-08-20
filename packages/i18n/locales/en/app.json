@@ -6378,6 +6378,8 @@
       "perTurnRecallTopKHelp": "Maximum number of memory snippets injected per turn. Default: 3.",
       "preOverflowCompaction": "Pre-overflow compaction guard",
       "preOverflowCompactionHelp": "Compacts the chat context at ~80% of the model window before a turn would overflow it, preventing single-token replies at the context wall. Default: enabled.",
+      "chatContextBudget": "Chat context budget (64K window fit)",
+      "chatContextBudgetHelp": "Bounds the chat static context: oversized memory becomes a bounded heading index and chat sessions use the curated chat toolset, so agent chat fits 64K-window models. Disable to restore unbounded memory injection and the full tool set (pre-RUFU-135 behavior). Default: enabled.",
       "failedToLoadBackendStatus": "Failed to load backend status: ",
       "for": "for \"",
       "installing": "Installing…",
