@@ -2234,6 +2234,13 @@ export class ChatManager {
     await ensureEngineReady();
 
     let systemPrompt = CHAT_SYSTEM_PROMPT;
+    // FNXC:ChatContextBudget 2026-08-20-16:20:
+    // Runtime kill switch for the RUFU-135 chat context budget
+    // (Settings.chatContextBudgetEnabled): false restores the pre-RUFU-135
+    // prompt shape — unbounded memory inlining and the full registered tool
+    // set — so a production regression in the budget is disableable without
+    // a redeploy. Read per reply (hot) like the pre-overflow guard toggle.
+    const roomChatBudgetOn = (await this.getChatModelSettings()).chatContextBudgetEnabled !== false;
     if (buildAgentChatPromptFn) {
       try {
         /*
@@ -2261,7 +2268,7 @@ export class ChatManager {
           bounded heading index instead; full content stays reachable via
           fn_memory_search / fn_memory_get.
           */
-          memoryCapChars: CHAT_MEMORY_CAP_CHARS,
+          memoryCapChars: roomChatBudgetOn ? CHAT_MEMORY_CAP_CHARS : undefined,
           topic: input.content,
           sessionId: `room:${input.roomId}`,
           settings: await this.getSettings?.(),
@@ -2390,7 +2397,7 @@ export class ChatManager {
       so it must include the curated room customTools names or they are dropped —
       only the builtin coding tools would remain.
       */
-      toolsAllowlist: chatToolAllowlist(roomCustomTools.map((tool) => tool.name)),
+      toolsAllowlist: roomChatBudgetOn ? chatToolAllowlist(roomCustomTools.map((tool) => tool.name)) : undefined,
       ...(roomCustomTools.length > 0 ? { customTools: roomCustomTools } : {}),
       ...(effectiveModelProvider && effectiveModelId
         ? {
@@ -2717,6 +2724,15 @@ export class ChatManager {
       }
 
       let systemPrompt = CHAT_SYSTEM_PROMPT;
+      // FNXC:ChatContextBudget 2026-08-20-16:20:
+      // Runtime kill switch for the RUFU-135 chat context budget
+      // (Settings.chatContextBudgetEnabled): false restores the pre-RUFU-135
+      // prompt shape — unbounded memory inlining and the full registered tool
+      // set — so a production regression in the budget is disableable without
+      // a redeploy. Read per send (hot) like the pre-overflow guard toggle;
+      // declared here (function scope) so the session-creation toolsAllowlist
+      // below uses the same value as the prompt build.
+      const directChatBudgetOn = (await this.getChatModelSettings()).chatContextBudgetEnabled !== false;
       let agent: Agent | null = null;
 
       if (this.agentStore && session.agentId) {
@@ -2756,7 +2772,7 @@ export class ChatManager {
             models unusable. With the cap, oversized memory becomes a bounded
             heading index, keeping the static floor near ~35K tokens.
             */
-            memoryCapChars: CHAT_MEMORY_CAP_CHARS,
+            memoryCapChars: directChatBudgetOn ? CHAT_MEMORY_CAP_CHARS : undefined,
             topic: parsedSkillCommands.strippedContent || content,
             sessionId: session.id,
             settings: await this.getSettings?.(),
@@ -3040,7 +3056,7 @@ export class ChatManager {
         so the curated chat toolset names must be included or every fn_* chat tool
         is dropped from the session (observed: chat shrank to the 7 builtin tools).
         */
-        toolsAllowlist: chatToolAllowlist(customTools.map((tool) => tool.name)),
+        toolsAllowlist: directChatBudgetOn ? chatToolAllowlist(customTools.map((tool) => tool.name)) : undefined,
         ...(customTools.length > 0 ? { customTools } : {}),
         sessionManager,
         ...(effectiveModelProvider && effectiveModelId

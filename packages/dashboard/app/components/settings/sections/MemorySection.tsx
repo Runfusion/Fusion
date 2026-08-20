@@ -142,6 +142,26 @@ export function MemorySection({ form, setForm, memory }: MemorySectionProps) {
         onChange={(v) => setForm((f) => ({ ...f, chatPreOverflowCompactionEnabled: v === true }))}
       />
 
+      {/*
+      FNXC:ChatContextBudget 2026-08-20-16:20:
+      Runtime kill switch for the RUFU-135 chat context budget (bounded memory
+      inlining + curated chat tool allowlist). Sits next to the guard toggle
+      because operators think of LCM as one feature pair; disabling restores
+      the pre-RUFU-135 unbounded-memory / full-toolset prompt shape without a
+      redeploy (user requirement: every LCM behavior change must be disableable
+      as a feature).
+      */}
+      <SettingsToggleRow
+        descriptor={{
+          key: "chatContextBudgetEnabled",
+          label: t("settings.memory.chatContextBudget", "Chat context budget (64K window fit)"),
+          help: t("settings.memory.chatContextBudgetHelp", "Bounds the chat static context: oversized memory becomes a bounded heading index and chat sessions use the curated chat toolset, so agent chat fits 64K-window models. Disable to restore unbounded memory injection and the full tool set (pre-RUFU-135 behavior). Default: enabled."),
+          scope: "project",
+        }}
+        value={form.chatContextBudgetEnabled !== false}
+        onChange={(v) => setForm((f) => ({ ...f, chatContextBudgetEnabled: v === true }))}
+      />
+
       {backendLoading ? (<div className="form-group">
           <small className="settings-muted">{t("settings.memory.checkingMemoryWriteAccess", "Checking memory write access...")}</small>
         </div>) : backendError ? (<div className="form-group">
