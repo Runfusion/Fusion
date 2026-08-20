@@ -930,7 +930,13 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
   */
   router.post("/chat/sessions/:id/backfill-stash", rateLimit(RATE_LIMITS.mutation), async (req, res) => {
     try {
-      const { store, chatStore } = await resolveScopedChatStore(req.query.projectId as string | undefined);
+      /*
+      FNXC:ChatStashBackfillSigSync 2026-08-20-12:10:
+      (origin rebase 2026-08-20) resolveScopedChatStore changed upstream from (projectId)
+      to (req); the backfill route is new RUFU-136 code that rebased without conflict, so
+      this call site must follow the new signature or the dashboard tsc gate fails (TS2345).
+      */
+      const { store, chatStore } = await resolveScopedChatStore(req);
       const sessionId = String(req.params.id);
 
       const session = await chatStore.getSession(sessionId);
