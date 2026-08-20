@@ -364,17 +364,33 @@ The dashboard process loads the @runfusion/fusion host extension into every pi
 session, so without a filter the chat session also exposes all 86 executor
 fn_* tools (task delete/bypass, agent create, insights, evals, …) on top of the
 curated chat toolset — a large static schema payload that chat does not need.
-CHAT_CODING_TOOL_ALLOWLIST names the builtin coding tools, which makes the engine
-pass an explicit tool-name allowlist into the pi session; pi then filters EVERY
-registered tool (builtin + host-extension + custom) to that list, so the 86
-executor tools disappear from chat while the dashboard's own curated chat
-toolset (createChatFusionToolset + planner/messaging/workflow/document/artifact
-tools) and the builtin coding tools remain available. The chat surface is
+CHAT_CODING_TOOL_ALLOWLIST names the builtin coding tools. The engine applies a
+toolsAllowlist to EVERY registered tool — caller customTools included — so the
+allowlist passed to createResolvedAgentSession must also contain the curated
+chat toolset names (see the call sites), or the custom tools are filtered out
+before the session is created (observed 2026-08-20: chat sessions shrank to the
+7 builtin coding tools only, dropping fn_memory_search / fn_task_show / workflow
+tools). The 86 host-extension executor tools are excluded by pi's session-level
+registry filter because their names are not in the list. The chat surface is
 designed around the curated toolset (action-gate semantics included); losing the
 raw executor tools is intentional. Engine lanes (triage/executor/reviewer/merger)
 do not pass this allowlist and keep the full extension surface.
 */
 const CHAT_CODING_TOOL_ALLOWLIST = ["read", "bash", "edit", "write", "grep", "find", "ls"] as const;
+
+/**
+ * FNXC:ChatContextBudget 2026-08-20-12:43:
+ * Combine the builtin coding allowlist with the curated chat toolset names.
+ * The engine's toolsAllowlist is a GLOBAL allowlist (builtins + customTools +
+ * host-extension tools are all filtered by name — pi.ts isAllowedByToolAllowlist
+ * also filters caller-supplied customTools), so passing only the builtin names
+ * silently dropped the entire curated chat toolset from chat sessions. The
+ * host-extension executor tools stay hidden because their names are not in the
+ * combined list; pi's session-level tool filter removes them from the registry.
+ */
+export function chatToolAllowlist(customToolNames: string[]): string[] {
+  return [...CHAT_CODING_TOOL_ALLOWLIST, ...customToolNames];
+}
 
 const ROOM_AMBIENT_MAX_RESPONDERS = 5;
 
@@ -2346,6 +2362,7 @@ export class ChatManager {
       actionGateContext: missionGateContexts.actionGateContext,
     });
 
+    const roomCustomTools = dedupeChatTools([...workflowTools, ...chatFusionTools]);
     const resolvedSession = await createResolvedAgentSession({
       sessionPurpose: "heartbeat",
       pluginRunner: this.pluginRunner,
@@ -2367,14 +2384,14 @@ export class ChatManager {
       FNXC:ChatContextBudget 2026-08-20-11:56:
       Explicit tool-name allowlist: hides the 86 host-extension executor fn_* tools
       from room-responder sessions (see CHAT_CODING_TOOL_ALLOWLIST) so the static
-      tool-schema payload stays within the chat context budget. The curated
-      customTools (workflow + chatFusion) and the builtin coding tools remain
-      available. See the constant's comment for the full rationale.
+      tool-schema payload stays within the chat context budget.
+      FNXC:ChatContextBudget 2026-08-20-12:43:
+      The allowlist is global (the engine also filters caller customTools by it),
+      so it must include the curated room customTools names or they are dropped —
+      only the builtin coding tools would remain.
       */
-      toolsAllowlist: [...CHAT_CODING_TOOL_ALLOWLIST],
-      ...(workflowTools.length + chatFusionTools.length > 0
-        ? { customTools: dedupeChatTools([...workflowTools, ...chatFusionTools]) }
-        : {}),
+      toolsAllowlist: chatToolAllowlist(roomCustomTools.map((tool) => tool.name)),
+      ...(roomCustomTools.length > 0 ? { customTools: roomCustomTools } : {}),
       ...(effectiveModelProvider && effectiveModelId
         ? {
             defaultProvider: effectiveModelProvider,
@@ -3018,8 +3035,12 @@ export class ChatManager {
         Hide the 86 host-extension executor fn_* tools from direct chat/QuickChat
         sessions (explicit allowlist → pi filters every registered tool to the
         curated chat toolset + builtin coding tools). See CHAT_CODING_TOOL_ALLOWLIST.
+        FNXC:ChatContextBudget 2026-08-20-12:43:
+        The allowlist is global (the engine also filters caller customTools by it),
+        so the curated chat toolset names must be included or every fn_* chat tool
+        is dropped from the session (observed: chat shrank to the 7 builtin tools).
         */
-        toolsAllowlist: [...CHAT_CODING_TOOL_ALLOWLIST],
+        toolsAllowlist: chatToolAllowlist(customTools.map((tool) => tool.name)),
         ...(customTools.length > 0 ? { customTools } : {}),
         sessionManager,
         ...(effectiveModelProvider && effectiveModelId
