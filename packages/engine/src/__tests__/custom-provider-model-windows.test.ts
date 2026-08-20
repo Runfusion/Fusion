@@ -27,10 +27,12 @@ function makeProvider(models: NonNullable<CustomProvider["models"]>, apiType: Cu
   };
 }
 
-// The four declared apiType shapes. resolveApiType maps openai-compatible AND
-// google-generative-ai to the "openai-completions" pi-ai key; only anthropic-compatible
-// and openai-responses resolve to distinct keys. The builder must emit per-model
-// windows for every shape regardless of the resolved key.
+// The four declared apiType shapes. resolveApiType maps openai-compatible to the
+// "openai-completions" pi-ai key, openai-responses to "openai-responses",
+// anthropic-compatible to "anthropic-messages", and google-generative-ai to its own
+// "google-generative-ai" dialect key (upstream keeps pi's Google API dialect so its
+// shared thinking translation handles Off and every selected effort). The builder
+// must emit per-model windows for every shape regardless of the resolved key.
 const API_TYPE_CASES: CustomProvider["apiType"][] = [
   "openai-compatible",
   "openai-responses",
@@ -52,7 +54,7 @@ describe("buildCustomProviderModels per-model windows (RUFU-123)", () => {
       api,
     );
     // Sanity: the resolved pi-ai key for each declared shape is one pi-ai actually registers.
-    expect(["openai-completions", "openai-responses", "anthropic-messages"]).toContain(api);
+    expect(["openai-completions", "openai-responses", "anthropic-messages", "google-generative-ai"]).toContain(api);
 
     expect(models.map((m) => [m.id, m.contextWindow, m.maxTokens])).toEqual([
       ["deepseek-v4", 32768, 4096],
