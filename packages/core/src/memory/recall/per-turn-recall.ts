@@ -21,9 +21,9 @@ score filter, dedup, and top-K (Volt topK=3). The Stash API has NO server-side s
  */
 /** Maximum number of keywords emitted for a recall query (B.2: top 2–3). */
 export const RECALL_KEYWORD_MAX_TERMS = 3;
-/** Maximum characters per keyword (guards against pathological single tokens). */
+/** Maximum code points per keyword (guards against pathological single tokens). */
 export const RECALL_KEYWORD_MAX_TERM_LENGTH = 24;
-/** Maximum characters of the joined recall query (Stash q= length cap). */
+/** Maximum code points of the joined recall query (Stash q= length cap). */
 export const RECALL_KEYWORD_MAX_QUERY_LENGTH = 64;
 
 /**
@@ -48,15 +48,15 @@ const RECALL_STOPWORDS = new Set([
 /**
  * Deterministic recall-query normalization: lowercase; tokenize on characters that are not
  * Unicode letters, digits, `_`, or `-` (any script — accented Latin, Cyrillic, CJK, …); drop
- * tokens shorter than 3 characters and the built-in stopword set; dedupe keeping first
- * occurrence; rank by (length descending, first-occurrence index ascending); take at most 3;
- * truncate each term at 24 chars; then cap the joined (single-space) query at 64 characters
- * by dropping trailing keywords until it fits. Pure function — no I/O.
+ * tokens shorter than 3 code points and the built-in stopword set; dedupe keeping first
+ * occurrence; rank by (code-point length descending, first-occurrence index ascending); take
+ * at most 3; truncate each term at 24 code points; then cap the joined (single-space) query
+ * at 64 code points by dropping trailing keywords until it fits. Pure function — no I/O.
  * Returns [] when no terms remain.
  *
  * FNXC:PerTurnMemoryRecall 2026-08-18-22:05:
  * The length-descending ranking keeps the most distinctive (longest) content words in the
- * Stash query; the 64-char cap mirrors the observed Stash q= behavior and, combined with the
+ * Stash query; the 64-code-point cap mirrors the observed Stash q= behavior and, combined with
  * AND-semantics keyword drop, bounds how much of a topic can degrade the hit rate.
  *
  * FNXC:PerTurnMemoryRecall 2026-08-20-22:06: RUFU-145 PR #3493 review (CodeRabbit): the
@@ -64,16 +64,27 @@ const RECALL_STOPWORDS = new Set([
  * Slovak "žiadosti") tokenized with the accent characters stripped, silently rewriting the
  * query terms the Stash AND-match searches for. Tokenize on \p{L}/\p{N} instead so accented
  * and non-Latin keywords survive intact.
+ *
+ * FNXC:PerTurnMemoryRecall 2026-08-20-23:22: RUFU-145 PR #3493 review (CodeRabbit, 22:57 UTC pass on
+ * b02b7e771): all length math here was UTF-16-based, which (a) split NFD-decomposed accents
+ * on the combining mark (the \p{M} class keeps the mark attached to its base char), (b)
+ * mis-ranked astral terms by their double UTF-16 width, (c) overcounted the 64-unit query
+ * cap for astral content, and (d) let the 24-unit truncation split a surrogate pair and emit
+ * a lone surrogate into the Stash query. Every length/truncate below is now code-point
+ * based via Array.from; behavior for pure BMP/ASCII input is unchanged (Array.from length
+ * == String.length).
  */
 export function deriveRecallKeywords(topic: string): string[] {
   if (typeof topic !== "string") return [];
   const lower = topic.toLowerCase();
-  const tokens = lower.split(/[^\p{L}\p{N}_-]+/u).filter(Boolean);
+  // \p{M} keeps Unicode combining marks attached to their base character, so NFD-decomposed
+  // accents ("cafe\u0301") tokenize as one term instead of splitting on the mark.
+  const tokens = lower.split(/[^\p{L}\p{M}\p{N}_-]+/u).filter(Boolean);
 
   const seen = new Set<string>();
   const unique: string[] = [];
   for (const token of tokens) {
-    if (token.length < 3) continue;
+    if (Array.from(token).length < 3) continue; // code points, not UTF-16 units
     if (RECALL_STOPWORDS.has(token)) continue;
     if (seen.has(token)) continue;
     seen.add(token);
@@ -83,14 +94,18 @@ export function deriveRecallKeywords(topic: string): string[] {
   // Rank by (length descending, first-occurrence index ascending); stable tie-break keeps
   // the ordering deterministic for equal-length terms.
   const ranked = unique
-    .map((term, index) => ({ term, index }))
-    .sort((a, b) => b.term.length - a.term.length || a.index - b.index);
+    .map((term, index) => ({ term, index, cpLength: Array.from(term).length }))
+    .sort((a, b) => b.cpLength - a.cpLength || a.index - b.index);
 
-  const top = ranked.slice(0, RECALL_KEYWORD_MAX_TERMS).map((r) => r.term.slice(0, RECALL_KEYWORD_MAX_TERM_LENGTH));
+  // Code-point truncation: a code-point boundary can never split a surrogate pair, so a
+  // truncated astral-bearing term is always a valid query string (no lone surrogates).
+  const top = ranked
+    .slice(0, RECALL_KEYWORD_MAX_TERMS)
+    .map((r) => Array.from(r.term).slice(0, RECALL_KEYWORD_MAX_TERM_LENGTH).join(""));
 
-  // Cap the joined query at 64 chars by dropping trailing keywords until it fits.
+  // Cap the joined query at 64 code points by dropping trailing keywords until it fits.
   const kept: string[] = [...top];
-  while (kept.length > 0 && kept.join(" ").length > RECALL_KEYWORD_MAX_QUERY_LENGTH) {
+  while (kept.length > 0 && Array.from(kept.join(" ")).length > RECALL_KEYWORD_MAX_QUERY_LENGTH) {
     kept.pop();
   }
   return kept;

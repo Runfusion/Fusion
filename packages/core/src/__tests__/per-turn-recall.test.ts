@@ -4,6 +4,7 @@ import {
   deriveRecallKeywords,
   __resetPerTurnRecallDedupForTests,
   PER_TURN_RECALL_CUE_MAX_CHARS,
+  RECALL_KEYWORD_MAX_QUERY_LENGTH,
   PER_TURN_RECALL_DEDUP_MAX_SESSIONS,
   PER_TURN_RECALL_DEDUP_MAX_SIGNATURES,
   type PerTurnRecallOptions,
@@ -201,6 +202,56 @@ describe("deriveRecallKeywords (Stash AND-semantics guard)", () => {
     expect(deriveRecallKeywords("обновление кэша памяти")).toEqual(["обновление", "памяти", "кэша"]);
     // 3+ char CJK terms survive intact; the sub-3-char floor still applies per token.
     expect(deriveRecallKeywords("上下文压缩策略")).toEqual(["上下文压缩策略"]);
+  });
+});
+
+// FNXC:PerTurnMemoryRecallTests 2026-08-20-23:22: RUFU-145 PR #3493 review (CodeRabbit,
+// 2026-08-20 22:57 UTC pass on b02b7e771): the tokenizer's length math was UTF-16-based, so
+// NFD-decomposed accents split on the combining mark and astral terms mis-ranked,
+// overcounted the 64-unit query cap, and could truncate into a lone surrogate. These
+// invariant cases pin the code-point semantics (mutation-checked: reverting the source to
+// .length/.slice or dropping \p{M} fails this block).
+const hasLoneSurrogate = (s: string): boolean =>
+  /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/u.test(s);
+
+describe("deriveRecallKeywords Unicode invariants (review: decomposed + astral handling)", () => {
+  it("keeps combining marks attached to decomposed (NFD) accents", () => {
+    // "cafe\u0301" = c,a,f,e + COMBINING ACUTE (5 cp); "latte\u0301" = 6 cp.
+    expect(deriveRecallKeywords("cafe\u0301 latte\u0301")).toEqual(["latte\u0301", "cafe\u0301"]);
+    // "ke\u0301\u0161i" = k,e + COMBINING ACUTE, š, i — one 5-cp term, mark attached.
+    expect(deriveRecallKeywords("diskusie o ke\u0301\u0161i")).toEqual(["diskusie", "ke\u0301\u0161i"]);
+  });
+
+  it("truncates astral-bearing terms at code-point boundaries without lone surrogates", () => {
+    // U+10400 (DESERET CAPITAL LETTER LONG I) is an astral LETTER, so it survives
+    // \p{L} tokenization (emoji do not — they are symbols and act as separators).
+    // 25 cp / 26 UTF-16 units; the letter's surrogate pair straddles the 24-unit cut
+    // that String.slice would have made (23 x + lone high surrogate). The function
+    // lowercases first: U+10400 -> U+10428 (deseret small letter long i).
+    const topic = "x".repeat(23) + "\u{10400}" + "y";
+    const keywords = deriveRecallKeywords(topic);
+    expect(keywords).toEqual(["x".repeat(23) + "\u{10428}"]);
+    for (const kw of keywords) expect(hasLoneSurrogate(kw)).toBe(false);
+  });
+
+  it("ranks and filters by code points, not UTF-16 units, for mixed astral/BMP terms", () => {
+    // "a\u{10400}b" = 3 cp (4 units) must rank BELOW "cccc" = 4 cp (4 units); a
+    // UTF-16-unit sort key ties the two and keeps input order. (Lowercased to U+10428.)
+    expect(deriveRecallKeywords("a\u{10400}b cccc")).toEqual(["cccc", "a\u{10428}b"]);
+    // 2 cp < the 3-cp floor even though the token is 4 UTF-16 units.
+    expect(deriveRecallKeywords("a\u{10400} zzzz")).toEqual(["zzzz"]);
+  });
+
+  it("caps the joined query at 64 code points (UTF-16 length would overcount astrals)", () => {
+    // Each term: 31 astral-letter cp -> truncated to 24 cp = 48 UTF-16 units.
+    // Joined: 24+1+24 = 49 cp (<= 64, both kept) but 97 UTF-16 units, so a .length-based
+    // cap would drop the 2nd term.
+    // Lowercased: U+10400 -> U+10428, U+10401 -> U+10429.
+    const t1 = "\u{10400}".repeat(31);
+    const t2 = "\u{10401}".repeat(31);
+    const keywords = deriveRecallKeywords(`${t1} ${t2}`);
+    expect(keywords).toEqual(["\u{10428}".repeat(24), "\u{10429}".repeat(24)]);
+    expect(Array.from(keywords.join(" ")).length).toBeLessThanOrEqual(RECALL_KEYWORD_MAX_QUERY_LENGTH);
   });
 });
 
