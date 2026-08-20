@@ -6447,6 +6447,18 @@ export function createReadMessagesTool(messageStore: MessageStore, agentId: stri
   };
 }
 
+export function isLateAcquireColumnBlocked(workflowIr: fusionCore.WorkflowIr, column: string): boolean {
+  const blockedColumns = new Set<string>([
+    "in-review",
+    "done",
+    "archived",
+    ...fusionCore.resolveReviewColumns(workflowIr),
+    ...fusionCore.columnsWithFlag(workflowIr, "complete"),
+    ...fusionCore.columnsWithFlag(workflowIr, "archived"),
+  ]);
+  return blockedColumns.has(column);
+}
+
 export function createAcquireRepoWorktreeTool(opts: {
   workspaceRootDir: string;
   workspaceRepos: string[];
@@ -6500,7 +6512,16 @@ export function createAcquireRepoWorktreeTool(opts: {
         };
       }
       const existing = freshTask.workspaceWorktrees?.[repo];
-      const lateAcquireBlocked = freshTask.column === "in-review" || freshTask.column === "done" || freshTask.column === "archived" || ["merging", "merging-pr", "merging-fix"].includes(freshTask.status ?? "") || Object.values(freshTask.workspaceWorktrees ?? {}).some((entry) => Boolean(entry.landedSha));
+      /*
+      FNXC:WorkflowResolvedColumns 2026-08-20-04:35:
+      A renamed review/terminal lane must close late repository admission exactly like the built-in
+      `in-review`/`done`/`archived` lanes. Resolve membership from the task's own workflow while
+      retaining the legacy ids as a fail-safe for malformed or partially migrated task state.
+      */
+      const workflowIr = await fusionCore.resolveWorkflowIrForTask(store, freshTask.id);
+      const lateAcquireBlocked = isLateAcquireColumnBlocked(workflowIr, freshTask.column)
+        || ["merging", "merging-pr", "merging-fix"].includes(freshTask.status ?? "")
+        || Object.values(freshTask.workspaceWorktrees ?? {}).some((entry) => Boolean(entry.landedSha));
       if (!existing && lateAcquireBlocked) {
         await store.logEntry(task.id, `fn_acquire_repo_worktree: refused late acquisition of ${repo}; task is already in review or landing`, undefined, runContext);
         return {

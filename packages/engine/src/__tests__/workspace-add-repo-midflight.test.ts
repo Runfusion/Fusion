@@ -8,9 +8,10 @@ vi.mock("../worktree/worktree-acquisition.js", async (importOriginal) => {
   return { ...actual, acquireWorkspaceRepoWorktree: acquisition.acquire };
 });
 
-import { createAcquireRepoWorktreeTool } from "../agent-tools.js";
+import { createAcquireRepoWorktreeTool, isLateAcquireColumnBlocked } from "../agent-tools.js";
 import { buildRunImplementationDeps } from "../executor/deps-bags.js";
 import { invalidateWorkspaceConfigCache } from "../executor/workspace-config-resolver.js";
+import { lifecycleIr, RENAMED_VOCAB } from "./_workflow-vocabulary-fixture.js";
 
 const fixtures: WorkspaceFixture[] = [];
 afterEach(() => {
@@ -43,6 +44,14 @@ A late workspace member must be admitted by the same tool instance after its dis
 review/landing states instead require a follow-up so the merge loop cannot miss a repository.
 */
 describe.runIf(hasGit)("workspace membership acquired mid-flight", () => {
+  it("refuses renamed review and terminal lifecycle columns", () => {
+    const workflowIr = lifecycleIr(RENAMED_VOCAB, "workspace-renamed", { mergeOrchestration: true });
+
+    expect(isLateAcquireColumnBlocked(workflowIr, RENAMED_VOCAB.wip)).toBe(false);
+    expect(isLateAcquireColumnBlocked(workflowIr, RENAMED_VOCAB.review)).toBe(true);
+    expect(isLateAcquireColumnBlocked(workflowIr, RENAMED_VOCAB.complete)).toBe(true);
+  });
+
   it("refreshes a running host from disk and admits the newly added repository", async () => {
     const fixture = await createWorkspaceFixture(["repo-a", "repo-b"]);
     fixtures.push(fixture);
