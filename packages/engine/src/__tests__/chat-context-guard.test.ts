@@ -13,6 +13,7 @@ import {
   computeCompactionThreshold,
   estimateLoadedContextTokens,
   ensureContextWithinCompactionThreshold,
+  freshLoadedContextEstimate,
   type CompactionGateSession,
 } from "../chat-context-guard.js";
 
@@ -36,6 +37,12 @@ function makeFakePiSession(opts: {
   compactImpl?: (instructions?: string) => unknown | Promise<unknown>;
   withPiShape?: boolean;
   withState?: boolean;
+  /** The session's current final system prompt (pi getter) for the fresh cross-check. */
+  systemPrompt?: string;
+  /** pi's active tool names. */
+  activeToolNames?: string[];
+  /** pi's configured tool definitions. */
+  allTools?: Array<{ name?: string; description?: string; parameters?: unknown }>;
 }): {
   session: CompactionGateSession;
   compact: ReturnType<typeof vi.fn>;
@@ -66,6 +73,15 @@ function makeFakePiSession(opts: {
       }
       return usageState.current;
     };
+  }
+  if (opts.systemPrompt !== undefined) {
+    session.systemPrompt = opts.systemPrompt;
+  }
+  if (opts.activeToolNames !== undefined) {
+    session.getActiveToolNames = () => opts.activeToolNames!;
+  }
+  if (opts.allTools !== undefined) {
+    session.getAllTools = () => opts.allTools!;
   }
   return { session: session as unknown as CompactionGateSession, compact, usageState };
 }
@@ -206,6 +222,64 @@ describe("estimateLoadedContextTokens", () => {
   });
 });
 
+describe("freshLoadedContextEstimate", () => {
+  it("returns null when the session does not expose a non-empty system prompt", () => {
+    const { session } = makeFakePiSession({ usage: { tokens: 1, contextWindow: 128000, percent: 0 } });
+    expect(freshLoadedContextEstimate(session)).toBeNull();
+    const { session: empty } = makeFakePiSession({
+      usage: { tokens: 1, contextWindow: 128000, percent: 0 },
+      systemPrompt: "",
+    });
+    expect(freshLoadedContextEstimate(empty)).toBeNull();
+  });
+
+  it("measures the system prompt in chars/3.5 plus the loaded messages", () => {
+    const { session } = makeFakePiSession({
+      usage: { tokens: 1, contextWindow: 128000, percent: 0 },
+      systemPrompt: "p".repeat(35_000),
+      messages: [userMessageOf(4000)],
+    });
+    // 35000/3.5 = 10000 + 4000/4 = 1000 → 11000
+    expect(freshLoadedContextEstimate(session)).toBe(11_000);
+  });
+
+  it("counts only the active tools' schemas, not the full registry", () => {
+    const { session } = makeFakePiSession({
+      usage: { tokens: 1, contextWindow: 128000, percent: 0 },
+      systemPrompt: "p".repeat(3_500), // 1000 tokens
+      activeToolNames: ["a"],
+      allTools: [
+        { name: "a", description: "a".repeat(3_400), parameters: { x: 1 } }, // ~3400 chars ≈ 971 tokens
+        { name: "b", description: "b".repeat(3_400), parameters: { y: 1 } }, // inactive → excluded
+      ],
+    });
+    const withActive = freshLoadedContextEstimate(session) ?? 0;
+    // Sanity: the active-only measurement is strictly smaller than counting both tools.
+    const { session: bothActive } = makeFakePiSession({
+      usage: { tokens: 1, contextWindow: 128000, percent: 0 },
+      systemPrompt: "p".repeat(3_500),
+      activeToolNames: ["a", "b"],
+      allTools: [
+        { name: "a", description: "a".repeat(3_400), parameters: { x: 1 } },
+        { name: "b", description: "b".repeat(3_400), parameters: { y: 1 } },
+      ],
+    });
+    const withBoth = freshLoadedContextEstimate(bothActive) ?? 0;
+    expect(withBoth).toBeGreaterThan(withActive);
+  });
+
+  it("degrades to the prompt-only estimate when tool introspection throws", () => {
+    const session = {
+      model: { contextWindow: 128000, maxTokens: 16384 },
+      systemPrompt: "p".repeat(3_500),
+      getActiveToolNames: () => {
+        throw new Error("registry unavailable");
+      },
+    } as unknown as CompactionGateSession;
+    expect(freshLoadedContextEstimate(session)).toBe(1000);
+  });
+});
+
 describe("ensureContextWithinCompactionThreshold", () => {
   it("does not compact below the threshold (small-context no-op)", async () => {
     const { session, compact } = makeFakePiSession({
@@ -310,6 +384,59 @@ describe("ensureContextWithinCompactionThreshold", () => {
     expect(err?.retryable).toBe(false);
     expect(err?.cause?.message).toContain("no compaction result");
     expect(compact).toHaveBeenCalledTimes(1);
+  });
+
+  /*
+  FNXC:ChatContextGuard 2026-08-20-12:20:
+  Stale-usage cross-check (RUFU-135 follow-up): the provider-reported usage is
+  restored from the session file and describes the static context of the turn that
+  RECORDED it. After a deploy that shrank the chat prompt/toolset the live context
+  is far smaller than the recorded number — the gate must detect that via a fresh
+  measurement of the current prompt + tools + messages and proceed instead of
+  dead-ending every send with ChatContextOverflowError.
+  */
+  it("proceeds (no throw) when compaction returns no result but the fresh measurement fits (stale recorded usage)", async () => {
+    // Recorded usage says 120K (>= threshold 102400) but the session's CURRENT
+    // prompt is small (~100K chars ≈ 28.5K tokens fresh) → the usage is stale.
+    const { session, compact } = makeFakePiSession({
+      usage: { tokens: 120000, contextWindow: 128000, percent: 93.75 },
+      compactImpl: async () => undefined, // nothing to compact (small branch)
+      systemPrompt: "p".repeat(100_000),
+      activeToolNames: ["fn_task_list"],
+      allTools: [{ name: "fn_task_list", description: "list", parameters: { type: "object" } }],
+    });
+    const result = await ensureContextWithinCompactionThreshold(session, { tokenCap: undefined });
+    // No throw; reported as a fresh (non-compacted) measurement below the threshold.
+    expect(result.compacted).toBe(false);
+    expect(result.threshold).toBe(102400);
+    expect(result.contextTokens).not.toBeNull();
+    expect(result.contextTokens!).toBeLessThan(102400);
+    expect(compact).toHaveBeenCalledTimes(1);
+  });
+
+  it("still throws when compaction returns no result AND the fresh measurement also exceeds the threshold (real static overflow)", async () => {
+    // Recorded 120K AND the current prompt is genuinely huge (~500K chars ≈ 143K
+    // tokens fresh >= threshold) → the static floor itself no longer fits.
+    const { session } = makeFakePiSession({
+      usage: { tokens: 120000, contextWindow: 128000, percent: 93.75 },
+      compactImpl: async () => undefined,
+      systemPrompt: "p".repeat(500_000),
+    });
+    const err = await captureGateError(session, { tokenCap: undefined });
+    expect(err).toBeInstanceOf(ChatContextOverflowError);
+    expect(err?.code).toBe("CHAT_CONTEXT_OVERFLOW");
+    expect(err?.message).toContain("fresh measurement");
+  });
+
+  it("keeps the fail-loud behavior when the session does not expose the current system prompt", async () => {
+    // No systemPrompt on the session shape → fresh estimate is null → the gate
+    // cannot distinguish stale from real and must keep throwing (legacy behavior).
+    const { session } = makeFakePiSession({
+      usage: { tokens: 120000, contextWindow: 128000, percent: 93.75 },
+      compactImpl: async () => undefined,
+    });
+    const err = await captureGateError(session, { tokenCap: undefined });
+    expect(err).toBeInstanceOf(ChatContextOverflowError);
   });
 
   it("throws ChatContextOverflowError when session.compact() throws", async () => {
