@@ -72,6 +72,9 @@ describe("chat-to-mail report routing", () => {
     const activeSession = { id: "chat-1", agentId: "__fn_agent__", status: "active", title: "Chat", createdAt: "2026-08-09", updatedAt: "2026-08-09" };
     setupMockChat({ sessions: [activeSession], filteredSessions: [activeSession], activeSession, messages: [{ id: "assistant-1", sessionId: "chat-1", role: "assistant", content: "# Status\nReady", createdAt: "2026-08-09" }] });
     render(<ChatMailRoutingHost />);
+    // FN-054 list-first navigation: the thread pane renders only after the operator
+    // explicitly selects a conversation (detailOpen), so open the session first.
+    await user.click(screen.getByTestId("chat-session-chat-1"));
     await user.click(await screen.findByTestId("chat-send-as-report-assistant-1"));
     expect(screen.getByTestId("quick-chat-open")).toHaveTextContent("false");
     expect(await screen.findByTestId("report-title")).toHaveValue("Status");
@@ -96,7 +99,8 @@ describe("chat-to-mail report routing", () => {
     const body = `# Mobile status\n${"x".repeat(2_100)}`;
     setupMockChat({ sessions: [activeSession], filteredSessions: [activeSession], activeSession, messages: [{ id: "assistant-mobile", sessionId: "chat-mobile", role: "assistant", content: body, createdAt: "2026-08-09" }] });
     render(<ChatMailRoutingHost />);
-
+    // FN-054 list-first navigation: open the detail before the message actions exist.
+    await user.click(screen.getByTestId("chat-session-chat-mobile"));
     await user.click(await screen.findByTestId("chat-send-as-report-assistant-mobile"));
     expect(screen.getByTestId("quick-chat-open")).toHaveTextContent("false");
     expect(await screen.findByTestId("report-title")).toHaveValue("Mobile status");
@@ -130,13 +134,16 @@ describe("chat-to-mail report routing", () => {
     const activeSession = { id: "chat-repeat", agentId: "__fn_agent__", status: "active", title: "Chat", createdAt: "2026-08-09", updatedAt: "2026-08-09" };
     setupMockChat({ sessions: [activeSession], filteredSessions: [activeSession], activeSession, messages: [{ id: "assistant-repeat", sessionId: "chat-repeat", role: "assistant", content: "# First report\nReady", createdAt: "2026-08-09" }] });
     render(<ChatMailRoutingHost />);
-
+    // FN-054 list-first navigation: open the detail before the message actions exist.
+    await user.click(screen.getByTestId("chat-session-chat-repeat"));
     await user.click(await screen.findByTestId("chat-send-as-report-assistant-repeat"));
     await screen.findByTestId("message-composer");
     await user.click(screen.getByTestId("message-composer-cancel"));
     expect(screen.queryByTestId("message-composer")).not.toBeInTheDocument();
 
     await user.click(screen.getByTestId("reopen-quick-chat"));
+    // Reopening quick chat remounts ChatView, resetting detailOpen — select the session again.
+    await user.click(screen.getByTestId("chat-session-chat-repeat"));
     await user.click(await screen.findByTestId("chat-send-as-report-assistant-repeat"));
     expect(await screen.findByTestId("message-composer")).toBeInTheDocument();
     expect(screen.getByTestId("report-title")).toHaveValue("First report");
