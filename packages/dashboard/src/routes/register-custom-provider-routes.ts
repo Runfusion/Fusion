@@ -516,17 +516,45 @@ export async function refreshCustomProviderModels(
   const models = await discoverUsableProviderModels(targetProvider);
 
   /*
+   * FNXC:CustomProviders 2026-06-30-00:00:
+   * Model refresh can be slow because it probes a user-configured endpoint. Re-read settings after discovery and merge only the target provider's models so startup/manual refresh cannot overwrite concurrent provider edits, additions, or deletions made while the probe was in flight.
+   *
+   * FNXC:CustomProviders 2026-06-30-10:24:
+   * The probed connection fields are part of the model-list provenance. If the user edits baseUrl, apiType, or apiKey while a refresh is in flight, abort instead of persisting model IDs discovered from the previous endpoint onto the updated provider.
+   */
+  const latestSettings = await store.getGlobalSettingsStore().getSettings();
+  const latestProviders = latestSettings.customProviders ?? [];
+  const latestTargetIndex = latestProviders.findIndex((provider) => provider.id === providerId);
+  if (latestTargetIndex < 0) {
+    throw notFound(`custom provider '${providerId}' not found`);
+  }
+
+  const latestTargetProvider = latestProviders[latestTargetIndex];
+  if (
+    latestTargetProvider.baseUrl !== targetProvider.baseUrl ||
+    latestTargetProvider.apiType !== targetProvider.apiType ||
+    latestTargetProvider.apiKey !== targetProvider.apiKey
+  ) {
+    throw new ApiError(409, "Custom provider connection changed during model refresh; retry refresh to use the latest endpoint");
+  }
+
+  /*
    * FNXC:CustomProviderModelWindows 2026-08-19-14:16:
    * RUFU-123: probes do not always report per-model windows (Anthropic-compatible never
    * does; OpenAI-compatible endpoints may omit the limit object), so a naive list
    * replacement would silently drop operator-entered contextWindow/maxTokens. Build a
-   * model-id -> persisted-windows map from the pre-refresh provider record and let the
-   * probe value win when present (positive-finite), otherwise keep the prior persisted
-   * value for that id. Discovered models that no longer exist are still dropped (list
-   * replacement semantics unchanged).
+   * model-id -> persisted-windows map and let the probe value win when present
+   * (positive-finite), otherwise keep the prior persisted value for that id. Discovered
+   * models that no longer exist are still dropped (list replacement semantics unchanged).
+   *
+   * FNXC:CustomProviderModelWindows 2026-08-20-22:24: RUFU-145 PR #3493 review: the map is
+   * built from the RE-READ provider record (below), not the pre-probe snapshot — a
+   * concurrent model-limit edit during the probe window was previously lost, because the
+   * probe result merged against the stale pre-probe windows and was written back over the
+   * newer edit.
    */
   const persistedWindowsById = new Map<string, { contextWindow?: number; maxTokens?: number }>();
-  for (const model of targetProvider.models ?? []) {
+  for (const model of latestTargetProvider.models ?? []) {
     if (model.contextWindow !== undefined || model.maxTokens !== undefined) {
       persistedWindowsById.set(model.id, { contextWindow: model.contextWindow, maxTokens: model.maxTokens });
     }
@@ -549,29 +577,6 @@ export async function refreshCustomProviderModels(
     }
     return entry;
   });
-
-  /*
-   * FNXC:CustomProviders 2026-06-30-00:00:
-   * Model refresh can be slow because it probes a user-configured endpoint. Re-read settings after discovery and merge only the target provider's models so startup/manual refresh cannot overwrite concurrent provider edits, additions, or deletions made while the probe was in flight.
-   *
-   * FNXC:CustomProviders 2026-06-30-10:24:
-   * The probed connection fields are part of the model-list provenance. If the user edits baseUrl, apiType, or apiKey while a refresh is in flight, abort instead of persisting model IDs discovered from the previous endpoint onto the updated provider.
-   */
-  const latestSettings = await store.getGlobalSettingsStore().getSettings();
-  const latestProviders = latestSettings.customProviders ?? [];
-  const latestTargetIndex = latestProviders.findIndex((provider) => provider.id === providerId);
-  if (latestTargetIndex < 0) {
-    throw notFound(`custom provider '${providerId}' not found`);
-  }
-
-  const latestTargetProvider = latestProviders[latestTargetIndex];
-  if (
-    latestTargetProvider.baseUrl !== targetProvider.baseUrl ||
-    latestTargetProvider.apiType !== targetProvider.apiType ||
-    latestTargetProvider.apiKey !== targetProvider.apiKey
-  ) {
-    throw new ApiError(409, "Custom provider connection changed during model refresh; retry refresh to use the latest endpoint");
-  }
 
   const updatedProvider: CustomProvider = {
     ...latestTargetProvider,
