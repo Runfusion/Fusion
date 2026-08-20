@@ -193,8 +193,11 @@ executor session and vice versa.
 in `sendMessage` (CLI-agent sessions run in their own PTY process) is deliberately untouched:
 the gate requires a live pi `AgentSession` object in-process, which the PTY path does not
 expose. PTY-backed chats still rely on pi's own (blind-spot-limited) compaction; the out-of-scope
-follow-ups filed with RUFU-118 cover per-model window metadata for custom providers and an
-upstream note about the `_checkCompaction` blind spot.
+follow-ups filed with RUFU-118 (per-model window metadata for custom providers, and the upstream
+note about the `_checkCompaction` blind spot) have since landed as RUFU-123 (per-model
+`contextWindow`/`maxTokens` on custom-provider settings, registered by
+`buildCustomProviderModels` with 128000/16384 fallback) and RUFU-127 (upstream pi#8328 note),
+respectively.
 
 ## References
 
@@ -207,5 +210,5 @@ upstream note about the `_checkCompaction` blind spot.
   `dist/api/openai-completions.js:315-324,530` (usage parse / `include_usage` request).
 - Fusion: `packages/engine/src/chat-context-guard.ts` (gate), `packages/dashboard/src/chat.ts`
   (seams + fail-loud surfacing), `packages/engine/src/pi.ts:2538` (compaction enabled),
-  `packages/engine/src/auth/custom-provider-registry.ts:97-98` (hardcoded custom-provider
-  window), `packages/engine/src/errors/token-cap-detector.ts` (executor-only, unchanged).
+  `packages/engine/src/auth/custom-provider-registry.ts:119-120` (per-model custom-provider
+  window with 128000/16384 fallback, RUFU-123), `packages/engine/src/errors/token-cap-detector.ts` (executor-only, unchanged).

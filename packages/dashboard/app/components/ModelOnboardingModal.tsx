@@ -70,7 +70,15 @@ const mapLegacyCustomProviderToConfig = (
         ? "anthropic-messages"
         : "openai-responses",
   apiKey: provider.apiKey,
-  models: provider.models?.map((model) => ({ id: model.id, name: model.name })) ?? [],
+  // FNXC:CustomProviderModelWindows 2026-08-19-16:01:
+  // RUFU-123: carry persisted per-model contextWindow/maxTokens into the legacy form config
+  // so the row editor's numeric fields pre-fill on edit (the old mapping dropped them).
+  models: provider.models?.map((model) => ({
+    id: model.id,
+    name: model.name,
+    ...(model.contextWindow !== undefined ? { contextWindow: model.contextWindow } : {}),
+    ...(model.maxTokens !== undefined ? { maxTokens: model.maxTokens } : {}),
+  })) ?? [],
 });
 
 /** Provider-specific API key setup metadata for onboarding form rendering */

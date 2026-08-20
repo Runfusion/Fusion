@@ -71,6 +71,42 @@ describe("CustomProviderForm", () => {
   });
 });
 
+// FNXC:CustomProviderModelWindows 2026-08-19-16:01:
+// RUFU-123: the legacy ModelOnboardingModal form already renders per-model numeric
+// contextWindow/maxTokens inputs, but the API mirror (createCustomProvider) used to drop
+// them on persistence. This pins the legacy create path: a submitted config with per-model
+// windows must reach createCustomProvider unmodified.
+describe("legacy create path — per-model window carry-through (RUFU-123)", () => {
+  it("submits per-model contextWindow/maxTokens to createCustomProvider unmodified", async () => {
+    const createSpy = vi.spyOn(api, "createCustomProvider").mockResolvedValue({
+      id: "my-proxy",
+      name: "My Proxy",
+      apiType: "openai-compatible",
+      baseUrl: "https://proxy.example.com/v1",
+      models: [{ id: "deepseek-v4", name: "DeepSeek V4", contextWindow: 32768, maxTokens: 4096 }],
+    });
+
+    render(<CustomProviderForm onSave={(config) => createSpy(config)} />);
+    const user = userEvent.setup();
+    await user.type(screen.getByLabelText("Provider ID"), "my-proxy");
+    await user.type(screen.getByLabelText("Base URL"), "https://proxy.example.com/v1");
+    await user.type(screen.getByLabelText("Model ID 1"), "deepseek-v4");
+    await user.type(screen.getByLabelText("Context window 1"), "32768");
+    await user.type(screen.getByLabelText("Max tokens 1"), "4096");
+    await user.click(screen.getByRole("button", { name: "Save Provider" }));
+
+    expect(createSpy).toHaveBeenCalledWith({
+      id: "my-proxy",
+      name: undefined,
+      baseUrl: "https://proxy.example.com/v1",
+      api: "openai-completions",
+      apiKey: undefined,
+      models: [{ id: "deepseek-v4", name: undefined, reasoning: false, contextWindow: 32768, maxTokens: 4096 }],
+    });
+    createSpy.mockRestore();
+  });
+});
+
 describe("Detect Models", () => {
   beforeEach(() => {
     vi.resetModules();
