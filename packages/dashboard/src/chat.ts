@@ -337,6 +337,45 @@ FNXC:ChatCodingTools 2026-07-19-00:00:
 Dashboard Chat sessions intentionally use the project-root coding workspace builtins so direct, room, and task-detail planner Chat can read, write, edit, and investigate with bash. Keep this shared mode unfiltered: permanent-agent action gates still enforce file-write and command-execution policy when a durable agent is bound, while task-planner Chat reaches the same direct-chat session path.
 */
 const CHAT_CODING_TOOLS = "coding" as const;
+
+/*
+FNXC:ChatContextBudget 2026-08-20-11:56:
+User requirement: agent chat must keep working when the selected model has only a
+64K context window. The measured static floor of an agent-bound CEO chat on the
+128K-window qwen38 model was ~124K tokens — made up of the full project long-term
+memory (~65K tokens), the 50K-char agent workspace memory clamp (~14K tokens), the
+86 fn_* host-extension executor tool schemas (~15K+ tokens), and the pi-injected
+AGENTS.md (~15K tokens). That exceeded the 80% compaction threshold (102400) so the
+guard's pre-overflow compaction had no conversation branch left to compress and
+every send failed with ChatContextOverflowError (observed on chat-f7689c06 and
+chat-02c9c9de, 2026-08-19/20).
+
+CHAT_MEMORY_CAP_CHARS bounds the memory sections of the chat system prompt (see
+buildAgentChatPrompt `memoryCapChars`): oversized memory is inlined as a heading
+index and stays reachable through fn_memory_search / fn_memory_get. With the cap,
+the static floor drops to roughly ~35K tokens, which fits a 64K window with
+conversation + output headroom (guard threshold 51200, hard limit 48K).
+*/
+const CHAT_MEMORY_CAP_CHARS = 8_000;
+
+/*
+FNXC:ChatContextBudget 2026-08-20-11:56:
+The dashboard process loads the @runfusion/fusion host extension into every pi
+session, so without a filter the chat session also exposes all 86 executor
+fn_* tools (task delete/bypass, agent create, insights, evals, …) on top of the
+curated chat toolset — a large static schema payload that chat does not need.
+CHAT_CODING_TOOL_ALLOWLIST names the builtin coding tools, which makes the engine
+pass an explicit tool-name allowlist into the pi session; pi then filters EVERY
+registered tool (builtin + host-extension + custom) to that list, so the 86
+executor tools disappear from chat while the dashboard's own curated chat
+toolset (createChatFusionToolset + planner/messaging/workflow/document/artifact
+tools) and the builtin coding tools remain available. The chat surface is
+designed around the curated toolset (action-gate semantics included); losing the
+raw executor tools is intentional. Engine lanes (triage/executor/reviewer/merger)
+do not pass this allowlist and keep the full extension surface.
+*/
+const CHAT_CODING_TOOL_ALLOWLIST = ["read", "bash", "edit", "write", "grep", "find", "ls"] as const;
+
 const ROOM_AMBIENT_MAX_RESPONDERS = 5;
 
 type ChatSessionStatsLike = {
@@ -2238,6 +2277,17 @@ export class ChatManager {
           agentStore: this.agentStore,
           basePrompt: CHAT_SYSTEM_PROMPT,
           includeProjectMemory: true,
+          /*
+          FNXC:ChatContextBudget 2026-08-20-11:56:
+          Room responders share the direct-chat context budget: unbounded project +
+          agent memory injection is what pushed agent-bound chat past the 80%
+          compaction threshold on 128K-window models (ChatContextOverflowError
+          dead-end) and made 64K-window models unusable (user requirement: chat
+          must work on 64K-context models). Oversized memory is inlined as a
+          bounded heading index instead; full content stays reachable via
+          fn_memory_search / fn_memory_get.
+          */
+          memoryCapChars: CHAT_MEMORY_CAP_CHARS,
           topic: input.content,
           sessionId: `room:${input.roomId}`,
           settings: await this.getSettings?.(),
@@ -2355,6 +2405,15 @@ export class ChatManager {
       cwd: this.rootDir,
       systemPrompt,
       tools: CHAT_CODING_TOOLS,
+      /*
+      FNXC:ChatContextBudget 2026-08-20-11:56:
+      Explicit tool-name allowlist: hides the 86 host-extension executor fn_* tools
+      from room-responder sessions (see CHAT_CODING_TOOL_ALLOWLIST) so the static
+      tool-schema payload stays within the chat context budget. The curated
+      customTools (workflow + chatFusion) and the builtin coding tools remain
+      available. See the constant's comment for the full rationale.
+      */
+      toolsAllowlist: [...CHAT_CODING_TOOL_ALLOWLIST],
       ...(workflowTools.length + chatFusionTools.length > 0
         ? { customTools: dedupeChatTools([...workflowTools, ...chatFusionTools]) }
         : {}),
@@ -2713,6 +2772,16 @@ export class ChatManager {
             agentStore: this.agentStore,
             basePrompt: CHAT_SYSTEM_PROMPT,
             includeProjectMemory: true,
+            /*
+            FNXC:ChatContextBudget 2026-08-20-11:56:
+            Chat context budget (see CHAT_MEMORY_CAP_CHARS): the CEO agent's chat
+            measured a ~124K-token static floor (full 228K-char project memory +
+            50K-char agent memory clamp + 86 executor tool schemas + AGENTS.md),
+            which dead-ended every send on 128K-window models and made 64K-window
+            models unusable. With the cap, oversized memory becomes a bounded
+            heading index, keeping the static floor near ~35K tokens.
+            */
+            memoryCapChars: CHAT_MEMORY_CAP_CHARS,
             topic: parsedSkillCommands.strippedContent || content,
             sessionId: session.id,
             settings: await this.getSettings?.(),
@@ -2986,6 +3055,13 @@ export class ChatManager {
         cwd: this.rootDir,
         systemPrompt,
         tools: CHAT_CODING_TOOLS,
+        /*
+        FNXC:ChatContextBudget 2026-08-20-11:56:
+        Hide the 86 host-extension executor fn_* tools from direct chat/QuickChat
+        sessions (explicit allowlist → pi filters every registered tool to the
+        curated chat toolset + builtin coding tools). See CHAT_CODING_TOOL_ALLOWLIST.
+        */
+        toolsAllowlist: [...CHAT_CODING_TOOL_ALLOWLIST],
         ...(customTools.length > 0 ? { customTools } : {}),
         sessionManager,
         ...(effectiveModelProvider && effectiveModelId

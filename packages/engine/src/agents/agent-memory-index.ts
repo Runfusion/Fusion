@@ -4,6 +4,8 @@ import { join } from "node:path";
 type BuildMemoryIndexInput = {
   rootDir: string;
   agentId: string;
+  /** Override the total index byte budget (defaults to MAX_INDEX_BYTES). */
+  maxBytes?: number;
 };
 
 type HeadingEntry = {
@@ -63,7 +65,40 @@ async function buildFileSection(sectionHeader: string, displayPath: string, fsPa
   }
 }
 
-export async function buildMemoryIndex({ rootDir, agentId }: BuildMemoryIndexInput): Promise<string> {
+/**
+ * FNXC:ChatContextBudget 2026-08-20-11:56:
+ * User requirement: agent chat must work on models with a 64K context window.
+ * Full memory files (project .fusion/memory/MEMORY.md and per-agent
+ * .fusion/agent-memory/<id>/MEMORY.md) can exceed 200K chars and are the
+ * dominant component of the chat static context floor. This helper renders a
+ * bounded heading index from in-memory content so callers with a small
+ * context budget can advertise the memory structure (what exists, where it
+ * lives) without paying for the full body. The full content stays reachable
+ * through fn_memory_search / fn_memory_get.
+ */
+export function buildMemoryHeadingIndex(options: {
+  sectionHeader: string;
+  displayPath: string;
+  content: string;
+  maxBytes: number;
+}): string {
+  const { sectionHeader, displayPath, content, maxBytes } = options;
+  const headings = parseHeadings(content);
+  if (headings.length === 0) {
+    // No structure to advertise — fall back to a terse pointer so the caller
+    // still signals that searchable content exists at this path.
+    return `${sectionHeader}\n- ${displayPath} (no headings; use fn_memory_search / fn_memory_get to read)\n`;
+  }
+  const lines = [sectionHeader, `- ${displayPath}`];
+  for (const entry of headings) {
+    lines.push(`  - "${entry.heading}"`);
+  }
+  const assembled = `${lines.join("\n")}\n`;
+  if (Buffer.byteLength(assembled, "utf8") <= maxBytes) return assembled;
+  return `${clampUtf8(assembled, maxBytes - 1)}…\n`;
+}
+
+export async function buildMemoryIndex({ rootDir, agentId, maxBytes = MAX_INDEX_BYTES }: BuildMemoryIndexInput): Promise<string> {
   const safeAgentId = agentId.trim().replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "agent";
   const agentDisplayPath = `.fusion/agent-memory/${safeAgentId}/MEMORY.md`;
   const agentFsPath = join(rootDir, ".fusion", "agent-memory", safeAgentId, "MEMORY.md");
@@ -78,6 +113,6 @@ export async function buildMemoryIndex({ rootDir, agentId }: BuildMemoryIndexInp
 
   const assembled = [agentSection, projectSection].filter(Boolean).join("\n").trim();
   if (!assembled) return "";
-  if (Buffer.byteLength(assembled, "utf8") <= MAX_INDEX_BYTES) return assembled;
-  return `${clampUtf8(assembled, MAX_INDEX_BYTES - 1)}…`;
+  if (Buffer.byteLength(assembled, "utf8") <= maxBytes) return assembled;
+  return `${clampUtf8(assembled, maxBytes - 1)}…`;
 }
