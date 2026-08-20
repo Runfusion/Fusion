@@ -76,7 +76,28 @@ export function resolveApiType(apiType: string): string {
  * Custom-provider models are presumed thinking-capable without a user-declared capability. Register
  * all seven canonical levels as transmissible so pi owns Off translation and up-then-down clamping;
  * the same registration is the source for selector display and execution.
+ * FNXC:CustomProviderModelWindows 2026-08-19-13:03:
+ * RUFU-123 (RUFU-118 finding 2, live repro dsai1 deepseek-v4 32K window): each model's
+ * contextWindow/maxTokens now come from the settings entry when present, instead of the
+ * hardcoded 128000/16384 that masked every custom-provider model's true window and made
+ * the RUFU-118 pre-overflow compaction gate compute a ~102,400 threshold for a 32K model.
+ * Fallback contract: a value is emitted only when it is a number, finite, and > 0; anything
+ * else (omitted, 0, negative, NaN, or a corrupted persisted string) falls back to the
+ * registry defaults 128000 (window) / 16384 (maxTokens) so an invalid stored value can
+ * never break registration or collapse a compaction threshold.
  */
+const DEFAULT_CUSTOM_PROVIDER_CONTEXT_WINDOW = 128000;
+const DEFAULT_CUSTOM_PROVIDER_MAX_TOKENS = 16384;
+
+/**
+ * FNXC:CustomProviderModelWindows 2026-08-19-13:03:
+ * RUFU-123: positive-finite guard for persisted per-model window values — see the
+ * builder doc comment for the fallback contract (defaults 128000/16384).
+ */
+function resolveModelWindowValue(value: number | undefined, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
 export function buildCustomProviderModels(
   provider: CustomProvider,
   api: string,
@@ -106,8 +127,8 @@ export function buildCustomProviderModels(
       cacheRead: 0,
       cacheWrite: 0,
     },
-    contextWindow: 128000,
-    maxTokens: 16384,
+    contextWindow: resolveModelWindowValue(model.contextWindow, DEFAULT_CUSTOM_PROVIDER_CONTEXT_WINDOW),
+    maxTokens: resolveModelWindowValue(model.maxTokens, DEFAULT_CUSTOM_PROVIDER_MAX_TOKENS),
     ...(api === "openai-completions"
       ? {
           compat: {

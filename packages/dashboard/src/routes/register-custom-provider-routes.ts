@@ -96,11 +96,31 @@ function assertBaseUrl(value: unknown): string {
 }
 
 /**
+ * FNXC:CustomProviderModelWindows 2026-08-19-14:16:
+ * RUFU-123: per-model contextWindow/maxTokens arrived on the custom-provider settings
+ * shape (CustomProvider.models entries). Request bodies may carry either field per model
+ * entry; a value that is not a positive finite number is rejected 400 with the exact
+ * field path named, mirroring the registry builder's positive-finite fallback contract
+ * (custom-provider-registry.ts) so a corrupted value can never be persisted and later
+ * collapse a compaction threshold. Absent keys are omitted entirely — never persisted
+ * as explicit undefined.
+ */
+function assertPositiveFiniteNumber(value: unknown, fieldName: string): number {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    throw badRequest(`${fieldName} must be a positive finite number`);
+  }
+  return value;
+}
+
+/**
  * Validates and normalizes a models array from a request body.
- * Returns undefined if models is omitted, or an array of { id, name } objects.
+ * Returns undefined if models is omitted, or an array of
+ * { id, name, contextWindow?, maxTokens? } objects (window keys omitted when absent).
  * @throws {ApiError} with status 400 if the structure is invalid.
  */
-function validateModels(value: unknown): Array<{ id: string; name: string }> | undefined {
+function validateModels(
+  value: unknown,
+): Array<{ id: string; name: string; contextWindow?: number; maxTokens?: number }> | undefined {
   if (value === undefined) {
     return undefined;
   }
@@ -115,10 +135,17 @@ function validateModels(value: unknown): Array<{ id: string; name: string }> | u
     }
 
     const row = entry as Record<string, unknown>;
-    return {
+    const model: { id: string; name: string; contextWindow?: number; maxTokens?: number } = {
       id: assertNonEmptyString(row.id, `models[${index}].id`),
       name: assertNonEmptyString(row.name, `models[${index}].name`),
     };
+    if (row.contextWindow !== undefined) {
+      model.contextWindow = assertPositiveFiniteNumber(row.contextWindow, `models[${index}].contextWindow`);
+    }
+    if (row.maxTokens !== undefined) {
+      model.maxTokens = assertPositiveFiniteNumber(row.maxTokens, `models[${index}].maxTokens`);
+    }
+    return model;
   });
 }
 
@@ -487,7 +514,41 @@ export async function refreshCustomProviderModels(
 
   const targetProvider = providers[targetIndex];
   const models = await discoverUsableProviderModels(targetProvider);
-  const persistedModels = models.map((model) => ({ id: model.id, name: model.name }));
+
+  /*
+   * FNXC:CustomProviderModelWindows 2026-08-19-14:16:
+   * RUFU-123: probes do not always report per-model windows (Anthropic-compatible never
+   * does; OpenAI-compatible endpoints may omit the limit object), so a naive list
+   * replacement would silently drop operator-entered contextWindow/maxTokens. Build a
+   * model-id -> persisted-windows map from the pre-refresh provider record and let the
+   * probe value win when present (positive-finite), otherwise keep the prior persisted
+   * value for that id. Discovered models that no longer exist are still dropped (list
+   * replacement semantics unchanged).
+   */
+  const persistedWindowsById = new Map<string, { contextWindow?: number; maxTokens?: number }>();
+  for (const model of targetProvider.models ?? []) {
+    if (model.contextWindow !== undefined || model.maxTokens !== undefined) {
+      persistedWindowsById.set(model.id, { contextWindow: model.contextWindow, maxTokens: model.maxTokens });
+    }
+  }
+  const persistedModels = models.map((model) => {
+    const prior = persistedWindowsById.get(model.id);
+    const entry: { id: string; name: string; contextWindow?: number; maxTokens?: number } = {
+      id: model.id,
+      name: model.name,
+    };
+    if (typeof model.contextWindow === "number" && model.contextWindow > 0) {
+      entry.contextWindow = model.contextWindow;
+    } else if (prior?.contextWindow !== undefined) {
+      entry.contextWindow = prior.contextWindow;
+    }
+    if (typeof model.maxTokens === "number" && model.maxTokens > 0) {
+      entry.maxTokens = model.maxTokens;
+    } else if (prior?.maxTokens !== undefined) {
+      entry.maxTokens = prior.maxTokens;
+    }
+    return entry;
+  });
 
   /*
    * FNXC:CustomProviders 2026-06-30-00:00:

@@ -604,9 +604,9 @@ The custom-provider form uses these fields:
 - **Base URL** — the provider endpoint base URL. It must be a valid `http` or `https` URL, for example `https://api.example.com/v1`.
 - **API key** — optional credential for providers that require authentication.
 - **Enable Anthropic-style prompt caching** — shown only for **OpenAI-compatible** and **OpenAI Responses** provider entries. Turn this on when the provider gateway proxies an Anthropic-format backend (for example a self-hosted router fronting Claude models) to enable pi-ai's `cache_control` prompt caching, which stops re-billing the full context prefix every turn. Leave it off for gateways that do not support Anthropic-style caching (Together, Fireworks, etc.) to avoid provider errors. See [`anthropicPromptCaching` in the Settings Reference](./settings-reference.md#customproviders) for details.
-- **Available models** — comma-separated model IDs, for example `gpt-4, gpt-3.5-turbo`.
+- **Models** — one row per model. Each row has a **Model ID** (required), an optional **Display name** (falls back to the model ID when blank), and two optional numeric fields: **Context window** and **Max output tokens**. Blank window fields leave the model on the registry defaults `128,000` / `16,384`; set them to the model's true limits so compaction thresholds are computed from the real window. Add or remove rows with the **Add model row** and per-row **Remove model row** actions.
 
-Use **Detect Models** to auto-fill **Available models** while adding or editing a provider from the provider's `/models` endpoint. Detection requires a **Base URL** and may require an **API key**, depending on the provider. Saved providers also have a row-level **Refresh Models** action that uses the stored endpoint and credential to replace the persisted model list without exposing the raw key in the browser.
+Use **Detect Models** to probe the provider's `/models` endpoint while adding or editing a provider and append the detected models as rows. Detection requires a **Base URL** and may require an **API key**, depending on the provider. When the endpoint reports window limits (Google and OpenAI-compatible endpoints do; Anthropic-compatible does not), the probed values fill the new rows; existing rows keep their manual values, and detected IDs already present in the form are skipped. Saved providers also have a row-level **Refresh Models** action that uses the stored endpoint and credential to merge probed models into the persisted list without exposing the raw key in the browser.
 
 ### Add a custom provider
 
@@ -617,9 +617,7 @@ Use **Detect Models** to auto-fill **Available models** while adding or editing 
 5. Choose the correct **API type**: **OpenAI-compatible**, **OpenAI Responses**, **Anthropic-compatible**, or **Google Generative AI**.
 6. Enter the provider **Base URL**. The value must be a valid `http` or `https` URL.
 7. If the provider requires authentication, enter its **API key**.
-8. Populate **Available models** by either:
-   - entering comma-separated model IDs manually, or
-   - selecting **Detect Models** to query the provider's `/models` endpoint and prepend detected model IDs to the field.
+8. Add one **Models** row per model: enter the **Model ID** (and optionally a **Display name**, **Context window**, and **Max output tokens**), or select **Detect Models** to query the provider's `/models` endpoint and append detected models as rows (probed window limits included when the endpoint reports them).
 9. Select **Save Provider**.
 
 Expected outcome: the provider appears in the Custom Providers list with its API type and base URL. Each saved model is then available in model dropdowns as a `{provider}/{modelId}` option, including **Settings → Models · Project → Model Overrides → Workflow lanes** and workflow model lanes in the workflow editor.
@@ -628,8 +626,8 @@ Expected outcome: the provider appears in the Custom Providers list with its API
 
 1. Open **Settings → Authentication → Custom Providers** and expand **Advanced: Custom Providers**.
 2. Find the provider in the list and select its pencil **Edit** action.
-3. Update **Provider name**, **API type**, **Base URL**, **API key**, or **Available models** as needed.
-4. Select **Detect Models** again if you want to refresh or add model IDs from the provider's `/models` endpoint before saving.
+3. Update **Provider name**, **API type**, **Base URL**, **API key**, or the **Models** rows (model IDs, display names, context windows, max output tokens) as needed.
+4. Select **Detect Models** again if you want to refresh or add model rows from the provider's `/models` endpoint before saving.
 5. Select **Save Changes**.
 
 Expected outcome: the provider list refreshes, and model dropdowns use the updated model list. If you only need to refresh a saved provider's models after credentials, endpoints, or upstream availability changed, select the row-level **Refresh Models** action instead; failures keep the previous model list intact. If you rename the provider or change model IDs, update any **Project Models** or workflow model lane selections that should use the new `{provider}/{modelId}` value.
@@ -652,7 +650,7 @@ Saved API keys are stored in settings but are masked in API responses and UI-loa
 
 For the stored settings shape, see [`customProviders` in the Settings Reference](./settings-reference.md#customproviders). For the API behavior, including masked keys in responses, see [Architecture → Custom Provider endpoints](./architecture.md#custom-provider-endpoints).
 
-Custom-provider models do not carry per-model context-window metadata today: every model of a custom provider is registered with the registry defaults `contextWindow: 128,000` and `maxTokens: 16,384`. The chat pre-overflow compaction gate enforces that registered window — the compaction threshold and the hard limit are computed from it, so custom-provider chats are protected the same way as built-in provider models. A follow-up for per-model `contextWindow`/`maxTokens` on custom providers is pending (filed as an RUFU-118 out-of-scope follow-up).
+Custom-provider models carry optional per-model window metadata: each model row's **Context window** and **Max output tokens** persist in the provider's `models` entries and register each model with its true window. Models that omit a value (or persist an invalid one) keep the registry defaults `contextWindow: 128,000` and `maxTokens: 16,384`. Consumers that size their context budget from the registered window (e.g. the chat pre-overflow compaction gate) enforce that registered window — the compaction threshold (80% of the window, clamped to the hard limit) is computed from it — so setting a 32K model's true window lowers its compaction threshold from the ~102,400 default to its real hard limit (16,384 for a 32K/16K model) instead of leaving the chat able to wedge at 1-token replies.
 
 ## Worktree copy files
 

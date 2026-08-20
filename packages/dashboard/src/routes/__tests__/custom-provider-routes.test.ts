@@ -573,7 +573,13 @@ describe("custom provider routes", () => {
         apiType: "openai-compatible",
         baseUrl: "https://api.example.com/v1",
         apiKey: "sk-stored-secret",
-        models: [{ id: "stale-model", name: "Stale model" }],
+        /*
+         * FNXC:CustomProviderModelWindows 2026-08-19-14:18:
+         * RUFU-123: the preservation fixture carries manually persisted per-model
+         * windows — a failed probe must keep the full previous list INCLUDING those
+         * values, not drop them.
+         */
+        models: [{ id: "stale-model", name: "Stale model", contextWindow: 32768, maxTokens: 4096 }],
       },
     ];
     vi.stubGlobal("fetch", vi.fn(async () => ({
@@ -589,7 +595,9 @@ describe("custom provider routes", () => {
 
     expect(res.status).toBe(401);
     expect(updates).toHaveLength(0);
-    expect(settings.customProviders?.[0]?.models).toEqual([{ id: "stale-model", name: "Stale model" }]);
+    expect(settings.customProviders?.[0]?.models).toEqual([
+      { id: "stale-model", name: "Stale model", contextWindow: 32768, maxTokens: 4096 },
+    ]);
   });
 
   it("POST /custom-providers/:id/refresh-models preserves models when only non-chat models are returned", async () => {
@@ -623,5 +631,164 @@ describe("custom provider routes", () => {
     const res = await REQUEST(app, "POST", "/api/custom-providers/missing/refresh-models");
 
     expect(res.status).toBe(404);
+  });
+});
+
+/*
+FNXC:CustomProviderModelWindows 2026-08-19-14:18:
+RUFU-123: per-model contextWindow/maxTokens on the custom-provider CRUD + refresh
+paths. Symptom-verification assertion 1 (settings round-trip): POST/PUT with
+contextWindow 32768 / maxTokens 4096 persist and GET returns them unchanged; invalid
+values are rejected 400 with the field path named. The refresh-models id-merge keeps
+manual windows when the probe reports none (Anthropic-compatible) and lets probe
+windows win when present (OpenAI-compatible limit fields).
+*/
+describe("RUFU-123: per-model contextWindow/maxTokens round-trip", () => {
+  let settings: GlobalSettings;
+
+  beforeEach(() => {
+    settings = {};
+    vi.unstubAllGlobals();
+  });
+
+  it("POST + GET + PUT round-trip preserves per-model windows unchanged", async () => {
+    const app = createApp(settings);
+    const posted = await REQUEST(app, "POST", "/api/custom-providers", {
+      name: "RUFU-123 Provider",
+      apiType: "openai-compatible",
+      baseUrl: "https://api.example.com/v1",
+      models: [
+        { id: "deepseek-v4", name: "DeepSeek V4", contextWindow: 32768, maxTokens: 4096 },
+        { id: "legacy-model", name: "Legacy Model" },
+      ],
+    });
+    expect(posted.status).toBe(201);
+    expect(posted.body.models).toEqual([
+      { id: "deepseek-v4", name: "DeepSeek V4", contextWindow: 32768, maxTokens: 4096 },
+      { id: "legacy-model", name: "Legacy Model" },
+    ]);
+    const providerId = posted.body.id as string;
+
+    const fetched = await REQUEST(app, "GET", "/api/custom-providers");
+    expect(fetched.status).toBe(200);
+    const fetchedModel = fetched.body.find((p: any) => p.id === providerId)?.models?.[0];
+    expect(fetchedModel).toEqual({ id: "deepseek-v4", name: "DeepSeek V4", contextWindow: 32768, maxTokens: 4096 });
+
+    const updated = await REQUEST(app, "PUT", `/api/custom-providers/${providerId}`, {
+      models: [
+        { id: "deepseek-v4", name: "DeepSeek V4", contextWindow: 65536, maxTokens: 8192 },
+        { id: "legacy-model", name: "Legacy Model" },
+      ],
+    });
+    expect(updated.status).toBe(200);
+    expect(updated.body.models).toEqual([
+      { id: "deepseek-v4", name: "DeepSeek V4", contextWindow: 65536, maxTokens: 8192 },
+      { id: "legacy-model", name: "Legacy Model" },
+    ]);
+    // The model entry without window fields stays key-free — no explicit undefined.
+    expect(settings.customProviders?.[0]?.models?.[1]).toEqual({ id: "legacy-model", name: "Legacy Model" });
+  });
+
+  it.each([
+    { field: "contextWindow", values: [0, -1, "abc"] },
+    { field: "maxTokens", values: [0, -1, "abc"] },
+  ])("POST rejects invalid models[0].%s as 400", async ({ field, values }) => {
+    const app = createApp(settings);
+    for (const value of values) {
+      const res = await REQUEST(app, "POST", "/api/custom-providers", {
+        name: "RUFU-123 Provider",
+        apiType: "openai-compatible",
+        baseUrl: "https://api.example.com/v1",
+        models: [{ id: "m", name: "M", [field]: value }],
+      });
+      expect(res.status, `value=${String(value)}`).toBe(400);
+      expect(res.body.error).toContain(`models[0].${field}`);
+    }
+    expect(settings.customProviders).toBeUndefined();
+  });
+
+  it("PUT rejects invalid models[0].contextWindow as 400", async () => {
+    settings.customProviders = [
+      { id: "cp-1", name: "P", apiType: "openai-compatible", baseUrl: "https://api.example.com/v1" },
+    ];
+    const app = createApp(settings);
+    const res = await REQUEST(app, "PUT", "/api/custom-providers/cp-1", {
+      models: [{ id: "m", name: "M", contextWindow: Number.NaN }],
+    });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("models[0].contextWindow");
+    expect(settings.customProviders?.[0]?.models).toBeUndefined();
+  });
+
+  it("refresh-models overwrites prior windows when the OpenAI-compatible probe reports limit fields", async () => {
+    settings.customProviders = [
+      {
+        id: "cp-1",
+        name: "OpenAI Proxy",
+        apiType: "openai-compatible",
+        baseUrl: "https://api.example.com/v1",
+        apiKey: "sk-stored-secret",
+        models: [
+          { id: "fresh-model", name: "Fresh model", contextWindow: 100000, maxTokens: 8192 },
+          { id: "probe-only-model", name: "Probe only" },
+        ],
+      },
+    ];
+    vi.stubGlobal("fetch", vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        data: [
+          { id: "fresh-model", name: "Fresh model", limit: { context: 32768, output: 4096 } },
+          { id: "probe-only-model", name: "Probe only", limit: { context: 8192 } },
+        ],
+      }),
+    })));
+    const app = createApp(settings);
+
+    const res = await REQUEST(app, "POST", "/api/custom-providers/cp-1/refresh-models");
+
+    expect(res.status).toBe(200);
+    expect(settings.customProviders?.[0]?.models).toEqual([
+      { id: "fresh-model", name: "Fresh model", contextWindow: 32768, maxTokens: 4096 },
+      // Probe reported only the window for this model — prior (absent) maxTokens stays absent.
+      { id: "probe-only-model", name: "Probe only", contextWindow: 8192 },
+    ]);
+  });
+
+  it("refresh-models on an Anthropic-compatible provider preserves manual windows the probe never reports", async () => {
+    settings.customProviders = [
+      {
+        id: "cp-1",
+        name: "Anthropic Proxy",
+        apiType: "anthropic-compatible",
+        baseUrl: "https://anthropic.example.com/v1",
+        apiKey: "sk-stored-secret",
+        models: [
+          { id: "claude-sonnet-4-20250514", name: "Claude Sonnet 4", contextWindow: 200000, maxTokens: 8192 },
+          { id: "legacy-model", name: "Legacy model" },
+        ],
+      },
+    ];
+    // Anthropic's models list carries no window data — the probe returns id/display_name only.
+    vi.stubGlobal("fetch", vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        data: [
+          { id: "claude-sonnet-4-20250514", display_name: "Claude Sonnet 4" },
+          { id: "claude-opus-4-20250514", display_name: "Claude Opus 4" },
+        ],
+      }),
+    })));
+    const app = createApp(settings);
+
+    const res = await REQUEST(app, "POST", "/api/custom-providers/cp-1/refresh-models");
+
+    expect(res.status).toBe(200);
+    expect(settings.customProviders?.[0]?.models).toEqual([
+      // The manual 200000/8192 windows survive the refresh via the id-merge.
+      { id: "claude-sonnet-4-20250514", name: "Claude Sonnet 4", contextWindow: 200000, maxTokens: 8192 },
+      // Newly discovered model: no prior windows to merge.
+      { id: "claude-opus-4-20250514", name: "Claude Opus 4" },
+    ]);
   });
 });

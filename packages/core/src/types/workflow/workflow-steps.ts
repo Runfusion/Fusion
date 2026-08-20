@@ -243,7 +243,19 @@ export interface CustomProvider {
    * `google-generative-ai` (no cache_control concept).
    */
   anthropicPromptCaching?: boolean;
-  models?: { id: string; name: string }[];
+  /**
+   * FNXC:CustomProviderModelWindows 2026-08-19-13:03:
+   * RUFU-123 (found as RUFU-118 finding 2, live repro dsai1 deepseek-v4 at a 32K window):
+   * per-model contextWindow/maxTokens so the model registry stops lying about every
+   * custom-provider model's window. Before this, `buildCustomProviderModels` stamped the
+   * hardcoded 128000/16384 defaults on all models, so the RUFU-118 chat pre-overflow
+   * compaction gate computed a ~102,400 threshold for a 32K model and long chats could
+   * wedge at 1-token replies. Both fields are optional positive token counts; the
+   * registry builder falls back to 128000/16384 for a model that omits either (or that
+   * carries an invalid persisted value). Additive widening of a plain JSON settings
+   * array — no settings migration, schema change, or store change is needed.
+   */
+  models?: { id: string; name: string; contextWindow?: number; maxTokens?: number }[];
 }
 
 export interface WorkflowStepInput {

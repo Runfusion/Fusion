@@ -68,7 +68,27 @@
   white-space: nowrap;
 }
 
-.custom-provider-detect-actions {
+/*
+FNXC:CustomProviderModelWindows 2026-08-19-16:49:
+RUFU-123: per-model row editor for the Advanced: Custom Providers forms, replacing the old
+single comma-separated input and the custom-provider-detect-actions block (the Detect Models
+button now lives in the editor's action row). Grid layout mirrors the legacy
+custom-provider-form__model-row pattern; design tokens only, no hardcoded px/hex.
+*/
+.custom-provider-model-rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.custom-provider-model-row {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr)) auto;
+  gap: var(--space-sm);
+  align-items: center;
+}
+
+.custom-provider-model-row-actions {
   display: flex;
   align-items: center;
   gap: var(--space-sm);
@@ -197,5 +217,18 @@ openai-compatible/openai-responses providers. Follows the existing form-row toke
   .custom-provider-refresh-btn {
     flex: 1 1 auto;
     justify-content: center;
+  }
+
+  /*
+  FNXC:CustomProviderModelWindows 2026-08-19-16:49:
+  RUFU-123: model rows stack to a single column on mobile so the four inputs + remove button
+  remain usable at narrow widths (matches the legacy form's mobile row treatment).
+  */
+  .custom-provider-model-row {
+    grid-template-columns: 1fr;
+  }
+
+  .custom-provider-model-row-actions {
+    flex-wrap: wrap;
   }
 }

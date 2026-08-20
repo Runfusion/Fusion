@@ -27,6 +27,7 @@ vi.mock("lucide-react", () => ({
   RefreshCw: () => <svg data-testid="icon-refresh" />,
   Search: () => <svg data-testid="icon-search" />,
   Trash2: () => <svg data-testid="icon-trash" />,
+  X: () => <svg data-testid="icon-x" />,
 }));
 
 describe("CustomProvidersSection", () => {
@@ -506,21 +507,23 @@ describe("CustomProvidersSection", () => {
     });
 
     fireEvent.click(screen.getByLabelText("Edit Test Provider"));
-    expect(screen.getByLabelText("Available models")).toHaveValue("stale-model");
+    // FNXC:CustomProviderModelWindows 2026-08-19-16:49: RUFU-123 the comma input is gone; the row editor seeds row 1.
+    expect(screen.getByLabelText("Model ID 1")).toHaveValue("stale-model");
 
     fireEvent.click(screen.getByRole("button", { name: "Refresh models for Test Provider" }));
 
     await waitFor(() => {
-      expect(screen.getByLabelText("Available models")).toHaveValue("fresh-model");
+      expect(screen.getByLabelText("Model ID 1")).toHaveValue("fresh-model");
     });
 
     fireEvent.change(screen.getByLabelText("Provider name"), { target: { value: "Renamed Provider" } });
     fireEvent.click(screen.getByRole("button", { name: "Save Changes" }));
 
     await waitFor(() => {
+      // The refreshed model's persisted display name now round-trips through the row editor.
       expect(mockUpdateCustomProvider).toHaveBeenCalledWith("test-id", expect.objectContaining({
         name: "Renamed Provider",
-        models: [{ id: "fresh-model", name: "fresh-model" }],
+        models: [{ id: "fresh-model", name: "Fresh model" }],
       }));
     });
   });
@@ -544,14 +547,14 @@ describe("CustomProvidersSection", () => {
     });
 
     fireEvent.click(screen.getByLabelText("Edit Test Provider"));
-    expect(screen.getByLabelText("Available models")).toHaveValue("stale-model");
+    expect(screen.getByLabelText("Model ID 1")).toHaveValue("stale-model");
     fireEvent.click(screen.getByRole("button", { name: "Refresh models for Test Provider" }));
 
     await waitFor(() => {
       expect(screen.getByText("provider offline")).toBeTruthy();
     });
     expect(screen.getByRole("button", { name: "Save Changes" })).toBeTruthy();
-    expect(screen.getByLabelText("Available models")).toHaveValue("stale-model");
+    expect(screen.getByLabelText("Model ID 1")).toHaveValue("stale-model");
   });
 
   it("keeps refresh actions in the reusable mobile-safe action container", async () => {
@@ -632,5 +635,211 @@ describe("CustomProvidersSection", () => {
     await waitFor(() => {
       expect(screen.getByText("add failed")).toBeTruthy();
     });
+  });
+
+  /*
+  FNXC:CustomProviderModelWindows 2026-08-19-16:49:
+  RUFU-123: row-editor coverage — per-model contextWindow/maxTokens flow from the form rows
+  into the save payload, blank windows persist as absent, persisted windows pre-fill the
+  editor, and detect/refresh merge probed windows without clobbering manual values.
+  */
+  it("adds a provider with per-model window values via the row editor", async () => {
+    mockFetchCustomProviders.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+
+    render(<CustomProvidersSection embedded />);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /Add Custom Provider/i })).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /Add Custom Provider/i }));
+    fireEvent.change(screen.getByLabelText("Provider name"), { target: { value: "DeepSeek" } });
+    fireEvent.change(screen.getByLabelText("Base URL"), { target: { value: "https://api.deepseek.com" } });
+    fireEvent.change(screen.getByLabelText("Model ID 1"), { target: { value: "deepseek-v4" } });
+    fireEvent.change(screen.getByLabelText("Display name 1"), { target: { value: "DeepSeek V4" } });
+    fireEvent.change(screen.getByLabelText("Context window 1"), { target: { value: "32768" } });
+    fireEvent.change(screen.getByLabelText("Max output tokens 1"), { target: { value: "4096" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save Provider" }));
+
+    await waitFor(() => {
+      expect(mockAddCustomProvider).toHaveBeenCalledWith({
+        name: "DeepSeek",
+        apiType: "openai-compatible",
+        baseUrl: "https://api.deepseek.com",
+        models: [{ id: "deepseek-v4", name: "DeepSeek V4", contextWindow: 32768, maxTokens: 4096 }],
+      });
+    });
+  });
+
+  it("omits blank window fields from the save payload and keeps the display-name fallback", async () => {
+    mockFetchCustomProviders.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+
+    render(<CustomProvidersSection embedded />);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /Add Custom Provider/i })).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /Add Custom Provider/i }));
+    fireEvent.change(screen.getByLabelText("Provider name"), { target: { value: "Test Provider" } });
+    fireEvent.change(screen.getByLabelText("Base URL"), { target: { value: "https://api.example.com" } });
+    fireEvent.change(screen.getByLabelText("Model ID 1"), { target: { value: "gpt-4" } });
+    // Leave the display name and both window inputs blank: name falls back to the id and the
+    // window keys are omitted so the registry builder's defaults apply at registration.
+    fireEvent.click(screen.getByRole("button", { name: "Save Provider" }));
+
+    await waitFor(() => {
+      expect(mockAddCustomProvider).toHaveBeenCalledWith({
+        name: "Test Provider",
+        apiType: "openai-compatible",
+        baseUrl: "https://api.example.com",
+        models: [{ id: "gpt-4", name: "gpt-4" }],
+      });
+    });
+  });
+
+  it("pre-fills numeric window inputs when editing a provider persisted with windows", async () => {
+    mockFetchCustomProviders.mockResolvedValueOnce([
+      {
+        id: "test-id",
+        name: "Windowed Provider",
+        apiType: "openai-compatible",
+        baseUrl: "https://api.example.com",
+        models: [{ id: "deepseek-v4", name: "DeepSeek V4", contextWindow: 32768, maxTokens: 4096 }],
+      },
+    ]);
+
+    render(<CustomProvidersSection embedded />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Edit Windowed Provider")).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByLabelText("Edit Windowed Provider"));
+
+    expect(screen.getByLabelText("Model ID 1")).toHaveValue("deepseek-v4");
+    expect(screen.getByLabelText("Display name 1")).toHaveValue("DeepSeek V4");
+    expect(screen.getByLabelText("Context window 1")).toHaveValue(32768);
+    expect(screen.getByLabelText("Max output tokens 1")).toHaveValue(4096);
+  });
+
+  it("Detect Models appends probed rows with windows and preserves manual values on existing rows", async () => {
+    mockFetchCustomProviders.mockResolvedValue([]);
+    mockProbeProviderModels.mockResolvedValue({
+      models: [
+        { id: "deepseek-v4", name: "DeepSeek V4", contextWindow: 32768, maxTokens: 4096 },
+        { id: "existing-model", name: "Existing" },
+      ],
+      count: 2,
+    });
+
+    render(<CustomProvidersSection embedded />);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /Add Custom Provider/i })).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /Add Custom Provider/i }));
+    fireEvent.change(screen.getByLabelText("Provider name"), { target: { value: "Probe Provider" } });
+    fireEvent.change(screen.getByLabelText("Base URL"), { target: { value: "https://api.example.com" } });
+    // Fill the initial row manually with its own windows before probing.
+    fireEvent.change(screen.getByLabelText("Model ID 1"), { target: { value: "existing-model" } });
+    fireEvent.change(screen.getByLabelText("Context window 1"), { target: { value: "8192" } });
+    fireEvent.change(screen.getByLabelText("Max output tokens 1"), { target: { value: "1024" } });
+
+    fireEvent.click(screen.getByRole("button", { name: "Detect Models" }));
+
+    // The probed model is appended as row 2 with its probed windows; the probe reports no
+    // window for existing-model, so the manual 8192/1024 survive the merge.
+    await waitFor(() => {
+      expect(screen.getByLabelText("Model ID 2")).toHaveValue("deepseek-v4");
+      expect(screen.getByLabelText("Context window 2")).toHaveValue(32768);
+      expect(screen.getByLabelText("Max output tokens 2")).toHaveValue(4096);
+    });
+    expect(screen.getByLabelText("Context window 1")).toHaveValue(8192);
+    expect(screen.getByLabelText("Max output tokens 1")).toHaveValue(1024);
+
+    fireEvent.click(screen.getByRole("button", { name: "Save Provider" }));
+
+    await waitFor(() => {
+      expect(mockAddCustomProvider).toHaveBeenCalledWith(expect.objectContaining({
+        models: expect.arrayContaining([
+          { id: "existing-model", name: "existing-model", contextWindow: 8192, maxTokens: 1024 },
+          { id: "deepseek-v4", name: "DeepSeek V4", contextWindow: 32768, maxTokens: 4096 },
+        ]),
+      }));
+    });
+  });
+
+  it("Refresh Models re-seeds an open edit form with the merged persisted windows", async () => {
+    mockFetchCustomProviders.mockResolvedValueOnce([
+      {
+        id: "test-id",
+        name: "Windowed Provider",
+        apiType: "openai-compatible",
+        baseUrl: "https://api.example.com",
+        models: [{ id: "claude-x", name: "Claude X", contextWindow: 65536, maxTokens: 8192 }],
+      },
+    ]);
+    // The server-side refresh already id-merges probed and persisted windows.
+    mockRefreshProviderModels.mockResolvedValueOnce({
+      provider: {
+        id: "test-id",
+        name: "Windowed Provider",
+        apiType: "openai-compatible",
+        baseUrl: "https://api.example.com",
+        models: [
+          { id: "claude-x", name: "Claude X", contextWindow: 65536, maxTokens: 8192 },
+          { id: "new-model", name: "New model", contextWindow: 32768 },
+        ],
+      },
+      modelsRefreshed: 2,
+    });
+
+    render(<CustomProvidersSection embedded />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Edit Windowed Provider")).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByLabelText("Edit Windowed Provider"));
+    fireEvent.click(screen.getByRole("button", { name: "Refresh models for Windowed Provider" }));
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Model ID 2")).toHaveValue("new-model");
+    });
+    expect(screen.getByLabelText("Context window 1")).toHaveValue(65536);
+    expect(screen.getByLabelText("Max output tokens 1")).toHaveValue(8192);
+    expect(screen.getByLabelText("Context window 2")).toHaveValue(32768);
+    // new-model's maxTokens was not reported/persisted, so its field stays blank.
+    expect((screen.getByLabelText("Max output tokens 2") as HTMLInputElement).value).toBe("");
+  });
+
+  it("no longer renders the legacy comma-separated models input in either form", async () => {
+    mockFetchCustomProviders.mockResolvedValueOnce([
+      {
+        id: "test-id",
+        name: "Windowed Provider",
+        apiType: "openai-compatible",
+        baseUrl: "https://api.example.com",
+        models: [{ id: "deepseek-v4", name: "DeepSeek V4", contextWindow: 32768, maxTokens: 4096 }],
+      },
+    ]);
+
+    render(<CustomProvidersSection embedded />);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /Add Custom Provider/i })).toBeTruthy();
+    });
+
+    // New-provider form variant: row editor present, no comma input.
+    fireEvent.click(screen.getByRole("button", { name: /Add Custom Provider/i }));
+    expect(screen.queryByPlaceholderText("e.g., gpt-4, gpt-3.5-turbo")).toBeNull();
+    expect(screen.getByRole("button", { name: "Add model row" })).toBeTruthy();
+
+    // Edit form variant: the row editor renders there too, no comma input.
+    fireEvent.click(screen.getByLabelText("Edit Windowed Provider"));
+    expect(screen.queryByPlaceholderText("e.g., gpt-4, gpt-3.5-turbo")).toBeNull();
+    expect(screen.getByLabelText("Model ID 1")).toHaveValue("deepseek-v4");
   });
 });

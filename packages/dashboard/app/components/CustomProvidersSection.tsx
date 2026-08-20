@@ -9,7 +9,7 @@ import {
   updateCustomProvider,
   type CustomProvider,
 } from "../api";
-import { AlertCircle, Loader2, Pencil, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
+import { AlertCircle, Loader2, Pencil, Plus, RefreshCw, Search, Trash2, X } from "lucide-react";
 import { OnboardingDisclosure } from "./OnboardingDisclosure";
 import "./CustomProvidersSection.css";
 
@@ -24,7 +24,9 @@ type LegacyProvider = {
   api: "openai-completions" | "openai-responses" | "anthropic-messages" | "google-generative-ai";
   apiKey?: string;
   anthropicPromptCaching?: boolean;
-  models?: Array<{ id: string; name?: string }>;
+  // FNXC:CustomProviderModelWindows 2026-08-19-16:49: RUFU-123 legacy records can carry the
+  // per-model windows too; normalizeProviders carries them through so the edit form pre-fills.
+  models?: Array<{ id: string; name?: string; contextWindow?: number; maxTokens?: number }>;
 };
 
 function normalizeProviders(result: Awaited<ReturnType<typeof fetchCustomProviders>>): CustomProvider[] {
@@ -50,17 +52,166 @@ function normalizeProviders(result: Awaited<ReturnType<typeof fetchCustomProvide
       models: (provider.models ?? []).map((model) => ({
         id: model.id,
         name: model.name ?? model.id,
+        // FNXC:CustomProviderModelWindows 2026-08-19-16:49: RUFU-123 keep only valid positive windows.
+        ...(isPositiveTokenValue(model.contextWindow) ? { contextWindow: model.contextWindow } : {}),
+        ...(isPositiveTokenValue(model.maxTokens) ? { maxTokens: model.maxTokens } : {}),
       })),
     } satisfies CustomProvider;
   });
 }
 
-function parseModels(modelsInput: string): { id: string; name: string }[] {
-  return modelsInput
-    .split(",")
-    .map((model) => model.trim())
-    .filter(Boolean)
-    .map((model) => ({ id: model, name: model }));
+/*
+FNXC:CustomProviderModelWindows 2026-08-19-16:49:
+RUFU-123 (source finding: RUFU-118 finding 2): the single comma-separated "Available models"
+input is replaced by per-model rows so each custom-provider model can carry an optional
+context window and max output tokens. Rows hold the window fields as strings while editing;
+only values that parse to a positive finite number reach the save payload (blank or invalid
+=> key omitted => the registry builder's 128000/16384 fallback applies). ModelRowsEditor is
+a module-scope component (never declared inside CustomProvidersSection's render) per the
+no-nested-component-definitions rule; both the edit form and the new-provider form render it.
+*/
+type ModelRow = {
+  id: string;
+  name: string;
+  contextWindow: string;
+  maxTokens: string;
+};
+
+function emptyModelRow(): ModelRow {
+  return { id: "", name: "", contextWindow: "", maxTokens: "" };
+}
+
+function isPositiveTokenValue(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0;
+}
+
+/** Parse a row's window input; blank or non-positive/non-finite values stay absent so defaults apply. */
+function parsePositiveTokenValue(value: string): number | undefined {
+  const trimmed = value.trim();
+  if (trimmed === "") return undefined;
+  const parsed = Number(trimmed);
+  return isPositiveTokenValue(parsed) ? parsed : undefined;
+}
+
+function modelRowFromModel(model: { id: string; name?: string; contextWindow?: number; maxTokens?: number }): ModelRow {
+  return {
+    id: model.id,
+    name: model.name ?? model.id,
+    contextWindow: model.contextWindow != null ? String(model.contextWindow) : "",
+    maxTokens: model.maxTokens != null ? String(model.maxTokens) : "",
+  };
+}
+
+function isEmptyModelRow(row: ModelRow): boolean {
+  return row.id.trim() === "" && row.name.trim() === "" && row.contextWindow.trim() === "" && row.maxTokens.trim() === "";
+}
+
+interface ModelRowsEditorProps {
+  rows: ModelRow[];
+  onChange: (rows: ModelRow[]) => void;
+  onDetect: () => void;
+  detecting: boolean;
+  canDetect: boolean;
+  canAddRow: boolean;
+  disabled?: boolean;
+}
+
+function ModelRowsEditor({ rows, onChange, onDetect, detecting, canDetect, canAddRow, disabled = false }: ModelRowsEditorProps) {
+  const { t } = useTranslation("app");
+
+  const updateRow = (index: number, patch: Partial<ModelRow>) => {
+    onChange(rows.map((row, i) => (i === index ? { ...row, ...patch } : row)));
+  };
+
+  const removeRow = (index: number) => {
+    // The single remaining row cannot be removed; saving a blank row stores no models.
+    if (rows.length <= 1) return;
+    onChange(rows.filter((_, i) => i !== index));
+  };
+
+  return (
+    <div className="custom-provider-model-rows">
+      {rows.map((row, index) => (
+        <div key={`${row.id || "empty"}-${index}`} className="custom-provider-model-row">
+          <input
+            className="input"
+            aria-label={`${t("providers.modelRowModelId", "Model ID")} ${index + 1}`}
+            placeholder={t("providers.modelRowModelId", "Model ID")}
+            value={row.id}
+            onChange={(event) => updateRow(index, { id: event.target.value })}
+            disabled={disabled}
+          />
+          <input
+            className="input"
+            aria-label={`${t("providers.modelRowName", "Display name")} ${index + 1}`}
+            placeholder={t("providers.modelRowName", "Display name")}
+            value={row.name}
+            onChange={(event) => updateRow(index, { name: event.target.value })}
+            disabled={disabled}
+          />
+          <input
+            className="input"
+            aria-label={`${t("providers.fields.contextWindow", "Context window")} ${index + 1}`}
+            placeholder={t("providers.fields.contextWindowPlaceholder", "e.g. 200000 (default)")}
+            type="number"
+            min={1}
+            inputMode="numeric"
+            value={row.contextWindow}
+            onChange={(event) => updateRow(index, { contextWindow: event.target.value })}
+            disabled={disabled}
+          />
+          <input
+            className="input"
+            aria-label={`${t("providers.fields.maxTokens", "Max output tokens")} ${index + 1}`}
+            placeholder={t("providers.fields.maxTokensPlaceholder", "e.g. 4096 (default)")}
+            type="number"
+            min={1}
+            inputMode="numeric"
+            value={row.maxTokens}
+            onChange={(event) => updateRow(index, { maxTokens: event.target.value })}
+            disabled={disabled}
+          />
+          <button
+            type="button"
+            className="btn btn-icon btn-sm"
+            onClick={() => removeRow(index)}
+            disabled={disabled || rows.length <= 1}
+            aria-label={t("providers.removeModelRowLabel", "Remove model {{index}}", { index: index + 1 })}
+          >
+            <X aria-hidden="true" />
+          </button>
+        </div>
+      ))}
+
+      <div className="custom-provider-model-row-actions">
+        <button
+          type="button"
+          className="btn btn-sm"
+          onClick={() => onChange([...rows, emptyModelRow()])}
+          disabled={disabled || !canAddRow}
+        >
+          <Plus aria-hidden="true" /> {t("providers.addModelRow", "Add model row")}
+        </button>
+        <button
+          type="button"
+          className="btn btn-sm"
+          onClick={onDetect}
+          disabled={disabled || detecting || !canDetect}
+          title={t("providers.detectTitle", "Auto-detect models from the provider's /models endpoint")}
+        >
+          {detecting ? (
+            <>
+              <Loader2 className="custom-provider-spin" size={14} /> {t("providers.detecting", "Detecting…")}
+            </>
+          ) : (
+            <>
+              <Search size={14} /> {t("providers.detectModels", "Detect Models")}
+            </>
+          )}
+        </button>
+      </div>
+    </div>
+  );
 }
 
 interface CustomProvidersSectionProps {
@@ -80,7 +231,9 @@ export function CustomProvidersSection({ embedded = false, onProviderChange }: C
   const [apiType, setApiType] = useState<ProviderApiType>("openai-compatible");
   const [baseUrl, setBaseUrl] = useState("");
   const [apiKey, setApiKey] = useState("");
-  const [models, setModels] = useState("");
+  // FNXC:CustomProviderModelWindows 2026-08-19-16:49: RUFU-123 per-model rows replace the
+  // comma-separated string so each model can carry optional contextWindow/maxTokens.
+  const [modelRows, setModelRows] = useState<ModelRow[]>([emptyModelRow()]);
   // FNXC:ProviderAuth 2026-07-08-00:00:
   // FN-7689: opt-in for Anthropic-style prompt caching on openai-compatible/openai-responses
   // custom gateways that proxy an Anthropic backend. Shown only for those two apiTypes —
@@ -128,7 +281,7 @@ export function CustomProvidersSection({ embedded = false, onProviderChange }: C
     setApiType("openai-compatible");
     setBaseUrl("");
     setApiKey("");
-    setModels("");
+    setModelRows([emptyModelRow()]);
     setAnthropicPromptCaching(false);
     setFormError(null);
     setDetectError(null);
@@ -142,7 +295,7 @@ export function CustomProvidersSection({ embedded = false, onProviderChange }: C
     setApiType("openai-compatible");
     setBaseUrl("");
     setApiKey("");
-    setModels("");
+    setModelRows([emptyModelRow()]);
     setAnthropicPromptCaching(false);
     setFormError(null);
     setDetectError(null);
@@ -160,7 +313,11 @@ export function CustomProvidersSection({ embedded = false, onProviderChange }: C
     // masked value to save/probe (which the server rejects). Start empty; an
     // unchanged blank field leaves the stored key untouched on save.
     setApiKey("");
-    setModels((provider.models ?? []).map((model) => model.id).join(", "));
+    // FNXC:CustomProviderModelWindows 2026-08-19-16:49: RUFU-123 seed rows from the persisted
+    // models including any per-model windows so the edit form round-trips them unchanged.
+    setModelRows((provider.models ?? []).length > 0
+      ? (provider.models ?? []).map(modelRowFromModel)
+      : [emptyModelRow()]);
     setAnthropicPromptCaching(provider.anthropicPromptCaching === true);
     setFormError(null);
     setDetectError(null);
@@ -215,16 +372,39 @@ export function CustomProvidersSection({ embedded = false, onProviderChange }: C
       });
 
       if (result.models.length > 0) {
-        setModels((prev) => {
-          const existingIds = new Set(
-            prev.split(",").map((s) => s.trim()).filter(Boolean),
-          );
-          const newIds = result.models
-            .map((m) => m.id.trim())
-            .filter((id) => !existingIds.has(id));
-          if (newIds.length === 0) return prev;
-          const existing = prev.trim();
-          return newIds.join(", ") + (existing ? ", " + existing : "");
+        setModelRows((prev) => {
+          // FNXC:CustomProviderModelWindows 2026-08-19-16:49: RUFU-123 merge by id: append new
+          // models with their probed windows, and only fill blank fields on existing rows —
+          // manual window values typed by the operator are never clobbered by the probe.
+          const rows = prev.filter((row) => !isEmptyModelRow(row));
+          const byId = new Map(rows.map((row) => [row.id.trim(), row] as const));
+          for (const discovered of result.models) {
+            const discoveredId = discovered.id.trim();
+            if (!discoveredId) continue;
+            const existing = byId.get(discoveredId);
+            if (existing) {
+              byId.set(discoveredId, {
+                ...existing,
+                name: existing.name.trim() !== "" ? existing.name : (discovered.name ?? discoveredId),
+                contextWindow: existing.contextWindow.trim() !== ""
+                  ? existing.contextWindow
+                  : (discovered.contextWindow != null ? String(discovered.contextWindow) : ""),
+                maxTokens: existing.maxTokens.trim() !== ""
+                  ? existing.maxTokens
+                  : (discovered.maxTokens != null ? String(discovered.maxTokens) : ""),
+              });
+            } else {
+              const row: ModelRow = {
+                id: discoveredId,
+                name: discovered.name ?? discoveredId,
+                contextWindow: discovered.contextWindow != null ? String(discovered.contextWindow) : "",
+                maxTokens: discovered.maxTokens != null ? String(discovered.maxTokens) : "",
+              };
+              rows.push(row);
+              byId.set(discoveredId, row);
+            }
+          }
+          return rows.length > 0 ? rows : [emptyModelRow()];
         });
       } else {
         setDetectError(t("providers.noModelsFound", "No models found. The provider may require an API key."));
@@ -243,7 +423,22 @@ export function CustomProvidersSection({ embedded = false, onProviderChange }: C
     setFormError(validationError);
     if (validationError) return;
 
-    const parsedModels = parseModels(models);
+    // FNXC:CustomProviderModelWindows 2026-08-19-16:49: RUFU-123 build the models array from
+    // rows — blank ids are dropped (a provider may be saved with zero models), a blank display
+    // name falls back to the id, and window keys are included only when the field parses to a
+    // positive finite number (blank/invalid persist as absent so defaults apply at registration).
+    const parsedModels = modelRows.flatMap((row) => {
+      const id = row.id.trim();
+      if (id === "") return [];
+      const contextWindow = parsePositiveTokenValue(row.contextWindow);
+      const maxTokens = parsePositiveTokenValue(row.maxTokens);
+      return [{
+        id,
+        name: row.name.trim() || id,
+        ...(contextWindow !== undefined ? { contextWindow } : {}),
+        ...(maxTokens !== undefined ? { maxTokens } : {}),
+      }];
+    });
     const payload: Omit<CustomProvider, "id"> = {
       name: name.trim(),
       apiType,
@@ -273,7 +468,7 @@ export function CustomProvidersSection({ embedded = false, onProviderChange }: C
     } finally {
       setSaving(false);
     }
-  }, [anthropicPromptCaching, apiKey, apiType, baseUrl, editingProvider, loadProviders, models, name, resetForm, validateForm, t]);
+  }, [anthropicPromptCaching, apiKey, apiType, baseUrl, editingProvider, loadProviders, modelRows, name, resetForm, validateForm, t]);
 
   const handleDelete = useCallback(
     async (provider: CustomProvider) => {
@@ -305,9 +500,14 @@ export function CustomProvidersSection({ embedded = false, onProviderChange }: C
           /*
           FNXC:CustomProviders 2026-06-30-00:00:
           Manual refresh can run while a provider edit form is open. Keep that form's model input synchronized with the persisted refresh result so saving unrelated edits cannot overwrite newly discovered models with the pre-refresh list.
+          FNXC:CustomProviderModelWindows 2026-08-19-16:49:
+          RUFU-123: the refresh response's models already carry the server-side id-merge of
+          probed and persisted windows, so re-seed the row editor from them and the open form
+          saves the merged list (windows included) instead of the pre-refresh rows.
           */
-          const refreshedModels = (result.provider.models ?? []).map((model) => model.id).join(", ");
-          setModels(refreshedModels);
+          setModelRows((result.provider.models ?? []).length > 0
+            ? (result.provider.models ?? []).map(modelRowFromModel)
+            : [emptyModelRow()]);
           setEditingProvider((current) => current?.id === provider.id
             ? { ...current, models: result.provider.models ?? [] }
             : current);
@@ -478,36 +678,18 @@ export function CustomProvidersSection({ embedded = false, onProviderChange }: C
                     </div>
 
                     <div className="form-group custom-provider-form-row">
-                      <label htmlFor="custom-provider-models">{t("providers.modelsLabel", "Available models")}</label>
-                      <input
-                        id="custom-provider-models"
-                        className="input"
-                        placeholder="e.g., gpt-4, gpt-3.5-turbo"
-                        value={models}
-                        onChange={(event) => setModels(event.target.value)}
+                      <label>{t("providers.modelsLabel", "Available models")}</label>
+                      <ModelRowsEditor
+                        rows={modelRows}
+                        onChange={setModelRows}
+                        onDetect={() => void handleDetectModels()}
+                        detecting={detecting}
+                        canDetect={baseUrl.trim() !== ""}
+                        canAddRow
                         disabled={saving}
                       />
                     </div>
 
-                    <div className="custom-provider-detect-actions">
-                      <button
-                        type="button"
-                        className="btn btn-sm"
-                        onClick={() => void handleDetectModels()}
-                        disabled={saving || detecting || !baseUrl.trim()}
-                        title={t("providers.detectTitle", "Auto-detect models from the provider's /models endpoint")}
-                      >
-                        {detecting ? (
-                          <>
-                            <Loader2 className="custom-provider-spin" size={14} /> {t("providers.detecting", "Detecting…")}
-                          </>
-                        ) : (
-                          <>
-                            <Search size={14} /> {t("providers.detectModels", "Detect Models")}
-                          </>
-                        )}
-                      </button>
-                    </div>
                     {detectError ? <div className="custom-provider-form-error">{detectError}</div> : null}
 
                     {formError ? <div className="custom-provider-form-error">{formError}</div> : null}
@@ -616,36 +798,18 @@ export function CustomProvidersSection({ embedded = false, onProviderChange }: C
           </div>
 
           <div className="form-group custom-provider-form-row">
-            <label htmlFor="custom-provider-models">{t("providers.modelsLabel", "Available models")}</label>
-            <input
-              id="custom-provider-models"
-              className="input"
-              placeholder="e.g., gpt-4, gpt-3.5-turbo"
-              value={models}
-              onChange={(event) => setModels(event.target.value)}
+            <label>{t("providers.modelsLabel", "Available models")}</label>
+            <ModelRowsEditor
+              rows={modelRows}
+              onChange={setModelRows}
+              onDetect={() => void handleDetectModels()}
+              detecting={detecting}
+              canDetect={baseUrl.trim() !== ""}
+              canAddRow
               disabled={saving}
             />
           </div>
 
-          <div className="custom-provider-detect-actions">
-            <button
-              type="button"
-              className="btn btn-sm"
-              onClick={() => void handleDetectModels()}
-              disabled={saving || detecting || !baseUrl.trim()}
-              title={t("providers.detectTitle", "Auto-detect models from the provider's /models endpoint")}
-            >
-              {detecting ? (
-                <>
-                  <Loader2 className="custom-provider-spin" size={14} /> {t("providers.detecting", "Detecting…")}
-                </>
-              ) : (
-                <>
-                  <Search size={14} /> {t("providers.detectModels", "Detect Models")}
-                </>
-              )}
-            </button>
-          </div>
           {detectError ? <div className="custom-provider-form-error">{detectError}</div> : null}
 
           {formError ? <div className="custom-provider-form-error">{formError}</div> : null}
