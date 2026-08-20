@@ -6564,6 +6564,17 @@ class LateWorkspaceRepoAcquireError extends Error {
   }
 }
 
+  /*
+  FNXC:WorkspaceLateAcquire 2026-08-20-20:37 DELIBERATE-LITERAL:
+  Late worktree acquisition is refused once the task has left the executable column set
+  (in-review — review/merge owns the worktree; done/archived — terminal) or has started
+  landing (a merging-* status, or any workspace repo with a landedSha). This is a
+  deliberate column+status+workspace condition (FN-9163, upstream 2a3150582) — reviewed
+  and intentionally kept as an honest literal for the lifecycle-column census; no single
+  role helper expresses this three-part condition without inventing a bespoke trait.
+  (2026-08-21, RUFU-146 rebase: after #3492 landed the column half is resolved by
+  isLateAcquireColumnBlocked and the three-part condition now lives in this helper.)
+  */
 async function isWorkspaceRepoLateAcquireBlocked(store: TaskStore, currentTask: import("@fusion/core").Task, repo: string): Promise<boolean> {
   if (currentTask.workspaceWorktrees?.[repo]) return false;
   if (["merging", "merging-pr", "merging-fix"].includes(currentTask.status ?? "")) return true;
