@@ -545,10 +545,12 @@ export async function mergeWorkspaceWorktreeEntryImpl(
       const existing = workspaceWorktrees[repoRelPath];
       if (options.requireExistingEntry && !existing) return { task: current, mutated: false };
       /*
-      A callback patch runs while both the in-process task mutex and the database task advisory
-      transaction lock are held. Workspace acquisition uses this seam to revalidate lifecycle state,
-      create the worktree, and return its durable entry without allowing a lifecycle move between
-      those operations and this row update.
+      FNXC:WorkspaceWorktree 2026-08-20-06:26:34: A callback patch runs while both the in-process task
+      mutex and the database task advisory transaction lock are held. Workspace acquisition uses this
+      seam to revalidate lifecycle state, create the worktree, and return its durable entry without
+      allowing a lifecycle move between those operations and this row update. Callback code must use
+      the acquisition-scoped deferring store for lock-taking task updates and log entries; directly
+      re-entering TaskStore mutations here would deadlock the non-reentrant task lock.
       */
       const resolvedPatch = typeof patch === "function" ? await patch(current) : patch;
 

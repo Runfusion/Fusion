@@ -46,13 +46,16 @@ function makeFakeStore(
     failWhen?: (patch: Partial<Task>) => boolean;
     beforeWorkspaceMerge?: (repoRelPath: string) => Promise<void>;
   } = {},
-): { store: TaskStore; current: () => Task; logs: string[]; patches: Partial<Task>[] } {
+): { store: TaskStore; current: () => Task; logs: string[]; patches: Partial<Task>[]; mutationsDuringMerge: () => number } {
   let current = task;
   let mergeTail = Promise.resolve();
+  let mergeCallbackActive = false;
+  let nestedMutationCount = 0;
   const logs: string[] = [];
   const patches: Partial<Task>[] = [];
   const store = {
     async updateTask(id: string, patch: Partial<Task>): Promise<void> {
+      if (mergeCallbackActive) nestedMutationCount += 1;
       // Deliberately retain wholesale replacement: the concurrent regression below must fail
       // if production returns to updateTask({ workspaceWorktrees }) instead of the key merge.
       patches.push(patch);
@@ -79,7 +82,13 @@ function makeFakeStore(
         const workspaceWorktrees = current.workspaceWorktrees ?? {};
         const existing = workspaceWorktrees[repoRelPath];
         if (mergeOptions?.requireExistingEntry && !existing) return current;
-        const resolvedPatch = typeof patch === "function" ? await patch(current) : patch;
+        mergeCallbackActive = true;
+        let resolvedPatch: Partial<NonNullable<Task["workspaceWorktrees"]>[string]>;
+        try {
+          resolvedPatch = typeof patch === "function" ? await patch(current) : patch;
+        } finally {
+          mergeCallbackActive = false;
+        }
         const mergedPatch: Partial<Task> = {
           workspaceWorktrees: { ...workspaceWorktrees, [repoRelPath]: { ...existing, ...resolvedPatch } },
           ...(mergeOptions?.clearSingularWorktree ? { worktree: undefined, branch: undefined } : {}),
@@ -93,13 +102,14 @@ function makeFakeStore(
       }
     },
     async logEntry(_id: string, message: string): Promise<void> {
+      if (mergeCallbackActive) nestedMutationCount += 1;
       logs.push(message);
     },
     async getTask(id: string): Promise<Task | null> {
       return id === current.id ? current : null;
     },
   } as unknown as TaskStore;
-  return { store, current: () => current, logs, patches };
+  return { store, current: () => current, logs, patches, mutationsDuringMerge: () => nestedMutationCount };
 }
 
 function makeTask(id: string): Task {
@@ -343,6 +353,51 @@ describeIfGit("acquireWorkspaceRepoWorktree (U2 per-repo hardening)", { timeout:
     expect(second.baseCommitSha).toBe(first.baseCommitSha);
     expect(patches).toHaveLength(1);
     expect(registry.isPathActive(fixture.repoPath("repo-a"))).toBe(false);
+  });
+
+  it("defers task mutations until the lifecycle-locked workspace merge callback has returned", async () => {
+    fixture = await createWorkspaceFixture(["repo-a"]);
+    const { store, current, logs, mutationsDuringMerge } = makeFakeStore(makeTask("FN-4-lock"));
+
+    await acquireWorkspaceRepoWorktree({
+      repoRelPath: "repo-a",
+      workspaceRootDir: fixture.rootDir,
+      task: current(),
+      store,
+      settings: SETTINGS,
+      registry: new ActiveSessionRegistry(),
+    });
+
+    expect(mutationsDuringMerge()).toBe(0);
+    expect(logs.some((message) => message.includes("Worktree created at"))).toBe(true);
+  });
+
+  it("creates one durable worktree when the same task acquires the same repository concurrently", async () => {
+    fixture = await createWorkspaceFixture(["repo-a"]);
+    const initial = makeTask("FN-4-concurrent");
+    const { store, current } = makeFakeStore(initial);
+    const registry = new ActiveSessionRegistry();
+    const auditEvents: Array<{ type: string }> = [];
+    const audit = {
+      async git(event: { type: string }): Promise<void> { auditEvents.push(event); },
+      async filesystem(): Promise<void> {},
+    };
+
+    const [first, second] = await Promise.all([
+      acquireWorkspaceRepoWorktree({
+        repoRelPath: "repo-a", workspaceRootDir: fixture.rootDir, task: initial, store,
+        settings: SETTINGS, registry, audit,
+      }),
+      acquireWorkspaceRepoWorktree({
+        repoRelPath: "repo-a", workspaceRootDir: fixture.rootDir, task: initial, store,
+        settings: SETTINGS, registry, audit,
+      }),
+    ]);
+
+    expect([first.alreadyAcquired, second.alreadyAcquired].sort()).toEqual([false, true]);
+    expect(first.worktreePath).toBe(second.worktreePath);
+    expect(Object.keys(current().workspaceWorktrees ?? {})).toEqual(["repo-a"]);
+    expect(auditEvents.filter((event) => event.type === "worktree:create")).toHaveLength(1);
   });
 
   it("surfaces an error and persists an audit event when acquisition fails (no swallowed stall)", async () => {

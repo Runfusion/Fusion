@@ -1341,8 +1341,9 @@ export interface AcquireWorkspaceRepoWorktreeOptions {
   runConfiguredCommand?: AcquireTaskWorktreeOptions["runConfiguredCommand"];
   taskEnv?: NodeJS.ProcessEnv;
   /**
-   * Revalidate caller-owned admission policy immediately before worktree creation. The callback runs
-   * under the TaskStore's local mutex and durable task advisory transaction lock.
+   * FNXC:WorkspaceWorktree 2026-08-20-06:26:34: Revalidate caller-owned admission policy immediately
+   * before worktree creation. The callback runs under the TaskStore's local mutex and durable task
+   * advisory transaction lock.
    */
   validateTaskBeforeCreate?: (freshTask: Task) => Promise<void>;
 }
@@ -1533,16 +1534,48 @@ export async function acquireWorkspaceRepoWorktree(
     */
     let acquisitionResult: { worktreePath: string; branch: string; baseCommitSha?: string; alreadyAcquired: boolean } | undefined;
     let baseResolution: Awaited<ReturnType<typeof resolveWorkspaceRepoBaseBranch>> | undefined;
-    await store.mergeWorkspaceWorktreeEntry(
-      task.id,
-      repoRelPath,
-      async (freshTask) => {
-        /*
-        The per-repository lock is already held. mergeWorkspaceWorktreeEntry now adds the TaskStore's
-        in-process mutex and PostgreSQL task advisory transaction lock, the same lock lifecycle moves
-        use. Revalidate after both locks are held, then keep them through creation and persistence.
-        */
-        await validateTaskBeforeCreate?.(freshTask);
+    const deferredTaskUpdates: Array<[string, Parameters<TaskStore["updateTask"]>[1]]> = [];
+    const deferredLogEntries: Array<Parameters<TaskStore["logEntry"]>> = [];
+    let mergeError: unknown;
+    try {
+      await store.mergeWorkspaceWorktreeEntry(
+        task.id,
+        repoRelPath,
+        async (freshTask) => {
+          /*
+          FNXC:WorkspaceWorktree 2026-08-20-06:26:34: The per-repository lock is already held.
+          mergeWorkspaceWorktreeEntry adds the TaskStore's in-process mutex and PostgreSQL task
+          advisory transaction lock, the same lock lifecycle moves use. Revalidate after both locks
+          are held, then keep them through creation and persistence. The acquisition helper normally
+          logs through TaskStore and may request metadata cleanup; defer those lock-taking mutations
+          until this callback releases the non-reentrant task lock.
+          */
+          const callbackStore = new Proxy(store, {
+            get(target, property) {
+              if (property === "logEntry") {
+                return async (...args: Parameters<TaskStore["logEntry"]>): Promise<void> => {
+                  deferredLogEntries.push(args);
+                };
+              }
+              if (property === "updateTask") {
+                return async (id: string, patch: Parameters<TaskStore["updateTask"]>[1]): Promise<void> => {
+                  if (id !== task.id) throw new Error(`Workspace acquisition attempted to mutate unexpected task ${id}`);
+                  deferredTaskUpdates.push([id, patch]);
+                  Object.assign(freshTask, patch);
+                };
+              }
+              const value = Reflect.get(target, property, target);
+              return typeof value === "function" ? value.bind(target) : value;
+            },
+          }) as TaskStore;
+
+          const concurrentExisting = freshTask.workspaceWorktrees?.[repoRelPath];
+          if (concurrentExisting && existsSync(concurrentExisting.worktreePath)) {
+            acquisitionResult = { ...concurrentExisting, alreadyAcquired: true };
+            return concurrentExisting;
+          }
+
+          await validateTaskBeforeCreate?.(freshTask);
         const resolvedBase = await resolveWorkspaceRepoBaseBranch({
       mode: "acquire",
       repoRootDir: repoAbsPath,
@@ -1569,7 +1602,7 @@ export async function acquireWorkspaceRepoWorktree(
       suppressSingularWorktreePersist: true,
       workspaceContext: { workspaceRootDir, repoRelPath },
       rootDir: repoAbsPath,
-      store,
+      store: callbackStore,
       // FNXC:Workspace 2026-07-07-08:40 (FN-7360 regression — strip shared branch overrides for per-repo start-point):
       // FN-7360 pinned fresh task worktree creation to `resolveIntegrationBranch(rootDir, settings)`
       // when no executionStartBranch is present, so new branches never inherit an ambient root HEAD.
@@ -1631,7 +1664,7 @@ export async function acquireWorkspaceRepoWorktree(
       // and re-escalate this deliberately NON-FATAL step into a fatal acquisition error,
       // stranding the already-created worktree. Suppress observability failures via safeObserve.
       await safeObserve(async () => {
-        await store.logEntry(task.id, `Workspace sub-repo identity-guard install failed for ${repoRelPath} (non-fatal): ${message}`, undefined, runContext);
+        await callbackStore.logEntry(task.id, `Workspace sub-repo identity-guard install failed for ${repoRelPath} (non-fatal): ${message}`, undefined, runContext);
         await audit?.git({
           type: "worktree:workspace-repo-acquire-failed",
           target: repoAbsPath,
@@ -1658,7 +1691,7 @@ export async function acquireWorkspaceRepoWorktree(
       // FNXC:Workspace 2026-06-22-09:00: same non-fatal contract as the identity-guard catch —
       // the awaited observability writes must not re-escalate a non-fatal base-capture failure.
       await safeObserve(async () => {
-        await store.logEntry(task.id, `Workspace sub-repo base-SHA capture failed for ${repoRelPath} (non-fatal): ${message}`, undefined, runContext);
+        await callbackStore.logEntry(task.id, `Workspace sub-repo base-SHA capture failed for ${repoRelPath} (non-fatal): ${message}`, undefined, runContext);
         await audit?.git({
           type: "worktree:workspace-repo-acquire-failed",
           target: repoAbsPath,
@@ -1699,11 +1732,27 @@ export async function acquireWorkspaceRepoWorktree(
               }
             : {}),
         };
-      },
-      { clearSingularWorktree: true },
-    );
-    if (!acquisitionResult || !baseResolution) {
+        },
+        { clearSingularWorktree: true },
+      );
+    } catch (error) {
+      mergeError = error;
+    }
+    let deferredMutationError: unknown;
+    try {
+      for (const [id, patch] of deferredTaskUpdates) await store.updateTask(id, patch);
+      for (const args of deferredLogEntries) await store.logEntry(...args);
+    } catch (error) {
+      deferredMutationError = error;
+    }
+    if (mergeError) throw mergeError;
+    if (deferredMutationError) throw deferredMutationError;
+    if (!acquisitionResult) {
       throw new Error(`Workspace sub-repo acquisition for ${repoRelPath} completed without a durable result`);
+    }
+    if (acquisitionResult.alreadyAcquired) return acquisitionResult;
+    if (!baseResolution) {
+      throw new Error(`Workspace sub-repo acquisition for ${repoRelPath} completed without a base resolution`);
     }
     await recordWorkspaceBaseBranchDecision({
       store,
