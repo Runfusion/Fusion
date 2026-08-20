@@ -840,4 +840,75 @@ describe("RUFU-123: per-model contextWindow/maxTokens round-trip", () => {
       { id: "m1", name: "M1", contextWindow: 65536, maxTokens: 4096 },
     ]);
   });
+
+  /*
+  FNXC:CustomProviderModelWindows 2026-08-20-22:27: RUFU-145 PR #3493 review invariant:
+  the output reservation must fit inside the context window on every persistence
+  surface (POST, PUT, refresh). A pair where maxTokens >= contextWindow makes the
+  chat-lane compaction hard limit (contextWindow - max(16384, maxTokens)) non-positive
+  — the review fixture persisted contextWindow 8192 with no maxTokens, the engine
+  defaulted maxTokens to 16384, and the documented threshold became -8192.
+  */
+  it("POST rejects a model whose maxTokens cannot fit its contextWindow (incompatible pair invariant)", async () => {
+    const app = createApp(settings);
+    const res = await REQUEST(app, "POST", "/api/custom-providers", {
+      name: "RUFU-123 Provider",
+      apiType: "openai-compatible",
+      baseUrl: "https://api.example.com/v1",
+      models: [{ id: "probe-only-model", name: "Probe only", contextWindow: 8192, maxTokens: 16384 }],
+    });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("models[0].maxTokens");
+    expect(res.body.error).toContain("models[0].contextWindow");
+    expect(settings.customProviders).toBeUndefined();
+  });
+
+  it("PUT rejects a model whose maxTokens cannot fit its contextWindow (incompatible pair invariant)", async () => {
+    const app = createApp(settings);
+    const posted = await REQUEST(app, "POST", "/api/custom-providers", {
+      name: "RUFU-123 Provider",
+      apiType: "openai-compatible",
+      baseUrl: "https://api.example.com/v1",
+      models: [{ id: "probe-only-model", name: "Probe only", contextWindow: 8192 }],
+    });
+    expect(posted.status).toBe(201);
+    const providerId = posted.body.id as string;
+    const res = await REQUEST(app, "PUT", `/api/custom-providers/${providerId}`, {
+      models: [{ id: "probe-only-model", name: "Probe only", contextWindow: 8192, maxTokens: 16384 }],
+    });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("models[0].maxTokens");
+    // The rejected update is not persisted.
+    expect(settings.customProviders?.[0]?.models).toEqual([{ id: "probe-only-model", name: "Probe only", contextWindow: 8192 }]);
+  });
+
+  it("refresh-models drops a probed output limit that cannot fit the probed context window (incompatible pair invariant)", async () => {
+    const settings: GlobalSettings = {
+      customProviders: [
+        {
+          id: "cp-1",
+          name: "Small window",
+          apiType: "openai-compatible",
+          baseUrl: "https://api.small.example.com/v1",
+          apiKey: "sk-test-1",
+        },
+      ],
+    };
+    const app = createApp(settings);
+    vi.stubGlobal("fetch", vi.fn(async (_url: unknown, init?: { method?: string }) => {
+      if (init?.method === "GET") {
+        return {
+          ok: true,
+          json: async () => ({ data: [{ id: "m1", name: "M1", limit: { context: 8192, output: 16384 } }] }),
+        };
+      }
+      return { ok: false, status: 404, json: async () => ({}) };
+    }));
+
+    const res = await REQUEST(app, "POST", "/api/custom-providers/cp-1/refresh-models");
+    expect(res.status).toBe(200);
+    // The inconsistent probed output limit is dropped; the window persists alone so
+    // the engine default + safe small-window guard threshold apply downstream.
+    expect(settings.customProviders?.[0]?.models).toEqual([{ id: "m1", name: "M1", contextWindow: 8192 }]);
+  });
 });

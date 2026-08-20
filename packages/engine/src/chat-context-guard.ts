@@ -14,7 +14,9 @@
  *
  * FNXC:ChatContextGuard 2026-08-18-18:06:
  * Threshold semantics: threshold = min(tokenCap ?? round(0.8 * contextWindow),
- * contextWindow - max(16384, maxTokens)). On the chat lane tokenCap is an UPPER BOUND on
+ * contextWindow - max(16384, maxTokens); when that reserve cannot fit inside the
+ * window (small-window models) it is capped at half the window — the safe small-window
+ * threshold, RUFU-145 review). On the chat lane tokenCap is an UPPER BOUND on
  * the effective threshold, not an exact target: unset falls back to 80% of the per-model
  * context window, and values above the hard limit (contextWindow - reserve) are clamped.
  * The 0.8 default belongs here (engine pure function), not in the settings schema, so
@@ -63,6 +65,17 @@ const MIN_RESERVE_TOKENS = 16_384;
  * threshold of contextWindow - reserveTokens).
  */
 const DEFAULT_COMPACT_FRACTION = 0.8;
+
+/**
+ * FNXC:ChatContextGuard 2026-08-20-22:27:
+ * RUFU-145 PR #3493 review (safe small-window threshold): when the output reservation
+ * cannot fit inside the context window at all (reserve >= window — e.g. an 8K probe
+ * window paired with the 16K default output reservation), the hard limit is
+ * non-positive and the gate degenerates. Cap the reserve at half the window so
+ * small-window models get a usable, deterministic threshold: half the window is
+ * reserved for output + slack, the other half remains available for conversation.
+ */
+const SMALL_WINDOW_RESERVE_FRACTION = 0.5;
 
 /**
  * FNXC:ChatContextGuard 2026-08-20-12:20:
@@ -121,10 +134,19 @@ function resolveCompactionBounds(
   if (typeof contextWindow !== "number" || !Number.isFinite(contextWindow) || contextWindow <= 0) {
     return null;
   }
-  const reserve = Math.max(
+  const rawReserve = Math.max(
     MIN_RESERVE_TOKENS,
     typeof maxTokens === "number" && Number.isFinite(maxTokens) ? maxTokens : 0,
   );
+  // FNXC:ChatContextGuard 2026-08-20-22:27: RUFU-145 PR #3493 review: the safe
+  // small-window threshold. A reserve that cannot fit inside the window makes the hard
+  // limit non-positive (threshold -8192 for an 8K window with the 16K default), which
+  // either skips the gate or crosses it on every send. Cap the reserve at
+  // SMALL_WINDOW_RESERVE_FRACTION of the window so the threshold stays usable.
+  const reserve =
+    rawReserve >= contextWindow
+      ? Math.max(1, Math.floor(contextWindow * SMALL_WINDOW_RESERVE_FRACTION))
+      : rawReserve;
   const hardLimit = contextWindow - reserve;
   if (hardLimit <= 0) {
     return null;
@@ -339,6 +361,27 @@ export async function ensureContextWithinCompactionThreshold(
 
   if (contextTokens < threshold) {
     return { compacted: false, contextTokens, threshold };
+  }
+
+  /*
+  FNXC:ChatContextGuard 2026-08-20-22:27: RUFU-145 PR #3493 review: the stale-usage
+  cross-check now runs BEFORE compaction, not only when compaction returns no result.
+  estimateLoadedContextTokens prefers the provider-reported getContextUsage().tokens,
+  which pi restores from the session file and which can describe a LARGER static
+  context than the session carries now (RUFU-135: recorded 124K vs ~36K live). When the
+  conversation branch is still large, the old order compacted first and the
+  post-compaction re-measure could read the same stale usage — throwing
+  ChatContextOverflowError even though the live context fits. The fresh measurement
+  (current prompt + active tool schemas + loaded messages) is the live view; when it
+  fits under the threshold the recorded usage is stale and the send proceeds without a
+  compaction round-trip.
+  */
+  const preCompactFreshTokens = freshLoadedContextEstimate(session);
+  if (preCompactFreshTokens !== null && preCompactFreshTokens < threshold) {
+    piLog.log(
+      `chat-context-guard: recorded context ${contextTokens} tokens >= threshold ${threshold} but the fresh measurement of the current prompt + tools + messages is ${preCompactFreshTokens} tokens — the recorded usage is stale; proceeding without compaction`,
+    );
+    return { compacted: false, contextTokens: preCompactFreshTokens, threshold };
   }
 
   piLog.warn(

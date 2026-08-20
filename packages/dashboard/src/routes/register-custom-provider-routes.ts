@@ -145,6 +145,23 @@ function validateModels(
     if (row.maxTokens !== undefined) {
       model.maxTokens = assertPositiveFiniteNumber(row.maxTokens, `models[${index}].maxTokens`);
     }
+    /*
+    FNXC:CustomProviderModelWindows 2026-08-20-22:27: RUFU-145 PR #3493 review invariant:
+    the output reservation must fit inside the context window. A pair where
+    maxTokens >= contextWindow makes the chat-lane compaction hard limit
+    (contextWindow - max(16384, maxTokens)) non-positive, so every chat call enters
+    compaction or fails before sending. An explicitly registered contradictory pair is
+    an operator input error — reject 400 with both field paths named.
+    */
+    if (
+      model.contextWindow !== undefined &&
+      model.maxTokens !== undefined &&
+      model.maxTokens >= model.contextWindow
+    ) {
+      throw badRequest(
+        `models[${index}].maxTokens (${model.maxTokens}) must be smaller than models[${index}].contextWindow (${model.contextWindow})`,
+      );
+    }
     return model;
   });
 }
@@ -574,6 +591,18 @@ export async function refreshCustomProviderModels(
       entry.maxTokens = model.maxTokens;
     } else if (prior?.maxTokens !== undefined) {
       entry.maxTokens = prior.maxTokens;
+    }
+    // FNXC:CustomProviderModelWindows 2026-08-20-22:27: RUFU-145 PR #3493 review
+    // invariant (refresh surface): a probe that reports an output limit at/above its
+    // own context window is internally inconsistent; persisting it would make the
+    // compaction hard limit non-positive. Drop the limit and let the engine default +
+    // safe small-window guard threshold apply.
+    if (
+      typeof entry.contextWindow === "number" &&
+      typeof entry.maxTokens === "number" &&
+      entry.maxTokens >= entry.contextWindow
+    ) {
+      delete entry.maxTokens;
     }
     return entry;
   });
