@@ -132,7 +132,7 @@ function ModelRowsEditor({ rows, onChange, onDetect, detecting, canDetect, canAd
   return (
     <div className="custom-provider-model-rows">
       {rows.map((row, index) => (
-        <div key={`${row.id || "empty"}-${index}`} className="custom-provider-model-row">
+        <div key={index} className="custom-provider-model-row">
           <input
             className="input"
             aria-label={`${t("providers.modelRowModelId", "Model ID")} ${index + 1}`}
@@ -376,14 +376,19 @@ export function CustomProvidersSection({ embedded = false, onProviderChange }: C
           // FNXC:CustomProviderModelWindows 2026-08-19-16:49: RUFU-123 merge by id: append new
           // models with their probed windows, and only fill blank fields on existing rows —
           // manual window values typed by the operator are never clobbered by the probe.
+          // FNXC:CustomProviderModelWindows 2026-08-20-22:06: RUFU-145 PR #3493 review:
+          // the merge writes the merged object back into the rows array by index. The
+          // original code updated a parallel byId map and then returned the untouched
+          // rows, so probed windows for already-typed model ids never reached the form.
           const rows = prev.filter((row) => !isEmptyModelRow(row));
-          const byId = new Map(rows.map((row) => [row.id.trim(), row] as const));
+          const indexById = new Map(rows.map((row, i) => [row.id.trim(), i] as const));
           for (const discovered of result.models) {
             const discoveredId = discovered.id.trim();
             if (!discoveredId) continue;
-            const existing = byId.get(discoveredId);
-            if (existing) {
-              byId.set(discoveredId, {
+            const existingIndex = indexById.get(discoveredId);
+            if (existingIndex !== undefined) {
+              const existing = rows[existingIndex]!;
+              rows[existingIndex] = {
                 ...existing,
                 name: existing.name.trim() !== "" ? existing.name : (discovered.name ?? discoveredId),
                 contextWindow: existing.contextWindow.trim() !== ""
@@ -392,7 +397,7 @@ export function CustomProvidersSection({ embedded = false, onProviderChange }: C
                 maxTokens: existing.maxTokens.trim() !== ""
                   ? existing.maxTokens
                   : (discovered.maxTokens != null ? String(discovered.maxTokens) : ""),
-              });
+              };
             } else {
               const row: ModelRow = {
                 id: discoveredId,
@@ -401,7 +406,7 @@ export function CustomProvidersSection({ embedded = false, onProviderChange }: C
                 maxTokens: discovered.maxTokens != null ? String(discovered.maxTokens) : "",
               };
               rows.push(row);
-              byId.set(discoveredId, row);
+              indexById.set(discoveredId, rows.length - 1);
             }
           }
           return rows.length > 0 ? rows : [emptyModelRow()];
@@ -678,7 +683,8 @@ export function CustomProvidersSection({ embedded = false, onProviderChange }: C
                     </div>
 
                     <div className="form-group custom-provider-form-row">
-                      <label>{t("providers.modelsLabel", "Available models")}</label>
+                      <label id="custom-provider-models-label-edit">{t("providers.modelsLabel", "Available models")}</label>
+                      <div role="group" aria-labelledby="custom-provider-models-label-edit">
                       <ModelRowsEditor
                         rows={modelRows}
                         onChange={setModelRows}
@@ -688,6 +694,7 @@ export function CustomProvidersSection({ embedded = false, onProviderChange }: C
                         canAddRow
                         disabled={saving}
                       />
+                      </div>
                     </div>
 
                     {detectError ? <div className="custom-provider-form-error">{detectError}</div> : null}
@@ -798,7 +805,8 @@ export function CustomProvidersSection({ embedded = false, onProviderChange }: C
           </div>
 
           <div className="form-group custom-provider-form-row">
-            <label>{t("providers.modelsLabel", "Available models")}</label>
+            <label id="custom-provider-models-label-create">{t("providers.modelsLabel", "Available models")}</label>
+            <div role="group" aria-labelledby="custom-provider-models-label-create">
             <ModelRowsEditor
               rows={modelRows}
               onChange={setModelRows}
@@ -808,6 +816,7 @@ export function CustomProvidersSection({ embedded = false, onProviderChange }: C
               canAddRow
               disabled={saving}
             />
+            </div>
           </div>
 
           {detectError ? <div className="custom-provider-form-error">{detectError}</div> : null}
