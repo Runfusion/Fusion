@@ -537,3 +537,20 @@ describe("ensureContextWithinCompactionThreshold", () => {
     expect(compact).toHaveBeenCalledTimes(1);
   });
 });
+
+/*
+FNXC:CustomProviderModelWindows 2026-08-20-13:25:
+RUFU-123 integration pin (carried over from the standalone custom-provider-model-windows
+branch, where it cannot run because this guard module is absent there): once per-model
+contextWindow/maxTokens are registered for custom-provider models, the threshold for a
+32768-window / 4096-maxTokens model must be 16384 — not the ~102,400 the pre-fix
+hardcoded 128000 registry default produced. Combined with the registry tests on the
+RUFU-123 branch, this proves the registered window flows all the way to the gate.
+*/
+describe("per-model window thresholds (RUFU-123 integration)", () => {
+  it("computes 16384 (not 102400) for a 32768-window / 4096-maxTokens model", () => {
+    expect(computeCompactionThreshold({ contextWindow: 32768, maxTokens: 4096 })).toBe(16384);
+    // Regression pin: the pre-fix hardcoded registry default produced 102,400 here.
+    expect(computeCompactionThreshold({ contextWindow: 128000, maxTokens: 16384 })).toBe(102400);
+  });
+});
