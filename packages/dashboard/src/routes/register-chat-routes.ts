@@ -89,8 +89,19 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
   const resolveProjectDisplayName = async (projectId: string): Promise<string | undefined> => {
     const sharedCentral = options?.centralCore;
     const shouldClose = !sharedCentral;
-    const central = sharedCentral ?? new (await import("@fusion/core")).CentralCore();
+    let central = sharedCentral;
     try {
+      // FNXC:StashChatFolderNaming 2026-08-20-18:45:
+      // Construction and init live INSIDE the try: the CentralCore constructor
+      // can throw (e.g. test harnesses, where resolveGlobalDir() refuses to
+      // touch the real ~/.fusion) and a best-effort display-name lookup must
+      // degrade to the bare-name fallback instead of failing the backfill.
+      // The shared withCentralCore helper deliberately keeps its
+      // propagate-on-error contract for registry routes; this seam is
+      // naming-only and must be total.
+      if (!central) {
+        central = new (await import("@fusion/core")).CentralCore();
+      }
       if (!sharedCentral || (typeof central.isInitialized === "function" && !central.isInitialized())) {
         await central.init();
       }
@@ -100,7 +111,14 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
     } catch {
       return undefined;
     } finally {
-      if (shouldClose) await central.close();
+      if (shouldClose && central) {
+        try {
+          await central.close();
+        } catch {
+          // A close failure on a partially-constructed core must never mask the
+          // resolution outcome or the upload that follows.
+        }
+      }
     }
   };
 
