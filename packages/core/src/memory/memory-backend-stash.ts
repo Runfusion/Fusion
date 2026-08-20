@@ -191,6 +191,25 @@ export function __resetStashFolderCacheForTests(): void {
   stashFolderCache.clear();
 }
 
+/*
+FNXC:Rufu126VectorSearch 2026-08-19-10:50:
+RUFU-126 (D3): per-process NEGATIVE vector-capability cache. Keyed by baseUrl
+only (vector capability is a property of the Stash instance, not the project).
+Records ONLY definitive "this server cannot do vector search" responses —
+404 (unpatched server, no /events/semantic-search route), 405, 501, and 503
+(embedder unconfigured) — parsed from the transport's `Stash returned <code>:`
+rejection prefix. 422/500 and network errors are NEVER cached (transient or
+malformed — retry on the next call). TTL 1h, mirroring the session-folder
+cache; __resetVectorCapabilityCacheForTests() clears it for test isolation.
+*/
+const STASH_VECTOR_NEGATIVE_CACHE_TTL_MS = 3_600_000;
+const stashVectorNegativeCache = new Map<string, { expiresAt: number }>();
+
+/** RUFU-126 test seam: clear the per-process negative vector-capability cache. */
+export function __resetVectorCapabilityCacheForTests(): void {
+  stashVectorNegativeCache.clear();
+}
+
 /**
  * Derive a stable, per-project stash session namespace discriminator prefix.
  *
@@ -284,6 +303,17 @@ export class StashMemoryBackend implements MemoryBackend {
   private readonly baseUrl: string;
   private readonly apiKey: string;
 
+  /*
+  FNXC:Rufu126VectorSearch 2026-08-19-10:50:
+  RUFU-126 (D3): opt-in vector (semantic) search, default OFF. Enabled by the
+  per-project `stashVectorSearch` setting (settings-schema.ts) threaded through
+  resolveMemoryBackend. Default-off = zero behavior change until the operator
+  enables it (this is a prototype); rejected alternative was automatic
+  capability detection (changes default behavior + per-process 404 round-trip
+  cost against unpatched servers).
+  */
+  private readonly vectorSearch: boolean;
+
   /**
    * FNXC:RUFU121TransportSeam 2026-08-18-19:53:
    * RUFU-121: injectable clock (default Date.now) for the session-folder
@@ -300,9 +330,12 @@ export class StashMemoryBackend implements MemoryBackend {
     now?: () => number;
     /** RUFU-121: injectable HTTP transport seam (recorder fake in tests). */
     httpClient?: StashHttpClient;
+    /** RUFU-126: opt-in vector (semantic) search path (default false). */
+    vectorSearch?: boolean;
   }) {
     this.baseUrl = (options?.baseUrl ?? DEFAULT_STASH_URL).replace(/\/+$/, "");
     this.apiKey = options?.apiKey ?? "";
+    this.vectorSearch = options?.vectorSearch === true;
     this.now = options?.now ?? (() => Date.now());
     this.client =
       options?.httpClient ??
@@ -450,10 +483,48 @@ export class StashMemoryBackend implements MemoryBackend {
   /**
    * Search stash events via GET /api/v1/me/sessions/events/search.
    * Maps each result to a MemorySearchResult. Fails CLOSED to [] on any error.
+   *
+   * FNXC:Rufu126VectorSearch 2026-08-19-10:50:
+   * RUFU-126: vector-first / fallback invariant (decisions D1–D5, see
+   * docs/research/stash-vector-search-evaluation.md):
+   * - D1: the vector path is a SEPARATE endpoint (GET
+   *   /api/v1/me/sessions/events/semantic-search), not a mode=vector param —
+   *   FastAPI silently ignores undeclared params, so an unpatched server
+   *   would return keyword results mislabeled as vector; a new path 404s
+   *   cleanly and matches Stash's /me/pages/semantic-search precedent.
+   * - D2: applies only to MULTI-word queries (≥2 whitespace-separated tokens
+   *   in the trimmed raw query); single-word queries stay keyword-only
+   *   (exact-token FTS is the best single-token baseline).
+   * - Fallback (load-bearing): on ANY vector failure — network error/timeout,
+   *   non-2xx, malformed body, or an EMPTY vector result list — control falls
+   *   through to the RUFU-121 keyword path BYTE-IDENTICAL below (normalized
+   *   q, legacy empty-query URL, limit cap, fail-closed []). The vector path
+   *   can therefore never make recall worse than the keyword baseline.
+   * - D3: negative-capability cache (per-process, baseUrl-keyed, TTL 1h)
+   *   suppresses the vector attempt after definitive 404/405/501/503 —
+   *   never after 422/500 or network errors.
+   * - D5: vector score = response `rank` (= cosine similarity, 0..1); the
+   *   keyword path keeps positional scores (2/1). The scales differ —
+   *   consumers with client-side min-score filters must treat score scales
+   *   per-backend. Missing/non-finite rank → 1.0.
    */
   async search(rootDir: string, options: MemorySearchOptions): Promise<MemorySearchResult[]> {
     const req = options.query || "";
     const limit = Math.max(1, Math.min(options.limit ?? 5, 20));
+    // ── RUFU-126 vector-first branch (D1/D2/D3) ──
+    // Multi-word raw queries only; suppressed while a definitive
+    // no-vector response is cached for this baseUrl. null → fall through;
+    // the keyword path below is byte-identical (RUFU-121).
+    const rawTrimmed = req.trim();
+    if (
+      this.vectorSearch &&
+      rawTrimmed.length > 0 &&
+      rawTrimmed.split(/\s+/).length >= 2 &&
+      this.vectorSearchAvailable()
+    ) {
+      const vectorHits = await this.vectorSearchHits(rawTrimmed, limit);
+      if (vectorHits) return vectorHits;
+    }
     /*
     FNXC:RUFU121TopicRemoval 2026-08-18-19:53:
     RUFU-121: removes the inert `&topic=` query param. Stash's search_events
@@ -498,6 +569,78 @@ export class StashMemoryBackend implements MemoryBackend {
       // stash down -> [] -> LCM cue "" -> run proceeds. Never throws.
       return [];
     }
+  }
+
+  /**
+   * RUFU-126 (D3): false while a definitive no-vector response (404/405/501/
+   * 503) is cached for this baseUrl and its TTL has not expired.
+   */
+  private vectorSearchAvailable(): boolean {
+    const entry = stashVectorNegativeCache.get(this.baseUrl);
+    return !entry || entry.expiresAt <= this.now();
+  }
+
+  /*
+  FNXC:Rufu126VectorSearch 2026-08-19-10:50:
+  RUFU-126 (D1): one semantic-search attempt. Returns mapped hits on 2xx with
+  a non-empty results array; null on ANY other outcome (network error/timeout,
+  non-2xx, malformed body, empty list) so the caller falls through to the
+  keyword path. Definitive no-vector statuses {404, 405, 501, 503} are
+  negatively cached per baseUrl (TTL 1h); 422/500 and network errors are never
+  cached (transient/malformed — retry next call). The raw trimmed query is sent
+  UN-normalized (the embedder tokenizes on its own), capped at 200 chars.
+  */
+  private async vectorSearchHits(rawQuery: string, limit: number): Promise<MemorySearchResult[] | null> {
+    const q = rawQuery.slice(0, 200);
+    try {
+      const resp = await this.httpRequest<StashSearchResponse>(
+        `/api/v1/me/sessions/events/semantic-search?q=${encodeURIComponent(q)}&limit=${limit}`,
+        "GET",
+      );
+      const items = resp?.results ?? resp?.events;
+      if (!Array.isArray(items) || items.length === 0) return null; // empty list → keyword fallback
+      const hits = items
+        .filter((it): it is StashSearchResultItem => Boolean(it) && typeof it === "object")
+        .map((it, idx) => {
+          // D5: vector rank = similarity (0..1); missing/null/non-finite → 1.0.
+          const rawRank = it.rank;
+          const rank =
+            typeof rawRank === "number"
+              ? rawRank
+              : typeof rawRank === "string" && rawRank.trim() !== ""
+                ? Number(rawRank)
+                : NaN;
+          return {
+            path: it.session_id ? `stash://session/${it.session_id}` : `stash://event/${it.id ?? idx}`,
+            lineStart: 1,
+            lineEnd: 1,
+            snippet: (it.content ?? it.snippet ?? "").substring(0, 500),
+            score: Number.isFinite(rank) ? rank : 1.0,
+            backend: this.type,
+          } as MemorySearchResult;
+        });
+      return hits.length > 0 ? hits : null;
+    } catch (err) {
+      const status = this.stashErrorStatus(err);
+      if (status !== null && (status === 404 || status === 405 || status === 501 || status === 503)) {
+        stashVectorNegativeCache.set(this.baseUrl, {
+          expiresAt: this.now() + STASH_VECTOR_NEGATIVE_CACHE_TTL_MS,
+        });
+      }
+      return null;
+    }
+  }
+
+  /**
+   * RUFU-126: parse the `Stash returned <code>: ...` status out of the
+   * transport seam's rejection message; null for any other error shape.
+   */
+  private stashErrorStatus(err: unknown): number | null {
+    if (typeof err !== "object" || err === null) return null;
+    const msg = (err as { message?: unknown }).message;
+    if (typeof msg !== "string") return null;
+    const m = /^Stash returned (\d{3}):/.exec(msg);
+    return m ? Number(m[1]) : null;
   }
 
   // ── exists ─────────────────────────────────────────────────────────

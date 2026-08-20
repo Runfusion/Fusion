@@ -20,6 +20,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   StashMemoryBackend,
   __resetStashFolderCacheForTests,
+  __resetVectorCapabilityCacheForTests,
   normalizeStashSearchQuery,
   queryStashEvents,
   deleteStashChatSession,
@@ -29,6 +30,7 @@ import {
   type StashHttpClient,
   type StashBulkDeleteStore,
 } from "../memory-backend-stash.js";
+import { resolveMemoryBackend, getMemoryBackend } from "../memory-backend.js";
 
 type RecordedCall = { path: string; method: string; payload?: unknown };
 
@@ -384,6 +386,219 @@ describe("StashMemoryBackend.search URL contract (RUFU-121 Step 2)", () => {
     expect(searchPath()).toBe("/api/v1/me/sessions/events/search?q=&limit=1");
     await backend.search("/proj/demo", { query: "", limit: 1000 });
     expect(searchPath()).toBe("/api/v1/me/sessions/events/search?q=&limit=20");
+  });
+});
+
+describe("StashMemoryBackend vector-first search (RUFU-126 Step 5)", () => {
+  const SEMANTIC_PREFIX = "/api/v1/me/sessions/events/semantic-search";
+  const KEYWORD_PREFIX = "/api/v1/me/sessions/events/search";
+  /** RUFU-126 negative vector-capability cache TTL (pinned: 3,600,000 ms ≈ 1h). */
+  const VECTOR_TTL_MS = 3_600_000;
+
+  function makeVectorFake(
+    semantic: (path: string) => unknown,
+    keyword: (path: string) => unknown = () => ({ results: [] }),
+  ) {
+    const fake = makeFakeHttp((path) => {
+      if (path.startsWith(SEMANTIC_PREFIX)) return semantic(path);
+      if (path.startsWith(KEYWORD_PREFIX)) return keyword(path);
+      return null;
+    });
+    const semanticCalls = () => fake.calls.filter((c) => c.path.startsWith(SEMANTIC_PREFIX));
+    const keywordCalls = () => fake.calls.filter((c) => c.path.startsWith(KEYWORD_PREFIX));
+    return { fake, semanticCalls, keywordCalls };
+  }
+
+  /** Reject exactly like the real transport seam for a non-2xx response. */
+  function stashStatus(code: number): () => never {
+    return () => {
+      throw new Error(`Stash returned ${code}: body`);
+    };
+  }
+
+  beforeEach(() => {
+    __resetVectorCapabilityCacheForTests();
+    __resetStashFolderCacheForTests();
+  });
+
+  it("1. flag off (default) + multi-word query → keyword URL only, no semantic URL", async () => {
+    const { fake, semanticCalls, keywordCalls } = makeVectorFake(() => {
+      throw new Error("semantic endpoint must not be called when the flag is off");
+    });
+    const backend = new StashMemoryBackend({ baseUrl: "http://stash.test", httpClient: fake.client });
+    const results = await backend.search("/proj/demo", { query: "LCM B.1 B.2 priorita plan" });
+    expect(results).toEqual([]);
+    expect(semanticCalls()).toHaveLength(0);
+    expect(keywordCalls()).toHaveLength(1);
+    expect(keywordCalls()[0].path).toBe("/api/v1/me/sessions/events/search?q=LCM&limit=5");
+  });
+
+  it("2. flag on + multi-word + semantic 200 hits → semantic URL first (raw trimmed q), no keyword URL, D5 scores mapped", async () => {
+    const { fake, semanticCalls, keywordCalls } = makeVectorFake(() => ({
+      events: [
+        { id: "ev-1", session_id: "ses-9", content: "first hit content is here", rank: 0.91 },
+        { id: "ev-2", session_id: "ses-9", content: "second hit content", rank: 0.42 },
+      ],
+    }));
+    const backend = new StashMemoryBackend({ baseUrl: "http://stash.test", httpClient: fake.client, vectorSearch: true });
+    const results = await backend.search("/proj/demo", { query: "  LCM B.1 B.2 priorita plan  " });
+
+    expect(semanticCalls()).toHaveLength(1);
+    expect(keywordCalls()).toHaveLength(0);
+    expect(semanticCalls()[0].path).toBe(
+      `/api/v1/me/sessions/events/semantic-search?q=${encodeURIComponent("LCM B.1 B.2 priorita plan")}&limit=5`,
+    );
+    expect(results).toEqual([
+      {
+        path: "stash://session/ses-9",
+        lineStart: 1,
+        lineEnd: 1,
+        snippet: "first hit content is here",
+        score: 0.91,
+        backend: "stash",
+      },
+      {
+        path: "stash://session/ses-9",
+        lineStart: 1,
+        lineEnd: 1,
+        snippet: "second hit content",
+        score: 0.42,
+        backend: "stash",
+      },
+    ]);
+  });
+
+  it("3. flag on + multi-word + semantic 404 (unpatched server) → keyword fallback with normalized q; negative-cached within TTL; retried after TTL", async () => {
+    const { fake, semanticCalls, keywordCalls } = makeVectorFake(
+      stashStatus(404),
+      () => ({ results: [{ id: "kw-1", content: "keyword hit", session_id: "kw-ses" }] }),
+    );
+    let nowMs = 1_000;
+    const backend = new StashMemoryBackend({ baseUrl: "http://stash.test", now: () => nowMs, httpClient: fake.client, vectorSearch: true });
+
+    const results = await backend.search("/proj/demo", { query: "LCM B.1 B.2 priorita plan" });
+    expect(semanticCalls()).toHaveLength(1);
+    expect(keywordCalls()).toHaveLength(1);
+    expect(keywordCalls()[0].path).toBe("/api/v1/me/sessions/events/search?q=LCM&limit=5");
+    expect(results).toEqual([
+      {
+        path: "stash://session/kw-ses",
+        lineStart: 1,
+        lineEnd: 1,
+        snippet: "keyword hit",
+        score: 2,
+        backend: "stash",
+      },
+    ]);
+
+    // Second multi-word call within the TTL: no semantic attempt (negative cache).
+    await backend.search("/proj/demo", { query: "other multi word query" });
+    expect(semanticCalls()).toHaveLength(1);
+    expect(keywordCalls()).toHaveLength(2);
+
+    // After the 1h TTL expires: the semantic URL is retried.
+    nowMs += VECTOR_TTL_MS + 1;
+    await backend.search("/proj/demo", { query: "yet another multi word" });
+    expect(semanticCalls()).toHaveLength(2);
+    expect(keywordCalls()).toHaveLength(3);
+  });
+
+  it("4. flag on + multi-word + semantic 503 (embedder unconfigured) → keyword fallback; negative cached within TTL", async () => {
+    const { fake, semanticCalls, keywordCalls } = makeVectorFake(stashStatus(503), () => ({ results: [] }));
+    let nowMs = 1_000;
+    const backend = new StashMemoryBackend({ baseUrl: "http://stash.test", now: () => nowMs, httpClient: fake.client, vectorSearch: true });
+
+    await backend.search("/proj/demo", { query: "two word query" });
+    expect(semanticCalls()).toHaveLength(1);
+    expect(keywordCalls()).toHaveLength(1);
+
+    nowMs += 60_000; // within TTL — suppressed
+    await backend.search("/proj/demo", { query: "three word query now" });
+    expect(semanticCalls()).toHaveLength(1);
+    expect(keywordCalls()).toHaveLength(2);
+  });
+
+  it.each([
+    ["500 error", stashStatus(500)],
+    [
+      "network error",
+      () => {
+        throw new Error("connect ECONNREFUSED 127.0.0.1:3456");
+      },
+    ],
+    ["malformed body (empty 2xx resolves null)", () => null],
+    ["malformed body (results not an array)", () => ({ results: "nope" })],
+    ["empty result list", () => ({ events: [] })],
+  ])("5. %s → keyword fallback on EVERY call (never negatively cached)", async (_label, semanticImpl) => {
+    const { fake, semanticCalls, keywordCalls } = makeVectorFake(semanticImpl, () => ({ results: [] }));
+    const backend = new StashMemoryBackend({ baseUrl: "http://stash.test", httpClient: fake.client, vectorSearch: true });
+
+    await backend.search("/proj/demo", { query: "first two words" });
+    await backend.search("/proj/demo", { query: "second pair words" });
+    expect(semanticCalls()).toHaveLength(2);
+    expect(keywordCalls()).toHaveLength(2);
+  });
+
+  it("6. flag on + single-word query → keyword only; semantic URL never called", async () => {
+    const { fake, semanticCalls, keywordCalls } = makeVectorFake(() => {
+      throw new Error("semantic endpoint must not be called for single-word queries");
+    });
+    const backend = new StashMemoryBackend({ baseUrl: "http://stash.test", httpClient: fake.client, vectorSearch: true });
+    await backend.search("/proj/demo", { query: "postgres" });
+    await backend.search("/proj/demo", { query: "B.1" });
+    expect(semanticCalls()).toHaveLength(0);
+    expect(keywordCalls()).toHaveLength(2);
+    expect(keywordCalls()[0].path).toBe("/api/v1/me/sessions/events/search?q=postgres&limit=5");
+    // RUFU-121 normalization strips punctuation: "B.1" → "B1".
+    expect(keywordCalls()[1].path).toBe("/api/v1/me/sessions/events/search?q=B1&limit=5");
+  });
+
+  it("7. semantic hits with rank missing/null → score 1.0; server order preserved", async () => {
+    const { fake, semanticCalls, keywordCalls } = makeVectorFake(() => ({
+      events: [
+        { id: "a", content: "no rank field" },
+        { id: "b", content: "explicit null rank", rank: null },
+        { id: "c", content: "real rank", rank: 0.77 },
+      ],
+    }));
+    const backend = new StashMemoryBackend({ baseUrl: "http://stash.test", httpClient: fake.client, vectorSearch: true });
+    const results = await backend.search("/proj/demo", { query: "multi word query" });
+
+    expect(semanticCalls()).toHaveLength(1);
+    expect(keywordCalls()).toHaveLength(0);
+    expect(results.map((r) => r.score)).toEqual([1.0, 1.0, 0.77]);
+    expect(results.map((r) => r.path)).toEqual(["stash://event/a", "stash://event/b", "stash://event/c"]);
+  });
+
+  it("8. resolveMemoryBackend materializes the vector flag; shared registry default instance stays disabled", () => {
+    const on = resolveMemoryBackend({ memoryBackendType: "stash", stashVectorSearch: true });
+    expect(on).toBeInstanceOf(StashMemoryBackend);
+    expect((on as { vectorSearch: boolean }).vectorSearch).toBe(true);
+
+    const offDefault = resolveMemoryBackend({ memoryBackendType: "stash" });
+    expect(offDefault).toBeInstanceOf(StashMemoryBackend);
+    expect((offDefault as { vectorSearch: boolean }).vectorSearch).toBe(false);
+
+    const offExplicit = resolveMemoryBackend({ memoryBackendType: "stash", stashVectorSearch: false });
+    expect((offExplicit as { vectorSearch: boolean }).vectorSearch).toBe(false);
+
+    const shared = getMemoryBackend("stash");
+    expect(shared).toBeInstanceOf(StashMemoryBackend);
+    expect((shared as { vectorSearch: boolean }).vectorSearch).toBe(false);
+  });
+
+  it("9. fail-closed: semantic error AND keyword error → [] (no throw)", async () => {
+    const { fake, semanticCalls, keywordCalls } = makeVectorFake(
+      stashStatus(503),
+      () => {
+        throw new Error("Stash returned 500: kw down");
+      },
+    );
+    const backend = new StashMemoryBackend({ baseUrl: "http://stash.test", httpClient: fake.client, vectorSearch: true });
+    const results = await backend.search("/proj/demo", { query: "two word query" });
+    expect(results).toEqual([]);
+    expect(semanticCalls()).toHaveLength(1);
+    expect(keywordCalls()).toHaveLength(1);
   });
 });
 
