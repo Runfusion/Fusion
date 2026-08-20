@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { CustomProvidersSection } from "../CustomProvidersSection";
 
 const mockFetchCustomProviders = vi.fn();
@@ -764,8 +765,79 @@ describe("CustomProvidersSection", () => {
     await waitFor(() => {
       expect(mockAddCustomProvider).toHaveBeenCalledWith(expect.objectContaining({
         models: expect.arrayContaining([
-          { id: "existing-model", name: "existing-model", contextWindow: 8192, maxTokens: 1024 },
+          // The probe's name fills the blank display-name field on the existing row
+          // (RUFU-145 review fix: the detect merge now reaches the form).
+          { id: "existing-model", name: "Existing", contextWindow: 8192, maxTokens: 1024 },
           { id: "deepseek-v4", name: "DeepSeek V4", contextWindow: 32768, maxTokens: 4096 },
+        ]),
+      }));
+    });
+  });
+
+  // FNXC:CustomProviderModelRows 2026-08-20-22:12: RUFU-145 PR #3493 review: the row key
+  // was derived from row.id, so every keystroke changed the key and React remounted the
+  // row, dropping focus and keeping only the first typed character. Assert with real
+  // per-character input (fireEvent.change cannot catch a remount: it sets the value
+  // directly on the node).
+  it("typing a multi-character Model ID keeps focus and the full value (stable row key)", async () => {
+    mockFetchCustomProviders.mockResolvedValue([]);
+
+    render(<CustomProvidersSection embedded />);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /Add Custom Provider/i })).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /Add Custom Provider/i }));
+    fireEvent.change(screen.getByLabelText("Provider name"), { target: { value: "Key Provider" } });
+    fireEvent.change(screen.getByLabelText("Base URL"), { target: { value: "https://api.example.com" } });
+
+    const modelId = screen.getByLabelText("Model ID 1");
+    await userEvent.type(modelId, "gpt-4o");
+
+    expect(modelId).toHaveValue("gpt-4o");
+    expect(modelId).toHaveFocus();
+  });
+
+  // FNXC:CustomProviderModelRows 2026-08-20-22:12: RUFU-145 PR #3493 review: the detect
+  // merge updated a parallel byId map but returned the untouched rows, so probed windows
+  // for an already-typed model id never filled the blank form fields. Probe reports a
+  // window for the typed id; the blank fields must be filled on the same row.
+  it("Detect Models fills blank fields on an already-typed row from the probe", async () => {
+    mockFetchCustomProviders.mockResolvedValue([]);
+    mockProbeProviderModels.mockResolvedValue({
+      models: [{ id: "existing-model", name: "Existing Name", contextWindow: 32768, maxTokens: 4096 }],
+      count: 1,
+    });
+
+    render(<CustomProvidersSection embedded />);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /Add Custom Provider/i })).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /Add Custom Provider/i }));
+    fireEvent.change(screen.getByLabelText("Provider name"), { target: { value: "Probe Provider" } });
+    fireEvent.change(screen.getByLabelText("Base URL"), { target: { value: "https://api.example.com" } });
+    // Only the Model ID is typed; display name, window, and max tokens stay blank.
+    fireEvent.change(screen.getByLabelText("Model ID 1"), { target: { value: "existing-model" } });
+
+    fireEvent.click(screen.getByRole("button", { name: "Detect Models" }));
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Context window 1")).toHaveValue(32768);
+      expect(screen.getByLabelText("Max output tokens 1")).toHaveValue(4096);
+    });
+    expect(screen.getByLabelText("Display name 1")).toHaveValue("Existing Name");
+    // The merge fills the existing row; it must not append a duplicate row.
+    expect(screen.queryByLabelText("Model ID 2")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Save Provider" }));
+
+    await waitFor(() => {
+      expect(mockAddCustomProvider).toHaveBeenCalledWith(expect.objectContaining({
+        models: expect.arrayContaining([
+          { id: "existing-model", name: "Existing Name", contextWindow: 32768, maxTokens: 4096 },
         ]),
       }));
     });
