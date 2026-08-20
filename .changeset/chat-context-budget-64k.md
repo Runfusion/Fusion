@@ -1,0 +1,7 @@
+---
+"@runfusion/fusion": patch
+---
+
+summary: Bounded chat context: memory indexes + trimmed toolset let agent chat work on 64K-context models.
+category: fix
+dev: RUFU-135 — agent-bound dashboard chat (direct chat, QuickChat, room responders) inlined the full project long-term memory (~230K chars, ~65K tokens on the RunFusion project) and the 50K-char agent workspace memory clamp (~14K tokens) into the per-turn system prompt, and exposed all 86 host-extension executor fn_* tools on top of the curated chat toolset. The measured static floor was ~124K tokens on the 128K-window qwen38 model, exceeding the 80% pre-overflow compaction threshold (102400) so every send after the first failed with ChatContextOverflowError (chat-f7689c06, chat-02c9c9de). Dashboard chat now passes `memoryCapChars` (8K chars) to buildAgentChatPrompt — oversized project/agent memory is inlined as a bounded heading index (full content stays reachable via fn_memory_search / fn_memory_get) — and passes an explicit `toolsAllowlist` (builtin coding tools) that makes pi filter every registered tool to the curated chat toolset, hiding the 86 executor tools. Engine lanes (triage/executor/reviewer/merger/heartbeat) keep the legacy full injection and full extension surface. Measured static floor drops from ~124K to ~35K tokens, fitting a 64K window (threshold 51200, hard limit 48K) with conversation headroom.
