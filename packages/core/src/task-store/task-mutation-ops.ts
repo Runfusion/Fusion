@@ -529,7 +529,7 @@ export async function mergeWorkspaceWorktreeEntryImpl(
   store: TaskStore,
   id: string,
   repoRelPath: string,
-  patch: Partial<WorkspaceWorktreeEntry>,
+  patch: Partial<WorkspaceWorktreeEntry> | ((current: Task) => Promise<Partial<WorkspaceWorktreeEntry>>),
   options: { requireExistingEntry?: boolean; clearSingularWorktree?: boolean } = {},
 ): Promise<Task> {
   return store.withTaskLock(id, async () => {
@@ -544,12 +544,19 @@ export async function mergeWorkspaceWorktreeEntryImpl(
       const workspaceWorktrees = current.workspaceWorktrees ?? {};
       const existing = workspaceWorktrees[repoRelPath];
       if (options.requireExistingEntry && !existing) return { task: current, mutated: false };
+      /*
+      A callback patch runs while both the in-process task mutex and the database task advisory
+      transaction lock are held. Workspace acquisition uses this seam to revalidate lifecycle state,
+      create the worktree, and return its durable entry without allowing a lifecycle move between
+      those operations and this row update.
+      */
+      const resolvedPatch = typeof patch === "function" ? await patch(current) : patch;
 
       const updatedAt = new Date().toISOString();
       const [updatedRow] = await tx
         .update(schema.project.tasks)
         .set({
-          workspaceWorktrees: { ...workspaceWorktrees, [repoRelPath]: { ...existing, ...patch } },
+          workspaceWorktrees: { ...workspaceWorktrees, [repoRelPath]: { ...existing, ...resolvedPatch } },
           ...(options.clearSingularWorktree
             ? {
                 worktree: null,

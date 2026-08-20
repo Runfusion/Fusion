@@ -2079,7 +2079,8 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   async mergeWorkspaceWorktreeEntry(
     id: string,
     repoRelPath: string,
-    patch: Partial<import("./types.js").WorkspaceWorktreeEntry>,
+    patch: Partial<import("./types.js").WorkspaceWorktreeEntry>
+      | ((current: Task) => Promise<Partial<import("./types.js").WorkspaceWorktreeEntry>>),
     options?: { requireExistingEntry?: boolean; clearSingularWorktree?: boolean },
   ): Promise<Task> {
     return mergeWorkspaceWorktreeEntryImpl(this, id, repoRelPath, patch, options);

@@ -6459,6 +6459,21 @@ export function isLateAcquireColumnBlocked(workflowIr: fusionCore.WorkflowIr, co
   return blockedColumns.has(column);
 }
 
+class LateWorkspaceRepoAcquireError extends Error {
+  constructor(public readonly repo: string) {
+    super(`Cannot acquire new repository ${repo} after review or landing has started`);
+    this.name = "LateWorkspaceRepoAcquireError";
+  }
+}
+
+async function isWorkspaceRepoLateAcquireBlocked(store: TaskStore, currentTask: import("@fusion/core").Task, repo: string): Promise<boolean> {
+  if (currentTask.workspaceWorktrees?.[repo]) return false;
+  if (["merging", "merging-pr", "merging-fix"].includes(currentTask.status ?? "")) return true;
+  if (Object.values(currentTask.workspaceWorktrees ?? {}).some((entry) => Boolean(entry.landedSha))) return true;
+  const workflowIr = await fusionCore.resolveWorkflowIrForTask(store, currentTask.id);
+  return isLateAcquireColumnBlocked(workflowIr, currentTask.column);
+}
+
 export function createAcquireRepoWorktreeTool(opts: {
   workspaceRootDir: string;
   workspaceRepos: string[];
@@ -6511,26 +6526,22 @@ export function createAcquireRepoWorktreeTool(opts: {
           isError: true,
         };
       }
-      const existing = freshTask.workspaceWorktrees?.[repo];
-      /*
-      FNXC:WorkflowResolvedColumns 2026-08-20-04:35:
-      A renamed review/terminal lane must close late repository admission exactly like the built-in
-      `in-review`/`done`/`archived` lanes. Resolve membership from the task's own workflow while
-      retaining the legacy ids as a fail-safe for malformed or partially migrated task state.
-      */
-      let lateAcquireBlocked = ["merging", "merging-pr", "merging-fix"].includes(freshTask.status ?? "")
-        || Object.values(freshTask.workspaceWorktrees ?? {}).some((entry) => Boolean(entry.landedSha));
-      if (!existing && !lateAcquireBlocked) {
-        const workflowIr = await fusionCore.resolveWorkflowIrForTask(store, freshTask.id);
-        lateAcquireBlocked = isLateAcquireColumnBlocked(workflowIr, freshTask.column);
-      }
-      if (!existing && lateAcquireBlocked) {
+      const refuseLateAcquisition = async () => {
         await store.logEntry(task.id, `fn_acquire_repo_worktree: refused late acquisition of ${repo}; task is already in review or landing`, undefined, runContext);
         return {
           content: [{ type: "text" as const, text: `ERROR: Cannot acquire new repository "${repo}" after review or landing has started. Create a follow-up task with fn_task_create for this repository.` }],
           details: {},
           isError: true,
         };
+      };
+      /*
+      FNXC:WorkflowResolvedColumns 2026-08-20-04:35:
+      A renamed review/terminal lane must close late repository admission exactly like the built-in
+      `in-review`/`done`/`archived` lanes. Resolve membership from the task's own workflow while
+      retaining the legacy ids as a fail-safe for malformed or partially migrated task state.
+      */
+      if (await isWorkspaceRepoLateAcquireBlocked(store, freshTask, repo)) {
+        return refuseLateAcquisition();
       }
       /*
       FNXC:Workspace 2026-06-21-22:30:
@@ -6555,8 +6566,16 @@ export function createAcquireRepoWorktreeTool(opts: {
           runContext,
           runConfiguredCommand,
           taskEnv,
+          validateTaskBeforeCreate: async (latestTask) => {
+            if (await isWorkspaceRepoLateAcquireBlocked(store, latestTask, repo)) {
+              throw new LateWorkspaceRepoAcquireError(repo);
+            }
+          },
         });
       } catch (err) {
+        if (err instanceof LateWorkspaceRepoAcquireError) {
+          return refuseLateAcquisition();
+        }
         if (err instanceof WorkspaceRepoAcquireBusyError) {
           return {
             content: [{ type: "text" as const, text: `Sub-repo ${repo} is temporarily locked by another task's acquisition; retry fn_acquire_repo_worktree shortly.` }],

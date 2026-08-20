@@ -1340,6 +1340,11 @@ export interface AcquireWorkspaceRepoWorktreeOptions {
   registry?: ActiveSessionRegistry;
   runConfiguredCommand?: AcquireTaskWorktreeOptions["runConfiguredCommand"];
   taskEnv?: NodeJS.ProcessEnv;
+  /**
+   * Revalidate caller-owned admission policy immediately before worktree creation. The callback runs
+   * under the TaskStore's local mutex and durable task advisory transaction lock.
+   */
+  validateTaskBeforeCreate?: (freshTask: Task) => Promise<void>;
 }
 
 /*
@@ -1364,7 +1369,7 @@ const WORKSPACE_REPO_ACQUIRE_OWNER_KEY = "workspace-repo-acquire";
 export async function acquireWorkspaceRepoWorktree(
   opts: AcquireWorkspaceRepoWorktreeOptions,
 ): Promise<{ worktreePath: string; branch: string; baseCommitSha?: string; alreadyAcquired: boolean }> {
-  const { repoRelPath, workspaceRootDir, task, store, settings, logger, secretsStore, audit, runContext, runConfiguredCommand, taskEnv } = opts;
+  const { repoRelPath, workspaceRootDir, task, store, settings, logger, secretsStore, audit, runContext, runConfiguredCommand, taskEnv, validateTaskBeforeCreate } = opts;
   const registry = opts.registry ?? activeSessionRegistry;
   const { join } = await import("node:path");
 
@@ -1526,27 +1531,40 @@ export async function acquireWorkspaceRepoWorktree(
     sibling absent from this sub-repo. Resolve task.baseBranch per repo instead, then overwrite the
     copied task's start point so acquireTaskWorktree never forwards that sibling ref to git worktree add.
     */
-    const baseResolution = await resolveWorkspaceRepoBaseBranch({
+    let acquisitionResult: { worktreePath: string; branch: string; baseCommitSha?: string; alreadyAcquired: boolean } | undefined;
+    let baseResolution: Awaited<ReturnType<typeof resolveWorkspaceRepoBaseBranch>> | undefined;
+    await store.mergeWorkspaceWorktreeEntry(
+      task.id,
+      repoRelPath,
+      async (freshTask) => {
+        /*
+        The per-repository lock is already held. mergeWorkspaceWorktreeEntry now adds the TaskStore's
+        in-process mutex and PostgreSQL task advisory transaction lock, the same lock lifecycle moves
+        use. Revalidate after both locks are held, then keep them through creation and persistence.
+        */
+        await validateTaskBeforeCreate?.(freshTask);
+        const resolvedBase = await resolveWorkspaceRepoBaseBranch({
       mode: "acquire",
       repoRootDir: repoAbsPath,
       repoRelPath,
-      task,
+      task: freshTask,
       settings,
       logger,
     });
+        baseResolution = resolvedBase;
     /*
     FNXC:WorkspaceBranches 2026-08-20-03:38:
     FN-9161 uses one explicit operator branch in every workspace repository.
     Keep only that branch through the singular-worktree isolation copy; derived
     and canonical assignments retain the existing per-repository behavior.
     */
-    const workspaceWorkingBranch = resolveTaskWorkingBranchWithOrigin(task);
+    const workspaceWorkingBranch = resolveTaskWorkingBranchWithOrigin(freshTask);
     const result = await acquireTaskWorktree({
       task: {
-        ...task,
+        ...freshTask,
         worktree: undefined,
         branch: workspaceWorkingBranch.origin === "operator-supplied" ? workspaceWorkingBranch.branch : undefined,
-        executionStartBranch: baseResolution.branch,
+        executionStartBranch: resolvedBase.branch,
       },
       suppressSingularWorktreePersist: true,
       workspaceContext: { workspaceRootDir, repoRelPath },
@@ -1630,7 +1648,7 @@ export async function acquireWorkspaceRepoWorktree(
     */
     let baseCommitSha: string | undefined;
     try {
-      baseCommitSha = await resolveCapturedBaseCommitSha(result.worktreePath, logger, baseResolution.branch);
+      baseCommitSha = await resolveCapturedBaseCommitSha(result.worktreePath, logger, resolvedBase.branch);
     } catch (baseErr) {
       // FNXC:Workspace 2026-06-21-22:30: F3 — base-SHA capture is non-fatal; an undefined baseCommitSha is an accepted state.
       // FNXC:Workspace 2026-06-22-00:00: guard the best-effort logEntry/audit so a logging throw cannot promote this
@@ -1664,22 +1682,29 @@ export async function acquireWorkspaceRepoWorktree(
     never makes dashboard workspace rendering, self-healing, or executor dispatch read it as
     single-repo.
     */
-    await store.mergeWorkspaceWorktreeEntry(
-      task.id,
-      repoRelPath,
-      {
-        worktreePath: result.worktreePath,
-        branch: result.branch,
-        baseCommitSha,
-        ...(baseResolution.requested
-          ? {
-              baseBranch: baseResolution.branch,
-              ...(baseResolution.fallbackReason ? { baseBranchFallbackFrom: baseResolution.requested } : {}),
-            }
-          : {}),
+        acquisitionResult = {
+          worktreePath: result.worktreePath,
+          branch: result.branch,
+          baseCommitSha,
+          alreadyAcquired: false,
+        };
+        return {
+          worktreePath: result.worktreePath,
+          branch: result.branch,
+          baseCommitSha,
+          ...(resolvedBase.requested
+            ? {
+                baseBranch: resolvedBase.branch,
+                ...(resolvedBase.fallbackReason ? { baseBranchFallbackFrom: resolvedBase.requested } : {}),
+              }
+            : {}),
+        };
       },
       { clearSingularWorktree: true },
     );
+    if (!acquisitionResult || !baseResolution) {
+      throw new Error(`Workspace sub-repo acquisition for ${repoRelPath} completed without a durable result`);
+    }
     await recordWorkspaceBaseBranchDecision({
       store,
       audit,
@@ -1691,7 +1716,7 @@ export async function acquireWorkspaceRepoWorktree(
       runContext,
     });
 
-    return { worktreePath: result.worktreePath, branch: result.branch, baseCommitSha, alreadyAcquired: false };
+    return acquisitionResult;
   } catch (err) {
     /*
     FNXC:Workspace 2026-06-21-20:10:

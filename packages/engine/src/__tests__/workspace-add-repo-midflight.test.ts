@@ -127,6 +127,21 @@ describe.runIf(hasGit)("workspace membership acquired mid-flight", () => {
     await expect(acquire.execute("call", { repo: "repo-b" } as never)).resolves.not.toMatchObject({ isError: true });
   });
 
+  it("revalidates lifecycle inside the acquisition critical section", async () => {
+    const currentTask = task();
+    acquisition.acquire.mockImplementation(async (options: any) => {
+      currentTask.column = "in-review";
+      await options.validateTaskBeforeCreate?.(currentTask);
+      return { worktreePath: "/worktrees/repo-b", branch: "fusion/FN-9163", alreadyAcquired: false };
+    });
+    const acquire = toolFor(currentTask, ["repo-a", "repo-b"]);
+
+    const refused = await acquire.execute("call", { repo: "repo-b" } as never);
+
+    expect(refused).toMatchObject({ isError: true });
+    expect(refused.content[0]?.text).toContain("follow-up task");
+  });
+
   it("retains the prior host snapshot for empty disk membership", async () => {
     const fixture = await createWorkspaceFixture(["repo-a"]);
     fixtures.push(fixture);

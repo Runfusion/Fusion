@@ -48,6 +48,7 @@ function makeFakeStore(
   } = {},
 ): { store: TaskStore; current: () => Task; logs: string[]; patches: Partial<Task>[] } {
   let current = task;
+  let mergeTail = Promise.resolve();
   const logs: string[] = [];
   const patches: Partial<Task>[] = [];
   const store = {
@@ -61,23 +62,35 @@ function makeFakeStore(
     async mergeWorkspaceWorktreeEntry(
       id: string,
       repoRelPath: string,
-      patch: Partial<NonNullable<Task["workspaceWorktrees"]>[string]>,
+      patch:
+        | Partial<NonNullable<Task["workspaceWorktrees"]>[string]>
+        | ((freshTask: Task) => Promise<Partial<NonNullable<Task["workspaceWorktrees"]>[string]>>),
       mergeOptions?: { requireExistingEntry?: boolean; clearSingularWorktree?: boolean },
     ): Promise<Task> {
       if (id !== current.id) throw new Error(`Task ${id} not found`);
       await options.beforeWorkspaceMerge?.(repoRelPath);
-      // Read only after the deterministic gate: this mirrors the store primitive's locked fresh read.
-      const workspaceWorktrees = current.workspaceWorktrees ?? {};
-      const existing = workspaceWorktrees[repoRelPath];
-      if (mergeOptions?.requireExistingEntry && !existing) return current;
-      const mergedPatch: Partial<Task> = {
-        workspaceWorktrees: { ...workspaceWorktrees, [repoRelPath]: { ...existing, ...patch } },
-        ...(mergeOptions?.clearSingularWorktree ? { worktree: undefined, branch: undefined } : {}),
-      };
-      patches.push(mergedPatch);
-      if (options.failWhen?.(mergedPatch)) throw new Error("injected update failure");
-      current = { ...current, ...mergedPatch };
-      return current;
+      // Mirror TaskStore.withTaskLock after the deterministic overlap gate so both contenders
+      // can arrive, then serialize the fresh read + callback + key merge exactly like production.
+      const previousMerge = mergeTail;
+      let releaseMerge!: () => void;
+      mergeTail = new Promise<void>((resolve) => { releaseMerge = resolve; });
+      await previousMerge;
+      try {
+        const workspaceWorktrees = current.workspaceWorktrees ?? {};
+        const existing = workspaceWorktrees[repoRelPath];
+        if (mergeOptions?.requireExistingEntry && !existing) return current;
+        const resolvedPatch = typeof patch === "function" ? await patch(current) : patch;
+        const mergedPatch: Partial<Task> = {
+          workspaceWorktrees: { ...workspaceWorktrees, [repoRelPath]: { ...existing, ...resolvedPatch } },
+          ...(mergeOptions?.clearSingularWorktree ? { worktree: undefined, branch: undefined } : {}),
+        };
+        patches.push(mergedPatch);
+        if (options.failWhen?.(mergedPatch)) throw new Error("injected update failure");
+        current = { ...current, ...mergedPatch };
+        return current;
+      } finally {
+        releaseMerge();
+      }
     },
     async logEntry(_id: string, message: string): Promise<void> {
       logs.push(message);
