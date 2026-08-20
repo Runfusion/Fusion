@@ -791,4 +791,53 @@ describe("RUFU-123: per-model contextWindow/maxTokens round-trip", () => {
       { id: "claude-opus-4-20250514", name: "Claude Opus 4" },
     ]);
   });
+
+  /*
+  FNXC:CustomProviderModelWindows 2026-08-20-22:24: RUFU-145 PR #3493 review regression:
+  the refresh merged the probe against the PRE-PROBE persisted windows, so a concurrent
+  model-limit edit during the probe window was overwritten on write-back. The
+  source-of-truth map must be built from the re-read record. Production getSettings()
+  returns a fresh object per read, so this test clones per read — the shared settings
+  alias of the surrounding harness would hide the stale-map bug.
+  */
+  it("refresh-models preserves a concurrent model-limit edit made during probing", async () => {
+    settings.customProviders = [
+      {
+        id: "cp-1",
+        name: "P",
+        apiType: "openai-compatible",
+        baseUrl: "https://api.example.com/v1",
+        apiKey: "sk-stored-secret",
+        models: [{ id: "m1", name: "M1", contextWindow: 32768, maxTokens: 4096 }],
+      },
+    ];
+    const store = createMockStore(settings, () => undefined);
+    store.getGlobalSettingsStore = vi.fn(() => ({
+      getSettings: vi.fn(async () => structuredClone(settings)),
+      updateSettings: vi.fn(),
+      getSettingsPath: vi.fn(),
+      init: vi.fn(),
+      invalidateCache: vi.fn(),
+    }));
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store));
+
+    // The probe omits limit objects (common for OpenAI-compatible endpoints). During
+    // the probe window a concurrent PUT raises m1's contextWindow to 65536.
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      settings.customProviders![0]!.models = [{ id: "m1", name: "M1", contextWindow: 65536, maxTokens: 4096 }];
+      return {
+        ok: true,
+        json: async () => ({ data: [{ id: "m1", name: "M1" }] }),
+      };
+    }));
+
+    const res = await REQUEST(app, "POST", "/api/custom-providers/cp-1/refresh-models");
+    expect(res.status).toBe(200);
+    // The concurrent edit must survive the refresh write-back (stale-map regression).
+    expect(settings.customProviders?.[0]?.models).toEqual([
+      { id: "m1", name: "M1", contextWindow: 65536, maxTokens: 4096 },
+    ]);
+  });
 });
