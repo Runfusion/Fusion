@@ -188,6 +188,20 @@ describe("deriveRecallKeywords (Stash AND-semantics guard)", () => {
     expect(keywords.join(" ").length).toBeLessThanOrEqual(64);
     expect(keywords.length).toBe(2);
   });
+
+  // FNXC:PerTurnMemoryRecall 2026-08-20-22:06: RUFU-145 PR #3493 review (CodeRabbit): the
+  // old ASCII-only split stripped accent characters, so Slovak topics like "žiadosti"
+  // tokenized as "iadosti" and the Stash AND-match searched for the wrong term. Accented
+  // Latin, Cyrillic, and CJK keywords must now survive intact.
+  it("keeps accented Latin keywords intact (ASCII-only split regression)", () => {
+    expect(deriveRecallKeywords("Slovenské žiadosti o podporu")).toEqual(["slovenské", "žiadosti", "podporu"]);
+  });
+
+  it("keeps non-Latin (Cyrillic and CJK) keywords intact", () => {
+    expect(deriveRecallKeywords("обновление кэша памяти")).toEqual(["обновление", "памяти", "кэша"]);
+    // 3+ char CJK terms survive intact; the sub-3-char floor still applies per token.
+    expect(deriveRecallKeywords("上下文压缩策略")).toEqual(["上下文压缩策略"]);
+  });
 });
 
 describe("query construction against the backend", () => {

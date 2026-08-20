@@ -107,12 +107,14 @@ describe("buildCustomProviderModels per-model windows (RUFU-123)", () => {
 
   it("treats invalid persisted window values as unset and falls back to 128000/16384", () => {
     // Corrupted persisted values must never break registration: 0, negative, non-number,
-    // and NaN each fall back independently for the window and maxTokens.
-    const invalidValues: unknown[] = [0, -1, "abc" as unknown as number, Number.NaN, undefined];
+    // NaN, and ±Infinity each fall back independently for the window and maxTokens. The
+    // deliberately malformed model array is cast through unknown so the test can express
+    // values the persisted-settings JSON boundary would not normally admit.
+    const invalidValues: unknown[] = [0, -1, "abc", Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY, undefined];
     for (const contextWindow of invalidValues) {
       for (const maxTokens of invalidValues) {
         const models = buildCustomProviderModels(
-          makeProvider([{ id: "m", name: "M", contextWindow, maxTokens }]),
+          makeProvider([{ id: "m", name: "M", contextWindow, maxTokens }] as unknown as NonNullable<CustomProvider["models"]>),
           "openai-completions",
         );
         expect(models[0], `contextWindow=${String(contextWindow)}, maxTokens=${String(maxTokens)}`).toMatchObject({

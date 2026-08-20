@@ -3411,7 +3411,7 @@ export class ChatManager {
           diagnostics.error(`Failed to persist context-overflow failure for session ${sessionId}:`, persistErr);
         }
 
-        this.flushInFlightGenerationPersist(sessionId, null);
+        await this.flushInFlightGenerationPersist(sessionId, null, generationId);
 
         chatStreamManager.broadcast(sessionId, {
           type: "error",
