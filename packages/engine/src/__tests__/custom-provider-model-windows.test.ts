@@ -16,7 +16,6 @@
 import { describe, expect, it } from "vitest";
 import type { CustomProvider } from "@fusion/core";
 import { buildCustomProviderModels, resolveApiType } from "../auth/custom-provider-registry.js";
-import { computeCompactionThreshold } from "../chat-context-guard.js";
 
 function makeProvider(models: NonNullable<CustomProvider["models"]>, apiType: CustomProvider["apiType"] = "openai-compatible"): CustomProvider {
   return {
@@ -155,29 +154,10 @@ describe("buildCustomProviderModels per-model windows (RUFU-123)", () => {
 });
 
 /*
-FNXC:CustomProviderModelWindows 2026-08-19-13:03:
-RUFU-123 Symptom-Verification assertion 4 (conditional on RUFU-118 having landed —
-chat-context-guard.ts exists in this worktree): the RUFU-118 pre-overflow compaction
-gate threshold for a 32768-window / 4096-maxTokens model must be
-min(round(0.8 * 32768), 32768 - max(16384, 4096)) === 16384, not the ~102,400 the
-pre-fix hardcoded 128000 registry default produced.
+FNXC:CustomProviderModelWindows 2026-08-20-13:25:
+The pre-overflow gate threshold assertion (RUFU-123 assertion 4) is not pinned here:
+it needs the RUFU-118 chat-context-guard module, which this standalone branch does not
+carry. It is pinned in the LCM branch's chat-context-guard test suite as
+"per-model window thresholds", so once both land the combined tree proves that a
+32768-window / 4096-maxTokens model compacts at 16384 instead of the pre-fix 102400.
 */
-describe("RUFU-118 gate threshold sees the true per-model window (RUFU-123 assertion 4)", () => {
-  it("computes 16384 (not 102400) for a 32768-window model", () => {
-    const built = buildCustomProviderModels(
-      makeProvider([{ id: "deepseek-v4", name: "DeepSeek V4", contextWindow: 32768, maxTokens: 4096 }]),
-      "openai-completions",
-    );
-    const model = built[0]!;
-    expect(model.contextWindow).toBe(32768);
-    expect(model.maxTokens).toBe(4096);
-
-    const threshold = computeCompactionThreshold({
-      contextWindow: model.contextWindow,
-      maxTokens: model.maxTokens,
-    });
-    expect(threshold).toBe(16384);
-    // Regression pin: the pre-fix hardcoded registry default produced 102,400 here.
-    expect(computeCompactionThreshold({ contextWindow: 128000, maxTokens: 16384 })).toBe(102400);
-  });
-});
