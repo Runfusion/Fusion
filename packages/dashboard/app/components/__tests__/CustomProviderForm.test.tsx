@@ -95,13 +95,16 @@ describe("legacy create path — per-model window carry-through (RUFU-123)", () 
     await user.type(screen.getByLabelText("Max tokens 1"), "4096");
     await user.click(screen.getByRole("button", { name: "Save Provider" }));
 
+    // FN-043 (origin) replaced the per-model reasoning boolean with canonical thinking
+    // levels, so the form no longer submits a reasoning field — the expectation is
+    // window carry-through only (the test's purpose).
     expect(createSpy).toHaveBeenCalledWith({
       id: "my-proxy",
       name: undefined,
       baseUrl: "https://proxy.example.com/v1",
       api: "openai-completions",
       apiKey: undefined,
-      models: [{ id: "deepseek-v4", name: undefined, reasoning: false, contextWindow: 32768, maxTokens: 4096 }],
+      models: [{ id: "deepseek-v4", name: undefined, contextWindow: 32768, maxTokens: 4096 }],
     });
     createSpy.mockRestore();
   });
