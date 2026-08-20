@@ -65,6 +65,15 @@ const MIN_RESERVE_TOKENS = 16_384;
 const DEFAULT_COMPACT_FRACTION = 0.8;
 
 /**
+ * FNXC:ChatContextGuard 2026-08-20-12:20:
+ * Chars-per-token divisor for the stale-usage cross-check. pi's own estimator uses
+ * chars/4; the dsai1 (qwen3) provider measured on the chat lane tokenizes at ~3.46
+ * chars/token, and English-centric tokenizers sit at ~3.5-4, so chars/3.5 is a
+ * conservative (never-underestimating) divisor for the providers observed here.
+ */
+const FRESH_ESTIMATE_CHARS_PER_TOKEN = 3.5;
+
+/**
  * Structural session shape the gate needs.
  *
  * A pi `AgentSession` satisfies this. Plugin CLI runtimes (grok/droid/cursor) expose a
@@ -81,6 +90,20 @@ export interface CompactionGateSession {
   state?: { messages?: unknown[] | undefined } | undefined;
   /** pi's compaction entry point (driven through compactSessionContext). */
   compact?: (customInstructions?: string) => Promise<unknown> | unknown;
+  /**
+   * FNXC:ChatContextGuard 2026-08-20-12:20:
+   * The session's current final system prompt. pi populates it during session setup
+   * (setActiveToolsByName rebuilds it from the base prompt, context files such as
+   * AGENTS.md, skills, and the active tools' guidelines), so at the pre-prompt gate
+   * seam it describes exactly the prompt the next send would carry. Absent on
+   * non-pi runtimes and on pi versions that build it lazily — the fresh estimate
+   * then degrades to null and the gate keeps its fail-loud behavior.
+   */
+  systemPrompt?: string | undefined;
+  /** pi's active tool names (subset of the configured registry). */
+  getActiveToolNames?: () => string[];
+  /** pi's configured tool definitions (name/description/parameters/…). */
+  getAllTools?: () => Array<{ name?: string; description?: string; parameters?: unknown }>;
 }
 
 interface CompactionBounds {
@@ -148,6 +171,59 @@ export function computeCompactionThreshold(params: {
 }
 
 type EstimateTokensArg = Parameters<typeof estimateTokens>[0];
+
+/**
+ * FNXC:ChatContextGuard 2026-08-20-12:20:
+ * Fresh measurement of what the NEXT send would actually carry: the session's current
+ * final system prompt + the active tools' schemas (the provider counts the `tools`
+ * parameter on top of the prompt) + the loaded messages, in conservative chars/3.5
+ * (system prompt + tools) plus pi's own per-message estimate.
+ *
+ * This exists to detect a STALE provider-reported usage: pi persists assistant
+ * usage into the session file and getContextUsage() restores it into a fresh
+ * session object, so the number describes the static context of the turn that
+ * RECORDED it, not the current one. After a deploy that shrank the chat prompt/
+ * toolset (RUFU-135), an old 124K-token usage kept failing every send with
+ * ChatContextOverflowError even though the live context was ~36K (chat-02c9c9de).
+ * Returns null when the session does not expose the final system prompt — the
+ * caller then cannot distinguish stale from real and must keep the fail-loud path.
+ */
+export function freshLoadedContextEstimate(session: CompactionGateSession): number | null {
+  const systemPrompt = typeof session.systemPrompt === "string" ? session.systemPrompt : "";
+  if (!systemPrompt) {
+    return null;
+  }
+  let chars = systemPrompt.length;
+  try {
+    const activeNames = new Set(session.getActiveToolNames?.() ?? []);
+    for (const tool of session.getAllTools?.() ?? []) {
+      if (typeof tool?.name !== "string" || !tool.name) continue;
+      if (activeNames.size > 0 && !activeNames.has(tool.name)) continue;
+      chars += Buffer.byteLength(
+        JSON.stringify({
+          name: tool.name,
+          description: tool.description ?? "",
+          parameters: tool.parameters ?? {},
+        }),
+        "utf8",
+      );
+    }
+  } catch {
+    // Tool introspection is best-effort; a failing reader must not break the gate.
+  }
+  let messageTokens = 0;
+  const messages = session.state?.messages;
+  if (Array.isArray(messages)) {
+    for (const message of messages) {
+      try {
+        messageTokens += estimateTokens(message as EstimateTokensArg);
+      } catch {
+        // Malformed message shapes count as 0 (best-effort measurement).
+      }
+    }
+  }
+  return Math.round(chars / FRESH_ESTIMATE_CHARS_PER_TOKEN) + messageTokens;
+}
 
 /**
  * Estimate the loaded context tokens of a session.
@@ -280,9 +356,32 @@ export async function ensureContextWithinCompactionThreshold(
     );
   }
   if (!compactResult) {
+    /*
+    FNXC:ChatContextGuard 2026-08-20-12:20:
+    Stale-usage cross-check (RUFU-135 follow-up). "No compaction result" means the
+    conversation branch was too small to compress — the context is dominated by
+    STATIC content. The recorded usage may therefore describe a LARGER static
+    context than the session carries now (it is restored from the session file and
+    predates whatever deploy changed the prompt/toolset). Re-measure the current
+    prompt + active tool schemas + messages; if the fresh measurement fits under the
+    threshold, the recorded usage is stale and the send is safe. When the fresh
+    measurement also exceeds the threshold the overflow is real (the static floor
+    itself no longer fits) and the gate keeps its fail-loud behavior.
+    */
+    const freshTokens = freshLoadedContextEstimate(session);
+    if (freshTokens !== null && freshTokens < threshold) {
+      piLog.log(
+        `chat-context-guard: recorded context ${contextTokens} tokens is stale — fresh measurement of the current prompt + tools + messages is ${freshTokens} tokens (< threshold ${threshold}); the session's static context changed since the usage was recorded. Proceeding with the current context.`,
+      );
+      return { compacted: false, contextTokens: freshTokens, threshold };
+    }
     throw new ChatContextOverflowError(
-      `Pre-overflow compaction returned no result for a ${contextTokens}-token context (threshold ${threshold}, contextWindow ${session.model?.contextWindow ?? "unknown"}); the prompt was not sent`,
-      { contextTokens, threshold, contextWindow: session.model?.contextWindow ?? null, stage: "compaction-unavailable" },
+      `Pre-overflow compaction returned no result for a ${contextTokens}-token context (threshold ${threshold}, contextWindow ${session.model?.contextWindow ?? "unknown"})${
+        freshTokens !== null
+          ? `; the fresh measurement of the current prompt is ${freshTokens} tokens, so the static context (system prompt + tools + memory) itself exceeds the window budget — reduce the agent's tools/memory or use a larger-window model`
+          : ""
+      }; the prompt was not sent`,
+      { contextTokens, freshTokens, threshold, contextWindow: session.model?.contextWindow ?? null, stage: "compaction-unavailable" },
       new Error("session.compact() produced no compaction result"),
     );
   }
