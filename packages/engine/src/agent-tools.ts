@@ -6518,10 +6518,12 @@ export function createAcquireRepoWorktreeTool(opts: {
       `in-review`/`done`/`archived` lanes. Resolve membership from the task's own workflow while
       retaining the legacy ids as a fail-safe for malformed or partially migrated task state.
       */
-      const workflowIr = await fusionCore.resolveWorkflowIrForTask(store, freshTask.id);
-      const lateAcquireBlocked = isLateAcquireColumnBlocked(workflowIr, freshTask.column)
-        || ["merging", "merging-pr", "merging-fix"].includes(freshTask.status ?? "")
+      let lateAcquireBlocked = ["merging", "merging-pr", "merging-fix"].includes(freshTask.status ?? "")
         || Object.values(freshTask.workspaceWorktrees ?? {}).some((entry) => Boolean(entry.landedSha));
+      if (!existing && !lateAcquireBlocked) {
+        const workflowIr = await fusionCore.resolveWorkflowIrForTask(store, freshTask.id);
+        lateAcquireBlocked = isLateAcquireColumnBlocked(workflowIr, freshTask.column);
+      }
       if (!existing && lateAcquireBlocked) {
         await store.logEntry(task.id, `fn_acquire_repo_worktree: refused late acquisition of ${repo}; task is already in review or landing`, undefined, runContext);
         return {

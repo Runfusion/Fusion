@@ -46,10 +46,14 @@ review/landing states instead require a follow-up so the merge loop cannot miss 
 describe.runIf(hasGit)("workspace membership acquired mid-flight", () => {
   it("refuses renamed review and terminal lifecycle columns", () => {
     const workflowIr = lifecycleIr(RENAMED_VOCAB, "workspace-renamed", { mergeOrchestration: true });
+    if (workflowIr.version !== "v2") throw new Error("expected v2 workflow fixture");
+    workflowIr.columns.push({ id: "retired", name: "Archived", traits: [{ trait: "archived" }] });
 
     expect(isLateAcquireColumnBlocked(workflowIr, RENAMED_VOCAB.wip)).toBe(false);
     expect(isLateAcquireColumnBlocked(workflowIr, RENAMED_VOCAB.review)).toBe(true);
     expect(isLateAcquireColumnBlocked(workflowIr, RENAMED_VOCAB.complete)).toBe(true);
+    expect(isLateAcquireColumnBlocked(workflowIr, "retired")).toBe(true);
+    expect(isLateAcquireColumnBlocked(workflowIr, "archived")).toBe(true);
   });
 
   it("refreshes a running host from disk and admits the newly added repository", async () => {

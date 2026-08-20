@@ -22,8 +22,8 @@ let cssStyleElement: HTMLStyleElement | null = null;
 const dependencyGraphCss = readFileSync("src/DependencyGraph.css", "utf8");
 
 vi.mock("@fusion/dashboard/app/components/TaskCard", () => ({
-  TaskCard: ({ task, onOpenDetail, disableDrag }: { task: Task; onOpenDetail: (task: Task) => void; disableDrag?: boolean }) => (
-    <button data-testid={`task-${task.id}`} draggable={!disableDrag} onClick={() => onOpenDetail(task)}>{task.id}</button>
+  TaskCard: ({ task, onOpenDetail }: { task: Task; onOpenDetail: (task: Task) => void }) => (
+    <button data-testid={`task-${task.id}`} onClick={() => onOpenDetail(task)}>{task.id}</button>
   ),
 }));
 
