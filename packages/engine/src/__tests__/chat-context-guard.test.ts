@@ -155,9 +155,24 @@ describe("computeCompactionThreshold", () => {
     expect(computeCompactionThreshold({ contextWindow: -1, maxTokens: 16384 })).toBeNull();
   });
 
-  it("returns null when the hard limit is non-positive (reserve >= window)", () => {
-    // 16000 window - 16384 reserve = -384
-    expect(computeCompactionThreshold({ contextWindow: 16000, maxTokens: 16384 })).toBeNull();
+  /*
+  FNXC:ChatContextGuard 2026-08-20-22:27: RUFU-145 PR #3493 review (safe small-window
+  threshold): a reserve that cannot fit inside the window no longer yields null — the
+  reserve is capped at half the window so small-window models get a usable threshold.
+  */
+  it("caps the reserve at half the window when the reserve cannot fit (safe small-window threshold)", () => {
+    // 16K window with the 16384 floor: reserve 16384 >= 16000 → cap to floor(16000*0.5)=8000
+    // → hard limit 8000 → threshold min(12800, 8000) = 8000.
+    expect(computeCompactionThreshold({ contextWindow: 16000, maxTokens: 16384 })).toBe(8000);
+    // The review fixture: an 8K probe window with no maxTokens (engine defaults to 16384)
+    // used to compute min(6554, 8192-16384) = -8192; now: reserve cap floor(8192*0.5)=4096
+    // → threshold min(6554, 4096) = 4096 — a usable gate instead of a permanently failing one.
+    expect(computeCompactionThreshold({ contextWindow: 8192 })).toBe(4096);
+    // An explicit small maxTokens that still cannot beat the 16384 floor: the floor wins,
+    // the cap applies, same 4096.
+    expect(computeCompactionThreshold({ contextWindow: 8192, maxTokens: 4000 })).toBe(4096);
+    // A window that barely fits the reserve is unchanged: 20K/16384 → hard limit 3616.
+    expect(computeCompactionThreshold({ contextWindow: 20000, maxTokens: 16384 })).toBe(3616);
   });
 
   it("treats degenerate tokenCap values (0, negative, NaN) as unset", () => {
@@ -395,9 +410,15 @@ describe("ensureContextWithinCompactionThreshold", () => {
   measurement of the current prompt + tools + messages and proceed instead of
   dead-ending every send with ChatContextOverflowError.
   */
-  it("proceeds (no throw) when compaction returns no result but the fresh measurement fits (stale recorded usage)", async () => {
+  it("proceeds WITHOUT compacting when the fresh measurement fits (stale recorded usage, cross-check runs before compaction)", async () => {
     // Recorded usage says 120K (>= threshold 102400) but the session's CURRENT
     // prompt is small (~100K chars ≈ 28.5K tokens fresh) → the usage is stale.
+    /*
+    FNXC:ChatContextGuard 2026-08-20-22:27: RUFU-145 PR #3493 review: the cross-check
+    moved before compaction — the gate now detects the stale usage up front and skips
+    the compaction round-trip entirely (previously it compacted first and only caught
+    the stale number in the "no compaction result" branch).
+    */
     const { session, compact } = makeFakePiSession({
       usage: { tokens: 120000, contextWindow: 128000, percent: 93.75 },
       compactImpl: async () => undefined, // nothing to compact (small branch)
@@ -411,6 +432,41 @@ describe("ensureContextWithinCompactionThreshold", () => {
     expect(result.threshold).toBe(102400);
     expect(result.contextTokens).not.toBeNull();
     expect(result.contextTokens!).toBeLessThan(102400);
+    expect(compact).not.toHaveBeenCalled();
+  });
+
+  it("skips compaction for a stale recorded usage even when the conversation branch is still large (review scenario)", async () => {
+    // The documented RUFU-135 case: recorded 124K (>= threshold 102400), live context
+    // ~36K — but the conversation branch itself is still large, so pi's compact() WOULD
+    // have produced a result and the old post-compaction re-measure would have read the
+    // stale usage again. The pre-compaction fresh measurement sees the live view and
+    // proceeds without the compaction round-trip.
+    const { session, compact } = makeFakePiSession({
+      usage: { tokens: 124000, contextWindow: 128000, percent: 96.9 },
+      compactImpl: async () => ({ summary: "s", tokensBefore: 124000 }),
+      systemPrompt: "p".repeat(35_000), // ≈ 10K tokens fresh
+      messages: [userMessageOf(300_000)], // ≈ 75K tokens (chars/4)
+      activeToolNames: ["fn_task_list"],
+      allTools: [{ name: "fn_task_list", description: "list", parameters: { type: "object" } }],
+    });
+    const result = await ensureContextWithinCompactionThreshold(session, { tokenCap: undefined });
+    expect(result.compacted).toBe(false);
+    expect(result.threshold).toBe(102400);
+    expect(result.contextTokens!).toBeLessThan(102400);
+    expect(compact).not.toHaveBeenCalled();
+  });
+
+  it("still compacts when the fresh measurement also exceeds the threshold (real overflow, large conversation)", async () => {
+    // Fresh measurement (~143K from the 500K-char prompt + 75K messages) is >= the
+    // threshold — the overflow is real, so the gate proceeds to compaction as before.
+    const { session, compact, usageState } = makeFakePiSession({
+      usage: { tokens: 124000, contextWindow: 128000, percent: 96.9 },
+      compactImpl: async () => compactToSummary(session, usageState, 2000, 124000),
+      systemPrompt: "p".repeat(500_000),
+      messages: [userMessageOf(300_000)],
+    });
+    const result = await ensureContextWithinCompactionThreshold(session, { tokenCap: undefined });
+    expect(result.compacted).toBe(true);
     expect(compact).toHaveBeenCalledTimes(1);
   });
 
