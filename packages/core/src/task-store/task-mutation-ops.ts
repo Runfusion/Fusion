@@ -530,9 +530,32 @@ export async function mergeWorkspaceWorktreeEntryImpl(
   id: string,
   repoRelPath: string,
   patch: Partial<WorkspaceWorktreeEntry> | ((current: Task) => Promise<Partial<WorkspaceWorktreeEntry>>),
-  options: { requireExistingEntry?: boolean; clearSingularWorktree?: boolean } = {},
+  options: {
+    requireExistingEntry?: boolean;
+    clearSingularWorktree?: boolean;
+    validateBeforePersist?: (current: Task) => Promise<void>;
+  } = {},
 ): Promise<Task> {
   return store.withTaskLock(id, async () => {
+    let resolvedPatch: Partial<WorkspaceWorktreeEntry>;
+    if (typeof patch === "function") {
+      const callbackTask = await store.getTask(id, { includeDeleted: true });
+      if (callbackTask.deletedAt) throw new TaskDeletedError(id, callbackTask.deletedAt);
+      const callbackExisting = callbackTask.workspaceWorktrees?.[repoRelPath];
+      if (options.requireExistingEntry && !callbackExisting) return callbackTask;
+      /*
+      FNXC:WorkspaceWorktree 2026-08-20-07:08:
+      Filesystem creation, configured init commands, hydration, and secrets materialization must not
+      occupy a PostgreSQL transaction or one of the small runtime connection pool's sessions. The
+      in-process task mutex and durable repository-acquisition lease serialize preparation; the short
+      transaction below revalidates authoritative lifecycle state under the cross-process advisory
+      lock immediately before persisting the prepared entry.
+      */
+      resolvedPatch = await patch(callbackTask);
+    } else {
+      resolvedPatch = patch;
+    }
+
     const layer = store.asyncLayer!;
     const outcome = await layer.transactionImmediate(async (tx) => {
       await acquireTaskAdvisoryXactLock(tx, layer.projectId, id);
@@ -544,16 +567,13 @@ export async function mergeWorkspaceWorktreeEntryImpl(
       const workspaceWorktrees = current.workspaceWorktrees ?? {};
       const existing = workspaceWorktrees[repoRelPath];
       if (options.requireExistingEntry && !existing) return { task: current, mutated: false };
+      await options.validateBeforePersist?.(current);
       /*
-      FNXC:WorkspaceWorktree 2026-08-20-06:26:34: A callback patch runs while both the in-process task
-      mutex and the database task advisory transaction lock are held. Workspace acquisition uses this
-      seam to revalidate lifecycle state, create the worktree, and return its durable entry without
-      allowing a lifecycle move between those operations and this row update. Callback code must use
-      the acquisition-scoped deferring store for lock-taking task updates and log entries; directly
-      re-entering TaskStore mutations here would deadlock the non-reentrant task lock.
+      FNXC:WorkspaceWorktree 2026-08-20-07:08: Persist the prepared entry only after the authoritative
+      task row passes lifecycle revalidation under the database advisory lock. A cross-process move
+      that wins during filesystem preparation therefore blocks the row update instead of attaching a
+      late worktree to review, complete, or archived state.
       */
-      const resolvedPatch = typeof patch === "function" ? await patch(current) : patch;
-
       const updatedAt = new Date().toISOString();
       const [updatedRow] = await tx
         .update(schema.project.tasks)

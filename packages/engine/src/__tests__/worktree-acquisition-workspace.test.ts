@@ -68,7 +68,11 @@ function makeFakeStore(
       patch:
         | Partial<NonNullable<Task["workspaceWorktrees"]>[string]>
         | ((freshTask: Task) => Promise<Partial<NonNullable<Task["workspaceWorktrees"]>[string]>>),
-      mergeOptions?: { requireExistingEntry?: boolean; clearSingularWorktree?: boolean },
+      mergeOptions?: {
+        requireExistingEntry?: boolean;
+        clearSingularWorktree?: boolean;
+        validateBeforePersist?: (freshTask: Task) => Promise<void>;
+      },
     ): Promise<Task> {
       if (id !== current.id) throw new Error(`Task ${id} not found`);
       await options.beforeWorkspaceMerge?.(repoRelPath);
@@ -89,6 +93,7 @@ function makeFakeStore(
         } finally {
           mergeCallbackActive = false;
         }
+        await mergeOptions?.validateBeforePersist?.(current);
         const mergedPatch: Partial<Task> = {
           workspaceWorktrees: { ...workspaceWorktrees, [repoRelPath]: { ...existing, ...resolvedPatch } },
           ...(mergeOptions?.clearSingularWorktree ? { worktree: undefined, branch: undefined } : {}),
@@ -398,6 +403,65 @@ describeIfGit("acquireWorkspaceRepoWorktree (U2 per-repo hardening)", { timeout:
     expect(first.worktreePath).toBe(second.worktreePath);
     expect(Object.keys(current().workspaceWorktrees ?? {})).toEqual(["repo-a"]);
     expect(auditEvents.filter((event) => event.type === "worktree:create")).toHaveLength(1);
+  });
+
+  it("replaces a concurrently persisted directory that is not a usable git worktree", async () => {
+    fixture = await createWorkspaceFixture(["repo-a"]);
+    const initial = makeTask("FN-4-stale-concurrent");
+    let store!: TaskStore;
+    const fake = makeFakeStore(initial, {
+      beforeWorkspaceMerge: async () => {
+        await store.updateTask(initial.id, {
+          workspaceWorktrees: {
+            "repo-a": { worktreePath: fixture.rootDir, branch: "fusion/stale-directory" },
+          },
+        });
+      },
+    });
+    store = fake.store;
+
+    const result = await acquireWorkspaceRepoWorktree({
+      repoRelPath: "repo-a",
+      workspaceRootDir: fixture.rootDir,
+      task: initial,
+      store,
+      settings: SETTINGS,
+      registry: new ActiveSessionRegistry(),
+    });
+
+    expect(result.alreadyAcquired).toBe(false);
+    expect(result.worktreePath).not.toBe(fixture.rootDir);
+    expect(fake.current().workspaceWorktrees?.["repo-a"]?.worktreePath).toBe(result.worktreePath);
+  });
+
+  it("removes a prepared worktree when authoritative pre-persist validation rejects it", async () => {
+    fixture = await createWorkspaceFixture(["repo-a"]);
+    const { store, current } = makeFakeStore(makeTask("FN-4-rejected-persist"));
+    const auditEvents: Array<{ type: string; target?: string }> = [];
+    let validationCalls = 0;
+
+    await expect(acquireWorkspaceRepoWorktree({
+      repoRelPath: "repo-a",
+      workspaceRootDir: fixture.rootDir,
+      task: current(),
+      store,
+      settings: SETTINGS,
+      registry: new ActiveSessionRegistry(),
+      audit: {
+        async git(event: { type: string; target?: string }): Promise<void> { auditEvents.push(event); },
+        async filesystem(): Promise<void> {},
+      },
+      validateTaskBeforeCreate: async () => {
+        validationCalls += 1;
+        if (validationCalls === 2) throw new Error("lifecycle moved before persistence");
+      },
+    })).rejects.toThrow("lifecycle moved before persistence");
+
+    const createdPath = auditEvents.find((event) => event.type === "worktree:create")?.target;
+    expect(validationCalls).toBe(2);
+    expect(createdPath).toBeTruthy();
+    expect(existsSync(createdPath!)).toBe(false);
+    expect(current().workspaceWorktrees?.["repo-a"]).toBeUndefined();
   });
 
   it("surfaces an error and persists an audit event when acquisition fails (no swallowed stall)", async () => {

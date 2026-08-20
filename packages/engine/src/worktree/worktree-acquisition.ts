@@ -1359,6 +1359,21 @@ function assertInRootRepoRelPath(repoRelPath: string): void {
 }
 
 /*
+FNXC:WorkspaceWorktree 2026-08-20-07:02:
+Both the caller snapshot and the task-locked re-read must apply the same remembered-worktree
+liveness contract. Path existence alone is insufficient because a pruned or interrupted checkout
+can leave a directory that is no longer a registered, usable git worktree.
+*/
+async function isRememberedWorkspaceWorktreeLive(repoRootDir: string, worktreePath: string): Promise<boolean> {
+  if (!existsSync(worktreePath)) return false;
+  try {
+    return (await classifyTaskWorktree(repoRootDir, worktreePath)).ok;
+  } catch {
+    return false;
+  }
+}
+
+/*
 FNXC:Workspace 2026-06-21-20:10:
 Acquisition-time exclusivity owner key for the same-sub-repo lock (U2/KTD4). The
 registry record is keyed by the sub-repo ABSOLUTE path and carries this distinct
@@ -1396,15 +1411,7 @@ export async function acquireWorkspaceRepoWorktree(
     returns the persisted entry verbatim — no second identity-guard install, no
     re-capture of the base SHA, no second exclusivity registration.
     */
-    let live = existsSync(existing.worktreePath);
-    if (live) {
-      try {
-        const classification = await classifyTaskWorktree(repoAbsPath, existing.worktreePath);
-        live = classification.ok;
-      } catch {
-        live = false;
-      }
-    }
+    const live = await isRememberedWorkspaceWorktreeLive(repoAbsPath, existing.worktreePath);
     if (live) {
       return { ...existing, alreadyAcquired: true };
     }
@@ -1534,8 +1541,7 @@ export async function acquireWorkspaceRepoWorktree(
     */
     let acquisitionResult: { worktreePath: string; branch: string; baseCommitSha?: string; alreadyAcquired: boolean } | undefined;
     let baseResolution: Awaited<ReturnType<typeof resolveWorkspaceRepoBaseBranch>> | undefined;
-    const deferredTaskUpdates: Array<[string, Parameters<TaskStore["updateTask"]>[1]]> = [];
-    const deferredLogEntries: Array<Parameters<TaskStore["logEntry"]>> = [];
+    const deferredTaskMutations: Array<() => Promise<unknown>> = [];
     let mergeError: unknown;
     try {
       await store.mergeWorkspaceWorktreeEntry(
@@ -1554,23 +1560,43 @@ export async function acquireWorkspaceRepoWorktree(
             get(target, property) {
               if (property === "logEntry") {
                 return async (...args: Parameters<TaskStore["logEntry"]>): Promise<void> => {
-                  deferredLogEntries.push(args);
+                  deferredTaskMutations.push(() => store.logEntry(...args));
                 };
               }
               if (property === "updateTask") {
-                return async (id: string, patch: Parameters<TaskStore["updateTask"]>[1]): Promise<void> => {
+                return async (...args: Parameters<TaskStore["updateTask"]>): Promise<void> => {
+                  const [id, patch] = args;
                   if (id !== task.id) throw new Error(`Workspace acquisition attempted to mutate unexpected task ${id}`);
-                  deferredTaskUpdates.push([id, patch]);
+                  deferredTaskMutations.push(() => store.updateTask(...args));
                   Object.assign(freshTask, patch);
                 };
               }
+              if (property === "pauseTask") {
+                return async (...args: Parameters<TaskStore["pauseTask"]>): Promise<Task> => {
+                  const [id, paused] = args;
+                  if (id !== task.id) throw new Error(`Workspace acquisition attempted to pause unexpected task ${id}`);
+                  deferredTaskMutations.push(() => store.pauseTask(...args));
+                  Object.assign(freshTask, { paused });
+                  return freshTask;
+                };
+              }
               const value = Reflect.get(target, property, target);
-              return typeof value === "function" ? value.bind(target) : value;
+              if (typeof value !== "function") return value;
+              if (property === "getTask") return value.bind(target);
+              /*
+              FNXC:WorkspaceWorktree 2026-08-20-07:02:
+              The acquisition callback holds a non-reentrant task lock. Forwarding a newly added
+              TaskStore method by default could silently reintroduce same-task deadlock, so only the
+              audited read seam is forwarded and every other method fails closed until classified.
+              */
+              return async (): Promise<never> => {
+                throw new Error(`Workspace acquisition cannot call unsupported TaskStore method ${String(property)} while the task lock is held`);
+              };
             },
           }) as TaskStore;
 
           const concurrentExisting = freshTask.workspaceWorktrees?.[repoRelPath];
-          if (concurrentExisting && existsSync(concurrentExisting.worktreePath)) {
+          if (concurrentExisting && await isRememberedWorkspaceWorktreeLive(repoAbsPath, concurrentExisting.worktreePath)) {
             acquisitionResult = { ...concurrentExisting, alreadyAcquired: true };
             return concurrentExisting;
           }
@@ -1733,19 +1759,38 @@ export async function acquireWorkspaceRepoWorktree(
             : {}),
         };
         },
-        { clearSingularWorktree: true },
+        { clearSingularWorktree: true, validateBeforePersist: validateTaskBeforeCreate },
       );
     } catch (error) {
       mergeError = error;
     }
     let deferredMutationError: unknown;
     try {
-      for (const [id, patch] of deferredTaskUpdates) await store.updateTask(id, patch);
-      for (const args of deferredLogEntries) await store.logEntry(...args);
+      for (const mutation of deferredTaskMutations) await mutation();
     } catch (error) {
       deferredMutationError = error;
     }
-    if (mergeError) throw mergeError;
+    if (mergeError) {
+      /*
+      FNXC:WorkspaceWorktree 2026-08-20-07:08:
+      A cross-process lifecycle move can win while filesystem preparation runs outside the database
+      transaction. If authoritative pre-persist validation then refuses the row update, remove only
+      the newly created, not-yet-published worktree so the rejected acquisition cannot leave an orphan.
+      */
+      if (acquisitionResult && !acquisitionResult.alreadyAcquired) {
+        await removeWorktree({
+          rootDir: repoAbsPath,
+          worktreePath: acquisitionResult.worktreePath,
+          settings,
+          reason: RemovalReason.WorkspaceAcquireRollback,
+          taskId: task.id,
+          force: true,
+        }).catch((cleanupError: unknown) => {
+          logger?.warn(`${task.id}: failed to roll back rejected workspace acquisition at ${acquisitionResult?.worktreePath}: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`);
+        });
+      }
+      throw mergeError;
+    }
     if (deferredMutationError) throw deferredMutationError;
     if (!acquisitionResult) {
       throw new Error(`Workspace sub-repo acquisition for ${repoRelPath} completed without a durable result`);
