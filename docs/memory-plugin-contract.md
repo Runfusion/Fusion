@@ -179,6 +179,53 @@ export class MemoryBackendError extends Error {
 | `QmdMemoryBackend` | `qmd` | Delegates read/write to file backend; schedules qmd refresh; uses qmd search first, local layered search fallback |
 | `ReadOnlyMemoryBackend` | `readonly` | Read-only; `write()` throws `MemoryBackendError("READ_ONLY", ...)`; `search()` returns empty |
 
+#### 3.3.1 Stash vector/semantic search (RUFU-126)
+
+`StashMemoryBackend` supports an **opt-in vector (semantic) recall path** for
+multi-word queries, layered in front of the RUFU-121 keyword path. Decision
+provenance D1–D5: `docs/research/stash-vector-search-evaluation.md`.
+
+**Endpoint contract.** `GET /api/v1/me/sessions/events/semantic-search` with
+`q=<raw trimmed query, capped at 200 chars>` (NOT RUFU-121-normalized — the
+embedder tokenizes on its own) and `limit=<same 1..20 clamp as the keyword
+path>`. Response: the standard `HistoryEventListResponse` envelope
+(`{ events: [...], has_more }`); each event carries `id`, `session_id`,
+`content`/`snippet`, and a `rank` (cosine similarity, 0..1) from Stash.
+
+**Flag (default off).** Per-project `stashVectorSearch` boolean, schema-only
+(no UI row, consistent with `stashUrl`/`stashApiKey`), default `false`. Threaded
+through `resolveMemoryBackend` into the materialized backend; the shared
+registry default instance always stays off. Default-off = zero behavior
+change until an operator enables it.
+
+**Multi-word-only rule (D2).** The vector attempt runs only when the flag is
+on AND the trimmed raw query has ≥2 whitespace-separated tokens. Single-word
+queries stay keyword-only (exact-token FTS is the best single-token baseline).
+
+**Fallback + negative-cache semantics.** On ANY vector failure — network
+error/timeout, non-2xx, malformed body, or an empty vector result list —
+`search()` falls through to the RUFU-121 keyword path **byte-identical**
+(normalized `q`, legacy empty-query URL, limit cap, fail-closed `[]`). A
+per-process negative capability cache (baseUrl-keyed, TTL 1h, test seam
+`__resetVectorCapabilityCacheForTests`) suppresses further vector attempts
+only after *definitive* no-vector responses — 404 (unpatched server), 405,
+501, 503 (embedder unconfigured); 422/500 and network errors are never
+cached, so the vector path retries on the next call.
+
+**Score-scale caveat (D5).** Vector `score` = response `rank` (cosine
+similarity, 0..1; missing/non-finite → 1.0); the keyword path keeps
+positional scores (2.0 first hit, 1.0 thereafter). The two scales differ —
+client-side min-score filters must treat score scales per-backend.
+
+**Upstream dependency.** The endpoint ships in a local Stash branch
+(`fusion-rufu-126-sessions-semantic-search`, plus `sentence-transformers` in
+requirements and a history-event embedding backfill task) — **not yet merged
+or deployed**. Against an unpatched server the vector path 404s and falls
+back transparently (once negatively cached per process). Operator rollout
+steps (image rebuild with the embedder, backfill, verification, flag
+enablement) are checklist form in
+`docs/research/stash-vector-search-evaluation.md`.
+
 ### 3.4 Registry Contract (Function-Based)
 
 ```ts

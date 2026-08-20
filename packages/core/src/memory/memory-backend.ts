@@ -1556,7 +1556,13 @@ export function resolveMemoryBackend(settings?: MemorySettings): MemoryBackend {
       const key = settings?.["stashApiKey"];
       const baseUrl = typeof url === "string" && url.trim().length > 0 ? url.trim() : DEFAULT_STASH_URL;
       const apiKey = typeof key === "string" ? key : "";
-      return new StashMemoryBackend({ baseUrl, apiKey });
+      // FNXC:Rufu126VectorSearch 2026-08-19-10:50:
+      // RUFU-126 (D3): thread the opt-in vector (semantic) search flag from
+      // project settings into the materialized backend. Strict `=== true` —
+      // undefined/false/any other value keeps the keyword-only baseline.
+      // The shared registry default instance (above) stays vector-disabled.
+      const vectorSearch = settings?.["stashVectorSearch"] === true;
+      return new StashMemoryBackend({ baseUrl, apiKey, vectorSearch });
     }
     return backend;
   }

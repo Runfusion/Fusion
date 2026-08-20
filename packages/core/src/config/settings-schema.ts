@@ -851,6 +851,19 @@ export const DEFAULT_PROJECT_SETTINGS = {
   stashUrl: "",
   stashApiKey: "",
   /*
+  FNXC:Rufu126VectorSearch 2026-08-19-10:50:
+  RUFU-126 (D3): opt-in vector (semantic) recall for the Stash memory backend.
+  Default OFF — zero behavior change until the operator enables it (this is a
+  prototype; rejected alternative was automatic capability detection, which
+  would change default behavior and pay a per-process 404 round-trip against
+  unpatched servers). When true, multi-word (≥2 tokens) recall queries try the
+  Stash GET /api/v1/me/sessions/events/semantic-search endpoint first and fall
+  back byte-identically to the RUFU-121 keyword path on any vector failure
+  (see memory-backend-stash.ts search() + docs/research/stash-vector-search-evaluation.md
+  for D1–D5). Schema-only, consistent with stashUrl/stashApiKey (no UI row).
+  */
+  stashVectorSearch: false,
+  /*
   FNXC:StashSessionCapture 2026-08-19-04:37:
   (RUFU-122) Task-terminal transcript upload defaults. All are inert unless
   memoryBackendType === "stash". executorSessionCaptureEnabled gates ONLY the

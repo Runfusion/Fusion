@@ -2327,6 +2327,20 @@ export interface ProjectSettings {
    *  operator through the secrets path. */
   stashApiKey?: string;
   /*
+  FNXC:Rufu126VectorSearch 2026-08-19-10:50:
+  RUFU-126 (D3): opt-in vector (semantic) recall for the Stash memory backend.
+  Default-off = zero behavior change until the operator enables it (prototype;
+  rejected alternative was automatic capability detection). When true,
+  multi-word recall queries try GET /api/v1/me/sessions/events/semantic-search
+  first and fall back byte-identically to the RUFU-121 keyword path on any
+  vector failure (memory-backend-stash.ts search(); decisions D1–D5 in
+  docs/research/stash-vector-search-evaluation.md). Used only when
+  memoryBackendType === "stash". Schema-only — no UI row, consistent with
+  stashUrl/stashApiKey.
+  */
+  /** Opt-in vector (semantic) search for Stash memory recall (default off). */
+  stashVectorSearch?: boolean;
+  /*
   FNXC:StashSessionCapture 2026-08-19-04:37:
   (RUFU-122) Task-terminal transcript upload to Stash. On task terminalization
   (done + failed/parked) the engine uploads the task's agent log (agent-log.jsonl)
