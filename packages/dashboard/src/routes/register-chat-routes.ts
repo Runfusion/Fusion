@@ -74,6 +74,36 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
   const { router, options, store, getProjectContext, chatLogger, rethrowAsApiError } = ctx;
   const { parseLastEventId, replayBufferedSSE, validateOptionalModelField, upload } = deps;
 
+  /*
+  FNXC:StashChatFolderNaming 2026-08-20-14:52:
+  The manual "store chat to Stash" backfill must stamp the same project name the
+  live capture seam stamps (projectIdentity.projectName = the central registry's
+  project name). Without it the FIRST session-folder get-or-create names the
+  per-project Stash folder bare "Fusion", and get-or-create (keyed by stable
+  external_key fusion-<projectId>) never renames it afterwards — which is why
+  the first store-chat action produced a "Fusion" session instead of
+  "Fusion — <project name>". Best-effort: a registry miss or error returns
+  undefined and the upload proceeds exactly as before (bare-name fallback);
+  folder naming must never block the backfill.
+  */
+  const resolveProjectDisplayName = async (projectId: string): Promise<string | undefined> => {
+    const sharedCentral = options?.centralCore;
+    const shouldClose = !sharedCentral;
+    const central = sharedCentral ?? new (await import("@fusion/core")).CentralCore();
+    try {
+      if (!sharedCentral || (typeof central.isInitialized === "function" && !central.isInitialized())) {
+        await central.init();
+      }
+      const project = await central.getProject(projectId);
+      const name = typeof project?.name === "string" ? project.name.trim() : "";
+      return name.length > 0 ? name : undefined;
+    } catch {
+      return undefined;
+    } finally {
+      if (shouldClose) await central.close();
+    }
+  };
+
   const uploadChatAttachment: import("express").RequestHandler = (req, res, next) => {
     upload.single("file")(req, res, (err?: unknown) => {
       if (!err) {
@@ -1035,6 +1065,8 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
       // store.getProjectId() is string | null — the ternary below narrows to string
       // for captureMemory's meta.projectId; a null guard keeps the type honest.
       const projectId = store.getProjectId();
+      // FNXC:StashChatFolderNaming 2026-08-20-14:52: see resolveProjectDisplayName.
+      const projectName = projectId ? await resolveProjectDisplayName(projectId) : undefined;
       const events = freshMessages.map((message) => {
         const metadata = message.metadata ?? {};
         const agentName = typeof metadata.agent_name === "string"
@@ -1061,6 +1093,7 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
       const result = await captureMemory(rootDir, resolved, sessionId, events, {
         projectRoot: rootDir,
         ...(projectId ? { projectId } : {}),
+        ...(projectName ? { projectName } : {}),
         ...(session.title ? { chatTitle: session.title } : {}),
       });
 
