@@ -211,7 +211,7 @@ Filed 2026-08-18 as **earendil-works/pi#8328**.
 
 **Title:**
 
-```
+```text
 Threshold compaction never fires for zero-usage providers: estimateContextTokens pure estimate discarded when lastUsageIndex === null
 ```
 

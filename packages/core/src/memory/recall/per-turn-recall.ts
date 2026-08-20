@@ -46,22 +46,29 @@ const RECALL_STOPWORDS = new Set([
 ]);
 
 /**
- * Deterministic recall-query normalization: lowercase; tokenize on characters other than
- * [a-z0-9_-]; drop tokens shorter than 3 characters and the built-in stopword set; dedupe
- * keeping first occurrence; rank by (length descending, first-occurrence index ascending);
- * take at most 3; truncate each term at 24 chars; then cap the joined (single-space) query
- * at 64 characters by dropping trailing keywords until it fits. Pure function — no I/O.
+ * Deterministic recall-query normalization: lowercase; tokenize on characters that are not
+ * Unicode letters, digits, `_`, or `-` (any script — accented Latin, Cyrillic, CJK, …); drop
+ * tokens shorter than 3 characters and the built-in stopword set; dedupe keeping first
+ * occurrence; rank by (length descending, first-occurrence index ascending); take at most 3;
+ * truncate each term at 24 chars; then cap the joined (single-space) query at 64 characters
+ * by dropping trailing keywords until it fits. Pure function — no I/O.
  * Returns [] when no terms remain.
  *
  * FNXC:PerTurnMemoryRecall 2026-08-18-22:05:
  * The length-descending ranking keeps the most distinctive (longest) content words in the
  * Stash query; the 64-char cap mirrors the observed Stash q= behavior and, combined with the
  * AND-semantics keyword drop, bounds how much of a topic can degrade the hit rate.
+ *
+ * FNXC:PerTurnMemoryRecall 2026-08-20-22:06: RUFU-145 PR #3493 review (CodeRabbit): the
+ * original [^a-z0-9_-] split was ASCII-only, so non-English content topics (live repro:
+ * Slovak "žiadosti") tokenized with the accent characters stripped, silently rewriting the
+ * query terms the Stash AND-match searches for. Tokenize on \p{L}/\p{N} instead so accented
+ * and non-Latin keywords survive intact.
  */
 export function deriveRecallKeywords(topic: string): string[] {
   if (typeof topic !== "string") return [];
   const lower = topic.toLowerCase();
-  const tokens = lower.split(/[^a-z0-9_-]+/).filter(Boolean);
+  const tokens = lower.split(/[^\p{L}\p{N}_-]+/u).filter(Boolean);
 
   const seen = new Set<string>();
   const unique: string[] = [];
