@@ -53,6 +53,8 @@ describe.runIf(hasGit)("workspace membership acquired mid-flight", () => {
     expect(isLateAcquireColumnBlocked(workflowIr, RENAMED_VOCAB.review)).toBe(true);
     expect(isLateAcquireColumnBlocked(workflowIr, RENAMED_VOCAB.complete)).toBe(true);
     expect(isLateAcquireColumnBlocked(workflowIr, "retired")).toBe(true);
+    expect(isLateAcquireColumnBlocked(workflowIr, "in-review")).toBe(true);
+    expect(isLateAcquireColumnBlocked(workflowIr, "done")).toBe(true);
     expect(isLateAcquireColumnBlocked(workflowIr, "archived")).toBe(true);
   });
 
