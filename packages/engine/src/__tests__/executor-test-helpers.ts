@@ -672,15 +672,30 @@ export function createMockStore() {
       applyPatch(id, patch);
       return { ...(patches.get(id) ?? {}), id };
     }),
-    mergeWorkspaceWorktreeEntry: vi.fn(async (id: string, repoRelPath: string, patch: Record<string, unknown>) => {
+    mergeWorkspaceWorktreeEntry: vi.fn(async (
+      id: string,
+      repoRelPath: string,
+      patch: Record<string, unknown> | ((current: Record<string, unknown>) => Promise<Record<string, unknown>>),
+      options?: {
+        requireExistingEntry?: boolean;
+        clearSingularWorktree?: boolean;
+        validateBeforePersist?: (current: Record<string, unknown>) => Promise<void>;
+      },
+    ) => {
       const live = await store.getTask(id);
       const workspaceWorktrees = (live?.workspaceWorktrees ?? {}) as Record<string, unknown>;
       const existing = workspaceWorktrees[repoRelPath];
+      if (options?.requireExistingEntry && !existing) {
+        throw new Error(`Workspace worktree entry ${repoRelPath} does not exist`);
+      }
+      const resolvedPatch = typeof patch === "function" ? await patch(live) : patch;
+      await options?.validateBeforePersist?.(live);
       applyPatch(id, {
         workspaceWorktrees: {
           ...workspaceWorktrees,
-          [repoRelPath]: { ...(existing && typeof existing === "object" ? existing : {}), ...patch },
+          [repoRelPath]: { ...(existing && typeof existing === "object" ? existing : {}), ...resolvedPatch },
         },
+        ...(options?.clearSingularWorktree ? { worktree: undefined, branch: undefined } : {}),
       });
       return store.getTask(id);
     }),

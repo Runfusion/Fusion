@@ -4251,6 +4251,9 @@ describe("SelfHealingManager", () => {
         worktree: null,
         sessionFile: null,
       }));
+      const workspacePatch = (store.updateTask as ReturnType<typeof vi.fn>).mock.calls
+        .find(([taskId]) => taskId === "FN-7802-WORKSPACE")?.[1];
+      expect(workspacePatch).not.toHaveProperty("branch");
       expect(store.moveTask).toHaveBeenCalledWith("FN-7802-WORKSPACE", "todo", { preserveProgress: true, moveSource: "engine", recoveryRehome: true });
       expect(store.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
         mutationType: "task:reconcile-missing-worktree-merge-active",

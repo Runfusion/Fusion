@@ -26,16 +26,26 @@ function makeFakeStore(task: Task): { store: TaskStore; current: () => Task } {
     async mergeWorkspaceWorktreeEntry(
       id: string,
       repoRelPath: string,
-      patch: Partial<NonNullable<Task["workspaceWorktrees"]>[string]>,
-      options?: { clearSingularWorktree?: boolean },
+      patch: Partial<NonNullable<Task["workspaceWorktrees"]>[string]>
+        | ((freshTask: Task) => Promise<Partial<NonNullable<Task["workspaceWorktrees"]>[string]>>),
+      options?: {
+        requireExistingEntry?: boolean;
+        clearSingularWorktree?: boolean;
+        validateBeforePersist?: (freshTask: Task) => Promise<void>;
+      },
     ): Promise<Task> {
       if (id !== current.id) throw new Error(`Task ${id} not found`);
       const existing = current.workspaceWorktrees?.[repoRelPath];
+      if (options?.requireExistingEntry && !existing) {
+        throw new Error(`Workspace worktree entry ${repoRelPath} does not exist`);
+      }
+      const resolvedPatch = typeof patch === "function" ? await patch(current) : patch;
+      await options?.validateBeforePersist?.(current);
       current = {
         ...current,
         workspaceWorktrees: {
           ...(current.workspaceWorktrees ?? {}),
-          [repoRelPath]: { ...existing, ...patch },
+          [repoRelPath]: { ...existing, ...resolvedPatch },
         },
         ...(options?.clearSingularWorktree ? { worktree: undefined, branch: undefined } : {}),
       };

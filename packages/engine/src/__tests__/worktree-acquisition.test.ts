@@ -244,6 +244,7 @@ describe("acquireTaskWorktree", () => {
     writeFileSync(join(orphanedPath, "preserved.txt"), "keep this checkout\n", "utf-8");
     git(orphanedPath, "git add preserved.txt");
     git(orphanedPath, 'git commit -m "FN-1: preserved pre-fix work"');
+    const canonicalOrphanedPath = realpathSync(orphanedPath);
     const preservedTip = git(orphanedPath, "git rev-parse HEAD");
     const createWorktree = vi.fn();
 
@@ -255,11 +256,11 @@ describe("acquireTaskWorktree", () => {
       createWorktree,
     });
 
-    expect(result).toMatchObject({ worktreePath: orphanedPath, branch: "fusion/fn-1", source: "existing" });
+    expect(result).toMatchObject({ worktreePath: canonicalOrphanedPath, branch: "fusion/fn-1", source: "existing" });
     expect(git(orphanedPath, "git rev-parse HEAD")).toBe(preservedTip);
     expect(createWorktree).not.toHaveBeenCalled();
     expect(store.updateTask).toHaveBeenCalledWith("FN-1", {
-      worktree: orphanedPath,
+      worktree: canonicalOrphanedPath,
       branch: "fusion/fn-1",
       branchWriteOrigin: "engine",
     });
