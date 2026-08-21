@@ -708,11 +708,11 @@ export function createMockStore() {
           },
           ...(options?.clearSingularWorktree
             ? {
-                worktree: undefined,
-                branch: undefined,
+                worktree: null,
+                branch: null,
                 branchWriteOrigin: "engine",
-                executionStartBranch: undefined,
-                baseCommitSha: undefined,
+                executionStartBranch: null,
+                baseCommitSha: null,
               }
             : {}),
         });

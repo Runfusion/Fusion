@@ -71,6 +71,10 @@ describe("worktree workflow routing fixture", () => {
   The shared executor fake is a production-contract seam: concurrent callback merges must preserve
   every repository entry, missing required entries are no-ops, and workspace routing clears all
   singular-checkout metadata.
+
+  FNXC:EngineTests 2026-08-21-09:29:
+  Cleared singular-checkout metadata must use null, matching the persisted TaskStore row shape;
+  undefined would let fixture-only behavior diverge from production reads.
   */
   it("mirrors atomic workspace worktree merge semantics", async () => {
     const store = createMockStore();
@@ -129,10 +133,10 @@ describe("worktree workflow routing fixture", () => {
 
     expect(Object.keys(result.workspaceWorktrees ?? {}).sort()).toEqual(["repo-a", "repo-b", "repo-c"]);
     expect(result).toEqual(expect.objectContaining({ branchWriteOrigin: "engine" }));
-    expect(result.worktree).toBeUndefined();
-    expect(result.branch).toBeUndefined();
-    expect(result.executionStartBranch).toBeUndefined();
-    expect(result.baseCommitSha).toBeUndefined();
+    expect(result.worktree).toBeNull();
+    expect(result.branch).toBeNull();
+    expect(result.executionStartBranch).toBeNull();
+    expect(result.baseCommitSha).toBeNull();
   });
 
   it("selects its eligible executor from the role pool", async () => {
