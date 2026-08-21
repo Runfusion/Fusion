@@ -5838,6 +5838,29 @@
     "inProgress": ""
   },
   "settings": {
+    "jira": {
+      "configuration": "",
+      "enable": "",
+      "enabledHelp": "",
+      "baseUrl": "",
+      "globalBaseUrl": "",
+      "baseUrlHelp": "",
+      "apiBaseUrl": "",
+      "globalApiBaseUrl": "",
+      "apiBaseUrlHelp": "",
+      "email": "",
+      "globalEmail": "",
+      "emailHelp": "",
+      "secretKey": "",
+      "globalSecretKey": "",
+      "secretHelp": "",
+      "secretScope": "",
+      "globalSecretScope": "",
+      "scopeHelp": "",
+      "template": "",
+      "globalTemplate": "",
+      "templateHelp": ""
+    },
     "actions": {
       "cancel": "Annuler",
       "save": "Enregistrer"
@@ -6331,6 +6354,8 @@
     "keepRemote": "Garder la version distante",
     "loading": "Chargement…",
     "memory": {
+      "chatContextBudget": "",
+      "chatContextBudgetHelp": "",
       "03": "",
       "agentsGetMemorySearchMemoryGetAndMemory": "",
       "agentsSearchWithQmdFirstFallBackTo": "",
