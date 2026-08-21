@@ -137,6 +137,8 @@ html {
   --font-size-md: 1.125rem;
   --font-size-lg: 1.25rem;
   --line-height-tight: 1.25;
+  /* FNXC:DashboardStyling 2026-08-21-13:35: normal-body line-height token (was a raw 1.4 literal in ChatFocusSelector.css). */
+  --line-height-normal: 1.4;
 
   /* Spacing Scale */
   --space-xs: 4px;

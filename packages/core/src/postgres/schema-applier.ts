@@ -66,7 +66,9 @@ capacity-model table drop that landed while this PR was open.
 /* FNXC:TaskRecommendations 2026-08-13-22:23: upgrades must install the source-agent index before duplicate intake queries it. */
 /* FNXC:WorkspaceLease 2026-08-15-12:00: the baseline ceiling must include durable coordination tables so an upgraded database is never rejected by the current binary. */
 /* FNXC:ActivityLogTaskSearch 2026-08-20-04:17: advance the schema ceiling so durable central task-ID lookups receive their indexed upgrade. */
-export const SCHEMA_BASELINE_VERSION = "0064";
+/* FNXC:MemoryFocus 2026-08-13-15:57: chat_sessions.memory_focus (RUFU-068) renumbered 0059->0060->0061 as upstream claimed 0059 (FN-9037) and 0060 (FN-9059). */
+/* FNXC:MemoryFocus 2026-08-20-22:10: the upstream 2026-08-20 batch (FN-066..FN-094) claimed 0061-0064 after this branch had already taken 0061, so the memory-focus migration is renumbered to 0065 and the baseline ceiling advances with it. */
+export const SCHEMA_BASELINE_VERSION = "0065";
 /** FNXC:SymbolLock 2026-07-20-10:00: upgrades need durable task declarations before admission resolves symbols. */
 export const TASK_DECLARED_SYMBOLS_VERSION = "0028";
 const INITIAL_SCHEMA_VERSION = "0000";
@@ -233,6 +235,9 @@ export const REMOVE_TASK_SUBTASK_SPLITTING_VERSION = "0062";
 export const AI_MERGE_REVIEW_RECONCILIATION_VERSION = "0063";
 /** FNXC:RepositoryScope 2026-08-20-23:07: upgraded projects need explicit task repository intent before workspace lifecycle readers use it. */
 export const TASK_REPOSITORY_SCOPE_VERSION = "0064";
+
+/** FNXC:MemoryFocus 2026-08-13-15:57: explicit registration prevents the per-conversation memory-focus migration from being skipped. Renumbered to 0060 (FN-9037 took 0059), then 0061, then 0065 (2026-08-20) when the upstream FN-066..FN-094 batch claimed 0061-0064. */
+export const CHAT_SESSION_MEMORY_FOCUS_VERSION = "0065";
 
 /** SECURITY DEFINER helper that only inserts LEGACY_ADOPTION_DRAINED_MARKER. */
 export const LEGACY_ADOPTION_DRAINED_MARKER_FUNCTION = "fusion_mark_legacy_adoption_drained";
@@ -471,6 +476,8 @@ const ACTIVITY_LOG_TASK_ID_INDEX_MIGRATION_PATH = join(MIGRATIONS_DIR, "0061_fn_
 const REMOVE_TASK_SUBTASK_SPLITTING_MIGRATION_PATH = join(MIGRATIONS_DIR, "0062_remove_task_subtask_splitting.sql");
 const AI_MERGE_REVIEW_RECONCILIATION_MIGRATION_PATH = join(MIGRATIONS_DIR, "0063_fn_090_ai_merge_review_reconciliation.sql");
 const TASK_REPOSITORY_SCOPE_MIGRATION_PATH = join(MIGRATIONS_DIR, "0064_fn_094_task_repository_scope.sql");
+/* FNXC:MemoryFocus 2026-08-14-10:30: renumbered to 0061 (FN-9059 workspace leases own 0060), then to 0065 (2026-08-20) when the upstream FN-066..FN-094 batch claimed 0061-0064. */
+const CHAT_SESSION_MEMORY_FOCUS_MIGRATION_PATH = join(MIGRATIONS_DIR, "0065_chat_session_memory_focus.sql");
 
 /**
  * Ensure the migration bookkeeping table exists. Lives in the public schema so
@@ -605,6 +612,7 @@ export async function applySchemaBaseline(
     const removeTaskSubtaskSplittingAlreadyApplied = applied.includes(REMOVE_TASK_SUBTASK_SPLITTING_VERSION);
     const aiMergeReviewReconciliationAlreadyApplied = applied.includes(AI_MERGE_REVIEW_RECONCILIATION_VERSION);
     const taskRepositoryScopeAlreadyApplied = applied.includes(TASK_REPOSITORY_SCOPE_VERSION);
+    const chatSessionMemoryFocusAlreadyApplied = applied.includes(CHAT_SESSION_MEMORY_FOCUS_VERSION);
     assertBinaryNotOlderThanDatabase(applied);
     let schemaChanged = false;
 
@@ -1348,6 +1356,14 @@ export async function applySchemaBaseline(
       const migrationSql = await readFile(TASK_REPOSITORY_SCOPE_MIGRATION_PATH, "utf8");
       await tx.execute(sql.raw(migrationSql));
       await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${TASK_REPOSITORY_SCOPE_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+
+    /* FNXC:MemoryFocus 2026-08-14-10:30: register 0065 explicitly (renumbered from 0061 on 2026-08-20 — the upstream FN-066..FN-094 batch owns 0061-0064). */
+    if (!chatSessionMemoryFocusAlreadyApplied) {
+      const migrationSql = await readFile(CHAT_SESSION_MEMORY_FOCUS_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${CHAT_SESSION_MEMORY_FOCUS_VERSION}) ON CONFLICT (version) DO NOTHING`);
       schemaChanged = true;
     }
     return { applied: schemaChanged, pluginHooksRun: pluginHooks.length };

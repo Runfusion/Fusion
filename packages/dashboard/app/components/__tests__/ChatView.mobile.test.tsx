@@ -23,6 +23,17 @@ vi.mock("../../hooks/useNavigationHistory", () => ({
   useNavigationHistoryContext: () => ({ pushNav: vi.fn(), replaceCurrent: vi.fn() }),
 }));
 
+// RUFU-121: ChatView fetches the session's memoryFocus for the focus chip;
+// stub the api seam (importOriginal spread keeps new exports working) so the
+// mobile render path never hits the network.
+vi.mock("../../api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../api")>();
+  return {
+    ...actual,
+    fetchChatSession: vi.fn().mockResolvedValue({ session: { memoryFocus: null } }),
+  };
+});
+
 describe("ChatView mobile list/detail navigation", () => {
   beforeEach(() => {
     installChatViewEnv();

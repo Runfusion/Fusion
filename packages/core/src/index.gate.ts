@@ -1922,6 +1922,7 @@ export {
   readProjectMemoryWithBackend,
   searchProjectMemory,
   getProjectMemory,
+  buildProactiveMemoryCueBlock,
   resolveMemoryInstructionContext,
   type MemoryInstructionContext,
 } from "./memory/project-memory.js";
@@ -1974,14 +1975,67 @@ export {
   readMemory,
   writeMemory,
   memoryExists,
+  captureMemory,
   MEMORY_BACKEND_SETTINGS_KEYS,
   DEFAULT_MEMORY_BACKEND,
   isQmdAvailable,
 } from "./memory/memory-backend.js";
 
-export { MemoryBackendError } from "./memory/memory-backend.js";
+export {
+  MemoryBackendError,
+  type MemoryBackendErrorCode,
+} from "./memory/memory-backend-error.js";
 
-export type { MemoryBackendCapabilities, MemoryFileInfo, MemoryGetOptions, MemoryGetResult, MemorySearchOptions, MemorySearchResult } from "./memory/memory-backend.js";
+// FNXC:StashBackend 2026-08-13-16:35: (RUFU-068) expose the Stash backend.
+export {
+  StashMemoryBackend,
+  DEFAULT_STASH_URL,
+  // FNXC:RUFU121CoreExports 2026-08-18-19:53: RUFU-121 recall + delete-sync helpers.
+  normalizeStashSearchQuery,
+  queryStashEvents,
+  deleteStashChatSession,
+  // FNXC:RUFU125CoreExports 2026-08-19-06:07: RUFU-125 bulk archival delete-sync helpers.
+  DEFAULT_STASH_BULK_MAX_PAGES,
+  deleteStashChatSessions,
+  bulkDeleteStashChatSessions,
+} from "./memory/memory-backend-stash.js";
+export type {
+  StashEvent,
+  StashHttpMethod,
+  StashHttpClient,
+  StashEventQueryFilters,
+  StashChatSessionDeleteResult,
+  // FNXC:RUFU125CoreExports 2026-08-19-06:07: RUFU-125 bulk delete-sync types.
+  StashBulkChatSessionDeleteResult,
+  StashBulkChatSessionSyncSummary,
+  StashBulkDeleteStore,
+} from "./memory/memory-backend-stash.js";
+
+// FNXC:RUFU121StashSettingsInCore 2026-08-18-19:53: (RUFU-121) Stash settings/secret
+// resolution moved from @fusion/engine into core (dashboard delete-sync consumer).
+export {
+  STASH_SECRET_KEY,
+  STASH_SECRET_SCOPE,
+  resolveStashMemorySettings,
+} from "./memory/stash-settings.js";
+export type {
+  MemoryBackendSettings,
+  StashSecretsReader,
+} from "./memory/stash-settings.js";
+
+export type {
+  MemoryBackendCapabilities,
+  MemoryFileInfo,
+  MemoryGetOptions,
+  MemoryGetResult,
+  MemorySearchOptions,
+  MemorySearchResult,
+  MemoryCaptureEvent,
+  MemoryCaptureResult,
+  MemoryCaptureEventType,
+  // FNXC:RUFU121CoreExports 2026-08-18-19:53: RUFU-121 write() identity meta.
+  MemoryWriteIdentity,
+} from "./memory/memory-backend.js";
 
 export {
   agentDailyMemoryPath,

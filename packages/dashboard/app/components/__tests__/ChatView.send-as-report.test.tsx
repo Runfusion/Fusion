@@ -10,7 +10,7 @@ vi.mock("../../hooks/useNavigationHistory", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../hooks/useNavigationHistory")>();
   return { ...actual, useNavigationHistoryContext: () => ({ pushNav: vi.fn(), replaceCurrent: vi.fn() }) };
 });
-vi.mock("../../api", () => ({ fetchSettings: vi.fn().mockResolvedValue({}), fetchModels: vi.fn().mockResolvedValue({ models: [] }), fetchAgents: vi.fn().mockResolvedValue([]), fetchDiscoveredSkills: vi.fn().mockResolvedValue([]), fetchTasks: vi.fn().mockResolvedValue([]), searchFiles: vi.fn().mockResolvedValue({ files: [] }), updateGlobalSettings: vi.fn() }));
+vi.mock("../../api", () => ({ fetchSettings: vi.fn().mockResolvedValue({}), fetchModels: vi.fn().mockResolvedValue({ models: [] }), fetchAgents: vi.fn().mockResolvedValue([]), fetchDiscoveredSkills: vi.fn().mockResolvedValue([]), fetchTasks: vi.fn().mockResolvedValue([]), searchFiles: vi.fn().mockResolvedValue({ files: [] }), updateGlobalSettings: vi.fn(), fetchChatSession: vi.fn().mockResolvedValue({ session: { memoryFocus: null } }) }));
 installChatViewEnv();
 
 const session = (overrides: Record<string, unknown> = {}) => ({

@@ -627,6 +627,7 @@ export const askQuestionParams = Type.Object({
 
 export const memorySearchParams = Type.Object({
   query: Type.String({ description: "Search terms for durable project memory. Use focused keywords, not a full prompt." }),
+  topic: Type.Optional(Type.String({ description: "RUFU-068: optional read-time focus/topic. When set, scopes the project recall to a working topic (a within-project read filter). 'all', empty, or '*' clears to whole-project scope. The Stash backend pushes this as a &topic= query param for SQL-enforced filtering; never post-filter in-memory." })),
   limit: Type.Optional(Type.Number({ description: "Maximum snippets to return (default: 5, max: 20)" })),
 });
 
@@ -697,6 +698,11 @@ type AgentMemoryContext = {
 
 type MemoryToolOptions = {
   agentMemory?: AgentMemoryContext;
+  // FNXC:MemoryFocusEngine 2026-08-13-15:57: optional per-conversation memory
+  // focus/topic from the enclosing session (chat_sessions.memory_focus). When set,
+  // fn_memory_search scopes the project recall to this topic via
+  // resolveMemorySearchTopic → searchProjectMemory (a within-project read filter).
+  focus?: string;
 };
 
 type MemorySearchHit = {
@@ -4076,6 +4082,30 @@ export function createWorkflowAuthoringTools(
   ];
 }
 
+/**
+ * Resolve an active memory-search topic/focus to its effective value.
+ *
+ * RUFU-068: a conversation's focus is a within-project read filter that scopes
+ * recall to a working topic. Values that mean "no filter" collapse to `undefined`
+ * so the caller searches whole-project scope (project default):
+ *   - undefined / null → undefined (whole scope)
+ *   - empty or whitespace-only string → undefined
+ *   - "all" or "*" (operator way to clear the filter) → undefined
+ * Any other non-empty trimmed string is the active topic.
+ */
+// FNXC:MemoryFocusEngine 2026-08-13-15:57: per-conversation memory focus (RUFU-068).
+// A conversation can carry an active topic; recall (fn_memory_search) must scope to
+// it as a WITHIN-project read filter. 'all'/'*'/empty/undefined mean no filter →
+// whole-project scope (project default). The resolved topic is pushed through
+// searchProjectMemory → backend.search (Stash REST &topic= for SQL-side filtering),
+// never a client-side post-query filter.
+export function resolveMemorySearchTopic(focus: string | null | undefined): string | undefined {
+  if (focus == null) return undefined;
+  const trimmed = focus.trim();
+  if (trimmed === "" || trimmed === "all" || trimmed === "*") return undefined;
+  return trimmed;
+}
+
 export function createMemorySearchTool(rootDir: string, settings?: MemoryToolSettings, options?: MemoryToolOptions): ToolDefinition {
   return {
     name: "fn_memory_search",
@@ -4091,9 +4121,18 @@ export function createMemorySearchTool(rootDir: string, settings?: MemoryToolSet
           ? await searchAgentMemoryWithQmd(rootDir, options.agentMemory, params.query, limit)
           : await searchAgentMemoryFile(rootDir, options.agentMemory, params.query, limit)
         : [];
+      // FNXC:MemoryFocusEngine 2026-08-13-15:57: scope the project recall to the
+      // active topic when a focus is set — either explicitly via params.topic, or
+      // from the enclosing conversation's focus (options.focus). 'all'/''/'*' clears
+      // to whole-project scope. This is a WITHIN-project read filter; it never
+      // weakens cross-project scope isolation. The topic reaches searchProjectMemory
+      // → backend.search, which (for Stash) pushes it as a &topic= query param for
+      // SQL-enforced filtering — we never post-filter results in-memory.
+      const activeTopic = resolveMemorySearchTopic(params.topic ?? options?.focus);
       const projectResults = await searchProjectMemory(rootDir, {
         query: params.query,
         limit,
+        ...(activeTopic ? { topic: activeTopic } : {}),
       }, settings);
       const results = [...agentResults, ...projectResults]
         .sort((a, b) => b.score - a.score || a.path.localeCompare(b.path))
@@ -6466,6 +6505,17 @@ class LateWorkspaceRepoAcquireError extends Error {
   }
 }
 
+  /*
+  FNXC:WorkspaceLateAcquire 2026-08-20-20:37 DELIBERATE-LITERAL:
+  Late worktree acquisition is refused once the task has left the executable column set
+  (in-review — review/merge owns the worktree; done/archived — terminal) or has started
+  landing (a merging-* status, or any workspace repo with a landedSha). This is a
+  deliberate column+status+workspace condition (FN-9163, upstream 2a3150582) — reviewed
+  and intentionally kept as an honest literal for the lifecycle-column census; no single
+  role helper expresses this three-part condition without inventing a bespoke trait.
+  (2026-08-21, RUFU-146 rebase: after #3492 landed the column half is resolved by
+  isLateAcquireColumnBlocked and the three-part condition now lives in this helper.)
+  */
 async function isWorkspaceRepoLateAcquireBlocked(store: TaskStore, currentTask: import("@fusion/core").Task, repo: string): Promise<boolean> {
   if (currentTask.workspaceWorktrees?.[repo]) return false;
   if (["merging", "merging-pr", "merging-fix"].includes(currentTask.status ?? "")) return true;

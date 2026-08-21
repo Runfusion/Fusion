@@ -1490,6 +1490,82 @@ export async function runAiMerge(
       task.mergeDetails?.mergeConfirmed === true ||
       !!task.mergeDetails?.commitSha ||
       hasPriorAiNoOpFinalizationProof(task, branch, integrationBranch);
+    /*
+     * FNXC:NoCommitsBranchMissing 2026-08-08-19:46:
+     * No-commits tasks (observational audits, non-code deliverables) never create a git
+     * branch with substantive work. If a no-commits task WAS executed (baseCommitSha set)
+     * but its branch is missing and not already merged, route through evaluateNoCommitsNoOpFinalize
+     * BEFORE the "work appears lost" throw: all-done tasks finalize as a no-op (audit.git kind
+     * "no-commits-expected"), incomplete/skipped tasks demote to todo with progress preserved.
+     * Commit-expected tasks STILL throw below (invariant unchanged).
+     * Restored from RUFU-011 (commit 98dc396ec); the noCommitsExpected clause was dropped in
+     * the domain-folder move / dep-sync restructure.
+     */
+    if (wasExecuted && !alreadyMerged && task.noCommitsExpected === true) {
+      const noCommitsFinalize = evaluateNoCommitsNoOpFinalize(task);
+      if (noCommitsFinalize.blocked) {
+        const reason = noCommitsFinalize.reason ?? "no-commits task has incomplete work with no branch changes";
+        /*
+         * FNXC:RUFU146MergeFence 2026-08-21-13:35:
+         * RUFU-146 review (PRRT_kwDOSA-8Y86a7RaK): this lane's lifecycle
+         * writes were UNFENCED — if the merge generation is aborted after the
+         * branch lookup (successor generation owns the task), a stale
+         * generation's direct updateTask/logEntry/moveTask/finalizeTask could
+         * still demote the successor to todo or finalize it as done. Route
+         * every write through fence.write(...), stop after an orphaned
+         * signal, and hand the fence to finalizeTask — the same contract the
+         * ai-empty-merge lane and the missing-branch no-op finalize already
+         * follow.
+         */
+        await fence.write("lifecycle", () => store.updateTask(taskId, { error: reason }));
+        if (fence.isOrphaned()) return {
+          task, branch, merged: false, noOp: false, ok: true, reason, error: reason,
+          worktreeRemoved: false, branchDeleted: false,
+        };
+        const reboundColumn = await resolveFinalizeReboundColumn(store, taskId);
+        await fence.write("log", () => store.logEntry(
+          taskId,
+          `Finalize blocked (no-commits incomplete-work guard): ${reason} — moving back to ${reboundColumn} with progress preserved`,
+          JSON.stringify({
+            doneCount: noCommitsFinalize.doneCount,
+            incompleteCount: noCommitsFinalize.incompleteCount,
+            branch,
+            integrationBranch,
+            lane: "no-commits-branch-missing",
+          }, null, 2),
+        ));
+        await audit.database({
+          type: "task:no-commits-finalize-blocked-incomplete-steps" as Parameters<typeof audit.database>[0]["type"],
+          target: taskId,
+          metadata: {
+            reason,
+            doneCount: noCommitsFinalize.doneCount,
+            incompleteCount: noCommitsFinalize.incompleteCount,
+            branch,
+            integrationBranch,
+            lane: "no-commits-branch-missing",
+          },
+        });
+        await fence.write("lifecycle", () => store.moveTask(taskId, reboundColumn, { preserveProgress: true, moveSource: "engine" } as Parameters<TaskStore["moveTask"]>[2]));
+        return {
+          task,
+          branch,
+          merged: false,
+          noOp: false,
+          ok: true,
+          reason,
+          error: reason,
+          worktreeRemoved: false,
+          branchDeleted: false,
+        };
+      }
+      await audit.git({
+        type: "merge:ai-no-branch",
+        target: branch,
+        metadata: { taskId, kind: "no-commits-expected", noCommitsExpected: true },
+      });
+      return await finalizeTask(store, taskId, noOpResult(task, branch, "no-commits-expected"), undefined, undefined, projectRootDir, fence);
+    }
     if (wasExecuted && !alreadyMerged) {
       await audit.git({
         type: "merge:ai-no-branch",

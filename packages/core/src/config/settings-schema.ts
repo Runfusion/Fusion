@@ -824,6 +824,40 @@ export const DEFAULT_PROJECT_SETTINGS = {
   taskEvaluationRetention: undefined,
   memoryEnabled: true,
   memoryBackendType: "qmd",
+  // FNXC:StashConfig 2026-08-13-16:35: (RUFU-068) Optional per-project Stash LCM
+  // memory backend config. stashUrl points at the operator's Stash server
+  // (default http://127.0.0.1:3457). stashApiKey is an override for hard
+  // isolation (separate Stash instance/account); the PRIMARY API key lives in
+  // the global secrets store ("stash-api-key") and is NEVER committed. Project
+  // value wins over global. TencentDB's URL setting is intentionally NOT ported.
+  stashUrl: "",
+  stashApiKey: "",
+  /*
+  FNXC:Rufu126VectorSearch 2026-08-19-10:50:
+  RUFU-126 (D3): opt-in vector (semantic) recall for the Stash memory backend.
+  Default OFF — zero behavior change until the operator enables it (this is a
+  prototype; rejected alternative was automatic capability detection, which
+  would change default behavior and pay a per-process 404 round-trip against
+  unpatched servers). When true, multi-word (≥2 tokens) recall queries try the
+  Stash GET /api/v1/me/sessions/events/semantic-search endpoint first and fall
+  back byte-identically to the RUFU-121 keyword path on any vector failure
+  (see memory-backend-stash.ts search() + docs/research/stash-vector-search-evaluation.md
+  for D1–D5). Schema-only, consistent with stashUrl/stashApiKey (no UI row).
+  */
+  stashVectorSearch: false,
+  /*
+  FNXC:StashSessionCapture 2026-08-19-04:37:
+  (RUFU-122) Task-terminal transcript upload defaults. All are inert unless
+  memoryBackendType === "stash". executorSessionCaptureEnabled gates ONLY the
+  transcript upload (the RUFU-068 terminal anchor event still fires when it is
+  off) and defaults ON. executorSessionCaptureMaxEvents caps transcript events
+  per task; the engine keeps the most recent N (default 20000). 
+  executorSessionCaptureIncludeStatus is the schema-only "keep a setting" for
+  uploading `status` log entries (default off; no UI row).
+  */
+  executorSessionCaptureEnabled: true,
+  executorSessionCaptureMaxEvents: 20_000,
+  executorSessionCaptureIncludeStatus: false,
   memoryAutoSummarizeEnabled: false,
   memoryAutoSummarizeThresholdChars: 50_000,
   memoryAutoSummarizeSchedule: "0 3 * * *",

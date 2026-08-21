@@ -12,8 +12,13 @@ import { getTaskCompletionBlockerForStore } from "../execution/task-completion.j
 import { buildWorkflowFailureScopeGuard } from "./workflow-failure-scope-guard.js";
 import { resolveAuthoritativeExternalExecutionRoute } from "./resolve-authoritative-external-execution-route.js";
 import { TaskExecutorWorktreePureFacades } from "./task-executor-worktree-pure-facades.js";
+import { ChatSessionMemoryCapture, createStashChatMemoryCaptureSink, type ChatEventEmitter, type RuntimeProjectIdentity } from "./memory-capture.js";
 
 export abstract class TaskExecutorSessionFacades extends TaskExecutorWorktreePureFacades {
+  /** Active complete-chat memory capture service + its emitter/detach (RUFU-068). */
+  protected chatMemoryCapture: ChatSessionMemoryCapture | null = null;
+  protected chatMemoryCaptureEmitter: ChatEventEmitter | null = null;
+  protected chatMemoryCaptureDetach: (() => void) | null = null;
   protected addActiveWorktree(taskId: string, worktreePath: string): void { impl.addActiveWorktreeImpl(this.activeWorktrees, taskId, worktreePath); }
   protected getActiveWorktreePaths(taskId: string): ReturnType<typeof impl.getActiveWorktreePathsImpl> { return impl.getActiveWorktreePathsImpl(this.activeWorktrees, taskId); }
   protected sessionRegistryPath(taskId: string, worktreePath: string): ReturnType<typeof impl.sessionRegistryPathImpl> { return impl.sessionRegistryPathImpl(this.rootDir, taskId, worktreePath); }
@@ -72,7 +77,48 @@ export abstract class TaskExecutorSessionFacades extends TaskExecutorWorktreePur
   protected tokenUsageWithModelSnapshot(...args: Parameters<typeof impl.tokenUsageWithModelSnapshotImpl>): ReturnType<typeof impl.tokenUsageWithModelSnapshotImpl> { return impl.tokenUsageWithModelSnapshotImpl(...args); }
   protected async extractSessionTokenUsage(...args: Parameters<typeof impl.extractSessionTokenUsageImpl>): ReturnType<typeof impl.extractSessionTokenUsageImpl> { return impl.extractSessionTokenUsageImpl(...args); }
   protected signalTaskComplete(task: import("@fusion/core").Task): ReturnType<typeof impl.signalTaskCompleteImpl> { return impl.signalTaskCompleteImpl(bags.buildSignalTaskCompleteDeps(this), task); }
+  /*
+  FNXC:StashSessionCapture 2026-08-19-05:09:
+  (RUFU-122) Terminal-failure capture seam (RUFU-122 requirement 3): the executor
+  post-loop finally calls this for terminally failed runs. It fires ONLY the
+  memory capture (no post-task reflection, no onComplete — those belong to the
+  genuine completion seam), sharing the capturedMemoryTaskIds gate with
+  signalTaskComplete so a task is captured at most once across both seams.
+  Fire-and-forget: triggerTaskMemoryCapture never throws.
+  */
+  protected signalTaskTerminalFailed(task: import("@fusion/core").Task): ReturnType<typeof impl.triggerTaskMemoryCaptureImpl> { return impl.triggerTaskMemoryCaptureImpl(bags.buildSignalTaskTerminalFailedDeps(this), task, "failure"); }
   protected triggerPostTaskReflectionCapture(task: import("@fusion/core").Task): ReturnType<typeof impl.triggerPostTaskReflectionCaptureImpl> { return impl.triggerPostTaskReflectionCaptureImpl(bags.buildTriggerPostTaskReflectionCaptureDeps(this), task); }
+  /** Live complete-chat memory capture: subscribes this executor to the project ChatStore so
+   * every conversation's messages are captured (best-effort) into the Stash memory backend.
+   * Returns a detach fn. Idempotent per executor. Never throws — capture failures are swallowed.
+   *
+   * FNXC:RUFU121AttachIdentity 2026-08-18-19:53:
+   * RUFU-121 Step 4: the optional projectIdentity is threaded to both the capture service
+   * (per-session identity cache + runtime fallback) and the stash sink factory (fallback for
+   * identity-less sink params), so captured events are stamped to the per-project Stash
+   * session folder. Omitting it preserves the legacy identity-less attach path.
+   */
+  attachChatMemoryCapture(chatStore: ChatEventEmitter, projectIdentity?: RuntimeProjectIdentity): () => void {
+    if (this.chatMemoryCapture && this.chatMemoryCaptureDetach) return this.chatMemoryCaptureDetach;
+    const capture = new ChatSessionMemoryCapture({
+      sink: createStashChatMemoryCaptureSink(this.store, projectIdentity),
+      rootDir: this.rootDir,
+      projectIdentity,
+    });
+    this.chatMemoryCapture = capture;
+    this.chatMemoryCaptureEmitter = chatStore;
+    this.chatMemoryCaptureDetach = capture.attach(chatStore);
+    return this.chatMemoryCaptureDetach;
+  }
+  /** Detach any active chat memory capture subscription (idempotent). */
+  detachChatMemoryCapture(): void {
+    if (this.chatMemoryCapture && this.chatMemoryCaptureEmitter) {
+      this.chatMemoryCapture.detach(this.chatMemoryCaptureEmitter);
+    }
+    this.chatMemoryCapture = null;
+    this.chatMemoryCaptureEmitter = null;
+    this.chatMemoryCaptureDetach = null;
+  }
   protected scheduleCompletedTaskWatchdog(taskId: string, trigger: string): void { impl.scheduleCompletedTaskWatchdogImpl(bags.buildScheduleCompletedTaskWatchdogDeps(this, constants.COMPLETED_TASK_WATCHDOG_MS), taskId, trigger); }
   protected async clearTerminalStepFailuresForRetry(taskId: string): ReturnType<typeof impl.clearTerminalStepFailuresForRetryImpl> { return impl.clearTerminalStepFailuresForRetryImpl(bags.buildStoreRunContextDeps(this), taskId); }
   protected async performWorkflowRerunBounce(...args: FacadeRestArgs<typeof impl.performWorkflowRerunBounceImpl>): ReturnType<typeof impl.performWorkflowRerunBounceImpl> { return impl.performWorkflowRerunBounceImpl(bags.buildPerformWorkflowRerunBounceDeps(this), ...args); }

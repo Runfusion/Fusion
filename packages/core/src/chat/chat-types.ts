@@ -69,6 +69,13 @@ export interface ChatSession {
   modelId: string | null;
   /** Optional thinking/reasoning-effort override for this session (optional, overrides defaults) */
   thinkingLevel: string | null;
+  /**
+   * FNXC:MemoryFocus 2026-08-13-15:57:
+   * RUFU-068: per-conversation read-time memory FOCUS/TOPIC. When set, this
+   * session's fn_memory_search + proactive recall are scoped to the topic within
+   * the project. Null/empty string normalizes to unset → whole-project scope.
+   */
+  memoryFocus: string | null;
   /** When the session was created */
   createdAt: string;
   /** When the session was last updated */
@@ -234,6 +241,8 @@ export interface ChatSessionCreateInput {
   modelId?: string | null;
   /** Optional thinking/reasoning-effort override */
   thinkingLevel?: string | null;
+  /** Optional per-conversation read-time memory focus/topic (RUFU-068). */
+  memoryFocus?: string | null;
   /** Optional cli-agent adapter id; when set the chat is CLI-backed (U12) */
   cliExecutorAdapterId?: string | null;
 }
@@ -258,6 +267,8 @@ export interface ChatSessionUpdateInput {
   agentId?: string;
   /** Thinking/reasoning-effort override */
   thinkingLevel?: string | null;
+  /** Per-conversation read-time memory focus/topic; null/empty clears to whole-project scope (RUFU-068). */
+  memoryFocus?: string | null;
   /** Pin timestamp, or null to remove a pin. */
   pinnedAt?: string | null;
 }
