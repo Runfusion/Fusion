@@ -21,10 +21,16 @@ FNXC:ChatStashBackfillIdempotency 2026-08-19-22:35:
 Stash's /events/batch is a bare INSERT (no server-side dedupe — verified against the
 backend source and live: 4 -> 8 -> 12 events across two identical backfills), so
 idempotency is client-side: the route pages the session's existing events via
-queryStashEvents and skips already-stored content. (i) asserts a pre-check hit skips
+queryStashEvents and skips already-stored events. (i) asserts a pre-check hit skips
 those messages (capture receives only the fresh ones; skipped is reported); (j)
 asserts a pre-check transport failure fails CLOSED (502, no capture) rather than
 uploading duplicates.
+FNXC:ChatStashBackfillKey 2026-08-21-13:35:
+RUFU-146 review (PRRT_kwDOSA-8Y86a7RZ8): the dedupe key is now (event type,
+canonical timestamp, NUL-stripped content) instead of content alone — identical
+text at different times (or empty content) must not collapse onto one key, and
+the wire field is created_at (the Stash field the server honors) instead of the
+ignored `timestamp` key. (l) is the three-phase regression.
 */
 const mocks = vi.hoisted(() => ({
   captureMemory: vi.fn(),
@@ -179,7 +185,7 @@ describe("POST /api/chat/sessions/:id/backfill-stash (ChatStashBackfill)", () =>
     ]);
     // Real per-message chronology — NOT the upload time (a backfill that re-stamped
     // every message with now() would destroy the transcript's after/before ordering).
-    expect(events.map((e: { timestamp: string }) => e.timestamp)).toEqual([
+    expect(events.map((e: { created_at: string }) => e.created_at)).toEqual([
       "2026-07-01T10:00:00.000Z",
       "2026-07-01T10:00:30.000Z",
       "2026-07-02T09:00:00.000Z",
@@ -259,8 +265,8 @@ describe("POST /api/chat/sessions/:id/backfill-stash (ChatStashBackfill)", () =>
     const { app } = buildApp({ settings: STASH_OK_SETTINGS });
     mocks.queryStashEvents.mockResolvedValue({
       events: [
-        { content: "hello old chat", created_at: "2026-07-01T10:00:00.000Z" },
-        { content: "old reply", created_at: "2026-07-01T10:00:30.000Z" },
+        { event_type: "user_message", content: "hello old chat", created_at: "2026-07-01T10:00:00.000Z" },
+        { event_type: "assistant_message", content: "old reply", created_at: "2026-07-01T10:00:30.000Z" },
       ],
       hasMore: false,
     });
@@ -322,10 +328,10 @@ describe("POST /api/chat/sessions/:id/backfill-stash (ChatStashBackfill)", () =>
     const { app } = buildApp({ settings: STASH_OK_SETTINGS });
     mocks.queryStashEvents.mockResolvedValue({
       events: [
-        { content: "hello old chat", created_at: "2026-07-01T10:00:00.000Z" },
-        { content: "old reply", created_at: "2026-07-01T10:00:30.000Z" },
-        { content: "follow-up", created_at: "2026-07-02T09:00:00.000Z" },
-        { content: "second reply", created_at: "2026-07-02T09:00:45.000Z" },
+        { event_type: "user_message", content: "hello old chat", created_at: "2026-07-01T10:00:00.000Z" },
+        { event_type: "assistant_message", content: "old reply", created_at: "2026-07-01T10:00:30.000Z" },
+        { event_type: "user_message", content: "follow-up", created_at: "2026-07-02T09:00:00.000Z" },
+        { event_type: "assistant_message", content: "second reply", created_at: "2026-07-02T09:00:45.000Z" },
       ],
       hasMore: false,
     });
@@ -335,5 +341,74 @@ describe("POST /api/chat/sessions/:id/backfill-stash (ChatStashBackfill)", () =>
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ ok: true, inserted: 0, skipped: 4, uploaded: 0 });
     expect(mocks.captureMemory).not.toHaveBeenCalled();
+  });
+
+  /*
+  FNXC:ChatStashBackfillKey 2026-08-21-13:35:
+  RUFU-146 review (PRRT_kwDOSA-8Y86a7RZ8): three-phase dedupe regression.
+  Phase 1: fresh backfill of a chat whose messages include IDENTICAL content
+  at different times ("done" x2) and EMPTY content at different times ("") —
+  the content-only key collapsed all of these onto one key, permanently
+  suppressing every message after the first. All four must upload.
+  Phase 2: a re-run where only the FIRST "done" is stored: the second
+  identical-content message must still upload (type+timestamp distinguish
+  them); the two empty-content messages are not yet stored so they upload.
+  Phase 3: a full re-run where all four are stored, with created_at in the
+  SERVER'S re-serialized form (6-digit fraction: .000Z read back as
+  .000000Z) — nothing may upload; capture is never called.
+  */
+  it("(l) RUFU-146: identical + empty content are distinct keys; full re-run uploads nothing", async () => {
+    const dupMessages = [
+      { id: "d1", sessionId: "chat-dup", role: "user", content: "done", thinkingOutput: null, metadata: null, createdAt: "2026-07-01T10:00:00.000Z" },
+      { id: "d2", sessionId: "chat-dup", role: "assistant", content: "done", thinkingOutput: null, metadata: null, createdAt: "2026-07-01T10:00:30.000Z" },
+      { id: "d3", sessionId: "chat-dup", role: "user", content: "", thinkingOutput: null, metadata: null, createdAt: "2026-07-01T10:01:00.000Z" },
+      { id: "d4", sessionId: "chat-dup", role: "assistant", content: "", thinkingOutput: null, metadata: null, createdAt: "2026-07-01T10:02:00.000Z" },
+    ];
+    const { app } = buildApp({ settings: STASH_OK_SETTINGS, messages: dupMessages as never });
+
+    // Phase 1 — fresh: store is empty, all four upload (identical/empty content included).
+    mocks.queryStashEvents
+      .mockResolvedValueOnce({ events: [], hasMore: false })
+      // Phase 2 — only the first "done" is stored; the second must still upload.
+      .mockResolvedValueOnce({
+        events: [{ event_type: "user_message", content: "done", created_at: "2026-07-01T10:00:00.000Z" }],
+        hasMore: false,
+      })
+      // Phase 3 — full re-run; the server re-serializes created_at with a 6-digit
+      // fraction (.000Z -> .000000Z), so matching must survive re-serialization.
+      .mockResolvedValueOnce({
+        events: [
+          { event_type: "user_message", content: "done", created_at: "2026-07-01T10:00:00.000000Z" },
+          { event_type: "assistant_message", content: "done", created_at: "2026-07-01T10:00:30.000000Z" },
+          { event_type: "user_message", content: "", created_at: "2026-07-01T10:01:00.000000Z" },
+          { event_type: "assistant_message", content: "", created_at: "2026-07-01T10:02:00.000000Z" },
+        ],
+        hasMore: false,
+      });
+
+    const res1 = await request(app, "POST", "/api/chat/sessions/chat-dup/backfill-stash");
+    expect(res1.status).toBe(200);
+    expect(res1.body).toEqual({ ok: true, inserted: 2, skipped: 0, uploaded: 4 });
+    expect(mocks.captureMemory).toHaveBeenCalledTimes(1);
+    let [, , , events] = mocks.captureMemory.mock.calls[0];
+    expect(events.map((e: { content: string }) => e.content)).toEqual(["done", "done", "", ""]);
+    expect(events.map((e: { created_at: string }) => e.created_at)).toEqual([
+      "2026-07-01T10:00:00.000Z",
+      "2026-07-01T10:00:30.000Z",
+      "2026-07-01T10:01:00.000Z",
+      "2026-07-01T10:02:00.000Z",
+    ]);
+
+    const res2 = await request(app, "POST", "/api/chat/sessions/chat-dup/backfill-stash");
+    expect(res2.status).toBe(200);
+    expect(res2.body).toEqual({ ok: true, inserted: 2, skipped: 1, uploaded: 3 });
+    expect(mocks.captureMemory).toHaveBeenCalledTimes(2);
+    [, , , events] = mocks.captureMemory.mock.calls[1];
+    expect(events.map((e: { content: string }) => e.content)).toEqual(["done", "", ""]);
+
+    const res3 = await request(app, "POST", "/api/chat/sessions/chat-dup/backfill-stash");
+    expect(res3.status).toBe(200);
+    expect(res3.body).toEqual({ ok: true, inserted: 0, skipped: 4, uploaded: 0 });
+    expect(mocks.captureMemory).toHaveBeenCalledTimes(2); // phase 3 uploads nothing
   });
 });

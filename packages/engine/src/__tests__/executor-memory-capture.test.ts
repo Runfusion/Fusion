@@ -115,6 +115,31 @@ describe("chatMessageToMemoryCaptureEvent (message → event mapping)", () => {
     expect(evt.event_type).toBe("tool_use");
     expect((evt as Record<string, unknown>).tool_name).toBeUndefined();
   });
+
+  /*
+  FNXC:RUFU146CreatedAt 2026-08-21-13:35:
+  RUFU-146 review (PRRT_kwDOSA-8Y86a7RaB): the mapper MUST preserve the
+  message's creation time via `created_at` (the Stash storage field). The
+  previous `timestamp` wire field was ignored server-side, so every event
+  landed with the receive wall-clock; buffered uploads lost message order.
+  */
+  it("maps createdAt to created_at (exact value, no receive-time substitution)", () => {
+    const createdAt = "2026-08-21T09:14:02.500Z";
+    const evt = chatMessageToMemoryCaptureEvent({
+      role: "user",
+      content: "preserved",
+      metadata: null,
+      createdAt,
+    });
+    expect(evt.created_at).toBe(createdAt);
+    expect((evt as Record<string, unknown>).timestamp).toBeUndefined();
+  });
+
+  it("falls back to a parseable RFC3339 created_at when createdAt is omitted", () => {
+    const evt = chatMessageToMemoryCaptureEvent({ role: "assistant", content: "fallback", metadata: null });
+    expect(typeof evt.created_at).toBe("string");
+    expect(Number.isNaN(Date.parse(evt.created_at))).toBe(false);
+  });
 });
 
 class FakeChatEmitter implements ChatEventEmitter {

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import http from "node:http";
+import https from "node:https";
 import {
   StashMemoryBackend,
   DEFAULT_STASH_URL,
@@ -403,7 +404,13 @@ describe("StashMemoryBackend", () => {
       expect(res.ok).toBe(false);
     });
 
-    it("no-ops on empty events", async () => {
+    /*
+    FNXC:StashCaptureFacadeOrder 2026-08-21-13:35:
+    RUFU-146 review (PRRT_kwDOSA-8Y86a7RZi): enabled + empty is a SUCCESSFUL
+    no-op (ok:true) and short-circuits before backend resolution, so no
+    request is issued and no transport/secret resolution runs.
+    */
+    it("enabled + empty events -> ok:true no-op (no request, no backend resolution)", async () => {
       const { captureMemory } = await import("../memory/memory-backend.js");
       let called = false;
       responder = () => { called = true; return { statusCode: 200, body: { inserted: 1, deduped: 0 } }; };
@@ -414,7 +421,7 @@ describe("StashMemoryBackend", () => {
         [],
       );
       expect(called).toBe(false);
-      expect(res.ok).toBe(false);
+      expect(res).toEqual({ ok: true, inserted: 0, deduped: 0 });
     });
 
     it("captures through the resolved stash backend and never throws when unreachable", async () => {
@@ -512,6 +519,27 @@ describe("StashMemoryBackend", () => {
       expect(batchPosts).toHaveLength(2);
     });
 
+    /*
+    FNXC:StashEmptyBatch2xx 2026-08-21-13:35:
+    RUFU-146 review (PRRT_kwDOSA-8Y86bC_sK): a 2xx with an empty body is a
+    valid zero-count response, not a failure — every chunk succeeds, the loop
+    keeps uploading, and the result is ok:true with inserted:0.
+    */
+    it("empty 2xx body on every chunk -> all chunks succeed, {inserted: 0, ok: true}", async () => {
+      responder = () => ({ statusCode: 200, body: "" });
+      const promise = backend().capture("fusion-task-RUFU-146", transcriptEvents(250, "e"), { projectRoot: "/proj" });
+      await deliver();
+      await macrotask();
+      await deliver();
+      await macrotask();
+      await deliver();
+      await macrotask();
+      const res = await promise;
+      const batchPosts = log.filter((r) => r.path.includes("/api/v1/me/sessions/events/batch"));
+      expect(batchPosts).toHaveLength(3);
+      expect(res).toEqual({ inserted: 0, deduped: 0, ok: true });
+    });
+
     it("empty event list -> no POST and {0, 0, ok: true}", async () => {
       const res = await backend().capture("fusion-task-RUFU-122", [], { projectRoot: "/proj" });
       expect(res).toEqual({ inserted: 0, deduped: 0, ok: true });
@@ -531,6 +559,64 @@ describe("StashMemoryBackend", () => {
       expect(sent[0].content).toBe("e-0");
       expect(sent[99].content).toBe("e-99");
       expect(res).toEqual({ inserted: 100, deduped: 0, ok: true });
+    });
+    /*
+    FNXC:StashTransportScheme 2026-08-21-13:35:
+    RUFU-146 review (PRRT_kwDOSA-8Y86a7RZf): the transport must follow the
+    baseUrl scheme (https: deployments are the common self-hosted shape) and
+    preserve any base-URL path prefix (proxied /stash deployments).
+    */
+    describe("transport scheme + base path prefix (RUFU-146)", () => {
+      type Call = { hostname: string; port: number | string; path: string };
+
+      function trackRequests(mod: typeof http, calls: Call[]) {
+        vi.spyOn(mod, "request").mockImplementation(((options: http.RequestOptions, cb?: (res: http.IncomingMessage) => void) => {
+          calls.push({ hostname: options.hostname ?? "", port: options.port ?? 0, path: options.path ?? "" });
+          const req = fakeRequest();
+          setImmediate(() => cb?.(fakeIncoming(200, {})));
+          return req;
+        }) as unknown as typeof mod.request);
+      }
+
+      it("https: base uses node:https (never node:http) and keeps the /stash base path prefix", async () => {
+        const httpsCalls: Call[] = [];
+        const httpCalls: Call[] = [];
+        trackRequests(https, httpsCalls);
+        trackRequests(http, httpCalls);
+        const b = new StashMemoryBackend({ baseUrl: "https://stash.example/stash", apiKey: "k" });
+        await b.exists("proj-a");
+        expect(httpCalls).toHaveLength(0);
+        expect(httpsCalls).toHaveLength(1);
+        expect(httpsCalls[0].hostname).toBe("stash.example");
+        expect(httpsCalls[0].port).toBe(443);
+        expect(httpsCalls[0].path).toBe("/stash/api/v1/me/sessions/events/search?q=&limit=1");
+      });
+
+      it("http: base with a path prefix keeps the prefix (no dropped /stash segment)", async () => {
+        const httpsCalls: Call[] = [];
+        const httpCalls: Call[] = [];
+        trackRequests(https, httpsCalls);
+        trackRequests(http, httpCalls);
+        const b = new StashMemoryBackend({ baseUrl: "http://stash.example/stash", apiKey: "k" });
+        await b.exists("proj-a");
+        expect(httpsCalls).toHaveLength(0);
+        expect(httpCalls).toHaveLength(1);
+        expect(httpCalls[0].hostname).toBe("stash.example");
+        expect(httpCalls[0].port).toBe(80);
+        expect(httpCalls[0].path).toBe("/stash/api/v1/me/sessions/events/search?q=&limit=1");
+      });
+
+      it("base without a path prefix resolves directly under root (no double slash)", async () => {
+        const httpsCalls: Call[] = [];
+        const httpCalls: Call[] = [];
+        trackRequests(https, httpsCalls);
+        trackRequests(http, httpCalls);
+        const b = new StashMemoryBackend({ baseUrl: DEFAULT_STASH_URL, apiKey: "k" });
+        await b.exists("proj-a");
+        expect(httpsCalls).toHaveLength(0);
+        expect(httpCalls).toHaveLength(1);
+        expect(httpCalls[0].path).toBe("/api/v1/me/sessions/events/search?q=&limit=1");
+      });
     });
   });
 });

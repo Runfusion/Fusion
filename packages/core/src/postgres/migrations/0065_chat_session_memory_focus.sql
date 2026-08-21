@@ -9,7 +9,8 @@
 -- untouched (Stash owner_user_id SQL scope is orthogonal).
 -- Renumbered again during the rebase onto origin/main (2026-08-14): origin/main
 -- concurrently landed FN-9037's 0059_fn_9037_tasks_source_agent_index.sql under the
--- same 0059 sequence we had picked, so our chat_session_memory_focus migration is
--- pinned to 0060 (the next free sequence above both SCHEMA_BASELINE_VERSION "0059"
--- and FN-9037's source-agent index).
+-- same 0059 sequence we had picked, so the migration moved to 0060. It moved to
+-- 0061 on 2026-08-15 (FN-9059's workspace coordination leases own 0060), and the
+-- upstream 2026-08-20 batch (FN-066..FN-094) claiming 0061-0064 pinned it at its
+-- current 0065 (the next free sequence above SCHEMA_BASELINE_VERSION "0065").
 ALTER TABLE IF EXISTS project.chat_sessions ADD COLUMN IF NOT EXISTS memory_focus text;

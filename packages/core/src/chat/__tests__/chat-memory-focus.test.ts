@@ -3,7 +3,7 @@
  * RUFU-068 store persistence test for the per-conversation memory FOCUS/TOPIC
  * (chat_sessions.memory_focus). Runs against real PostgreSQL via the
  * satellite-db-injected-stores harness, applying the schema baseline (which
- * includes the newly registered 0059 migration). Asserts a focus set before a
+ * includes the newly registered 0065 migration). Asserts a focus set before a
  * "reconnect" (a fresh getSession) is read back, clearing (null) persists, and
  * an empty-string focus is normalized to null (unset → whole-project scope).
  *
@@ -12,7 +12,7 @@
  */
 
 import { describe, it, expect, afterEach } from "vitest";
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { createAsyncDataLayer, type AsyncDataLayer } from "../../postgres/data-layer.js";
 import { ChatStore } from "../chat-store.js";
 import type { ChatSession } from "../chat-types.js";
@@ -28,9 +28,17 @@ function uniqueDbName(): string {
   return `fusion_chat_focus_test_${process.pid}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
+/*
+FNXC:MemoryFocus 2026-08-21-13:35:
+RUFU-146 review (PRRT_kwDOSA-8Y86a7RZb): FUSION_PG_TEST_URL_BASE comes from the
+environment and previously reached psql through shell-string interpolation in
+execSync. execFileSync with an argument vector passes the URL and the SQL as
+separate argv entries — no shell, no quoting surface.
+*/
 function adminExec(statement: string): void {
-  execSync(
-    `psql "${PG_TEST_URL_BASE}/postgres" -v ON_ERROR_STOP=1 -c "${statement.replace(/"/g, '\\"')}"`,
+  execFileSync(
+    "psql",
+    [`${PG_TEST_URL_BASE}/postgres`, "-v", "ON_ERROR_STOP=1", "-c", statement],
     { stdio: "pipe", env: process.env },
   );
 }
