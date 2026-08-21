@@ -1162,6 +1162,30 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
           separate product), so the pre-check fails CLOSED (409) exactly like a
           transport failure instead of counting what it cannot see. Short pages
           (the tie group fits inside the page) and unique boundaries are safe.
+          FNXC:ChatStashBackfillTieBoundaryResidual 2026-08-21-18:46:
+          (RUFU-146 review, PR #3494 comment 3832713940, Greptile P1 "Boundary-start ties
+          skip events") RESIDUAL, documented rather than fixable client-side: the guard
+          compares only the last two rows, so a tie group that STARTS at the final row of
+          a full page (one T row in-page, the rest beyond rank 200) is invisible in the
+          forward stream — the exclusive cursor skips it and the pre-check undercounts.
+          Verified undecidable within the Stash API: GET /api/v1/me/sessions/events
+          accepts only agent_name/session_id/event_type/after/before/limit (1-200)/order
+          (routers/memory.py); after/before compile to STRICT inequalities
+          (`created_at >` / `<`, memory_service._build_event_filters) and
+          _query_events has no offset and no (created_at, id) tiebreak — no bounded
+          call sequence can observe rank 201+ of a cursor window or count the rows equal
+          to T (a backward probe excludes T itself). The obvious client-side narrowing
+          (fail closed whenever a local message shares the boundary millisecond) is
+          UNSOUND: backfill stores each message's REAL created_at, so in an ordinary
+          200+ backfill the 200th stored row is itself a local message — the condition
+          would hold at every full-page boundary and 409 every large backfill.
+          Consequence bound of the residual: DUPLICATE re-upload of the skipped
+          occurrences only (the undercount can never lose a local occurrence), under the
+          rare shape of a same-millisecond tie group crossing a 200-row boundary in a
+          200+ event session. The true fix is a server-side composite (created_at, id)
+          cursor in the Stash product (separate repo, own release — out of scope for
+          this PR). Regression (p) pins the shape: no false 409, bounded duplicate,
+          honest counts.
           */
           if (events.length === 200 && nextCursor !== undefined && nextCursor === prevCursor) {
             res.status(409).json({
@@ -1170,7 +1194,7 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
               skipped: 0,
               uploaded: messages.length,
               error:
-                "Stash pre-check unsafe: more than 200 stored events share a timestamp at a page boundary, so the exclusive cursor cannot count them all. Nothing was uploaded — safe dedupe needs a composite (created_at, id) cursor.",
+                "Stash pre-check unsafe: a full-page boundary falls on a timestamp shared by the page's last two rows, and the exclusive cursor cannot prove the tie group is fully counted inside the 200-row window. Nothing was uploaded — safe dedupe needs a composite (created_at, id) cursor.",
             });
             return;
           }
