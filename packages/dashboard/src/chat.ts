@@ -2641,6 +2641,15 @@ export class ChatManager {
     let accumulatedThinking = "";
     let accumulatedText = "";
     let lastStreamEventId = 0;
+    /*
+    FNXC:ChatInFlightRecovery 2026-08-20-20:17 (RUFU-144):
+    Stamp the generation's start time into every in-flight snapshot persist (initial
+    flush and each streamed checkpoint). A generation cannot outlive the dashboard
+    process that started it and no owner/PID is recorded, so `startedAt` is the liveness
+    proof the engine self-healing sweep uses to clear flags stranded by a restart. The
+    null-clear flushes deliberately drop the whole payload and are untouched.
+    */
+    const generationStartedAt = new Date().toISOString();
     type ToolCallRecord = {
       toolName: string;
       args?: Record<string, unknown>;
@@ -2683,6 +2692,7 @@ export class ChatManager {
         ],
         replayFromEventId: lastStreamEventId,
         updatedAt: new Date().toISOString(),
+        startedAt: generationStartedAt,
       }, generationId);
     };
 
@@ -2703,6 +2713,7 @@ export class ChatManager {
         toolCalls: [],
         replayFromEventId: 0,
         updatedAt: new Date().toISOString(),
+        startedAt: generationStartedAt,
       }, generationId);
 
       const parsedSkillCommands = parseSkillCommands(content);
@@ -3253,6 +3264,13 @@ export class ChatManager {
       interface AgentMessage {
         role: string;
         content?: string | Array<{ type: string; text: string }>;
+        /**
+         * FNXC:ChatOutputBudget 2026-08-20-20:17 (RUFU-144):
+         * pi-shaped runtimes report the pi-ai assistant `stopReason` ("stop" | "length" | …)
+         * on state messages; plugin CLI runtimes may omit it. Only a proven "length" on the
+         * final assistant message drives the output-budget-exhausted marker below.
+         */
+        stopReason?: string;
       }
       /*
        * FNXC:Chat 2026-07-10-00:00:
@@ -3312,6 +3330,20 @@ export class ChatManager {
       const usageSnapshot = await readChatSessionUsageSnapshot(agentResult.session);
       if (usageSnapshot.contextUsage) {
         assistantMetadata.contextUsage = usageSnapshot.contextUsage;
+      }
+      /*
+      FNXC:ChatOutputBudget 2026-08-20-20:17 (RUFU-144):
+      A turn can end with stopReason "length" and NO visible content: the model spent the
+      entire maxTokens budget on thinking and was truncated before emitting any output
+      tokens, so the persisted assistant message is empty. Without an explicit marker the
+      UI shows a blank bubble and the user sees "thinking…" with no answer and no
+      explanation (the RUFU-144 complaint). Persist `budgetExhausted: true` exactly when
+      stopReason "length" is proven on the final assistant message AND the visible
+      content is empty; it is never set for failure turns (the failureInfo path) or
+      non-empty content, and the dashboard renders an inline notice from it.
+      */
+      if (lastMessage?.stopReason === "length" && finalResponseText.trim().length === 0) {
+        assistantMetadata.budgetExhausted = true;
       }
       const assistantMessage = await this.chatStore.addMessage(sessionId, {
         role: "assistant",

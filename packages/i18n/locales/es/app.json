@@ -1311,6 +1311,7 @@
     "noSkillsAvailable": "No hay habilidades disponibles",
     "noSkillsFound": "No se encontraron habilidades",
     "openQuickChat": "Abrir chat rápido",
+    "outputBudgetExhausted": "El modelo usó todo su presupuesto de salida en pensar; aumenta maxTokens para este modelo.",
     "questionAnsweredLabel": "",
     "questionAnsweredWithoutContent": "",
     "questionConfirmNo": "",

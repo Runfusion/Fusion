@@ -1327,6 +1327,7 @@
     "noSkillsAvailable": "No skills available",
     "noSkillsFound": "No skills found",
     "openQuickChat": "Open quick chat",
+    "outputBudgetExhausted": "The model used its entire output budget on thinking — raise maxTokens for this model.",
     "questionAnsweredLabel": "Answered",
     "questionAnsweredWithoutContent": "A later user reply answered this question.",
     "questionConfirmNo": "No",

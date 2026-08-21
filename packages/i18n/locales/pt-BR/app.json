@@ -1327,6 +1327,7 @@
     "noSkillsAvailable": "Nenhuma habilidade disponível",
     "noSkillsFound": "Nenhuma habilidade encontrada",
     "openQuickChat": "Abrir chat rápido",
+    "outputBudgetExhausted": "O modelo usou todo o seu orçamento de saída para raciocínio — aumente o maxTokens para este modelo.",
     "questionAnsweredLabel": "Respondida",
     "questionAnsweredWithoutContent": "Uma resposta posterior do usuário respondeu a esta pergunta.",
     "questionConfirmNo": "Não",

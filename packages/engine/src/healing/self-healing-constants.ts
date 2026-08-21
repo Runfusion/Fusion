@@ -24,3 +24,13 @@ export const MAX_AUTO_MERGE_RETRIES = 3;
  * blips, while exhaustion remains visible and requires manual review.
  */
 export const MAX_TRANSIENT_MERGE_RECOVERIES = 5;
+/*
+ * FNXC:ChatInFlightRecovery 2026-08-20-20:17 (RUFU-144):
+ * Staleness floor for dashboard chat in_flight_generation flags. A generation cannot
+ * outlive the dashboard process that started it and no owner/PID is recorded, so the
+ * flag's startedAt (fallback: session updated_at) older than this floor is provably
+ * dead. The floor is far longer than any single LLM turn (a live generation is never
+ * cleared) and far shorter than how long a human notices a zombie "generating" box
+ * (recovery stays timely). Dashboard restarts are the known stranding source.
+ */
+export const CHAT_IN_FLIGHT_GENERATION_STALE_MS = 30 * 60_000;

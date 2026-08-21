@@ -1311,6 +1311,7 @@
     "noSkillsAvailable": "사용 가능한 스킬 없음",
     "noSkillsFound": "스킬을 찾을 수 없습니다",
     "openQuickChat": "빠른 채팅 열기",
+    "outputBudgetExhausted": "모델이 전체 출력 예산을 모두 추론에 사용했습니다. 이 모델의 maxTokens를 높이세요.",
     "questionAnsweredLabel": "",
     "questionAnsweredWithoutContent": "",
     "questionConfirmNo": "",
