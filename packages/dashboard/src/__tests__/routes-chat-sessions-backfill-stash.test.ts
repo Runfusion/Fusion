@@ -567,8 +567,94 @@ describe("POST /api/chat/sessions/:id/backfill-stash (ChatStashBackfill)", () =>
     expect(res.body.ok).toBe(false);
     expect(res.body.inserted).toBe(0);
     expect(res.body.skipped).toBe(0);
-    expect(String(res.body.error)).toMatch(/timestamp at a page boundary/);
+    expect(String(res.body.error)).toMatch(/tie group is fully counted/);
     expect(mocks.queryStashEvents).toHaveBeenCalledTimes(1); // tie detected on page 1; the uncountable tail is never fetched
     expect(mocks.captureMemory).not.toHaveBeenCalled(); // nothing uploaded — the stored "tie-250" is never duplicated
+  });
+
+  /*
+  FNXC:ChatStashBackfillTieBoundaryResidual 2026-08-21-18:46:
+  RUFU-146 review (PR #3494 comment 3832713940, Greptile P1 "Boundary-start
+  ties skip events"): the undecidable residual pinned in executable form.
+  A tie group STARTS at the final row of a full exclusive-cursor page:
+  page 1 = 199 unique fillers + ONE "tie-x" at T (rank 200); the other five
+  "tie-x" rows share T and sit beyond rank 200, where `created_at > T` hides
+  them forever. The in-page guard (last two rows) cannot see the tie —
+  rows 199 and 200 differ — and the route must NOT false-409 this shape:
+  a local message at the boundary millisecond is the ORDINARY case in any
+  200+ backfill (the 200th stored row is itself a backfilled message), so a
+  boundary-vs-local guard would 409 every large backfill. Pinned
+  consequence: the pre-check counts the one visible "tie-x", the multiset
+  diff uploads exactly the five invisible occurrences as DUPLICATES of the
+  stored rows, every local occurrence stays represented in Stash (no loss),
+  and the route reports the honest counts. The Stash API cannot distinguish
+  this shape from a safe one (strict inequalities, no offset, 200-row cap
+  — see the route's FNXC:ChatStashBackfillTieBoundaryResidual comment);
+  the real fix is a server-side composite (created_at, id) cursor.
+  */
+  it("(p) RUFU-146: boundary-start tie is an undecidable residual — no false 409, bounded duplicate, no loss", async () => {
+    const T_server = "2026-07-01T10:00:00.000000Z"; // server re-serialized form
+    const T_local = "2026-07-01T10:00:00.000Z"; // local form — same epoch millisecond
+
+    const straddleMessages: Array<Record<string, unknown>> = [];
+    for (let i = 0; i < 199; i++) {
+      straddleMessages.push({
+        id: `s${i + 1}`,
+        sessionId: "chat-straddle",
+        role: "assistant",
+        content: `filler-${i + 1}`,
+        thinkingOutput: null,
+        metadata: null,
+        createdAt: `2026-07-01T09:${String(Math.floor(i / 60)).padStart(2, "0")}:${String(i % 60).padStart(2, "0")}.000Z`,
+      });
+    }
+    for (let i = 1; i <= 6; i++) {
+      straddleMessages.push({
+        id: `t${i}`,
+        sessionId: "chat-straddle",
+        role: "user",
+        content: "tie-x",
+        thinkingOutput: null,
+        metadata: null,
+        createdAt: T_local,
+      });
+    }
+    const { app } = buildApp({ settings: STASH_OK_SETTINGS, messages: straddleMessages as never });
+
+    // Store: 199 unique fillers + SIX "tie-x" at T. Rank 200 is the FIRST of
+    // the tie group — the group starts exactly at the page boundary, so the
+    // exclusive cursor's next window (`created_at > T`) never sees the other
+    // five.
+    const stored: Array<Record<string, unknown>> = [];
+    for (let i = 0; i < 199; i++) {
+      stored.push({
+        id: `ev${String(i + 1).padStart(3, "0")}`,
+        event_type: "assistant_message",
+        content: `filler-${i + 1}`,
+        created_at: `2026-07-01T09:${String(Math.floor(i / 60)).padStart(2, "0")}:${String(i % 60).padStart(2, "0")}.000000Z`,
+      });
+    }
+    for (let i = 1; i <= 6; i++) {
+      stored.push({ id: `tie${i}`, event_type: "user_message", content: "tie-x", created_at: T_server });
+    }
+
+    // Exclusive server (verified source semantics): `after` filters created_at > after.
+    mocks.queryStashEvents.mockImplementation(async (_url: string, _key: string, filters?: { after?: string }) => {
+      const after = filters?.after;
+      const page = after === undefined ? stored : stored.filter((e) => String(e.created_at) > after);
+      return { events: page.slice(0, 200), hasMore: page.length > 200 };
+    });
+
+    const res = await request(app, "POST", "/api/chat/sessions/chat-straddle/backfill-stash");
+    expect(res.status).toBe(200); // no false 409: a local message at the boundary millisecond is ordinary in a 200+ backfill
+    expect(res.body.uploaded).toBe(5); // the five invisible occurrences re-upload — the bounded DUPLICATE residual
+    expect(res.body.skipped).toBe(200); // 199 fillers + the one visible "tie-x" counted; nothing over-uploaded
+    expect(mocks.captureMemory).toHaveBeenCalledTimes(1);
+    const [, , , events] = mocks.captureMemory.mock.calls[0];
+    expect(events).toHaveLength(5);
+    expect(events.map((e: { content: string }) => e.content)).toEqual(["tie-x", "tie-x", "tie-x", "tie-x", "tie-x"]);
+    // No loss: after the upload the session holds six "tie-x" rows (one pre-existing
+    // counted + five uploaded) — every local occurrence is represented in Stash.
+    expect(mocks.queryStashEvents).toHaveBeenCalledTimes(2); // page 1 (full) + the empty post-cursor page
   });
 });
