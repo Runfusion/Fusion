@@ -27,7 +27,12 @@ jobs:
   pack-fixture:
     name: Pack agent-browser install fixture
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    # FNXC:AgentBrowserPackaging 2026-08-11-02:13:
+    # prepack asserts dist/plugin-sdk/index.d.ts exists (prepare-publish-manifest).
+    # A skip-install pack cannot produce that declaration, so install + build the
+    # CLI package before `pnpm pack` or every packages/cli/package.json change fails
+    # the fixture (electron dependabot PR #3370).
+    timeout-minutes: 15
 
     steps:
       - name: Checkout
@@ -37,8 +42,10 @@ jobs:
 
       - name: Setup Node.js and pnpm
         uses: ./.github/actions/setup-node-pnpm
-        with:
-          skip-install: "true"
+
+      - name: Build CLI package for pack
+        shell: bash
+        run: pnpm --filter @runfusion/fusion build
 
       - name: Pack Fusion CLI and agent-browser
         shell: bash

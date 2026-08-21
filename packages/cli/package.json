@@ -71,7 +71,7 @@
     "@earendil-works/pi-coding-agent": "0.84.1",
     "claude-code-cli-acp": "0.1.1",
     "dockerode": "^4.0.12",
-    "electron": "^33.4.11",
+    "electron": "^43.3.0",
     "embedded-postgres": "15.18.0-beta.17",
     "express": "^5.1.0",
     "i18next": "^26.3.6",
