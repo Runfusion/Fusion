@@ -19,6 +19,12 @@ const describeIfGit = hasGit ? describe : describe.skip;
 
 function makeFakeStore(task: Task): { store: TaskStore; current: () => Task } {
   let current = task;
+  /*
+  FNXC:WorkspaceRootRouting 2026-08-21-08:34:
+  This focused routing fake mirrors TaskStore's per-task merge lock and post-callback authoritative
+  re-read so callback-based acquisitions cannot clobber sibling entries or external task updates.
+  */
+  let workspaceMergeTail = Promise.resolve();
   const store = {
     async updateTask(id: string, patch: Partial<Task>): Promise<void> {
       if (id === current.id) current = { ...current, ...patch };
@@ -34,22 +40,38 @@ function makeFakeStore(task: Task): { store: TaskStore; current: () => Task } {
         validateBeforePersist?: (freshTask: Task) => Promise<void>;
       },
     ): Promise<Task> {
-      if (id !== current.id) throw new Error(`Task ${id} not found`);
-      const existing = current.workspaceWorktrees?.[repoRelPath];
-      if (options?.requireExistingEntry && !existing) {
-        throw new Error(`Workspace worktree entry ${repoRelPath} does not exist`);
-      }
-      const resolvedPatch = typeof patch === "function" ? await patch(current) : patch;
-      await options?.validateBeforePersist?.(current);
-      current = {
-        ...current,
-        workspaceWorktrees: {
-          ...(current.workspaceWorktrees ?? {}),
-          [repoRelPath]: { ...existing, ...resolvedPatch },
-        },
-        ...(options?.clearSingularWorktree ? { worktree: undefined, branch: undefined } : {}),
-      };
-      return current;
+      const operation = workspaceMergeTail.then(async () => {
+        if (id !== current.id) throw new Error(`Task ${id} not found`);
+        const existing = current.workspaceWorktrees?.[repoRelPath];
+        if (options?.requireExistingEntry && !existing) return current;
+        const callbackTask = current;
+        const resolvedPatch = typeof patch === "function" ? await patch(callbackTask) : patch;
+        const freshExisting = current.workspaceWorktrees?.[repoRelPath];
+        if (options?.requireExistingEntry && !freshExisting) return current;
+        await options?.validateBeforePersist?.(current);
+        current = {
+          ...current,
+          workspaceWorktrees: {
+            ...(current.workspaceWorktrees ?? {}),
+            [repoRelPath]: {
+              ...freshExisting,
+              ...resolvedPatch,
+            } as NonNullable<Task["workspaceWorktrees"]>[string],
+          },
+          ...(options?.clearSingularWorktree
+            ? {
+                worktree: undefined,
+                branch: undefined,
+                branchWriteOrigin: "engine" as const,
+                executionStartBranch: undefined,
+                baseCommitSha: undefined,
+              }
+            : {}),
+        };
+        return current;
+      });
+      workspaceMergeTail = operation.then(() => undefined, () => undefined);
+      return operation;
     },
     async logEntry(): Promise<void> {},
     async getTask(id: string): Promise<Task> {
@@ -74,6 +96,54 @@ function makeTask(id: string): Task {
     updatedAt: new Date().toISOString(),
   } as Task;
 }
+
+describe("workspace root routing store fake", () => {
+  /*
+  FNXC:WorkspaceRootRouting 2026-08-21-08:34:
+  The focused routing fake must hold the same concurrent-merge invariant as the shared executor fake;
+  exercising both surfaces prevents one fixture from silently reverting to stale snapshot writes.
+  */
+  it("serializes callback merges without dropping sibling repository entries", async () => {
+    const { store, current } = makeFakeStore(makeTask("FN-routing-merge"));
+    let releaseFirst!: () => void;
+    let markFirstStarted!: () => void;
+    const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    const firstStarted = new Promise<void>((resolve) => { markFirstStarted = resolve; });
+
+    const first = store.mergeWorkspaceWorktreeEntry(
+      "FN-routing-merge",
+      "repo-a",
+      async () => {
+        markFirstStarted();
+        await firstGate;
+        return { worktreePath: "/tmp/repo-a", branch: "fusion/a" };
+      },
+    );
+    await firstStarted;
+    await store.updateTask("FN-routing-merge", {
+      workspaceWorktrees: {
+        "repo-c": { worktreePath: "/tmp/repo-c", branch: "fusion/c" },
+      },
+    });
+
+    let secondStarted = false;
+    const second = store.mergeWorkspaceWorktreeEntry(
+      "FN-routing-merge",
+      "repo-b",
+      async (freshTask) => {
+        secondStarted = true;
+        expect(freshTask.workspaceWorktrees?.["repo-a"]?.worktreePath).toBe("/tmp/repo-a");
+        return { worktreePath: "/tmp/repo-b", branch: "fusion/b" };
+      },
+    );
+
+    await Promise.resolve();
+    expect(secondStarted).toBe(false);
+    releaseFirst();
+    await Promise.all([first, second]);
+    expect(Object.keys(current().workspaceWorktrees ?? {}).sort()).toEqual(["repo-a", "repo-b", "repo-c"]);
+  });
+});
 
 const settings: Partial<Settings> = {
   worktreeNaming: "task-id",
