@@ -959,4 +959,142 @@ describe("RUFU-123: per-model contextWindow/maxTokens round-trip", () => {
     // the engine default + safe small-window guard threshold apply downstream.
     expect(settings.customProviders?.[0]?.models).toEqual([{ id: "m1", name: "M1", contextWindow: 8192 }]);
   });
+
+  /*
+  FNXC:CustomProviderThinkingFormat 2026-08-21-05:47:
+  RUFU-143: the dashboard persists the per-model thinking flags verbatim (additive to the
+  RUFU-123 window fields). Invalid thinkingFormat values and non-boolean reasoning are rejected
+  400 with the exact field path named; the flags round-trip through sanitizeProvider into the
+  create/list responses; refresh-models carries a prior thinkingFormat over when set and a prior
+  reasoning opt-out (false) across re-probing — never pre-filling flags from the probe heuristic,
+  which would silently change the wire behavior of a model that was working.
+  */
+  it("POST /custom-providers accepts and persists per-model thinking flags (RUFU-143)", async () => {
+    const updates: Array<Partial<GlobalSettings>> = [];
+    const app = createApp(settings, (patch) => updates.push(patch));
+
+    const res = await REQUEST(app, "POST", "/api/custom-providers", {
+      name: "Qwen LiteLLM",
+      apiType: "openai-compatible",
+      baseUrl: "https://litellm.example.com/v1",
+      apiKey: "sk-qwen-1234",
+      models: [
+        { id: "qwen3", name: "Qwen3", thinkingFormat: "qwen-chat-template", reasoning: false },
+        { id: "other", name: "Other" },
+      ],
+    });
+
+    expect(res.status).toBe(201);
+    // Flags round-trip through the create response (sanitizeProvider keeps model entries verbatim).
+    expect(res.body.models).toEqual([
+      { id: "qwen3", name: "Qwen3", thinkingFormat: "qwen-chat-template", reasoning: false },
+      { id: "other", name: "Other" },
+    ]);
+    const persisted = updates[0].customProviders as CustomProvider[];
+    expect(persisted[0]?.models).toEqual([
+      { id: "qwen3", name: "Qwen3", thinkingFormat: "qwen-chat-template", reasoning: false },
+      { id: "other", name: "Other" },
+    ]);
+
+    // GET round-trip: the flag appears on the listed (sanitized) provider.
+    const listRes = await REQUEST(app, "GET", "/api/custom-providers");
+    expect(listRes.status).toBe(200);
+    expect(listRes.body[0]?.models?.[0]).toEqual({ id: "qwen3", name: "Qwen3", thinkingFormat: "qwen-chat-template", reasoning: false });
+  });
+
+  it("POST /custom-providers rejects an invalid thinkingFormat with the field path (RUFU-143)", async () => {
+    const app = createApp(settings);
+
+    const res = await REQUEST(app, "POST", "/api/custom-providers", {
+      name: "Qwen LiteLLM",
+      apiType: "openai-compatible",
+      baseUrl: "https://litellm.example.com/v1",
+      models: [{ id: "qwen3", name: "Qwen3", thinkingFormat: "bogus-format" }],
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain('Invalid models[0].thinkingFormat "bogus-format". Allowed:');
+    expect(res.body.error).toContain("qwen-chat-template");
+    expect(settings.customProviders).toBeUndefined();
+  });
+
+  it("POST /custom-providers rejects a non-boolean reasoning (RUFU-143)", async () => {
+    const app = createApp(settings);
+
+    const res = await REQUEST(app, "POST", "/api/custom-providers", {
+      name: "Qwen LiteLLM",
+      apiType: "openai-compatible",
+      baseUrl: "https://litellm.example.com/v1",
+      models: [{ id: "qwen3", name: "Qwen3", reasoning: "no" }],
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("models[0].reasoning must be a boolean");
+  });
+
+  it("PUT /custom-providers/:id persists per-model thinking flags (RUFU-143)", async () => {
+    settings.customProviders = [
+      {
+        id: "cp-1",
+        name: "Qwen LiteLLM",
+        apiType: "openai-compatible",
+        baseUrl: "https://litellm.example.com/v1",
+        apiKey: "sk-qwen-1234",
+        models: [{ id: "qwen3", name: "Qwen3" }],
+      },
+    ];
+    const updates: Array<Partial<GlobalSettings>> = [];
+    const app = createApp(settings, (patch) => updates.push(patch));
+
+    const res = await REQUEST(app, "PUT", "/api/custom-providers/cp-1", {
+      models: [{ id: "qwen3", name: "Qwen3", thinkingFormat: "deepseek", reasoning: true }],
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.models).toEqual([{ id: "qwen3", name: "Qwen3", thinkingFormat: "deepseek", reasoning: true }]);
+    const persisted = updates[0].customProviders as CustomProvider[];
+    expect(persisted[0]?.models).toEqual([{ id: "qwen3", name: "Qwen3", thinkingFormat: "deepseek", reasoning: true }]);
+  });
+
+  it("refresh-models preserves prior thinkingFormat and reasoning opt-out, never pre-filling from the probe (RUFU-143)", async () => {
+    settings.customProviders = [
+      {
+        id: "cp-1",
+        name: "Qwen LiteLLM",
+        apiType: "openai-compatible",
+        baseUrl: "https://litellm.example.com/v1",
+        apiKey: "sk-qwen-1234",
+        models: [
+          { id: "qwen3", name: "Qwen3", thinkingFormat: "qwen-chat-template", reasoning: false },
+          { id: "reasoning-o1", name: "Reasoning O1" },
+          { id: "prior-true", name: "Prior True", reasoning: true },
+        ],
+      },
+    ];
+    // The probe reports no thinkingFormat and guesses reasoning=true for the "o1"/"reason" ids —
+    // neither guess may be persisted. No limit objects, so windows are all undefined too.
+    vi.stubGlobal("fetch", vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        data: [
+          { id: "qwen3", name: "Qwen3" },
+          { id: "reasoning-o1", name: "Reasoning O1" },
+          { id: "prior-true", name: "Prior True" },
+        ],
+      }),
+    })));
+    const app = createApp(settings);
+
+    const res = await REQUEST(app, "POST", "/api/custom-providers/cp-1/refresh-models");
+
+    expect(res.status).toBe(200);
+    expect(settings.customProviders?.[0]?.models).toEqual([
+      // Prior thinkingFormat + reasoning opt-out survive the re-probe.
+      { id: "qwen3", name: "Qwen3", thinkingFormat: "qwen-chat-template", reasoning: false },
+      // The probe's reasoning:true heuristic ("reason"/"o1" in the id) is NOT pre-filled.
+      { id: "reasoning-o1", name: "Reasoning O1" },
+      // A prior explicit reasoning:true is not re-emitted — the default is already presumed-capable.
+      { id: "prior-true", name: "Prior True" },
+    ]);
+  });
 });

@@ -5,7 +5,7 @@ so the desktop in-process dashboard server and the CLI serve/dashboard/daemon pa
 custom-provider registration implementation. packages/cli/src/commands/custom-provider-registry.ts
 is now a thin re-export shim of this module; its observable behavior is unchanged.
 */
-import { customProviderRegistryKey, type CustomProvider } from "@fusion/core";
+import { customProviderRegistryKey, type CustomProvider, type CustomProviderThinkingFormat } from "@fusion/core";
 import { refreshFusionModelRegistry, type RefreshableModelRegistry } from "./model-registry-refresh.js";
 
 interface ModelRegistryLike extends RefreshableModelRegistry {
@@ -25,6 +25,13 @@ interface ModelRegistryLike extends RefreshableModelRegistry {
       compat?: {
         supportsDeveloperRole?: boolean;
         cacheControlFormat?: "anthropic";
+        /*
+        FNXC:CustomProviderThinkingFormat 2026-08-21-05:30:
+        RUFU-143: widened so the shared builder's compat.thinkingFormat is part of the
+        declared registration contract (pi-ai's OpenAICompletionsCompat is the only api
+        compat surface that reads it; see the builder's FNXC note for the emission rules).
+        */
+        thinkingFormat?: CustomProviderThinkingFormat;
       };
     }>;
   }) => void;
@@ -105,39 +112,63 @@ export function buildCustomProviderModels(
   id: string;
   name: string;
   reasoning: boolean;
-  thinkingLevelMap: { xhigh: string; max: string };
+  thinkingLevelMap?: { xhigh: string; max: string };
   input: ("text" | "image")[];
   cost: { input: number; output: number; cacheRead: number; cacheWrite: number };
   contextWindow: number;
   maxTokens: number;
-  compat?: { supportsDeveloperRole?: boolean; cacheControlFormat?: "anthropic" };
+  compat?: { supportsDeveloperRole?: boolean; cacheControlFormat?: "anthropic"; thinkingFormat?: CustomProviderThinkingFormat };
 }> {
   const supportsDeveloperRole = provider.supportsDeveloperRole === true;
   const anthropicPromptCaching = provider.anthropicPromptCaching === true;
 
-  return (provider.models ?? []).map((model) => ({
-    id: model.id,
-    name: model.name,
-    reasoning: true,
-    thinkingLevelMap: { xhigh: "xhigh", max: "max" },
-    input: ["text" as const],
-    cost: {
-      input: 0,
-      output: 0,
-      cacheRead: 0,
-      cacheWrite: 0,
-    },
-    contextWindow: resolveModelWindowValue(model.contextWindow, DEFAULT_CUSTOM_PROVIDER_CONTEXT_WINDOW),
-    maxTokens: resolveModelWindowValue(model.maxTokens, DEFAULT_CUSTOM_PROVIDER_MAX_TOKENS),
-    ...(api === "openai-completions"
-      ? {
-          compat: {
-            supportsDeveloperRole,
-            ...(anthropicPromptCaching ? { cacheControlFormat: "anthropic" as const } : {}),
-          },
-        }
-      : {}),
-  }));
+  /*
+  FNXC:CustomProviderThinkingFormat 2026-08-21-05:10:
+  RUFU-143: custom-provider models are presumed thinking-capable (reasoning:true +
+  thinkingLevelMap for xhigh/max), which makes pi send `reasoning_effort` to
+  OpenAI-compatible gateways. Qwen3 behind LiteLLM rejects that parameter. The
+  per-model flags translate as:
+  - `reasoning: false` (the only meaningful explicit value) opts the model OUT of
+    thinking entirely: pi receives `reasoning: false` and NO thinkingLevelMap, so
+    no thinking parameter is ever emitted and /api/models exposes no levels.
+  - `thinkingFormat` is forwarded as `compat.thinkingFormat` ONLY for the
+    openai-completions api (pi's OpenAICompletionsCompat is the only surface that
+    reads it) and only while the opt-out is not in effect — the opt-out wins over
+    format when both are set.
+  - `chatTemplateKwargs` is deliberately never emitted: pi-ai 0.84.1's
+    qwen-chat-template branch hardcodes `{ enable_thinking: !!reasoningEffort,
+    preserve_thinking: true }`, so an explicit kwargs object would only risk being
+    ignored or rejected by a strict gateway.
+  With neither flag set, the emitted object is byte-identical to the pre-RUFU-143
+  registration (reasoning:true, thinkingLevelMap, compat keys unchanged).
+  */
+  return (provider.models ?? []).map((model) => {
+    const reasoningEnabled = model.reasoning !== false;
+    return {
+      id: model.id,
+      name: model.name,
+      reasoning: reasoningEnabled,
+      ...(reasoningEnabled ? { thinkingLevelMap: { xhigh: "xhigh", max: "max" } } : {}),
+      input: ["text" as const],
+      cost: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+      },
+      contextWindow: resolveModelWindowValue(model.contextWindow, DEFAULT_CUSTOM_PROVIDER_CONTEXT_WINDOW),
+      maxTokens: resolveModelWindowValue(model.maxTokens, DEFAULT_CUSTOM_PROVIDER_MAX_TOKENS),
+      ...(api === "openai-completions"
+        ? {
+            compat: {
+              supportsDeveloperRole,
+              ...(anthropicPromptCaching ? { cacheControlFormat: "anthropic" as const } : {}),
+              ...(reasoningEnabled && model.thinkingFormat ? { thinkingFormat: model.thinkingFormat } : {}),
+            },
+          }
+        : {}),
+    };
+  });
 }
 
 function toProviderConfig(provider: CustomProvider) {

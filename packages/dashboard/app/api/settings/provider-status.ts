@@ -6,6 +6,7 @@
 import { api } from "../client/client.js";
 import type { FetchOptions } from "../client/client.js";
 import { dedupe } from "../client/dedupe.js";
+import type { CustomProviderThinkingFormat } from "@fusion/core";
 // --- Auth API ---
 
 /*
@@ -613,12 +614,25 @@ stops silently dropping the windows it already collects. Keep in sync with
 packages/core/src/types/workflow/workflow-steps.ts (RUFU-123 widened it) and with the
 register-custom-provider-routes validateModels contract (positive finite numbers only).
 */
-function modelWindowFields(model: { contextWindow?: number; maxTokens?: number }): { contextWindow?: number; maxTokens?: number } {
+function modelWindowFields(
+  model: { contextWindow?: number; maxTokens?: number; thinkingFormat?: string; reasoning?: boolean },
+): { contextWindow?: number; maxTokens?: number; thinkingFormat?: CustomProviderThinkingFormat; reasoning?: boolean } {
   const contextWindow = typeof model.contextWindow === "number" && Number.isFinite(model.contextWindow) && model.contextWindow > 0 ? model.contextWindow : undefined;
   const maxTokens = typeof model.maxTokens === "number" && Number.isFinite(model.maxTokens) && model.maxTokens > 0 ? model.maxTokens : undefined;
+  /*
+  FNXC:CustomProviderThinkingFormat 2026-08-21-05:48:
+  RUFU-143: the per-model thinking flags ride the same optional-field carry-through. The browser
+  mirror only guards types (string/boolean) — the route's validateModels is the authority that
+  checks thinkingFormat against the pi-ai literal union. Keys are omitted when absent so default
+  registrations round-trip byte-identical.
+  */
+  const thinkingFormat = typeof model.thinkingFormat === "string" && model.thinkingFormat.length > 0 ? model.thinkingFormat as CustomProviderThinkingFormat : undefined;
+  const reasoning = typeof model.reasoning === "boolean" ? model.reasoning : undefined;
   return {
     ...(contextWindow !== undefined ? { contextWindow } : {}),
     ...(maxTokens !== undefined ? { maxTokens } : {}),
+    ...(thinkingFormat !== undefined ? { thinkingFormat } : {}),
+    ...(reasoning !== undefined ? { reasoning } : {}),
   };
 }
 
@@ -638,8 +652,12 @@ export interface CustomProvider {
    * FNXC:CustomProviderModelWindows 2026-08-19-16:01:
    * RUFU-123: per-model contextWindow/maxTokens mirror core's widened model entry
    * (see modelWindowFields). Absent values fall back to 128000/16384 at registration.
+   *
+   * FNXC:CustomProviderThinkingFormat 2026-08-21-05:48:
+   * RUFU-143: per-model thinkingFormat (pi-ai thinking-format literal) and reasoning (strict
+   * boolean; false opts out of all thinking params) mirror core's widened model entry.
    */
-  models?: { id: string; name: string; contextWindow?: number; maxTokens?: number }[];
+  models?: { id: string; name: string; contextWindow?: number; maxTokens?: number; thinkingFormat?: CustomProviderThinkingFormat; reasoning?: boolean }[];
 }
 
 export async function fetchCustomProviders(): Promise<CustomProviderConfig[] & { providers: CustomProviderConfig[] }> {
@@ -732,6 +750,10 @@ export interface CustomProviderModelInput {
   name?: string;
   contextWindow?: number;
   maxTokens?: number;
+  /** FNXC:CustomProviderThinkingFormat 2026-08-21-05:48: RUFU-143 per-model pi-ai thinking-format literal. */
+  thinkingFormat?: CustomProviderThinkingFormat;
+  /** FNXC:CustomProviderThinkingFormat 2026-08-21-05:48: RUFU-143 strict boolean; false opts out of all thinking params. */
+  reasoning?: boolean;
 }
 
 export interface CustomProviderConfig {

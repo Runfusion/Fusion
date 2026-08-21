@@ -269,7 +269,13 @@ export type {
   OwningNodeHandoffPolicy,
 };
 
-import { NOTIFICATION_EVENTS } from "./types/workflow/workflow-steps.js";
+/*
+FNXC:CustomProviderThinking 2026-08-21-10:19:
+RUFU-143 re-exports the per-model thinking flags from the workflow-steps core type so the
+dashboard route validator and the app form share the pi-ai `thinkingFormat` literal union
+and the `CUSTOM_PROVIDER_THINKING_FORMATS` runtime list with the canonical declaration.
+*/
+import { NOTIFICATION_EVENTS, CUSTOM_PROVIDER_THINKING_FORMATS } from "./types/workflow/workflow-steps.js";
 import type {
   ModelPreset,
   WorkflowStepMode,
@@ -287,13 +293,14 @@ import type {
   NotificationPayload,
   NotificationProviderConfig,
   CustomProvider,
+  CustomProviderThinkingFormat,
   WorkflowStepInput,
   WorkflowStepResult,
   WorkflowRunStepInstanceStatus,
   WorkflowRunStepInstance,
   WorkflowStepTemplate,
 } from "./types/workflow/workflow-steps.js";
-export { NOTIFICATION_EVENTS };
+export { NOTIFICATION_EVENTS, CUSTOM_PROVIDER_THINKING_FORMATS };
 export type {
   ModelPreset,
   WorkflowStepMode,
@@ -311,6 +318,7 @@ export type {
   NotificationPayload,
   NotificationProviderConfig,
   CustomProvider,
+  CustomProviderThinkingFormat,
   WorkflowStepInput,
   WorkflowStepResult,
   WorkflowRunStepInstanceStatus,
