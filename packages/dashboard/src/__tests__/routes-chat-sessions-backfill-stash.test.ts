@@ -474,4 +474,53 @@ describe("POST /api/chat/sessions/:id/backfill-stash (ChatStashBackfill)", () =>
     expect(res3.body).toEqual({ ok: true, inserted: 0, skipped: 3, uploaded: 0 });
     expect(mocks.captureMemory).toHaveBeenCalledTimes(2); // phase 3 uploads nothing
   });
+
+  /*
+  FNXC:ChatStashBackfillCursorDedupe 2026-08-21-14:49:
+  RUFU-146 review (PRRT_kwDOSA-8Y86bMJxP, Greptile P1): with an inclusive
+  `after` cursor, page N+1 re-returns page N's boundary row. Before the
+  per-event UUID dedupe, that double-count inflated the boundary key in the
+  multiset pre-check: with the stored "ok" as the boundary row and TWO local
+  messages sharing its key, the inflated remote count (2 vs actual 1) made
+  localCount - remoteCount = 0, so BOTH local occurrences were skipped — the
+  second is permanently lost while the route reports success. This regression
+  simulates the inclusive server (the mock pages with created_at >= after),
+  asserts exactly the ONE missing "ok" occurrence uploads, and that the
+  stored boundary row is counted once (the fresh "reply" still uploads).
+  */
+  it("(n) RUFU-146: inclusive-cursor re-returned boundary row is not double-counted (no occurrence loss)", async () => {
+    const boundaryMessages = [
+      { id: "b1", sessionId: "chat-boundary", role: "user", content: "ok", thinkingOutput: null, metadata: null, createdAt: "2026-07-01T10:00:00.000Z" },
+      { id: "b2", sessionId: "chat-boundary", role: "user", content: "ok", thinkingOutput: null, metadata: null, createdAt: "2026-07-01T10:00:00.000Z" },
+      { id: "b3", sessionId: "chat-boundary", role: "assistant", content: "reply", thinkingOutput: null, metadata: null, createdAt: "2026-07-01T10:00:10.000Z" },
+    ];
+    const { app } = buildApp({ settings: STASH_OK_SETTINGS, messages: boundaryMessages as never });
+
+    // Store: 199 unique fillers (09:00:00 + i seconds) + the stored "ok" as
+    // the 200th row — the boundary of page 1 (max created_at).
+    const stored: Array<Record<string, unknown>> = [];
+    for (let i = 0; i < 199; i++) {
+      stored.push({
+        id: `ev${String(i + 1).padStart(3, "0")}`,
+        event_type: "assistant_message",
+        content: `filler-${i + 1}`,
+        created_at: `2026-07-01T09:${String(Math.floor(i / 60)).padStart(2, "0")}:${String(i % 60).padStart(2, "0")}.000000Z`,
+      });
+    }
+    stored.push({ id: "ev200", event_type: "user_message", content: "ok", created_at: "2026-07-01T10:00:00.000000Z" });
+
+    // Inclusive server: `after` re-returns the boundary row (created_at >= after).
+    mocks.queryStashEvents.mockImplementation(async (_url: string, _key: string, filters?: { after?: string }) => {
+      const after = filters?.after;
+      const page = after === undefined ? stored : stored.filter((e) => String(e.created_at) >= after);
+      return { events: page.slice(0, 200), hasMore: page.length > 200 };
+    });
+
+    const res = await request(app, "POST", "/api/chat/sessions/chat-boundary/backfill-stash");
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ ok: true, inserted: 2, skipped: 1, uploaded: 2 });
+    expect(mocks.captureMemory).toHaveBeenCalledTimes(1);
+    const [, , , events] = mocks.captureMemory.mock.calls[0];
+    expect(events.map((e: { content: string }) => e.content)).toEqual(["ok", "reply"]);
+  });
 });

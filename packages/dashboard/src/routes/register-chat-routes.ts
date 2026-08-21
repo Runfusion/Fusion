@@ -1062,12 +1062,12 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
       chat 4 -> 8 -> 12 events across two identical backfills). The live backend also
       stores content untruncated (50k chars round-tripped intact, verified 2026-08-19),
       so an EXACT content match is the dedupe key. Pre-check: page the session's
-      existing events (structured query, 200/page, ascending, inclusive after-cursor)
-      and skip messages whose content is already stored. Bounded: 50 pages (10k
-      events) plus a no-progress guard — the inclusive `after` re-returns the boundary
-      row (the Set absorbs it), and a frozen cursor signature breaks the loop instead
-      of spinning. A pre-check transport failure fails CLOSED (502) rather than
-      blindly uploading duplicates.
+      existing events (structured query, 200/page, ascending, after-cursor) and
+      skip messages whose content is already stored. Bounded: 50 pages (10k
+      events) plus a no-progress guard — a frozen cursor signature breaks the loop
+      instead of spinning. A pre-check transport failure fails CLOSED (502) rather
+      than blindly uploading duplicates. (The cursor-inclusivity question is
+      settled by per-event UUID dedupe — FNXC:ChatStashBackfillCursorDedupe.)
       */
       const rawStashUrl = resolved.stashUrl;
       const stashUrl =
@@ -1095,6 +1095,7 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
         existingCounts = new Map<string, number>();
         let cursor: string | undefined;
         let lastSignature = "";
+        const seenEventIds = new Set<string>();
         for (let page = 0; page < 50; page++) {
           const { events } = await queryStashEvents(stashUrl, resolved.stashApiKey, {
             sessionId,
@@ -1103,7 +1104,34 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
             ...(cursor ? { after: cursor } : {}),
           });
           if (events.length === 0) break;
+          /*
+          FNXC:ChatStashBackfillCursorDedupe 2026-08-21-14:49:
+          (RUFU-146 review, PRRT_kwDOSA-8Y86bMJxP, Greptile P1) the multiset
+          pre-check must count each STORED event exactly once. The `after`
+          cursor is the previous page's boundary created_at; whether the
+          server re-returns that row depends on the deployed cursor
+          semantics (the Stash source filter is exclusive —
+          memory_service._build_event_filters `created_at > $n` — but the
+          earlier inclusive assumption was never re-verified against the
+          deployed revision). Under an inclusive cursor, or a same-second
+          tie at the boundary, page N's tail row(s) re-appear on page
+          N+1, and a plain count inflates that key by 1: with
+          localCount = remoteCount + 1 the inflated remote side then
+          suppresses the one occurrence that is NOT stored, so the route
+          reports success while silently losing a transcript event. Dedupe
+          by row UUID (HistoryEventResponse.id, always present on the
+          wire) so each stored event counts exactly once under either
+          cursor semantics. An event without a usable id is counted as-is
+          (matches the exclusive-source behavior).
+          */
           for (const event of events) {
+            const rawId = event.id;
+            const eventId =
+              typeof rawId === "string" ? rawId : typeof rawId === "number" ? String(rawId) : undefined;
+            if (eventId !== undefined) {
+              if (seenEventIds.has(eventId)) continue; // re-returned boundary row
+              seenEventIds.add(eventId);
+            }
             const key = backfillEventKey(
               typeof event.event_type === "string" ? event.event_type : "",
               typeof event.created_at === "string" ? event.created_at : undefined,
