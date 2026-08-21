@@ -73,6 +73,29 @@ pgTest("workspace worktree per-repo atomic merge (PostgreSQL)", () => {
     });
   });
 
+  it("clears review remediation with approval evidence when scope intent changes", async () => {
+    const store = h.store();
+    const task = await store.createTask({ description: "scope change clears stale remediation" });
+    await store.updateTask(task.id, {
+      repositoryScope: {
+        repositories: ["repo-a"],
+        state: "confirmed",
+        revision: 1,
+        reviewEvidence: { "repo-a": { fingerprint: "old", approvedAt: new Date().toISOString() } },
+        reviewRemediation: { scopeRevision: 1, repository: "repo-a", inputSignature: "old-review" },
+      },
+    });
+
+    const updated = await store.updateTaskRepositoryScope(task.id, {
+      repositories: ["repo-b"],
+      confirmedBy: "operator",
+    });
+
+    expect(updated.repositoryScope).toMatchObject({ repositories: ["repo-b"] });
+    expect(updated.repositoryScope?.reviewEvidence).toBeUndefined();
+    expect(updated.repositoryScope?.reviewRemediation).toBeUndefined();
+  });
+
   it("clears singular state in the same per-key update", async () => {
     const store = h.store();
     const task = await store.createTask({ description: "workspace singular state" });

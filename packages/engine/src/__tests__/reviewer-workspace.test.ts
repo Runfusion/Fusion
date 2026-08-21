@@ -17,7 +17,7 @@ the cwd of each call. Coverage:
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { EventEmitter } from "node:events";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ReviewResult } from "../execution/reviewer.js";
@@ -56,6 +56,18 @@ function makeGitCheckout(): string {
   cleanupDirs.push(dir);
   execFileSync("git", ["init"], { cwd: dir, stdio: "ignore" });
   return dir;
+}
+
+function makeFingerprintableCheckout(): { path: string; baseCommitSha: string } {
+  const path = makeGitCheckout();
+  execFileSync("git", ["config", "user.email", "fusion@example.test"], { cwd: path });
+  execFileSync("git", ["config", "user.name", "Fusion"], { cwd: path });
+  writeFileSync(join(path, "changed.ts"), "export const before = true;\n");
+  execFileSync("git", ["add", "changed.ts"], { cwd: path });
+  execFileSync("git", ["commit", "-m", "base"], { cwd: path, stdio: "ignore" });
+  const baseCommitSha = execFileSync("git", ["rev-parse", "HEAD"], { cwd: path, encoding: "utf8" }).trim();
+  writeFileSync(join(path, "changed.ts"), "export const after = true;\n");
+  return { path, baseCommitSha };
 }
 
 function makeStore(task: Task): TaskStore & EventEmitter {
@@ -294,6 +306,64 @@ describe("U2 KTD3 — step-inversion review seam (executor.ts:5668) loops per su
     expect(seen).toEqual([WT_A, WT_B]);
     expect(seen).not.toContain(ROOT);
     expect(result.verdict).toBe("APPROVE");
+  });
+
+  it("clears a matching remediation target when step-review approves the current scope", async () => {
+    const repoA = makeFingerprintableCheckout();
+    const repoB = makeFingerprintableCheckout();
+    capturedFilesByCwd = { [repoA.path]: ["changed.ts"], [repoB.path]: ["changed.ts"] };
+    const task = makeTask({
+      workspaceWorktrees: {
+        "repo-a": { worktreePath: repoA.path, branch: "fusion/fn-1", baseCommitSha: repoA.baseCommitSha },
+        "repo-b": { worktreePath: repoB.path, branch: "fusion/fn-1", baseCommitSha: repoB.baseCommitSha },
+      },
+      repositoryScope: {
+        repositories: ["repo-a", "repo-b"], state: "confirmed", revision: 2,
+        reviewRemediation: { scopeRevision: 2, repository: "repo-b", inputSignature: "revise" },
+      },
+    });
+    const executor = workspaceExecutor(makeStore(task));
+    scriptReviewByCwd({
+      [repoA.path]: { verdict: "APPROVE", review: "a", summary: "a" },
+      [repoB.path]: { verdict: "APPROVE", review: "b", summary: "b" },
+    });
+    const seams = executor.createAuthoritativeWorkflowSeams({ autoMerge: false } as any);
+    const context = { [FOREACH_ACTIVE_CONTEXT_KEY]: { stepIndex: 1, worktreePath: WT_A, baselineSha: "base" } } as any;
+
+    await seams.stepReview!(task as any, context, { type: "code", advisory: false } as any);
+
+    expect(task.repositoryScope?.reviewEvidence).toMatchObject({ "repo-a": expect.any(Object), "repo-b": expect.any(Object) });
+    expect(task.repositoryScope?.reviewRemediation).toBeUndefined();
+  });
+
+  it("clears a matching remediation target when a custom review node approves the current scope", async () => {
+    const repoA = makeFingerprintableCheckout();
+    const repoB = makeFingerprintableCheckout();
+    capturedFilesByCwd = { [repoA.path]: ["changed.ts"], [repoB.path]: ["changed.ts"] };
+    const task = makeTask({
+      workspaceWorktrees: {
+        "repo-a": { worktreePath: repoA.path, branch: "fusion/fn-1", baseCommitSha: repoA.baseCommitSha },
+        "repo-b": { worktreePath: repoB.path, branch: "fusion/fn-1", baseCommitSha: repoB.baseCommitSha },
+      },
+      repositoryScope: {
+        repositories: ["repo-a", "repo-b"], state: "confirmed", revision: 2,
+        reviewRemediation: { scopeRevision: 2, repository: "repo-a", inputSignature: "revise" },
+      },
+    });
+    const executor = workspaceExecutor(makeStore(task));
+    vi.spyOn(executor as any, "ensureGraphCustomNodeWorktree").mockResolvedValue(task);
+    vi.spyOn(executor as any, "executeWorkflowStep").mockResolvedValue({ success: true, verdict: "APPROVE", output: "approved" });
+
+    const result = await (executor as any).runGraphCustomNode(
+      { id: "custom-code-review", kind: "prompt", config: { reviewKind: "code", prompt: "review" } },
+      task,
+      {},
+      undefined,
+    );
+
+    expect(result).toMatchObject({ outcome: "success" });
+    expect(task.repositoryScope?.reviewEvidence).toMatchObject({ "repo-a": expect.any(Object), "repo-b": expect.any(Object) });
+    expect(task.repositoryScope?.reviewRemediation).toBeUndefined();
   });
 
   /*

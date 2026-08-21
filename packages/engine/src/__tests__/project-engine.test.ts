@@ -149,6 +149,12 @@ vi.mock("../merge/merger-ai.js", () => {
       this.name = "WorkspaceMergeDispatchSupersededError";
     }
   }
+  class WorkspaceMergeTechnicalError extends Error {
+    constructor(public readonly kind: string, message: string) {
+      super(message);
+      this.name = "WorkspaceMergeTechnicalError";
+    }
+  }
   return {
     runAiMerge: mocks.runAiMerge,
     landWorkspaceTask: mocks.landWorkspaceTask,
@@ -156,6 +162,7 @@ vi.mock("../merge/merger-ai.js", () => {
     WorkspacePartialLandError,
     WorkspaceFinalizeBlockedError,
     WorkspaceMergeDispatchSupersededError,
+    WorkspaceMergeTechnicalError,
   };
 });
 
@@ -2049,7 +2056,12 @@ describe("ProjectEngine workspace merge dispatch hardening (Phase C review)", ()
     vi.useFakeTimers();
     try {
       const mockStore = createMockStore({ ...baseSettings, autoMerge: true });
-      mockStore.store.getTask.mockResolvedValue(workspaceTask() as any);
+      let liveTask = workspaceTask() as Record<string, unknown>;
+      mockStore.store.getTask.mockImplementation(async () => liveTask as any);
+      mockStore.store.updateTask.mockImplementation(async (_id: string, patch: Record<string, unknown>) => {
+        liveTask = { ...liveTask, ...patch };
+        return liveTask as any;
+      });
       mocks.currentStore = mockStore.store;
       mocks.landWorkspaceTask.mockRejectedValue(
         new WorkspaceRepoLandBusyError("repo-a", "FN-OTHER", "FN-WSH"),

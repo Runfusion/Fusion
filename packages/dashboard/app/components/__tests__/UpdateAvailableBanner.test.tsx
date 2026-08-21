@@ -3,6 +3,7 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { useState } from "react";
 import { UpdateAvailableBanner } from "../UpdateAvailableBanner";
 import { __test_resetSystemRestartRecovery } from "../../hooks/useSystemRestartRecovery";
+import { __test_resetPendingUpdateInstall } from "../../hooks/usePendingUpdateInstall";
 
 const mockFetchDashboardHealth = vi.hoisted(() => vi.fn());
 const mockFetchSystemInfo = vi.hoisted(() => vi.fn());
@@ -38,6 +39,7 @@ async function completeInstall() {
 describe("UpdateAvailableBanner", () => {
   beforeEach(() => {
     __test_resetSystemRestartRecovery();
+    __test_resetPendingUpdateInstall();
     mockFetchDashboardHealth.mockReset();
     mockFetchDashboardHealth.mockResolvedValue({ version: "not-ready", status: "starting", holding: true });
     mockFetchSystemInfo.mockReset();

@@ -5,6 +5,7 @@ import path from "path";
 import { SettingsModal } from "../SettingsModal";
 import type { SettingsExportData, UpdateCheckResponse } from "../../api";
 import { ApiRequestError } from "../../api";
+import { __test_resetPendingUpdateInstall } from "../../hooks/usePendingUpdateInstall";
 import {
   mockFetchSettings,
   mockFetchSettingsByScope,
@@ -122,6 +123,7 @@ vi.mock("../../api", async (importOriginal) => {
     fetchProjects: (...args: unknown[]) => mockFetchProjects(...args),
     fetchDashboardHealth: (...args: unknown[]) => mockFetchDashboardHealth(...args),
     checkForUpdates: (...args: unknown[]) => mockCheckForUpdates(...args),
+    checkForUpdate: vi.fn(() => Promise.resolve({ currentVersion: "1.0.0", latestVersion: null, updateAvailable: false })),
     installUpdate: (...args: unknown[]) => mockInstallUpdate(...args),
     fetchRemoteSettings: (...args: unknown[]) => mockFetchRemoteSettings(...args),
     updateRemoteSettings: (...args: unknown[]) => mockUpdateRemoteSettings(...args),
@@ -208,6 +210,7 @@ describe("SettingsModal", () => {
   installSettingsModalEnv();
 
   beforeEach(() => {
+    __test_resetPendingUpdateInstall();
     localStorage.setItem("fusion:settings:show-advanced", "true");
   });
 
@@ -972,6 +975,75 @@ describe("SettingsModal", () => {
       await waitFor(() => expect(mockInstallUpdate).toHaveBeenCalledTimes(1));
       expect(await screen.findByText("Updated to v2.0.0 — restart Fusion to apply")).toBeInTheDocument();
       expect(screen.queryByRole("button", { name: "Update now" })).not.toBeInTheDocument();
+    });
+
+    it("preserves the installed restart state after closing and reopening Settings", async () => {
+      mockCheckForUpdates.mockResolvedValueOnce({
+        currentVersion: "1.0.0",
+        latestVersion: "2.0.0",
+        updateAvailable: true,
+      });
+      mockInstallUpdate.mockResolvedValueOnce({
+        currentVersion: "1.0.0",
+        latestVersion: "2.0.0",
+        updated: true,
+        outcome: "installed",
+      });
+
+      const firstModal = renderModal();
+      await waitForSettingsModalReady();
+      await settingsModalUser.click(screen.getByRole("button", { name: "Check for updates" }));
+      await settingsModalUser.click(await screen.findByRole("button", { name: "Update now" }));
+      expect(await screen.findByText("Updated to v2.0.0 — restart Fusion to apply")).toBeInTheDocument();
+
+      firstModal.unmount();
+      renderModal();
+      await waitForSettingsModalReady();
+
+      expect(await screen.findByText("Updated to v2.0.0 — restart Fusion to apply")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Restart Fusion" })).toBeEnabled();
+      expect(screen.queryByRole("button", { name: "Update now" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Updating…" })).not.toBeInTheDocument();
+      expect(mockCheckForUpdates).toHaveBeenCalledTimes(1);
+      expect(mockInstallUpdate).toHaveBeenCalledTimes(1);
+    });
+
+    it("retains a successful install that completes after Settings closes", async () => {
+      mockCheckForUpdates.mockResolvedValueOnce({
+        currentVersion: "1.0.0",
+        latestVersion: "2.0.0",
+        updateAvailable: true,
+      });
+      let resolveInstall: ((result: { currentVersion: string; latestVersion: string; updated: boolean; outcome: "installed" }) => void) | undefined;
+      mockInstallUpdate.mockReturnValueOnce(new Promise((resolve) => {
+        resolveInstall = resolve;
+      }));
+
+      const firstModal = renderModal();
+      await waitForSettingsModalReady();
+      await settingsModalUser.click(screen.getByRole("button", { name: "Check for updates" }));
+      await settingsModalUser.click(await screen.findByRole("button", { name: "Update now" }));
+      expect(await screen.findByRole("button", { name: "Updating…" })).toBeDisabled();
+
+      firstModal.unmount();
+      await act(async () => {
+        resolveInstall?.({
+          currentVersion: "1.0.0",
+          latestVersion: "2.0.0",
+          updated: true,
+          outcome: "installed",
+        });
+      });
+
+      renderModal();
+      await waitForSettingsModalReady();
+
+      expect(await screen.findByText("Updated to v2.0.0 — restart Fusion to apply")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Restart Fusion" })).toBeEnabled();
+      expect(screen.queryByRole("button", { name: "Update now" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Updating…" })).not.toBeInTheDocument();
+      expect(mockCheckForUpdates).toHaveBeenCalledTimes(1);
+      expect(mockInstallUpdate).toHaveBeenCalledTimes(1);
     });
 
     it("disables update-now and shows inline errors while installing", async () => {

@@ -43,7 +43,7 @@ import * as schema from "../postgres/schema/index.js";
 import type {DbTransaction} from "../postgres/data-layer.js";
 import { resolveTaskPrefix } from "./task-prefix.js";
 import {assertValidProviderInstanceId} from "../provider-instance.js";
-import {validateTaskBranchName} from "../branch/branch-assignment.js";
+import {BranchWriteProvenanceError, validateTaskBranchName} from "../branch/branch-assignment.js";
 import {loadWorkspaceConfig} from "../git/git-repository.js";
 import {
   getInternalIntakeOwnershipExemptionReason,
@@ -59,7 +59,7 @@ never inferred from a prefix, and preserve an operator's `fusion/...` branch mar
 function normalizeCreateBranchProvenance(input: TaskCreateInput): TaskCreateInput {
   if (input.branch === undefined) return input;
   if (input.branchWriteOrigin !== "operator" && input.branchWriteOrigin !== "engine") {
-    throw new Error("branchWriteOrigin is required when branch is provided");
+    throw new BranchWriteProvenanceError();
   }
   validateTaskBranchName(input.branch);
   if (input.branchWriteOrigin === "operator") {

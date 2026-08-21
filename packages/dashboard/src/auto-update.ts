@@ -50,6 +50,7 @@ export type AutoUpdateOutcome =
   | "install-failed"
   | "unsupported-install-method"
   | "restart-unavailable"
+  | "restart-waiting"
   | "restarting";
 
 export interface AutoUpdateLogger {
@@ -115,6 +116,16 @@ export async function runAutoUpdateCycle(deps: AutoUpdateDeps): Promise<AutoUpda
     return "unsupervised";
   }
 
+  const coordinator = deps.coordinator ?? new UpdateInstallCoordinator();
+
+  /*
+   * FNXC:AutoUpdate 2026-08-21-06:28:
+   * A manual install retained by this old process is authoritative until restart.
+   * The watcher must wait for that restart before its forced registry check, so
+   * background automation cannot re-check or reinstall an already-installed target.
+   */
+  if (coordinator.getPendingInstall()) return "restart-waiting";
+
   const fusionDir = deps.fusionDir ?? resolveGlobalDir();
   const check = deps.checkForUpdate ?? performUpdateCheck;
   const install = deps.installUpdate ?? performUpdateInstall;
@@ -144,7 +155,6 @@ export async function runAutoUpdateCycle(deps: AutoUpdateDeps): Promise<AutoUpda
 
   let installed: UpdateInstallResult;
   try {
-    const coordinator = deps.coordinator ?? new UpdateInstallCoordinator();
     installed = await coordinator.install(result.latestVersion, () => install(result.currentVersion, result.latestVersion, {
       fusionDir,
       installMethod: { sourceWorkspaceRoot: deps.sourceWorkspaceRoot },
@@ -168,7 +178,7 @@ export async function runAutoUpdateCycle(deps: AutoUpdateDeps): Promise<AutoUpda
   let latestSettings: AutoUpdateSettings;
   try { latestSettings = await deps.getSettings(); } catch { latestSettings = {}; }
   if (!resolveUpdateAutomationSettings(latestSettings).autoRestartAfterUpdate) return "up-to-date";
-  const scheduled = (deps.coordinator ?? new UpdateInstallCoordinator()).requestRestart(() => deps.requestRestart("auto-update"));
+  const scheduled = coordinator.requestRestart(() => deps.requestRestart("auto-update"));
   if (!scheduled) {
     deps.log.warn("Auto-update installed but restart was not scheduled", {
       message: `v${installed.latestVersion} is installed; restart Fusion manually to run it.`,

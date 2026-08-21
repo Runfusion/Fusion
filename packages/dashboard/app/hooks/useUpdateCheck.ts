@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { checkForUpdate } from "../api";
+import type { UpdateInstallResponse } from "../api";
+import { pendingUpdateInstallState, usePendingUpdateInstall } from "./usePendingUpdateInstall";
 
 const UPDATE_BANNER_DISMISSED_KEY = "kb-update-banner-dismissed";
 
@@ -9,10 +11,12 @@ export interface UseUpdateCheckResult {
   currentVersion: string | null;
   loading: boolean;
   dismissed: boolean;
+  pendingInstall?: UpdateInstallResponse;
   dismiss: () => void;
 }
 
 export function useUpdateCheck(): UseUpdateCheckResult {
+  const pendingInstall = usePendingUpdateInstall({ hydrate: false });
   const [loading, setLoading] = useState(true);
   const [updateAvailable, setUpdateAvailable] = useState(false);
   const [latestVersion, setLatestVersion] = useState<string | null>(null);
@@ -27,6 +31,9 @@ export function useUpdateCheck(): UseUpdateCheckResult {
 
     void checkForUpdate()
       .then((result) => {
+        // Record before ordinary update state so a hydrated pending restart never
+        // flashes a second Update now action through a competing stale response.
+        pendingUpdateInstallState.record(result.pendingInstall);
         if (cancelled || result.disabled) return;
 
         setUpdateAvailable(result.updateAvailable === true);
@@ -58,6 +65,7 @@ export function useUpdateCheck(): UseUpdateCheckResult {
     currentVersion,
     loading,
     dismissed,
+    pendingInstall,
     dismiss,
   };
 }

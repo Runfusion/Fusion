@@ -1059,6 +1059,7 @@ export const RemovalReason = {
   SelfHealingIdleSweep: "self-healing-idle-sweep",
   PoolPrune: "pool-prune",
   TaskReset: "task-reset",
+  WorkspaceAcquireRollback: "workspace-acquire-rollback",
 } as const;
 
 export type RemovalReason = typeof RemovalReason[keyof typeof RemovalReason];
@@ -1068,6 +1069,7 @@ const ALLOWED_FORCE_REASONS = new Set<RemovalReason>([
   RemovalReason.ExecutorDispose,
   RemovalReason.ExecutorTransientRetry,
   RemovalReason.ExecutorStuckKilled,
+  RemovalReason.WorkspaceAcquireRollback,
 ]);
 
 export class InvalidForceUsageError extends Error {
@@ -1091,8 +1093,9 @@ export class ActiveSessionWorktreeRemovalError extends Error {
 }
 
 /**
- * Remove a worktree via configured backend.
- * Only executor-owned hard-cancel/dispose paths may use force=true.
+ * FNXC:WorkspaceWorktree 2026-08-20-07:08:
+ * Force removal is reserved for explicit executor teardown paths and workspace-acquisition rollback
+ * before the rejected checkout has been published to task state.
  */
 export async function removeWorktree(input: {
   worktreePath: string;

@@ -54,6 +54,9 @@ export interface UpdateInstallResponse {
   priorPid?: number;
 }
 
+/** The old dashboard process retains this successful install until it restarts. */
+export type PendingUpdateInstall = UpdateInstallResponse;
+
 export function installUpdate(projectId?: string): Promise<UpdateInstallResponse> {
   return api<UpdateInstallResponse>(withProjectId("/update-check/install", projectId), {
     method: "POST",

@@ -166,7 +166,7 @@ export function GraphTaskNode({
           <span className="graph-task-active-indicator-text">{getStatusLabel(task.status)}</span>
         </div>
       ) : null}
-      <TaskCard {...taskCardProps} taskColumnFlags={taskColumnFlags} onOpenDetail={() => {}} disableDrag={true} />
+      <TaskCard {...taskCardProps} taskColumnFlags={taskColumnFlags} onOpenDetail={() => {}} />
     </div>
   );
 }

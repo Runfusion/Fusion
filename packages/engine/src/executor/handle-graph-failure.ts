@@ -21,6 +21,7 @@ import {
   resolveWorkflowIrForTask,
 } from "@fusion/core";
 import {
+  BRANCH_WRITE_PROVENANCE_FAILURE_VALUE,
   PLAN_REVIEW_PROVIDER_FAILURE_HOLD_VALUE,
   WORKFLOW_DRIFT_PARK_CONTEXT_KEY,
 } from "../workflows/workflow-graph-executor.js";
@@ -35,6 +36,7 @@ import { MERGE_BOUNDARY_UNPROVEN_VALUE } from "../workflows/workflow-merge-nodes
 import { emitMergeBoundaryUnprovenParked } from "./emit-merge-boundary-unproven-audit.js";
 import { PAUSE_ABORT_PARK_ERROR_MARKER, PAUSE_ABORT_PARK_OPERATOR_MARKER } from "../self-healing.js";
 import {
+  graphFailureErrorTexts,
   graphFailureValue,
   graphRunReportedPendingReview,
   isMergeGraphFailure,
@@ -232,6 +234,20 @@ export async function handleGraphFailure(
       a terminal failure — it is a wait. Route it to the self-recovering backoff hold, which never parks
       the task and never consumes the provider/artifact retry budgets.
       */
+      /*
+       * FNXC:BranchNaming 2026-08-21-09:09:
+       * A rejected branch provenance is deterministic task mutation input, not a model/provider
+       * outage. Park it exactly once before every retry classifier so recovery cannot replay a
+       * freshly-created checkout or consume graph/provider retry budgets.
+       */
+      if (graphFailureValue(result) === BRANCH_WRITE_PROVENANCE_FAILURE_VALUE) {
+        const diagnostic = graphFailureErrorTexts(result).find((message) => message.includes("branchWriteOrigin is required when branch is provided"))
+          ?? "branchWriteOrigin is required when branch is provided";
+        await deps.store.logEntry(task.id, diagnostic, undefined, deps.getRunContextFor(task.id));
+        await deps.store.updateTask(task.id, { status: "failed", error: diagnostic }, deps.getRunContextFor(task.id));
+        await deps.persistTokenUsage(task.id);
+        return;
+      }
       if (isSessionContentionGraphFailure(result)) {
         await deps.holdForSessionContention(task, live, result);
         await deps.persistTokenUsage(task.id);

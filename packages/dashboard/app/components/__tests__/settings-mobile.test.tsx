@@ -5,6 +5,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { SettingsModal, SettingsView } from "../SettingsModal";
+import { __test_resetPendingUpdateInstall } from "../../hooks/usePendingUpdateInstall";
 import type { Settings } from "@fusion/core";
 
 
@@ -118,6 +119,7 @@ vi.mock("../../api", () => ({
   })),
   fetchDashboardHealth: vi.fn(() => Promise.resolve({ status: "ok", version: "1.2.3", uptime: 120 })),
   checkForUpdates: vi.fn(() => Promise.resolve({ currentVersion: "1.0.0", latestVersion: "2.0.0", updateAvailable: true })),
+  checkForUpdate: vi.fn(() => Promise.resolve({ currentVersion: "1.0.0", latestVersion: "2.0.0", updateAvailable: true })),
   installUpdate: vi.fn(() => Promise.resolve({ currentVersion: "1.0.0", latestVersion: "2.0.0", updated: true })),
   fetchSystemInfo: vi.fn(() => Promise.resolve({ supervised: true, restartSupported: true })),
   requestSystemRestart: vi.fn(() => Promise.resolve({ scheduled: true })),
@@ -273,6 +275,7 @@ function expectBaseRule(css: string, selector: string, declaration: string): voi
 
 describe("SettingsModal mobile adaptations", () => {
   beforeEach(() => {
+    __test_resetPendingUpdateInstall();
     vi.clearAllMocks();
     setDocumentHidden(false);
     localStorage.removeItem("fusion_github_star_count");

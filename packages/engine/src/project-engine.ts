@@ -88,6 +88,7 @@ import {
   landWorkspaceTask,
   WorkspaceFinalizeBlockedError,
   WorkspaceMergeDispatchSupersededError,
+  WorkspaceMergeTechnicalError,
   WorkspacePartialLandError,
   WorkspaceRepoLandBusyError,
 } from "./merge/merger-ai.js";
@@ -4726,6 +4727,22 @@ export class ProjectEngine {
           land attempt. Reject the resolver so the busy error surfaces to the user (they can retry),
           WITHOUT consuming a mergeRetry. No re-enqueue: manual merges are user-driven, not engine-timed.
           */
+          /*
+          FNXC:WorkspaceFinalization 2026-08-21-08:46:
+          Technical fence/lease failures retain their real category and consume the durable transient
+          retry budget. They must never enter the contention branch, which is reserved for a concrete
+          repository lease conflict naming a real holder task.
+          */
+          if (err instanceof WorkspaceMergeTechnicalError) {
+            await store.logEntry(taskId, `Workspace merge technical failure (${err.kind}): ${err.message}`, "WorkspaceMergeTechnicalFailure").catch(() => undefined);
+            if (hasManualResolver) {
+              this.rejectMergeResolvers(taskId, err);
+            } else if (!(await this.maybeRetryTransientMerge(store, taskId, await store.getTask(taskId).catch(() => null), err.message, true))) {
+              await store.updateTask(taskId, { status: "failed", error: err.message }).catch(() => undefined);
+            }
+            continue;
+          }
+
           const isWorkspaceBusyError = err instanceof WorkspaceRepoLandBusyError
             || err instanceof WorkspaceMergeDispatchBusyError
             // FNXC:WorkspaceMergeDispatch 2026-08-15-09:37: a stale generation that pushed
@@ -4740,23 +4757,27 @@ export class ProjectEngine {
           }
 
           if (isWorkspaceBusyError && !hasManualResolver) {
-            const busyCount = this.workspaceBusyReenqueues.get(taskId) ?? 0;
+            /*
+            FNXC:WorkspaceFinalization 2026-08-21-09:09:
+            Lease contention is restart-safe only when its ceiling is task state. The local timer
+            map may coalesce callbacks but must never decide the retry count; persist before
+            scheduling so a recreated engine cannot restart the same livelock episode. Legacy rows
+            with no counter begin their first durable contention episode at zero.
+            */
+            const liveTask = await store.getTask(taskId).catch(() => null);
+            const busyCount = liveTask?.mergeTransientRetryCount ?? 0;
             await store
               .logEntry(taskId, `Workspace sub-repo land busy (contention): ${errorMsg}`, "WorkspaceRepoLandBusy")
               .catch(() => undefined);
             if (busyCount < ProjectEngine.WORKSPACE_BUSY_MAX_REENQUEUES) {
-              this.workspaceBusyReenqueues.set(taskId, busyCount + 1);
-              // Capped exponential backoff (B5): never exceed 60s even at the busy ceiling.
+              const nextCount = busyCount + 1;
               const delayMs = Math.min(5000 * Math.pow(2, busyCount), 60_000);
-              await store.updateTask(taskId, { status: null }).catch(() => undefined);
+              await store.updateTask(taskId, { status: null, mergeTransientRetryCount: nextCount }).catch(() => undefined);
               runtimeLog.log(
-                `Workspace land busy re-enqueue ${busyCount + 1}/${ProjectEngine.WORKSPACE_BUSY_MAX_REENQUEUES} for ${taskId} in ${delayMs / 1000}s (no mergeRetry consumed — pure lease contention)`,
+                `Workspace land busy re-enqueue ${nextCount}/${ProjectEngine.WORKSPACE_BUSY_MAX_REENQUEUES} for ${taskId} in ${delayMs / 1000}s (durable transient retry)`,
               );
               this.scheduleWorkspaceBusyReenqueue(taskId, delayMs);
             } else {
-              // Pathological sustained contention — surface but do NOT burn mergeRetries; park as
-              // failed so the cooldown sweep stops re-attempting and an operator can intervene.
-              this.workspaceBusyReenqueues.delete(taskId);
               await store
                 .updateTask(taskId, { status: "failed", error: errorMsg })
                 .catch(() => undefined);

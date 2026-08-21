@@ -528,6 +528,8 @@ export function createAuthoritativeWorkflowSeams(
               repositoryScope: {
                 ...currentScope,
                 reviewEvidence: Object.fromEntries(Object.entries(review.repositoryDiffFingerprints).map(([repo, fingerprint]) => [repo, { fingerprint, approvedAt }])),
+                // FNXC:WorkspaceFinalization 2026-08-21-09:50: An APPROVE for this fenced scope ends its REVISE episode; retaining its target would misroute later acquisition.
+                ...(currentScope.reviewRemediation?.scopeRevision === review.repositoryScopeRevision ? { reviewRemediation: undefined } : {}),
               },
             };
           });

@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { buildAutoUpdateDeps, runAutoUpdateCycle, startAutoUpdateWatcher } from "../auto-update.js";
 import type { AutoUpdateDeps } from "../auto-update.js";
+import { UpdateInstallCoordinator } from "../update-install-coordinator.js";
 
 /*
 FNXC:AutoUpdate 2026-07-25-10:05:
@@ -98,6 +99,23 @@ describe("runAutoUpdateCycle", () => {
       force: true,
       channel: "beta",
     });
+  });
+
+  it("waits for restart without rechecking after another surface installed an update", async () => {
+    const coordinator = new UpdateInstallCoordinator();
+    await coordinator.install("2.0.0", async () => ({
+      currentVersion: "1.0.0",
+      latestVersion: "2.0.0",
+      updated: true,
+      outcome: "installed",
+    }));
+    const deps = makeDeps({ coordinator });
+
+    await expect(runAutoUpdateCycle(deps)).resolves.toBe("restart-waiting");
+
+    expect(deps.checkForUpdate).not.toHaveBeenCalled();
+    expect(deps.installUpdate).not.toHaveBeenCalled();
+    expect(deps.requestRestart).not.toHaveBeenCalled();
   });
 
   it("does not install or restart when already up to date", async () => {

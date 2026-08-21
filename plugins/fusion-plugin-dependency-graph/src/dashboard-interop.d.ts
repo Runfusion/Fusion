@@ -49,7 +49,6 @@ declare module "@fusion/dashboard/app/components/TaskCard" {
     /* FNXC:WorkflowLifecycleColumns 2026-07-31-15:30: the prop the host card already accepts; without it
        declared here a plugin-drawn card could not be given the board's traits at all. */
     taskColumnFlags?: Partial<TraitFlags>;
-    disableDrag?: boolean;
   }
 
   export function TaskCard(props: TaskCardProps): ReactElement;
@@ -57,6 +56,11 @@ declare module "@fusion/dashboard/app/components/TaskCard" {
 
 declare module "@fusion/dashboard/app/utils/projectStorage" {
   export function getScopedItem(baseKey: string, projectId?: string): string | null;
-  export function setScopedItem(baseKey: string, value: string, projectId?: string): void;
+  export function setScopedItem(
+    baseKey: string,
+    value: string,
+    projectId?: string,
+    options?: { maxBytes?: number },
+  ): boolean;
   export function removeScopedItem(baseKey: string, projectId?: string): void;
 }

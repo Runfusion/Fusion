@@ -1127,7 +1127,10 @@ The client treats mapping persistence as part of onboarding success. If mapping 
 | GET | `/api/settings/auth-export` | Export local `AuthMaterialSnapshot`. |
 | GET | `/api/update-check` | Read cached/TTL-guarded npm update status for `@runfusion/fusion` (respects `updateCheckEnabled`). |
 | POST | `/api/update-check/refresh` | Clear cached update data and force a fresh npm update check. |
+| POST | `/api/update-check/install` | Install the available package once; a successful install is retained by the old process until restart. |
 | GET | `/api/updates/check` | Perform an on-demand npm registry check for the latest `@runfusion/fusion` version (no cache). |
+
+Update-check responses may include `pendingInstall`, using the install response shape for a successful `installed` target plus restart flags. `pendingInstall` takes dashboard action/message precedence over ordinary availability, disabled checks, and cached status; while it exists GET, refresh, and install return it without another registry lookup or npm install. It is intentionally process-local and expires on host replacement, rather than being persisted in settings or storage.
 
 When adding a new node settings/auth sync endpoint, add it to the `ENDPOINTS` catalog in `packages/dashboard/src/__tests__/routes-nodes-sync-contract.test.ts` so the auth/error/payload parity matrix covers it. Inbound sync endpoints (including `/api/secrets/sync-receive` and `/api/secrets/sync-export`) must validate `Authorization: Bearer <apiKey>` against the local node API key.
 
@@ -2445,3 +2448,13 @@ An approval remains an approval. A clean approval is reviewed a second time agai
 Workspace acquisition prepares Git worktrees for every configured repository before planning; it does not declare task intent. A task's explicit repository scope is the authority for downstream work. Planning confirms that scope, and a pre-land extension is recorded with its acceptance or refusal history. A late extension after any repository has landed is refused so operators can create a follow-up rather than mutate an integration episode.
 
 Review and landing use the intersection of confirmed scope and qualified changed-file evidence. Clean scoped repositories are recorded as **No changes — not reviewed** and have no reviewer verdict. Acquired out-of-scope repositories are not opened by reviewers or selected as land/recovery targets. Workspace tasks keep their worktree and branch state per repository; an absent singular `task.worktree` is normal and must not trigger root-worktree recovery.
+
+## Branch assignment provenance
+
+Every populated or cleared task `branch` mutation declares `branchWriteOrigin`: use `operator` only for a matching persisted override and `engine` for canonical, group-derived, recovery, and clear writes. Single-repository acquisition creates or attaches the checkout, persists its singular branch assignment, then exposes it. If that persistence fails, it removes only the checkout created by the attempt through the backend-aware removal path and preserves the branch. A provenance validation failure is deterministic and terminal, never a provider retry.
+
+## Workspace finalization readiness
+
+Workspace landing derives its repository obligations from confirmed repository scope and durable per-repository evidence. A repository with a recorded `landedSha` remains an obligation on a finalize-once retry even when its current task-branch diff is empty. Undefined scope, duplicate repository declarations or worktree paths, and unexplained empty obligations fail closed; only an explicit commit-free task may take the no-op path.
+
+Every land and recovery door evaluates graph-owned pre-merge blockers before changing merge state, acquiring leases, or writing Git. Recovery uses the persisted transient merge counter and reports scheduling separately from observed finalization. Main-checkout committed-work detection requires task ownership after the repository baseline; historical task-ID commits, recorded landings, and foreign shared-checkout commits do not become task violations. A scope revision atomically clears both its approval fingerprints and Code Review remediation target; a current-scope approval likewise clears that target, so a successor cannot inherit a stale remediation coordinator.

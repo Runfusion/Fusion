@@ -188,6 +188,7 @@ export async function handleBranchConflict(
       status: "failed",
       error: conflictMessage,
       branch: error.branchName,
+      branchWriteOrigin: "engine" as const,
       worktree: error.conflictingWorktreePath,
       paused: true,
       pausedReason: "branch-conflict-unrecoverable",

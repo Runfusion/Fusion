@@ -36,7 +36,7 @@ import {hasOwnDeclaredSymbols, normalizeDeclaredSymbols, extractDeclaredSymbolsF
 import {assertValidProviderInstanceId} from "../provider-instance.js";
 import {supersedePlanReviewResults} from "../planner/plan-approval.js";
 import {PLAN_REVIEW_GROUP_ID} from "../workflows/builtin-plan-review-group.js";
-import {validateTaskBranchName} from "../branch/branch-assignment.js";
+import {BranchWriteProvenanceError, validateTaskBranchName} from "../branch/branch-assignment.js";
 import {withTaskBranchContextInSourceMetadata} from "./branch-context.js";
 import {invalidateSupersededRepositoryScopeReviews} from "../tasks/repository-scope.js";
 
@@ -89,7 +89,7 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
   if (updates.recommendations !== undefined) assertValidRecommendations(updates.recommendations);
   if (updates.branch !== undefined) {
     if (updates.branchWriteOrigin !== "operator" && updates.branchWriteOrigin !== "engine") {
-      throw new Error("branchWriteOrigin is required when branch is provided");
+      throw new BranchWriteProvenanceError();
     }
     if (updates.branch !== null) validateTaskBranchName(updates.branch);
   }
@@ -248,12 +248,12 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
       } else if (updates.repositoryScope !== undefined) {
         /*
         FNXC:RepositoryScope 2026-08-21-02:48:
-        Prompt confirmation writes scope in the same task mutation. Its new revision
-        cannot inherit Code Review evidence captured for the old repository intent.
+        Prompt confirmation writes scope in the same task mutation. Its new revision cannot
+        inherit Code Review evidence or a remediation target captured for the old repository intent.
         */
         const scopeRevisionChanged = task.repositoryScope?.revision !== updates.repositoryScope.revision;
         task.repositoryScope = scopeRevisionChanged
-          ? { ...updates.repositoryScope, reviewEvidence: undefined }
+          ? { ...updates.repositoryScope, reviewEvidence: undefined, reviewRemediation: undefined }
           : updates.repositoryScope;
         if (scopeRevisionChanged) {
           task.workflowStepResults = invalidateSupersededRepositoryScopeReviews(

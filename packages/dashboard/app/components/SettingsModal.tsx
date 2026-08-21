@@ -12,6 +12,7 @@ import { fetchSettings, fetchSettingsByScope, updateSettings, updateGlobalSettin
 import type { AuthProvider, ManualOAuthCodeInfo, ModelInfo, BackupListResponse, SettingsExportData, MemoryFileInfo, MemoryRetrievalTestResult, GitRemote, GitRemoteDetailed, ProjectInfo, RemoteStatus, UpdateCheckResponse, UpdateInstallResponse, OAuthDeviceCodeInfo } from "../api";
 import { resolveScopedMcpSettings, splitSettingsSave, type McpSettingsScope } from "./settings/save-split";
 import { systemRestartRecovery, useSystemRestartRecovery } from "../hooks/useSystemRestartRecovery";
+import { pendingUpdateInstallState, usePendingUpdateInstall } from "../hooks/usePendingUpdateInstall";
 import {
   ALL_PROJECT_RESET_KEYS,
   getResetIneligibleReason,
@@ -1255,6 +1256,7 @@ export function SettingsModal({
   const [restartScheduled, setRestartScheduled] = useState(false);
   const [restartError, setRestartError] = useState<string | null>(null);
   const restartRecovery = useSystemRestartRecovery();
+  const pendingInstall = usePendingUpdateInstall();
   const gitHubStarCount = useGitHubStarCount();
   const [starClicked, markStarClicked] = useStarClickedFlag();
   const [prefixError, setPrefixError] = useState<string | null>(null);
@@ -1803,6 +1805,7 @@ export function SettingsModal({
 
     try {
       const result = await checkForUpdates();
+      pendingUpdateInstallState.record(result.pendingInstall);
       setUpdateCheckResult(result);
 
       if (result.error) {
@@ -1831,6 +1834,7 @@ export function SettingsModal({
 
     try {
       const result = await installUpdate(projectId);
+      pendingUpdateInstallState.record(result);
       setUpdateInstallResult(result);
       if (result.restartScheduled && result.latestVersion) {
         setRestartScheduled(true);
@@ -1924,7 +1928,7 @@ export function SettingsModal({
       const result = await requestSystemRestart("settings-update");
       if (result.scheduled) {
         setRestartScheduled(true);
-        const targetVersion = updateInstallResult?.latestVersion ?? updateCheckResult?.latestVersion;
+        const targetVersion = pendingInstall?.latestVersion ?? updateInstallResult?.latestVersion ?? updateCheckResult?.latestVersion;
         if (targetVersion) systemRestartRecovery.arm(targetVersion, restartPriorPid);
       } else {
         setRestartError(t("settings.general.restartFailed", "Restart could not be scheduled. Try restarting Fusion manually."));
@@ -1934,27 +1938,32 @@ export function SettingsModal({
     } finally {
       setRestartLoading(false);
     }
-  }, [restartLoading, restartPriorPid, t, updateCheckResult, updateInstallResult]);
+  }, [pendingInstall, restartLoading, restartPriorPid, t, updateCheckResult, updateInstallResult]);
 
   const renderUpdateCheckResultContent = useCallback(() => {
-    if (!updateCheckResult) {
+    /* FNXC:PendingUpdateInstall 2026-08-21-05:58: A host-retained install takes precedence over this modal's transient check and loading state, including after the modal remounts. */
+    const effectiveCheckResult = pendingInstall
+      ? { currentVersion: pendingInstall.currentVersion, latestVersion: pendingInstall.latestVersion, updateAvailable: true }
+      : updateCheckResult;
+    const effectiveInstallResult = pendingInstall ?? updateInstallResult;
+    if (!effectiveCheckResult) {
       return null;
     }
 
-    if (updateCheckResult.error) {
-      return updateCheckResult.error;
+    if (effectiveCheckResult.error) {
+      return effectiveCheckResult.error;
     }
 
-    if (updateCheckResult.updateAvailable && updateCheckResult.latestVersion) {
-      const installSucceeded = updateInstallResult?.updated === true;
-      const installError = updateInstallResult?.error;
-      const installMessage = updateInstallResult?.message ?? installError ?? (updateInstallResult && !updateInstallResult.updated ? t("settings.general.updateUnknown", "Update did not complete — see the Fusion logs") : undefined);
-      const installIsError = updateInstallResult?.outcome === "check-failed" || updateInstallResult?.outcome === "failed" || Boolean(installError && updateInstallResult?.outcome !== "unsupported-install-method");
+    if (effectiveCheckResult.updateAvailable && effectiveCheckResult.latestVersion) {
+      const installSucceeded = effectiveInstallResult?.updated === true;
+      const installError = effectiveInstallResult?.error;
+      const installMessage = effectiveInstallResult?.message ?? installError ?? (effectiveInstallResult && !effectiveInstallResult.updated ? t("settings.general.updateUnknown", "Update did not complete — see the Fusion logs") : undefined);
+      const installIsError = effectiveInstallResult?.outcome === "check-failed" || effectiveInstallResult?.outcome === "failed" || Boolean(installError && effectiveInstallResult?.outcome !== "unsupported-install-method");
 
       return (
         <>
           <span>
-            {t("settings.general.updateAvailablePrefix", "v{{version}} available", { version: updateCheckResult.latestVersion })} ·{" "}
+            {t("settings.general.updateAvailablePrefix", "v{{version}} available", { version: effectiveCheckResult.latestVersion })} ·{" "}
             <a
               href="https://runfusion.ai"
               target="_blank"
@@ -1968,10 +1977,10 @@ export function SettingsModal({
             <span className="settings-update-install-succeeded">
               <span className="settings-update-install-status settings-update-install-status--success" aria-live="polite">
                 {t("settings.general.updateSuccess", "Updated to v{{version}} — restart Fusion to apply", {
-                  version: updateInstallResult.latestVersion ?? updateCheckResult.latestVersion,
+                  version: effectiveInstallResult.latestVersion ?? effectiveCheckResult.latestVersion,
                 })}
               </span>
-              {restartScheduled ? (
+              {restartScheduled || pendingInstall?.restartScheduled ? (
                 <>
                   <span className="settings-update-install-status" aria-live="polite">
                     {restartRecovery.phase === "back"
@@ -2051,7 +2060,7 @@ export function SettingsModal({
     }
 
     return t("settings.general.upToDate", "You're up to date ✓");
-  }, [handleInstallUpdate, handleRestart, restartError, restartLoading, restartRecovery, restartScheduled, restartSupported, t, updateCheckResult, updateInstallLoading, updateInstallResult]);
+  }, [handleInstallUpdate, handleRestart, pendingInstall, restartError, restartLoading, restartRecovery, restartScheduled, restartSupported, t, updateCheckResult, updateInstallLoading, updateInstallResult]);
 
   /*
   FNXC:SettingsUpdate 2026-07-25-19:40:
@@ -2062,13 +2071,16 @@ export function SettingsModal({
   Import/Export/Reset/Close were pushed off-screen behind a scroll affordance operators do not see. Giving the banner
   its own row keeps the rail to the controls it was sized for, and the banner wraps normally instead of clipping.
   */
-  const updateCheckResultNode = updateCheckResult ? (
+  const displayedUpdateCheckResult = pendingInstall
+    ? { currentVersion: pendingInstall.currentVersion, latestVersion: pendingInstall.latestVersion, updateAvailable: true }
+    : updateCheckResult;
+  const updateCheckResultNode = displayedUpdateCheckResult ? (
     <span
       aria-live="polite"
       className={`settings-update-result ${
-        updateCheckResult.error
+        displayedUpdateCheckResult.error
           ? "settings-update-result--error"
-          : updateCheckResult.updateAvailable
+          : displayedUpdateCheckResult.updateAvailable
             ? "settings-update-result--available"
             : "settings-update-result--up-to-date"
       }`}

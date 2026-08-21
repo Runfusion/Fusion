@@ -3,6 +3,7 @@ import { act, render, screen, fireEvent, waitFor, within, cleanup } from "@testi
 import path from "path";
 import { SettingsModal } from "../SettingsModal";
 import { __test_resetSystemRestartRecovery, systemRestartRecovery } from "../../hooks/useSystemRestartRecovery";
+import { __test_resetPendingUpdateInstall } from "../../hooks/usePendingUpdateInstall";
 import { ModalDismissPreferenceProvider } from "../../hooks/useOverlayDismiss";
 import {
   mockFetchSettings,
@@ -134,6 +135,7 @@ vi.mock("../../api", async (importOriginal) => {
     fetchProjects: (...args: unknown[]) => mockFetchProjects(...args),
     fetchDashboardHealth: (...args: unknown[]) => mockFetchDashboardHealth(...args),
     checkForUpdates: (...args: unknown[]) => mockCheckForUpdates(...args),
+    checkForUpdate: vi.fn(() => Promise.resolve({ currentVersion: "1.0.0", latestVersion: null, updateAvailable: false })),
     installUpdate: (...args: unknown[]) => mockInstallUpdate(...args),
     fetchSystemInfo: (...args: unknown[]) => mockFetchSystemInfo(...args),
     requestSystemRestart: (...args: unknown[]) => mockRequestSystemRestart(...args),
@@ -414,6 +416,9 @@ describe("SettingsModal", () => {
   }
 
   describe("update restart affordance", () => {
+    beforeEach(() => {
+      __test_resetPendingUpdateInstall();
+    });
     it("renders an enabled restart button after a successful update on desktop", async () => {
       viewportMode = "desktop";
 
@@ -1263,6 +1268,7 @@ describe("SettingsModal", () => {
 
   describe("Global General", () => {
     beforeEach(() => {
+      __test_resetPendingUpdateInstall();
       localStorage.setItem("fusion:settings:show-advanced", "true");
     });
 

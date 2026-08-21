@@ -719,6 +719,13 @@ export interface TaskRepositoryScope {
   confirmedBy?: "operator" | "plan" | "inferred";
   /** FNXC:RepositoryScope 2026-08-21-01:18: Fresh landing accepts only the exact repository diff approved by Code Review. */
   reviewEvidence?: Record<string, { fingerprint: string; approvedAt: string }>;
+  /*
+  FNXC:WorkspaceFinalization 2026-08-21-09:09:
+  A repeated workspace Code Review REVISE must survive result cleanup and engine restart. Store the
+  reviewed repository and normalized input signature with its scope generation, never a root path
+  or checkout path, so a changed scope or diff opens a new remediation episode safely.
+  */
+  reviewRemediation?: { scopeRevision: number; repository: string; inputSignature: string };
   extensions?: Array<{
     repository: string;
     requestedAt: string;

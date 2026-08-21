@@ -59,6 +59,7 @@ export {
 } from "./agents/memory-agent-defaults.js";
 export type { MemoryAgentDefault } from "./agents/memory-agent-defaults.js";
 export {
+  BranchWriteProvenanceError,
   resolveEntryPointBranchAssignment,
   sanitizeBranchSegment,
   derivePerTaskBranchName,

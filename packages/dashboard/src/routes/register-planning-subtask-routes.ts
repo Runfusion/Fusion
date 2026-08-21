@@ -1071,6 +1071,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
         priority: isTaskPriority(summary.priority) ? summary.priority : DEFAULT_TASK_PRIORITY,
         ...(sourceContext ? { sourceIssue: sourceContext.sourceIssue, source: { sourceType: "github_import" as const, sourceMetadata: sourceContext.sourceMetadata }, ...(trackingDecision?.githubTracking ? { githubTracking: trackingDecision.githubTracking } : {}) } : { source: { sourceType: "api" as const } }),
         branch: resolvedBranch,
+        ...(resolvedBranch !== undefined ? { branchWriteOrigin: "operator" as const } : {}),
         baseBranch: resolvedBaseBranch,
         /*
         FNXC:WorkflowSelection 2026-06-20-16:48:

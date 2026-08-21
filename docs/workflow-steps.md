@@ -1020,3 +1020,7 @@ Board hold-lane payloads can expose a transient `releaseGate` verdict. It makes 
 A workflow whose `foreach` template contains `step-execute` may use terminal live task-step coverage as merge implementation proof when it expects at least one instance. Every expected instance must map to a `done` or `skipped` live step. This supports Review Level 0, which intentionally disables optional node-result groups. Zero expected instances still require a relevant `source:"node"` pre-merge result, and pending or failed node results remain blocking.
 
 When the merge boundary cannot be proven, Fusion emits the terminal graph value `merge-boundary-unproven` and parks the task as failed with an actionable error. It does not silently retain the task in the review lane or repeat the same boundary check through bounded auto-merge retry.
+
+### Workspace Code Review remediation
+
+Workspace Code Review carries repository-specific outcomes. A failed review is remediated from the failing repository's acquired worktree without persisting a singular workspace-root worktree. Repeated unchanged negative review input parks for operator approval; landing requires current approval evidence for every modified scoped repository. Scope changes clear both approval evidence and the remediation target atomically, while a current-scope APPROVE clears its matching target before graph completion.

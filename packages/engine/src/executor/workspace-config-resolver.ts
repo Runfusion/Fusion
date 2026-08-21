@@ -38,6 +38,7 @@ export async function normalizeWorkspaceTaskRouting(store: TaskStore, taskId: st
     await store.updateTask(taskId, {
       worktree: null,
       branch: null,
+      branchWriteOrigin: "engine" as const,
       executionStartBranch: null,
       baseCommitSha: null,
       sessionFile: null,

@@ -529,10 +529,33 @@ export async function mergeWorkspaceWorktreeEntryImpl(
   store: TaskStore,
   id: string,
   repoRelPath: string,
-  patch: Partial<WorkspaceWorktreeEntry>,
-  options: { requireExistingEntry?: boolean; clearSingularWorktree?: boolean } = {},
+  patch: Partial<WorkspaceWorktreeEntry> | ((current: Task) => Promise<Partial<WorkspaceWorktreeEntry>>),
+  options: {
+    requireExistingEntry?: boolean;
+    clearSingularWorktree?: boolean;
+    validateBeforePersist?: (current: Task) => Promise<void>;
+  } = {},
 ): Promise<Task> {
   return store.withTaskLock(id, async () => {
+    let resolvedPatch: Partial<WorkspaceWorktreeEntry>;
+    if (typeof patch === "function") {
+      const callbackTask = await store.getTask(id, { includeDeleted: true });
+      if (callbackTask.deletedAt) throw new TaskDeletedError(id, callbackTask.deletedAt);
+      const callbackExisting = callbackTask.workspaceWorktrees?.[repoRelPath];
+      if (options.requireExistingEntry && !callbackExisting) return callbackTask;
+      /*
+      FNXC:WorkspaceWorktree 2026-08-20-07:08:
+      Filesystem creation, configured init commands, hydration, and secrets materialization must not
+      occupy a PostgreSQL transaction or one of the small runtime connection pool's sessions. The
+      in-process task mutex and durable repository-acquisition lease serialize preparation; the short
+      transaction below revalidates authoritative lifecycle state under the cross-process advisory
+      lock immediately before persisting the prepared entry.
+      */
+      resolvedPatch = await patch(callbackTask);
+    } else {
+      resolvedPatch = patch;
+    }
+
     const layer = store.asyncLayer!;
     const outcome = await layer.transactionImmediate(async (tx) => {
       await acquireTaskAdvisoryXactLock(tx, layer.projectId, id);
@@ -544,12 +567,18 @@ export async function mergeWorkspaceWorktreeEntryImpl(
       const workspaceWorktrees = current.workspaceWorktrees ?? {};
       const existing = workspaceWorktrees[repoRelPath];
       if (options.requireExistingEntry && !existing) return { task: current, mutated: false };
-
+      await options.validateBeforePersist?.(current);
+      /*
+      FNXC:WorkspaceWorktree 2026-08-20-07:08: Persist the prepared entry only after the authoritative
+      task row passes lifecycle revalidation under the database advisory lock. A cross-process move
+      that wins during filesystem preparation therefore blocks the row update instead of attaching a
+      late worktree to review, complete, or archived state.
+      */
       const updatedAt = new Date().toISOString();
       const [updatedRow] = await tx
         .update(schema.project.tasks)
         .set({
-          workspaceWorktrees: { ...workspaceWorktrees, [repoRelPath]: { ...existing, ...patch } },
+          workspaceWorktrees: { ...workspaceWorktrees, [repoRelPath]: { ...existing, ...resolvedPatch } },
           ...(options.clearSingularWorktree
             ? {
                 worktree: null,
@@ -670,15 +699,15 @@ export async function updateTaskRepositoryScopeImpl(
         : requestedScope;
       /*
       FNXC:RepositoryScope 2026-08-21-02:48:
-      A repository-scope mutation invalidates approvals captured for the prior intent
-      generation. Never carry review evidence into a new revision: landing may only
-      accept fingerprints reviewed against the current confirmed repository set.
+      A repository-scope mutation invalidates the prior review episode. Never carry approval
+      evidence or a remediation target into a new revision: landing may only accept fingerprints
+      reviewed against the current confirmed repository set, and remediation must re-evaluate it.
       */
       const normalized = nextRepositories && replacement && {
         ...replacement,
         repositories: nextRepositories,
         revision: Math.max((current.repositoryScope?.revision ?? 0) + 1, replacement.revision ?? 0),
-        ...(scopeChanged ? { reviewEvidence: undefined } : {}),
+        ...(scopeChanged ? { reviewEvidence: undefined, reviewRemediation: undefined } : {}),
       };
       const [updatedRow] = await tx
         .update(schema.project.tasks)
@@ -699,6 +728,47 @@ export async function updateTaskRepositoryScopeImpl(
     store.emitTaskLifecycleEventSafely("task:updated", [outcome]);
     return outcome;
   }));
+}
+
+/*
+FNXC:WorkspaceFinalization 2026-08-21-09:09:
+Workspace Code Review remediation is task-owned state guarded by the current repository-scope
+revision. The CAS prevents a late reviewer from restoring a stale repository target after an
+operator changes scope; it updates only repository_scope and cannot clobber worktree land state.
+*/
+export async function updateWorkspaceReviewStateImpl(
+  store: TaskStore,
+  id: string,
+  expectedScopeRevision: number,
+  reviewRemediation: TaskRepositoryScope["reviewRemediation"] | null,
+): Promise<{ task: Task; updated: boolean }> {
+  return store.withTaskLock(id, async () => {
+    const layer = store.asyncLayer!;
+    const outcome = await layer.transactionImmediate(async (tx) => {
+      await acquireTaskAdvisoryXactLock(tx, layer.projectId, id);
+      const row = await readTaskRowInTransaction(tx, id, { includeDeleted: true }, layer.projectId);
+      if (!row) throw new TaskNotFoundError(id);
+      if (row.deletedAt) throw new TaskDeletedError(id, row.deletedAt as string);
+      const current = store.rowToTask(store.pgRowToTaskRow(row));
+      if (current.repositoryScope?.revision !== expectedScopeRevision) return { task: current, updated: false };
+      const repositoryScope = {
+        ...current.repositoryScope,
+        ...(reviewRemediation ? { reviewRemediation } : { reviewRemediation: undefined }),
+      };
+      const [updatedRow] = await tx.update(schema.project.tasks).set({
+        repositoryScope,
+        updatedAt: new Date().toISOString(),
+      }).where(and(eq(schema.project.tasks.id, id), taskProjectScope(layer))).returning();
+      if (!updatedRow) throw new TaskNotFoundError(id);
+      return { task: store.rowToTask(store.pgRowToTaskRow(updatedRow)), updated: true };
+    });
+    if (outcome.updated) {
+      await store.writeTaskJsonFile(store.taskDir(id), outcome.task);
+      if (store.isWatching) store.taskCache.set(id, { ...outcome.task });
+      store.emitTaskLifecycleEventSafely("task:updated", [outcome.task]);
+    }
+    return outcome;
+  });
 }
 
 export async function resolveTaskWedgeNotificationEpisodeImpl(

@@ -17,6 +17,7 @@ import { captureBaseCommitSha } from "./worktree-git-refs.js";
 import { createConfiguredCommandAbortError } from "./task-predicates.js";
 import type { WorktreePool } from "../worktree/worktree-pool.js";
 import { resolveWorkspaceConfigOnce } from "./workspace-config-resolver.js";
+import { resolveWorkspaceReviewRemediationRepository } from "./workspace-review-remediation.js";
 
 export type EnsureGraphCustomNodeWorktreeDeps = {
   store: TaskStore;
@@ -81,6 +82,12 @@ export async function ensureGraphCustomNodeWorktree(
     while the durable map remains the authority for all repository worktrees.
     */
     if (workspaceConfig) {
+      /*
+      FNXC:WorkspaceFinalization 2026-08-21-09:33:
+      Graph-node reacquisition is a production rerun path too. Preserve the durable failing
+      repository as coordinator and let acquisition reject a stale or foreign scope target.
+      */
+      const remediationRepository = resolveWorkspaceReviewRemediationRepository(task, workspaceConfig.repos);
       const workspace = await acquireWorkspaceTaskWorktrees({
         workspaceConfig,
         workspaceRootDir: deps.rootDir,
@@ -107,6 +114,7 @@ export async function ensureGraphCustomNodeWorktree(
           }),
         taskEnv: process.env,
         addActiveWorktree: deps.addActiveWorktree,
+        remediationRepository,
       });
       deps.onStart?.(workspace.task, workspace.coordinatorWorktreePath);
       executorLog.debug(`${task.id}: workflow node '${nodeId}' using workspace coordinator ${workspace.coordinatorWorktreePath}`);

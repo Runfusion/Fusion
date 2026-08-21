@@ -46,6 +46,8 @@ export async function sendTaskBackForFix(
   mergeVerificationFailure: boolean = false,
   retryPresentation?: { attempt: number; max?: number },
   findings?: WorkflowReviewFinding[],
+  /** Workspace remediation must not overwrite singular task checkout routing. */
+  persistWorktreePath?: boolean,
 ): Promise<void> {
   const taskId = task.id;
   deps.clearCompletedTaskWatchdog(taskId);
@@ -135,6 +137,6 @@ export async function sendTaskBackForFix(
     remediationWorktreePath,
     `${taskId}: sent back to in-progress for remediation`,
     preserveResumeState,
-    !externalExecutionRoute.configured,
+    persistWorktreePath ?? !externalExecutionRoute.configured,
   );
 }

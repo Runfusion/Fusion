@@ -1,5 +1,99 @@
 # @runfusion/fusion
 
+## 0.77.0-beta.6
+
+### Patch Changes
+
+- 2bdc444: summary: Allow larger chat logs and supported file-editor saves without payload errors.
+  category: fix
+  dev: Adds finite route-scoped 2 MiB chat and escaped-file JSON parsers while retaining default limits.
+- b2125ae: summary: Preserve installed update restart state when Settings reopens.
+  category: fix
+  dev: The old dashboard process exposes its pending install until replacement.
+- c91e5ce: summary: Prevent workspace merge retries from looping after repositories already land.
+  category: fix
+  dev: Preserves durable landing obligations and reports workspace merge failures truthfully.
+- 3717fc5: summary: Restore single-repository worktree acquisition and stop destructive validation retries.
+  category: fix
+  dev: Enforces branch-write provenance across production callers and terminalizes deterministic acquisition validation failures.
+
+## 0.77.0-beta.5
+
+### Minor Changes
+
+- dfa2533: summary: Add exact task-ID search to the Activity Log.
+  category: feature
+  dev: Durable project and central activity feeds compose task-ID, project, and event-type filters.
+- 0b71e9f: summary: Make mobile task creation and Board/List navigation available from every project view.
+  category: feature
+  dev: Moves the mobile full-task trigger to Header while preserving Planning quick entry.
+- eb3eeb8: summary: Keep complex requests as one planned task without task splitting.
+  category: breaking
+  dev: Removes split-driven parent deletion and the dashboard subtask and planning fan-out routes.
+- 3903d3c: summary: Start a new chat directly from an active conversation header.
+  category: feature
+  dev: Keeps the existing project New Chat default and prompt behavior across Chat hosts.
+- c21f628: summary: Add independent update install and restart automation controls.
+  category: feature
+  dev: Dashboard update restarts now wait for the installed version before reloading.
+- e40bceb: summary: Workspace tasks can use one custom branch name across every sub-repository and reuse existing branches.
+  category: feature
+  dev: Adds provenance-based task branch ownership, guarded cleanup, task-aware PR heads, collision attach, and identity guards.
+- a426e28: summary: Derive workspace branch names from configured JIRA issues.
+  category: feature
+  dev: Adds JIRA configuration keys and a read-only branch-name derivation endpoint.
+
+### Patch Changes
+
+- a96f0dd: summary: The Docker image now ships git-lfs, so LFS-tracked files check out as real content instead of stubs.
+  category: fix
+  dev: The repository stores binary assets (screenshots) as Git LFS objects, but the runner stage installed plain `git`. Without git-lfs, `git checkout`/`clone` writes ~130-byte pointer files in place of the real content AND reports a clean tree — an agent reading one gets a text stub where an image should be, and any `git lfs` subcommand fails outright. Verified in the running container: `screenshots/fn-061-medieval-desktop.png` was a `version https://git-lfs.github.com/spec/v1` stub across 129 tracked files, and became a valid 753KB PNG after installing git-lfs and running `git lfs pull`. Added to the runner apt install alongside git, with the Dockerfile manifest guard extended so it cannot be dropped again.
+- d9a4d36: summary: Restore desktop Board dragging from safe empty-column surfaces.
+  category: fix
+  dev: Keeps mobile Board scrolling and column snapping unchanged while retaining no edge auto-scroll.
+- 0fce621: summary: Clear a Task Detail description to delete the task through configured confirmation.
+  category: fix
+  dev: Reuses the existing task deletion lifecycle and confirmation preference.
+- a2856ba: summary: Let operators explicitly remove incoming dependency references when soft-deleting a task.
+  category: fix
+  dev: `fn_task_delete` forwards `removeDependencyReferences` to the existing PostgreSQL store transaction.
+- 89427da: summary: Keep dashboard chat textareas automatic through five lines without mouse resizing.
+  category: fix
+  dev: Chat composers now use the shared automatic-only five-line autosize controller and shrink after content is removed or cleared.
+- 926dda6: summary: Keep multi-repository merges live during long AI land operations.
+  category: fix
+  dev: Renews repository land leases and unifies workspace File Scope resolution across merge and completion guards.
+- f714e45: summary: Prevent approved AI merge reviews from entering corrective merge loops.
+  category: fix
+  dev: Stores review findings with the task and confirms the same candidate before landing.
+- bbca7a1: summary: Keep multi-repository tasks from reviewing or recovering clean unrelated repositories.
+  category: fix
+  dev: Adds explicit task repository scope and lifecycle parity fencing.
+- b5e366d: summary: Keep task Chat model names readable by widening its selector menu to match Direct Chat.
+  category: fix
+  dev: Reuses the shared readable, viewport-clamped CustomModelDropdown width mode.
+- 3066123: summary: Prevent false interrupted-response save warnings when starting a new idle chat.
+  category: fix
+  dev: Idle ChatManager cancellation now returns a successful no-op while active durability failures remain recoverable.
+- 07be287: summary: Prevent non-executor audit telemetry failures from interrupting engine recovery and merge work.
+  category: fix
+  dev: Moves bounded audit isolation to a shared engine seam; createRunAuditor no longer propagates sink rejections.
+- 6d51ae8: summary: Keep remaining engine audit telemetry from blocking workflow progress.
+  category: internal
+  dev: Routes hold-release, goals, overseer, mesh lease, runtime rotation, and column boundaries through packages/engine/src/util/emit-bounded-run-audit.ts while preserving the goal retrieval log anchor.
+- f5192a5: summary: Prevent optional core audit sinks from delaying task lifecycle operations.
+  category: fix
+  dev: Core best-effort run-audit emitters now use a bounded, non-rejecting seam.
+- fdebfba: summary: Keep deleted-task outbox delivery resilient when audit telemetry fails.
+  category: fix
+  dev: Routes catch-up, reconciliation-fallback, lease-fenced, and retention-pruned through the core bounded audit seam.
+- 5c008ba: summary: Prevent stalled recall telemetry from retaining detached memory captures.
+  category: fix
+  dev: Routes packages/core/src/memory/recall-capture.ts through emitBoundedRunAudit.
+- c8f6afe: summary: Keep workflow recovery and reservation cleanup responsive when audit logging stalls.
+  category: fix
+  dev: Adds emitBoundedRunAuditWithOutcome for workflow-switch-torn and phantom-reservation reconciliation.
+
 ## 0.77.0-beta.4
 
 ### Minor Changes

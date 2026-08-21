@@ -16,6 +16,18 @@ export interface UpdateCheckResponse {
   currentVersion: string;
   latestVersion: string | null;
   updateAvailable: boolean;
+  /** Process-local successful install that remains actionable until host replacement. */
+  pendingInstall?: {
+    currentVersion: string;
+    latestVersion: string | null;
+    updated: boolean;
+    outcome?: "installed" | "no-update-available" | "check-failed" | "unsupported-install-method" | "failed";
+    message?: string;
+    error?: string;
+    restartAttempted?: boolean;
+    restartScheduled?: boolean;
+    priorPid?: number;
+  };
   lastChecked?: number;
   disabled?: boolean;
   error?: string;

@@ -479,8 +479,9 @@ describe("TaskExecutor worktree naming", () => {
     expect(store.updateTask).toHaveBeenCalledWith("FN-030", {
       worktree: "/tmp/test/.worktrees/swift-falcon",
       branch: "fusion/fn-030",
+      branchWriteOrigin: "engine",
     });
-    expect(mockedGenerateWorktreeName).toHaveBeenCalledWith("/tmp/test", expect.any(Object));
+    expect(mockedGenerateWorktreeName).toHaveBeenCalledWith("/tmp/test", expect.any(Object), undefined);
   });
 
   it("does NOT use task ID as worktree directory name for fresh worktrees", async () => {
@@ -561,7 +562,7 @@ describe("TaskExecutor worktree naming", () => {
     await executor.execute(makeTask("FN-032", stalePath));
 
     expect(store.updateTask).toHaveBeenCalledWith("FN-032", expect.objectContaining({ worktree: null, branch: null }));
-    expect(mockedGenerateWorktreeName).toHaveBeenCalledWith("/tmp/test", expect.any(Object));
+    expect(mockedGenerateWorktreeName).toHaveBeenCalledWith("/tmp/test", expect.any(Object), undefined);
     const worktreeAddCalls = mockedExecSync.mock.calls.filter(
       (call) => typeof call[0] === "string" && call[0].includes("git worktree add"),
     );
@@ -587,7 +588,8 @@ describe("TaskExecutor worktree naming", () => {
       expect(store.updateTask).toHaveBeenCalledWith("FN-042", {
         worktree: "/tmp/test/.worktrees/fn-042",
         branch: "fusion/fn-042",
-      });
+        branchWriteOrigin: "engine",
+    });
       // Should NOT call generateWorktreeName when using task-id
       expect(mockedGenerateWorktreeName).not.toHaveBeenCalled();
     });
@@ -621,7 +623,8 @@ describe("TaskExecutor worktree naming", () => {
       expect(store.updateTask).toHaveBeenCalledWith("FN-043", {
         worktree: `/tmp/test/.worktrees/${expectedSlug}`,
         branch: "fusion/fn-043",
-      });
+        branchWriteOrigin: "engine",
+    });
       expect(mockedGenerateWorktreeName).not.toHaveBeenCalled();
     });
 
@@ -655,7 +658,8 @@ describe("TaskExecutor worktree naming", () => {
       expect(store.updateTask).toHaveBeenCalledWith("FN-044", {
         worktree: `/tmp/test/.worktrees/${expectedSlug}`,
         branch: "fusion/fn-044",
-      });
+        branchWriteOrigin: "engine",
+    });
     });
 
     it("uses generateWorktreeName when worktreeNaming is 'random'", async () => {
@@ -676,8 +680,9 @@ describe("TaskExecutor worktree naming", () => {
       expect(store.updateTask).toHaveBeenCalledWith("FN-045", {
         worktree: "/tmp/test/.worktrees/swift-falcon",
         branch: "fusion/fn-045",
-      });
-      expect(mockedGenerateWorktreeName).toHaveBeenCalledWith("/tmp/test", expect.any(Object));
+        branchWriteOrigin: "engine",
+    });
+      expect(mockedGenerateWorktreeName).toHaveBeenCalledWith("/tmp/test", expect.any(Object), undefined);
     });
 
     it("defaults to random naming when worktreeNaming is undefined", async () => {
@@ -698,8 +703,9 @@ describe("TaskExecutor worktree naming", () => {
       expect(store.updateTask).toHaveBeenCalledWith("FN-046", {
         worktree: "/tmp/test/.worktrees/swift-falcon",
         branch: "fusion/fn-046",
-      });
-      expect(mockedGenerateWorktreeName).toHaveBeenCalledWith("/tmp/test", expect.any(Object));
+        branchWriteOrigin: "engine",
+    });
+      expect(mockedGenerateWorktreeName).toHaveBeenCalledWith("/tmp/test", expect.any(Object), undefined);
     });
 
     it("ignores worktreeNaming setting when using pooled worktree (recycle mode)", async () => {
@@ -734,8 +740,9 @@ describe("TaskExecutor worktree naming", () => {
       expect(store.updateTask).toHaveBeenCalledWith("FN-047", {
         worktree: "/tmp/test/.worktrees/swift-falcon",
         branch: "fusion/fn-047",
-      });
-      expect(mockedGenerateWorktreeName).toHaveBeenCalledWith("/tmp/test", expect.any(Object));
+        branchWriteOrigin: "engine",
+    });
+      expect(mockedGenerateWorktreeName).toHaveBeenCalledWith("/tmp/test", expect.any(Object), undefined);
     });
   });
 });
@@ -2467,7 +2474,12 @@ describe("TaskExecutor dependency-based worktree creation", () => {
       "/tmp/test/.worktrees/idle-wt",
       "fusion/fn-064",
       "fusion/fn-063",
-      { allowSiblingBranchRename: false, repoDir: "/tmp/test", requestingTaskId: "FN-064" },
+      {
+        allowSiblingBranchRename: false,
+        repoDir: "/tmp/test",
+        requestingTaskId: "FN-064",
+        branchOrigin: "engine-canonical",
+      },
     );
   });
 
@@ -2500,7 +2512,12 @@ describe("TaskExecutor dependency-based worktree creation", () => {
       "/tmp/test/.worktrees/idle-wt",
       "fusion/fn-065",
       "main",
-      { allowSiblingBranchRename: false, repoDir: "/tmp/test", requestingTaskId: "FN-065" },
+      {
+        allowSiblingBranchRename: false,
+        repoDir: "/tmp/test",
+        requestingTaskId: "FN-065",
+        branchOrigin: "engine-canonical",
+      },
     );
   });
 
@@ -2574,6 +2591,7 @@ describe("TaskExecutor dependency-based worktree creation", () => {
     expect(store.updateTask).toHaveBeenCalledWith("FN-066", {
       worktree: "/tmp/test/.worktrees/idle-wt",
       branch: "fusion/fn-066-2",
+      branchWriteOrigin: "engine",
     });
   });
 });

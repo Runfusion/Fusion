@@ -6,6 +6,7 @@ import { getErrorMessage } from "@fusion/core";
 import { fetchSystemInfo, installUpdate, requestSystemRestart } from "../api";
 import type { UpdateInstallResponse } from "../api";
 import { systemRestartRecovery, useSystemRestartRecovery } from "../hooks/useSystemRestartRecovery";
+import { pendingUpdateInstallState, usePendingUpdateInstall } from "../hooks/usePendingUpdateInstall";
 
 interface UpdateAvailableBannerProps {
   latestVersion: string;
@@ -23,6 +24,8 @@ export function UpdateAvailableBanner({ latestVersion, currentVersion, onDismiss
   const [restartScheduled, setRestartScheduled] = useState(false);
   const [restartError, setRestartError] = useState<string | null>(null);
   const recovery = useSystemRestartRecovery();
+  // Root useUpdateCheck hydrates the shared host snapshot; this consumer only subscribes.
+  const pendingInstall = usePendingUpdateInstall({ hydrate: false });
 
   useEffect(() => {
     let active = true;
@@ -50,6 +53,7 @@ export function UpdateAvailableBanner({ latestVersion, currentVersion, onDismiss
 
     try {
       const result = await installUpdate();
+      pendingUpdateInstallState.record(result);
       setInstallResult(result);
       if (result.restartScheduled && result.latestVersion) {
         setRestartScheduled(true);
@@ -87,7 +91,8 @@ export function UpdateAvailableBanner({ latestVersion, currentVersion, onDismiss
       const result = await requestSystemRestart("update-banner");
       if (result.scheduled) {
         setRestartScheduled(true);
-        if (installResult?.latestVersion ?? latestVersion) systemRestartRecovery.arm(installResult?.latestVersion ?? latestVersion, priorPid);
+        const targetVersion = pendingInstall?.latestVersion ?? installResult?.latestVersion ?? latestVersion;
+        if (targetVersion) systemRestartRecovery.arm(targetVersion, priorPid);
       } else {
         setRestartError(t("updateBanner.restartFailed", "Restart could not be scheduled. Try restarting Fusion manually."));
       }
@@ -99,10 +104,11 @@ export function UpdateAvailableBanner({ latestVersion, currentVersion, onDismiss
   };
 
   /* FNXC:UpdateBanner 2026-08-14-19:31: an Update now result always remains visible; failed checks are errors, never up-to-date reassurance. */
-  const installSucceeded = installResult?.updated === true;
-  const installError = installResult?.error;
-  const installMessage = installResult?.message ?? installError ?? (installResult && !installResult.updated ? t("updateBanner.updateUnknown", "Update did not complete — see the Fusion logs") : undefined);
-  const installIsError = installResult?.outcome === "check-failed" || installResult?.outcome === "failed" || Boolean(installError && installResult?.outcome !== "unsupported-install-method");
+  const effectiveInstallResult = pendingInstall ?? installResult;
+  const installSucceeded = effectiveInstallResult?.updated === true;
+  const installError = effectiveInstallResult?.error;
+  const installMessage = effectiveInstallResult?.message ?? installError ?? (effectiveInstallResult && !effectiveInstallResult.updated ? t("updateBanner.updateUnknown", "Update did not complete — see the Fusion logs") : undefined);
+  const installIsError = effectiveInstallResult?.outcome === "check-failed" || effectiveInstallResult?.outcome === "failed" || Boolean(installError && effectiveInstallResult?.outcome !== "unsupported-install-method");
   // Advisory guidance only — shown when the host explicitly reported no supervising parent.
   const restartUnavailable = restartSupported === false;
 
@@ -134,10 +140,10 @@ export function UpdateAvailableBanner({ latestVersion, currentVersion, onDismiss
             <>
               <span className="update-available-banner__install-status update-available-banner__install-status--success" aria-live="polite">
                 {t("updateBanner.updateSuccess", "Updated to v{{version}} — restart Fusion to apply", {
-                  version: installResult.latestVersion ?? latestVersion,
+                  version: effectiveInstallResult.latestVersion ?? latestVersion,
                 })}
               </span>
-              {restartScheduled ? (
+              {restartScheduled || pendingInstall?.restartScheduled ? (
                 <>
                   <span className="update-available-banner__install-status" aria-live="polite">
                     {recovery.phase === "back"

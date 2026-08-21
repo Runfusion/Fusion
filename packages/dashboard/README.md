@@ -459,11 +459,24 @@ Browse and edit task worktree files directly from the task detail modal:
 - **Safety Features**:
   - Path traversal prevention (blocks `..` patterns)
   - Binary file detection (prevents editing images, executables, etc.)
-  - 1MB file size limit
+  - 1MB UTF-8 file-content size limit
+  - File-save JSON requests allow up to 6,292,480 bytes so a supported 1MB control-character file
+    can survive JSON escaping; this transport envelope does not increase the file-content limit
   - Unsaved change indicators
 - **Keyboard Shortcuts**:
   - `Ctrl/Cmd+S` to save
   - `Escape` to close
+
+### Large chat and file requests
+
+Pasted Direct, Planner, and Room Chat text sent as JSON can be up to 2 MiB per request. The limit
+is a transport limit, not a model-context promise: provider context also includes conversation
+history, instructions, tool input, reasoning, and output. Chat attachment uploads remain multipart
+with their existing file count and size limits.
+
+File-editor saves have an approximately 6 MiB JSON transport envelope only to accommodate JSON
+escaping of the unchanged 1 MiB UTF-8 file-content maximum. File-browser operations such as mkdir,
+copy, move, delete, and rename, plus unrelated JSON endpoints, retain the 100 KiB request limit.
 
 ### Activity Log
 View a centralized timeline of all task lifecycle events. Click the history icon in the header to open the Activity Log modal.

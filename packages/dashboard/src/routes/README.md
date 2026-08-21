@@ -180,3 +180,24 @@ return 404. Download returns 202 with queued/downloading state; poll status for 
 
 `server.ts` excludes only `/api/voice/transcribe` from its global 100 KiB JSON parser so the
 route's 2 MiB parser can return JSON 413/400 errors; other routes retain raw-body HMAC capture.
+
+## Large text JSON parsing
+
+`server.ts` preserves raw bodies and selects a finite parser before metrics, authentication, and
+all API registrars. The default remains 100 KiB. Only `POST /api/chat/sessions/:id/messages` and
+`POST /api/chat/rooms/:id/messages` (including optional trailing slashes) receive a 2 MiB JSON
+limit. Multipart requests on those paths are not parsed by `express.json()` and continue to Multer.
+
+Only non-empty `POST /api/tasks/:id/files/{*filepath}` and generic
+`POST /api/files/{*filepath}` saves receive `6 * MAX_FILE_SIZE + 1024` bytes (6,292,480 bytes).
+A supported 1 MiB UTF-8 string can expand to six bytes per control character in canonical JSON;
+the extra 1 KiB covers object framing. `/api/files/mkdir` and literal terminal `/copy`, `/move`,
+`/delete`, and `/rename` operation paths retain 100 KiB, including optional trailing slashes. The
+selector uses query-free, undecoded `req.path`, so an encoded filepath such as `src%2Fcopy` remains
+a generic save rather than an operation.
+
+The roughly 6 MiB file envelope is a deliberate exact-route trade-off: Express warns that larger
+bodies consume memory and can add latency. It is not derived from model context windows, because
+HTTP parsing precedes model selection, bytes are not tokens, and model context also includes
+history, system/tool input, reasoning, and output. GitHub raw webhook parsing stays first;
+Voice keeps its route-owned 2 MiB parser and Planning keeps its route-owned 5 MiB parser.

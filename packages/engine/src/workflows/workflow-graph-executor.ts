@@ -47,6 +47,7 @@ import { runLoop, runOptionalGroup } from "./workflow-graph-loop.js";
 import type { WorkflowNodeRunnerRegistry } from "./workflow-node-runner.js";
 import { workflowNodeRequiresWorktree } from "./workflow-node-execution-needs.js";
 import type { WorkflowColumnBoundary } from "./workflow-column-boundary.js";
+import { BranchWriteProvenanceError } from "@fusion/core";
 import { WorktreeBaseRefreshError } from "../worktree/worktree-acquisition.js";
 
 export type WorkflowNodeOutcome = "success" | "failure";
@@ -57,6 +58,8 @@ type WorkflowNodeSettings = Pick<Settings, "experimentalFeatures"> & {
 
 /** A classified Plan Review provider outage terminates the graph without replan traversal. */
 export const PLAN_REVIEW_PROVIDER_FAILURE_HOLD_VALUE = "plan-review-provider-failure-hold";
+/** Deterministic task-row validation; it must never enter provider retry handling. */
+export const BRANCH_WRITE_PROVENANCE_FAILURE_VALUE = "branch-write-provenance-failure";
 
 /*
 FNXC:PlanReviewLease 2026-07-18-23:45:
@@ -1995,7 +1998,9 @@ export class WorkflowGraphExecutor {
     const failureResult: WorkflowNodeResult = {
       outcome: "failure",
       // FNXC:SessionContention 2026-07-25-21:30: contention is a retryable hold, not an exception.
-      value: isSessionContentionError(lastErrorText) ? SESSION_CONTENTION_HOLD_VALUE : "exception",
+      value: lastError instanceof BranchWriteProvenanceError
+        ? BRANCH_WRITE_PROVENANCE_FAILURE_VALUE
+        : isSessionContentionError(lastErrorText) ? SESSION_CONTENTION_HOLD_VALUE : "exception",
       contextPatch: {
         [`node:${node.id}:error`]: lastErrorText,
       },

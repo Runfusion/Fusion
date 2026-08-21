@@ -67,7 +67,7 @@ describe("GraphTaskNode", () => {
     expect(node).toBeTruthy();
     expect(container.querySelector(".card-title")?.textContent).toContain("Task description");
     expect(node.getAttribute("draggable")).toBe("false");
-    expect(container.querySelector(".card")?.getAttribute("draggable")).toBe("false");
+    expect(container.querySelector(".card")?.getAttribute("draggable")).toBeNull();
   });
 
   it("shows active indicator with capitalized status for in-progress executing tasks", () => {
@@ -350,7 +350,7 @@ describe("GraphTaskNode", () => {
 
     const { container } = render(
       <div>
-        <TaskCard {...props} disableDrag={true} />
+        <TaskCard {...props} />
         <GraphTaskNode {...props} />
       </div>,
     );

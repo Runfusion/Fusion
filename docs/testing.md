@@ -953,3 +953,7 @@ pnpm --filter @fusion/dashboard exec vitest run app/components/__tests__/Workspa
 ```
 
 The parity invariant is that a mono-repository task and a workspace task changing one scoped repository have identical review, completion, and landing outcomes. The acquired clean peer must be displayed as **No changes — not reviewed**, must not get a blocking verdict, and must not become a partial-land target.
+
+### Branch-writer validation regressions
+
+When task-branch validation changes, test production acquisition and task creation callers in addition to the validation boundary. Keep a source census of direct and computed branch patches, and exercise single-repository assignment persistence failure plus workspace suppression so a caller cannot silently omit provenance.

@@ -16,6 +16,18 @@ export interface EntryPointBranchAssignment {
 export type TaskBranchOrigin = "engine-canonical" | "group-derived" | "operator-supplied";
 
 /**
+ * FNXC:BranchNaming 2026-08-21-09:09:
+ * Task mutation boundaries reject ambiguous branch writes. Callers must declare whether the
+ * branch is operator-owned or engine-selected; this keeps ownership durable instead of inferred.
+ */
+export class BranchWriteProvenanceError extends Error {
+  constructor() {
+    super("branchWriteOrigin is required when branch is provided");
+    this.name = "BranchWriteProvenanceError";
+  }
+}
+
+/**
  * FNXC:BranchNaming 2026-08-20-03:40:
  * Branch ownership follows its durable write provenance, not its spelling. A matching
  * operator marker wins even for `fusion/<task>`; otherwise only this task's canonical

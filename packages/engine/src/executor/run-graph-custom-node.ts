@@ -20,6 +20,7 @@ import type {
 } from "@fusion/core";
 import { resolveEffectiveAgent, THINKING_LEVELS } from "@fusion/core";
 import { executorLog } from "../logger.js";
+import { resolveWorkspaceReviewRemediationRepository } from "./workspace-review-remediation.js";
 import type { EngineRunContext } from "../util/run-audit.js";
 import type { WorkflowNodeResult } from "../workflows/workflow-graph-executor.js";
 import {
@@ -251,12 +252,23 @@ export async function runGraphCustomNode(
       }
     }
 
+    /*
+    FNXC:WorkspaceFinalization 2026-08-21-09:33:
+    A graph session consumes the same current-scope remediation coordinator returned by acquisition.
+    Selecting the alphabetic default here would discard a later repository's REVISE even though the
+    workspace map was acquired correctly, recreating wrong-checkout remediation without persistence.
+    */
+    const remediationRepository = workspaceConfig
+      ? resolveWorkspaceReviewRemediationRepository(executionTarget, workspaceConfig.repos)
+      : undefined;
     const workspaceCoordinator = workspaceConfig
-      ? Object.keys(executionTarget.workspaceWorktrees ?? {})
-        .filter((repoRelPath) => workspaceConfig.repos.includes(repoRelPath))
-        .sort()
-        .map((repoRelPath) => executionTarget.workspaceWorktrees?.[repoRelPath]?.worktreePath)
-        .find((path): path is string => typeof path === "string" && path.length > 0)
+      ? (remediationRepository
+        ? executionTarget.workspaceWorktrees?.[remediationRepository]?.worktreePath
+        : Object.keys(executionTarget.workspaceWorktrees ?? {})
+          .filter((repoRelPath) => workspaceConfig.repos.includes(repoRelPath))
+          .sort()
+          .map((repoRelPath) => executionTarget.workspaceWorktrees?.[repoRelPath]?.worktreePath)
+          .find((path): path is string => typeof path === "string" && path.length > 0))
       : undefined;
     if (!executionTarget.worktree && !workspaceCoordinator) {
       return { outcome: "failure", value: "no-worktree-for-write-node" };
@@ -531,6 +543,8 @@ export async function runGraphCustomNode(
               repositoryScope: {
                 ...currentScope,
                 reviewEvidence: Object.fromEntries(Object.entries(aggregate.repositoryDiffFingerprints).map(([repo, fingerprint]) => [repo, { fingerprint, approvedAt }])),
+                // FNXC:WorkspaceFinalization 2026-08-21-09:50: A current-scope APPROVE clears the durable REVISE coordinator before graph completion can schedule another run.
+                ...(currentScope.reviewRemediation?.scopeRevision === aggregate.repositoryScopeRevision ? { reviewRemediation: undefined } : {}),
               },
             };
           });

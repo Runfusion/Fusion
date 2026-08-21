@@ -104,4 +104,51 @@ describeIfGit("FN-034 workspace root worktree routing", { timeout: 60_000 }, () 
     ].sort());
     expect(existsSync(join(fixture.rootDir, ".worktrees", "FN-034"))).toBe(false);
   });
+
+  it("uses a current-scope later review target instead of the default coordinator", async () => {
+    fixture = await createWorkspaceFixture(["repo-a", "repo-b"]);
+    const task = makeTask("FN-106");
+    task.repositoryScope = {
+      state: "confirmed",
+      revision: 7,
+      repositories: ["repo-a", "repo-b"],
+      reviewRemediation: { scopeRevision: 7, repository: "repo-b", inputSignature: "node\\0repo-b" },
+    };
+    const { store, current } = makeFakeStore(task);
+    const result = await acquireWorkspaceTaskWorktrees({
+      workspaceConfig: { repos: fixture.repos },
+      workspaceRootDir: fixture.rootDir,
+      task: current(),
+      store,
+      settings,
+      registry: new ActiveSessionRegistry(),
+      remediationRepository: "repo-b",
+    });
+
+    expect(result.coordinatorWorktreePath).toBe(result.task.workspaceWorktrees?.["repo-b"]?.worktreePath);
+    expect(result.coordinatorWorktreePath).not.toContain(join(fixture.rootDir, ".worktrees"));
+    expect(result.task.worktree).toBeUndefined();
+  });
+
+  it("rejects a stale review target instead of falling back to another repository", async () => {
+    fixture = await createWorkspaceFixture(["repo-a", "repo-b"]);
+    const task = makeTask("FN-107");
+    task.repositoryScope = {
+      state: "confirmed",
+      revision: 8,
+      repositories: ["repo-a", "repo-b"],
+      reviewRemediation: { scopeRevision: 7, repository: "repo-b", inputSignature: "stale" },
+    };
+    const { store, current } = makeFakeStore(task);
+
+    await expect(acquireWorkspaceTaskWorktrees({
+      workspaceConfig: { repos: fixture.repos },
+      workspaceRootDir: fixture.rootDir,
+      task: current(),
+      store,
+      settings,
+      registry: new ActiveSessionRegistry(),
+      remediationRepository: "repo-b",
+    })).rejects.toThrow("remediation target is stale");
+  });
 });

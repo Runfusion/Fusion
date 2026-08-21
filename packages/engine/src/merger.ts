@@ -6649,6 +6649,7 @@ async function tryEarlyEmptyOwnDiffFinalize(input: {
       await store.updateTask(taskId, {
         worktree: worktreeRemoved ? null : task.worktree,
         branch: branchDeleted ? null : task.branch,
+        ...(branchDeleted ? { branchWriteOrigin: "engine" as const } : {}),
       });
       // Keep the in-memory task in sync with the DB so the returned
       // MergeResult.task does not advertise a removed path / deleted branch.
@@ -7178,7 +7179,7 @@ export async function aiMergeTask(
             rootDir,
             integrationBranch: mergeTarget.branch,
           });
-          await store.updateTask(taskId, { worktree: reusableMatch.path, branch: reusableMatch.branch });
+          await store.updateTask(taskId, { worktree: reusableMatch.path, branch: reusableMatch.branch, branchWriteOrigin: "engine" as const });
           await emitReuseHandoffAuditEvent(
             "merge:reuse-fallback-reused-existing-registration",
             {

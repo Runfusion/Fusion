@@ -95,6 +95,43 @@ describe("FN-034 — workspace sessions use a declared repository worktree", () 
     );
     expect(worktreeWrites).toHaveLength(0);
   });
+
+  it("passes a current-scope later repository REVISE to normal executor acquisition", async () => {
+    const store = createMockStore();
+    mockedAcquireWorkspaceTaskWorktrees.mockResolvedValue({
+      task: inProgressTask({
+        workspaceWorktrees: {
+          "repo-a": { worktreePath: "/tmp/workspace-root/repo-a/.worktrees/fn-001", branch: "fusion/fn-001" },
+          "repo-b": { worktreePath: "/tmp/workspace-root/repo-b/.worktrees/fn-001", branch: "fusion/fn-001" },
+        },
+      }),
+      coordinatorWorktreePath: "/tmp/workspace-root/repo-b/.worktrees/fn-001",
+    });
+    mockedCreateFnAgent.mockResolvedValue({
+      session: { prompt: vi.fn().mockResolvedValue(undefined), dispose: vi.fn() },
+      sessionFile: "/tmp/sessions/ws-remediation.jsonl",
+    } as any);
+    const task = inProgressTask({
+      repositoryScope: {
+        state: "confirmed",
+        revision: 4,
+        repositories: ["repo-a", "repo-b"],
+        reviewRemediation: { scopeRevision: 4, repository: "repo-b", inputSignature: "review" },
+      },
+    });
+    (store.getTask as any).mockResolvedValue(task);
+    const executor = new TaskExecutor(store, ROOT);
+    (executor as any).workspaceConfig = { repos: ["repo-a", "repo-b"] } as WorkspaceConfig;
+
+    await executor.execute(task);
+
+    expect(mockedAcquireWorkspaceTaskWorktrees).toHaveBeenCalledWith(expect.objectContaining({
+      remediationRepository: "repo-b",
+    }));
+    expect(mockedCreateFnAgent.mock.calls[0]?.[0]).toEqual(expect.objectContaining({
+      cwd: "/tmp/workspace-root/repo-b/.worktrees/fn-001",
+    }));
+  });
 });
 
 describe("U1 regression — non-workspace task acquires a worktree and roots the session there", () => {

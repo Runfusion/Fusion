@@ -116,6 +116,7 @@ module so self-healing can import the predicate without re-entering the self-hea
 import cycle (merger-ai-worktree imports `MIN_TEMP_WORKTREE_REAP_AGE_MS` from self-healing).
 */
 import { isRepoLanded, findProvenLandedCommit, FUSION_TASK_ID_TRAILER_KEY } from "./workspace-land-predicate.js";
+import { resolveWorkspaceMergeReadiness } from "./workspace-merge-readiness.js";
 import { persistWorkspaceRepoLandFailure } from "./workspace-land-failure.js";
 import { ensureTenancyFenceRef, mergeDispatchFenceRef, pushWithWorkspaceFence, WorkspaceFenceRefError, workspaceLandFenceRef } from "./workspace-fence-ref.js";
 import { finalizeProvenAutoMergeTask } from "./auto-merge-finalization.js";
@@ -2013,6 +2014,20 @@ workspace-merger tests already consume; only the persist-failure window escalate
 so the engine parks/retries and A1's `isRepoLanded` ancestor-fallback skips the actually-landed
 repo on retry (no double-squash).
 */
+/*
+FNXC:WorkspaceFinalization 2026-08-21-08:46:
+Only an acquired repository lease with a real holder task can be reported as contention. Fence
+publication and durable-lease transport failures are technical retryable outcomes; representing
+those implementation markers as a repository/task identity sent operators to nonexistent owners.
+*/
+export class WorkspaceMergeTechnicalError extends Error {
+  public readonly retryable = true;
+  constructor(public readonly kind: "dispatch-fence-publication" | "repository-fence-publication" | "durable-lease", message: string) {
+    super(message);
+    this.name = "WorkspaceMergeTechnicalError";
+  }
+}
+
 export class WorkspacePartialLandError extends Error {
   public readonly retryable = true;
   constructor(
@@ -2103,10 +2118,29 @@ export async function landWorkspaceTask(
   */
   const liveMergeBoundaryTask = await store.getTask(taskId).catch(() => undefined);
   const mergeBoundaryTask = liveMergeBoundaryTask?.workspaceWorktrees ? liveMergeBoundaryTask : task;
+  /*
+  FNXC:WorkspaceFinalization 2026-08-21-09:09:
+  Direct CLI and UI-only callers reach this landing function without ProjectEngine's optional
+  admission callback. Apply the canonical pre-merge blocker before boundary evidence, transient
+  status, leases, or Git writes so a failed or pending Code Review cannot finalize an all-landed retry.
+  */
+  const reviewColumns = new Set<string>(["in-review"]);
+  const workflowIr = await resolveWorkflowIrForTask(store, taskId).catch(() => undefined);
+  if (workflowIr) for (const column of resolveReviewColumns(workflowIr)) reviewColumns.add(column);
+  const completeColumns = new Set<string>(["done"]);
+  if (workflowIr) for (const column of resolveTerminalColumns(workflowIr)) completeColumns.add(column);
+  if (!completeColumns.has(mergeBoundaryTask.column)) {
+    const mergeBlocker = getTaskMergeBlocker(mergeBoundaryTask, {
+      manual: options.manual === true,
+      reviewColumns,
+    });
+    if (mergeBlocker) throw new WorkspaceFinalizeBlockedError(taskId, mergeBlocker);
+  }
   const confirmedScope = mergeBoundaryTask.repositoryScope?.state === "confirmed"
     ? new Set(mergeBoundaryTask.repositoryScope.repositories)
     : undefined;
   const mergeBoundaryModifiedFiles: string[] = [];
+  const mergeBoundaryModifiedRepositories = new Set<string>();
   const mergeBoundaryFingerprints: Record<string, string> = {};
   const modifiedOutOfScopeRepositories = new Set<string>();
   const netZeroBranchRepositories = new Set<string>();
@@ -2128,6 +2162,7 @@ export async function landWorkspaceTask(
       if (files.length > 0 && !confirmedScope?.has(repoRel)) {
         modifiedOutOfScopeRepositories.add(repoRel);
       } else if (confirmedScope?.has(repoRel)) {
+        if (files.length > 0) mergeBoundaryModifiedRepositories.add(repoRel);
         mergeBoundaryModifiedFiles.push(...files.map((file) => `${repoRel}/${file}`));
         if (files.length === 0) {
           const { stdout: aheadCount } = await execFileAsync("git", ["rev-list", "--count", `HEAD..${entry.branch}`], { cwd: entry.worktreePath, encoding: "utf8" });
@@ -2150,11 +2185,20 @@ export async function landWorkspaceTask(
   of silently persisting the new snapshot and landing it. Persist failure is likewise a hard fence:
   a later recovery must never infer an unrecorded merge boundary.
   */
-  const approvedReviewEvidence = mergeBoundaryTask.repositoryScope?.reviewEvidence ?? {};
-  const missingOrStaleReviewApproval = Object.entries(mergeBoundaryFingerprints)
-    .some(([repoRel, fingerprint]) => approvedReviewEvidence[repoRel]?.fingerprint !== fingerprint);
+  const approvedReviewEvidence = mergeBoundaryTask.repositoryScope?.reviewEvidence;
+  /*
+  FNXC:WorkspaceFinalization 2026-08-21-08:52:
+  Repository fingerprints are mandatory once a workflow has recorded repository review evidence.
+  Legacy/direct workspace callers with no enabled review step have no review episode to compare, so
+  they retain the established merge-agent review path; a present-but-incomplete evidence map never
+  downgrades that fence.
+  */
+  const requiresRepositoryReviewEvidence = approvedReviewEvidence !== undefined
+    || (mergeBoundaryTask.enabledWorkflowSteps ?? []).some((step) => /review/i.test(step));
+  const missingOrStaleReviewApproval = requiresRepositoryReviewEvidence && Object.entries(mergeBoundaryFingerprints)
+    .some(([repoRel, fingerprint]) => approvedReviewEvidence?.[repoRel]?.fingerprint !== fingerprint);
   if (
-    normalizedMergeBoundaryFiles.some((file) => !persistedReviewFiles.includes(file))
+    (requiresRepositoryReviewEvidence && normalizedMergeBoundaryFiles.some((file) => !persistedReviewFiles.includes(file)))
     || missingOrStaleReviewApproval
   ) {
     /*
@@ -2165,22 +2209,27 @@ export async function landWorkspaceTask(
     */
     throw new Error(`Workspace merge evidence changed after review for ${taskId}; return the task to Code Review before landing`);
   }
-  await store.updateTask(taskId, { modifiedFiles: normalizedMergeBoundaryFiles });
-  task = { ...mergeBoundaryTask, modifiedFiles: normalizedMergeBoundaryFiles };
-  const workspaceWorktrees = task.workspaceWorktrees ?? {};
   /*
-  FNXC:RepositoryScope 2026-08-20-23:57:
-  Landing obligations come from confirmed task intent plus actual qualified diff evidence. An
-  ambiguous legacy row must park for operator confirmation rather than treating every acquired
-  checkout as intent, because that recreates the clean-peer partial-land livelock.
+  FNXC:WorkspaceFinalization 2026-08-21-08:46:
+  Do not replace the reviewed file snapshot with an empty second-pass capture. An already-landed
+  repository has no task-branch diff to capture, yet remains a required finalization obligation.
+  The readiness resolver retains that evidence and refuses unexplained empty sets before status,
+  dispatch fencing, leases, or Git writes.
   */
-  const explicitScope = task.repositoryScope?.state === "confirmed" ? task.repositoryScope.repositories : undefined;
-  if (!explicitScope) {
-    throw new Error(`Workspace repository scope is unresolved for ${taskId}; operator confirmation is required before landing`);
+  const readiness = resolveWorkspaceMergeReadiness(
+    mergeBoundaryTask,
+    mergeBoundaryModifiedRepositories,
+    netZeroBranchRepositories,
+  );
+  if (readiness.kind === "blocked") throw new Error(readiness.reason);
+  if (readiness.kind === "no-op") {
+    throw new Error(`Workspace task ${taskId} has explicit no-commits policy and cannot enter repository landing`);
   }
-  const repoKeys = Object.keys(workspaceWorktrees)
-    .filter((repoRel) => explicitScope.includes(repoRel) && ((task.modifiedFiles ?? []).some((file) => file.startsWith(`${repoRel}/`)) || netZeroBranchRepositories.has(repoRel)))
-    .sort();
+  const retainedModifiedFiles = [...new Set([...normalizedMergeBoundaryFiles, ...readiness.preservedFiles])].sort();
+  await store.updateTask(taskId, { modifiedFiles: retainedModifiedFiles });
+  task = { ...mergeBoundaryTask, modifiedFiles: retainedModifiedFiles };
+  const workspaceWorktrees = task.workspaceWorktrees ?? {};
+  const repoKeys = readiness.repositories;
   const repos: WorkspaceRepoLandResult[] = [];
   let allLanded = true;
 
@@ -2217,7 +2266,7 @@ export async function landWorkspaceTask(
       };
     } catch (error) {
       if (error instanceof WorkspaceFenceRefError) {
-        throw new WorkspaceRepoLandBusyError(repoKeys[0] ?? "workspace", "workspace-merge-dispatch-fence", taskId);
+        throw new WorkspaceMergeTechnicalError("dispatch-fence-publication", `Workspace merge dispatch fence publication failed for ${taskId}: ${error.message}`);
       }
       throw error;
     }
@@ -2379,7 +2428,7 @@ export async function landWorkspaceTask(
     } catch (error) {
       if (durableLandLease) await store.releaseWorkspaceLease(durableLandLease).catch(() => undefined);
       if (error instanceof WorkspaceRepoLandBusyError) throw error;
-      throw new WorkspaceRepoLandBusyError(repoRel, "durable-workspace-lease", taskId);
+      throw new WorkspaceMergeTechnicalError("durable-lease", `Workspace repository lease unavailable for ${repoRel}: ${getErrorMessage(error)}`);
     }
     try {
       activeSessionRegistry.registerPath(repoRootDir, {
@@ -2423,7 +2472,7 @@ export async function landWorkspaceTask(
     renewalTimer?.unref?.();
     const landSignal = options.signal ? AbortSignal.any([options.signal, leaseAbort.signal]) : leaseAbort.signal;
     const assertLeaseLive = () => {
-      if (leaseLost || leaseAbort.signal.aborted) throw new WorkspaceRepoLandBusyError(repoRel, "durable-workspace-lease", taskId);
+      if (leaseLost || leaseAbort.signal.aborted) throw new WorkspaceMergeTechnicalError("durable-lease", `Workspace repository lease renewal was lost for ${repoRel}`);
     };
 
     try {
@@ -2500,7 +2549,7 @@ export async function landWorkspaceTask(
       A lost repository tenancy is not a repository land failure: writing landFailure here would
       let a stale owner mutate workspace state after its durable lease was revoked.
       */
-      if (leaseLost) throw new WorkspaceRepoLandBusyError(repoRel, "durable-workspace-lease", taskId);
+      if (leaseLost) throw new WorkspaceMergeTechnicalError("durable-lease", `Workspace repository lease renewal was lost for ${repoRel}`);
       if (isMergeAbortedError(err)) throw err;
       // A WorkspacePartialLandError from the persist-failure window above must PROPAGATE
       // (the engine parks/retries). The outer try/finally below resets status first (A3).
@@ -2508,7 +2557,7 @@ export async function landWorkspaceTask(
       // A dispatch-fence publication failure is contention/transport at the resource boundary,
       // not a sub-repo merge failure. This body never reached its fenced push.
       if (err instanceof WorkspaceFenceRefError) {
-        throw new WorkspaceRepoLandBusyError(repoRel, "workspace-merge-dispatch-fence", taskId);
+        throw new WorkspaceMergeTechnicalError("repository-fence-publication", `Workspace repository fence publication failed for ${repoRel}: ${err.message}`);
       }
       const message = getErrorMessage(err);
       await log(`AI merge (workspace): sub-repo ${repoRel} land failed: ${message}`);

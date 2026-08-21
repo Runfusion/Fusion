@@ -56,6 +56,7 @@ import {
 import { executorLog } from "../logger.js";
 import type { EngineRunContext } from "../util/run-audit.js";
 import { emitBoundedRunAudit } from "./emit-bounded-run-audit.js";
+import { deriveWorkspaceReviewRemediation } from "./workspace-review-remediation.js";
 
 function normalizeConvergenceText(value: string | undefined): string {
   return (value ?? "").replace(/\s+/g, " ").trim().toLowerCase();
@@ -137,6 +138,7 @@ export type RequestPreMergeOptionalStepFixDeps = {
     mergeVerificationFailure: boolean,
     retryPresentation?: { attempt: number; max?: number },
     findings?: WorkflowReviewFinding[],
+    persistWorktreePath?: boolean,
   ) => Promise<void>;
 };
 
@@ -371,7 +373,30 @@ export async function requestPreMergeOptionalStepFix(
   another executor bounce. Park the task for an operator before a third session; new review output,
   a changed diff, or a scope revision naturally produces a different durable result and reopens it.
   */
-  if (hasRepeatedUnchangedCodeReview(liveTask, info)) {
+  const reviewResult = (liveTask.workflowStepResults ?? []).find((result) =>
+    (result.workflowStepId === info.nodeId || result.workflowStepName === info.stepName)
+    && result.verdict === "REVISE",
+  );
+  const derivedRemediation = reviewResult ? deriveWorkspaceReviewRemediation(reviewResult) : undefined;
+  // FNXC:WorkspaceFinalization 2026-08-21-09:09: structured outcomes can exist on legacy
+  // single-repository flows; only a durable workspace map activates scoped routing and persistence.
+  const remediation = derivedRemediation && liveTask.workspaceWorktrees ? derivedRemediation : undefined;
+  const priorRemediation = liveTask.repositoryScope?.reviewRemediation;
+  const hasDurableRepeatedWorkspaceReview = remediation !== undefined
+    && priorRemediation?.scopeRevision === remediation.scopeRevision
+    && priorRemediation.repository === remediation.repository
+    && priorRemediation.inputSignature === remediation.inputSignature;
+  const updateWorkspaceReviewState = (deps.store as TaskStore & {
+    updateWorkspaceReviewState?: TaskStore["updateWorkspaceReviewState"];
+  }).updateWorkspaceReviewState;
+  if (remediation && !hasDurableRepeatedWorkspaceReview && updateWorkspaceReviewState) {
+    const persisted = await updateWorkspaceReviewState.call(deps.store, taskId, remediation.scopeRevision, remediation);
+    if (!persisted.updated) {
+      executorLog.warn(`${taskId}: workspace Code Review remediation was superseded by a repository scope change.`);
+      return false;
+    }
+  }
+  if (hasDurableRepeatedWorkspaceReview || ((!remediation || !updateWorkspaceReviewState) && hasRepeatedUnchangedCodeReview(liveTask, info))) {
     const runContext = deps.getRunContextFor(taskId);
     await deps.store.logEntry(
       taskId,
@@ -418,9 +443,20 @@ export async function requestPreMergeOptionalStepFix(
     optionalStepRevisionLogOutcome(`Step: ${info.stepName}\nStatus: ${info.status}\nFeedback:\n${info.feedback}`, revisionKey),
     deps.getRunContextFor(taskId),
   );
-  await deps.sendTaskBackForFix(
+  const remediationWorktreePath = remediation
+    ? liveTask.workspaceWorktrees?.[remediation.repository]?.worktreePath
+    : liveTask.worktree;
+  if (remediation && !remediationWorktreePath) {
+    await deps.store.updateTask(taskId, {
+      status: "awaiting-approval",
+      awaitingApprovalReason: "code-review-non-convergence",
+      error: `Workspace Code Review remediation target ${remediation.repository} has no acquired worktree.`,
+    });
+    return false;
+  }
+  const sendArgs = [
     liveTask,
-    liveTask.worktree ?? "",
+    remediationWorktreePath ?? "",
     info.feedback,
     info.stepName,
     `Pre-merge optional workflow step "${info.stepName}" requested revision`,
@@ -428,6 +464,11 @@ export async function requestPreMergeOptionalStepFix(
     false,
     { attempt: nextCount, max: budget.unbounded ? undefined : budget.max },
     info.findings,
-  );
+  ] as const;
+  if (remediation) {
+    await deps.sendTaskBackForFix(...sendArgs, false);
+  } else {
+    await deps.sendTaskBackForFix(...sendArgs);
+  }
   return true;
 }

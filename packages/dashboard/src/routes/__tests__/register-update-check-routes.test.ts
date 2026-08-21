@@ -96,6 +96,20 @@ describe("registerUpdateCheckRoutes", () => {
     expect(response.body).toMatchObject({ outcome });
   });
 
+  it("returns a retained pending install for later reads without another check or install", async () => {
+    mockPerformUpdateCheck.mockResolvedValue(updateAvailable);
+    mockPerformUpdateInstall.mockResolvedValue({ ...updateAvailable, updated: true, outcome: "installed" });
+    const app = createApp();
+    expect((await postInstall(app)).body).toMatchObject({ updated: true, latestVersion: "2.0.0" });
+    const get = await performRequest(app, "GET", "/api/update-check");
+    const refresh = await performRequest(app, "POST", "/api/update-check/refresh", "{}", { "content-type": "application/json" });
+    const repeatInstall = await postInstall(app);
+    for (const response of [get, refresh]) expect(response.body).toMatchObject({ pendingInstall: { updated: true, latestVersion: "2.0.0" } });
+    expect(repeatInstall.body).toMatchObject({ updated: true, latestVersion: "2.0.0" });
+    expect(mockPerformUpdateCheck).toHaveBeenCalledTimes(1);
+    expect(mockPerformUpdateInstall).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps disabled update checks disabled", async () => {
     const response = await performRequest(createApp(undefined, false), "GET", "/api/update-check");
     expect(response.body).toMatchObject({ disabled: true, updateAvailable: false });

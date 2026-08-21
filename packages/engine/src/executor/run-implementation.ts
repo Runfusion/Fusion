@@ -193,6 +193,7 @@ import { buildStepFailureMessage, emitProactiveStatus, sanitizeFailureReason } f
 import { createRunAuditor, generateSyntheticRunId, type EngineRunContext } from "../util/run-audit.js";
 import { emitBoundedRunAudit } from "./emit-bounded-run-audit.js";
 import { acquireTaskWorktree, acquireWorkspaceTaskWorktrees, WorktreeBaseRefreshError } from "../worktree/worktree-acquisition.js";
+import { resolveWorkspaceReviewRemediationRepository } from "./workspace-review-remediation.js";
 import { resolveWorktreesDir } from "../worktree/worktree-paths.js";
 import {
   RemovalReason,
@@ -658,6 +659,13 @@ export async function runImplementation(
       never a task checkout or a recovery fallback.
       */
       if (hasWorkspaceRepos && deps.workspaceConfig) {
+        /*
+        FNXC:WorkspaceFinalization 2026-08-21-09:33:
+        Executor reruns must carry the current-scope Code Review target into acquisition. The
+        acquisition seam rechecks it after the durable workspace map is refreshed, fencing a
+        stale review instead of defaulting a later-repository REVISE to the first checkout.
+        */
+        const remediationRepository = resolveWorkspaceReviewRemediationRepository(task, deps.workspaceConfig.repos);
         const workspace = await acquireWorkspaceTaskWorktrees({
           workspaceConfig: deps.workspaceConfig,
           workspaceRootDir: deps.rootDir,
@@ -684,6 +692,7 @@ export async function runImplementation(
             }),
           taskEnv,
           addActiveWorktree: deps.addActiveWorktree,
+          remediationRepository,
         });
         task = workspace.task;
         workspaceCoordinatorWorktree = workspace.coordinatorWorktreePath;

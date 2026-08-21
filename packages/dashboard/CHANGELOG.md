@@ -1,5 +1,47 @@
 # @fusion/dashboard
 
+## 0.77.0-beta.6
+
+### Patch Changes
+
+- @fusion/core@0.77.0-beta.6
+- @fusion/engine@0.77.0-beta.6
+- @fusion/i18n@0.39.36-beta.6
+- @fusion-plugin-examples/claude-runtime@0.1.11-beta.6
+- @fusion-plugin-examples/cli-printing-press@0.1.53-beta.6
+- @fusion-plugin-examples/compound-engineering@0.1.36-beta.6
+- @fusion-plugin-examples/cursor-runtime@0.1.55-beta.6
+- @fusion-plugin-examples/dependency-graph@0.1.67-beta.6
+- @fusion-plugin-examples/grok-runtime@0.2.14-beta.6
+- @fusion-plugin-examples/hermes-runtime@0.2.86-beta.6
+- @fusion-plugin-examples/omp-runtime@0.1.11-beta.6
+- @fusion-plugin-examples/quality@0.1.11-beta.6
+- @fusion-plugin-examples/roadmap@0.1.55-beta.6
+- @fusion-plugin-examples/droid-runtime@0.1.62-beta.6
+- @fusion-plugin-examples/openclaw-runtime@0.2.86-beta.6
+- @fusion-plugin-examples/paperclip-runtime@0.2.86-beta.6
+
+## 0.77.0-beta.5
+
+### Patch Changes
+
+- @fusion/core@0.77.0-beta.5
+- @fusion/engine@0.77.0-beta.5
+- @fusion/i18n@0.39.36-beta.5
+- @fusion-plugin-examples/claude-runtime@0.1.11-beta.5
+- @fusion-plugin-examples/cli-printing-press@0.1.53-beta.5
+- @fusion-plugin-examples/compound-engineering@0.1.36-beta.5
+- @fusion-plugin-examples/cursor-runtime@0.1.55-beta.5
+- @fusion-plugin-examples/dependency-graph@0.1.67-beta.5
+- @fusion-plugin-examples/grok-runtime@0.2.14-beta.5
+- @fusion-plugin-examples/hermes-runtime@0.2.86-beta.5
+- @fusion-plugin-examples/omp-runtime@0.1.11-beta.5
+- @fusion-plugin-examples/quality@0.1.11-beta.5
+- @fusion-plugin-examples/roadmap@0.1.55-beta.5
+- @fusion-plugin-examples/droid-runtime@0.1.62-beta.5
+- @fusion-plugin-examples/openclaw-runtime@0.2.86-beta.5
+- @fusion-plugin-examples/paperclip-runtime@0.2.86-beta.5
+
 ## 0.77.0-beta.4
 
 ### Patch Changes

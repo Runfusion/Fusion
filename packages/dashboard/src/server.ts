@@ -33,6 +33,7 @@ import {
   setOnProjectFirstCreated,
 } from "./project-store-resolver.js";
 import { getOrCreateScopedChatStore } from "./chat-project-services.js";
+import { MAX_FILE_SIZE } from "./file-service.js";
 import { TerminalViewportRegistry } from "./terminal-viewport.js";
 import { getTerminalService, STALE_SESSION_THRESHOLD_MS } from "./terminal-service.js";
 import { WebSocketServer, type WebSocket } from "ws";
@@ -1018,13 +1019,39 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
   };
   const jsonParser = express.json({ verify: preserveRawBody });
   const planningImageCaptureParser = express.json({ limit: "5mb", verify: preserveRawBody });
+  const chatMessageParser = express.json({ limit: 2 * 1024 * 1024, verify: preserveRawBody });
+  const fileSaveParser = express.json({ limit: 6 * MAX_FILE_SIZE + 1024, verify: preserveRawBody });
+
+  /*
+  FNXC:LargeTextPayloads 2026-08-21-04:35:
+  Large pasted logs must reach only production chat-message endpoints within a finite 2 MiB JSON
+  envelope, while generic workspace and task-file saves receive 6 * MAX_FILE_SIZE + 1 KiB. A
+  supported 1 MiB UTF-8 file can serialize each control byte as six JSON bytes; 1 KiB covers the
+  canonical object framing. Express warns that large bodies increase memory and latency, so the
+  approximately 6 MiB parser is limited to exact save routes: mkdir and literal copy/move/delete/
+  rename operations retain the 100 KiB default. Model context windows cannot define HTTP bytes:
+  parsing precedes model resolution, bytes are not tokens, and context is shared with history,
+  system/tool input, reasoning, and output.
+  */
+  const isChatMessagePath = (path: string): boolean =>
+    /^\/api\/chat\/(?:sessions|rooms)\/[^/]+\/messages\/?$/.test(path);
+  const isTaskFileSavePath = (path: string): boolean =>
+    /^\/api\/tasks\/[^/]+\/files\/.+\/?$/.test(path);
+  const isWorkspaceFileSavePath = (path: string): boolean => {
+    if (!/^\/api\/files\/.+/.test(path) || /^\/api\/files\/mkdir\/?$/.test(path)) return false;
+    return !/^\/api\/files\/.+\/(?:copy|move|delete|rename)\/?$/.test(path);
+  };
   app.use((req, res, next) => {
     // Express treats trailing slashes as equivalent, so parser boundaries must do the same;
     // no broader prefix is exempted from the global rawBody-preserving parser.
     if (req.path === "/api/voice/transcribe" || req.path === "/api/voice/transcribe/") return next();
     const parser = req.path === "/api/planning/start-streaming" || req.path === "/api/planning/start-streaming/"
       ? planningImageCaptureParser
-      : jsonParser;
+      : req.method === "POST" && isChatMessagePath(req.path)
+        ? chatMessageParser
+        : req.method === "POST" && (isTaskFileSavePath(req.path) || isWorkspaceFileSavePath(req.path))
+          ? fileSaveParser
+          : jsonParser;
     return parser(req, res, (error) => {
       // Keep the established global and route-specific size rejections observable as 413 instead
       // of allowing Express's parser error to fall through to the generic 500 handler.

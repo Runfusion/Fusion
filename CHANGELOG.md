@@ -2,6 +2,63 @@
 
 User-facing release notes aggregated across all packages. This file is auto-synced from each `packages/*/CHANGELOG.md` by `scripts/release.mjs` — do not edit by hand.
 
+## 0.77.0-beta.6
+
+### Highlights
+
+- Chat logs and supported file-editor saves up to 2 MiB save without payload errors
+- Workspace merges stop retry-looping once repositories have already landed
+- Single-repository worktree acquisition works again, with no destructive validation retries
+- Settings keeps the installed-update restart prompt when you reopen it
+
+### Fixed
+
+- Larger chat logs and supported file-editor saves now go through instead of failing with a payload error; the chat and escaped-file routes accept up to 2 MiB while every other route keeps the default limit.
+- Workspace merge retries no longer loop after their repositories have landed. Durable landing obligations are preserved, and workspace merge failures are reported truthfully instead of being retried away.
+- Single-repository worktree acquisition is restored, and deterministic acquisition validation failures now stop instead of retrying destructively. Branch-write provenance is enforced across production callers.
+- Reopening Settings after an update installs no longer loses the restart prompt; the outgoing dashboard process keeps reporting its pending install until it is replaced.
+
+## 0.77.0-beta.5
+
+### Highlights
+
+- Complex requests stay one planned task — automatic task splitting is removed
+- Workspace tasks can share one custom branch across every sub-repo, or derive it from JIRA
+- Docker image ships git-lfs, so LFS-tracked files check out as real content, not stubs
+- Mobile task creation and Board/List navigation now reachable from every project view
+- Approved AI merge reviews land instead of dropping into corrective merge loops
+
+### Breaking
+
+- Complex requests are kept as a single planned task. Task splitting, split-driven parent deletion, and the dashboard subtask and planning fan-out routes are removed.
+
+### New
+
+- Workspace tasks can use one custom branch name across every sub-repository, including reusing an existing branch, with task-aware PR heads and collision attach.
+- Workspace branch names can be derived from configured JIRA issues.
+- Mobile task creation and Board/List navigation are available from every project view, with Planning quick entry preserved.
+- The Activity Log supports exact task-ID search, composable with project and event-type filters.
+- Update installation and restart are now independent controls, and dashboard update restarts wait for the installed version before reloading.
+- Start a new chat directly from the header of an active conversation.
+
+### Fixed
+
+- The Docker image installs git-lfs, so LFS-tracked files check out as real content instead of ~130-byte pointer stubs on an apparently clean tree.
+- Desktop Board dragging works again from safe empty-column surfaces; mobile Board scrolling and column snapping are unchanged.
+- Approved AI merge reviews no longer enter corrective merge loops — findings are stored with the task and the same candidate is confirmed before landing.
+- Multi-repository merges stay live through long AI land operations by renewing repository land leases.
+- Multi-repository tasks no longer review or recover clean unrelated repositories.
+- Clearing a Task Detail description deletes the task through your configured confirmation preference.
+- Soft-deleting a task can explicitly remove incoming dependency references.
+- Dashboard chat textareas autosize through five lines and shrink again when content is removed; no mouse resizing.
+- Task Chat's model selector is as wide as Direct Chat's, so model names stay readable.
+- Starting a new idle chat no longer raises a false interrupted-response save warning.
+- Failing or stalled audit telemetry no longer delays task lifecycle operations, engine recovery, merge work, deleted-task outbox delivery, workflow recovery, reservation cleanup, or detached memory captures.
+
+### Internal
+
+- Remaining engine audit telemetry (hold-release, goals, overseer, mesh lease, runtime rotation, column boundaries) routes through the shared bounded emit seam.
+
 ## 0.77.0-beta.4
 
 ### Highlights

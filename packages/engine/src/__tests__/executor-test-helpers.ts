@@ -672,6 +672,24 @@ export function createMockStore() {
       applyPatch(id, patch);
       return { ...(patches.get(id) ?? {}), id };
     }),
+    mergeWorkspaceWorktreeEntry: vi.fn(async (id: string, repoRelPath: string, patch: Record<string, unknown>) => {
+      const live = await store.getTask(id);
+      const workspaceWorktrees = (live?.workspaceWorktrees ?? {}) as Record<string, unknown>;
+      const existing = workspaceWorktrees[repoRelPath];
+      applyPatch(id, {
+        workspaceWorktrees: {
+          ...workspaceWorktrees,
+          [repoRelPath]: { ...(existing && typeof existing === "object" ? existing : {}), ...patch },
+        },
+      });
+      return store.getTask(id);
+    }),
+    updateWorkspaceReviewState: vi.fn(async (id: string, _revision: number, reviewRemediation: unknown) => {
+      const current = await store.getTask(id);
+      const repositoryScope = { ...(current.repositoryScope ?? {}), reviewRemediation };
+      applyPatch(id, { repositoryScope });
+      return { task: { ...current, repositoryScope }, updated: true };
+    }),
     recordActivity: vi.fn().mockResolvedValue({}),
     moveTask: makeWriteThroughMoveTask(),
     handoffToReview: vi.fn().mockImplementation(async (id: string) => store.moveTask(id, "in-review")),

@@ -119,8 +119,30 @@ export async function detectWorkspaceMainCheckoutWork(
       const { stdout } = await execAsync("git log -n 200 --format=%H%x1f%ct%x1f%B%x1e HEAD", { ...probeOptions, cwd: checkout });
       const attributed = new RegExp(`(?:${task.id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}|Fusion-Task-Id:\\s*${task.id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})`, "i");
       for (const commit of parseCommits(stdout)) {
-        const evidence: MainCheckoutEvidence | null = attributed.test(commit.body) ? "task-attributed-commit" : anchor !== null && commit.committedAt >= anchor ? "post-anchor-commit" : null;
-        if (evidence) violations.push({ repo, files: [], commits: [commit.sha], evidence });
+        const entry = workspaceWorktrees[repo];
+        const recordedLanding = entry?.landedSha === commit.sha
+          || task.mergeDetails?.workspaceLandedShas?.[repo] === commit.sha
+          || task.mergeDetails?.commitSha === commit.sha;
+        let reachableFromBaseline = false;
+        if (entry?.baseCommitSha) {
+          try {
+            await execAsync(`git merge-base --is-ancestor ${commit.sha} ${entry.baseCommitSha}`, { ...probeOptions, cwd: checkout });
+            reachableFromBaseline = true;
+          } catch {
+            // A missing/unreadable base is handled by the timestamp fallback below.
+          }
+        }
+        /*
+        FNXC:WorkspaceFinalization 2026-08-21-08:52:
+        Main-checkout refusal needs task ownership plus post-baseline evidence. A commit already
+        reachable from the acquired repository base, or durable prior landing proof, is historical
+        task prose rather than a direct edit; foreign post-anchor commits remain warnings.
+        */
+        if (attributed.test(commit.body) && !recordedLanding && !reachableFromBaseline && anchor !== null && commit.committedAt >= anchor) {
+          violations.push({ repo, files: [], commits: [commit.sha], evidence: "task-attributed-commit" });
+        } else if (!recordedLanding && !reachableFromBaseline && anchor !== null && commit.committedAt >= anchor) {
+          warnings.push({ repo, files: [], commits: [commit.sha], reason: "pre-existing-dirt" });
+        }
       }
     } catch { warnings.push({ repo, files: [], commits: [], reason: "commit-scan-unavailable" }); }
   }

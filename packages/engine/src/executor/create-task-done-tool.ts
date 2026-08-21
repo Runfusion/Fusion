@@ -330,6 +330,21 @@ export function createTaskDoneTool(
           await store.logEntry(taskId, refusalMessage, undefined, deps.getRunContextFor(task.id));
           executorLog.error(`${taskId}: fn_task_done refused (${invariantCheck.reason}) — observed=${invariantCheck.observed}, expected=${invariantCheck.expected}`);
 
+          /*
+          FNXC:WorkspaceFinalization 2026-08-21-08:46:
+          A main-checkout edit belongs to the shared checkout owner, not the executor. Parking it on
+          the first refusal preserves acquired workspace evidence and the retry budget; requeueing an
+          agent cannot rewrite a shared checkout safely and previously created an identical loop.
+          */
+          if (invariantCheck.reason === "main_checkout_edit") {
+            await store.updateTask(taskId, { status: "failed", error: refusalMessage });
+            await store.logEntry(taskId, `${refusalMessage} — operator cleanup and Retry are required; executor retry budget preserved`, undefined, deps.getRunContextFor(task.id));
+            return {
+              content: [{ type: "text" as const, text: refusalMessage }],
+              details: { error: refusalMessage },
+            };
+          }
+
           const priorRequeues = task.taskDoneRetryCount ?? 0;
           const nextRequeueCount = priorRequeues + 1;
           if (priorRequeues < MAX_TASK_DONE_REQUEUE_RETRIES) {

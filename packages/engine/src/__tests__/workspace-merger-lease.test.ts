@@ -29,7 +29,7 @@ import { writeFileSync } from "node:fs";
 import path from "node:path";
 import type { Task, TaskStore, WorkspaceLeaseHandle } from "@fusion/core";
 import { createSharedPgTaskStoreTestHarness, pgDescribe, type SharedPgTaskStoreHarness } from "../../../core/src/__test-utils__/pg-test-harness.js";
-import { landSquash, landWorkspaceTask, WorkspaceMergeDispatchSupersededError, WorkspaceRepoLandBusyError } from "../merge/merger-ai.js";
+import { landSquash, landWorkspaceTask, WorkspaceMergeDispatchSupersededError, WorkspaceMergeTechnicalError, WorkspaceRepoLandBusyError } from "../merge/merger-ai.js";
 import { ensureTenancyFenceRef, mergeDispatchFenceRef, WorkspaceFenceRefError } from "../merge/workspace-fence-ref.js";
 import { activeSessionRegistry } from "../agents/active-session-registry.js";
 import { createWorkspaceFixture, hasGit, type WorkspaceFixture } from "./_workspace-fixture.js";
@@ -650,7 +650,7 @@ describeIfGit("landWorkspaceTask — per-repo land lease (Phase C U3, KTD4)", ()
         await vi.advanceTimersByTimeAsync(60_000);
       }),
       reviewAgent: approveReviewAgent,
-    })).rejects.toBeInstanceOf(WorkspaceRepoLandBusyError);
+    })).rejects.toBeInstanceOf(WorkspaceMergeTechnicalError);
 
     expect(recordWorkspaceLandIntent).not.toHaveBeenCalled();
     expect((store.resolveWorkspaceLandIntent as any)).not.toHaveBeenCalled();

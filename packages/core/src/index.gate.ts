@@ -52,6 +52,7 @@ export {
   sanitizeBranchSegment,
   derivePerTaskBranchName,
   deriveAutoTaskBranchName,
+  BranchWriteProvenanceError,
   isValidBranchGroupBranchName,
   validateBranchGroupBranchName,
   isValidTaskBranchName,

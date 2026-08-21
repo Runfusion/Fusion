@@ -5795,9 +5795,9 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
               // unreadable checkout — fall back to clearing metadata
             }
           }
-          const patch: Partial<Task> = preservedWorktree
-            ? { branch: selected.branch }
-            : { branch: selected.branch, worktree: null as unknown as string };
+          const patch: Parameters<TaskStore["updateTask"]>[1] = preservedWorktree
+            ? { branch: selected.branch, branchWriteOrigin: "engine" as const }
+            : { branch: selected.branch, branchWriteOrigin: "engine" as const, worktree: null };
           if (!task.baseCommitSha) {
             const derivedBaseCommit = (await execAsync(
               `git merge-base ${shellQuote(integrationBase)} ${shellQuote(selected.branch)}`,
@@ -10503,6 +10503,26 @@ const movedTask = await this.store.moveTask(task.id, completeLane);
             await this.emitWorkspacePartialLandNoAction(task, "merge-pending", liveness.livePaths);
             continue;
           }
+          /*
+          FNXC:WorkspaceFinalization 2026-08-21-08:46:
+          Recovery is another merge door, not an exemption from graph-owned pre-merge review.
+          Re-read immediately before scheduling so a failed/pending review cannot race a stale sweep
+          into a lease or Git attempt; a retry never implicitly approves a negative verdict.
+          */
+          const latestTask = await this.store.getTask(task.id).catch(() => null);
+          /*
+          FNXC:WorkspaceFinalization 2026-08-21-08:52:
+          A prior retryable workspace land failure is recovery input rather than a merge-content
+          blocker. Strip only that known transient status for blocker evaluation; failed review
+          results and every other failed/operator state remain merge-blocking and cannot enqueue.
+          */
+          const blockerTask = latestTask?.status === "failed" && latestTask.error?.startsWith("Workspace partial land:")
+            ? { ...latestTask, status: null, error: undefined }
+            : latestTask;
+          if (!blockerTask || getTaskMergeBlocker(blockerTask as Task, { skipColumnIdentityCheck: true }) !== undefined) {
+            await this.emitWorkspacePartialLandNoAction(task, "merge-blocked", []);
+            continue;
+          }
 
           // Classify each confirmed, modified sub-repo: landed / retryable / unrecoverable / unreadable (FORK-A).
           const workspaceWorktrees = task.workspaceWorktrees ?? {};
@@ -10518,8 +10538,13 @@ const movedTask = await this.store.moveTask(task.id, completeLane);
             continue;
           }
           const repoKeys = Object.keys(workspaceWorktrees).filter((repoRel) =>
-            explicitScope.includes(repoRel) && (task.modifiedFiles ?? []).some((file) => file.startsWith(`${repoRel}/`)),
+            explicitScope.includes(repoRel)
+            && ((task.modifiedFiles ?? []).some((file) => file.startsWith(`${repoRel}/`)) || Boolean(workspaceWorktrees[repoRel]?.landedSha)),
           );
+          if (repoKeys.length === 0) {
+            await this.emitWorkspacePartialLandNoAction(task, "empty-obligations", []);
+            continue;
+          }
           const landedRepos: string[] = [];
           const unlandedRepos: string[] = [];
           const unrecoverableRepos: string[] = [];
@@ -10595,13 +10620,18 @@ const movedTask = await this.store.moveTask(task.id, completeLane);
           });
 
           if (evidenceUnavailableRepos.length > 0) {
-            const defers = (this.workspacePartialLandEvidenceDefers.get(task.id) ?? 0) + 1;
-            this.workspacePartialLandEvidenceDefers.set(task.id, defers);
+            /*
+            FNXC:WorkspaceFinalization 2026-08-21-09:09:
+            Evidence-unavailable recovery shares the task-owned transient ceiling with lease and
+            publication failures. A process-local defer map resets on restart and would otherwise
+            turn an unreadable repository into an infinite five-minute recovery loop.
+            */
+            const defers = (task.mergeTransientRetryCount ?? 0) + 1;
+            await this.store.updateTask(task.id, { mergeTransientRetryCount: defers });
             if (defers >= MAX_STARVATION_DROPS) {
               const error = `Workspace partial-land evidence unavailable: branch state could not be read after ${MAX_STARVATION_DROPS} sweeps for sub-repo(s) ${evidenceUnavailableRepos.join(", ")} — manual intervention required.`;
               await this.store.updateTask(task.id, { status: "failed", error });
               await this.store.logEntry(task.id, error);
-              this.workspacePartialLandEvidenceDefers.delete(task.id);
               await auditor.database({
                 type: "task:reconcile-workspace-partial-land",
                 target: task.id,
@@ -10615,7 +10645,6 @@ const movedTask = await this.store.moveTask(task.id, completeLane);
             continue;
           }
 
-          this.workspacePartialLandEvidenceDefers.delete(task.id);
 
           if (unrecoverableRepos.length > 0) {
             // FORK-A: at least one repo is proven branch-gone and not landed → park failed.
@@ -10657,7 +10686,7 @@ const movedTask = await this.store.moveTask(task.id, completeLane);
               landedRepos,
               unlandedRepos: [],
               reason: "all-landed-not-finalized",
-              successLog: "Auto-recovered (workspace): all sub-repos landed but task not finalized — re-enqueued finalize-once",
+              successLog: "Workspace merge recovery scheduled: all sub-repositories have proven landing evidence; awaiting finalize-once result",
             });
             recovered++;
             continue;
@@ -10668,7 +10697,7 @@ const movedTask = await this.store.moveTask(task.id, completeLane);
             landedRepos,
             unlandedRepos,
             reason: landedRepos.length > 0 ? "partial-land" : "zero-land",
-            successLog: `Auto-recovered (workspace): re-enqueued partial land (${landedRepos.length} landed, ${unlandedRepos.length} pending)`,
+            successLog: `Workspace merge recovery scheduled: ${landedRepos.length} landed, ${unlandedRepos.length} pending`,
           });
           recovered++;
         } catch (err: unknown) {
@@ -10685,7 +10714,7 @@ const movedTask = await this.store.moveTask(task.id, completeLane);
 
   private async emitWorkspacePartialLandNoAction(
     task: Task,
-    reason: "auto-merge-off" | "user-paused" | "live-worktree" | "merge-pending" | "evidence-unavailable" | "scope-unresolved",
+    reason: "auto-merge-off" | "user-paused" | "live-worktree" | "merge-pending" | "merge-blocked" | "evidence-unavailable" | "scope-unresolved" | "empty-obligations",
     livePaths: string[],
   ): Promise<void> {
     try {
@@ -10746,7 +10775,14 @@ const movedTask = await this.store.moveTask(task.id, completeLane);
       return false;
     }
 
-    const drops = (this.workspacePartialLandDrops.get(task.id) ?? 0) + 1;
+    /*
+    FNXC:WorkspaceFinalization 2026-08-21-08:46:
+    Queue rejection is a recovery failure, not a successful recovery. Persist its counter before
+    returning so a new SelfHealingManager cannot reset an infinite five-minute scheduling loop.
+    `mergeTransientRetryCount` is the established task-owned ceiling for transient merge attempts.
+    */
+    const drops = (task.mergeTransientRetryCount ?? 0) + 1;
+    await this.store.updateTask(task.id, { mergeTransientRetryCount: drops });
     this.workspacePartialLandDrops.set(task.id, drops);
     log.warn(`reconcileWorkspacePartialLands: enqueue dropped for ${task.id} (${drops}/${MAX_STARVATION_DROPS}); merge queue rejected re-enqueue`);
     if (drops >= MAX_STARVATION_DROPS) {

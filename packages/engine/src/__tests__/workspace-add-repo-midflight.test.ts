@@ -8,9 +8,10 @@ vi.mock("../worktree/worktree-acquisition.js", async (importOriginal) => {
   return { ...actual, acquireWorkspaceRepoWorktree: acquisition.acquire };
 });
 
-import { createAcquireRepoWorktreeTool } from "../agent-tools.js";
+import { createAcquireRepoWorktreeTool, isLateAcquireColumnBlocked } from "../agent-tools.js";
 import { buildRunImplementationDeps } from "../executor/deps-bags.js";
 import { invalidateWorkspaceConfigCache } from "../executor/workspace-config-resolver.js";
+import { lifecycleIr, RENAMED_VOCAB } from "./_workflow-vocabulary-fixture.js";
 
 const fixtures: WorkspaceFixture[] = [];
 afterEach(() => {
@@ -30,6 +31,11 @@ function toolFor(currentTask: any, repos: string[], resolveWorkspaceRepos?: () =
     task: currentTask,
     store: {
       getTask: vi.fn(async () => currentTask),
+      /*
+      FNXC:RepositoryScope 2026-08-21-05:15:
+      Acquisition fixtures expose the post-acquire scope mutation seam because successful late admission now persists repository intent.
+      */
+      mutateTaskRepositoryScope: vi.fn(async () => currentTask),
       logEntry: vi.fn(async () => undefined),
     } as any,
     settings: {},
@@ -43,6 +49,20 @@ A late workspace member must be admitted by the same tool instance after its dis
 review/landing states instead require a follow-up so the merge loop cannot miss a repository.
 */
 describe.runIf(hasGit)("workspace membership acquired mid-flight", () => {
+  it("refuses renamed review and terminal lifecycle columns", () => {
+    const workflowIr = lifecycleIr(RENAMED_VOCAB, "workspace-renamed", { mergeOrchestration: true });
+    if (workflowIr.version !== "v2") throw new Error("expected v2 workflow fixture");
+    workflowIr.columns.push({ id: "retired", name: "Archived", traits: [{ trait: "archived" }] });
+
+    expect(isLateAcquireColumnBlocked(workflowIr, RENAMED_VOCAB.wip)).toBe(false);
+    expect(isLateAcquireColumnBlocked(workflowIr, RENAMED_VOCAB.review)).toBe(true);
+    expect(isLateAcquireColumnBlocked(workflowIr, RENAMED_VOCAB.complete)).toBe(true);
+    expect(isLateAcquireColumnBlocked(workflowIr, "retired")).toBe(true);
+    expect(isLateAcquireColumnBlocked(workflowIr, "in-review")).toBe(true);
+    expect(isLateAcquireColumnBlocked(workflowIr, "done")).toBe(true);
+    expect(isLateAcquireColumnBlocked(workflowIr, "archived")).toBe(true);
+  });
+
   it("refreshes a running host from disk and admits the newly added repository", async () => {
     const fixture = await createWorkspaceFixture(["repo-a", "repo-b"]);
     fixtures.push(fixture);
@@ -110,6 +130,21 @@ describe.runIf(hasGit)("workspace membership acquired mid-flight", () => {
     currentTask.workspaceWorktrees = { "repo-b": { worktreePath: "/existing", branch: "fusion/FN-9163" } };
     acquisition.acquire.mockResolvedValue({ worktreePath: "/existing", branch: "fusion/FN-9163", alreadyAcquired: true });
     await expect(acquire.execute("call", { repo: "repo-b" } as never)).resolves.not.toMatchObject({ isError: true });
+  });
+
+  it("revalidates lifecycle inside the acquisition critical section", async () => {
+    const currentTask = task();
+    acquisition.acquire.mockImplementation(async (options: any) => {
+      currentTask.column = "in-review";
+      await options.validateTaskBeforeCreate?.(currentTask);
+      return { worktreePath: "/worktrees/repo-b", branch: "fusion/FN-9163", alreadyAcquired: false };
+    });
+    const acquire = toolFor(currentTask, ["repo-a", "repo-b"]);
+
+    const refused = await acquire.execute("call", { repo: "repo-b" } as never);
+
+    expect(refused).toMatchObject({ isError: true });
+    expect(refused.content[0]?.text).toContain("follow-up task");
   });
 
   it("retains the prior host snapshot for empty disk membership", async () => {

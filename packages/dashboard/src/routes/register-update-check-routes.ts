@@ -10,8 +10,26 @@ export const registerUpdateCheckRoutes: ApiRouteRegistrar = (ctx) => {
   /* FNXC:UpdateInstall 2026-08-21-02:48: A wired host shares its HTTP and watcher fence so a manual click cannot race the periodic installer. Isolated route harnesses intentionally get a fresh coordinator. */
   const coordinator = ctx.options?.systemControl ? processUpdateInstallCoordinator : new UpdateInstallCoordinator();
 
+  const pendingResponse = () => {
+    const pendingInstall = coordinator.getPendingInstall();
+    if (!pendingInstall) return undefined;
+    return {
+      currentVersion: pendingInstall.currentVersion,
+      latestVersion: pendingInstall.latestVersion,
+      // Keep the old version's availability signal compatible for legacy readers.
+      updateAvailable: true,
+      pendingInstall,
+      lastChecked: Date.now(),
+    };
+  };
+
   router.get("/update-check", async (_req, res) => {
     try {
+      const pending = pendingResponse();
+      if (pending) {
+        res.json(pending);
+        return;
+      }
       const globalSettings = await store.getGlobalSettingsStore().getSettings();
       if (globalSettings.updateCheckEnabled === false) {
         res.json({
@@ -36,6 +54,11 @@ export const registerUpdateCheckRoutes: ApiRouteRegistrar = (ctx) => {
 
   router.post("/update-check/refresh", async (_req, res) => {
     try {
+      const pending = pendingResponse();
+      if (pending) {
+        res.json(pending);
+        return;
+      }
       const globalSettings = await store.getGlobalSettingsStore().getSettings();
       const fusionDir = resolveGlobalDir();
       await clearUpdateCheckCache(fusionDir);
@@ -53,6 +76,11 @@ export const registerUpdateCheckRoutes: ApiRouteRegistrar = (ctx) => {
 
   router.post("/update-check/install", async (_req, res) => {
     try {
+      const pending = coordinator.getPendingInstall();
+      if (pending) {
+        res.json(pending);
+        return;
+      }
       const globalSettings = await store.getGlobalSettingsStore().getSettings();
       const fusionDir = resolveGlobalDir();
       const updateCheck = await performUpdateCheck(fusionDir, cliPackageVersion, {
@@ -97,7 +125,8 @@ export const registerUpdateCheckRoutes: ApiRouteRegistrar = (ctx) => {
       const restartScheduled = restartAttempted
         ? coordinator.requestRestart(() => ctx.options?.systemControl?.requestRestart("update-install") === true)
         : false;
-      res.json({ ...result, restartAttempted, restartScheduled, priorPid: restartAttempted ? process.pid : undefined });
+      // FNXC:PendingUpdateInstall 2026-08-21-05:58: Publish the coordinator snapshot after the restart decision so later route reads retain both the target and idempotent restart state.
+      res.json(coordinator.getPendingInstall() ?? { ...result, restartAttempted, restartScheduled, priorPid: restartAttempted ? process.pid : undefined });
     } catch (error) {
       rethrowAsApiError(error, "Failed to install update");
     }
