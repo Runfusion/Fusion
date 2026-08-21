@@ -1310,6 +1310,7 @@
     "noSkillsAvailable": "Aucune compétence disponible",
     "noSkillsFound": "Aucune compétence trouvée",
     "openQuickChat": "Ouvrir le chat rapide",
+    "outputBudgetExhausted": "Le modèle a utilisé tout son budget de sortie pour la réflexion — augmentez maxTokens pour ce modèle.",
     "questionAnsweredLabel": "",
     "questionAnsweredWithoutContent": "",
     "questionConfirmNo": "",

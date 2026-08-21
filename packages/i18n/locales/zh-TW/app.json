@@ -1310,6 +1310,7 @@
     "noSkillsAvailable": "暫無可用技能",
     "noSkillsFound": "找不到技能",
     "openQuickChat": "開啟快速聊天",
+    "outputBudgetExhausted": "模型的全部輸出預算都消耗在思考上——請為該模型調高 maxTokens。",
     "questionAnsweredLabel": "",
     "questionAnsweredWithoutContent": "",
     "questionConfirmNo": "",

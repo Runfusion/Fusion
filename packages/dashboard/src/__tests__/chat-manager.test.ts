@@ -1159,6 +1159,20 @@ describe("ChatManager.sendMessage", () => {
       expect.objectContaining({ status: "generating" }),
     );
     expect(mockChatStore.setInFlightGeneration).toHaveBeenLastCalledWith("chat-001", null);
+    /*
+    FNXC:ChatInFlightRecovery 2026-08-20-20:17 (RUFU-144):
+    Every persisted in-flight snapshot (the initial "generating" flush and every streamed
+    checkpoint) must carry the `startedAt` liveness timestamp so the engine self-healing
+    sweep can prove a flag older than its floor cannot belong to a live generation. The
+    final clear (null) drops the whole payload by design.
+    */
+    const generatingSnapshots = mockChatStore.setInFlightGeneration.mock.calls
+      .map((call) => call[1] as { status?: string } | null)
+      .filter((snapshot): snapshot is { status: string } => snapshot !== null && snapshot.status === "generating");
+    expect(generatingSnapshots.length).toBeGreaterThanOrEqual(1);
+    for (const snapshot of generatingSnapshots) {
+      expect(snapshot).toEqual(expect.objectContaining({ startedAt: expect.any(String) }));
+    }
   });
 
   it("observes a debounced checkpoint rejection without an unhandled rejection", async () => {
