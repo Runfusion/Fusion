@@ -114,6 +114,113 @@ describe("AcpRuntimeAdapter (U3)", () => {
     ).rejects.toThrow(/no live connection/);
   });
 
+  /*
+  FNXC:AcpSubscribeCompat 2026-08-21-18:40:
+  Regression for "session.subscribe is not a function": the engine's
+  workflow-step path (execute-workflow-step.ts) and pi.ts wireFallback call
+  session.subscribe(...) unguarded. ACP sessions must expose a subscribe
+  adapter that replays bridged stream updates as pi-shaped events.
+  */
+  it("exposes session.subscribe and replays streamed updates as pi-shaped events", async () => {
+    const adapter = makeAdapter({ acpEnvAllowList: ["ACP_FIXTURE_RICH_PROMPT"] });
+    const { session } = await adapter.createSession(
+      makeOptions({ taskEnv: { ACP_FIXTURE_RICH_PROMPT: "1" } } as never),
+    );
+    const events: Array<{ type: string; assistantMessageEvent?: { type: string; delta: string; contentIndex?: number }; toolName?: string }> = [];
+    const retained: Array<{ type: string }> = [];
+    const unsubscribe = session.subscribe((event: unknown) => events.push(event as { type: string }));
+    const retainedUnsub = session.subscribe((event: unknown) => retained.push(event as { type: string }));
+    try {
+      await expect(
+        adapter.promptWithFallback(session, "rich turn"),
+      ).resolves.toEqual({ stopReason: "end_turn" });
+
+      const textDelta = events.find(
+        (e) => e.type === "message_update" && e.assistantMessageEvent?.type === "text_delta",
+      );
+      expect(textDelta?.assistantMessageEvent?.delta).toContain("Working on it");
+      // FNXC:AcpSubscribeCompat 2026-08-21-20:24: contentIndex is per block, not per delta.
+      expect(textDelta?.assistantMessageEvent?.contentIndex).toBe(0);
+      expect(events.filter((e) => e.assistantMessageEvent?.type === "text_delta").every((e) => e.assistantMessageEvent?.contentIndex === 0)).toBe(true);
+
+      const thinkingDelta = events.find(
+        (e) => e.type === "message_update" && e.assistantMessageEvent?.type === "thinking_delta",
+      );
+      expect(thinkingDelta).toBeDefined();
+      expect(thinkingDelta?.assistantMessageEvent?.contentIndex).toBe(1);
+      expect(events.filter((e) => e.assistantMessageEvent?.type === "thinking_delta").every((e) => e.assistantMessageEvent?.contentIndex === 1)).toBe(true);
+
+      const toolStart = events.find((e) => e.type === "tool_execution_start");
+      expect(toolStart?.toolName).toBeTruthy();
+
+      const toolEnd = events.find(
+        (e) => e.type === "tool_execution_end" && e.toolName === (toolStart?.toolName),
+      );
+      expect(toolEnd).toBeDefined();
+
+      // Handler-specific unsubscription: only the unsubscribed handler stops.
+      const countAfterFirst = events.length;
+      const retainedBeforeSecond = retained.length;
+      unsubscribe();
+      await expect(adapter.promptWithFallback(session, "second rich turn")).resolves.toEqual({
+        stopReason: "end_turn",
+      });
+      expect(events.length).toBe(countAfterFirst);
+      expect(retained.length).toBeGreaterThan(retainedBeforeSecond);
+    } finally {
+      retainedUnsub();
+      await adapter.dispose(session);
+    }
+  });
+
+  it("keeps original callbacks firing alongside subscriber replay", async () => {
+    const onTextChunks: string[] = [];
+    const onThinkingChunks: string[] = [];
+    const toolStarts: Array<{ name: string; args?: unknown }> = [];
+    const toolEnds: Array<{ name: string; isError: boolean }> = [];
+    const adapter = makeAdapter({ acpEnvAllowList: ["ACP_FIXTURE_RICH_PROMPT"] });
+    const { session } = await adapter.createSession(
+      makeOptions({
+        onText: (t: string) => onTextChunks.push(t),
+        onThinking: (t: string) => onThinkingChunks.push(t),
+        onToolStart: (n: string, a?: unknown) => toolStarts.push({ name: n, args: a }),
+        onToolEnd: (n: string, e: boolean) => toolEnds.push({ name: n, isError: e }),
+        taskEnv: { ACP_FIXTURE_RICH_PROMPT: "1" },
+      } as never),
+    );
+    const seenText: string[] = [];
+    const seenThinking: string[] = [];
+    const seenStarts: string[] = [];
+    const seenEnds: string[] = [];
+    session.subscribe((event: unknown) => {
+      const e = event as { type: string; assistantMessageEvent?: { type: string; delta: string }; toolName?: string };
+      if (e.type === "message_update" && e.assistantMessageEvent?.type === "text_delta") {
+        seenText.push(e.assistantMessageEvent.delta);
+      } else if (e.type === "message_update" && e.assistantMessageEvent?.type === "thinking_delta") {
+        seenThinking.push(e.assistantMessageEvent.delta);
+      } else if (e.type === "tool_execution_start") {
+        seenStarts.push(e.toolName ?? "");
+      } else if (e.type === "tool_execution_end") {
+        seenEnds.push(e.toolName ?? "");
+      }
+    });
+    try {
+      await adapter.promptWithFallback(session, "dual delivery");
+      expect(onTextChunks.join("")).toContain("Working on it");
+      expect(seenText.join("")).toContain("Working on it");
+      expect(onThinkingChunks.join("")).toContain("Let me think");
+      expect(seenThinking.join("")).toContain("Let me think");
+      expect(toolStarts).toHaveLength(1);
+      expect(seenStarts).toHaveLength(1);
+      expect(seenStarts[0]).toBe(toolStarts[0].name);
+      expect(toolEnds).toHaveLength(1);
+      expect(seenEnds).toHaveLength(1);
+      expect(seenEnds[0]).toBe(toolEnds[0].name);
+    } finally {
+      await adapter.dispose(session);
+    }
+  });
+
   it("describeModel returns the session model description", async () => {
     const adapter = makeAdapter();
     const { session } = await adapter.createSession(makeOptions());

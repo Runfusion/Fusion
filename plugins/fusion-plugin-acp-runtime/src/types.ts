@@ -117,6 +117,11 @@ export interface AgentRuntimeOptions {
   systemPrompt: string;
   tools?: "coding" | "readonly";
   /**
+   * FNXC:AcpSubscribeCompat 2026-08-21-19:12:
+   * Task-scoped subprocess environment (engine contract); allow-list still gates forwarding.
+   */
+  taskEnv?: NodeJS.ProcessEnv;
+  /**
    * Engine-assembled Fusion custom tools (fn_*). ToolDefinition.execute closures
    * only run in-process, so the ACP runtime exposes them to the agent through a
    * loopback tool bridge registered in `session/new.mcpServers` (same pattern as
@@ -176,6 +181,15 @@ export interface AcpSession {
   /** Completion of the most recent direct dispose call. */
   disposePromise?: Promise<void>;
   dispose(): void;
+  /**
+   * Engine-compat event subscription. The engine's AgentSession interface
+   * (pi-coding-agent) exposes `subscribe(handler)` and several production
+   * call sites call it unconditionally (execute-workflow-step.ts, pi.ts).
+   * ACP sessions stream through the bridging client handler onto `callbacks`
+   * instead, so this adapter replays each forwarded event to every handler.
+   * Returns a no-op unsubscribe for interface compatibility.
+   */
+  subscribe(handler: (event: unknown) => void): () => void;
 }
 
 export type AgentSession = AcpSession;

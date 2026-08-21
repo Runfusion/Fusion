@@ -9,6 +9,7 @@
 // stopReason.
 
 import { resolveCliSettings, type AcpCliSettings } from "./cli-spawn.js";
+import type { AcpCallbacks } from "./types.js";
 import {
   connect,
   newAcpSession,
@@ -48,6 +49,65 @@ export class AcpRuntimeAdapter implements AgentRuntime {
       onToolEnd: options.onToolEnd,
     };
 
+    /*
+    FNXC:AcpSubscribeCompat 2026-08-21-18:40:
+    The engine's AgentSession contract (pi-coding-agent) exposes
+    `subscribe(handler)` and several production call sites call it
+    unconditionally — executor/execute-workflow-step.ts and pi.ts fallback
+    wiring do not use the `typeof === "function"` guard that reviewer.ts has.
+    ACP sessions stream through the bridging client handler onto `callbacks`
+    (createBridgingClientHandler → createEventBridge) instead of a pi
+    subscription, so any unguarded call site crashed with
+    "session.subscribe is not a function" the moment an ACP runtime
+    (Hermes/Prime/Grok) executed a workflow step.
+
+    Fix at the seam, not at every call site: wrap the raw callbacks so each
+    forwarded text/thinking/tool event is ALSO replayed to subscribers as the
+    pi-shaped event (`message_update` + `assistantMessageEvent`) that
+    consumers parse, and expose `session.subscribe(handler)` returning an
+    unsubscribe function that removes the handler. The bridging client
+    handler below receives the WRAPPED callbacks so both delivery paths
+    (original callbacks and subscriber replay) fire from one source.
+    */
+    const subscribers = new Set<(event: unknown) => void>();
+    const emitToSubscribers = (event: Record<string, unknown>): void => {
+      for (const handler of subscribers) {
+        try {
+          handler(event);
+        } catch {
+          // A faulty subscriber must never break the streaming bridge.
+        }
+      }
+    };
+    // FNXC:AcpSubscribeCompat 2026-08-21-20:16: contentIndex is per content block,
+    // not per delta — keep it stable for all deltas in the same block.
+    const TEXT_INDEX = 0;
+    const THINKING_INDEX = 1;
+    const bridgedCallbacks: AcpCallbacks = {
+      onText: (delta: string) => {
+        emitToSubscribers({
+          type: "message_update",
+          assistantMessageEvent: { type: "text_delta", contentIndex: TEXT_INDEX, delta },
+        });
+        callbacks.onText?.(delta);
+      },
+      onThinking: (delta: string) => {
+        emitToSubscribers({
+          type: "message_update",
+          assistantMessageEvent: { type: "thinking_delta", contentIndex: THINKING_INDEX, delta },
+        });
+        callbacks.onThinking?.(delta);
+      },
+      onToolStart: (toolName: string, args?: unknown) => {
+        emitToSubscribers({ type: "tool_execution_start", toolName, args });
+        callbacks.onToolStart?.(toolName, args);
+      },
+      onToolEnd: (toolName: string, isError: boolean, result?: unknown) => {
+        emitToSubscribers({ type: "tool_execution_end", toolName, isError, result });
+        callbacks.onToolEnd?.(toolName, isError, result);
+      },
+    };
+
     // Build the bridging client handler with the per-run permission gate (U5):
     // its `requestPermission` classifies each call per-category against the live
     // gate (KTD3a) and selects `allow_once` only (S2). `cancelPending` drains
@@ -57,7 +117,7 @@ export class AcpRuntimeAdapter implements AgentRuntime {
     // same toggles drive the advertised `fs` capability in connect() below, so
     // advertisement and registered handlers stay consistent.
     const { handler: clientHandler, cancelPending, resetTurn } = createBridgingClientHandler(
-      callbacks,
+      bridgedCallbacks,
       options.actionGateContext,
       {
         cwd: options.cwd,
@@ -79,7 +139,19 @@ export class AcpRuntimeAdapter implements AgentRuntime {
       binaryPath: this.settings.binaryPath,
       args: this.settings.args,
       cwd: options.cwd,
-      env: buildSpawnEnv(this.settings.envAllowList, { required: this.settings.requiredEnv }),
+      env: buildSpawnEnv(this.settings.envAllowList, {
+        required: this.settings.requiredEnv,
+        /*
+        FNXC:AcpSubscribeCompat 2026-08-21-18:40:
+        `taskEnv` is the engine's contract for task-scoped subprocess env
+        (AgentRuntimeOptions.taskEnv). Merge it AFTER the allow-list so task
+        values win, but only for keys the allow-list already admits — the
+        allow-list stays the trust boundary (KTD6b).
+        */
+        sourceEnv: options.taskEnv
+          ? { ...process.env, ...options.taskEnv }
+          : process.env,
+      }),
       advertiseFs: { read: this.settings.fsRead, write: this.settings.fsWrite },
       clientHandler,
       ...(this.settings.authenticate ? { authenticate: this.settings.authenticate } : {}),
@@ -145,7 +217,7 @@ export class AcpRuntimeAdapter implements AgentRuntime {
       sessionId,
       cwd: options.cwd,
       lastModelDescription: `acp/${model}`,
-      callbacks,
+      callbacks: bridgedCallbacks,
       fusionToolBridgeError: toolBridgeFailure ? { reasonCode: toolBridgeFailure } : undefined,
       // Persist the per-run gate (KTD3) so U5/U7 can reach the live action gate.
       gate: options.actionGateContext,
@@ -158,9 +230,16 @@ export class AcpRuntimeAdapter implements AgentRuntime {
       get disposePromise() {
         return disposePromise;
       },
+      subscribe: (handler: (event: unknown) => void) => {
+        subscribers.add(handler);
+        return () => {
+          subscribers.delete(handler);
+        };
+      },
       dispose: () => {
         if (disposed) return;
         disposed = true;
+        subscribers.clear();
         // Drain in-flight permission requests BEFORE the registry kill so a
         // blocked agent is released (KTD4a — the SIGKILL is still authoritative).
         cancelPending();
