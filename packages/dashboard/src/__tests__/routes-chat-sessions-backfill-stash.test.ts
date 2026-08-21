@@ -411,4 +411,67 @@ describe("POST /api/chat/sessions/:id/backfill-stash (ChatStashBackfill)", () =>
     expect(res3.body).toEqual({ ok: true, inserted: 0, skipped: 4, uploaded: 0 });
     expect(mocks.captureMemory).toHaveBeenCalledTimes(2); // phase 3 uploads nothing
   });
+
+  /*
+  FNXC:ChatStashBackfill 2026-08-21-14:34:
+  RUFU-146 review (PRRT_kwDOSA-8Y86bL8vN, Greptile P1): two DISTINCT local
+  messages can share one pre-check key (same role, same canonicalized
+  timestamp, identical content — the same "ok" sent twice in one second).
+  When an interrupted batch stores only ONE occurrence, a SET-based pre-check
+  sees the key as present and skips BOTH local messages on retry — the second
+  occurrence is permanently absent from Stash while the route reports success.
+  The fix is multiset arithmetic: per key, upload max(0, localCount -
+  remoteCount) occurrences. Phase 2 below stores exactly one "ok"; the retry
+  must upload exactly ONE more "ok" (not zero, not two). Phase 3 (both
+  occurrences stored) is a no-op.
+  */
+  it("(m) RUFU-146: partial store of a duplicated key re-uploads the missing occurrence only", async () => {
+    const dupKeyMessages = [
+      { id: "k1", sessionId: "chat-dupkey", role: "user", content: "ok", thinkingOutput: null, metadata: null, createdAt: "2026-07-01T10:00:00.000Z" },
+      { id: "k2", sessionId: "chat-dupkey", role: "user", content: "ok", thinkingOutput: null, metadata: null, createdAt: "2026-07-01T10:00:00.000Z" },
+      { id: "k3", sessionId: "chat-dupkey", role: "assistant", content: "reply", thinkingOutput: null, metadata: null, createdAt: "2026-07-01T10:00:10.000Z" },
+    ];
+    const { app } = buildApp({ settings: STASH_OK_SETTINGS, messages: dupKeyMessages as never });
+
+    // Phase 1 — fresh: both "ok" occurrences (identical keys) + the reply upload.
+    mocks.queryStashEvents
+      .mockResolvedValueOnce({ events: [], hasMore: false })
+      // Phase 2 — interrupted batch stored ONE "ok" (and the reply): the retry
+      // must upload exactly the second "ok" occurrence, skipping the stored one.
+      .mockResolvedValueOnce({
+        events: [
+          { event_type: "user_message", content: "ok", created_at: "2026-07-01T10:00:00.000Z" },
+          { event_type: "assistant_message", content: "reply", created_at: "2026-07-01T10:00:10.000Z" },
+        ],
+        hasMore: false,
+      })
+      // Phase 3 — fully stored (server re-serialized fractions): nothing uploads.
+      .mockResolvedValueOnce({
+        events: [
+          { event_type: "user_message", content: "ok", created_at: "2026-07-01T10:00:00.000000Z" },
+          { event_type: "user_message", content: "ok", created_at: "2026-07-01T10:00:00.000000Z" },
+          { event_type: "assistant_message", content: "reply", created_at: "2026-07-01T10:00:10.000000Z" },
+        ],
+        hasMore: false,
+      });
+
+    const res1 = await request(app, "POST", "/api/chat/sessions/chat-dupkey/backfill-stash");
+    expect(res1.status).toBe(200);
+    expect(res1.body).toEqual({ ok: true, inserted: 2, skipped: 0, uploaded: 3 });
+    let [, , , events] = mocks.captureMemory.mock.calls[0];
+    expect(events.map((e: { content: string }) => e.content)).toEqual(["ok", "ok", "reply"]);
+
+    const res2 = await request(app, "POST", "/api/chat/sessions/chat-dupkey/backfill-stash");
+    expect(res2.status).toBe(200);
+    expect(res2.body).toEqual({ ok: true, inserted: 2, skipped: 2, uploaded: 1 });
+    expect(mocks.captureMemory).toHaveBeenCalledTimes(2);
+    [, , , events] = mocks.captureMemory.mock.calls[1];
+    expect(events.map((e: { content: string }) => e.content)).toEqual(["ok"]);
+    expect(events.map((e: { event_type: string }) => e.event_type)).toEqual(["user_message"]);
+
+    const res3 = await request(app, "POST", "/api/chat/sessions/chat-dupkey/backfill-stash");
+    expect(res3.status).toBe(200);
+    expect(res3.body).toEqual({ ok: true, inserted: 0, skipped: 3, uploaded: 0 });
+    expect(mocks.captureMemory).toHaveBeenCalledTimes(2); // phase 3 uploads nothing
+  });
 });

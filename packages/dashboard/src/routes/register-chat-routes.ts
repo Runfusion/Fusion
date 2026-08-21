@@ -1078,9 +1078,21 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
       // timestamp, NUL-stripped content) — identical construction to the
       // incoming-message filter below, so a re-run matches what the first
       // run stored. Empty content is a valid key.
-      let existingKeys: Set<string>;
+      // FNXC:ChatStashBackfillMultiset 2026-08-21-14:34:
+      // RUFU-146 review (PRRT_kwDOSA-8Y86bL8vN, Greptile P1): the pre-check
+      // must be a MULTiset, not a set — Stash has no server-side dedupe and
+      // an interrupted batch can store only some occurrences of a key that
+      // several local messages share (same role, same canonicalized
+      // timestamp, identical content — e.g. the same "ok" typed twice in
+      // one second). A Set pre-check would then skip every local occurrence
+      // on retry, permanently losing the unsaved ones while the route still
+      // reports success. Count both sides and upload, per key,
+      // max(0, localCount - remoteCount) occurrences (the first N in order).
+      // A capped remote page list can only undercount the remote side,
+      // which biases toward re-upload (a duplicate), never toward loss.
+      let existingCounts: Map<string, number>;
       try {
-        existingKeys = new Set<string>();
+        existingCounts = new Map<string, number>();
         let cursor: string | undefined;
         let lastSignature = "";
         for (let page = 0; page < 50; page++) {
@@ -1092,13 +1104,12 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
           });
           if (events.length === 0) break;
           for (const event of events) {
-            existingKeys.add(
-              backfillEventKey(
-                typeof event.event_type === "string" ? event.event_type : "",
-                typeof event.created_at === "string" ? event.created_at : undefined,
-                typeof event.content === "string" ? event.content : "",
-              ),
+            const key = backfillEventKey(
+              typeof event.event_type === "string" ? event.event_type : "",
+              typeof event.created_at === "string" ? event.created_at : undefined,
+              typeof event.content === "string" ? event.content : "",
             );
+            existingCounts.set(key, (existingCounts.get(key) ?? 0) + 1);
           }
           const last = events[events.length - 1];
           const nextCursor = typeof last?.created_at === "string" ? last.created_at : undefined;
@@ -1117,7 +1128,25 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
         });
         return;
       }
-      const freshMessages = messages.filter((message) => !existingKeys.has(backfillEventKey(backfillEventType(message.role), message.createdAt, message.content ?? "")));
+      // Multiset difference (see FNXC:ChatStashBackfillMultiset above): for
+      // each key, the first max(0, local - remote) occurrences upload; the
+      // rest are already stored.
+      const localCounts = new Map<string, number>();
+      for (const message of messages) {
+        const key = backfillEventKey(backfillEventType(message.role), message.createdAt, message.content ?? "");
+        localCounts.set(key, (localCounts.get(key) ?? 0) + 1);
+      }
+      const remainingUploads = new Map<string, number>();
+      for (const [key, localCount] of localCounts) {
+        remainingUploads.set(key, Math.max(0, localCount - (existingCounts.get(key) ?? 0)));
+      }
+      const freshMessages = messages.filter((message) => {
+        const key = backfillEventKey(backfillEventType(message.role), message.createdAt, message.content ?? "");
+        const remaining = remainingUploads.get(key) ?? 0;
+        if (remaining <= 0) return false;
+        remainingUploads.set(key, remaining - 1);
+        return true;
+      });
       if (freshMessages.length === 0) {
         // Idempotent no-op: every message is already in Stash (re-run, or the chat
         // was live-captured) — success with nothing uploaded, never duplicates.
