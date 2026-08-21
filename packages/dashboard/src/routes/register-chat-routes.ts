@@ -1009,9 +1009,11 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
   chronology.
   Contract: 200 {ok,inserted,skipped,uploaded} on success (skipped = messages already
   in Stash, omitted by the client-side dedupe); 404 unknown session; 400 for
-  memory-disabled / non-stash backend / unconfigured key / empty chat; 502 when the
-  Stash pre-check or the upload itself fails — captureMemory never throws, it degrades
-  to ok:false, and the route must surface that as a visible failure, never a success.
+  memory-disabled / non-stash backend / unconfigured key / empty chat; 409 when the
+  Stash pre-check cannot safely count the stored events (exclusive-cursor tie
+  boundary — see FNXC:ChatStashBackfillTieBoundary); 502 when the Stash pre-check
+  or the upload itself fails — captureMemory never throws, it degrades to ok:false,
+  and the route must surface that as a visible failure, never a success.
   */
   router.post("/chat/sessions/:id/backfill-stash", rateLimit(RATE_LIMITS.mutation), async (req, res) => {
     try {
@@ -1089,7 +1091,10 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
       // reports success. Count both sides and upload, per key,
       // max(0, localCount - remoteCount) occurrences (the first N in order).
       // A capped remote page list can only undercount the remote side,
-      // which biases toward re-upload (a duplicate), never toward loss.
+      // which biases toward re-upload (a duplicate), never toward loss; the one
+      // cursor case that could undercount a tie group (an exclusive-cursor
+      // boundary tie across a full page) fails CLOSED with 409 instead — see
+      // FNXC:ChatStashBackfillTieBoundary below.
       let existingCounts: Map<string, number>;
       try {
         existingCounts = new Map<string, number>();
@@ -1140,7 +1145,35 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
             existingCounts.set(key, (existingCounts.get(key) ?? 0) + 1);
           }
           const last = events[events.length - 1];
+          const prev = events[events.length - 2];
           const nextCursor = typeof last?.created_at === "string" ? last.created_at : undefined;
+          const prevCursor = typeof prev?.created_at === "string" ? prev.created_at : undefined;
+          /*
+          FNXC:ChatStashBackfillTieBoundary 2026-08-21-18:25:
+          (RUFU-146 review, PRRT_kwDOSA-8Y86bP9Z5, Greptile P1) The Stash event
+          query's `after` filter is EXCLUSIVE on created_at (verified source:
+          memory_service._build_event_filters `created_at > $n`). When a full page
+          ends on a created_at that ties with the previous row, the exclusive
+          cursor skips every remaining stored row sharing that timestamp, so the
+          multiset pre-check would undercount the remote side and re-upload
+          already-stored occurrences — silent duplicate transcript events while
+          the route reports success. The tie group's tail cannot be fetched (the
+          API has no composite (created_at, id) cursor, and the Stash server is a
+          separate product), so the pre-check fails CLOSED (409) exactly like a
+          transport failure instead of counting what it cannot see. Short pages
+          (the tie group fits inside the page) and unique boundaries are safe.
+          */
+          if (events.length === 200 && nextCursor !== undefined && nextCursor === prevCursor) {
+            res.status(409).json({
+              ok: false,
+              inserted: 0,
+              skipped: 0,
+              uploaded: messages.length,
+              error:
+                "Stash pre-check unsafe: more than 200 stored events share a timestamp at a page boundary, so the exclusive cursor cannot count them all. Nothing was uploaded — safe dedupe needs a composite (created_at, id) cursor.",
+            });
+            return;
+          }
           const signature = `${nextCursor ?? ""}::${typeof last?.content === "string" ? last.content : ""}`;
           if (events.length < 200 || !nextCursor || signature === lastSignature) break;
           cursor = nextCursor;

@@ -523,4 +523,52 @@ describe("POST /api/chat/sessions/:id/backfill-stash (ChatStashBackfill)", () =>
     const [, , , events] = mocks.captureMemory.mock.calls[0];
     expect(events.map((e: { content: string }) => e.content)).toEqual(["ok", "reply"]);
   });
+
+  /*
+  FNXC:ChatStashBackfillTieBoundary 2026-08-21-18:25:
+  RUFU-146 review (PRRT_kwDOSA-8Y86bP9Z5, Greptile P1): the Stash `after`
+  filter is EXCLUSIVE on created_at (verified source), so a tie group of 200+
+  stored events sharing one timestamp cannot be fully counted across a page
+  boundary — the exclusive cursor skips the group's tail, the multiset
+  pre-check undercounts that key, and the route would re-upload an
+  already-stored occurrence (a silent duplicate) while reporting success.
+  This regression simulates the exclusive server (the mock pages with
+  created_at > after) with 250 stored events at ONE timestamp plus one local
+  message holding the tail row's key, and asserts the pre-check fails CLOSED
+  with 409 before any upload (captureMemory never called, and the uncountable
+  tail is never even fetched).
+  */
+  it("(o) RUFU-146: exclusive-cursor tie boundary across a full page fails closed (no duplicate upload)", async () => {
+    const tieMessages = [
+      { id: "t250", sessionId: "chat-tie", role: "user", content: "tie-250", thinkingOutput: null, metadata: null, createdAt: "2026-07-01T10:00:00.000Z" },
+    ];
+    const { app } = buildApp({ settings: STASH_OK_SETTINGS, messages: tieMessages as never });
+
+    // Store: 250 events all sharing ONE timestamp (a tie group larger than a page).
+    const stored: Array<Record<string, unknown>> = [];
+    for (let i = 1; i <= 250; i++) {
+      stored.push({
+        id: `ev${String(i).padStart(3, "0")}`,
+        event_type: "user_message",
+        content: `tie-${i}`,
+        created_at: "2026-07-01T10:00:00.000000Z",
+      });
+    }
+
+    // Exclusive server (verified source semantics): `after` filters created_at > after.
+    mocks.queryStashEvents.mockImplementation(async (_url: string, _key: string, filters?: { after?: string }) => {
+      const after = filters?.after;
+      const page = after === undefined ? stored : stored.filter((e) => String(e.created_at) > after);
+      return { events: page.slice(0, 200), hasMore: page.length > 200 };
+    });
+
+    const res = await request(app, "POST", "/api/chat/sessions/chat-tie/backfill-stash");
+    expect(res.status).toBe(409);
+    expect(res.body.ok).toBe(false);
+    expect(res.body.inserted).toBe(0);
+    expect(res.body.skipped).toBe(0);
+    expect(String(res.body.error)).toMatch(/timestamp at a page boundary/);
+    expect(mocks.queryStashEvents).toHaveBeenCalledTimes(1); // tie detected on page 1; the uncountable tail is never fetched
+    expect(mocks.captureMemory).not.toHaveBeenCalled(); // nothing uploaded — the stored "tie-250" is never duplicated
+  });
 });
