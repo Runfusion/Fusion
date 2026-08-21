@@ -313,4 +313,63 @@ describe("custom-provider-registry", () => {
     }));
     expect(refresh).toHaveBeenCalledTimes(1);
   });
+
+  /*
+  FNXC:CustomProviderThinkingFormat 2026-08-21-05:45:
+  RUFU-143: the per-model thinking flags must reach the registered provider config and trip
+  providersDiffer so the live settings:updated re-registration path picks up a flag edit. The
+  provider name is deliberately NOT part of toProviderConfig, so a name-only rename must not
+  false-positive into a re-registration (beyond the pre-existing behavior).
+  */
+  it("reregisters when a model's thinkingFormat is removed (RUFU-143 settings:updated path)", async () => {
+    const registerProvider = vi.fn();
+    const refresh = vi.fn();
+
+    await reregisterCustomProviders(
+      { registerProvider, refresh },
+      [{ id: "h00e8400-e29b-41d4-a716-446655440012", name: "Provider", apiType: "openai-compatible", baseUrl: "https://one.test", models: [{ id: "m", name: "M", thinkingFormat: "qwen-chat-template" }] }],
+      [{ id: "h00e8400-e29b-41d4-a716-446655440012", name: "Provider", apiType: "openai-compatible", baseUrl: "https://one.test", models: [{ id: "m", name: "M" }] }],
+      vi.fn(),
+    );
+
+    expect(registerProvider).toHaveBeenCalledTimes(1);
+    // The re-registered model's compat no longer carries the format (deep equality on compat).
+    expect(registerProvider).toHaveBeenCalledWith("provider", expect.objectContaining({
+      models: [expect.objectContaining({ id: "m", name: "M", compat: { supportsDeveloperRole: false } })],
+    }));
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("reregisters when a model opts out of thinking via reasoning: false (RUFU-143)", async () => {
+    const registerProvider = vi.fn();
+    const refresh = vi.fn();
+
+    await reregisterCustomProviders(
+      { registerProvider, refresh },
+      [{ id: "i00e8400-e29b-41d4-a716-446655440013", name: "Provider", apiType: "openai-compatible", baseUrl: "https://one.test", models: [{ id: "m", name: "M" }] }],
+      [{ id: "i00e8400-e29b-41d4-a716-446655440013", name: "Provider", apiType: "openai-compatible", baseUrl: "https://one.test", models: [{ id: "m", name: "M", reasoning: false }] }],
+      vi.fn(),
+    );
+
+    expect(registerProvider).toHaveBeenCalledTimes(1);
+    const models = registerProvider.mock.calls[0]?.[1]?.models as Array<Record<string, unknown>>;
+    expect(models[0]).toMatchObject({ id: "m", reasoning: false });
+    expect(models[0]).not.toHaveProperty("thinkingLevelMap");
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not reregister when only an unrelated field (name) changes (RUFU-143 no false positive)", async () => {
+    const registerProvider = vi.fn();
+    const refresh = vi.fn();
+
+    await reregisterCustomProviders(
+      { registerProvider, refresh },
+      [{ id: "j00e8400-e29b-41d4-a716-446655440014", name: "Provider A", apiType: "openai-compatible", baseUrl: "https://one.test", models: [{ id: "m", name: "M", thinkingFormat: "qwen-chat-template" }] }],
+      [{ id: "j00e8400-e29b-41d4-a716-446655440014", name: "Provider B", apiType: "openai-compatible", baseUrl: "https://one.test", models: [{ id: "m", name: "M", thinkingFormat: "qwen-chat-template" }] }],
+      vi.fn(),
+    );
+
+    expect(registerProvider).not.toHaveBeenCalled();
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
 });

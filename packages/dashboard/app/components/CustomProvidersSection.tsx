@@ -10,6 +10,8 @@ import {
   type CustomProvider,
 } from "../api";
 import { AlertCircle, Loader2, Pencil, Plus, RefreshCw, Search, Trash2, X } from "lucide-react";
+import type { CustomProviderThinkingFormat } from "@fusion/core";
+import { CUSTOM_PROVIDER_THINKING_FORMAT_OPTIONS } from "./custom-provider-thinking-format";
 import { OnboardingDisclosure } from "./OnboardingDisclosure";
 import "./CustomProvidersSection.css";
 
@@ -26,7 +28,9 @@ type LegacyProvider = {
   anthropicPromptCaching?: boolean;
   // FNXC:CustomProviderModelWindows 2026-08-19-16:49: RUFU-123 legacy records can carry the
   // per-model windows too; normalizeProviders carries them through so the edit form pre-fills.
-  models?: Array<{ id: string; name?: string; contextWindow?: number; maxTokens?: number }>;
+  // FNXC:CustomProviderThinkingFormat 2026-08-21-05:59: RUFU-143 same for the per-model
+  // thinking flags (thinkingFormat/reasoning) — legacy records may carry them too.
+  models?: Array<{ id: string; name?: string; contextWindow?: number; maxTokens?: number; thinkingFormat?: string; reasoning?: boolean }>;
 };
 
 function normalizeProviders(result: Awaited<ReturnType<typeof fetchCustomProviders>>): CustomProvider[] {
@@ -55,6 +59,11 @@ function normalizeProviders(result: Awaited<ReturnType<typeof fetchCustomProvide
         // FNXC:CustomProviderModelWindows 2026-08-19-16:49: RUFU-123 keep only valid positive windows.
         ...(isPositiveTokenValue(model.contextWindow) ? { contextWindow: model.contextWindow } : {}),
         ...(isPositiveTokenValue(model.maxTokens) ? { maxTokens: model.maxTokens } : {}),
+        // FNXC:CustomProviderThinkingFormat 2026-08-21-05:59: RUFU-143 carry the per-model
+        // thinking flags through the legacy normalize so the edit form pre-fills them. The
+        // legacy record type is string-typed; the route is the authority for the literal union.
+        ...(typeof model.thinkingFormat === "string" && model.thinkingFormat.length > 0 ? { thinkingFormat: model.thinkingFormat as CustomProviderThinkingFormat } : {}),
+        ...(model.reasoning === false ? { reasoning: false } : {}),
       })),
     } satisfies CustomProvider;
   });
@@ -69,16 +78,29 @@ only values that parse to a positive finite number reach the save payload (blank
 => key omitted => the registry builder's 128000/16384 fallback applies). ModelRowsEditor is
 a module-scope component (never declared inside CustomProvidersSection's render) per the
 no-nested-component-definitions rule; both the edit form and the new-provider form render it.
+
+FNXC:CustomProviderThinkingFormat 2026-08-21-05:59:
+RUFU-143: each row also carries the per-model thinking flags — a "Thinking format" select
+("") = pi-ai default; any UI-safe value is sent as-is) and a "No thinking params" checkbox
+(reasoning: false, which wins over the select and disables it). Both reach the save payload
+only when set, so default rows keep the byte-identical registration shape. Rows with a
+persisted value outside the UI-safe set (chat-template/baseten via models.json or the raw
+API) keep it in row.thinkingFormat and round-trip unchanged — the select simply renders
+blank for a value it has no option for.
 */
 type ModelRow = {
   id: string;
   name: string;
   contextWindow: string;
   maxTokens: string;
+  /** "" = pi-ai default; otherwise a value from CUSTOM_PROVIDER_THINKING_FORMAT_OPTIONS. */
+  thinkingFormat: string;
+  /** True = send reasoning: false (opt out of all thinking params; wins over thinkingFormat). */
+  noThinkingParams: boolean;
 };
 
 function emptyModelRow(): ModelRow {
-  return { id: "", name: "", contextWindow: "", maxTokens: "" };
+  return { id: "", name: "", contextWindow: "", maxTokens: "", thinkingFormat: "", noThinkingParams: false };
 }
 
 function isPositiveTokenValue(value: unknown): value is number {
@@ -93,17 +115,22 @@ function parsePositiveTokenValue(value: string): number | undefined {
   return isPositiveTokenValue(parsed) ? parsed : undefined;
 }
 
-function modelRowFromModel(model: { id: string; name?: string; contextWindow?: number; maxTokens?: number }): ModelRow {
+function modelRowFromModel(model: { id: string; name?: string; contextWindow?: number; maxTokens?: number; thinkingFormat?: string; reasoning?: boolean }): ModelRow {
   return {
     id: model.id,
     name: model.name ?? model.id,
     contextWindow: model.contextWindow != null ? String(model.contextWindow) : "",
     maxTokens: model.maxTokens != null ? String(model.maxTokens) : "",
+    // FNXC:CustomProviderThinkingFormat 2026-08-21-05:59: RUFU-143 pre-fill the thinking flags;
+    // only reasoning === false counts as opted out (true/absent = presumed thinking-capable).
+    thinkingFormat: typeof model.thinkingFormat === "string" ? model.thinkingFormat : "",
+    noThinkingParams: model.reasoning === false,
   };
 }
 
 function isEmptyModelRow(row: ModelRow): boolean {
-  return row.id.trim() === "" && row.name.trim() === "" && row.contextWindow.trim() === "" && row.maxTokens.trim() === "";
+  return row.id.trim() === "" && row.name.trim() === "" && row.contextWindow.trim() === "" && row.maxTokens.trim() === "" &&
+    row.thinkingFormat.trim() === "" && !row.noThinkingParams;
 }
 
 interface ModelRowsEditorProps {
@@ -174,6 +201,37 @@ function ModelRowsEditor({ rows, onChange, onDetect, detecting, canDetect, canAd
             onChange={(event) => updateRow(index, { maxTokens: event.target.value })}
             disabled={disabled}
           />
+          {/*
+          FNXC:CustomProviderThinkingFormat 2026-08-21-05:59:
+          RUFU-143: per-model thinking controls. The select offers only the UI-safe pi-ai
+          formats (blank = default) and is disabled while "No thinking params" is checked —
+          the opt-out wins, so a disabled select's value never reaches the save payload.
+          */}
+          <select
+            className="select custom-provider-model-row-thinking-format"
+            aria-label={`${t("providers.modelRow.thinkingFormat", "Thinking format")} ${index + 1}`}
+            title={t("providers.modelRow.thinkingFormat", "Thinking format")}
+            value={row.thinkingFormat}
+            onChange={(event) => updateRow(index, { thinkingFormat: event.target.value })}
+            disabled={disabled || row.noThinkingParams}
+          >
+            <option value="">{t("providers.modelRow.thinkingFormatDefault", "Default")}</option>
+            {CUSTOM_PROVIDER_THINKING_FORMAT_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {t(option.labelKey, option.label)}
+              </option>
+            ))}
+          </select>
+          <label className="custom-provider-model-row-no-thinking">
+            <input
+              type="checkbox"
+              aria-label={`${t("providers.modelRow.noThinkingParams", "No thinking params")} ${index + 1}`}
+              checked={row.noThinkingParams}
+              onChange={(event) => updateRow(index, { noThinkingParams: event.target.checked })}
+              disabled={disabled}
+            />{" "}
+            {t("providers.modelRow.noThinkingParams", "No thinking params")}
+          </label>
           <button
             type="button"
             className="btn btn-icon btn-sm"
@@ -402,11 +460,19 @@ export function CustomProvidersSection({ embedded = false, onProviderChange }: C
                   : (discovered.maxTokens != null ? String(discovered.maxTokens) : ""),
               };
             } else {
+              /*
+              FNXC:CustomProviderThinkingFormat 2026-08-21-06:07:
+              RUFU-143: newly probed rows start at the thinking-flag defaults — the probe
+              reports no thinking capability, and pre-filling from heuristics is forbidden
+              (the operator sets the format explicitly).
+              */
               const row: ModelRow = {
                 id: discoveredId,
                 name: discovered.name ?? discoveredId,
                 contextWindow: discovered.contextWindow != null ? String(discovered.contextWindow) : "",
                 maxTokens: discovered.maxTokens != null ? String(discovered.maxTokens) : "",
+                thinkingFormat: "",
+                noThinkingParams: false,
               };
               rows.push(row);
               indexById.set(discoveredId, rows.length - 1);
@@ -435,16 +501,26 @@ export function CustomProvidersSection({ embedded = false, onProviderChange }: C
     // rows — blank ids are dropped (a provider may be saved with zero models), a blank display
     // name falls back to the id, and window keys are included only when the field parses to a
     // positive finite number (blank/invalid persist as absent so defaults apply at registration).
+    // FNXC:CustomProviderThinkingFormat 2026-08-21-05:59: RUFU-143 the thinking flags follow
+    // the same conditional-spread rule — thinkingFormat only when non-blank AND not opted
+    // out (the opt-out wins); reasoning: false only when the checkbox is checked. Default
+    // rows (both at default) keep the byte-identical { id, name, ...windows } shape.
     const parsedModels = modelRows.flatMap((row) => {
       const id = row.id.trim();
       if (id === "") return [];
       const contextWindow = parsePositiveTokenValue(row.contextWindow);
       const maxTokens = parsePositiveTokenValue(row.maxTokens);
+      const thinkingFormat = !row.noThinkingParams ? row.thinkingFormat.trim() : "";
       return [{
         id,
         name: row.name.trim() || id,
         ...(contextWindow !== undefined ? { contextWindow } : {}),
         ...(maxTokens !== undefined ? { maxTokens } : {}),
+        // The row keeps the raw string so values outside the UI-safe set (chat-template/
+        // baseten via models.json or the raw API) round-trip unchanged; the route validator
+        // is the authority on the full pi-ai union, so the cast is safe.
+        ...(thinkingFormat !== "" ? { thinkingFormat: thinkingFormat as CustomProviderThinkingFormat } : {}),
+        ...(row.noThinkingParams ? { reasoning: false } : {}),
       }];
     });
     const payload: Omit<CustomProvider, "id"> = {

@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import dns from "node:dns/promises";
 import net from "node:net";
-import type { CustomProvider } from "@fusion/core";
+import { CUSTOM_PROVIDER_THINKING_FORMATS, type CustomProvider, type CustomProviderThinkingFormat } from "@fusion/core";
 import { ApiError, badRequest, notFound } from "../api-error.js";
 import type { ApiRouteRegistrar } from "./types.js";
 import { invalidateAllGlobalSettingsCaches } from "../project-store-resolver.js";
@@ -104,6 +104,11 @@ function assertBaseUrl(value: unknown): string {
  * (custom-provider-registry.ts) so a corrupted value can never be persisted and later
  * collapse a compaction threshold. Absent keys are omitted entirely — never persisted
  * as explicit undefined.
+ *
+ * FNXC:CustomProviderThinkingFormat 2026-08-21-05:46:
+ * RUFU-143: the same entries may also carry the per-model thinking flags — thinkingFormat
+ * (a pi-ai thinkingFormat literal, see assertThinkingFormat) and reasoning (strict boolean).
+ * Both are optional and omitted when absent, so default registrations round-trip unchanged.
  */
 function assertPositiveFiniteNumber(value: unknown, fieldName: string): number {
   if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
@@ -112,15 +117,38 @@ function assertPositiveFiniteNumber(value: unknown, fieldName: string): number {
   return value;
 }
 
+/*
+FNXC:CustomProviderThinkingFormat 2026-08-21-05:46:
+RUFU-143: the dashboard persists the per-model thinking flags verbatim (they are additive to the
+RUFU-123 window fields). thinkingFormat must be one of the pi-ai thinkingFormat literals
+(CUSTOM_PROVIDER_THINKING_FORMATS, in lockstep with the pinned pi-ai version); reasoning is a
+strict boolean (false = opt out of all thinking params). Invalid values are rejected 400 with the
+exact field path named so a corrupted flag can never be persisted and later sent to the provider.
+*/
+function assertThinkingFormat(value: unknown, fieldName: string): CustomProviderThinkingFormat {
+  if (typeof value !== "string" || !(CUSTOM_PROVIDER_THINKING_FORMATS as readonly string[]).includes(value)) {
+    throw badRequest(`Invalid ${fieldName} "${value}". Allowed: ${CUSTOM_PROVIDER_THINKING_FORMATS.join(", ")}`);
+  }
+  return value as CustomProviderThinkingFormat;
+}
+
+function assertReasoning(value: unknown, fieldName: string): boolean {
+  if (typeof value !== "boolean") {
+    throw badRequest(`${fieldName} must be a boolean`);
+  }
+  return value;
+}
+
 /**
  * Validates and normalizes a models array from a request body.
  * Returns undefined if models is omitted, or an array of
- * { id, name, contextWindow?, maxTokens? } objects (window keys omitted when absent).
+ * { id, name, contextWindow?, maxTokens?, thinkingFormat?, reasoning? } objects
+ * (window and thinking-flag keys omitted when absent).
  * @throws {ApiError} with status 400 if the structure is invalid.
  */
 function validateModels(
   value: unknown,
-): Array<{ id: string; name: string; contextWindow?: number; maxTokens?: number }> | undefined {
+): Array<{ id: string; name: string; contextWindow?: number; maxTokens?: number; thinkingFormat?: CustomProviderThinkingFormat; reasoning?: boolean }> | undefined {
   if (value === undefined) {
     return undefined;
   }
@@ -135,7 +163,7 @@ function validateModels(
     }
 
     const row = entry as Record<string, unknown>;
-    const model: { id: string; name: string; contextWindow?: number; maxTokens?: number } = {
+    const model: { id: string; name: string; contextWindow?: number; maxTokens?: number; thinkingFormat?: CustomProviderThinkingFormat; reasoning?: boolean } = {
       id: assertNonEmptyString(row.id, `models[${index}].id`),
       name: assertNonEmptyString(row.name, `models[${index}].name`),
     };
@@ -161,6 +189,12 @@ function validateModels(
       throw badRequest(
         `models[${index}].maxTokens (${model.maxTokens}) must be smaller than models[${index}].contextWindow (${model.contextWindow})`,
       );
+    }
+    if (row.thinkingFormat !== undefined) {
+      model.thinkingFormat = assertThinkingFormat(row.thinkingFormat, `models[${index}].thinkingFormat`);
+    }
+    if (row.reasoning !== undefined) {
+      model.reasoning = assertReasoning(row.reasoning, `models[${index}].reasoning`);
     }
     return model;
   });
@@ -569,16 +603,23 @@ export async function refreshCustomProviderModels(
    * concurrent model-limit edit during the probe window was previously lost, because the
    * probe result merged against the stale pre-probe windows and was written back over the
    * newer edit.
+   *
+   * FNXC:CustomProviderThinkingFormat 2026-08-21-05:46:
+   * RUFU-143: the same map now also carries the per-model thinking flags. The probe never
+   * reports them, so a prior thinkingFormat is carried over when set and a prior
+   * reasoning opt-out (false) is the only prior reasoning re-emitted (true/absent means the
+   * default presumed-thinking-capable behavior and must not be re-emitted as an explicit
+   * value).
    */
-  const persistedWindowsById = new Map<string, { contextWindow?: number; maxTokens?: number }>();
+  const persistedModelFieldsById = new Map<string, { contextWindow?: number; maxTokens?: number; thinkingFormat?: CustomProviderThinkingFormat; reasoning?: boolean }>();
   for (const model of latestTargetProvider.models ?? []) {
-    if (model.contextWindow !== undefined || model.maxTokens !== undefined) {
-      persistedWindowsById.set(model.id, { contextWindow: model.contextWindow, maxTokens: model.maxTokens });
+    if (model.contextWindow !== undefined || model.maxTokens !== undefined || model.thinkingFormat !== undefined || model.reasoning === false) {
+      persistedModelFieldsById.set(model.id, { contextWindow: model.contextWindow, maxTokens: model.maxTokens, thinkingFormat: model.thinkingFormat, reasoning: model.reasoning });
     }
   }
   const persistedModels = models.map((model) => {
-    const prior = persistedWindowsById.get(model.id);
-    const entry: { id: string; name: string; contextWindow?: number; maxTokens?: number } = {
+    const prior = persistedModelFieldsById.get(model.id);
+    const entry: { id: string; name: string; contextWindow?: number; maxTokens?: number; thinkingFormat?: CustomProviderThinkingFormat; reasoning?: boolean } = {
       id: model.id,
       name: model.name,
     };
@@ -591,6 +632,21 @@ export async function refreshCustomProviderModels(
       entry.maxTokens = model.maxTokens;
     } else if (prior?.maxTokens !== undefined) {
       entry.maxTokens = prior.maxTokens;
+    }
+    /*
+    FNXC:CustomProviderThinkingFormat 2026-08-21-05:46:
+    RUFU-143: probes never report thinkingFormat and never report a *negative* reasoning (the probe
+    heuristic only guesses the positive, and the default is already "presumed thinking-capable"), so
+    a prior flag is carried over only from the persisted record — never pre-filled from probe
+    heuristics, which would silently change the wire behavior of a model that was working. A prior
+    reasoning opt-out (false) is the only meaningful explicit value, so it survives re-probing; a
+    prior true/absent is not re-emitted.
+    */
+    if (prior?.thinkingFormat !== undefined) {
+      entry.thinkingFormat = prior.thinkingFormat;
+    }
+    if (prior?.reasoning === false) {
+      entry.reasoning = false;
     }
     // FNXC:CustomProviderModelWindows 2026-08-20-22:27: RUFU-145 PR #3493 review
     // invariant (refresh surface): a probe that reports an output limit at/above its

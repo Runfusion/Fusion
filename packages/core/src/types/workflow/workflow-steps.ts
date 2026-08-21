@@ -210,6 +210,52 @@ export interface NotificationProviderConfig {
   config: Record<string, unknown>;
 }
 
+/*
+FNXC:CustomProviderThinkingFormat 2026-08-21-05:10:
+RUFU-143: Custom providers (notably Qwen3 behind LiteLLM) can reject the
+`reasoning_effort` parameter Fusion attaches to presumed-thinking-capable custom
+models. Each custom-provider model entry gains two optional flags:
+- `thinkingFormat`: mirrors pi-ai 0.84.1's OpenAICompletionsCompat.thinkingFormat
+  union exactly. The engine forwards it as `compat.thinkingFormat` only for
+  OpenAI-compatible providers, so pi emits the endpoint's native thinking shape
+  (e.g. `qwen-chat-template` sends `chat_template_kwargs.enable_thinking` instead
+  of `reasoning_effort`). Ignored by Anthropic-compatible and other APIs.
+- `reasoning: false`: explicit opt-out that disables thinking entirely (no
+  thinkingLevelMap, no thinking parameters sent, `/api/models` exposes no
+  levels). `true` or absent preserves today's presumed-thinking-capable default,
+  so existing settings round-trip byte-identically.
+The opt-out wins over `thinkingFormat` when both are set.
+`CUSTOM_PROVIDER_THINKING_FORMATS` is the single source of truth for dashboard
+route validation and the UI dropdown options; it must stay in lockstep with the
+pi-ai version pinned in pnpm-workspace.yaml (0.84.1).
+*/
+export type CustomProviderThinkingFormat =
+  | "openai"
+  | "openrouter"
+  | "deepseek"
+  | "together"
+  | "baseten"
+  | "zai"
+  | "qwen"
+  | "chat-template"
+  | "qwen-chat-template"
+  | "string-thinking"
+  | "ant-ling";
+
+export const CUSTOM_PROVIDER_THINKING_FORMATS: readonly CustomProviderThinkingFormat[] = [
+  "openai",
+  "openrouter",
+  "deepseek",
+  "together",
+  "baseten",
+  "zai",
+  "qwen",
+  "chat-template",
+  "qwen-chat-template",
+  "string-thinking",
+  "ant-ling",
+];
+
 export interface CustomProvider {
   id: string;
   name: string;
@@ -247,8 +293,13 @@ export interface CustomProvider {
    * registry builder falls back to 128000/16384 for a model that omits either (or that
    * carries an invalid persisted value). Additive widening of a plain JSON settings
    * array — no settings migration, schema change, or store change is needed.
+   *
+   * FNXC:CustomProviderThinkingFormat 2026-08-21-05:10:
+   * RUFU-143: per-model `thinkingFormat` / `reasoning` flags (see
+   * CustomProviderThinkingFormat above). Both optional; absent keeps the
+   * presumed-thinking-capable default so pre-existing settings are unchanged.
    */
-  models?: { id: string; name: string; contextWindow?: number; maxTokens?: number }[];
+  models?: { id: string; name: string; contextWindow?: number; maxTokens?: number; thinkingFormat?: CustomProviderThinkingFormat; reasoning?: boolean }[];
 }
 
 export interface WorkflowStepInput {

@@ -990,4 +990,163 @@ describe("CustomProvidersSection", () => {
     expect(screen.queryByPlaceholderText("e.g., gpt-4, gpt-3.5-turbo")).toBeNull();
     expect(screen.getByLabelText("Model ID 1")).toHaveValue("deepseek-v4");
   });
+
+  /*
+  FNXC:CustomProviderThinkingFormat 2026-08-21-06:20:
+  RUFU-143: per-model thinking flags — the "Thinking format" select and "No thinking params"
+  checkbox round-trip from persisted providers into the edit form, reach the save payload only
+  when set (default rows keep the byte-identical shape), the opt-out disables the select and
+  wins in the payload, detect-merge keeps flags on existing rows, and flagged rows without an
+  id are still excluded (the id remains the validity anchor).
+  */
+  it("pre-fills the thinking format select and opt-out checkbox when editing a flagged provider", async () => {
+    mockFetchCustomProviders.mockResolvedValueOnce([
+      {
+        id: "test-id",
+        name: "Qwen Provider",
+        apiType: "openai-compatible",
+        baseUrl: "https://api.example.com",
+        models: [{ id: "qwen3", name: "Qwen 3", thinkingFormat: "qwen-chat-template", reasoning: false }],
+      },
+    ]);
+
+    render(<CustomProvidersSection embedded />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Edit Qwen Provider")).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByLabelText("Edit Qwen Provider"));
+
+    const select = screen.getByLabelText("Thinking format 1") as HTMLSelectElement;
+    expect(select.value).toBe("qwen-chat-template");
+    expect(screen.getByLabelText("No thinking params 1")).toBeChecked();
+    // The opt-out wins: the format select is disabled while reasoning is false.
+    expect(select).toBeDisabled();
+  });
+
+  it("sends the selected thinking format in the save payload and omits reasoning when not opted out", async () => {
+    mockFetchCustomProviders.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+
+    render(<CustomProvidersSection embedded />);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /Add Custom Provider/i })).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /Add Custom Provider/i }));
+    fireEvent.change(screen.getByLabelText("Provider name"), { target: { value: "Qwen" } });
+    fireEvent.change(screen.getByLabelText("Base URL"), { target: { value: "https://litellm.example.com" } });
+    fireEvent.change(screen.getByLabelText("Model ID 1"), { target: { value: "qwen3" } });
+    fireEvent.change(screen.getByLabelText("Thinking format 1"), { target: { value: "qwen-chat-template" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save Provider" }));
+
+    // Exact model shape: no reasoning key — the opt-out checkbox was never touched.
+    await waitFor(() => {
+      expect(mockAddCustomProvider).toHaveBeenCalledWith(expect.objectContaining({
+        models: [{ id: "qwen3", name: "qwen3", thinkingFormat: "qwen-chat-template" }],
+      }));
+    });
+  });
+
+  it("disables the format select and sends reasoning: false (no thinkingFormat) when opted out", async () => {
+    mockFetchCustomProviders.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+
+    render(<CustomProvidersSection embedded />);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /Add Custom Provider/i })).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /Add Custom Provider/i }));
+    fireEvent.change(screen.getByLabelText("Provider name"), { target: { value: "Qwen" } });
+    fireEvent.change(screen.getByLabelText("Base URL"), { target: { value: "https://litellm.example.com" } });
+    fireEvent.change(screen.getByLabelText("Model ID 1"), { target: { value: "qwen3" } });
+    // Select a format first, then opt out — the opt-out must win in the payload.
+    fireEvent.change(screen.getByLabelText("Thinking format 1"), { target: { value: "zai" } });
+    fireEvent.click(screen.getByLabelText("No thinking params 1"));
+
+    expect(screen.getByLabelText("Thinking format 1")).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Save Provider" }));
+
+    // Exact model shape: reasoning: false present, thinkingFormat omitted (opt-out wins).
+    await waitFor(() => {
+      expect(mockAddCustomProvider).toHaveBeenCalledWith(expect.objectContaining({
+        models: [{ id: "qwen3", name: "qwen3", reasoning: false }],
+      }));
+    });
+  });
+
+  it("Detect Models keeps per-model thinking flags on existing rows after re-detecting", async () => {
+    mockFetchCustomProviders.mockResolvedValue([]);
+    mockProbeProviderModels.mockResolvedValue({
+      models: [
+        { id: "qwen3", name: "Qwen 3" },
+        { id: "qwen3-vl", name: "Qwen 3 VL" },
+      ],
+      count: 2,
+    });
+
+    render(<CustomProvidersSection embedded />);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /Add Custom Provider/i })).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /Add Custom Provider/i }));
+    fireEvent.change(screen.getByLabelText("Provider name"), { target: { value: "Probe Provider" } });
+    fireEvent.change(screen.getByLabelText("Base URL"), { target: { value: "https://litellm.example.com" } });
+    // Row 1 gets its id + thinking format before the probe; the probe reports the same id
+    // (no thinking data) plus one new model.
+    fireEvent.change(screen.getByLabelText("Model ID 1"), { target: { value: "qwen3" } });
+    fireEvent.change(screen.getByLabelText("Thinking format 1"), { target: { value: "qwen-chat-template" } });
+
+    fireEvent.click(screen.getByRole("button", { name: "Detect Models" }));
+
+    // The probed model is appended as row 2; the merge must keep row 1's format flag.
+    await waitFor(() => {
+      expect(screen.getByLabelText("Model ID 2")).toHaveValue("qwen3-vl");
+    });
+    expect((screen.getByLabelText("Thinking format 1") as HTMLSelectElement).value).toBe("qwen-chat-template");
+
+    fireEvent.click(screen.getByRole("button", { name: "Save Provider" }));
+
+    await waitFor(() => {
+      expect(mockAddCustomProvider).toHaveBeenCalledWith(expect.objectContaining({
+        models: expect.arrayContaining([
+          { id: "qwen3", name: "qwen3", thinkingFormat: "qwen-chat-template" },
+          { id: "qwen3-vl", name: "Qwen 3 VL" },
+        ]),
+      }));
+    });
+  });
+
+  it("excludes a flagged model row without an id from the save payload", async () => {
+    mockFetchCustomProviders.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+
+    render(<CustomProvidersSection embedded />);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /Add Custom Provider/i })).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /Add Custom Provider/i }));
+    fireEvent.change(screen.getByLabelText("Provider name"), { target: { value: "Test Provider" } });
+    fireEvent.change(screen.getByLabelText("Base URL"), { target: { value: "https://api.example.com" } });
+    // Row 1 gets a thinking format but never an id — it must still be dropped on save.
+    fireEvent.change(screen.getByLabelText("Thinking format 1"), { target: { value: "deepseek" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add model row" }));
+    fireEvent.change(screen.getByLabelText("Model ID 2"), { target: { value: "gpt-4" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save Provider" }));
+
+    await waitFor(() => {
+      expect(mockAddCustomProvider).toHaveBeenCalledWith({
+        name: "Test Provider",
+        apiType: "openai-compatible",
+        baseUrl: "https://api.example.com",
+        models: [{ id: "gpt-4", name: "gpt-4" }],
+      });
+    });
+  });
 });

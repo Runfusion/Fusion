@@ -59,10 +59,14 @@ describe("CustomProviderForm", () => {
     });
   });
 
-  it("does not render a reasoning capability toggle", () => {
+  it("does not render the legacy reasoning capability toggle (only the RUFU-143 opt-out checkbox)", () => {
     render(<CustomProviderForm onSave={vi.fn()} />);
-    expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+    // FN-043 removed the per-model "Reasoning" capability toggle; that control must stay
+    // gone. The only model-row checkbox is the RUFU-143 "No thinking params" opt-out.
+    expect(screen.queryByLabelText(/^Reasoning/)).not.toBeInTheDocument();
     expect(screen.queryByText("Reasoning")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("No thinking params 1")).toBeInTheDocument();
+    expect(screen.getByLabelText("Thinking format 1")).toBeInTheDocument();
   });
 
   it("shows external error state", () => {
@@ -107,6 +111,90 @@ describe("legacy create path — per-model window carry-through (RUFU-123)", () 
       models: [{ id: "deepseek-v4", name: undefined, contextWindow: 32768, maxTokens: 4096 }],
     });
     createSpy.mockRestore();
+  });
+});
+
+// FNXC:CustomProviderThinkingFormat 2026-08-21-06:45:
+// RUFU-143: per-model thinking flags on the legacy onboarding surface — the format select and
+// "No thinking params" checkbox reach the save payload only when set (default rows keep the
+// byte-identical shape), the opt-out disables the select and wins in the payload, and the
+// ModelOnboardingModal legacy mapping round-trips both flags into the form config.
+describe("per-model thinking flags (RUFU-143)", () => {
+  it("keeps the default model row payload unchanged when both thinking controls are at default", async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    render(<CustomProviderForm onSave={onSave} />);
+
+    await user.type(screen.getByLabelText("Provider ID"), "my-proxy");
+    await user.type(screen.getByLabelText("Base URL"), "https://proxy.example.com/v1");
+    await user.type(screen.getByLabelText("Model ID 1"), "qwen3");
+    await user.click(screen.getByRole("button", { name: "Save Provider" }));
+
+    expect(onSave).toHaveBeenCalledWith({
+      id: "my-proxy",
+      name: undefined,
+      baseUrl: "https://proxy.example.com/v1",
+      api: "openai-completions",
+      apiKey: undefined,
+      models: [{ id: "qwen3", name: undefined, contextWindow: undefined, maxTokens: undefined }],
+    });
+  });
+
+  it("sends the selected thinking format in the save payload and omits reasoning when not opted out", async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    render(<CustomProviderForm onSave={onSave} />);
+
+    await user.type(screen.getByLabelText("Provider ID"), "my-proxy");
+    await user.type(screen.getByLabelText("Base URL"), "https://proxy.example.com/v1");
+    await user.type(screen.getByLabelText("Model ID 1"), "qwen3");
+    await user.selectOptions(screen.getByLabelText("Thinking format 1"), "qwen-chat-template");
+    await user.click(screen.getByRole("button", { name: "Save Provider" }));
+
+    expect(onSave).toHaveBeenCalledTimes(1);
+    const [config] = onSave.mock.calls[0];
+    expect(config.models).toHaveLength(1);
+    expect(config.models[0].thinkingFormat).toBe("qwen-chat-template");
+    expect(config.models[0]).not.toHaveProperty("reasoning");
+  });
+
+  it("disables the format select and sends reasoning: false (no thinkingFormat) when opted out", async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    render(<CustomProviderForm onSave={onSave} />);
+
+    await user.type(screen.getByLabelText("Provider ID"), "my-proxy");
+    await user.type(screen.getByLabelText("Base URL"), "https://proxy.example.com/v1");
+    await user.type(screen.getByLabelText("Model ID 1"), "qwen3");
+    // Select a format first, then opt out — the opt-out must win in the payload.
+    await user.selectOptions(screen.getByLabelText("Thinking format 1"), "zai");
+    await user.click(screen.getByLabelText("No thinking params 1"));
+    expect(screen.getByLabelText("Thinking format 1")).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Save Provider" }));
+
+    expect(onSave).toHaveBeenCalledTimes(1);
+    const [config] = onSave.mock.calls[0];
+    expect(config.models[0].reasoning).toBe(false);
+    expect(config.models[0]).not.toHaveProperty("thinkingFormat");
+  });
+
+  it("pre-fills the thinking controls from a legacy config carrying the flags", () => {
+    render(
+      <CustomProviderForm
+        onSave={vi.fn()}
+        initialConfig={{
+          id: "my-proxy",
+          baseUrl: "https://proxy.example.com/v1",
+          api: "openai-completions",
+          models: [{ id: "qwen3", name: "Qwen 3", thinkingFormat: "qwen-chat-template", reasoning: false }],
+        }}
+      />,
+    );
+
+    const select = screen.getByLabelText("Thinking format 1") as HTMLSelectElement;
+    expect(select.value).toBe("qwen-chat-template");
+    expect(screen.getByLabelText("No thinking params 1")).toBeChecked();
+    expect(select).toBeDisabled();
   });
 });
 
