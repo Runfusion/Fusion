@@ -319,8 +319,84 @@ describe("CustomProvidersSection", () => {
         name: "Updated Provider",
         apiType: "openai-compatible",
         baseUrl: "https://api.updated.example.com",
+        // FNXC:CustomProviderModelWindows 2026-08-21-00:06:
+        // RUFU-145 PR #3493 review (Greptile P1): the edit path always sends the row
+        // result — an explicit empty array so the server partial merge cannot silently
+        // keep a stored model list when the form's single row is blank.
+        models: [],
       });
       expect(screen.getByText("Updated Provider")).toBeTruthy();
+    });
+  });
+
+  it("sends an explicit empty models array when an edit clears the last remaining row", async () => {
+    mockFetchCustomProviders
+      .mockResolvedValueOnce([
+        {
+          id: "test-id",
+          name: "Windowed Provider",
+          apiType: "openai-compatible",
+          baseUrl: "https://api.example.com",
+          models: [{ id: "deepseek-v4", name: "DeepSeek V4", contextWindow: 32768, maxTokens: 4096 }],
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          id: "test-id",
+          name: "Windowed Provider",
+          apiType: "openai-compatible",
+          baseUrl: "https://api.example.com",
+          models: [],
+        },
+      ]);
+
+    render(<CustomProvidersSection embedded />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Edit Windowed Provider")).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByLabelText("Edit Windowed Provider"));
+
+    // The single remaining row cannot be removed; blanking its id is how the operator
+    // deletes the last model. The save must persist that deletion instead of omitting
+    // `models` and letting the server partial merge keep the stored list (Greptile P1 on
+    // PR #3493: "Cleared models remain persisted").
+    // FNXC:CustomProviderModelWindows 2026-08-21-00:06: RUFU-145 symptom verification —
+    // this assertion is gone-green: the payload carries an explicit empty array.
+    fireEvent.change(screen.getByLabelText("Model ID 1"), { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save Changes" }));
+
+    await waitFor(() => {
+      expect(mockUpdateCustomProvider).toHaveBeenCalledWith("test-id", expect.objectContaining({
+        name: "Windowed Provider",
+        models: [],
+      }));
+    });
+  });
+
+  it("omits models from the create payload when the only row is blank", async () => {
+    mockFetchCustomProviders.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+
+    render(<CustomProvidersSection embedded />);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /Add Custom Provider/i })).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /Add Custom Provider/i }));
+    fireEvent.change(screen.getByLabelText("Provider name"), { target: { value: "Bare Provider" } });
+    fireEvent.change(screen.getByLabelText("Base URL"), { target: { value: "https://api.example.com" } });
+    // Leave the single model row blank: a new provider simply has no registered models,
+    // so the create payload omits the key entirely (the exact-match assertion pins it).
+    fireEvent.click(screen.getByRole("button", { name: "Save Provider" }));
+
+    await waitFor(() => {
+      expect(mockAddCustomProvider).toHaveBeenCalledWith({
+        name: "Bare Provider",
+        apiType: "openai-compatible",
+        baseUrl: "https://api.example.com",
+      });
     });
   });
 

@@ -275,6 +275,54 @@ describe("custom provider routes", () => {
     });
   });
 
+  it("PUT /custom-providers/:id clears the stored model list on an explicit empty models array", async () => {
+    settings.customProviders = [
+      {
+        id: "cp-1",
+        name: "Original",
+        apiType: "openai-compatible",
+        baseUrl: "https://original.example.com",
+        models: [{ id: "old-model", name: "Old model" }],
+      },
+    ];
+
+    const app = createApp(settings);
+    // FNXC:CustomProviderModelWindows 2026-08-21-00:06: RUFU-145 PR #3493 review (Greptile
+    // P1): the partial merge must distinguish an omitted `models` key (keep stored list)
+    // from an explicit empty array (persist the operator's clear). This is the server-side
+    // half of the invariant the editor's explicit models: [] save depends on.
+    const res = await REQUEST(app, "PUT", "/api/custom-providers/cp-1", {
+      name: "Original",
+      apiType: "openai-compatible",
+      models: [],
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ id: "cp-1", models: [] });
+    expect(settings.customProviders?.[0]?.models).toEqual([]);
+  });
+
+  it("PUT /custom-providers/:id keeps the stored model list when models is omitted", async () => {
+    settings.customProviders = [
+      {
+        id: "cp-1",
+        name: "Original",
+        apiType: "openai-compatible",
+        baseUrl: "https://original.example.com",
+        models: [{ id: "old-model", name: "Old model" }],
+      },
+    ];
+
+    const app = createApp(settings);
+    const res = await REQUEST(app, "PUT", "/api/custom-providers/cp-1", {
+      name: "Renamed",
+      apiType: "openai-compatible",
+    });
+
+    expect(res.status).toBe(200);
+    expect(settings.customProviders?.[0]?.models).toEqual([{ id: "old-model", name: "Old model" }]);
+  });
+
   it("PUT /custom-providers/:id preserves stored key when a masked key is echoed back", async () => {
     settings.customProviders = [
       {
