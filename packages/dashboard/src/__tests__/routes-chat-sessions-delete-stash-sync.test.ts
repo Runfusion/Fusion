@@ -152,12 +152,22 @@ describe("DELETE /api/chat/sessions/:id — Stash delete sync (RUFU-121 Step 5)"
     expect(mocks.deleteStashChatSession).toHaveBeenCalledWith(DEFAULT_STASH_URL, "key-123", "chat-abc12345");
   });
 
+  /*
+  FNXC:RUFU121DeleteSyncBlankUrl 2026-08-21-13:35:
+  RUFU-146 review (PRRT_kwDOSA-8Y86bC_sS): (a3) claimed to cover a BLANK
+  stashUrl but omitted the key, so it only re-proved the UNSET case of (a2).
+  A whitespace-only configured value is the real blank shape (operators paste
+  URLs with stray spaces); set it explicitly so this test exercises the
+  trim→DEFAULT_STASH_URL fallback while the key still resolves from the global
+  secret — the two axes the route must handle independently.
+  */
   it("(a3) stash backend with BLANK stashUrl + key resolved from the global secret -> helper called with DEFAULT_STASH_URL + secret key", async () => {
     const { app } = buildApp({
-      // No stashUrl, no stashApiKey — the operator's live default: the key comes
-      // from the global stash-api-key secret via listSecrets → revealSecret (real
-      // resolveStashMemorySettings, unmocked).
-      settings: { memoryEnabled: true, memoryBackendType: "stash" },
+      // Blank (whitespace-only) stashUrl — NOT unset: the trim fallback to
+      // DEFAULT_STASH_URL must fire on the configured value itself. No
+      // stashApiKey: the key comes from the global stash-api-key secret via
+      // listSecrets → revealSecret (real resolveStashMemorySettings, unmocked).
+      settings: { memoryEnabled: true, memoryBackendType: "stash", stashUrl: "   	 " },
       deleteSessionResult: true,
       getSecretsStore: async () => ({
         listSecrets: async () => [{ id: "secret-row-uuid-1", key: "stash-api-key" }],

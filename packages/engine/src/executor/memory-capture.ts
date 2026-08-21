@@ -364,8 +364,20 @@ export async function triggerTaskMemoryCapture(
  * backend enforces a top-level `agent_name` (default "fusion") and `session_id` per event
  * (FYNC:StashEventShape — missing fields → 422); content size/truncation is handled by the
  * captured `content` field. agent/tool identities are read from message.metadata when present.
+ *
+ * FNXC:RUFU146CreatedAt 2026-08-21-13:35:
+ * RUFU-146 review (PRRT_kwDOSA-8Y86a7RaB): the mapper MUST emit `created_at`
+ * from the message's own `createdAt` — Stash stores `created_at` and silently
+ * ignores a `timestamp` field, so the previous shape made every buffered
+ * upload fall back to the server's receive wall-clock (message ordering lost).
+ * `createdAt` is optional on the input so legacy/test call sites keep working;
+ * the fallback (now) only fires for those. The object is a valid
+ * MemoryCaptureEvent by construction — the `as unknown as` double cast that
+ * hid the field mismatch is gone.
  */
-export function chatMessageToMemoryCaptureEvent(message: Pick<ChatMessage, "role" | "content" | "metadata">): MemoryCaptureEvent {
+export function chatMessageToMemoryCaptureEvent(
+  message: Pick<ChatMessage, "role" | "content" | "metadata"> & { createdAt?: string },
+): MemoryCaptureEvent {
   const metadata: Record<string, unknown> = message.metadata ?? {};
   const agentName = typeof metadata.agent_name === "string"
     ? metadata.agent_name
@@ -378,15 +390,17 @@ export function chatMessageToMemoryCaptureEvent(message: Pick<ChatMessage, "role
       ? metadata.toolName
       : undefined;
 
-  const base: Record<string, unknown> = {
+  const event: MemoryCaptureEvent = {
     event_type: message.role === "user" ? "user_message" : message.role === "assistant" ? "assistant_message" : "tool_use",
     agent_name: agentName,
-    timestamp: new Date().toISOString(),
+    // The Stash server's storage field is `created_at` (RFC3339). Preserve the
+    // message's creation time so buffered/catch-up uploads keep their order.
+    created_at: message.createdAt ?? new Date().toISOString(),
     content: message.content ?? "",
   };
-  if (message.role === "system" && toolName) base.tool_name = toolName;
+  if (message.role === "system" && toolName) event.tool_name = toolName;
 
-  return base as unknown as MemoryCaptureEvent;
+  return event;
 }
 
 /**

@@ -40,7 +40,12 @@ warn for failures). Follows the dashboard createLogger("dashboard-...") conventi
 */
 const chatDeleteSyncLog = createLogger("dashboard-register-chat-routes");
 
-interface ChatRouteDeps {
+/*
+FNXC:ChatRouteDepsExport 2026-08-21-13:35:
+RUFU-146 review (PRRT_kwDOSA-8Y86a7RZ3): exported because the dashboard's own
+route tests import the deps type to build typed registerChatRoutes fixtures.
+*/
+export interface ChatRouteDeps {
   parseLastEventId: (req: import("express").Request) => number | undefined;
   replayBufferedSSE: (res: import("express").Response, bufferedEvents: SessionBufferedEvent[]) => boolean;
   validateOptionalModelField: (value: unknown, fieldName: string) => string | undefined;
@@ -68,6 +73,38 @@ function resolveAttachmentPath(rootDir: string, sessionId: string, filename: str
     throw badRequest("Invalid attachment path");
   }
   return { sessionDir, filePath };
+}
+
+/*
+FNXC:ChatStashBackfillKey 2026-08-21-13:35:
+RUFU-146 review (PRRT_kwDOSA-8Y86a7RZ8): Stash's /events/batch is a bare
+INSERT with no server-side dedupe, so backfill idempotency is entirely
+client-side — and the pre-check key must identify an event exactly as a
+re-run will see it in Stash: (event type, timestamp, content). The old
+content-only key let two distinct messages with identical text (repeated
+tool output, a "done" turn) collide — the second was permanently
+suppressed by the first. The timestamp component is canonicalized through
+Date.parse to epoch milliseconds on BOTH sides because Stash honors the
+client created_at (push_events_batch: _normalize_ts(e["created_at"])) but
+re-serializes it on read (Pydantic datetime JSON, e.g.
+2026-08-19T10:00:00.123Z read back as 2026-08-19T10:00:00.123000Z) — raw
+string equality would never match. NUL bytes are stripped because the
+server scrubs \u0000 from every string field on ingest (memory_service
+_strip_nuls), so the stored content can differ from the uploaded content.
+Empty content is a VALID key component: (type, timestamp) still
+distinguishes two empty messages at different times, and an empty string
+is what makes a content-less message identifiable at all. A missing or
+unparseable timestamp falls back to the raw string (stable across runs
+for the same stored row).
+*/
+function backfillEventType(role: string): string {
+  return role === "user" ? "user_message" : role === "assistant" ? "assistant_message" : "tool_use";
+}
+
+function backfillEventKey(eventType: string, createdAt: string | undefined, content: string): string {
+  const parsed = createdAt !== undefined ? Date.parse(createdAt) : Number.NaN;
+  const t = Number.isFinite(parsed) ? String(parsed) : (createdAt ?? "");
+  return [eventType, t, content.replace(/\u0000/g, "")].join("\u0001");
 }
 
 export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): void {
@@ -1037,9 +1074,13 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
         typeof rawStashUrl === "string" && rawStashUrl.trim().length > 0
           ? rawStashUrl.trim()
           : DEFAULT_STASH_URL;
-      let existingContents: Set<string>;
+      // FNXC:ChatStashBackfillKey 2026-08-21-13:35: key (type, canonical
+      // timestamp, NUL-stripped content) — identical construction to the
+      // incoming-message filter below, so a re-run matches what the first
+      // run stored. Empty content is a valid key.
+      let existingKeys: Set<string>;
       try {
-        existingContents = new Set<string>();
+        existingKeys = new Set<string>();
         let cursor: string | undefined;
         let lastSignature = "";
         for (let page = 0; page < 50; page++) {
@@ -1051,8 +1092,13 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
           });
           if (events.length === 0) break;
           for (const event of events) {
-            const content = typeof event.content === "string" ? event.content : "";
-            if (content) existingContents.add(content);
+            existingKeys.add(
+              backfillEventKey(
+                typeof event.event_type === "string" ? event.event_type : "",
+                typeof event.created_at === "string" ? event.created_at : undefined,
+                typeof event.content === "string" ? event.content : "",
+              ),
+            );
           }
           const last = events[events.length - 1];
           const nextCursor = typeof last?.created_at === "string" ? last.created_at : undefined;
@@ -1071,7 +1117,7 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
         });
         return;
       }
-      const freshMessages = messages.filter((message) => !existingContents.has(message.content ?? ""));
+      const freshMessages = messages.filter((message) => !existingKeys.has(backfillEventKey(backfillEventType(message.role), message.createdAt, message.content ?? "")));
       if (freshMessages.length === 0) {
         // Idempotent no-op: every message is already in Stash (re-run, or the chat
         // was live-captured) — success with nothing uploaded, never duplicates.
@@ -1092,11 +1138,21 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
           : typeof metadata.agentName === "string"
             ? metadata.agentName
             : "fusion";
-        const base: Record<string, unknown> = {
-          event_type: message.role === "user" ? "user_message" : message.role === "assistant" ? "assistant_message" : "tool_use",
+        /*
+        FNXC:ChatStashBackfillKey 2026-08-21-13:35:
+        RUFU-146 review (PRRT_kwDOSA-8Y86a7RZ8): the wire field is
+        created_at (MemoryCaptureEvent's RFC3339 field, which Stash's
+        push_events_batch honors via _normalize_ts) — the old `timestamp`
+        key was silently ignored by the server, so every backfilled event
+        carried server receive-time and the real chat chronology was lost.
+        The mapper is now properly typed (no double cast), and content is
+        NUL-stripped to match what the server stores on ingest.
+        */
+        const base: MemoryCaptureEvent = {
+          event_type: backfillEventType(message.role),
           agent_name: agentName,
-          timestamp: message.createdAt || new Date().toISOString(),
-          content: message.content ?? "",
+          created_at: message.createdAt || new Date().toISOString(),
+          content: (message.content ?? "").replace(/\u0000/g, ""),
         };
         const toolName = typeof metadata.tool_name === "string"
           ? metadata.tool_name
@@ -1104,7 +1160,7 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
             ? metadata.toolName
             : undefined;
         if (message.role === "system" && toolName) base.tool_name = toolName;
-        return base as unknown as MemoryCaptureEvent;
+        return base;
       });
 
       const skipped = messages.length - freshMessages.length;

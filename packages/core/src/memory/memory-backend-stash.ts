@@ -31,6 +31,7 @@
  */
 
 import http from "node:http";
+import https from "node:https";
 import { createHash } from "node:crypto";
 import { basename } from "node:path";
 import type {
@@ -113,6 +114,15 @@ export type StashHttpClient = (
  * StashMemoryBackend.httpRequest so standalone helpers share it without a
  * backend instance). Same wire behavior as before: 10s timeout, Bearer auth,
  * JSON body, 2xx → parsed body (or null), otherwise reject.
+ *
+ * FNXC:StashTransportScheme 2026-08-21-13:35:
+ * RUFU-146 review (PRRT_kwDOSA-8Y86a7RZf): the transport must follow the
+ * baseUrl scheme. Self-hosted Stash deployments sit behind TLS reverse
+ * proxies, and the default operator setup is a non-loopback https URL — the
+ * previous unconditional node:http.request made every such deployment fail
+ * with an http/https protocol mismatch. Select node:https for `https:`
+ * bases, node:http otherwise, and preserve any base-URL path prefix (e.g.
+ * http://host/stash) so proxied deployments keep their /stash routing.
  */
 export function stashHttpJsonRequest<T>(
   baseUrl: string,
@@ -122,7 +132,10 @@ export function stashHttpJsonRequest<T>(
   payload?: unknown,
 ): Promise<T> {
   return new Promise<T>((resolve, reject) => {
-    const url = new URL(path, baseUrl + "/");
+    // Resolve `path` against the full base URL INCLUDING its path prefix:
+    // `new URL("/api/v1/…", "http://host/stash")` drops the /stash segment,
+    // so strip the leading slash and let URL resolution re-append it.
+    const url = new URL(path.startsWith("/") ? path.slice(1) : path, baseUrl.replace(/\/+$/, "") + "/");
     const body = payload !== undefined ? JSON.stringify(payload) : undefined;
     const headers: http.OutgoingHttpHeaders = { Accept: "application/json" };
     if (body) headers["Content-Type"] = "application/json";
@@ -137,7 +150,8 @@ export function stashHttpJsonRequest<T>(
       timeout: 10_000,
     };
 
-    const req = http.request(options, (res) => {
+    // FNXC:StashTransportScheme 2026-08-21-13:35: transport follows the scheme.
+    const req = (url.protocol === "https:" ? https : http).request(options, (res) => {
       let data = "";
       res.on("data", (chunk: Buffer) => { data += chunk.toString(); });
       res.on("end", () => {
@@ -764,6 +778,13 @@ export class StashMemoryBackend implements MemoryBackend {
       const chunk = tagged.slice(start, start + STASH_EVENT_BATCH_CHUNK_SIZE);
       try {
         const raw = (await this.batchUpload(discriminator, chunk)) as unknown;
+        // FNXC:StashEmptyBatch2xx 2026-08-21-13:35:
+        // RUFU-146 review (PRRT_kwDOSA-8Y86bC_sK): a 2xx with an empty body
+        // (204, or a 200 whose FFI layer emits no payload) is a VALID zero
+        // count — the transport resolves it to null, and treating it as a
+        // failure previously flipped ok:false (and stopped the chunk loop)
+        // on every such server. Count it as a successful 0-inserted chunk.
+        if (raw == null) continue;
         // Stash returns a JSON array ([HistoryEventResponse]) for /events/batch;
         // older/FFI mocks return { inserted, deduped }. Accept both so the count
         // is meaningful and unit tests stay green (FNXC:StashEventShape).

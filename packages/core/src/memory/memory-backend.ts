@@ -1703,12 +1703,23 @@ export async function captureMemory(
   if (settings?.memoryEnabled === false) {
     return { ok: false, inserted: 0, deduped: 0 };
   }
-  const backend = resolveMemoryBackend(settings);
-  if (!backend.capture || !backend.endSession) {
-    // Backend doesn't implement the capture seam -> no-op.
-    return { ok: false, inserted: 0, deduped: 0 };
-  }
+  /*
+  FNXC:StashCaptureFacadeOrder 2026-08-21-13:35:
+  RUFU-146 review (PRRT_kwDOSA-8Y86a7RZi): an enabled capture with an EMPTY
+  event list is a successful no-op, not a failure — return ok:true BEFORE
+  backend resolution so no transport/secret resolution runs at all. The
+  backend gate is `!backend.capture` only: endSession is an OPTIONAL seam
+  (MemoryBackend.endSession is optional; stateless backends like stash
+  implement it as a no-op but its absence must not block capture), and
+  treating its absence as a failure previously dropped every capture on
+  backends without an explicit endSession.
+  */
   if (!events || events.length === 0) {
+    return { ok: true, inserted: 0, deduped: 0 };
+  }
+  const backend = resolveMemoryBackend(settings);
+  if (!backend.capture) {
+    // Backend doesn't implement the capture seam -> no-op.
     return { ok: false, inserted: 0, deduped: 0 };
   }
   try {

@@ -362,13 +362,16 @@ const NOT_SURFACED_ALLOWLIST: Record<string, string> = {
   nested enabled flag rather than a top-level plain description field.
   */
   voiceInput: "nested Voice Input section object; enable toggle owns Default: off for voiceInput.enabled",
-  // Per-project Stash API key override for hard isolation. Not surfaced in Settings —
-  // the PRIMARY stash key lives in the global secrets store and any override is handled
-  // through the secrets path, so this key has no user-editable Settings description field.
-  stashApiKey: "per-project Stash API key override handled via the secrets path, not a Settings UI field",
+  /*
+  FNXC:StashVectorSearch 2026-08-21-13:35:
+  RUFU-146 review (PRRT_kwDOSA-8Y86a7RZs): the duplicate earlier stashApiKey
+  allowlist entry was removed — NOT_SURFACED_ALLOWLIST carried the key twice
+  (the second entry silently overrode the first); the single remaining entry
+  below is the more complete one.
+  */
   // FNXC:StashVectorSearch 2026-08-20-16:32:
   // (RUFU-126) schema-only vector search toggle with no Settings UI row
-  // (same treatment as stashApiKey above): config-file-managed knob for the
+  // (same treatment as stashApiKey below): config-file-managed knob for the
   // Stash backend, which is inert without a stashUrl anyway. Registered here
   // so the FN-7505 guard does not flag the RUFU-126 schema addition.
   stashVectorSearch: "RUFU-126 schema-only Stash vector search toggle; no Settings UI row",

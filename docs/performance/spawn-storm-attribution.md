@@ -76,15 +76,17 @@ embedded-PostgreSQL dependency surface. Measuring this reproducing engine child'
 cadence is a **direct, decisive live reproduction test of the ~100/s fork-storm hypothesis**
 on the residual native-fork surface:
 
-1. **Under TRUE idle-all-paused, with the transient blind window closed to ~5 ms, the engine
+1. **Under TRUE idle-all-paused, with the transient blind window reduced to ~5 ms, the engine
    child (PID 1282883) forks ~0.8 transient children/s — decisively NOT ~100/s.** A detached,
    pure-fs probe read `/proc/<pid>/task/*/children` at **5 ms** (vs the earlier 100 ms whose
-   blind window the prior review flagged). This closed the transient class: a ~100/s
+   blind window the prior review flagged). This narrowed the transient-class measurement: a ~100/s
    `uv_spawn` storm forks a child roughly every 10 ms, i.e. a transient every one or two 5 ms
    ticks, continuously; the measured engine child instead forks a transient only ~0.8 times/s
    on average, arriving in **bounded periodic bursts (~25-35 s cadence) of ~20-25
    sub-millisecond-lived children**. The bursts are a mix of: (i) a `node-MainThread` cluster
-   that inherits the engine's own comm and `dashboard --port 4040` cmdline — i.e. **`fork()`
+   that inherits the engine's own comm and `dashboard --port 4040` cmdline (4040 is the
+   reserved board-daemon port — the observation target, never a server to launch) — i.e.
+   **`fork()`
    without a completed `exec`** (pure `fork()`/failed-exec, the `spawn@:-1`-shaped
    **no-JS-parent native-fork class**), reaped in <1 ms; and (ii) JS-`child_process`-parented
    `git` (up to 7 concurrent), `node`, and occasional `gh` lifecycle subprocesses. None of this
@@ -113,7 +115,10 @@ measurement can close the transient blind window the original 100 ms default lef
   runtime (`isolationMode` `in-process` per
   `packages/core/src/postgres/schema/central.ts:43`), `/usr/bin/node …/packages/cli/bin.mjs
   dashboard --port 4040`, running on this development host as the board daemon this executor
-  (and the whole RUFU board) runs inside. It is the real, live engine child of *this*
+  (and the whole RUFU board) runs inside. 4040 is the **reserved board-daemon port**: this
+  report only OBSERVES the already-running live daemon — it does not document starting any
+  test server on 4040, and per the repository port rule any test server must use `--port 0`
+  or another free port and must never touch 4040. It is the real, live engine child of *this*
   workspace. It **reproduces the production storm CPU-symptom** — measured at **98-99%
   user+syst post-RUFU-076** (see P0-remediation subsection below) — so it is a valid live
   reproduction on which to directly test the ~100/s fork-storm hypothesis. A separate
@@ -140,7 +145,7 @@ production phenomenon the original CDP profile reported:
 | true-idle-all-paused @5 ms (**Window C**, prior round, reproduced) | **49 / 60 s = 0.82/s** (and 0.78/s on the reproducible second window) |
 
 **Interpretation — this is decisive, not a "no storm" assertion:** A genuine ~100/s
-`uv_spawn` storm forks ~1 child per 10 ms ≈ a transient in most every 5 ms tick continuously.
+`uv_spawn` storm forks ~1 child per 10 ms ≈ a transient in almost every 5 ms tick continuously.
 This live engine child, while burning **98-99% CPU** (the storm's defining observed symptom), forked a
 transient in only **191 of 11,389** 5 ms ticks during realistic executor activity (0.4%), never
 more than one per tick, and **49 of 11,378** ticks under true idle-all-paused. Both the active
@@ -174,17 +179,22 @@ intervals**, `engine-child-idle-all-paused-5ms-20260813T072703Z.log`:
 | largest single-interval transient burst | **1** (never >1 child per 5 ms tick) |
 | transient arrival pattern | **two bounded bursts** (~25 at t=5–10 s, ~22 at t=35–40 s) with ~30 s clean stretches |
 
-**The transient blind window is now closed.** A genuine ~100/s `uv_spawn` storm forks ~10
-children per 100 ms ≈ **1 every 10 ms**, i.e. a transient in most every 5 ms tick for sustained
-periods. The engine child instead showed a transient in only **49 of 11,378** 5 ms ticks
-(0.4%), never more than one per tick, clustered into two bounded bursts — a measured ~0.8/s,
-two orders of magnitude below the ~100/s claim at the per-tick resolution the storm would
-require. **A second, independent 60 s true-idle @5 ms window reproduced the result** (47
-distinct transients = 0.78/s, ≤1 per tick, same `node-MainThread`+`git` burst composition,
-`engine-child-idle-all-paused-5ms-reprod-*.log`), so Window C's ~0.8/s is a stable bound, not
-a one-off snapshot.
+**The 5 ms probe reduces the blind window but can miss children that fork and exit between
+samples.** A genuine ~100/s `uv_spawn` storm forks ~10 children per 100 ms ≈ **1 every 10
+ms**, i.e. a transient in almost every 5 ms tick for sustained periods — the pattern these
+samples would have to show. The engine child instead showed a transient in only **49 of
+11,378** 5 ms ticks (0.4%), never more than one per tick, clustered into two bounded bursts.
+The ~0.82/s figure is a **lower bound on observed child visibility, not a count of every
+fork syscall**: the relevant children live <1 ms and can be created and reaped between two
+samples, so a small additional fork rate is not excludable. It is nonetheless two orders of
+magnitude below the ~100/s claim at the per-tick resolution the storm would require — a
+~100/s rate would occupy almost every tick, and Window C's ticks are ~0.4% occupied.
+**A second, independent 60 s true-idle @5 ms window reproduced the result** (47 distinct
+transients = 0.78/s, ≤1 per tick, same `node-MainThread`+`git` burst composition,
+`engine-child-idle-all-paused-5ms-reprod-*.log`), so Window C's ~0.82/s observed rate is
+stable across windows, not a one-off snapshot.
 
-### What the closed window revealed (attribute the burst composition)
+### What the 5 ms window revealed (attribute the burst composition)
 
 Sampling at 5 ms (instead of 100 ms) revealed a **previously-blind-window-hidden transient
 native-fork population** that the 100 ms probe undercounted (window A 0.05/s vs this 0.82/s —
@@ -193,7 +203,8 @@ the 100 ms snapshots were missing the sub-100 ms-lived forks). Complementary cap
 bursts are:
 
 - a **`node-MainThread` cluster** whose cmdline reads ``/usr/bin/node …/bin.mjs dashboard
-  --port 4040`` — **the engine's own comm and cmdline, inherited pre-exec** — and that is
+  --port 4040`` (the reserved board-daemon port, observed not launched) — **the engine's own
+  comm and cmdline, inherited pre-exec** — and that is
   reaped in **<1 ms** (every stat read raced the reap). fork-then-exit without a completed
   `exec` is precisely the **no-JS-parent `spawn@:-1`-shaped native-fork class**;
 - **JS-`child_process`-parented** `git` (up to 7 concurrent), `node`, and occasional `gh`
@@ -354,11 +365,12 @@ residual (circularly gated on this task completing); it is not required for this
 **No in-repo code path, `node-pty`, `playwright-core`, `@modelcontextprotocol/sdk`,
 `proper-lockfile`, or the `postgres` store client produces a ~100/s native-spawn loop in the
 engine child.** The engine-child PID is directly measured at **0.82 transient child forks/s
-under true idle-all-paused with the blind window closed** (3.18/s under active tool activity
+under true idle-all-paused with the blind window reduced to ~5 ms** (3.18/s under active tool
+activity
 — the real bound the 100 ms probe undercounted). The embedded store server is a persistent,
 bounded native-fork source (~8/s active, 0-1/s idle) in a **separate** process. **These are
 measured on this host's real engine-child PID, which reproduces the production storm
-CPU-symptom.
+CPU-symptom.**
 
 ## What is not measurable by the executor (structural, not an evasion)
 

@@ -9,6 +9,17 @@ chip whose label is the topic. Mobile (max-width 768px) widens the popover to th
 viewport minus padding so the inline input stays usable on narrow screens. The
 chip matches --chat-input-control-size (the composer's send/attach control
 height) so it centers with the single-line textarea.
+
+FNXC:ChatMemoryFocusSelector 2026-08-21-13:35:
+RUFU-146 review (PRRT_kwDOSA-8Y86a7RZo): raw literals replaced with existing
+semantic tokens — --btn-border-width (borders), --transition-fast
+(chip transition), --opacity-disabled (disabled chip), --focus-ring-strong
+(focus-visible, previously an invalid `outline: 2px solid var(--focus-ring)`
+declaration since --focus-ring is a box-shadow token), calc(var(--space-xl) * 8)
+(12rem label cap), --z-popover (popover layer), --line-height-normal (help text).
+The 768px breakpoint stays literal by design: --mobile-breakpoint is documented
+in styles.css as documentation-only (custom properties cannot appear in
+@media conditions) and every other component CSS uses the same literal.
 */
 
 .chat-focus-root {
@@ -26,20 +37,19 @@ height) so it centers with the single-line textarea.
   padding: 0 var(--space-sm);
   color: var(--text-muted);
   background: var(--surface);
-  border: 1px solid var(--border);
+  border: var(--btn-border-width) solid var(--border);
   border-radius: var(--radius-pill, var(--radius-md));
   cursor: pointer;
-  transition: color var(--duration-fast, 120ms) ease, border-color var(--duration-fast, 120ms) ease;
+  transition: color var(--transition-fast), border-color var(--transition-fast);
 }
 
 .chat-focus-chip:disabled {
-  opacity: 0.5;
+  opacity: var(--opacity-disabled, 0.5);
   cursor: default;
 }
 
 .chat-focus-chip:focus-visible {
-  outline: 2px solid var(--focus-ring, var(--accent));
-  outline-offset: 1px;
+  box-shadow: var(--focus-ring-strong);
 }
 
 .chat-focus-chip--active {
@@ -49,7 +59,7 @@ height) so it centers with the single-line textarea.
 
 .chat-focus-chip-topic,
 .chat-focus-chip-label {
-  max-inline-size: 12rem;
+  max-inline-size: calc(var(--space-xl) * 8);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -65,10 +75,10 @@ height) so it centers with the single-line textarea.
   max-inline-size: calc(100vw - (var(--space-lg) * 2));
   padding: var(--space-sm);
   background: var(--surface);
-  border: 1px solid var(--border);
+  border: var(--btn-border-width) solid var(--border);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-lg);
-  z-index: 50;
+  z-index: var(--z-popover);
 }
 
 .chat-focus-title {
@@ -81,7 +91,7 @@ height) so it centers with the single-line textarea.
 .chat-focus-help {
   color: var(--text-muted);
   font-size: var(--font-size-2xs);
-  line-height: 1.4;
+  line-height: var(--line-height-normal);
   margin: 0 0 var(--space-sm);
 }
 
