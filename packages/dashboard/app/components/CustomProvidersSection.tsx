@@ -124,7 +124,10 @@ function ModelRowsEditor({ rows, onChange, onDetect, detecting, canDetect, canAd
   };
 
   const removeRow = (index: number) => {
-    // The single remaining row cannot be removed; saving a blank row stores no models.
+    // The single remaining row cannot be removed — the form always keeps one row, and
+    // blanking that last row is how the operator deletes every model (the edit save then
+    // sends an explicit empty models array; see handleSave's FNXC:CustomProviderModelWindows
+    // note). A blank row on a new provider stores no models.
     if (rows.length <= 1) return;
     onChange(rows.filter((_, i) => i !== index));
   };
@@ -449,7 +452,14 @@ export function CustomProvidersSection({ embedded = false, onProviderChange }: C
       apiType,
       baseUrl: baseUrl.trim(),
       ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
-      ...(parsedModels.length > 0 ? { models: parsedModels } : {}),
+      // FNXC:CustomProviderModelWindows 2026-08-21-00:06:
+      // RUFU-145 PR #3493 review (Greptile P1 "Cleared models remain persisted"): the PUT
+      // update path is a partial merge — an omitted `models` key keeps the stored list.
+      // The edit form must therefore always send the row result, including an explicit
+      // empty array, or the operator's cleared rows silently reappear after reload. The
+      // create path omits `models` when blank so a new provider simply has no registered
+      // models.
+      ...(editingProvider || parsedModels.length > 0 ? { models: parsedModels } : {}),
       // FNXC:ProviderAuth 2026-07-08-00:00: only send the caching opt-in for apiTypes where it
       // applies (openai-compatible/openai-responses); anthropic-compatible/google-generative-ai
       // never surface the checkbox so this is always false for them.
