@@ -182,6 +182,16 @@ function getProviderInfoMap(t: (key: string, defaultValue: string) => string): R
         usageDescription: t("setup.apiKeyUsage.openrouter", "Routes to multiple AI model providers through a single key"),
       },
     },
+    orcarouter: {
+      description: t("setup.providerDesc.orcarouter", "OrcaRouter — one gateway for multiple AI providers with gateway-level agent security"),
+      apiKeyInfo: {
+        fieldLabel: t("setup.apiKeyLabel.orcarouter", "OrcaRouter API Key"),
+        setupInstructions: t("setup.apiKeySetup.orcarouter", "Create an API key from your OrcaRouter dashboard."),
+        dashboardUrl: "https://www.orcarouter.ai",
+        inputPlaceholder: "sk-orca-...",
+        usageDescription: t("setup.apiKeyUsage.orcarouter", "Routes to multiple AI model providers through a single key"),
+      },
+    },
   };
 }
 
@@ -195,6 +205,7 @@ const PROVIDER_KEY_HINTS: Record<string, {
   openai: { pattern: /^sk-/, hint: "Starts with sk-", example: "sk-..." },
   "openai-codex": { pattern: /^sk-/, hint: "Starts with sk-", example: "sk-..." },
   openrouter: { pattern: /^sk-or-/, hint: "Starts with sk-or-", example: "sk-or-v1-..." },
+  orcarouter: { pattern: /^sk-orca-/, hint: "Starts with sk-orca-", example: "sk-orca-..." },
   google: { pattern: /^AIza/, hint: "Starts with AIza", example: "AIza..." },
   gemini: { pattern: /^AIza/, hint: "Starts with AIza", example: "AIza..." },
   minimax: { pattern: /^.{8,}$/, hint: "At least 8 characters", example: "..." },
@@ -218,6 +229,7 @@ const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
   openai: "OpenAI",
   "openai-codex": "OpenAI Codex",
   openrouter: "OpenRouter",
+  orcarouter: "OrcaRouter",
   google: "Google",
   gemini: "Gemini",
   minimax: "MiniMax",
@@ -273,7 +285,7 @@ Keep Anthropic subscription OAuth and raw Anthropic API-key auth as separate fir
 FNXC:Onboarding 2026-07-18-03:40:
 The OpenAI Codex subscription card belongs in quick start (it was buried in Advanced), placed directly AFTER the Anthropic subscription and BEFORE the API-key options — subscription sign-ins are the primary first-run path, keys are the fallback.
 */
-const QUICK_START_PROVIDER_IDS = ["anthropic-subscription", "openai-codex", "anthropic-api-key", "anthropic", "openai", "google", "gemini", "openrouter", "ollama"] as const;
+const QUICK_START_PROVIDER_IDS = ["anthropic-subscription", "openai-codex", "anthropic-api-key", "anthropic", "openai", "google", "gemini", "openrouter", "orcarouter", "ollama"] as const;
 
 const ONBOARDING_CURATED_PROVIDER_FAMILY_ORDER = [
   "anthropic",
@@ -283,6 +295,7 @@ const ONBOARDING_CURATED_PROVIDER_FAMILY_ORDER = [
   "llama-cpp",
   "openai-codex",
   "openrouter",
+  "orcarouter",
   "gemini",
   "minimax",
   "kimi",

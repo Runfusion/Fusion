@@ -9,7 +9,7 @@ import "./CustomProviderForm.css";
 export const BUILT_IN_PROVIDER_IDS = new Set<string>([
   "anthropic", "claude-cli", "pi-claude-cli", "openai", "openai-codex", "google", "gemini", "google-antigravity",
   "antigravity", "google-vertex", "vertex", "google-cloud-code", "cloud-code", "google-gemini-cli", "google-generative-ai",
-  "ollama", "github", "github-copilot", "openrouter", "minimax", "minimax-cn", "zai", "kimi", "moonshot", "kimi-coding",
+  "ollama", "github", "github-copilot", "openrouter", "orcarouter", "minimax", "minimax-cn", "zai", "kimi", "moonshot", "kimi-coding",
   "bedrock", "amazon-bedrock", "xai", "grok", "opencode", "opencode-go", "qwen", "qwen-ai", "qwen-coder", "alibaba", "tongyi",
   "lmstudio", "lm-studio", "huggingface", "hugging-face", "hf", "mistral", "mistral-ai", "azure", "azure-openai",
   "azure-openai-responses", "fireworks", "fireworks-ai", "fireworksai", "cerebras", "groq", "vercel", "vercel-ai-gateway",

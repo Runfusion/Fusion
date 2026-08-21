@@ -215,6 +215,7 @@ export const DEFAULT_GLOBAL_SETTINGS = {
   openrouterAppAttribution: undefined,
   openrouterModelFilters: undefined,
   openrouterProviderPreferences: undefined,
+  orcarouterModelSync: true,
   opencodeGoModelSync: true,
   updateCheckEnabled: true,
   fnBinaryCheckEnabled: true,

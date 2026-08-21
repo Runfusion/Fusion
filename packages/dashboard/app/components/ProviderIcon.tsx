@@ -569,6 +569,37 @@ function OpenRouterIcon({ size, color, label = "OpenRouter" }: { size: number; c
   );
 }
 
+/*
+FNXC:OrcaRouterProvider 2026-08-21-14:00:
+OrcaRouter brand mark — an orca fin motif (two smooth arcs forming a dorsal fin above
+the waterline). Simplified geometric symbol that keeps its silhouette legible at
+compact card sizes, matching the hand-drawn marks used for other gateway providers.
+*/
+function OrcaRouterIcon({ size, color, label = "OrcaRouter" }: { size: number; color: string; label?: string }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      data-testid="orcarouter-icon"
+      aria-label={label}
+    >
+      <path
+        d="M12 3c4.5 5.5 7 10 7 13a7 7 0 0 1-14 0c0-3 2.5-7.5 7-13Z"
+        fill={color}
+      />
+      <path
+        d="M5 18.5c3.5.5 7.5 1 11 .5"
+        stroke={color}
+        strokeWidth="1.8"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
 // GitHub logo (Octocat mark) from SimpleIcons.
 function GitHubIcon({ size, color, label = "GitHub" }: { size: number; color: string; label?: string }) {
   return (
@@ -854,6 +885,8 @@ const providerConfig: Record<
 
   // OpenRouter appears in onboarding auth cards and should not fall back to CPU.
   openrouter: { component: OpenRouterIcon, color: "var(--provider-openrouter)" },
+  // OrcaRouter is a named gateway provider in the auth catalog and onboarding.
+  orcarouter: { component: OrcaRouterIcon, color: "var(--provider-orcarouter)" },
   /*
   FNXC:ProviderIcon 2026-07-22-12:00:
   FN-8488 makes every static Authentication catalog ID resolve through a branded ProviderIcon entry. Brave Search and Tavily are API-key catalog providers, not custom provider names, so they must never reach the unknown Cpu fallback.

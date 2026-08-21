@@ -397,6 +397,7 @@ svg.spinning {
   --provider-openai: #10a37f;
   --provider-gemini: #4285f4;
   --provider-openrouter: #6f4cff;
+  --provider-orcarouter: #0e7c86;
   --provider-brave: #fb542b;
   --provider-tavily: #4f46e5;
   --provider-minimax: #e73562;
