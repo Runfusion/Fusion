@@ -31,6 +31,11 @@ function toolFor(currentTask: any, repos: string[], resolveWorkspaceRepos?: () =
     task: currentTask,
     store: {
       getTask: vi.fn(async () => currentTask),
+      /*
+      FNXC:RepositoryScope 2026-08-21-05:15:
+      Acquisition fixtures expose the post-acquire scope mutation seam because successful late admission now persists repository intent.
+      */
+      mutateTaskRepositoryScope: vi.fn(async () => currentTask),
       logEntry: vi.fn(async () => undefined),
     } as any,
     settings: {},
