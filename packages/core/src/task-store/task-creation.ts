@@ -102,7 +102,6 @@ async function resolveInitialRepositoryScope(store: TaskStore, input: TaskCreate
     ...(explicitSelection ? { confirmedAt: now } : {}),
   };
 }
-}
 
 type CreateTaskWithAfterInsert = TaskCreateInput & {
   /** Internal transaction hook; never persisted in task source metadata. */
