@@ -6398,6 +6398,8 @@
       "stashUrlLabel": "",
       "stashUrlPlaceholder": "",
       "uploadTaskAgentLogTranscriptToStash": "",
+      "chatContextBudget": "",
+      "chatContextBudgetHelp": "",
       "03": "",
       "agentsGetMemorySearchMemoryGetAndMemory": "",
       "agentsSearchWithQmdFirstFallBackTo": "",
