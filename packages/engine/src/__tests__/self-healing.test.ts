@@ -4253,6 +4253,8 @@ describe("SelfHealingManager", () => {
       }));
       const workspacePatch = (store.updateTask as ReturnType<typeof vi.fn>).mock.calls
         .find(([taskId]) => taskId === "FN-7802-WORKSPACE")?.[1];
+      // FNXC:WorkspaceRecovery 2026-08-21-08:44: Prove recovery emitted the workspace patch before asserting that it preserves repository routing.
+      expect(workspacePatch).toBeDefined();
       expect(workspacePatch).not.toHaveProperty("branch");
       expect(store.moveTask).toHaveBeenCalledWith("FN-7802-WORKSPACE", "todo", { preserveProgress: true, moveSource: "engine", recoveryRehome: true });
       expect(store.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
