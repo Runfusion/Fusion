@@ -3,9 +3,29 @@ import React, { cloneElement, isValidElement } from "react";
 import type { ReactElement, ReactNode } from "react";
 import { useFileBrowser } from "../context/FileBrowserContext";
 
+/*
+FNXC:FilePathLinkify 2026-08-21-23:26:
+FILE_PATH_REGEX must stay backtracking-linear. The previous main branch,
+`(?:[A-Za-z0-9_./@-]+\/)+`, let each segment match itself contain "/", so a
+slash-heavy near-miss — e.g. an agent message listing `STAS-001/002/.../057`
+without a trailing extension — had exponentially many segment partitions to
+explore when the match failed. SpiderMonkey (Firefox) drives its backtracker
+recursively and threw `InternalError: too much recursion` while linkifying
+~80KB assistant chat messages, tearing the whole chat view down through the
+ErrorBoundary ("Something went wrong"); V8 only froze for several seconds.
+The rewrite makes each iteration consume exactly one "/" (the segment class
+excludes "/"), so the partition of any candidate is unique and matching is
+linear; absolute paths keep matching via the explicit leading `/?`. The
+lookbehind additionally rejects a start immediately after "." or "/" so URL
+tails (`http://host.com/a/b.ts`) cannot begin a link after the domain dot or
+inside a protocol scheme. Accepted behavior delta: a token directly glued
+after a dot (e.g. `doc.Dockerfile`) no longer linkifies — a false-positive
+removal.
+*/
+
 // Two branches: the main branch requires a slash plus extension to avoid plain-prose false positives,
 // while the allowlist branch covers well-known root files agents commonly reference without a slash.
-export const FILE_PATH_REGEX = /(?<![\w@-])((?:[A-Za-z0-9_./@-]+\/)+[A-Za-z0-9_./@-]+\.[A-Za-z0-9]{1,8}(?::\d+(?::\d+)?)?|(?:Dockerfile|Makefile|AGENTS\.md|README\.md|README)(?::\d+(?::\d+)?)?)(?![\w-])/g;
+export const FILE_PATH_REGEX = /(?<![\w@/.-])(\/?(?:[A-Za-z0-9_.@-]+\/)+[A-Za-z0-9_.@-]+\.[A-Za-z0-9]{1,8}(?::\d+(?::\d+)?)?|(?:Dockerfile|Makefile|AGENTS\.md|README\.md|README)(?::\d+(?::\d+)?)?)(?![\w-])/g;
 
 const EXCLUDED_PROTOCOLS = ["http://", "https://", "mailto:", "git@", "ftp://"];
 const WELL_KNOWN_ROOT_FILES = new Set(["Dockerfile", "Makefile", "AGENTS.md", "README.md", "README"]);
