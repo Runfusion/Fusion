@@ -408,12 +408,31 @@ export async function getChatMessages(
   }
   const limit = filter?.limit ?? 100;
   const offset = filter?.offset ?? 0;
-  const orderCol = schema.project.chatMessages.createdAt;
+  /*
+  FNXC:ChatStashBackfillTiePagination 2026-08-21-17:25:
+  (RUFU-146 review, PRRT_kwDOSA-8Y86bNP8U, Greptile P1) ORDER BY created_at
+  alone is NON-UNIQUE — chat_messages.created_at is a text ISO timestamp and
+  bursts (same-millisecond writes, imported/reconstructed history) share
+  values. The Stash backfill route pages the full session history with
+  limit/offset (register-chat-routes.ts POST /chat/sessions/:id/backfill-stash);
+  when equal values straddle a page boundary, PostgreSQL's tie order is
+  plan-dependent, so one tied row can be returned on BOTH pages while another
+  is omitted entirely — the backfill then reports success with an incomplete
+  or duplicated Stash transcript. Adding id (part of the primary key) makes
+  the ordering a TOTAL order: every offset page is well-defined and stable
+  across repeated reads, in both directions (the before-cursor contract for
+  desc readers is unchanged).
+  */
+  const createdAtCol = schema.project.chatMessages.createdAt;
+  const idCol = schema.project.chatMessages.id;
   const rows = await handle
     .select()
     .from(schema.project.chatMessages)
     .where(and(...conditions))
-    .orderBy(filter?.order === "desc" ? desc(orderCol) : asc(orderCol))
+    .orderBy(
+      filter?.order === "desc" ? desc(createdAtCol) : asc(createdAtCol),
+      filter?.order === "desc" ? desc(idCol) : asc(idCol),
+    )
     .limit(limit)
     .offset(offset);
   return rows.map(rowToMessage);
