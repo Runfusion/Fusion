@@ -5837,6 +5837,29 @@
     "inProgress": "Em andamento"
   },
   "settings": {
+    "jira": {
+      "configuration": "",
+      "enable": "",
+      "enabledHelp": "",
+      "baseUrl": "",
+      "globalBaseUrl": "",
+      "baseUrlHelp": "",
+      "apiBaseUrl": "",
+      "globalApiBaseUrl": "",
+      "apiBaseUrlHelp": "",
+      "email": "",
+      "globalEmail": "",
+      "emailHelp": "",
+      "secretKey": "",
+      "globalSecretKey": "",
+      "secretHelp": "",
+      "secretScope": "",
+      "globalSecretScope": "",
+      "scopeHelp": "",
+      "template": "",
+      "globalTemplate": "",
+      "templateHelp": ""
+    },
     "merge": {
       "abort": "Abortar",
       "abortOneAIAttemptRequireManualResolutionIf": "Abortar — uma tentativa de IA; exige resolução manual se falhar",
@@ -7278,6 +7301,8 @@
       "wedgeNotificationSettleMsHelp": "Por quanto tempo uma falha terminal deve persistir antes de alertar um operador. 0 = notificar imediatamente. Padrão: 300000 (5 minutos)."
     },
     "memory": {
+      "chatContextBudget": "",
+      "chatContextBudgetHelp": "",
       "03": "0 3 * * *",
       "agentsGetMemorySearchMemoryGetAndMemory": "Os agentes recebem as ferramentas memory_search, memory_get e memory_append. A busca usa qmd por padrão, com arquivo local como reserva. Padrão: ativado.",
       "agentsSearchWithQmdFirstFallBackTo": ". Os agentes buscam primeiro com o qmd, recorrem a arquivos locais quando o qmd não está disponível e abrem janelas de linhas exatas somente quando necessário. ",
