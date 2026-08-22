@@ -574,7 +574,13 @@ describe("ChatManager.sendMessage", () => {
       totalTokens: 14,
     }));
     expect(createOptions.tools).toBe("coding");
-    expect(createOptions).not.toHaveProperty("toolsAllowlist");
+    /*
+    FNXC:ChatContextBudget 2026-08-22-12:14 (RUFU-135):
+    The planner chat gets a curated allowlist that still includes the
+    task-planner tools it needs (steering + metrics) while hiding the rest of
+    the executor surface.
+    */
+    expect(createOptions.toolsAllowlist).toContain("fn_task_planner_get_task_metrics");
   });
 
   it("does not record chat token usage when session stats are unavailable or zero", async () => {
@@ -1403,7 +1409,7 @@ describe("ChatManager.sendMessage", () => {
     );
   });
 
-  it("creates chat agents with the full coding toolset", async () => {
+  it("creates chat agents with the curated chat toolset allowlist", async () => {
     let createOptions: any;
     __setCreateResolvedAgentSession(async (options: any) => {
       createOptions = options;
@@ -1422,7 +1428,19 @@ describe("ChatManager.sendMessage", () => {
     await chatManager.sendMessage("chat-001", "Hello");
 
     expect(createOptions.tools).toBe("coding");
-    expect(createOptions).not.toHaveProperty("toolsAllowlist");
+    /*
+    FNXC:ChatContextBudget 2026-08-22-12:14 (RUFU-135):
+    Dashboard chat sessions get an explicit curated toolsAllowlist (the builtin
+    coding tools plus the session's own fn_* tools) so pi filters the 86
+    host-extension executor tools out of the static context — the invariant the
+    64K-window-model requirement depends on. The pre-RUFU-135 assertion here was
+    "no allowlist at all", which pinned the 124K-token static floor that made
+    64K-window models unusable.
+    */
+    expect(createOptions.toolsAllowlist).toEqual(
+      expect.arrayContaining(["read", "bash", "edit", "write", "grep", "find", "ls"]),
+    );
+    expect(createOptions.toolsAllowlist).not.toContain("fn_task_planner_get_task_metrics");
   });
 
   it("requests bound agent and enabled plugin skills for regular chat", async () => {
@@ -4080,7 +4098,15 @@ describe("ChatManager generation isolation", () => {
 
     const names = capturedTools.map((tool) => tool.name);
     expect(createOptions.tools).toBe("coding");
-    expect(createOptions).not.toHaveProperty("toolsAllowlist");
+    /*
+    FNXC:ChatContextBudget 2026-08-22-12:14 (RUFU-135):
+    Room responder sessions get the curated chat allowlist (builtin coding tools
+    plus the session's own custom tools) instead of the full executor surface;
+    the metrics exclusion below still holds via the customTools registration.
+    */
+    expect(createOptions.toolsAllowlist).toEqual(
+      expect.arrayContaining(["read", "bash", "edit", "write", "grep", "find", "ls"]),
+    );
     expect(names).not.toContain("fn_task_planner_get_task_metrics");
     for (const required of [
       "fn_task_list",
