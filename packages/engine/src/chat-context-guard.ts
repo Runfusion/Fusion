@@ -1,0 +1,455 @@
+/**
+ * Deterministic pre-overflow compaction gate for the chat/CLI pi-session path.
+ *
+ * FNXC:ChatContextGuard 2026-08-18-18:06:
+ * RUFU-118 phase 1: pi's built-in threshold auto-compaction is blind when no assistant
+ * message carries non-zero provider usage (its estimateContextTokens reports
+ * lastUsageIndex: null and _checkCompaction returns "No usage data at all"). Providers
+ * that omit usage in the stream (observed: dsai1/deepseek-v4 openai-completions) keep
+ * every assistant message at all-zero usage, so long chats silently grow past 96% of the
+ * window and degrade to 1-token replies with no compaction. This gate re-measures the
+ * loaded context at every chat send seam and forces compaction before the prompt when
+ * the estimate crosses the threshold. It is a backstop on the chat/CLI lane only — the
+ * executor lane keeps its existing TokenCapDetector (undefined = disabled) semantics.
+ *
+ * FNXC:ChatContextGuard 2026-08-18-18:06:
+ * Threshold semantics: threshold = min(tokenCap ?? round(0.8 * contextWindow),
+ * contextWindow - max(16384, maxTokens); when that reserve cannot fit inside the
+ * window (small-window models) it is capped at half the window — the safe small-window
+ * threshold, RUFU-145 review). On the chat lane tokenCap is an UPPER BOUND on
+ * the effective threshold, not an exact target: unset falls back to 80% of the per-model
+ * context window, and values above the hard limit (contextWindow - reserve) are clamped.
+ * The 0.8 default belongs here (engine pure function), not in the settings schema, so
+ * the schema default stays undefined.
+ *
+ * FNXC:ChatContextGuard 2026-08-18-18:06:
+ * Fail-loud contract: the gate never sends a call it cannot prove fits. When the loaded
+ * context is at or above the threshold it compacts via the existing compactSessionContext
+ * (session.compact()), re-measures, and throws ChatContextOverflowError when compaction
+ * is unavailable/returns no result, when it throws, or when the post-compaction estimate
+ * is still at or above the hard limit. Non-pi session shapes (plugin CLI runtimes without
+ * getContextUsage), unknown context windows, and unknown token counts skip the gate with a
+ * diagnostic warn instead of throwing — provider overflow errors from those sends still
+ * surface through the existing chat failure paths.
+ */
+
+import { estimateTokens, type AgentSession } from "@earendil-works/pi-coding-agent";
+import { piLog } from "./logger.js";
+import { compactSessionContext } from "./pi.js";
+import { PermanentError } from "./errors/engine-errors.js";
+
+/**
+ * Non-retryable: a context that overflows its model window (or cannot be compacted into
+ * it) will not fit on retry. Callers must surface it to the operator instead of
+ * re-sending a doomed prompt.
+ */
+export class ChatContextOverflowError extends PermanentError {
+  constructor(
+    message: string,
+    details?: Record<string, unknown>,
+    cause?: Error,
+  ) {
+    super(message, "CHAT_CONTEXT_OVERFLOW", details, cause);
+  }
+}
+
+/**
+ * Floor for the output reserve. Matches pi's DEFAULT_COMPACTION_SETTINGS.reserveTokens
+ * so the gate never plans a prompt with less output room than pi itself guarantees.
+ */
+const MIN_RESERVE_TOKENS = 16_384;
+
+/**
+ * Engine default compact fraction applied when tokenCap is unset on the chat lane:
+ * compact at 80% of the per-model context window (more conservative than pi's own
+ * threshold of contextWindow - reserveTokens).
+ */
+const DEFAULT_COMPACT_FRACTION = 0.8;
+
+/**
+ * FNXC:ChatContextGuard 2026-08-20-22:27:
+ * RUFU-145 PR #3493 review (safe small-window threshold): when the output reservation
+ * cannot fit inside the context window at all (reserve >= window — e.g. an 8K probe
+ * window paired with the 16K default output reservation), the hard limit is
+ * non-positive and the gate degenerates. Cap the reserve at half the window so
+ * small-window models get a usable, deterministic threshold: half the window is
+ * reserved for output + slack, the other half remains available for conversation.
+ */
+const SMALL_WINDOW_RESERVE_FRACTION = 0.5;
+
+/**
+ * FNXC:ChatContextGuard 2026-08-20-12:20:
+ * Chars-per-token divisor for the stale-usage cross-check. pi's own estimator uses
+ * chars/4; the dsai1 (qwen3) provider measured on the chat lane tokenizes at ~3.46
+ * chars/token, and English-centric tokenizers sit at ~3.5-4, so chars/3.5 is a
+ * conservative (never-underestimating) divisor for the providers observed here.
+ */
+const FRESH_ESTIMATE_CHARS_PER_TOKEN = 3.5;
+
+/**
+ * Structural session shape the gate needs.
+ *
+ * A pi `AgentSession` satisfies this. Plugin CLI runtimes (grok/droid/cursor) expose a
+ * top-level `messages` array without a pi-shaped `state`/`getContextUsage`, so the gate
+ * skips them (diagnostic warn, no throw) — they cannot be compacted from the dashboard
+ * side and their overflow errors keep flowing through the existing failure paths.
+ */
+export interface CompactionGateSession {
+  /** pi's ContextUsage reader; absence marks a non-pi session shape. */
+  getContextUsage?: () => { tokens: number | null; contextWindow: number; percent: number | null } | undefined;
+  /** The active model (contextWindow/maxTokens). */
+  model?: { contextWindow?: number | undefined; maxTokens?: number | undefined } | undefined;
+  /** The loaded message list (post-compaction view). */
+  state?: { messages?: unknown[] | undefined } | undefined;
+  /** pi's compaction entry point (driven through compactSessionContext). */
+  compact?: (customInstructions?: string) => Promise<unknown> | unknown;
+  /**
+   * FNXC:ChatContextGuard 2026-08-20-12:20:
+   * The session's current final system prompt. pi populates it during session setup
+   * (setActiveToolsByName rebuilds it from the base prompt, context files such as
+   * AGENTS.md, skills, and the active tools' guidelines), so at the pre-prompt gate
+   * seam it describes exactly the prompt the next send would carry. Absent on
+   * non-pi runtimes and on pi versions that build it lazily — the fresh estimate
+   * then degrades to null and the gate keeps its fail-loud behavior.
+   */
+  systemPrompt?: string | undefined;
+  /** pi's active tool names (subset of the configured registry). */
+  getActiveToolNames?: () => string[];
+  /** pi's configured tool definitions (name/description/parameters/…). */
+  getAllTools?: () => Array<{ name?: string; description?: string; parameters?: unknown }>;
+}
+
+interface CompactionBounds {
+  hardLimit: number;
+}
+
+/**
+ * Resolve the hard limit (contextWindow - reserve) or null when it is unknown/non-positive.
+ * Shared by the threshold computation and the post-compaction check so the two cannot drift.
+ */
+function resolveCompactionBounds(
+  contextWindow: number | null | undefined,
+  maxTokens: number | null | undefined,
+): CompactionBounds | null {
+  if (typeof contextWindow !== "number" || !Number.isFinite(contextWindow) || contextWindow <= 0) {
+    return null;
+  }
+  const rawReserve = Math.max(
+    MIN_RESERVE_TOKENS,
+    typeof maxTokens === "number" && Number.isFinite(maxTokens) ? maxTokens : 0,
+  );
+  // FNXC:ChatContextGuard 2026-08-20-22:27: RUFU-145 PR #3493 review: the safe
+  // small-window threshold. A reserve that cannot fit inside the window makes the hard
+  // limit non-positive (threshold -8192 for an 8K window with the 16K default), which
+  // either skips the gate or crosses it on every send. Cap the reserve at
+  // SMALL_WINDOW_RESERVE_FRACTION of the window so the threshold stays usable.
+  const reserve =
+    rawReserve >= contextWindow
+      ? Math.max(1, Math.floor(contextWindow * SMALL_WINDOW_RESERVE_FRACTION))
+      : rawReserve;
+  const hardLimit = contextWindow - reserve;
+  if (hardLimit <= 0) {
+    return null;
+  }
+  return { hardLimit };
+}
+
+/**
+ * Normalize the operator's tokenCap. Non-finite, zero, and negative values are treated as
+ * "unset" so a degenerate stored value cannot collapse the threshold to 0 (which would
+ * compact on every send).
+ */
+function resolveTokenCap(tokenCap: number | null | undefined): number | null {
+  if (typeof tokenCap !== "number" || !Number.isFinite(tokenCap) || tokenCap <= 0) {
+    return null;
+  }
+  return tokenCap;
+}
+
+/**
+ * Compute the effective pre-overflow compaction threshold.
+ *
+ * `min(tokenCap ?? round(0.8 * contextWindow), contextWindow - max(16384, maxTokens))`.
+ *
+ * - `tokenCap` (Settings.tokenCap) is an upper bound on the chat-lane threshold: unset
+ *   falls back to 80% of the model's context window; a value above the hard limit is
+ *   clamped to the hard limit.
+ * - Returns `null` when the context window is unknown/non-positive or the hard limit is
+ *   non-positive (reserve >= window) — callers must skip the gate in that case.
+ *
+ * For a 128K-window / 16K-maxTokens model with no tokenCap this yields exactly 102,400.
+ */
+export function computeCompactionThreshold(params: {
+  contextWindow?: number | null;
+  maxTokens?: number | null;
+  tokenCap?: number | null;
+}): number | null {
+  const bounds = resolveCompactionBounds(params.contextWindow, params.maxTokens);
+  if (!bounds) {
+    return null;
+  }
+  const cap = resolveTokenCap(params.tokenCap) ?? Math.round(DEFAULT_COMPACT_FRACTION * params.contextWindow!);
+  return Math.min(cap, bounds.hardLimit);
+}
+
+type EstimateTokensArg = Parameters<typeof estimateTokens>[0];
+
+/**
+ * FNXC:ChatContextGuard 2026-08-20-12:20:
+ * Fresh measurement of what the NEXT send would actually carry: the session's current
+ * final system prompt + the active tools' schemas (the provider counts the `tools`
+ * parameter on top of the prompt) + the loaded messages, in conservative chars/3.5
+ * (system prompt + tools) plus pi's own per-message estimate.
+ *
+ * This exists to detect a STALE provider-reported usage: pi persists assistant
+ * usage into the session file and getContextUsage() restores it into a fresh
+ * session object, so the number describes the static context of the turn that
+ * RECORDED it, not the current one. After a deploy that shrank the chat prompt/
+ * toolset (RUFU-135), an old 124K-token usage kept failing every send with
+ * ChatContextOverflowError even though the live context was ~36K (chat-02c9c9de).
+ * Returns null when the session does not expose the final system prompt — the
+ * caller then cannot distinguish stale from real and must keep the fail-loud path.
+ */
+export function freshLoadedContextEstimate(session: CompactionGateSession): number | null {
+  const systemPrompt = typeof session.systemPrompt === "string" ? session.systemPrompt : "";
+  if (!systemPrompt) {
+    return null;
+  }
+  let chars = systemPrompt.length;
+  try {
+    const activeNames = new Set(session.getActiveToolNames?.() ?? []);
+    for (const tool of session.getAllTools?.() ?? []) {
+      if (typeof tool?.name !== "string" || !tool.name) continue;
+      if (activeNames.size > 0 && !activeNames.has(tool.name)) continue;
+      chars += Buffer.byteLength(
+        JSON.stringify({
+          name: tool.name,
+          description: tool.description ?? "",
+          parameters: tool.parameters ?? {},
+        }),
+        "utf8",
+      );
+    }
+  } catch {
+    // Tool introspection is best-effort; a failing reader must not break the gate.
+  }
+  let messageTokens = 0;
+  const messages = session.state?.messages;
+  if (Array.isArray(messages)) {
+    for (const message of messages) {
+      try {
+        messageTokens += estimateTokens(message as EstimateTokensArg);
+      } catch {
+        // Malformed message shapes count as 0 (best-effort measurement).
+      }
+    }
+  }
+  return Math.round(chars / FRESH_ESTIMATE_CHARS_PER_TOKEN) + messageTokens;
+}
+
+/**
+ * Estimate the loaded context tokens of a session.
+ *
+ * Prefers `session.getContextUsage()` when it reports a concrete (non-null, > 0) token
+ * count — that is pi's own measurement (last provider usage + trailing chars/4 estimate).
+ * Otherwise sums pi's per-message `estimateTokens` (chars/4) over the loaded messages.
+ * Returns `null` when neither source yields a measurement.
+ */
+export function estimateLoadedContextTokens(session: CompactionGateSession): number | null {
+  if (typeof session.getContextUsage === "function") {
+    try {
+      const usage = session.getContextUsage();
+      if (usage && typeof usage.tokens === "number" && Number.isFinite(usage.tokens) && usage.tokens > 0) {
+        return usage.tokens;
+      }
+    } catch {
+      // A throwing usage reader must not break the send; fall through to the estimate.
+    }
+  }
+
+  const messages = session.state?.messages;
+  if (!Array.isArray(messages)) {
+    return null;
+  }
+  let total = 0;
+  for (const message of messages) {
+    try {
+      total += estimateTokens(message as EstimateTokensArg);
+    } catch {
+      // Malformed message shape (e.g. an assistant message without content) would throw
+      // inside pi's estimator; count it as 0 so the gate degrades to a best-effort
+      // measurement instead of breaking the send.
+    }
+  }
+  return total;
+}
+
+/** Options for {@link ensureContextWithinCompactionThreshold}. */
+export interface CompactionGateOptions {
+  /**
+   * Upper bound on the effective threshold (Settings.tokenCap). `undefined` means the
+   * engine default of 80% of the per-model context window.
+   */
+  tokenCap?: number | null;
+  /**
+   * FNXC:ChatContextGuard 2026-08-19-15:05:
+   * RUFU-118: operator opt-out (Settings.chatPreOverflowCompactionEnabled). `false`
+   * disables the gate for this call (no measurement, no compaction, no throw);
+   * `undefined` or `true` keeps it active. The gate ships ON by default (an opt-out,
+   * not an opt-in) because without it a context at the model wall degrades to 1-token
+   * replies — pi's own threshold compaction never fires for zero-usage providers
+   * (earendil-works/pi#8328) — but it is a selectable feature, so a project that
+   * prefers the raw pi-only behavior can turn it off.
+   */
+  enabled?: boolean;
+}
+
+/** Result of a gate evaluation. */
+export interface CompactionGateResult {
+  /** Whether this gate call compacted the session. */
+  compacted: boolean;
+  /** Estimated loaded context tokens measured at gate time (null when unknown). */
+  contextTokens: number | null;
+  /** Effective threshold used for the decision (null when unknown/unavailable). */
+  threshold: number | null;
+}
+
+/**
+ * Ensure the session's loaded context fits the model window before the next prompt.
+ *
+ * Skips (diagnostic warn, no throw) for: an explicit `enabled: false` opt-out,
+ * non-pi session shapes, unknown context window / non-positive hard limit, and unknown
+ * loaded-token measurements.
+ *
+ * When the measured context is at or above the threshold: compacts via the existing
+ * `compactSessionContext` (session.compact()), re-measures, and throws
+ * {@link ChatContextOverflowError} when compaction is unavailable/returns no result,
+ * throws, or leaves the context at or above the hard limit. The prompt is never sent in
+ * those cases.
+ */
+export async function ensureContextWithinCompactionThreshold(
+  session: CompactionGateSession,
+  options: CompactionGateOptions,
+): Promise<CompactionGateResult> {
+  if (options.enabled === false) {
+    // Routine per-turn skip (operator opted out via Settings.chatPreOverflowCompactionEnabled).
+    // debug() keeps this out of the steady-state log — a warn/log here would fire on every
+    // chat turn for opted-out projects.
+    piLog.debug("chat-context-guard: pre-overflow gate disabled by project settings — skipping");
+    return { compacted: false, contextTokens: null, threshold: null };
+  }
+  if (!session || typeof session.getContextUsage !== "function") {
+    piLog.warn("chat-context-guard: non-pi session shape (no getContextUsage) — skipping pre-overflow gate");
+    return { compacted: false, contextTokens: null, threshold: null };
+  }
+
+  const threshold = computeCompactionThreshold({
+    contextWindow: session.model?.contextWindow,
+    maxTokens: session.model?.maxTokens,
+    tokenCap: options.tokenCap,
+  });
+  if (threshold === null) {
+    piLog.warn("chat-context-guard: context window unknown or hard limit non-positive — skipping pre-overflow gate");
+    return { compacted: false, contextTokens: null, threshold: null };
+  }
+
+  const contextTokens = estimateLoadedContextTokens(session);
+  if (contextTokens === null) {
+    piLog.warn("chat-context-guard: loaded context tokens unknown — skipping pre-overflow gate");
+    return { compacted: false, contextTokens: null, threshold };
+  }
+
+  if (contextTokens < threshold) {
+    return { compacted: false, contextTokens, threshold };
+  }
+
+  /*
+  FNXC:ChatContextGuard 2026-08-20-22:27: RUFU-145 PR #3493 review: the stale-usage
+  cross-check now runs BEFORE compaction, not only when compaction returns no result.
+  estimateLoadedContextTokens prefers the provider-reported getContextUsage().tokens,
+  which pi restores from the session file and which can describe a LARGER static
+  context than the session carries now (RUFU-135: recorded 124K vs ~36K live). When the
+  conversation branch is still large, the old order compacted first and the
+  post-compaction re-measure could read the same stale usage — throwing
+  ChatContextOverflowError even though the live context fits. The fresh measurement
+  (current prompt + active tool schemas + loaded messages) is the live view; when it
+  fits under the threshold the recorded usage is stale and the send proceeds without a
+  compaction round-trip.
+  */
+  const preCompactFreshTokens = freshLoadedContextEstimate(session);
+  if (preCompactFreshTokens !== null && preCompactFreshTokens < threshold) {
+    piLog.log(
+      `chat-context-guard: recorded context ${contextTokens} tokens >= threshold ${threshold} but the fresh measurement of the current prompt + tools + messages is ${preCompactFreshTokens} tokens — the recorded usage is stale; proceeding without compaction`,
+    );
+    return { compacted: false, contextTokens: preCompactFreshTokens, threshold };
+  }
+
+  piLog.warn(
+    `chat-context-guard: loaded context ${contextTokens} tokens >= threshold ${threshold} — compacting before prompt`,
+  );
+
+  let compactResult: { summary: string; tokensBefore: number } | null;
+  try {
+    compactResult = await compactSessionContext(session as unknown as AgentSession);
+  } catch (err) {
+    throw new ChatContextOverflowError(
+      `Pre-overflow compaction failed for a ${contextTokens}-token context (threshold ${threshold}, contextWindow ${session.model?.contextWindow ?? "unknown"}); the prompt was not sent`,
+      { contextTokens, threshold, contextWindow: session.model?.contextWindow ?? null, stage: "compaction" },
+      err instanceof Error ? err : undefined,
+    );
+  }
+  if (!compactResult) {
+    /*
+    FNXC:ChatContextGuard 2026-08-20-12:20:
+    Stale-usage cross-check (RUFU-135 follow-up). "No compaction result" means the
+    conversation branch was too small to compress — the context is dominated by
+    STATIC content. The recorded usage may therefore describe a LARGER static
+    context than the session carries now (it is restored from the session file and
+    predates whatever deploy changed the prompt/toolset). Re-measure the current
+    prompt + active tool schemas + messages; if the fresh measurement fits under the
+    threshold, the recorded usage is stale and the send is safe. When the fresh
+    measurement also exceeds the threshold the overflow is real (the static floor
+    itself no longer fits) and the gate keeps its fail-loud behavior.
+    */
+    const freshTokens = freshLoadedContextEstimate(session);
+    if (freshTokens !== null && freshTokens < threshold) {
+      piLog.log(
+        `chat-context-guard: recorded context ${contextTokens} tokens is stale — fresh measurement of the current prompt + tools + messages is ${freshTokens} tokens (< threshold ${threshold}); the session's static context changed since the usage was recorded. Proceeding with the current context.`,
+      );
+      return { compacted: false, contextTokens: freshTokens, threshold };
+    }
+    throw new ChatContextOverflowError(
+      `Pre-overflow compaction returned no result for a ${contextTokens}-token context (threshold ${threshold}, contextWindow ${session.model?.contextWindow ?? "unknown"})${
+        freshTokens !== null
+          ? `; the fresh measurement of the current prompt is ${freshTokens} tokens, so the static context (system prompt + tools + memory) itself exceeds the window budget — reduce the agent's tools/memory or use a larger-window model`
+          : ""
+      }; the prompt was not sent`,
+      { contextTokens, freshTokens, threshold, contextWindow: session.model?.contextWindow ?? null, stage: "compaction-unavailable" },
+      new Error("session.compact() produced no compaction result"),
+    );
+  }
+
+  const bounds = resolveCompactionBounds(session.model?.contextWindow, session.model?.maxTokens);
+  if (!bounds) {
+    // The threshold check above already proved a valid bound existed at decision time;
+    // a model change mid-call cannot make this reachable, but fail loud anyway.
+    throw new ChatContextOverflowError(
+      `Compaction completed but the hard limit is no longer computable for a ${contextTokens}-token context; the prompt was not sent`,
+      { contextTokens, threshold, contextWindow: session.model?.contextWindow ?? null, stage: "post-compaction" },
+    );
+  }
+
+  const afterTokens = estimateLoadedContextTokens(session);
+  if (afterTokens !== null && afterTokens >= bounds.hardLimit) {
+    throw new ChatContextOverflowError(
+      `Context is still ${afterTokens} tokens after compaction (hard limit ${bounds.hardLimit}, contextWindow ${session.model?.contextWindow ?? "unknown"}); the prompt was not sent`,
+      { contextTokens, afterTokens, threshold, hardLimit: bounds.hardLimit, contextWindow: session.model?.contextWindow ?? null, stage: "post-compaction" },
+    );
+  }
+
+  if (afterTokens === null) {
+    piLog.warn("chat-context-guard: post-compaction measurement unknown — proceeding after a successful compaction");
+  }
+
+  return { compacted: true, contextTokens, threshold };
+}

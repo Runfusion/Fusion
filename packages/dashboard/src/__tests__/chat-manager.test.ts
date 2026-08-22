@@ -574,7 +574,13 @@ describe("ChatManager.sendMessage", () => {
       totalTokens: 14,
     }));
     expect(createOptions.tools).toBe("coding");
-    expect(createOptions).not.toHaveProperty("toolsAllowlist");
+    /*
+    FNXC:ChatContextBudget 2026-08-22-12:14 (RUFU-135):
+    The planner chat gets a curated allowlist that still includes the
+    task-planner tools it needs (steering + metrics) while hiding the rest of
+    the executor surface.
+    */
+    expect(createOptions.toolsAllowlist).toContain("fn_task_planner_get_task_metrics");
   });
 
   it("does not record chat token usage when session stats are unavailable or zero", async () => {
@@ -1159,6 +1165,20 @@ describe("ChatManager.sendMessage", () => {
       expect.objectContaining({ status: "generating" }),
     );
     expect(mockChatStore.setInFlightGeneration).toHaveBeenLastCalledWith("chat-001", null);
+    /*
+    FNXC:ChatInFlightRecovery 2026-08-20-20:17 (RUFU-144):
+    Every persisted in-flight snapshot (the initial "generating" flush and every streamed
+    checkpoint) must carry the `startedAt` liveness timestamp so the engine self-healing
+    sweep can prove a flag older than its floor cannot belong to a live generation. The
+    final clear (null) drops the whole payload by design.
+    */
+    const generatingSnapshots = mockChatStore.setInFlightGeneration.mock.calls
+      .map((call) => call[1] as { status?: string } | null)
+      .filter((snapshot): snapshot is { status: string } => snapshot !== null && snapshot.status === "generating");
+    expect(generatingSnapshots.length).toBeGreaterThanOrEqual(1);
+    for (const snapshot of generatingSnapshots) {
+      expect(snapshot).toEqual(expect.objectContaining({ startedAt: expect.any(String) }));
+    }
   });
 
   it("observes a debounced checkpoint rejection without an unhandled rejection", async () => {
@@ -1389,7 +1409,7 @@ describe("ChatManager.sendMessage", () => {
     );
   });
 
-  it("creates chat agents with the full coding toolset", async () => {
+  it("creates chat agents with the curated chat toolset allowlist", async () => {
     let createOptions: any;
     __setCreateResolvedAgentSession(async (options: any) => {
       createOptions = options;
@@ -1408,7 +1428,19 @@ describe("ChatManager.sendMessage", () => {
     await chatManager.sendMessage("chat-001", "Hello");
 
     expect(createOptions.tools).toBe("coding");
-    expect(createOptions).not.toHaveProperty("toolsAllowlist");
+    /*
+    FNXC:ChatContextBudget 2026-08-22-12:14 (RUFU-135):
+    Dashboard chat sessions get an explicit curated toolsAllowlist (the builtin
+    coding tools plus the session's own fn_* tools) so pi filters the 86
+    host-extension executor tools out of the static context — the invariant the
+    64K-window-model requirement depends on. The pre-RUFU-135 assertion here was
+    "no allowlist at all", which pinned the 124K-token static floor that made
+    64K-window models unusable.
+    */
+    expect(createOptions.toolsAllowlist).toEqual(
+      expect.arrayContaining(["read", "bash", "edit", "write", "grep", "find", "ls"]),
+    );
+    expect(createOptions.toolsAllowlist).not.toContain("fn_task_planner_get_task_metrics");
   });
 
   it("requests bound agent and enabled plugin skills for regular chat", async () => {
@@ -4066,7 +4098,15 @@ describe("ChatManager generation isolation", () => {
 
     const names = capturedTools.map((tool) => tool.name);
     expect(createOptions.tools).toBe("coding");
-    expect(createOptions).not.toHaveProperty("toolsAllowlist");
+    /*
+    FNXC:ChatContextBudget 2026-08-22-12:14 (RUFU-135):
+    Room responder sessions get the curated chat allowlist (builtin coding tools
+    plus the session's own custom tools) instead of the full executor surface;
+    the metrics exclusion below still holds via the customTools registration.
+    */
+    expect(createOptions.toolsAllowlist).toEqual(
+      expect.arrayContaining(["read", "bash", "edit", "write", "grep", "find", "ls"]),
+    );
     expect(names).not.toContain("fn_task_planner_get_task_metrics");
     for (const required of [
       "fn_task_list",
@@ -4274,4 +4314,117 @@ describe("ChatManager generation isolation", () => {
     }));
   });
 
+});
+
+/*
+FNXC:PerTurnMemoryRecall 2026-08-19-01:05:
+RUFU-120 (B.2 LCM phase 2): ChatManager forwards the per-turn recall inputs at BOTH prompt
+assembly seams — sendMessage (topic = user message content, sessionId = chat session id) and
+the room-responder path (topic = room reply input, sessionId = room:<roomId>). The prompt
+builder (engine buildAgentChatPrompt) owns the actual recall search/injection; this seam test
+asserts the forwarding contract via the __setBuildAgentChatPrompt hook so a regression that
+drops any of topic/sessionId/settings would leave the model without a recall cue.
+*/
+describe("ChatManager per-turn memory recall forwarding (RUFU-120 B.2)", () => {
+  const RECALL_SETTINGS = {
+    memoryEnabled: true,
+    memoryBackendType: "stash",
+    memoryPerTurnRecallEnabled: true,
+    memoryPerTurnRecallTopK: 3,
+  };
+
+  let capturedPromptOptions: any;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    __resetChatState();
+
+    mockChatStore.getSession.mockReturnValue({
+      id: "chat-001",
+      agentId: "agent-001",
+      status: "active",
+    });
+    mockChatStore.addMessage.mockReturnValue({
+      id: "msg-001",
+      sessionId: "chat-001",
+      role: "assistant",
+      content: "",
+    });
+    mockChatStore.getMessages.mockReturnValue([]);
+    mockChatStore.getRoomMessages.mockReturnValue([]);
+    mockAgentStore.init.mockResolvedValue(undefined);
+    mockAgentStore.getAgent.mockResolvedValue({
+      id: "agent-001",
+      name: "Avery",
+      role: "executor",
+      state: "idle",
+    });
+    mockAgentStore.listAgents.mockResolvedValue([{ id: "agent-001", name: "Avery", role: "executor", state: "idle" }]);
+
+    capturedPromptOptions = undefined;
+    __setBuildAgentChatPrompt(async (options: any) => {
+      capturedPromptOptions = options;
+      return options.basePrompt;
+    });
+    __setCreateResolvedAgentSession(async () => ({
+      session: {
+        prompt: vi.fn().mockResolvedValue(undefined),
+        dispose: vi.fn(),
+        state: { messages: [{ role: "assistant", content: "Done" }] },
+      },
+    }) as any);
+  });
+
+  afterEach(() => {
+    __setChatDiagnostics(null);
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  function managerWithSettings(): ChatManager {
+    return new ChatManager(
+      mockChatStore as any,
+      "/tmp/test",
+      mockAgentStore as any,
+      undefined,
+      async () => RECALL_SETTINGS,
+    );
+  }
+
+  it("sendMessage forwards topic (user content), chat sessionId, and settings to the prompt builder", async () => {
+    const manager = managerWithSettings();
+    await manager.sendMessage("chat-001", "čo sme diskutovali o LCM B.1");
+
+    expect(capturedPromptOptions).toBeDefined();
+    // Topic is the user message content (skill-command-stripped; raw content here).
+    expect(capturedPromptOptions.topic).toContain("čo sme diskutovali o LCM B.1");
+    // Stable per-chat session key for the session-scoped cue dedup.
+    expect(capturedPromptOptions.sessionId).toBe("chat-001");
+    // Settings forwarded so the enable/topK/memoryEnabled gates apply.
+    expect(capturedPromptOptions.settings).toEqual(RECALL_SETTINGS);
+    // Existing options untouched (compose, don't replace).
+    expect(capturedPromptOptions.includeProjectMemory).toBe(true);
+    expect(capturedPromptOptions.agent.id).toBe("agent-001");
+  });
+
+  it("sendRoomMessage forwards topic (room input), room-scoped sessionId, and settings", async () => {
+    (mockChatStore as any).getRoom = vi.fn().mockReturnValue({ id: "room-1", name: "team" });
+    (mockChatStore as any).listRoomMembers = vi.fn().mockReturnValue([
+      { roomId: "room-1", agentId: "agent-001", role: "member", addedAt: "2026-01-01" },
+    ]);
+    (mockChatStore as any).addRoomMessage = vi.fn().mockImplementation((_roomId: string, input: any) => ({
+      id: "room-msg",
+      roomId: "room-1",
+      ...input,
+    }));
+
+    const manager = managerWithSettings();
+    await manager.sendRoomMessage("room-1", "hello @Avery what is the merge gate status");
+
+    expect(capturedPromptOptions).toBeDefined();
+    expect(capturedPromptOptions.topic).toContain("what is the merge gate status");
+    // Stable per-room session key.
+    expect(capturedPromptOptions.sessionId).toBe("room:room-1");
+    expect(capturedPromptOptions.settings).toEqual(RECALL_SETTINGS);
+  });
 });

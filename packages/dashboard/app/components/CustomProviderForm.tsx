@@ -1,8 +1,10 @@
 import { useCallback, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Loader2, Search } from "lucide-react";
+import type { CustomProviderThinkingFormat } from "@fusion/core";
 import type { CustomProviderConfig, CustomProviderModelInput } from "../api";
 import { probeProviderModels } from "../api";
+import { CUSTOM_PROVIDER_THINKING_FORMAT_OPTIONS } from "./custom-provider-thinking-format";
 import "./CustomProviderForm.css";
 
 // Reserved built-in IDs (including hidden/deprecated aliases) to prevent custom-provider collisions.
@@ -160,6 +162,11 @@ export function CustomProviderForm({ initialConfig, onSave, onCancel, saving = f
         name: model.name?.trim() || undefined,
         contextWindow: model.contextWindow,
         maxTokens: model.maxTokens,
+        // FNXC:CustomProviderThinkingFormat 2026-08-21-06:30: RUFU-143 conditional spread —
+        // keys appear only when set so default rows keep the byte-identical payload; the
+        // opt-out wins, so a flagged model with reasoning: false sends only reasoning.
+        ...(model.reasoning !== false && model.thinkingFormat ? { thinkingFormat: model.thinkingFormat } : {}),
+        ...(model.reasoning === false ? { reasoning: false } : {}),
       })),
     });
   }
@@ -201,6 +208,11 @@ export function CustomProviderForm({ initialConfig, onSave, onCancel, saving = f
             FNXC:CustomProviders 2026-08-19-15:13:
             There is no reasoning capability control because custom models are presumed thinking-capable.
             Pi derives selector options and execution behavior from their shared server registration.
+
+            FNXC:CustomProviderThinkingFormat 2026-08-21-06:30:
+            RUFU-143: the per-model "Thinking format" select and "No thinking params" opt-out are
+            parameter controls, not capability claims — the presumed-thinking-capable default
+            stands unless the operator opts the model out (or pins a pi-ai thinking format).
             */
             <div key={`${index}-model`} className="custom-provider-form__model-row">
               <input
@@ -237,6 +249,30 @@ export function CustomProviderForm({ initialConfig, onSave, onCancel, saving = f
                 onChange={(e) => updateModel(index, { maxTokens: e.target.value ? Number(e.target.value) : undefined })}
                 disabled={saving}
               />
+              <select
+                className="select"
+                aria-label={`${t("providers.modelRow.thinkingFormat", "Thinking format")} ${index + 1}`}
+                value={model.thinkingFormat ?? ""}
+                onChange={(e) => updateModel(index, { thinkingFormat: (e.target.value || undefined) as CustomProviderThinkingFormat | undefined })}
+                disabled={saving || model.reasoning === false}
+              >
+                <option value="">{t("providers.modelRow.thinkingFormatDefault", "Default")}</option>
+                {CUSTOM_PROVIDER_THINKING_FORMAT_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {t(option.labelKey, option.label)}
+                  </option>
+                ))}
+              </select>
+              <label className="custom-provider-form__model-row-no-thinking">
+                <input
+                  type="checkbox"
+                  aria-label={`${t("providers.modelRow.noThinkingParams", "No thinking params")} ${index + 1}`}
+                  checked={model.reasoning === false}
+                  onChange={(e) => updateModel(index, { reasoning: e.target.checked ? false : undefined })}
+                  disabled={saving}
+                />{" "}
+                {t("providers.modelRow.noThinkingParams", "No thinking params")}
+              </label>
               <button
                 type="button"
                 className="btn btn-icon btn-sm"

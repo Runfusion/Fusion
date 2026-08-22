@@ -92,4 +92,53 @@ export const memorySearchEntries: SettingsSearchEntry[] = [
       "Cron expression for dream processing. Default: 0 4 * * * (daily at 4 AM).",
     keywords: ["timing"],
   },
+  /*
+  FNXC:PerTurnMemoryRecall 2026-08-19-15:05:
+  (RUFU-120) The per-turn recall rows were rendered with descriptor keys but never
+  registered here — the search-index drift guard (settings-search-index.test.ts) fails
+  on any rendered-but-unindexed key, so both rows are indexed now (fixes the red guard).
+  */
+  {
+    sectionId: "memory",
+    key: "memoryPerTurnRecallEnabled",
+    labelKey: "settings.memory.perTurnRecall",
+    labelFallback: " Per-turn memory recall ",
+    helpKey: "settings.memory.perTurnRecallHelp",
+    helpFallback:
+      "Recalls the most relevant memory snippets for the current topic before each chat or task step turn and injects a short, deduped cue into the prompt. Default: enabled.",
+    keywords: ["recall", "cue", "focus", "context"],
+  },
+  {
+    sectionId: "memory",
+    key: "memoryPerTurnRecallTopK",
+    labelKey: "settings.memory.perTurnRecallTopK",
+    labelFallback: " Max snippets per turn ",
+    helpKey: "settings.memory.perTurnRecallTopKHelp",
+    helpFallback: "Maximum number of memory snippets injected per turn. Default: 3.",
+    keywords: ["topk", "snippets", "limit"],
+  },
+  /*
+  FNXC:ChatContextGuard 2026-08-19-15:05:
+  (RUFU-118 follow-up) Opt-out toggle for the LCM B.1 pre-overflow compaction gate.
+  */
+  {
+    sectionId: "memory",
+    key: "chatPreOverflowCompactionEnabled",
+    labelKey: "settings.memory.preOverflowCompaction",
+    labelFallback: "Pre-overflow compaction guard",
+    helpKey: "settings.memory.preOverflowCompactionHelp",
+    helpFallback:
+      "Compacts the chat context at ~80% of the model window before a turn would overflow it, preventing single-token replies at the context wall. Default: enabled.",
+    keywords: ["compaction", "overflow", "guard", "context", "lcm"],
+  },
+  {
+    sectionId: "memory",
+    key: "chatContextBudgetEnabled",
+    labelKey: "settings.memory.chatContextBudget",
+    labelFallback: "Chat context budget (64K window fit)",
+    helpKey: "settings.memory.chatContextBudgetHelp",
+    helpFallback:
+      "Bounds the chat static context: oversized memory becomes a bounded heading index and chat sessions use the curated chat toolset, so agent chat fits 64K-window models. Disable to restore unbounded memory injection and the full tool set (pre-RUFU-135 behavior). Default: enabled.",
+    keywords: ["context", "budget", "memory", "tools", "64k", "lcm", "floor", "kill switch"],
+  },
 ];

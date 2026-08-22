@@ -1310,6 +1310,7 @@
     "noSkillsAvailable": "사용 가능한 스킬 없음",
     "noSkillsFound": "스킬을 찾을 수 없습니다",
     "openQuickChat": "빠른 채팅 열기",
+    "outputBudgetExhausted": "모델이 전체 출력 예산을 모두 추론에 사용했습니다. 이 모델의 maxTokens를 높이세요.",
     "questionAnsweredLabel": "",
     "questionAnsweredWithoutContent": "",
     "questionConfirmNo": "",
@@ -5827,6 +5828,29 @@
     "inProgress": ""
   },
   "settings": {
+    "jira": {
+      "configuration": "",
+      "enable": "",
+      "enabledHelp": "",
+      "baseUrl": "",
+      "globalBaseUrl": "",
+      "baseUrlHelp": "",
+      "apiBaseUrl": "",
+      "globalApiBaseUrl": "",
+      "apiBaseUrlHelp": "",
+      "email": "",
+      "globalEmail": "",
+      "emailHelp": "",
+      "secretKey": "",
+      "globalSecretKey": "",
+      "secretHelp": "",
+      "secretScope": "",
+      "globalSecretScope": "",
+      "scopeHelp": "",
+      "template": "",
+      "globalTemplate": "",
+      "templateHelp": ""
+    },
     "actions": {
       "cancel": "취소",
       "save": "저장"
@@ -6320,6 +6344,8 @@
     "keepRemote": "원격 유지",
     "loading": "불러오는 중…",
     "memory": {
+      "chatContextBudget": "",
+      "chatContextBudgetHelp": "",
       "03": "",
       "agentsGetMemorySearchMemoryGetAndMemory": "",
       "agentsSearchWithQmdFirstFallBackTo": "",
@@ -6338,6 +6364,14 @@
       "dreamNow": "지금 드림",
       "dreamSchedule": "",
       "enableMemoryTools": "",
+      "perTurnRecall": "턴별 메모리 회상",
+      "perTurnRecallTopK": "턴별 회상 Top K",
+      "perTurnRecallHelp": "에이전트 채팅 또는 단계 프롬프트마다 현재 주제에 대한 제한된 회상을 앞단에 붙여, 이전 힌트가 압축으로 제거되었더라도 관련 메모리가 컨텍스트에 있게 합니다. 기본: 켬.",
+      "perTurnRecallTopKHelp": "프롬프트당 앞단에 붙일 최대 메모리 조각 수. 기본: 3 (최대 10).",
+
+      "preOverflowCompaction": "",
+
+      "preOverflowCompactionHelp": "",
       "failedToLoadBackendStatus": "",
       "for": "",
       "installing": "설치 중…",

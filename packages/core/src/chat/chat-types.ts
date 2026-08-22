@@ -34,6 +34,15 @@ export interface ChatInFlightGenerationState {
   toolCalls: ChatInFlightToolCall[];
   replayFromEventId: number;
   updatedAt: string;
+  /**
+   * FNXC:ChatInFlightRecovery 2026-08-20-20:17:
+   * Liveness timestamp stamped when a generation starts (RUFU-144). A generation cannot
+   * outlive the dashboard process that started it and no owner/PID is recorded, so
+   * `startedAt` (fallback: the session's `updated_at` for pre-fix legacy rows) is the
+   * liveness proof the engine self-healing sweep uses to clear flags older than its
+   * staleness floor. Optional because rows written before this field existed lack it.
+   */
+  startedAt?: string;
 }
 
 export interface ChatTag {

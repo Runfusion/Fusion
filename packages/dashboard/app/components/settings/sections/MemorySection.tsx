@@ -86,6 +86,82 @@ export function MemorySection({ form, setForm, memory }: MemorySectionProps) {
         onChange={(v) => setForm((f) => ({ ...f, memoryEnabled: v === true }))}
       />
 
+      {/*
+      FNXC:PerTurnMemoryRecall 2026-08-19-01:15:
+      RUFU-120 (B.2 LCM phase 2): per-turn proactive memory recall. Before every
+      agent chat/step prompt, a bounded recall for the current topic is prepended
+      so relevant memory stays in context even when older cues were evicted by
+      compaction. On by default (memoryPerTurnRecallEnabled: true); recall costs
+      nothing when there is no topical memory to surface, and the top-K row is
+      gated on the toggle (same pattern as the auto-summarize threshold below).
+      */}
+      <SettingsToggleRow
+        descriptor={{
+          key: "memoryPerTurnRecallEnabled",
+          label: t("settings.memory.perTurnRecall", " Per-turn memory recall "),
+          help: t("settings.memory.perTurnRecallHelp", "Recalls the most relevant memory snippets for the current topic before each chat or task step turn and injects a short, deduped cue into the prompt. Default: enabled."),
+          scope: "project",
+        }}
+        value={form.memoryPerTurnRecallEnabled !== false}
+        onChange={(v) => setForm((f) => ({ ...f, memoryPerTurnRecallEnabled: v === true }))}
+      />
+
+      {(form.memoryPerTurnRecallEnabled !== false) && (
+        <SettingsNumberRow
+          descriptor={{
+            key: "memoryPerTurnRecallTopK",
+            label: t("settings.memory.perTurnRecallTopK", " Max snippets per turn "),
+            help: t("settings.memory.perTurnRecallTopKHelp", "Maximum number of memory snippets injected per turn. Default: 3."),
+            scope: "project",
+            min: 1,
+            max: 10,
+            step: 1,
+          }}
+          value={form.memoryPerTurnRecallTopK ?? 3}
+          onChange={(v) => setForm((f) => ({ ...f, memoryPerTurnRecallTopK: v || 3 }))}
+        />
+      )}
+
+      {/*
+      FNXC:ChatContextGuard 2026-08-19-15:05:
+      RUFU-118: LCM B.1 as an opt-out project option (selectable feature, not
+      always-on — user requirement: not every operator wants the pre-overflow
+      compaction gate). On by default: without it a context at the model wall
+      degrades to 1-token replies (pi threshold compaction never fires for
+      zero-usage providers — earendil-works/pi#8328). Sits next to the B.2 recall
+      toggle because operators think of LCM as one feature pair.
+      */}
+      <SettingsToggleRow
+        descriptor={{
+          key: "chatPreOverflowCompactionEnabled",
+          label: t("settings.memory.preOverflowCompaction", "Pre-overflow compaction guard"),
+          help: t("settings.memory.preOverflowCompactionHelp", "Compacts the chat context at ~80% of the model window before a turn would overflow it, preventing single-token replies at the context wall. Default: enabled."),
+          scope: "project",
+        }}
+        value={form.chatPreOverflowCompactionEnabled !== false}
+        onChange={(v) => setForm((f) => ({ ...f, chatPreOverflowCompactionEnabled: v === true }))}
+      />
+
+      {/*
+      FNXC:ChatContextBudget 2026-08-20-16:20:
+      Runtime kill switch for the RUFU-135 chat context budget (bounded memory
+      inlining + curated chat tool allowlist). Sits next to the guard toggle
+      because operators think of LCM as one feature pair; disabling restores
+      the pre-RUFU-135 unbounded-memory / full-toolset prompt shape without a
+      redeploy (user requirement: every LCM behavior change must be disableable
+      as a feature).
+      */}
+      <SettingsToggleRow
+        descriptor={{
+          key: "chatContextBudgetEnabled",
+          label: t("settings.memory.chatContextBudget", "Chat context budget (64K window fit)"),
+          help: t("settings.memory.chatContextBudgetHelp", "Bounds the chat static context: oversized memory becomes a bounded heading index and chat sessions use the curated chat toolset, so agent chat fits 64K-window models. Disable to restore unbounded memory injection and the full tool set (pre-RUFU-135 behavior). Default: enabled."),
+          scope: "project",
+        }}
+        value={form.chatContextBudgetEnabled !== false}
+        onChange={(v) => setForm((f) => ({ ...f, chatContextBudgetEnabled: v === true }))}
+      />
+
       {backendLoading ? (<div className="form-group">
           <small className="settings-muted">{t("settings.memory.checkingMemoryWriteAccess", "Checking memory write access...")}</small>
         </div>) : backendError ? (<div className="form-group">

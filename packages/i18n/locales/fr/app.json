@@ -1310,6 +1310,7 @@
     "noSkillsAvailable": "Aucune compétence disponible",
     "noSkillsFound": "Aucune compétence trouvée",
     "openQuickChat": "Ouvrir le chat rapide",
+    "outputBudgetExhausted": "Le modèle a utilisé tout son budget de sortie pour la réflexion — augmentez maxTokens pour ce modèle.",
     "questionAnsweredLabel": "",
     "questionAnsweredWithoutContent": "",
     "questionConfirmNo": "",
@@ -5827,6 +5828,29 @@
     "inProgress": ""
   },
   "settings": {
+    "jira": {
+      "configuration": "",
+      "enable": "",
+      "enabledHelp": "",
+      "baseUrl": "",
+      "globalBaseUrl": "",
+      "baseUrlHelp": "",
+      "apiBaseUrl": "",
+      "globalApiBaseUrl": "",
+      "apiBaseUrlHelp": "",
+      "email": "",
+      "globalEmail": "",
+      "emailHelp": "",
+      "secretKey": "",
+      "globalSecretKey": "",
+      "secretHelp": "",
+      "secretScope": "",
+      "globalSecretScope": "",
+      "scopeHelp": "",
+      "template": "",
+      "globalTemplate": "",
+      "templateHelp": ""
+    },
     "actions": {
       "cancel": "Annuler",
       "save": "Enregistrer"
@@ -6320,6 +6344,8 @@
     "keepRemote": "Garder la version distante",
     "loading": "Chargement…",
     "memory": {
+      "chatContextBudget": "",
+      "chatContextBudgetHelp": "",
       "03": "",
       "agentsGetMemorySearchMemoryGetAndMemory": "",
       "agentsSearchWithQmdFirstFallBackTo": "",
@@ -6338,6 +6364,14 @@
       "dreamNow": "Rêver maintenant",
       "dreamSchedule": "",
       "enableMemoryTools": "",
+      "perTurnRecall": "Rappel mémoire par tour",
+      "perTurnRecallTopK": "Top K du rappel par tour",
+      "perTurnRecallHelp": "Avant chaque chat agent ou prompt d'étape, un rappel borné du sujet actuel est préfixé afin que la mémoire pertinente reste dans le contexte, même si des indices plus anciens ont été évincés par la compactation. Par défaut : activé.",
+      "perTurnRecallTopKHelp": "Nombre maximal de fragments de mémoire préfixés par prompt. Par défaut : 3 (plafond 10).",
+
+      "preOverflowCompaction": "",
+
+      "preOverflowCompactionHelp": "",
       "failedToLoadBackendStatus": "",
       "for": "",
       "installing": "Installation…",

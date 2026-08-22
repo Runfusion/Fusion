@@ -6,6 +6,7 @@
 import { api } from "../client/client.js";
 import type { FetchOptions } from "../client/client.js";
 import { dedupe } from "../client/dedupe.js";
+import type { CustomProviderThinkingFormat } from "@fusion/core";
 // --- Auth API ---
 
 /*
@@ -603,6 +604,38 @@ export function setLlamaCppEnabled(
   });
 }
 
+/*
+FNXC:CustomProviderModelWindows 2026-08-19-16:01:
+RUFU-123: the custom-provider model entry now mirrors @fusion/core's per-model
+contextWindow/maxTokens (optional positive token counts; 128000/16384 fall back at the
+registry builder when omitted). The legacy mappings below must carry the values through
+when present and omit the keys when absent, so the legacy ModelOnboardingModal form path
+stops silently dropping the windows it already collects. Keep in sync with
+packages/core/src/types/workflow/workflow-steps.ts (RUFU-123 widened it) and with the
+register-custom-provider-routes validateModels contract (positive finite numbers only).
+*/
+function modelWindowFields(
+  model: { contextWindow?: number; maxTokens?: number; thinkingFormat?: string; reasoning?: boolean },
+): { contextWindow?: number; maxTokens?: number; thinkingFormat?: CustomProviderThinkingFormat; reasoning?: boolean } {
+  const contextWindow = typeof model.contextWindow === "number" && Number.isFinite(model.contextWindow) && model.contextWindow > 0 ? model.contextWindow : undefined;
+  const maxTokens = typeof model.maxTokens === "number" && Number.isFinite(model.maxTokens) && model.maxTokens > 0 ? model.maxTokens : undefined;
+  /*
+  FNXC:CustomProviderThinkingFormat 2026-08-21-05:48:
+  RUFU-143: the per-model thinking flags ride the same optional-field carry-through. The browser
+  mirror only guards types (string/boolean) — the route's validateModels is the authority that
+  checks thinkingFormat against the pi-ai literal union. Keys are omitted when absent so default
+  registrations round-trip byte-identical.
+  */
+  const thinkingFormat = typeof model.thinkingFormat === "string" && model.thinkingFormat.length > 0 ? model.thinkingFormat as CustomProviderThinkingFormat : undefined;
+  const reasoning = typeof model.reasoning === "boolean" ? model.reasoning : undefined;
+  return {
+    ...(contextWindow !== undefined ? { contextWindow } : {}),
+    ...(maxTokens !== undefined ? { maxTokens } : {}),
+    ...(thinkingFormat !== undefined ? { thinkingFormat } : {}),
+    ...(reasoning !== undefined ? { reasoning } : {}),
+  };
+}
+
 export interface CustomProvider {
   id: string;
   name: string;
@@ -615,7 +648,16 @@ export interface CustomProvider {
    * opt-in. Keep in sync with packages/core/src/types.ts.
    */
   anthropicPromptCaching?: boolean;
-  models?: { id: string; name: string }[];
+  /**
+   * FNXC:CustomProviderModelWindows 2026-08-19-16:01:
+   * RUFU-123: per-model contextWindow/maxTokens mirror core's widened model entry
+   * (see modelWindowFields). Absent values fall back to 128000/16384 at registration.
+   *
+   * FNXC:CustomProviderThinkingFormat 2026-08-21-05:48:
+   * RUFU-143: per-model thinkingFormat (pi-ai thinking-format literal) and reasoning (strict
+   * boolean; false opts out of all thinking params) mirror core's widened model entry.
+   */
+  models?: { id: string; name: string; contextWindow?: number; maxTokens?: number; thinkingFormat?: CustomProviderThinkingFormat; reasoning?: boolean }[];
 }
 
 export async function fetchCustomProviders(): Promise<CustomProviderConfig[] & { providers: CustomProviderConfig[] }> {
@@ -630,7 +672,8 @@ export async function fetchCustomProviders(): Promise<CustomProviderConfig[] & {
       : "openai-completions",
     apiKey: provider.apiKey,
     anthropicPromptCaching: provider.anthropicPromptCaching,
-    models: (provider.models ?? []).map((model) => ({ id: model.id, name: model.name })),
+    // FNXC:CustomProviderModelWindows 2026-08-19-16:01: RUFU-123 carry per-model windows through to the legacy config.
+    models: (provider.models ?? []).map((model) => ({ id: model.id, name: model.name, ...modelWindowFields(model) })),
   } satisfies CustomProviderConfig));
   return Object.assign(legacyProviders, { providers: legacyProviders });
 }
@@ -656,9 +699,11 @@ export function updateCustomProvider(
       : {}),
     ...(Array.isArray(legacy.models)
       ? {
+          // FNXC:CustomProviderModelWindows 2026-08-19-16:01: RUFU-123 carry per-model windows through the PUT body.
           models: legacy.models.map((model) => ({
             id: model.id,
             name: model.name ?? model.id,
+            ...modelWindowFields(model),
           })),
         }
       : {}),
@@ -705,6 +750,10 @@ export interface CustomProviderModelInput {
   name?: string;
   contextWindow?: number;
   maxTokens?: number;
+  /** FNXC:CustomProviderThinkingFormat 2026-08-21-05:48: RUFU-143 per-model pi-ai thinking-format literal. */
+  thinkingFormat?: CustomProviderThinkingFormat;
+  /** FNXC:CustomProviderThinkingFormat 2026-08-21-05:48: RUFU-143 strict boolean; false opts out of all thinking params. */
+  reasoning?: boolean;
 }
 
 export interface CustomProviderConfig {
@@ -728,9 +777,12 @@ export function createCustomProvider(config: CustomProviderConfig): Promise<Cust
     apiType,
     baseUrl: config.baseUrl,
     apiKey: config.apiKey,
+    // FNXC:CustomProviderModelWindows 2026-08-19-16:01: RUFU-123 the legacy form collects
+    // per-model windows; carry them through so they persist instead of being dropped.
     models: config.models?.map((model) => ({
       id: model.id,
       name: model.name ?? model.id,
+      ...modelWindowFields(model),
     })),
   });
 }
