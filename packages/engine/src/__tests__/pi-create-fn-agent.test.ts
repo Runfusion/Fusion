@@ -571,7 +571,7 @@ describe("worktree path boundary helpers", () => {
       expect(readTool.execute).toHaveBeenCalledOnce();
     });
 
-    it("allows only read/glob/grep under the standard user agent skill root", async () => {
+    it("allows only read/glob/grep under the standard user agent skill root without symlink escapes", async () => {
       const makeTool = (name: string) => ({
         name,
         label: name,
@@ -620,6 +620,21 @@ describe("worktree path boundary helpers", () => {
       });
       expect(siblingConfigResult).toMatchObject({ ok: false, error: expect.stringContaining("outside the worktree boundary") });
       expect(readTool.execute).toHaveBeenCalledOnce();
+
+      const symlinkDir = join(userSkillRoot, "linked-config");
+      const symlinkEscapePath = join(symlinkDir, "config.json");
+      realpathSyncNativeMock.mockImplementation((path: PathLike) => {
+        const text = String(path);
+        if (text === symlinkEscapePath) throw new Error("ENOENT");
+        return text === symlinkDir ? userAgentRoot : text;
+      });
+      for (const tool of wrapped.slice(0, 3) as any[]) {
+        const result = await tool.execute(`call-${tool.name}-symlink`, { path: symlinkEscapePath });
+        expect(result).toMatchObject({ ok: false, error: expect.stringContaining("outside the worktree boundary") });
+      }
+      expect(readTool.execute).toHaveBeenCalledOnce();
+      expect(globTool.execute).toHaveBeenCalledOnce();
+      expect(grepTool.execute).toHaveBeenCalledOnce();
     });
 
     it("rejects host skill paths when no read-only extra roots are provided", async () => {
