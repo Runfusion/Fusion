@@ -1,6 +1,7 @@
 /**
- * FNXC:CloudLink 2026-08-21-22:25:
+ * FNXC:CloudLink 2026-08-21-22:30:
  * HTTP client for the cloud-link control plane (/v1/pair, heartbeat, redeem).
+ * HTTPS required except loopback HTTP for local development. Requests time out.
  */
 import {
   FUSION_CLOUD_LINK_PROTOCOL,
@@ -11,6 +12,8 @@ import {
   type CloudReachabilityCandidate,
   type CloudRedeemResult,
 } from "./types.js";
+
+export const CLOUD_LINK_REQUEST_TIMEOUT_MS = 15_000;
 
 export class CloudLinkHttpError extends Error {
   constructor(
@@ -23,8 +26,36 @@ export class CloudLinkHttpError extends Error {
   }
 }
 
-function normalizeBase(httpBaseUrl: string): string {
-  return httpBaseUrl.trim().replace(/\/$/, "");
+function isLoopbackHostname(hostname: string): boolean {
+  const host = hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  return host === "localhost" || host === "127.0.0.1" || host === "::1";
+}
+
+/**
+ * Normalize and validate a cloud control-plane base URL.
+ * Rejects cleartext HTTP except loopback (local Convex / dev).
+ */
+export function normalizeCloudControlPlaneUrl(httpBaseUrl: string): string {
+  const trimmed = httpBaseUrl.trim();
+  if (!trimmed) {
+    throw new CloudLinkHttpError("Cloud HTTP URL is required", 400);
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    throw new CloudLinkHttpError("Cloud HTTP URL is invalid", 400);
+  }
+  if (parsed.protocol === "https:") {
+    return parsed.origin;
+  }
+  if (parsed.protocol === "http:" && isLoopbackHostname(parsed.hostname)) {
+    return parsed.origin;
+  }
+  throw new CloudLinkHttpError(
+    "Cloud HTTP URL must be https:// (http:// is only allowed for localhost)",
+    400,
+  );
 }
 
 async function postJson<T>(
@@ -32,11 +63,27 @@ async function postJson<T>(
   body: unknown,
   headers: Record<string, string> = {},
 ): Promise<T> {
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...headers },
-    body: JSON.stringify(body),
-  });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), CLOUD_LINK_REQUEST_TIMEOUT_MS);
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...headers },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+  } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") {
+      throw new CloudLinkHttpError(
+        `Cloud control-plane request timed out after ${CLOUD_LINK_REQUEST_TIMEOUT_MS}ms: ${url}`,
+        504,
+      );
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
   const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
   if (!res.ok) {
     const msg =
@@ -54,7 +101,7 @@ export async function cloudPairStart(
   httpBaseUrl: string,
   opts: { engineName?: string } = {},
 ): Promise<CloudPairStartResult> {
-  const base = normalizeBase(httpBaseUrl);
+  const base = normalizeCloudControlPlaneUrl(httpBaseUrl);
   const result = await postJson<{
     code: string;
     pendingSecret: string;
@@ -73,7 +120,7 @@ export async function cloudPairComplete(
   httpBaseUrl: string,
   opts: { code: string; pendingSecret: string },
 ): Promise<CloudPairCompleteResult> {
-  const base = normalizeBase(httpBaseUrl);
+  const base = normalizeCloudControlPlaneUrl(httpBaseUrl);
   const result = await postJson<{
     engineId: string;
     deviceSecret: string;
@@ -98,7 +145,7 @@ export async function cloudHeartbeat(
     capabilities?: Partial<CloudEngineCapabilities>;
   },
 ): Promise<{ status: string }> {
-  const base = normalizeBase(httpBaseUrl);
+  const base = normalizeCloudControlPlaneUrl(httpBaseUrl);
   const capabilities: CloudEngineCapabilities = {
     headless: opts.capabilities?.headless ?? true,
     dashboard: opts.capabilities?.dashboard ?? true,
@@ -125,7 +172,7 @@ export async function cloudRedeemTicket(
   httpBaseUrl: string,
   opts: { ticket: string; engineId?: string },
 ): Promise<CloudRedeemResult> {
-  const base = normalizeBase(httpBaseUrl);
+  const base = normalizeCloudControlPlaneUrl(httpBaseUrl);
   const result = await postJson<{
     engineId: string;
     userId: string;

@@ -1,14 +1,18 @@
 /**
- * FNXC:CloudLink 2026-08-21-22:25:
+ * FNXC:CloudLink 2026-08-21-22:30:
  * CLI for cloud-link Mode A — pair / complete / heartbeat / status / unlink.
- * Thin engine client; configure FUSION_CLOUD_HTTP_URL (or --http) to the control plane.
+ * Pending pairing is stored separately so pair-start cannot wipe a live link.
  */
 import {
+  clearCloudLinkPending,
   clearCloudLinkState,
   cloudHeartbeat,
   cloudPairComplete,
   cloudPairStart,
+  loadCloudLinkPending,
   loadCloudLinkState,
+  normalizeCloudControlPlaneUrl,
+  saveCloudLinkPending,
   saveCloudLinkState,
   type CloudReachabilityCandidate,
 } from "@fusion/core";
@@ -19,10 +23,10 @@ function resolveHttpBase(explicit?: string): string {
   const base = (explicit || fromEnv || "").replace(/\/$/, "");
   if (!base) {
     throw new Error(
-      "Missing cloud HTTP URL. Pass --http <url> or set FUSION_CLOUD_HTTP_URL (Convex .convex.site).",
+      "Missing cloud HTTP URL. Pass --http <url> or set FUSION_CLOUD_HTTP_URL.",
     );
   }
-  return base;
+  return normalizeCloudControlPlaneUrl(base);
 }
 
 function lanCandidate(port: number): CloudReachabilityCandidate | null {
@@ -47,21 +51,16 @@ export async function runCloudPairStart(opts: {
 }): Promise<void> {
   const http = resolveHttpBase(opts.http);
   const started = await cloudPairStart(http, { engineName: opts.name });
-  // Stash pending in state file under a temporary shape until complete
-  saveCloudLinkState({
+  saveCloudLinkPending({
     httpBaseUrl: http,
-    engineId: "",
-    deviceSecret: "",
+    code: started.code,
+    pendingSecret: started.pendingSecret,
     name: opts.name,
-    linkedAt: new Date().toISOString(),
+    createdAt: new Date().toISOString(),
   });
-  // Write pending alongside via env-like sidecar fields in a dedicated pending file is overkill;
-  // print secrets for complete step.
   console.log(`Pairing code: ${started.code}`);
   console.log("Claim this code in the cloud console (/pair), then run:");
-  console.log(
-    `  fn cloud pair-complete --http ${http} --code ${started.code} --pending-secret ${started.pendingSecret}`,
-  );
+  console.log("  fn cloud pair-complete");
   if (started.expiresAt) {
     console.log(`Expires: ${started.expiresAt}`);
   }
@@ -69,14 +68,23 @@ export async function runCloudPairStart(opts: {
 
 export async function runCloudPairComplete(opts: {
   http?: string;
-  code: string;
-  pendingSecret: string;
+  code?: string;
+  pendingSecret?: string;
 }): Promise<void> {
-  const http = resolveHttpBase(opts.http);
-  const completed = await cloudPairComplete(http, {
-    code: opts.code,
-    pendingSecret: opts.pendingSecret,
-  });
+  const pending = loadCloudLinkPending();
+  const http = opts.http
+    ? resolveHttpBase(opts.http)
+    : pending
+      ? normalizeCloudControlPlaneUrl(pending.httpBaseUrl)
+      : resolveHttpBase(undefined);
+  const code = opts.code ?? pending?.code;
+  const pendingSecret = opts.pendingSecret ?? pending?.pendingSecret;
+  if (!code || !pendingSecret) {
+    throw new Error(
+      "No pending pairing. Run fn cloud pair-start first, or pass --code and --pending-secret.",
+    );
+  }
+  const completed = await cloudPairComplete(http, { code, pendingSecret });
   saveCloudLinkState({
     httpBaseUrl: http,
     engineId: completed.engineId,
@@ -84,16 +92,16 @@ export async function runCloudPairComplete(opts: {
     name: completed.name,
     linkedAt: new Date().toISOString(),
   });
+  clearCloudLinkPending();
   console.log(`Linked engineId: ${completed.engineId}`);
   console.log(`Name: ${completed.name}`);
   console.log("Credentials saved to ~/.fusion/cloud-link.json");
-  console.log("Next: fn cloud heartbeat --url <public-or-lan-url> [--loop]");
+  console.log("Next: fn cloud heartbeat --url <public-or-lan-url>");
 }
 
 export async function runCloudHeartbeat(opts: {
   url?: string;
   port?: number;
-  loop?: boolean;
 }): Promise<void> {
   const state = loadCloudLinkState();
   if (!state?.engineId || !state.deviceSecret) {
@@ -115,24 +123,13 @@ export async function runCloudHeartbeat(opts: {
     throw new Error("Provide --url <engine-origin> or ensure a LAN IPv4 is available.");
   }
 
-  const once = async () => {
-    const result = await cloudHeartbeat(state.httpBaseUrl, {
-      engineId: state.engineId,
-      deviceSecret: state.deviceSecret,
-      candidates,
-      capabilities: { headless: true, dashboard: true },
-    });
-    console.log(new Date().toISOString(), "heartbeat", result.status);
-  };
-
-  if (opts.loop) {
-    for (;;) {
-      await once();
-      await new Promise((r) => setTimeout(r, 20_000));
-    }
-  } else {
-    await once();
-  }
+  const result = await cloudHeartbeat(state.httpBaseUrl, {
+    engineId: state.engineId,
+    deviceSecret: state.deviceSecret,
+    candidates,
+    capabilities: { headless: true, dashboard: true },
+  });
+  console.log(new Date().toISOString(), "heartbeat", result.status);
 }
 
 export async function runCloudStatus(opts: { json?: boolean } = {}): Promise<void> {
@@ -164,5 +161,6 @@ export async function runCloudStatus(opts: { json?: boolean } = {}): Promise<voi
 
 export async function runCloudUnlink(): Promise<void> {
   clearCloudLinkState();
+  clearCloudLinkPending();
   console.log("Cleared ~/.fusion/cloud-link.json");
 }

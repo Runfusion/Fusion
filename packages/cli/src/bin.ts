@@ -265,6 +265,11 @@ async function loadCommandHandlers() {
     runNodeShow,
     runNodeHealth,
     runMeshStatus,
+    runCloudPairStart,
+    runCloudPairComplete,
+    runCloudHeartbeat,
+    runCloudStatus,
+    runCloudUnlink,
     runInit,
     runOnboard,
     runAgentStop,
@@ -422,9 +427,9 @@ PR:
   fn mesh status [--json]              Show full mesh state
   fn cloud pair-start [--http <url>] [--name <name>]
                                       Start cloud-link pairing (prints code)
-  fn cloud pair-complete --code <code> --pending-secret <secret> [--http <url>]
-                                      Finish pairing after console claim
-  fn cloud heartbeat [--url <origin>] [--port <n>] [--loop]
+  fn cloud pair-complete [--http <url>] [--code <code>] [--pending-secret <secret>]
+                                      Finish pairing after console claim (uses pending file if flags omitted)
+  fn cloud heartbeat [--url <origin>] [--port <n>]
                                       Publish reachability candidates to cloud
   fn cloud status [--json]             Show local cloud-link state
   fn cloud unlink                      Clear ~/.fusion/cloud-link.json
@@ -803,6 +808,11 @@ async function main() {
     runNodeShow,
     runNodeHealth,
     runMeshStatus,
+    runCloudPairStart,
+    runCloudPairComplete,
+    runCloudHeartbeat,
+    runCloudStatus,
+    runCloudUnlink,
     runInit,
     runOnboard,
     runAgentStop,
@@ -1183,18 +1193,10 @@ async function main() {
             break;
           }
           case "pair-complete": {
-            const code = getFlagValue(args, "--code");
-            const pendingSecret = getFlagValue(args, "--pending-secret");
-            if (!code || !pendingSecret) {
-              console.error(
-                "Usage: fn cloud pair-complete --code <code> --pending-secret <secret> [--http <url>]",
-              );
-              process.exit(1);
-            }
             await runCloudPairComplete({
               http: getFlagValue(args, "--http"),
-              code,
-              pendingSecret,
+              code: getFlagValue(args, "--code"),
+              pendingSecret: getFlagValue(args, "--pending-secret"),
             });
             break;
           }
@@ -1202,7 +1204,6 @@ async function main() {
             await runCloudHeartbeat({
               url: getFlagValue(args, "--url"),
               port: getFlagValueNumber(args, "--port"),
-              loop: args.includes("--loop"),
             });
             break;
           }

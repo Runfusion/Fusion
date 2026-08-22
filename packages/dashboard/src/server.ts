@@ -82,7 +82,7 @@ import { setupCliSessionWebSocket } from "./cli-session-ws.js";
 import { createCliSessionsRouter } from "./routes/cli-sessions.js";
 import { getProjectIdFromRequest, resolveStoreForProjectId } from "./routes/context.js";
 import type { CliRelaunchRegistry } from "./cli-session-transport.js";
-import { issueRemoteAuthToken, validateRemoteAuthToken } from "./remote-auth.js";
+import { validateRemoteAuthToken } from "./remote-auth.js";
 import { getCliPackageVersion, isUnresolvedCliPackageVersion } from "./cli-package-version.js";
 import { performUpdateCheck } from "./update-check.js";
 import { buildAutoUpdateDeps, startAutoUpdateWatcher } from "./auto-update.js";
@@ -2226,13 +2226,30 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
     }
   });
 
-  app.get("/remote-login", async (req, res) => {
+  /*
+  FNXC:CloudLink 2026-08-21-22:30:
+  Unauthenticated cloudTicket redemption is not behind /api rate limits. Cap it so a
+  caller cannot fan out unbounded outbound redeem requests.
+  */
+  const cloudTicketRateLimit = rateLimit({
+    windowMs: 60_000,
+    max: 30,
+    message: "Too many cloud-link login attempts, please try again later.",
+  });
+
+  app.get("/remote-login", (req, res, next) => {
+    if (typeof req.query.cloudTicket === "string") {
+      cloudTicketRateLimit(req, res, next);
+      return;
+    }
+    next();
+  }, async (req, res) => {
     const remoteToken = typeof req.query.rt === "string" ? req.query.rt : undefined;
     /*
-    FNXC:CloudLink 2026-08-21-22:25:
+    FNXC:CloudLink 2026-08-21-22:30:
     Mode A handoff uses cloudTicket=jti.secret. Redeem against FUSION_CLOUD_HTTP_URL
-    (or linked ~/.fusion/cloud-link.json), then issue a short-lived local remote token (rt)
-    and redirect through the existing remote-login path so daemon auth still works.
+    (or linked ~/.fusion/cloud-link.json), then mint an HttpOnly remote session cookie.
+    Never put the daemon token in the redirect URL.
     */
     const cloudTicket =
       typeof req.query.cloudTicket === "string" ? req.query.cloudTicket : undefined;
@@ -2275,21 +2292,13 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
           ticket: cloudTicket,
           engineId: linked?.engineId,
         });
-        if (!remoteAccess.tokenStrategy.shortLived.enabled) {
-          const daemonTokenForRedirect = getDaemonToken(options);
-          if (daemonTokenForRedirect) {
-            const redirectUrl = new URL("/", `${req.protocol}://${req.get("host")}`);
-            redirectUrl.searchParams.set("token", daemonTokenForRedirect);
-            res.redirect(302, redirectUrl.pathname + redirectUrl.search);
-            return;
-          }
-          res.redirect(302, "/");
-          return;
+        if (daemonToken) {
+          const ttlMs = resolveRemoteSessionTtlMs(remoteAccess, { tokenType: "short-lived" });
+          const session = remoteSessions.issue(ttlMs);
+          const secure = req.protocol === "https" || req.get("x-forwarded-proto") === "https";
+          res.setHeader("Set-Cookie", buildRemoteSessionCookie(session, { secure }));
         }
-        const issued = issueRemoteAuthToken("short-lived", remoteAccess);
-        const redirectUrl = new URL("/remote-login", `${req.protocol}://${req.get("host")}`);
-        redirectUrl.searchParams.set("rt", issued.token);
-        res.redirect(302, redirectUrl.pathname + redirectUrl.search);
+        res.redirect(302, "/");
         return;
       } catch (err) {
         res.status(401).json({

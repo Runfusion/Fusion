@@ -40,6 +40,15 @@ export interface CloudLinkDeviceState {
   linkedAt: string;
 }
 
+/** In-progress pair-start payload; never mixed into linked device state. */
+export interface CloudLinkPendingPairing {
+  httpBaseUrl: string;
+  code: string;
+  pendingSecret: string;
+  name?: string;
+  createdAt: string;
+}
+
 export interface CloudPairStartResult {
   code: string;
   pendingSecret: string;
