@@ -124,10 +124,13 @@ describe("AcpRuntimeAdapter (U3)", () => {
   it("exposes session.subscribe and replays streamed updates as pi-shaped events", async () => {
     const adapter = makeAdapter({ acpEnvAllowList: ["ACP_FIXTURE_RICH_PROMPT"] });
     const { session } = await adapter.createSession(
-      makeOptions({ taskEnv: { ACP_FIXTURE_RICH_PROMPT: "1" } } as never),
+      makeOptions({ taskEnv: { ACP_FIXTURE_RICH_PROMPT: "1" } }),
     );
     const events: Array<{ type: string; assistantMessageEvent?: { type: string; delta: string; contentIndex?: number }; toolName?: string }> = [];
     const retained: Array<{ type: string }> = [];
+    const throwingUnsub = session.subscribe(() => {
+      throw new Error("broken subscriber");
+    });
     const unsubscribe = session.subscribe((event: unknown) => events.push(event as { type: string }));
     const retainedUnsub = session.subscribe((event: unknown) => retained.push(event as { type: string }));
     try {
@@ -135,20 +138,19 @@ describe("AcpRuntimeAdapter (U3)", () => {
         adapter.promptWithFallback(session, "rich turn"),
       ).resolves.toEqual({ stopReason: "end_turn" });
 
-      const textDelta = events.find(
+      const textDeltas = events.filter(
         (e) => e.type === "message_update" && e.assistantMessageEvent?.type === "text_delta",
       );
-      expect(textDelta?.assistantMessageEvent?.delta).toContain("Working on it");
+      expect(textDeltas).toHaveLength(2);
+      expect(textDeltas.map((e) => e.assistantMessageEvent?.delta).join("")).toContain("Working on it");
       // FNXC:AcpSubscribeCompat 2026-08-21-20:24: contentIndex is per block, not per delta.
-      expect(textDelta?.assistantMessageEvent?.contentIndex).toBe(0);
-      expect(events.filter((e) => e.assistantMessageEvent?.type === "text_delta").every((e) => e.assistantMessageEvent?.contentIndex === 0)).toBe(true);
+      expect(textDeltas.map((e) => e.assistantMessageEvent?.contentIndex)).toEqual([0, 0]);
 
-      const thinkingDelta = events.find(
+      const thinkingDeltas = events.filter(
         (e) => e.type === "message_update" && e.assistantMessageEvent?.type === "thinking_delta",
       );
-      expect(thinkingDelta).toBeDefined();
-      expect(thinkingDelta?.assistantMessageEvent?.contentIndex).toBe(1);
-      expect(events.filter((e) => e.assistantMessageEvent?.type === "thinking_delta").every((e) => e.assistantMessageEvent?.contentIndex === 1)).toBe(true);
+      expect(thinkingDeltas.length).toBeGreaterThan(1);
+      expect(new Set(thinkingDeltas.map((e) => e.assistantMessageEvent?.contentIndex))).toEqual(new Set([1]));
 
       const toolStart = events.find((e) => e.type === "tool_execution_start");
       expect(toolStart?.toolName).toBeTruthy();
@@ -168,6 +170,7 @@ describe("AcpRuntimeAdapter (U3)", () => {
       expect(events.length).toBe(countAfterFirst);
       expect(retained.length).toBeGreaterThan(retainedBeforeSecond);
     } finally {
+      throwingUnsub();
       retainedUnsub();
       await adapter.dispose(session);
     }
@@ -186,7 +189,7 @@ describe("AcpRuntimeAdapter (U3)", () => {
         onToolStart: (n: string, a?: unknown) => toolStarts.push({ name: n, args: a }),
         onToolEnd: (n: string, e: boolean) => toolEnds.push({ name: n, isError: e }),
         taskEnv: { ACP_FIXTURE_RICH_PROMPT: "1" },
-      } as never),
+      }),
     );
     const seenText: string[] = [];
     const seenThinking: string[] = [];
