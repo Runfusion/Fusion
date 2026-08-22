@@ -1648,6 +1648,22 @@ function normalizeExistingPathForGitComparison(path: string): string {
   }
 }
 
+function normalizePathThroughExistingAncestor(path: string): string {
+  const resolvedPath = resolve(path);
+  let existingAncestor = resolvedPath;
+
+  while (true) {
+    try {
+      const canonicalAncestor = realpathSync.native(existingAncestor);
+      return resolve(canonicalAncestor, relative(existingAncestor, resolvedPath));
+    } catch {
+      const parent = dirname(existingAncestor);
+      if (parent === existingAncestor) return resolvedPath;
+      existingAncestor = parent;
+    }
+  }
+}
+
 /**
  * FNXC:SkillReadBoundary 2026-07-21-12:00:
  * GitHub #2384 / FN-8466 requires the exact host-advertised additional skill
@@ -1732,7 +1748,7 @@ function isWorktreeAllowedPath(
   const requestedResolved = isAbsolute(requestedPath) ? resolve(requestedPath) : resolve(worktreeResolved, requestedPath);
   const worktreeCanonical = normalizeExistingPathForGitComparison(worktreeResolved);
   const projectRootCanonical = normalizeExistingPathForGitComparison(projectRootResolved);
-  const requestedCanonical = normalizeExistingPathForGitComparison(requestedResolved);
+  const requestedCanonical = normalizePathThroughExistingAncestor(requestedResolved);
 
   // Check if path is inside the worktree
   if (
@@ -1776,12 +1792,17 @@ function isWorktreeAllowedPath(
     GitHub #2384 / FN-8466 lets agents Read only the specific additional skill
     roots advertised by this session. Do not extend this exception to write,
     edit, or bash: plugin skill bodies remain host-owned read-only context.
+
+    FNXC:SkillReadBoundary 2026-08-22-09:37:
+    Skill-root containment must compare canonical paths only. A lexical path
+    beneath an allowed root can traverse a symlink whose real target is outside
+    that root; canonicalizing the deepest existing ancestor also closes this
+    escape for glob paths and nonexistent descendants.
     */
     if (readOnlyExtraRoots.some((root) => {
       const rootResolved = resolve(root);
-      const rootCanonical = normalizeExistingPathForGitComparison(rootResolved);
-      return isSameOrInsidePath(rootResolved, requestedResolved)
-        || isSameOrInsidePath(rootCanonical, requestedCanonical);
+      const rootCanonical = normalizePathThroughExistingAncestor(rootResolved);
+      return isSameOrInsidePath(rootCanonical, requestedCanonical);
     })) {
       return true;
     }
@@ -1894,7 +1915,7 @@ export function wrapToolsWithBoundary(
           const relToProject = relative(projectRoot, pathArg);
           return boundaryRejection(
             `Path "${relToProject}" is outside the worktree boundary. ` +
-              `Coding agents can only modify files inside the current worktree. ` +
+              `Coding agents can only access files inside the current worktree. ` +
               `Existing exceptions include .fusion/memory/ and task attachments; ` +
               `read-only tools may also access sibling task specs, ~/.agents/skills, and host-advertised skill roots.`,
           );
