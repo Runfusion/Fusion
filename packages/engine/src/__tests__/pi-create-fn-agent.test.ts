@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { PathLike } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
 const createAgentSessionMock = vi.fn();
 const createBashToolMock = vi.fn((cwd: string, options?: any) => ({ name: "bash", cwd, options }));
@@ -551,6 +553,72 @@ describe("worktree path boundary helpers", () => {
       const outsideResult = await (wrapped[0] as any).execute("call-outside", { path: "/other/project/secret" });
       expect(outsideResult).toMatchObject({ ok: false, error: expect.stringContaining("outside the worktree boundary") });
       expect(readTool.execute).toHaveBeenCalledOnce();
+    });
+
+    it("allows only read/glob/grep under the standard user agent skill root without symlink escapes", async () => {
+      const makeTool = (name: string) => ({
+        name,
+        label: name,
+        description: `${name} a user skill file`,
+        parameters: {},
+        execute: vi.fn().mockResolvedValue({ ok: true, content: [] }),
+      });
+      const userAgentRoot = join(homedir(), ".agents");
+      const userSkillRoot = join(userAgentRoot, "skills");
+      const skillPath = join(userSkillRoot, "code-review", "SKILL.md");
+      const [readTool, globTool, grepTool, writeTool, editTool, bashTool] = [
+        makeTool("read"),
+        makeTool("glob"),
+        makeTool("grep"),
+        makeTool("write"),
+        makeTool("edit"),
+        makeTool("bash"),
+      ];
+      const { wrapToolsWithBoundary } = await import("../pi.js");
+      const wrapped = wrapToolsWithBoundary(
+        [readTool, globTool, grepTool, writeTool, editTool, bashTool] as any,
+        "/project/.worktrees/fn-user-skills",
+        "/project",
+      );
+
+      for (const tool of wrapped.slice(0, 3) as any[]) {
+        await tool.execute(`call-${tool.name}`, { path: skillPath });
+      }
+      expect(readTool.execute).toHaveBeenCalledOnce();
+      expect(globTool.execute).toHaveBeenCalledOnce();
+      expect(grepTool.execute).toHaveBeenCalledOnce();
+
+      for (const tool of wrapped.slice(3, 5) as any[]) {
+        const result = await tool.execute(`call-${tool.name}`, { path: skillPath });
+        expect(result).toMatchObject({ ok: false, error: expect.stringContaining("outside the worktree boundary") });
+      }
+      expect(writeTool.execute).not.toHaveBeenCalled();
+      expect(editTool.execute).not.toHaveBeenCalled();
+
+      const bashResult = await (wrapped[5] as any).execute("call-bash", { command: "pwd", cwd: userSkillRoot });
+      expect(bashResult).toMatchObject({ ok: false, error: expect.stringContaining("outside the worktree boundary") });
+      expect(bashTool.execute).not.toHaveBeenCalled();
+
+      const siblingConfigResult = await (wrapped[0] as any).execute("call-config", {
+        path: join(userAgentRoot, "config.json"),
+      });
+      expect(siblingConfigResult).toMatchObject({ ok: false, error: expect.stringContaining("outside the worktree boundary") });
+      expect(readTool.execute).toHaveBeenCalledOnce();
+
+      const symlinkDir = join(userSkillRoot, "linked-config");
+      const symlinkEscapePath = join(symlinkDir, "config.json");
+      realpathSyncNativeMock.mockImplementation((path: PathLike) => {
+        const text = String(path);
+        if (text === symlinkEscapePath) throw new Error("ENOENT");
+        return text === symlinkDir ? userAgentRoot : text;
+      });
+      for (const tool of wrapped.slice(0, 3) as any[]) {
+        const result = await tool.execute(`call-${tool.name}-symlink`, { path: symlinkEscapePath });
+        expect(result).toMatchObject({ ok: false, error: expect.stringContaining("outside the worktree boundary") });
+      }
+      expect(readTool.execute).toHaveBeenCalledOnce();
+      expect(globTool.execute).toHaveBeenCalledOnce();
+      expect(grepTool.execute).toHaveBeenCalledOnce();
     });
 
     it("rejects host skill paths when no read-only extra roots are provided", async () => {
