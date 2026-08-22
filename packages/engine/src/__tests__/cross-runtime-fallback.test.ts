@@ -11,6 +11,7 @@ import {
   captureTransferableConversationContext,
   TRANSFERABLE_CONVERSATION_LIMITS,
 } from "../agents/cross-runtime-fallback.js";
+import type { AgentRuntimeOptions } from "../agents/agent-runtime.js";
 
 const primaryError = new Error("rate limit exceeded");
 
@@ -68,6 +69,68 @@ describe("cross-runtime fallback", () => {
     expect(fallbackPrompt.mock.calls[1]?.[1]).toBe("later request");
     await session.dispose();
     expect(fallbackSession.dispose).toHaveBeenCalledOnce();
+  });
+
+  /*
+  FNXC:RuntimeSubscribeCompat 2026-08-22-03:07:
+  Subscribers stay attached to the caller-held primary session across a deferred
+  runtime swap, so fallback callbacks must relay through that stable boundary.
+  */
+  it("relays fallback callbacks to subscribers on the primary session", async () => {
+    let fallbackOptions: AgentRuntimeOptions | undefined;
+    const fallbackSession = { dispose: vi.fn() };
+    const fallbackPrompt = vi.fn(async () => {
+      fallbackOptions?.onText?.("answer");
+      fallbackOptions?.onThinking?.("reasoning");
+      fallbackOptions?.onToolStart?.("read_file", { path: "README.md" });
+      fallbackOptions?.onToolEnd?.("read_file", false, { text: "ok" });
+    });
+    resolveRuntime.mockResolvedValue({
+      runtimeId: "cursor",
+      runtime: {
+        createSession: vi.fn(async (options: AgentRuntimeOptions) => {
+          fallbackOptions = options;
+          return { session: fallbackSession };
+        }),
+        promptWithFallback: fallbackPrompt,
+      },
+    });
+    const primaryListeners = new Set<(event: unknown) => void>();
+    const session = {
+      ...createSession(),
+      subscribe: (listener: (event: unknown) => void) => {
+        primaryListeners.add(listener);
+        return () => primaryListeners.delete(listener);
+      },
+    };
+    arm(session);
+    const events: unknown[] = [];
+    const unsubscribeThrowing = session.subscribe(() => {
+      throw new Error("broken subscriber");
+    });
+    const unsubscribe = session.subscribe((event) => events.push(event));
+
+    await expect(
+      (session.promptWithFallback as (prompt: string) => Promise<unknown>)("hello"),
+    ).resolves.toBeUndefined();
+
+    expect(events).toEqual([
+      {
+        type: "message_update",
+        assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "answer" },
+      },
+      {
+        type: "message_update",
+        assistantMessageEvent: { type: "thinking_delta", contentIndex: 1, delta: "reasoning" },
+      },
+      { type: "tool_execution_start", toolName: "read_file", args: { path: "README.md" } },
+      { type: "tool_execution_end", toolName: "read_file", isError: false, result: { text: "ok" } },
+    ]);
+
+    unsubscribeThrowing();
+    unsubscribe();
+    await (session.promptWithFallback as (prompt: string) => Promise<unknown>)("again");
+    expect(events).toHaveLength(4);
   });
 
   it.each([
