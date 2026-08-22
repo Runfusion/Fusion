@@ -19,6 +19,7 @@ import {
   __setCreateResolvedAgentSession,
   __resetChatState,
   chatStreamManager,
+  chatToolAllowlist,
   __getChatDiagnostics,
   __setChatDiagnostics,
   CHAT_ASK_QUESTION_GUIDANCE,
@@ -654,7 +655,18 @@ describe("ChatManager.sendMessage", () => {
       totalTokens: 14,
     }));
     expect(createOptions.tools).toBe("coding");
-    expect(createOptions).not.toHaveProperty("toolsAllowlist");
+    /*
+    FNXC:ChatContextBudget 2026-08-22-17:20:
+    RUFU-150 — RUFU-135 made chat session-creation options carry `toolsAllowlist`
+    (builtin coding tools + curated chat toolset names) under the default-on
+    `chatContextBudgetEnabled` project setting. This assertion pins that union
+    shape via the exported `chatToolAllowlist` helper instead of the pre-RUFU-135
+    absent-property shape, and preserves the planner-chat tool isolation intent
+    by pinning the task-scoped metrics tool inside the planner session's allowlist.
+    */
+    const plannerToolNames = (createOptions.customTools ?? []).map((tool: { name: string }) => tool.name);
+    expect(createOptions.toolsAllowlist).toEqual(chatToolAllowlist(plannerToolNames));
+    expect(createOptions.toolsAllowlist).toContain("fn_task_planner_get_task_metrics");
   });
 
   it("does not record chat token usage when session stats are unavailable or zero", async () => {
@@ -1593,7 +1605,55 @@ describe("ChatManager.sendMessage", () => {
     await chatManager.sendMessage("chat-001", "Hello");
 
     expect(createOptions.tools).toBe("coding");
-    expect(createOptions).not.toHaveProperty("toolsAllowlist");
+    /*
+    FNXC:ChatContextBudget 2026-08-22-17:20:
+    RUFU-150 — RUFU-135 made chat session-creation options carry `toolsAllowlist`
+    (builtin coding tools + curated chat toolset names) under the default-on
+    `chatContextBudgetEnabled` project setting. This assertion pins that union
+    shape via the exported `chatToolAllowlist` helper instead of the pre-RUFU-135
+    absent-property shape, and preserves the "full coding toolset" intent by
+    pinning the builtin coding tools as the allowlist prefix.
+    */
+    const customToolNames = (createOptions.customTools ?? []).map((tool: { name: string }) => tool.name);
+    expect(createOptions.toolsAllowlist).toEqual(chatToolAllowlist(customToolNames));
+    expect(createOptions.toolsAllowlist.slice(0, 7)).toEqual(["read", "bash", "edit", "write", "grep", "find", "ls"]);
+  });
+
+  /*
+  FNXC:ChatContextBudget 2026-08-22-17:20:
+  RUFU-150 — pins the `chatContextBudgetEnabled: false` kill-switch half of the
+  RUFU-135 contract. The session-options literal assigns `toolsAllowlist`
+  unconditionally (`<flag> ? chatToolAllowlist(...) : undefined`) at both
+  session-creation call sites, and the `__setCreateResolvedAgentSession` seam
+  captures the raw options reference — so with the budget disabled the
+  `toolsAllowlist` key is present as an own property with value `undefined`.
+  Asserted value-based (`toBeUndefined`), never key-presence (`not.toHaveProperty`),
+  which cannot pass for any test-only change.
+  */
+  it("omits the toolsAllowlist when the chat context budget is disabled (RUFU-135 kill switch)", async () => {
+    let createOptions: any;
+    __setCreateResolvedAgentSession(async (options: any) => {
+      createOptions = options;
+      return {
+        session: {
+          prompt: vi.fn().mockResolvedValue(undefined),
+          dispose: vi.fn(),
+          state: { messages: [{ role: "assistant", content: "Done" }] },
+        },
+      };
+    });
+
+    const chatManager = new ChatManager(
+      mockChatStore as any,
+      "/tmp/test",
+      mockAgentStore as any,
+      undefined,
+      async () => ({ chatContextBudgetEnabled: false }),
+    );
+    await chatManager.sendMessage("chat-001", "Hello");
+
+    expect(createOptions.tools).toBe("coding");
+    expect(createOptions.toolsAllowlist).toBeUndefined();
   });
 
   it("requests bound agent and enabled plugin skills for regular chat", async () => {
@@ -4499,7 +4559,17 @@ describe("ChatManager generation isolation", () => {
 
     const names = capturedTools.map((tool) => tool.name);
     expect(createOptions.tools).toBe("coding");
-    expect(createOptions).not.toHaveProperty("toolsAllowlist");
+    /*
+    FNXC:ChatContextBudget 2026-08-22-17:20:
+    RUFU-150 — RUFU-135 made chat session-creation options carry `toolsAllowlist`
+    (builtin coding tools + curated chat toolset names) under the default-on
+    `chatContextBudgetEnabled` project setting. This assertion pins that union
+    shape via the exported `chatToolAllowlist` helper instead of the pre-RUFU-135
+    absent-property shape, and preserves the room metrics-tool exclusion intent
+    by pinning the planner metrics tool out of the room responder's allowlist.
+    */
+    expect(createOptions.toolsAllowlist).toEqual(chatToolAllowlist(names));
+    expect(createOptions.toolsAllowlist).not.toContain("fn_task_planner_get_task_metrics");
     expect(names).not.toContain("fn_task_planner_get_task_metrics");
     for (const required of [
       "fn_task_list",
