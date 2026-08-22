@@ -11,6 +11,7 @@ import { exec, execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { createRequire } from "node:module";
 import { randomUUID } from "node:crypto";
+import { homedir } from "node:os";
 import { basename, dirname, join, relative, isAbsolute, resolve } from "node:path";
 
 const execAsync = promisify(exec);
@@ -1707,6 +1708,7 @@ async function assertValidWorktreeSession(cwd: string, projectRoot: string): Pro
  * - Task attachments under .fusion/tasks/N/attachments/ are allowed (for reading context files)
  * - Sibling task specs (.fusion/tasks/N/PROMPT.md and task.json) are allowed for
  *   read-only tools (read/glob/grep) so agents can consult dependency specs.
+ * - User skills under ~/.agents/skills are allowed for read-only tools only.
  * - Host-advertised additional skill roots are allowed for read-only tools only.
  * - All other paths outside the worktree are rejected
  *
@@ -1855,7 +1857,17 @@ export function wrapToolsWithBoundary(
     return tools; // Not a worktree session, no wrapping needed
   }
 
-  const normalizedReadOnlyExtraRoots = normalizeAdditionalSkillPaths(readOnlyExtraRoots);
+  /*
+  FNXC:SkillReadBoundary 2026-08-22-09:20:
+  Agent Skills installs reusable user skills under ~/.agents/skills. Worktree
+  sessions must be able to read those skill bodies and references, but the
+  exception must not expose sibling ~/.agents configuration or permit writes,
+  edits, or Bash outside the worktree.
+  */
+  const normalizedReadOnlyExtraRoots = normalizeAdditionalSkillPaths([
+    join(homedir(), ".agents", "skills"),
+    ...readOnlyExtraRoots,
+  ]);
 
   return tools.map((tool) => {
     // Only wrap tools that access the filesystem
@@ -1884,7 +1896,7 @@ export function wrapToolsWithBoundary(
             `Path "${relToProject}" is outside the worktree boundary. ` +
               `Coding agents can only modify files inside the current worktree. ` +
               `Existing exceptions include .fusion/memory/ and task attachments; ` +
-              `read-only tools may also access sibling task specs and host-advertised skill roots.`,
+              `read-only tools may also access sibling task specs, ~/.agents/skills, and host-advertised skill roots.`,
           );
         }
 

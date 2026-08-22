@@ -963,7 +963,7 @@ Task-detail Chat is included because it is a `task-planner:<taskId>` ChatManager
 
 ### Worktree session file boundary
 
-Pi sessions started in an isolated task worktree reject filesystem paths outside that worktree. The established project-memory and task-attachment exceptions remain unchanged. Separately, when Fusion advertises skill bodies through `AgentOptions.additionalSkillPaths` (including enabled plugin skill roots), it allows only `read`, `glob`, and `grep` to access those exact normalized roots. `write`, `edit`, and Bash working directories remain worktree-bound for skill roots; this is not a general `~/.fusion/plugins` exception.
+Pi sessions started in an isolated task worktree reject filesystem paths outside that worktree. The established project-memory and task-attachment exceptions remain unchanged. The standard user Agent Skills root at `~/.agents/skills` is readable from worktree sessions. Separately, when Fusion advertises skill bodies through `AgentOptions.additionalSkillPaths` (including enabled plugin skill roots), it allows only `read`, `glob`, and `grep` to access those exact normalized roots. `write`, `edit`, and Bash working directories remain worktree-bound for skill roots; these are not general `~/.agents` or `~/.fusion/plugins` exceptions.
 
 ```bash
 fn message inbox
