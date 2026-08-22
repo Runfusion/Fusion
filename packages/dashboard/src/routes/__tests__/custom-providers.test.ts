@@ -1,10 +1,11 @@
 // @vitest-environment node
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import express from "express";
 import type { CustomProvider, TaskStore } from "@fusion/core";
 import { createApiRoutes } from "../../routes.js";
 import { request } from "../../test-request.js";
+import { probeProviderModels } from "../register-custom-provider-routes.js";
 
 const mockCentralListProjects = vi.fn().mockResolvedValue([]);
 const mockCentralInit = vi.fn().mockResolvedValue(undefined);
@@ -682,5 +683,354 @@ describe("POST /api/custom-providers/probe-models", () => {
     expect(res.status).toBe(200);
     expect(res.body.count).toBe(100);
     expect(res.body.models.length).toBe(100);
+  });
+});
+
+/*
+FNXC:LocalProviderWindowDetection 2026-08-22-02:05:
+RUFU-138: body-level window extraction is exercised against the exported probeProviderModels
+directly (fetch stubbed) so these scenarios stay independent of the express harness and can
+assert the exact outbound fetch budget — while every model resolves a window from the /v1/models
+body (directly or via one-level LoRA parent inheritance) the main probe must remain the only
+fetch, which is also the precondition that keeps the trusted-refresh enrichment gate silent.
+*/
+describe("probeProviderModels body-level window extraction", () => {
+  let mockFetch: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    mockFetch = vi.fn();
+    vi.stubGlobal("fetch", mockFetch);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.clearAllMocks();
+  });
+
+  it("extracts vLLM max_model_len, LoRA parent inheritance, OpenRouter limit, and LM Studio max_context_size", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        data: [
+          { id: "llama-70b", object: "model", max_model_len: 131072 },
+          { id: "llama-70b-lora", object: "model", parent: "llama-70b" },
+          { id: "gpt-4o", object: "model", limit: { context: 128000, output: 16384 } },
+          { id: "qwen2.5-7b", object: "model", max_context_size: 32768 },
+        ],
+      }),
+    });
+
+    const models = await probeProviderModels("http://localhost:11434/v1", undefined, "openai-compatible", { allowPrivateAddress: true });
+
+    expect(models.map((m) => m.contextWindow)).toEqual([131072, 131072, 128000, 32768]);
+    expect(models[0].maxTokens).toBeUndefined();
+    expect(models[1].maxTokens).toBeUndefined();
+    expect(models[2].maxTokens).toBe(16384);
+    expect(models[3].maxTokens).toBeUndefined();
+    // Every model ended with a window (directly or via parent), so the trusted-refresh
+    // enrichment gate stays quiet: exactly one fetch (the main probe only).
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(mockFetch).toHaveBeenCalledWith(
+      "http://localhost:11434/v1/models",
+      expect.any(Object),
+    );
+  });
+
+  it("prefers OpenRouter limit.context over vLLM max_model_len", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        data: [
+          { id: "hybrid-model", object: "model", limit: { context: 64000 }, max_model_len: 131072 },
+        ],
+      }),
+    });
+
+    const models = await probeProviderModels("http://localhost:8000/v1", undefined, "openai-compatible", { allowPrivateAddress: true });
+    expect(models[0].contextWindow).toBe(64000);
+  });
+
+  it("keeps contextWindow undefined for zero, string, and NaN window values", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        data: [
+          { id: "zero-model", object: "model", max_model_len: 0 },
+          { id: "string-model", object: "model", max_model_len: "8192" },
+          { id: "nan-model", object: "model", context_length: Number.NaN },
+        ],
+      }),
+    });
+
+    const models = await probeProviderModels("http://localhost:11434/v1", undefined, "openai-compatible", { allowPrivateAddress: true });
+    expect(models.map((m) => m.contextWindow)).toEqual([undefined, undefined, undefined]);
+  });
+});
+
+/*
+FNXC:LocalProviderWindowDetection 2026-08-22-02:05:
+RUFU-138: trusted-refresh enrichment coverage. These scenarios exercise the same-origin
+native-API enrichment (Ollama /api/tags + /api/show, LM Studio /api/v1/models) against the
+exported probeProviderModels with allowPrivateAddress: true — the trusted-refresh contract the
+startup sweep and the saved-provider Refresh Models action run — and assert the bounded fetch
+budget (main probe + at most tags + native + 25 show calls) and the best-effort no-throw
+contract on hostile local endpoints.
+*/
+describe("probeProviderModels trusted-refresh enrichment", () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.clearAllMocks();
+  });
+
+  it("Ollama modern: tags details.context_length plus /api/show fallback with Bearer headers", async () => {
+    fetchMock.mockImplementation(async (input: string) => {
+      if (input === "http://localhost:11434/v1/models") {
+        return { ok: true, json: async () => ({ data: [{ id: "llama3:latest", owned_by: "library" }, { id: "mistral:7b" }] }) };
+      }
+      if (input === "http://localhost:11434/api/tags") {
+        return { ok: true, json: async () => ({ models: [{ name: "llama3:latest", details: { context_length: 8192 } }, { name: "mistral:7b", details: { format: "gguf" } }] }) };
+      }
+      if (input === "http://localhost:11434/api/show") {
+        return { ok: true, json: async () => ({ model_info: { "mistral.context_length": 32768, "mistral.embedding_length": 4096 } }) };
+      }
+      throw new Error(`unexpected URL: ${input}`);
+    });
+
+    const models = await probeProviderModels("http://localhost:11434/v1", "local-secret", "openai-compatible", { allowPrivateAddress: true });
+
+    expect(models.map((m) => [m.id, m.contextWindow])).toEqual([
+      ["llama3:latest", 8192],
+      ["mistral:7b", 32768],
+    ]);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost:11434/api/tags",
+      expect.objectContaining({ headers: expect.objectContaining({ Authorization: "Bearer local-secret" }) }),
+    );
+    const showCalls = fetchMock.mock.calls.filter((c) => c[0] === "http://localhost:11434/api/show");
+    expect(showCalls).toHaveLength(1);
+    expect(showCalls[0][1]).toEqual(
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ name: "mistral:7b" }),
+        headers: expect.objectContaining({ Authorization: "Bearer local-secret" }),
+      }),
+    );
+  });
+
+  it("Ollama legacy: tags without context_length fall through to per-model /api/show arch-prefixed keys", async () => {
+    fetchMock.mockImplementation(async (input: string, init?: RequestInit) => {
+      if (input === "http://localhost:11434/v1/models") {
+        return { ok: true, json: async () => ({ data: [{ id: "llama-3.1-8b" }, { id: "qwen3-8b" }] }) };
+      }
+      if (input === "http://localhost:11434/api/tags") {
+        return { ok: true, json: async () => ({ models: [{ name: "llama-3.1-8b", details: { format: "gguf" } }, { name: "qwen3-8b", details: { format: "gguf" } }] }) };
+      }
+      if (input === "http://localhost:11434/api/show") {
+        const name = JSON.parse(String(init?.body)).name;
+        return {
+          ok: true,
+          json: async () => ({ model_info: name === "llama-3.1-8b" ? { "llama.context_length": 8192 } : { "qwen3.context_length": 32768 } }),
+        };
+      }
+      throw new Error(`unexpected URL: ${input}`);
+    });
+
+    const models = await probeProviderModels("http://localhost:11434/v1", undefined, "openai-compatible", { allowPrivateAddress: true });
+
+    expect(models.map((m) => [m.id, m.contextWindow])).toEqual([
+      ["llama-3.1-8b", 8192],
+      ["qwen3-8b", 32768],
+    ]);
+  });
+
+  it("caps /api/show probes at 25 for a 30-model install", async () => {
+    const ids = Array.from({ length: 30 }, (_, i) => `model-${i}`);
+    fetchMock.mockImplementation(async (input: string) => {
+      if (input === "http://localhost:11434/v1/models") {
+        return { ok: true, json: async () => ({ data: ids.map((id) => ({ id })) }) };
+      }
+      if (input === "http://localhost:11434/api/tags") {
+        return { ok: true, json: async () => ({ models: ids.map((id) => ({ name: id, details: { format: "gguf" } })) }) };
+      }
+      if (input === "http://localhost:11434/api/show") {
+        return { ok: true, json: async () => ({ model_info: {} }) };
+      }
+      throw new Error(`unexpected URL: ${input}`);
+    });
+
+    const models = await probeProviderModels("http://localhost:11434/v1", undefined, "openai-compatible", { allowPrivateAddress: true });
+
+    expect(models).toHaveLength(30);
+    const showCalls = fetchMock.mock.calls.filter((c) => c[0] === "http://localhost:11434/api/show");
+    expect(showCalls).toHaveLength(25);
+  });
+
+  it("LM Studio native fallback: /api/v1/models key matching, no window leak to a non-chat id", async () => {
+    fetchMock.mockImplementation(async (input: string) => {
+      if (input === "http://localhost:1234/v1/models") {
+        return {
+          ok: true,
+          json: async () => ({
+            data: [
+              { id: "qwen2.5-7b-instruct", object: "model" },
+              { id: "nomic-embed@q8_0", object: "model", modalities: { input: ["text"], output: ["embedding"] } },
+            ],
+          }),
+        };
+      }
+      if (input === "http://localhost:1234/api/tags") {
+        return { ok: false, status: 404, json: async () => ({}) };
+      }
+      if (input === "http://localhost:1234/api/v1/models") {
+        return {
+          ok: true,
+          json: async () => ({
+            models: [
+              { key: "qwen2.5-7b-instruct", type: "llm", max_context_length: 32768 },
+              { key: "nomic-embed", type: "embedding", max_context_length: 2048 },
+            ],
+          }),
+        };
+      }
+      throw new Error(`unexpected URL: ${input}`);
+    });
+
+    const models = await probeProviderModels("http://localhost:1234/v1", undefined, "openai-compatible", { allowPrivateAddress: true });
+
+    // The embedding entry is filtered by isNonChatModel, so it never reaches the result —
+    // no window may leak to a non-chat id and the 2048 embedding window must not appear.
+    expect(models).toHaveLength(1);
+    expect(models[0].id).toBe("qwen2.5-7b-instruct");
+    expect(models[0].contextWindow).toBe(32768);
+    expect(models.some((m) => m.id.includes("embed") || m.contextWindow === 2048)).toBe(false);
+  });
+
+  it("LM Studio: variant-suffixed chat id matches the native key via the @-prefix rule", async () => {
+    fetchMock.mockImplementation(async (input: string) => {
+      if (input === "http://localhost:1234/v1/models") {
+        return { ok: true, json: async () => ({ data: [{ id: "qwen2.5-7b-instruct@q8_0", object: "model" }] }) };
+      }
+      if (input === "http://localhost:1234/api/tags") {
+        return { ok: false, status: 404, json: async () => ({}) };
+      }
+      if (input === "http://localhost:1234/api/v1/models") {
+        return { ok: true, json: async () => ({ models: [{ key: "qwen2.5-7b-instruct", type: "llm", max_context_length: 32768 }] }) };
+      }
+      throw new Error(`unexpected URL: ${input}`);
+    });
+
+    const models = await probeProviderModels("http://localhost:1234/v1", undefined, "openai-compatible", { allowPrivateAddress: true });
+
+    expect(models[0].id).toBe("qwen2.5-7b-instruct@q8_0");
+    expect(models[0].contextWindow).toBe(32768);
+  });
+
+  it("skips enrichment entirely when every model already has a window (exactly one fetch)", async () => {
+    fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: [{ id: "m1", max_model_len: 8192 }] }) });
+
+    const models = await probeProviderModels("http://localhost:11434/v1", undefined, "openai-compatible", { allowPrivateAddress: true });
+
+    expect(models[0].contextWindow).toBe(8192);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("skips enrichment on public hosts even with allowPrivateAddress (exactly one fetch)", async () => {
+    fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: [{ id: "m1" }] }) });
+
+    const models = await probeProviderModels("https://api.example.com/v1", undefined, "openai-compatible", { allowPrivateAddress: true });
+
+    expect(models[0].contextWindow).toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("skips enrichment for anthropic-compatible apiType (exactly one fetch, no /api/tags)", async () => {
+    fetchMock.mockImplementation(async (input: string) => {
+      expect(input).toBe("http://localhost:1234/v1/models");
+      return { ok: true, json: async () => ({ data: [{ id: "claude-3-opus", display_name: "Claude 3 Opus" }] }) };
+    });
+
+    const models = await probeProviderModels("http://localhost:1234", undefined, "anthropic-compatible", { allowPrivateAddress: true });
+
+    expect(models[0].id).toBe("claude-3-opus");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("resolves with windowless models when tags and native endpoints both 404 (plain local server)", async () => {
+    fetchMock.mockImplementation(async (input: string) => {
+      if (input === "http://localhost:8080/v1/models") {
+        return { ok: true, json: async () => ({ data: [{ id: "model-a" }] }) };
+      }
+      return { ok: false, status: 404, json: async () => ({}) };
+    });
+
+    const models = await probeProviderModels("http://localhost:8080/v1", undefined, "openai-compatible", { allowPrivateAddress: true });
+
+    expect(models[0].id).toBe("model-a");
+    expect(models[0].contextWindow).toBeUndefined();
+  });
+
+  it("does not throw when tags json() rejects (malformed body)", async () => {
+    fetchMock.mockImplementation(async (input: string) => {
+      if (input === "http://localhost:11434/v1/models") {
+        return { ok: true, json: async () => ({ data: [{ id: "model-a" }] }) };
+      }
+      if (input === "http://localhost:11434/api/tags") {
+        return { ok: true, json: async () => { throw new Error("malformed body"); } };
+      }
+      return { ok: false, status: 404, json: async () => ({}) };
+    });
+
+    const models = await probeProviderModels("http://localhost:11434/v1", undefined, "openai-compatible", { allowPrivateAddress: true });
+
+    expect(models[0].contextWindow).toBeUndefined();
+  });
+
+  it("leaves a model windowless when /api/show returns 500 for it", async () => {
+    fetchMock.mockImplementation(async (input: string) => {
+      if (input === "http://localhost:11434/v1/models") {
+        return { ok: true, json: async () => ({ data: [{ id: "a" }, { id: "b" }] }) };
+      }
+      if (input === "http://localhost:11434/api/tags") {
+        return { ok: true, json: async () => ({ models: [{ name: "a", details: { context_length: 4096 } }] }) };
+      }
+      if (input === "http://localhost:11434/api/show") {
+        return { ok: false, status: 500, json: async () => ({ error: "boom" }) };
+      }
+      throw new Error(`unexpected URL: ${input}`);
+    });
+
+    const models = await probeProviderModels("http://localhost:11434/v1", undefined, "openai-compatible", { allowPrivateAddress: true });
+
+    expect(models.map((m) => [m.id, m.contextWindow])).toEqual([
+      ["a", 4096],
+      ["b", undefined],
+    ]);
+  });
+
+  it("ignores non-numeric (string) and zero model_info context_length values", async () => {
+    fetchMock.mockImplementation(async (input: string, init?: RequestInit) => {
+      if (input === "http://localhost:11434/v1/models") {
+        return { ok: true, json: async () => ({ data: [{ id: "a" }, { id: "b" }] }) };
+      }
+      if (input === "http://localhost:11434/api/tags") {
+        return { ok: true, json: async () => ({ models: [] }) };
+      }
+      if (input === "http://localhost:11434/api/show") {
+        const name = JSON.parse(String(init?.body)).name;
+        return { ok: true, json: async () => ({ model_info: name === "a" ? { "llama.context_length": "8192" } : { "qwen3.context_length": 0 } }) };
+      }
+      throw new Error(`unexpected URL: ${input}`);
+    });
+
+    const models = await probeProviderModels("http://localhost:11434/v1", undefined, "openai-compatible", { allowPrivateAddress: true });
+
+    expect(models.map((m) => m.contextWindow)).toEqual([undefined, undefined]);
   });
 });

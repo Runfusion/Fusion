@@ -507,6 +507,49 @@ describe("custom provider routes", () => {
     expect(settings.customProviders?.[0]?.models).toEqual([{ id: "local-model", name: "Local model" }]);
   });
 
+  /*
+  FNXC:LocalProviderWindowDetection 2026-08-22-02:05:
+  RUFU-138: the trusted-refresh enrichment shape check keys on the `models` array (not `data`),
+  so a local backend that serves only `{data: [...]}`-shaped responses (like the catch-all
+  fetchMock above) triggers the bounded tags + native round-trips but no windows are applied
+  and no per-model /api/show batch starts — the refresh stays behavior-identical to the
+  pre-enrichment flow.
+  */
+  it("POST /custom-providers/:id/refresh-models leaves {data:[...]}-shaped local backends unchanged (bounded enrichment shape check)", async () => {
+    settings.customProviders = [
+      {
+        id: "cp-local",
+        name: "Local Data-Shaped Backend",
+        apiType: "openai-compatible",
+        baseUrl: "http://localhost:1234/v1",
+        apiKey: "local-secret",
+        models: [{ id: "stale-local", name: "Stale local" }],
+      },
+    ];
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ data: [{ id: "local-model", name: "Local model" }] }),
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    const app = createApp(settings);
+
+    const res = await REQUEST(app, "POST", "/api/custom-providers/cp-local/refresh-models");
+
+    expect(res.status).toBe(200);
+    // Bounded budget: main probe + one tags + one native = exactly 3 fetches; no /api/show
+    // batch — the shape check keys on the `models` array, so `{data: [...]}` applies nothing.
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    const urls = fetchMock.mock.calls.map((c) => c[0]);
+    expect(urls).toEqual([
+      "http://localhost:1234/v1/models",
+      "http://localhost:1234/api/tags",
+      "http://localhost:1234/api/v1/models",
+    ]);
+    expect(urls).not.toContain("http://localhost:1234/api/show");
+    // No window applied from a non-native shape; stored models are unchanged in shape.
+    expect(settings.customProviders?.[0]?.models).toEqual([{ id: "local-model", name: "Local model" }]);
+  });
+
   it("POST /custom-providers/:id/refresh-models preserves concurrent provider changes made during probing", async () => {
     settings.customProviders = [
       {
@@ -1096,5 +1139,154 @@ describe("RUFU-123: per-model contextWindow/maxTokens round-trip", () => {
       // A prior explicit reasoning:true is not re-emitted — the default is already presumed-capable.
       { id: "prior-true", name: "Prior True" },
     ]);
+  });
+});
+
+/*
+ * FNXC:CustomProviderModelWindows 2026-08-22-02:05:
+ * RUFU-138 Step 3: end-to-end refresh-models persistence for the local auto-detection paths —
+ * the probed/enriched windows must flow through the RUFU-123 id-merge into the persisted
+ * per-model rows (probe-wins, else prior persisted), with exactly one settings update per
+ * refresh and manual windows surviving windowless probes.
+ */
+describe("RUFU-138: refresh-models end-to-end window persistence", () => {
+  let settings: GlobalSettings;
+
+  beforeEach(() => {
+    settings = {};
+    vi.unstubAllGlobals();
+  });
+
+  it("auto-fills per-model windows for a local Ollama provider and persists them via one settings update", async () => {
+    settings.customProviders = [
+      {
+        id: "cp-ollama",
+        name: "Local Ollama",
+        apiType: "openai-compatible",
+        baseUrl: "http://localhost:11434/v1",
+        apiKey: "ollama-key",
+        models: [],
+      },
+    ];
+    const fetchMock = vi.fn(async (input: string, init?: RequestInit) => {
+      if (input === "http://localhost:11434/v1/models") {
+        return { ok: true, json: async () => ({ data: [{ id: "llama3:latest" }, { id: "mistral:7b" }] }) };
+      }
+      if (input === "http://localhost:11434/api/tags") {
+        return { ok: true, json: async () => ({ models: [
+          { name: "llama3:latest", details: { context_length: 8192 } },
+          { name: "mistral:7b", details: { format: "gguf" } },
+        ] }) };
+      }
+      if (input === "http://localhost:11434/api/show") {
+        const name = JSON.parse(String(init?.body)).name;
+        if (name === "mistral:7b") {
+          return { ok: true, json: async () => ({ model_info: { "mistral.context_length": 32768 } }) };
+        }
+        return { ok: false, status: 404, json: async () => ({ error: "model not found" }) };
+      }
+      throw new Error(`unexpected fetch URL: ${input}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const onUpdate = vi.fn();
+    const app = createApp(settings, onUpdate);
+
+    const res = await REQUEST(app, "POST", "/api/custom-providers/cp-ollama/refresh-models");
+
+    expect(res.status).toBe(200);
+    // Names follow dedupeProviderModels id-fallback defaults; no maxTokens/thinking-flag keys for a
+    // window-only probe of a provider with an empty prior model list.
+    expect(settings.customProviders?.[0]?.models).toEqual([
+      { id: "llama3:latest", name: "llama3:latest", contextWindow: 8192 },
+      { id: "mistral:7b", name: "mistral:7b", contextWindow: 32768 },
+    ]);
+    // Exactly one settings update landed, carrying the patched customProviders.
+    expect(onUpdate).toHaveBeenCalledTimes(1);
+    expect(onUpdate.mock.calls[0][0].customProviders).toEqual([
+      expect.objectContaining({
+        id: "cp-ollama",
+        models: [
+          { id: "llama3:latest", name: "llama3:latest", contextWindow: 8192 },
+          { id: "mistral:7b", name: "mistral:7b", contextWindow: 32768 },
+        ],
+      }),
+    ]);
+  });
+
+  it("preserves manual windows for models the probe reports windowless (RUFU-123 merge guard)", async () => {
+    settings.customProviders = [
+      {
+        id: "cp-ollama",
+        name: "Local Ollama",
+        apiType: "openai-compatible",
+        baseUrl: "http://localhost:11434/v1",
+        apiKey: "ollama-key",
+        models: [
+          { id: "a", name: "A", contextWindow: 65536 },
+          { id: "b", name: "B" },
+        ],
+      },
+    ];
+    const fetchMock = vi.fn(async (input: string) => {
+      if (input === "http://localhost:11434/v1/models") {
+        // 'a' has no window anywhere (absent from tags, 404 on /api/show); 'b' only via tags.
+        return { ok: true, json: async () => ({ data: [{ id: "a" }, { id: "b" }] }) };
+      }
+      if (input === "http://localhost:11434/api/tags") {
+        return { ok: true, json: async () => ({ models: [
+          { name: "b", details: { context_length: 131072 } },
+        ] }) };
+      }
+      if (input === "http://localhost:11434/api/show") {
+        return { ok: false, status: 404, json: async () => ({ error: "model not found" }) };
+      }
+      throw new Error(`unexpected fetch URL: ${input}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const app = createApp(settings);
+
+    const res = await REQUEST(app, "POST", "/api/custom-providers/cp-ollama/refresh-models");
+
+    expect(res.status).toBe(200);
+    const refreshed = settings.customProviders?.[0]?.models ?? [];
+    const byId = new Map(refreshed.map((m: { id: string }) => [m.id, m]));
+    // 'a' has no window in the probe -> the prior persisted 65536 wins (probe-wins, else prior).
+    expect(byId.get("a")?.contextWindow).toBe(65536);
+    // 'b' picks up the tags window.
+    expect(byId.get("b")?.contextWindow).toBe(131072);
+    expect(refreshed.map((m: { id: string }) => m.id).sort()).toEqual(["a", "b"]);
+  });
+
+  it("persists vLLM body-level windows plus LoRA parent inheritance with exactly one fetch call", async () => {
+    settings.customProviders = [
+      {
+        id: "cp-vllm",
+        name: "Local vLLM",
+        apiType: "openai-compatible",
+        baseUrl: "http://localhost:8000/v1",
+        apiKey: "vllm-key",
+        models: [],
+      },
+    ];
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ data: [
+        { id: "llama-70b", max_model_len: 131072 },
+        { id: "lora-x", parent: "llama-70b" },
+      ] }),
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    const app = createApp(settings);
+
+    const res = await REQUEST(app, "POST", "/api/custom-providers/cp-vllm/refresh-models");
+
+    expect(res.status).toBe(200);
+    expect(settings.customProviders?.[0]?.models).toEqual([
+      { id: "llama-70b", name: "llama-70b", contextWindow: 131072 },
+      { id: "lora-x", name: "lora-x", contextWindow: 131072 },
+    ]);
+    // Body-level max_model_len + one-level LoRA inheritance resolve every window, so the
+    // enrichment gate (at least one windowless model) never fires.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
