@@ -7578,6 +7578,29 @@
       "maxSourcesPerRunHint": "Padrão: 20.",
       "maxDurationMsHint": "Padrão: 300000 (5 minutos).",
       "requestTimeoutMsHint": "Padrão: 30000 (30 segundos)."
+    },
+    "jira": {
+      "configuration": "",
+      "enable": "",
+      "enabledHelp": "",
+      "baseUrl": "",
+      "globalBaseUrl": "",
+      "baseUrlHelp": "",
+      "apiBaseUrl": "",
+      "globalApiBaseUrl": "",
+      "apiBaseUrlHelp": "",
+      "email": "",
+      "globalEmail": "",
+      "emailHelp": "",
+      "secretKey": "",
+      "globalSecretKey": "",
+      "secretHelp": "",
+      "secretScope": "",
+      "globalSecretScope": "",
+      "scopeHelp": "",
+      "template": "",
+      "globalTemplate": "",
+      "templateHelp": ""
     }
   },
   "setup": {
