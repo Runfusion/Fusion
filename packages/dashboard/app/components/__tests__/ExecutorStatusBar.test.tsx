@@ -109,11 +109,11 @@ function makeBackgroundSession(id: string, status: AiSessionSummary["status"]): 
   };
 }
 
+// FNXC:StuckTagRemoval 2026-08-17-22:30: stuck-task tagging removed from the dashboard; stuck coverage deleted with it.
 describe("ExecutorStatusBar", () => {
   const defaultStats: ExecutorStats = {
     runningTaskCount: 2,
     blockedTaskCount: 1,
-    stuckTaskCount: 0,
     queuedTaskCount: 5,
     inReviewCount: 3,
     executorState: "running",
@@ -158,7 +158,6 @@ describe("ExecutorStatusBar", () => {
           queuedTaskCount: 9,
           runningTaskCount: 2,
           maxConcurrent: 4,
-          stuckTaskCount: 1,
           blockedTaskCount: 2,
           inReviewCount: 1,
         },
@@ -194,7 +193,6 @@ describe("ExecutorStatusBar", () => {
       expectSegmentCount("Waiting", "9");
       expectSegmentCount("Running", "2");
       expect(within(getSegmentByLabel("Running")).getByText("4")).toHaveClass("executor-status-bar__max");
-      expectSegmentCount("Stuck", "1");
       expectSegmentCount("Blocked", "2");
       expect(statusBar).not.toHaveTextContent("In Review");
       expect(statusBar).toHaveTextContent("Overlap queue");
@@ -487,26 +485,6 @@ describe("ExecutorStatusBar", () => {
       expect(screen.queryByTestId("scripts-btn")).toBeNull();
     });
 
-    it("does not show stuck tasks segment when count is 0", () => {
-      render(<ExecutorStatusBar tasks={emptyTasks} />);
-
-      expect(screen.queryByText("Stuck")).not.toBeInTheDocument();
-    });
-
-    it("shows stuck tasks segment when count is > 0", () => {
-      vi.mocked(mockUseExecutorStats).mockReturnValue({
-        stats: { ...defaultStats, stuckTaskCount: 2 },
-        loading: false,
-        error: null,
-        refresh: vi.fn(),
-      });
-
-      render(<ExecutorStatusBar tasks={emptyTasks} />);
-
-      const statusBar = screen.getByRole("status");
-      expect(statusBar).toHaveTextContent("Stuck");
-      expect(statusBar).toHaveTextContent("2");
-    });
   });
 
   describe("mobile stat tooltips", () => {
@@ -579,15 +557,8 @@ describe("ExecutorStatusBar", () => {
     it("adds stat tooltips only for conditional segments that exist", async () => {
       const user = userEvent.setup();
       const { rerender } = render(<ExecutorStatusBar tasks={emptyTasks} />);
-      expect(screen.queryByTestId("executor-stat-stuck")).toBeNull();
       expect(screen.queryByTestId("executor-stat-fanout")).toBeNull();
 
-      vi.mocked(mockUseExecutorStats).mockReturnValue({
-        stats: { ...defaultStats, stuckTaskCount: 1 },
-        loading: false,
-        error: null,
-        refresh: vi.fn(),
-      });
       const fanoutTasks = [
         makeTask("FN-010", "in-progress"),
         makeTask("FN-101", "todo", { blockedBy: "FN-010" }),
@@ -598,8 +569,6 @@ describe("ExecutorStatusBar", () => {
       ];
       rerender(<ExecutorStatusBar tasks={fanoutTasks} />);
 
-      await user.click(screen.getByTestId("executor-stat-stuck"));
-      expect(screen.getByRole("tooltip")).toHaveTextContent("Stuck");
       await user.click(screen.getByTestId("executor-stat-fanout"));
       expect(screen.getByRole("tooltip")).toHaveTextContent("Overlap queue");
     });
@@ -964,21 +933,6 @@ describe("ExecutorStatusBar", () => {
       expect(blockedSegment?.parentElement?.querySelector(".executor-status-bar__count")).toHaveClass("executor-status-bar__count--warning");
     });
 
-    it("applies error class to stuck count when stuck tasks exist", () => {
-      vi.mocked(mockUseExecutorStats).mockReturnValue({
-        stats: { ...defaultStats, stuckTaskCount: 1 },
-        loading: false,
-        error: null,
-        refresh: vi.fn(),
-      });
-
-      render(<ExecutorStatusBar tasks={emptyTasks} />);
-
-      const statusBar = screen.getByRole("status");
-      const stuckSegment = statusBar.querySelector(".executor-status-bar__segment--stuck");
-      expect(stuckSegment?.querySelector(".executor-status-bar__count")).toHaveClass("executor-status-bar__count--error");
-    });
-
     it("applies active class to running indicator when tasks are running", () => {
       render(<ExecutorStatusBar tasks={emptyTasks} />);
 
@@ -1016,13 +970,13 @@ describe("ExecutorStatusBar", () => {
       const tasks: any[] = [{ id: "FN-001" }];
       render(<ExecutorStatusBar tasks={tasks} projectId="proj_abc123" />);
 
-      expect(mockUseExecutorStats).toHaveBeenCalledWith(tasks, "proj_abc123", undefined, undefined, undefined);
+      expect(mockUseExecutorStats).toHaveBeenCalledWith(tasks, "proj_abc123", undefined);
     });
 
     it("passes tasks and undefined to useExecutorStats when projectId not provided", () => {
       render(<ExecutorStatusBar tasks={emptyTasks} />);
 
-      expect(mockUseExecutorStats).toHaveBeenCalledWith(emptyTasks, undefined, undefined, undefined, undefined);
+      expect(mockUseExecutorStats).toHaveBeenCalledWith(emptyTasks, undefined, undefined);
     });
   });
 
@@ -1104,24 +1058,7 @@ describe("ExecutorStatusBar", () => {
       render(<ExecutorStatusBar tasks={tasks} />);
 
       // useExecutorStats receives the tasks array as first argument
-      expect(mockUseExecutorStats).toHaveBeenCalledWith(tasks, undefined, undefined, undefined, undefined);
-    });
-
-    it("renders stuck segment with correct count when stuck tasks detected", () => {
-      vi.mocked(mockUseExecutorStats).mockReturnValue({
-        stats: { ...defaultStats, stuckTaskCount: 3, runningTaskCount: 2 },
-        loading: false,
-        error: null,
-        refresh: vi.fn(),
-      });
-
-      render(<ExecutorStatusBar tasks={emptyTasks} />);
-
-      const statusBar = screen.getByRole("status");
-      expect(statusBar).toHaveTextContent("Stuck");
-      const stuckCount = statusBar.querySelector(".executor-status-bar__segment--stuck .executor-status-bar__count");
-      expect(stuckCount).toHaveTextContent("3");
-      expect(stuckCount).toHaveClass("executor-status-bar__count--error");
+      expect(mockUseExecutorStats).toHaveBeenCalledWith(tasks, undefined, undefined);
     });
   });
 

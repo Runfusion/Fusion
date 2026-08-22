@@ -175,13 +175,13 @@ describe("useTerminal", () => {
     act(() => {
       MockWebSocket.instances[0].emitMessage({ type: "connected", shell: "/bin/bash", cwd: "/project" });
       MockWebSocket.instances[0].emitMessage({ type: "data", data: "hello world" });
-      MockWebSocket.instances[0].emitMessage({ type: "scrollback", data: "previous output" });
+      MockWebSocket.instances[0].emitMessage({ type: "scrollback", data: "previous output", reset: true });
       MockWebSocket.instances[0].emitMessage({ type: "exit", exitCode: 0 });
     });
 
     expect(onConnect).toHaveBeenCalledWith({ shell: "/bin/bash", cwd: "/project" });
     expect(onData).toHaveBeenCalledWith("hello world");
-    expect(onScrollback).toHaveBeenCalledWith("previous output");
+    expect(onScrollback).toHaveBeenCalledWith("previous output", true);
     expect(onExit).toHaveBeenCalledWith(0);
 
     unsubData();
@@ -493,7 +493,7 @@ describe("useTerminal", () => {
       });
 
       // The late subscriber should receive the buffered scrollback
-      expect(onScrollback).toHaveBeenCalledWith("previous output");
+      expect(onScrollback).toHaveBeenCalledWith("previous output", false);
     });
 
     it("replays buffered connected info to late subscribers", () => {
@@ -574,7 +574,7 @@ describe("useTerminal", () => {
       });
 
       expect(firstSubscription).toHaveBeenCalledTimes(1);
-      expect(firstSubscription).toHaveBeenCalledWith("initial prompt$ ");
+      expect(firstSubscription).toHaveBeenCalledWith("initial prompt$ ", false);
 
       act(() => {
         unsubscribeFirst?.();
@@ -623,7 +623,7 @@ describe("useTerminal", () => {
       act(() => {
         result.current.onScrollback(sub1);
       });
-      expect(sub1).toHaveBeenCalledWith("buf");
+      expect(sub1).toHaveBeenCalledWith("buf", false);
 
       // Second subscriber does NOT get the stale buffer — it was already
       // delivered to sub1, so replaying it would cause duplicate output.
@@ -695,7 +695,7 @@ describe("useTerminal", () => {
       });
 
       // All three message types should be replayed to late subscribers
-      expect(onScrollback).toHaveBeenCalledWith("shell-prompt$ ");
+      expect(onScrollback).toHaveBeenCalledWith("shell-prompt$ ", false);
       expect(onConnect).toHaveBeenCalledWith({ shell: "/bin/zsh", cwd: "/project" });
       expect(onData).toHaveBeenCalledWith("echo hello\n");
     });
@@ -720,7 +720,7 @@ describe("useTerminal", () => {
       });
 
       // Both messages should be delivered (no loss)
-      expect(onScrollback).toHaveBeenCalledWith("user@host");
+      expect(onScrollback).toHaveBeenCalledWith("user@host", false);
       expect(onData).toHaveBeenCalledWith(" ~/project $ ");
     });
   });
@@ -737,7 +737,7 @@ describe("useTerminal", () => {
       act(() => {
         result.current.onScrollback(sub1);
       });
-      expect(sub1).toHaveBeenCalledWith("prompt$ ");
+      expect(sub1).toHaveBeenCalledWith("prompt$ ", false);
 
       // Second subscriber does NOT get the replay (prevents duplicate output)
       const sub2 = vi.fn();
@@ -752,7 +752,7 @@ describe("useTerminal", () => {
       });
       expect(sub1).toHaveBeenCalledTimes(2);
       expect(sub2).toHaveBeenCalledTimes(1);
-      expect(sub2).toHaveBeenCalledWith("new!");
+      expect(sub2).toHaveBeenCalledWith("new!", false);
     });
 
     it("does not replay data to second subscriber to prevent duplicate terminal output", () => {
@@ -825,7 +825,7 @@ describe("useTerminal", () => {
       });
 
       // Old buffer was delivered
-      expect(onScrollback).toHaveBeenCalledWith("old prompt$ ");
+      expect(onScrollback).toHaveBeenCalledWith("old prompt$ ", false);
 
       // Reconnect — creates new WebSocket, clears buffers
       act(() => {
@@ -842,7 +842,7 @@ describe("useTerminal", () => {
 
       // Existing subscriber gets new live data
       expect(onScrollback).toHaveBeenCalledTimes(2); // old buffer + new live
-      expect(onScrollback).toHaveBeenLastCalledWith("new prompt$ ");
+      expect(onScrollback).toHaveBeenLastCalledWith("new prompt$ ", false);
       expect(onConnect).toHaveBeenCalledTimes(2); // old buffer + new live
       expect(onConnect).toHaveBeenLastCalledWith({ shell: "/bin/zsh", cwd: "/new" });
     });

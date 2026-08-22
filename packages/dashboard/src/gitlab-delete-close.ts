@@ -1,4 +1,4 @@
-import { createLogger, type GithubIssueAction, type Task, type TaskDeleteClosureContext, type TaskStore } from "@fusion/core";
+import { createLogger, type GithubIssueAction, type Task, type TaskStore } from "@fusion/core";
 
 const gitLabDeleteCloseLog = createLogger("dashboard-gitlab-delete-close");
 import { formatGitLabTargetLabel, resolveGitLabTarget, safeLogGitLabEntry, type GitLabLifecycleTarget } from "./gitlab-lifecycle.js";
@@ -6,20 +6,18 @@ import { updateGitLabTargetState } from "./gitlab-tracking-state.js";
 
 type TaskDeletedMeta = {
   githubIssueAction?: GithubIssueAction;
-  closureContext?: TaskDeleteClosureContext | { kind?: string };
   observed?: boolean;
 };
 
 export type GitLabDeleteAction =
   | { action: "close"; target: GitLabLifecycleTarget; deletionUnsupported: boolean }
-  | { action: "skip"; reason: "split-close" | "leave" | "merge-request" | "no-target" };
+  | { action: "skip"; reason: "leave" | "merge-request" | "no-target" };
 
 /** Decides delete behavior after the delete-only ownership resolver has selected one target. */
 export function decideGitLabDeleteAction(
   meta: TaskDeletedMeta | undefined,
   target: GitLabLifecycleTarget | null,
 ): GitLabDeleteAction {
-  if (meta?.closureContext?.kind === "split-into-subtasks") return { action: "skip", reason: "split-close" };
   if (!target) return { action: "skip", reason: "no-target" };
   if (meta?.githubIssueAction === "leave") return { action: "skip", reason: "leave" };
   if (target.kind === "merge_request") return { action: "skip", reason: "merge-request" };
@@ -71,7 +69,6 @@ export class GitLabDeleteCloseService {
       const decision = decideGitLabDeleteAction(meta, target);
       if (decision.action === "skip") {
         stage = "log-skip";
-        if (decision.reason === "split-close") return;
         const details = target ? formatGitLabTargetLabel(target.kind, target.project, target.iid) : "No linked GitLab issue";
         const message = decision.reason === "leave"
           ? "Left linked GitLab issue unchanged on task delete"

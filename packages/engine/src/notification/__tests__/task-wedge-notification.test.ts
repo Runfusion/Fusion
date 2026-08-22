@@ -2,7 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import { TaskNotFoundError, WEDGE_RENOTIFY_COOLDOWN_MS, type NotificationProvider, type Settings, type Task } from "@fusion/core";
 import { NotificationService } from "../notification-service.js";
 import { MAX_AUTO_MERGE_TRANSIENT_RETRIES } from "../../errors/transient-merge-error-classifier.js";
-import { describeSelfHealingNoActionWedge, describeTaskRecoveryOwner, describeTaskWedge, isTaskProgressing } from "../task-wedge-notification.js";
+import { classifyTerminalFailureAutoRecoveryForTask, describeSelfHealingNoActionWedge, describeTaskRecoveryOwner, describeTaskWedge, isTaskProgressing } from "../task-wedge-notification.js";
+import { NO_PROGRESS_REQUEUE_BUDGET_EXHAUSTED_PREFIX } from "../../healing/no-progress-requeue-budget.js";
 
 type Listener = (task: Task) => void;
 
@@ -777,6 +778,13 @@ describe("task wedge notifications", () => {
   it("classifies an otherwise unknown persisted failure with a bounded fallback", () => {
     const { task } = fixture();
     expect(describeTaskWedge(task({ error: "internal stack trace or opaque failure" }))).toMatchObject({ reasonKey: "terminal-failed" });
+  });
+
+  it("keeps an exhausted no-progress requeue park specific despite preserved error text", () => {
+    const { task } = fixture();
+    const parked = task({ error: `${NO_PROGRESS_REQUEUE_BUDGET_EXHAUSTED_PREFIX} 3/3 attempts spent. BLOCKED: check:changeset-format tool failure` });
+    expect(describeTaskWedge(parked)).toMatchObject({ reasonKey: "no-progress-requeue-budget-exhausted" });
+    expect(classifyTerminalFailureAutoRecoveryForTask(parked, { autoRecoveryEnabled: true })).toEqual({ action: "skip", reason: "not-generic-terminal-failure" });
   });
 
   it("changes the active reason into a new episode without raw error keys", async () => {

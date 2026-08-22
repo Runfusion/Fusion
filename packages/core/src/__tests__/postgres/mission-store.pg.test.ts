@@ -9,8 +9,12 @@
  * counts; reorderMilestones/reorderSlices new order; linkGoal/unlinkGoal +
  * listGoalIdsForMission round-trip; linkFeatureToTask/unlinkFeatureFromTask;
  * addContractAssertion → listContractAssertions; startValidatorRun → getValidatorRunsByFeature;
- * computeMissionStatus reflects state; missing mission → undefined. Runs in the blocking
- * gate (test:pg-gate).
+ * computeMissionStatus reflects state; missing mission → undefined. This remains in default
+ * core discovery; `test:pg-gate` intentionally runs only its two PostgreSQL canaries.
+ *
+ * FNXC:MissionStore 2026-08-16-19:32:
+ * FN-9127 corrected the stale gate-membership claim so loaded-teardown diagnosis runs the
+ * actual default-core surface instead of implying this suite is a blocking PG-gate canary.
  */
 
 import { describe, it, expect, beforeAll, beforeEach, afterEach, afterAll, vi } from "vitest";
@@ -18,7 +22,7 @@ import { eq, sql } from "drizzle-orm";
 import { readFile } from "node:fs/promises";
 import type { DbTransaction } from "../../postgres/data-layer.js";
 import type { TaskCreateInput } from "../../types/task/task-core.js";
-import type { MissionEvent } from "../../missions/mission-types.js";
+import type { MissionEvent, FeatureUnlinkedPayload } from "../../missions/mission-types.js";
 
 import {
   pgDescribe,
@@ -308,11 +312,14 @@ pgTest("MissionStore (PostgreSQL backend mode)", () => {
     const feature = await m.addFeature(slice.id, { title: "F" });
     const task = await h.store().createTask({ description: "delivery task" });
     const observedEvents: MissionEvent[] = [];
+    const unlinkedEvents: FeatureUnlinkedPayload[] = [];
     m.on("mission:event", (event) => observedEvents.push(event));
+    m.on("feature:unlinked", (payload) => unlinkedEvents.push(payload));
 
     const linked = await m.linkFeatureToTask(feature.id, task.id);
     expect(linked.taskId).toBe(task.id);
     expect(linked.status).toBe("triaged");
+    expect(unlinkedEvents).toHaveLength(0);
     expect(observedEvents).toEqual(expect.arrayContaining([expect.objectContaining({ eventType: "feature_status_changed", metadata: expect.objectContaining({ source: "mission-link" }) })]));
     expect((await m.getMissionEvents(mission.id, { limit: 10 })).events).toEqual(expect.arrayContaining([
       expect.objectContaining({
@@ -321,15 +328,186 @@ pgTest("MissionStore (PostgreSQL backend mode)", () => {
       }),
     ]));
 
+    /*
+    FNXC:MissionFeatureUnlinkEvent 2026-08-17-12:20:
+    RUFU-116 symptom verification: an unlink must surface as a feature:unlinked EventEmitter
+    event (with the detached taskId) plus a feature_status_changed mission:event sourced
+    mission-unlink, so subscribers observing feature:linked transitions can see unlinks too.
+    */
     const unlinked = await m.unlinkFeatureFromTask(feature.id);
     expect(unlinked.taskId).toBeUndefined();
     expect(unlinked.status).toBe("defined");
+    expect(unlinkedEvents).toHaveLength(1);
+    expect(unlinkedEvents[0]).toEqual(expect.objectContaining({
+      feature: expect.objectContaining({ id: feature.id, taskId: undefined, status: "defined" }),
+      taskId: task.id,
+    }));
     expect((await m.getMissionEvents(mission.id, { limit: 10 })).events).toEqual(expect.arrayContaining([
       expect.objectContaining({
         eventType: "feature_status_changed",
-        metadata: expect.objectContaining({ featureId: feature.id, from: "triaged", to: "defined", source: "mission-store" }),
+        metadata: expect.objectContaining({ featureId: feature.id, from: "triaged", to: "defined", source: "mission-unlink" }),
       }),
     ]));
+  });
+
+  /*
+  FNXC:MissionFeatureClaimRace 2026-08-19-21:24 (RUFU-134 / PR #3491 Greptile P1):
+  Two transactions claiming the same unclaimed task used to both pass the conflicting-feature
+  check (each read the task as unclaimed) and both commit, corrupting the single-valued
+  feature→task invariant. Claim paths now hold the task row lock (lockLiveTaskForClaim) BEFORE
+  the conflict check. This test simulates the first claimant's transaction on a separate
+  connection: it locks the task row with SELECT ... FOR UPDATE and writes the first claimant's
+  linkage while holding the lock. The store's concurrent link (second claimant) must (a) remain
+  blocked on the row lock while the first transaction is open (~250ms pending probe) and
+  (b) after the first transaction commits, reject with the conflicting-feature error instead of
+  overwriting the first claimant's linkage.
+  */
+  it("serializes concurrent claims on the same task (Greptile P1 race)", async () => {
+    const m = missions();
+    const mission = await m.createMission({ title: "Claim race" });
+    const milestone = await m.addMilestone(mission.id, { title: "MS" });
+    const slice = await m.addSlice(milestone.id, { title: "SL" });
+    const featureOne = await m.addFeature(slice.id, { title: "F1" });
+    const featureTwo = await m.addFeature(slice.id, { title: "F2" });
+    const task = await h.store().createTask({ description: "contested task" });
+    const db = h.adminDb();
+
+    // Second claimant's link — fired while the first claimant holds the row lock.
+    let settled = false;
+    const contestedLink = m.linkFeatureToTask(featureTwo.id, task.id).then(
+      (value) => { settled = true; return value; },
+      (error) => { settled = true; throw error; },
+    );
+
+    // First claimant's transaction: lock the task row, write its linkage, hold it open.
+    await db.transaction(async (tx) => {
+      await tx.select({ id: schema.project.tasks.id })
+        .from(schema.project.tasks)
+        .where(eq(schema.project.tasks.id, task.id))
+        .for("update");
+      await tx.update(schema.project.missionFeatures)
+        .set({ taskId: task.id, status: "triaged", updatedAt: new Date().toISOString() })
+        .where(eq(schema.project.missionFeatures.id, featureOne.id));
+      await tx.update(schema.project.tasks)
+        .set({ missionId: mission.id, sliceId: slice.id, updatedAt: new Date().toISOString() })
+        .where(eq(schema.project.tasks.id, task.id));
+
+      // While the first claimant is uncommitted, the second claimant must still be blocked
+      // on the task row lock, not settled (success or failure).
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      expect(settled).toBe(false);
+    });
+
+    // First claimant committed: the second claimant now observes the committed link and
+    // must reject with the conflicting-feature error (the pre-fix code committed here,
+    // silently overwriting the first claimant's linkage).
+    await expect(contestedLink).rejects.toThrow(`Task ${task.id} is already linked to feature ${featureOne.id}`);
+
+    const persistedTwo = await m.getFeature(featureTwo.id);
+    expect(persistedTwo?.taskId).toBeUndefined();
+    const taskRow = (await h.store().getTask(task.id)) as { missionId?: string | null; sliceId?: string | null };
+    expect(taskRow.missionId).toBe(mission.id);
+    expect(taskRow.sliceId).toBe(slice.id);
+  });
+
+  it("repointFeatureToTask atomically re-points the single-valued taskId", async () => {
+    const m = missions();
+    const mission = await m.createMission({ title: "Repoint" });
+    const milestone = await m.addMilestone(mission.id, { title: "MS" });
+    const slice = await m.addSlice(milestone.id, { title: "SL" });
+    const feature = await m.addFeature(slice.id, { title: "F" });
+    const wrongTask = await h.store().createTask({ description: "wrong task" });
+    const rightTask = await h.store().createTask({ description: "right delivery task" });
+    const store = h.store();
+
+    // Link feature to the wrong task (reproduces the original symptom: a feature
+    // pinned to the wrong task via fn_feature_link_task).
+    await m.linkFeatureToTask(feature.id, wrongTask.id);
+    expect((await m.getFeature(feature.id))?.taskId).toBe(wrongTask.id);
+    const wrongTaskRow = (await store.getTask(wrongTask.id)) as any;
+    expect(wrongTaskRow.missionId).toBe(mission.id);
+    expect(wrongTaskRow.sliceId).toBe(slice.id);
+
+    // Re-point to the right delivery task.
+    const repointed = await m.repointFeatureToTask(feature.id, rightTask.id);
+    expect(repointed.taskId).toBe(rightTask.id);
+    const persisted = await m.getFeature(feature.id);
+    expect(persisted?.taskId).toBe(rightTask.id);
+    expect(persisted?.status).toBe("triaged");
+
+    // The old task's reverse linkage is cleared; the new task's is set.
+    const oldTaskRow = (await store.getTask(wrongTask.id)) as any;
+    expect(oldTaskRow.missionId).toBeUndefined();
+    expect(oldTaskRow.sliceId).toBeUndefined();
+    const rightTaskRow = (await store.getTask(rightTask.id)) as any;
+    expect(rightTaskRow.missionId).toBe(mission.id);
+    expect(rightTaskRow.sliceId).toBe(slice.id);
+
+    // Same-task re-point is an idempotent no-op preserving status/loop/attempts.
+    await m.updateFeatureStatus(feature.id, "in-progress");
+    const beforeSame = await m.getFeature(feature.id);
+    const same = await m.repointFeatureToTask(feature.id, rightTask.id);
+    const afterSame = await m.getFeature(feature.id);
+    expect(same.taskId).toBe(rightTask.id);
+    expect(afterSame?.taskId).toBe(rightTask.id);
+    expect(beforeSame?.status).toBe("in-progress");
+    expect(afterSame?.status).toBe("in-progress");
+
+    // Conflict: re-point to a task already owned by another feature is rejected.
+    const otherFeature = await m.addFeature(slice.id, { title: "Other" });
+    await m.linkFeatureToTask(otherFeature.id, wrongTask.id);
+    await expect(m.repointFeatureToTask(feature.id, wrongTask.id))
+      .rejects.toThrow(`Task ${wrongTask.id} is already linked to feature ${otherFeature.id}`);
+
+    // Unlink after re-point clears the (new) task.
+    const finalUnlink = await m.unlinkFeatureFromTask(feature.id);
+    expect(finalUnlink.taskId).toBeUndefined();
+    expect(finalUnlink.status).toBe("defined");
+    const rightTaskAfterUnlink = (await store.getTask(rightTask.id)) as any;
+    expect(rightTaskAfterUnlink.missionId).toBeUndefined();
+    expect(rightTaskAfterUnlink.sliceId).toBeUndefined();
+  });
+
+  /*
+  FNXC:MissionFeatureUnlinkContract 2026-08-19-21:24 (RUFU-134 / PR #3491):
+  Unlinking a feature that is not linked to any task is an error: it changes nothing and emits
+  nothing. This replaced the previous "idempotent no-op that still emits feature:unlinked"
+  behavior, which no public surface ever honored and which silently rewrote the row — including
+  the silent status demotion of a reverse-lineage-credited done feature (RUFU-109 credits the
+  status without setting taskId). The CLI/agent surfaces report the error, and the dashboard
+  route maps it to a 4xx.
+  */
+  it("unlinkFeatureFromTask of a not-linked feature rejects, changes nothing, and emits nothing", async () => {
+    const m = missions();
+    const mission = await m.createMission({ title: "Unlink-contract" });
+    const milestone = await m.addMilestone(mission.id, { title: "MS" });
+    const slice = await m.addSlice(milestone.id, { title: "SL" });
+    const feature = await m.addFeature(slice.id, { title: "F" });
+    const task = await h.store().createTask({ description: "unlink-contract task" });
+    const observedEvents: MissionEvent[] = [];
+    const unlinkedEvents: FeatureUnlinkedPayload[] = [];
+    m.on("mission:event", (event) => observedEvents.push(event));
+    m.on("feature:unlinked", (payload) => unlinkedEvents.push(payload));
+
+    // (1) A feature that was never linked: the store rejects with the documented message.
+    await expect(m.unlinkFeatureFromTask(feature.id)).rejects.toThrow(`Feature ${feature.id} is not linked to any task`);
+    expect(unlinkedEvents).toHaveLength(0);
+    expect(observedEvents).toHaveLength(0);
+    expect((await m.getMissionEvents(mission.id, { limit: 10 })).events).toEqual([]);
+
+    // (2) A feature that was linked and then unlinked: the same error, no residual linkage.
+    await m.linkFeatureToTask(feature.id, task.id);
+    await m.unlinkFeatureFromTask(feature.id);
+    const rowBefore = await m.getFeature(feature.id);
+    expect(rowBefore?.taskId).toBeUndefined();
+    expect(rowBefore?.status).toBe("defined");
+    await expect(m.unlinkFeatureFromTask(feature.id)).rejects.toThrow(`Feature ${feature.id} is not linked to any task`);
+    expect(unlinkedEvents).toHaveLength(1); // only the real unlink above
+    const rowAfter = await m.getFeature(feature.id);
+    expect(rowAfter).toEqual(rowBefore); // the failed unlink rewrote nothing
+    const taskRow = (await h.store().getTask(task.id)) as { missionId?: string | null; sliceId?: string | null };
+    expect(taskRow.missionId).toBeUndefined();
+    expect(taskRow.sliceId).toBeUndefined();
   });
 
   it("audits defined-feature bootstrap claims inside their task transaction", async () => {

@@ -172,7 +172,7 @@ export function markStuckAborted(
           status: "queued",
           error: null,
           worktree: null,
-          branch: null,
+          branch: null, branchWriteOrigin: "engine" as const,
         });
         await deps.store.moveTask(taskId, await resolveReboundColumnFor(deps.store, taskId), preserveProgress ? { preserveProgress: true } : undefined);
         // Remove from executing only after the hung surfaces and worktree have

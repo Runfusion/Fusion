@@ -25,10 +25,11 @@ const openModelPortal = async () => {
 };
 
 describe("ChatThinkingLevelControl with the real CustomModelDropdown portal", () => {
-  it("keeps the brain popup open for pointerdown inside the portaled model menu, then selects the model normally", async () => {
+  it("keeps the brain popup open for pointerdown inside the readable portaled model menu, then selects the model normally", async () => {
     const onChangeModel = vi.fn();
     const portal = await openModelPortalWithRender({ onChangeModel });
 
+    expect(portal).toHaveAttribute("data-menu-width", "readable");
     fireEvent.pointerDown(portal);
 
     expect(screen.getByTestId("chat-thinking-popover")).toBeInTheDocument();

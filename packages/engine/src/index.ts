@@ -9,6 +9,12 @@ export { reloadExemptTools, addToExemptTools, getExemptToolNames, evaluateAgentA
 export type { AgentActionGateContext, AgentActionGateDecision } from "./agents/agent-action-gate.js";
 export { createFusionAuthStorage, createFusionModelRegistry } from "./auth/auth-storage.js";
 export {
+  DEFAULT_DASHBOARD_PORT,
+  getLocalDashboardPort,
+  setLocalDashboardPort,
+  resetLocalDashboardPortForTests,
+} from "./local-dashboard-port.js";
+export {
   DEFAULT_MODEL_REGISTRY_REFRESH_TIMEOUT_MS,
   boundExistingModelRegistryRefresh,
   refreshFusionModelRegistry,
@@ -643,7 +649,15 @@ export {
   type MockScriptContext,
 } from "./providers/index.js";
 export { activeSessionRegistry } from "./agents/active-session-registry.js";
-export { WorktreePool, scanIdleWorktrees, cleanupOrphanedWorktrees, reapOrphanWorktrees } from "./worktree/worktree-pool.js";
+export {
+  WorktreePool,
+  scanIdleWorktrees,
+  cleanupOrphanedWorktrees,
+  reapOrphanWorktrees,
+  getRegisteredWorktreeBranches,
+} from "./worktree/worktree-pool.js";
+export { removeWorktree, RemovalReason, type RemovalReason as WorktreeRemovalReason, type WorktreeRemoveOutcome } from "./worktree/worktree-backend.js";
+export { isInsideConfiguredWorktreesDir, resolveWorktreesDir } from "./worktree/worktree-paths.js";
 export {
   pruneWorktreeAdminEntries,
   pruneWorktreeAdminEntriesSync,
@@ -662,6 +676,8 @@ export {
   type InspectBranchConflictInput,
 } from "./execution/branch-conflicts.js";
 export { generateReservedWorktreeName, generateWorktreeName, planTaskWorktreePath, slugify } from "./worktree/worktree-names.js";
+export { deriveJiraBranchName, normalizeJiraIssueKey } from "./worktree/jira-branch-name.js";
+export type { JiraBranchNameResult } from "./worktree/jira-branch-name.js";
 export { createLogger, type Logger } from "./logger.js";
 export {
   validateExternalIntegrationManifest,
@@ -926,7 +942,9 @@ export {
   DEFAULT_STALE_MERGING_STATUS_MIN_AGE_MS,
   isMergeActiveStatus,
   isStaleMergeActiveStatus,
+  shouldClearOrphanedMergeStamp,
 } from "./merge/merge-active-status.js";
+export { clearOwnedMergeStamp, reconcileUnownedStaleMergeStamp } from "./merge/clear-orphaned-merge-stamp.js";
 export { PluginRunner, type PluginRunnerOptions } from "./plugins/plugin-runner.js";
 export {
   registerPluginTraits,

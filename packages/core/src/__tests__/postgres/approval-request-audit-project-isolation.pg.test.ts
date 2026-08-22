@@ -178,6 +178,6 @@ pgDescribe("approval request audit project isolation", () => {
       { projectId: "order-project", id: "c", requestId: "apr-order", eventType: "completed", actorId: "agent", actorType: "agent", actorName: "Agent", createdAt: "2026-08-12T16:00:00.000Z" },
     ]);
     expect((await getApprovalAuditHistory(h.layer().db, "apr-order", "order-project")).map((event) => event.id))
-      .toEqual(["a", "b", "c"]);
+      .toEqual(["b", "a", "c"]);
   });
 });

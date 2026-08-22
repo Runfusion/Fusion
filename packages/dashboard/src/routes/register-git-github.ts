@@ -1,4 +1,4 @@
-import { createLogger, createIngestedCheckResolver, resolveRequiredCheckNames, resolveWorkflowIrForTask, resolveReviewColumns, resolveReboundTarget } from "@fusion/core";
+import { createLogger, createIngestedCheckResolver, resolveRequiredCheckNames, resolveWorkflowIrForTask, resolveReviewColumns, resolveReboundTarget, resolveTaskPrHeadBranch } from "@fusion/core";
 
 const severityAuditLog = createLogger("dashboard-register-git-github");
 import { type NextFunction, type Request, type Response } from "express";
@@ -20,7 +20,7 @@ import type {
   Task,
   TaskStore,
 } from "@fusion/core";
-import { classifyGhError, getCurrentRepo, isGhAuthenticated, loadWorkspaceConfig } from "@fusion/core";
+import { addWorkspaceRepo, classifyGhError, detectWorkspaceRepos, getCurrentRepo, isGhAuthenticated, loadWorkspaceConfig, WorkspaceRepoValidationError } from "@fusion/core";
 import {
   dropAutostashHandle,
   generateSyntheticRunId,
@@ -54,7 +54,6 @@ import { GitLabIssueCommentService } from "../gitlab-issue-comment.js";
 import { GitLabTrackingCommentService } from "../gitlab-tracking-comments.js";
 import { GitLabTrackingStateService } from "../gitlab-tracking-state.js";
 import { GitLabSourceIssueCloseService } from "../gitlab-source-issue-close.js";
-import { GitLabSplitCloseService } from "../gitlab-split-close.js";
 import { GitLabDeleteCloseService } from "../gitlab-delete-close.js";
 import { KnowledgeIndexRefreshService } from "../knowledge-index-refresh.js";
 import { githubRateLimiter } from "../github-poll.js";
@@ -414,7 +413,13 @@ async function computePrPreflight(task: Task, repoRoot: string, requestedBase?: 
   const defaultBaseBranch = requestedBase?.trim()
     ? ensureSafeGitRef(requestedBase, "base branch")
     : await resolveDefaultPrBaseBranch(task, repoRoot);
-  const head = `fusion/${task.id.toLowerCase()}`;
+  /*
+  FNXC:WorkspacePrHead 2026-08-20-03:38:
+  FN-9161 lets workspace tasks use one operator-supplied branch in every repository.
+  PR preflight must inspect that persisted working branch rather than inventing the
+  legacy task-derived ref, or a valid workspace branch appears absent.
+  */
+  const head = resolveTaskPrHeadBranch(task);
   const safeHead = ensureSafeGitRef(head, "head branch");
   const response: PrPreflightResponse = {
     branchOnRemote: false,
@@ -2672,16 +2677,43 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
 
   /**
    * GET /api/git/workspace-repos
-   * Returns the list of sub-repos for a workspace-mode project.
-   * Non-workspace projects return an empty array.
+   * Returns registered workspace repos, with candidates only when explicitly requested.
    */
   router.get("/git/workspace-repos", async (req, res) => {
     try {
       const { store: scopedStore } = await getProjectContext(req);
       const rootDir = resolveGitDir(req, scopedStore.getRootDir());
       const config = await loadWorkspaceConfig(rootDir);
-      res.json({ repos: config?.repos ?? [] });
+      if (!config) throw conflict("This project is not a workspace");
+      if (req.query.includeAvailable === "1") {
+        const available = (await detectWorkspaceRepos(rootDir)).filter((repo) => !config.repos.includes(repo));
+        res.json({ repos: config.repos, available });
+      } else {
+        res.json({ repos: config.repos });
+      }
     } catch (err: unknown) {
+      if (err instanceof ApiError) throw err;
+      rethrowAsApiError(err);
+    }
+  });
+
+  /*
+  FNXC:Workspace 2026-08-20-02:03:
+  workspace.json is the membership authority. Core serializes this idempotent write with mode
+  toggles, and executor acquisition refreshes disk membership without a process restart.
+  */
+  router.post("/git/workspace-repos", async (req, res) => {
+    try {
+      const { store: scopedStore } = await getProjectContext(req);
+      const rootDir = resolveGitDir(req, scopedStore.getRootDir());
+      const repo = (req.body as { repo?: unknown } | undefined)?.repo;
+      if (typeof repo !== "string") throw badRequest("repo must be a string");
+      res.json(await addWorkspaceRepo(rootDir, repo));
+    } catch (err: unknown) {
+      if (err instanceof WorkspaceRepoValidationError) {
+        if (err.reason === "not-a-workspace") throw conflict("This project is not a workspace");
+        throw badRequest(`Invalid workspace repository: ${err.reason}`);
+      }
       if (err instanceof ApiError) throw err;
       rethrowAsApiError(err);
     }
@@ -2716,10 +2748,6 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
     const gitlabSourceIssueCloseService = new GitLabSourceIssueCloseService(store);
     gitlabSourceIssueCloseService.start();
     ctx.registerDispose(() => gitlabSourceIssueCloseService.stop());
-
-    const gitlabSplitCloseService = new GitLabSplitCloseService(store);
-    gitlabSplitCloseService.start();
-    ctx.registerDispose(() => gitlabSplitCloseService.stop());
 
     const gitlabDeleteCloseService = new GitLabDeleteCloseService(store);
     gitlabDeleteCloseService.start();
@@ -2785,7 +2813,6 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
       githubSourceIssueCloseService.attach(projectStore);
       gitlabTrackingStateService.attach(projectStore);
       gitlabSourceIssueCloseService.attach(projectStore);
-      gitlabSplitCloseService.attach(projectStore);
       gitlabDeleteCloseService.attach(projectStore);
       // FNXC:Knowledge 2026-06-16-14:32:
       // Knowledge index refresh on task:moved→done must run for every registered project store, not just the primary.
@@ -5450,8 +5477,8 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
 
       const existingPrs = getTaskPrList(task);
 
-      // Determine branch name from task
-      const branchName = `fusion/${task.id.toLowerCase()}`;
+      // FNXC:WorkspacePrHead 2026-08-20-03:38: PR creation follows the task's persisted working branch, including an operator-supplied workspace branch.
+      const branchName = resolveTaskPrHeadBranch(task);
 
       // Get owner/repo from git remote or GITHUB_REPOSITORY env
       let owner: string;
@@ -5553,7 +5580,7 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
       const requestedBase = typeof req.body?.base === "string" ? req.body.base.trim() : "";
       const defaultBaseBranch = requestedBase || await resolveDefaultPrBaseBranch(task, repoRoot);
       const baseBranch = ensureSafeGitRef(defaultBaseBranch, "base branch");
-      const head = ensureSafeGitRef(`fusion/${task.id.toLowerCase()}`, "head branch");
+      const head = ensureSafeGitRef(resolveTaskPrHeadBranch(task), "head branch");
       const headRef = `refs/heads/${head}`;
       const baseRef = await resolvePrBaseRef(repoRoot, baseBranch).catch(() => baseBranch);
 
@@ -5634,7 +5661,7 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
       const requestedBase = typeof req.body?.base === "string" ? req.body.base.trim() : "";
       const defaultBaseBranch = requestedBase || await resolveDefaultPrBaseBranch(task, repoRoot);
       const baseBranch = ensureSafeGitRef(defaultBaseBranch, "base branch");
-      const head = ensureSafeGitRef(`fusion/${task.id.toLowerCase()}`, "head branch");
+      const head = ensureSafeGitRef(resolveTaskPrHeadBranch(task), "head branch");
       const baseRef = await resolvePrBaseRef(repoRoot, baseBranch).catch(() => baseBranch);
 
       /*

@@ -1,5 +1,6 @@
 import { EventEmitter } from "node:events";
-import type { Task, CentralCore } from "@fusion/core";
+import { existsSync } from "node:fs";
+import { createTaskStoreForBackend, resolveEffectiveConcurrency, type Task, type CentralCore, type RegisteredProject } from "@fusion/core";
 import { InProcessRuntime } from "../runtimes/in-process-runtime.js";
 import { ChildProcessRuntime } from "../runtimes/child-process-runtime.js";
 import { RemoteNodeRuntime } from "../runtimes/remote-node-runtime.js";
@@ -470,12 +471,13 @@ export class ProjectManager extends EventEmitter<ProjectManagerEvents> {
     const workingDirectory = await this.centralCore.resolveLocalProjectWorkingDirectory(projectId);
     await this.removeProject(projectId);
 
+    const capacity = await this.resolveStartupConcurrency(project, workingDirectory);
     await this.addProject({
       projectId,
       workingDirectory,
       isolationMode: project.isolationMode,
-      maxConcurrent: project.settings?.maxConcurrent ?? 2,
-      maxWorktrees: project.settings?.maxWorktrees ?? 4,
+      maxConcurrent: capacity.maxConcurrent,
+      maxWorktrees: capacity.worktreeLimit ?? capacity.maxConcurrent,
       settings: project.settings,
     });
 
@@ -485,6 +487,24 @@ export class ProjectManager extends EventEmitter<ProjectManagerEvents> {
       isolationMode: project.isolationMode,
       reason: options?.reason,
     });
+  }
+
+  /*
+  FNXC:CapacityModel 2026-08-21-15:45:
+  Runtime restarts must preserve FN-9185's live-settings precedence instead of restoring a stale registry snapshot.
+  */
+  private async resolveStartupConcurrency(project: RegisteredProject, workingDirectory: string) {
+    if (!existsSync(workingDirectory)) return resolveEffectiveConcurrency(project.settings);
+    try {
+      const boot = await createTaskStoreForBackend({ rootDir: workingDirectory, projectId: project.id });
+      try {
+        return resolveEffectiveConcurrency(await boot.taskStore.getSettingsFast());
+      } finally {
+        await boot.shutdown();
+      }
+    } catch {
+      return resolveEffectiveConcurrency(project.settings);
+    }
   }
 
   /**

@@ -72,6 +72,16 @@ pgDescribe("FN-8601 — PostgreSQL foreach merge proof", () => {
     expect(live?.steps.every((step) => step.status === "done")).toBe(true);
   });
 
+  it("admits builtin-coding-shaped terminal steps with Review Level 0 results disabled", async () => {
+    const doneSteps = pendingSteps().map((step) => ({ ...step, status: "done" as const }));
+    const { store, task, executor } = await setup({ results: [], steps: doneSteps });
+    await store.updateTask(task.id, { enabledWorkflowSteps: [] });
+    const live = await store.getTask(task.id);
+    const result = await merge(executor, live!);
+    expect((result as { blocked?: unknown }).blocked).toBeUndefined();
+    expect((await store.getTask(task.id))?.column).toBe("in-review");
+  });
+
   it("blocks complete coverage when an unrelated pre-merge node result failed", async () => {
     const ids = [0, 1, 2].map((index) => instanceNodeId("steps", index, "step-execute"));
     const { store, task, executor } = await setup({ results: [...ids.map((id) => nodeResult(id)), nodeResult("unrelated", "failed")] });

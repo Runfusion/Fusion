@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { performance } from "node:perf_hooks";
@@ -15,6 +15,10 @@ export const DEFAULT_HISTORY_PATH = "scripts/test-velocity-history.json";
 export const DEFAULT_REPORT_PATH = "docs/test-velocity-baseline.md";
 export const DEFAULT_MEASURE_TIMEOUT_MS = 10 * 60 * 1000;
 export const DELETION_CLOCK_DAYS = 14;
+const HISTORY_LOCK_PATH = "scripts/.test-velocity-history.lock";
+const HISTORY_LOCK_TIMEOUT_MS = 10_000;
+const HISTORY_LOCK_RETRY_MS = 25;
+const HISTORY_LOCK_STALE_MS = 60_000;
 
 const BUILD_PREFLIGHT_COMMAND = {
   key: "buildPreflightMs",
@@ -45,6 +49,68 @@ function writeText(relativePath, value, rootDir = repoRoot) {
   const absolutePath = path.join(rootDir, relativePath);
   mkdirSync(path.dirname(absolutePath), { recursive: true });
   writeFileSync(absolutePath, value, "utf8");
+}
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function staleHistoryLock(lockPath) {
+  try {
+    const owner = JSON.parse(readFileSync(path.join(lockPath, "owner.json"), "utf8"));
+    if (Number.isInteger(owner?.pid) && owner.pid > 0) {
+      try {
+        process.kill(owner.pid, 0);
+        return false;
+      } catch (error) {
+        if (error?.code === "EPERM") return false;
+        if (error?.code === "ESRCH") return true;
+      }
+    }
+    return Date.now() - statSync(lockPath).mtimeMs > HISTORY_LOCK_STALE_MS;
+  } catch {
+    // FNXC:TestVelocityBaseline 2026-08-18-14:41: Recover an abandoned pre-owner directory after its bounded stale timeout so a crash cannot permanently wedge refreshes.
+    try {
+      return Date.now() - statSync(lockPath).mtimeMs > HISTORY_LOCK_STALE_MS;
+    } catch {
+      return false;
+    }
+  }
+}
+
+/**
+ * FNXC:TestVelocityBaseline 2026-08-18-14:41:
+ * FN-9144 requires measurement appends and verdict annotations to be additive across
+ * concurrent invocations. Serialize the short history read/modify/write section after
+ * expensive measurement completes, and release the filesystem lock in finally so a
+ * failed writer cannot strand later regenerations.
+ */
+async function withHistoryLock(rootDir, callback) {
+  const lockPath = path.join(rootDir, HISTORY_LOCK_PATH);
+  mkdirSync(path.dirname(lockPath), { recursive: true });
+  const deadline = Date.now() + HISTORY_LOCK_TIMEOUT_MS;
+  let acquired = false;
+  while (!acquired) {
+    try {
+      mkdirSync(lockPath, { recursive: false });
+      writeFileSync(path.join(lockPath, "owner.json"), JSON.stringify({ pid: process.pid, acquiredAt: new Date().toISOString() }), "utf8");
+      acquired = true;
+    } catch (error) {
+      if (error?.code !== "EEXIST") throw error;
+      if (staleHistoryLock(lockPath)) {
+        rmSync(lockPath, { recursive: true, force: true });
+        continue;
+      }
+      if (Date.now() >= deadline) throw new Error(`Timed out waiting for ${HISTORY_LOCK_PATH}`);
+      await delay(HISTORY_LOCK_RETRY_MS);
+    }
+  }
+
+  try {
+    return await callback();
+  } finally {
+    rmSync(lockPath, { recursive: true, force: true });
+  }
 }
 
 function normalizeMs(value) {
@@ -185,7 +251,23 @@ function trendCell(current, prior) {
   return `${diff > 0 ? "+" : ""}${diff}`;
 }
 
-export function renderReport({ gateMs, bootSmokeMs, testMs, slowest = [], quarantine, capturedAt, previous = null, measurementFailures = [], timingSnapshotCapturedAt = null, timingNotes = [] } = {}) {
+/**
+ * FNXC:TestVelocityBaseline 2026-08-18-14:35:
+ * FN-9144 requires investigative verdicts to survive wholesale report regeneration and
+ * unbounded future weekly appends. Collect notes from the complete persisted history,
+ * not the latest baseline or a recent window, so an older measurement remains visible.
+ */
+function measurementNoteRows(entries) {
+  return entries
+    .map((entry, index) => ({ entry, index, capturedAt: entry?.capturedAt, date: toDate(entry?.capturedAt) }))
+    .filter(({ entry }) => Array.isArray(entry?.notes))
+    .sort((left, right) => (right.date?.getTime() ?? -Infinity) - (left.date?.getTime() ?? -Infinity) || right.index - left.index)
+    .flatMap(({ entry, capturedAt, date }) => entry.notes
+      .filter((note) => typeof note?.text === "string" && note.text.trim())
+      .map((note) => `- **${date ? isoWeek(date) : "unknown cycle"}** (${capturedAt ?? "unknown capturedAt"}): ${note.text}`));
+}
+
+export function renderReport({ gateMs, bootSmokeMs, testMs, slowest = [], quarantine, capturedAt, previous = null, measurementFailures = [], timingSnapshotCapturedAt = null, timingNotes = [], entries = [] } = {}) {
   const latest = {
     gateMs: normalizeMs(gateMs),
     bootSmokeMs: normalizeMs(bootSmokeMs),
@@ -206,11 +288,15 @@ export function renderReport({ gateMs, bootSmokeMs, testMs, slowest = [], quaran
   const timingNoteRows = timingNotes.length > 0
     ? timingNotes.map((note) => `- ${note}`).join("\n")
     : "- No stale or missing timing metadata detected in the rendered slowest-file rows.";
+  const measurementNotes = measurementNoteRows(entries);
+  const measurementNoteRowsText = measurementNotes.length > 0
+    ? measurementNotes.join("\n")
+    : "- No notes recorded.";
   const previousRows = previous
     ? `| Previous | ${previous.capturedAt ?? "unknown"} | ${formatDuration(previous.gateMs)} | ${formatDuration(previous.bootSmokeMs)} | ${formatDuration(previous.testMs)} | ${previous.quarantineCount ?? "n/a"} |\n| Latest | ${latest.capturedAt} | ${formatDuration(latest.gateMs)} | ${formatDuration(latest.bootSmokeMs)} | ${formatDuration(latest.testMs)} | ${latest.quarantineCount} |\n| Delta | — | ${delta(latest, previous, "gateMs")} | ${delta(latest, previous, "bootSmokeMs")} | ${delta(latest, previous, "testMs")} | ${trendCell(latest.quarantineCount, previous.quarantineCount)} |`
     : `| Previous | _(seed baseline)_ | — | — | — | — |\n| Latest | ${latest.capturedAt} | ${formatDuration(latest.gateMs)} | ${formatDuration(latest.bootSmokeMs)} | ${formatDuration(latest.testMs)} | ${latest.quarantineCount} |\n| Delta | — | n/a | n/a | n/a | n/a |`;
 
-  return `# Test velocity baseline\n\n> Weekly FN-6612 signal-per-second baseline. Measure and report feedback-loop velocity; do **not** add slow tests or wire this report into blocking PR checks. The merge gate remains the existing thin Lint, Typecheck, Build, and Gate path.\n\n## Latest baseline\n\n- Cycle: **${cycle}**\n- Captured at: **${latest.capturedAt}**\n- Timing snapshot: \`${DEFAULT_TIMINGS_PATH}\`${timingSnapshotCapturedAt ? ` captured at **${timingSnapshotCapturedAt}**` : ""}\n- Quarantine ledger: \`${DEFAULT_QUARANTINE_PATH}\`\n\n## Metrics\n\n| Metric | Current | Delta vs previous |\n|---|---:|---:|\n${renderMetricRow("Merge gate wall-time (`pnpm test:gate`)", latest, previous, "gateMs")}\n${renderMetricRow("Boot smoke wall-time (`pnpm smoke:boot`)", latest, previous, "bootSmokeMs")}\n${renderMetricRow("Changed-only test wall-time (`pnpm test`)", latest, previous, "testMs")}\n| Quarantine / flake count | ${latest.quarantineCount} | ${trendCell(latest.quarantineCount, previous?.quarantineCount)} |\n| Deletion-due quarantines | ${quarantine?.deletionDueCount ?? 0} | n/a |\n\n## Measurement failures\n\n${failures}\n\n## Timing snapshot notes\n\n${timingNoteRows}\n\n## Slowest 20 test files\n\n| Rank | File | Package | Duration |\n|---:|---|---|---:|\n${slowRows || "| — | — | — | — |"}\n\n## Quarantine age buckets\n\n| Age bucket | Count |\n|---|---:|\n| 0-6 days | ${quarantine?.byAgeBucket?.["0-6d"] ?? 0} |\n| 7-13 days | ${quarantine?.byAgeBucket?.["7-13d"] ?? 0} |\n| deletion due (>=14 days) | ${quarantine?.byAgeBucket?.deletionDue ?? 0} |\n| unknown/future | ${quarantine?.byAgeBucket?.unknown ?? 0} |\n\n### Deletion-due entries\n\n| File | Quarantined at | Age (days) |\n|---|---:|---:|\n${dueRows || "| — | — | — |"}\n\n## Before / after trend\n\n| Row | Captured at | Gate | Boot smoke | \`pnpm test\` | Quarantine count |\n|---|---|---:|---:|---:|---:|\n${previousRows}\n\n_Future weekly rows append to \`${DEFAULT_HISTORY_PATH}\`; compare the latest row against the previous row before posting to #leads._\n\n## Post to #leads\n\n\`\`\`text\nFN-6612 weekly test velocity: gate ${formatDuration(latest.gateMs)} (${delta(latest, previous, "gateMs")}), boot smoke ${formatDuration(latest.bootSmokeMs)} (${delta(latest, previous, "bootSmokeMs")}), pnpm test ${formatDuration(latest.testMs)} (${delta(latest, previous, "testMs")}), quarantine ledger ${latest.quarantineCount} (${trendCell(latest.quarantineCount, previous?.quarantineCount)}). Slowest file: ${slowest[0]?.file ?? "none"} at ${formatDuration(slowest[0]?.ms)}. Deletion-due quarantines: ${quarantine?.deletionDueCount ?? 0}.\n\`\`\`\n\n## How to refresh\n\n\`\`\`bash\npnpm test:velocity -- --measure --write-report\n\`\`\`\n\nIn measure mode, the script runs a non-measured \`pnpm build\` preflight before timing \`pnpm test:gate\`, \`pnpm smoke:boot\`, or \`pnpm test\`. The preflight time is setup only and is excluded from lane metrics; if it fails, the Measurement failures section records \`Build preflight (pnpm build)\` as the reason. Use \`--skip-build-preflight\` only when the workspace is already built by CI.\n\nReport-only regeneration is cheap and does not run any suite:\n\n\`\`\`bash\npnpm test:velocity\n\`\`\`\n`;
+  return `# Test velocity baseline\n\n> Weekly FN-6612 signal-per-second baseline. Measure and report feedback-loop velocity; do **not** add slow tests or wire this report into blocking PR checks. The merge gate remains the existing thin Lint, Typecheck, Build, and Gate path.\n\n## Latest baseline\n\n- Cycle: **${cycle}**\n- Captured at: **${latest.capturedAt}**\n- Timing snapshot: \`${DEFAULT_TIMINGS_PATH}\`${timingSnapshotCapturedAt ? ` captured at **${timingSnapshotCapturedAt}**` : ""}\n- Quarantine ledger: \`${DEFAULT_QUARANTINE_PATH}\`\n\n## Metrics\n\n| Metric | Current | Delta vs previous |\n|---|---:|---:|\n${renderMetricRow("Merge gate wall-time (`pnpm test:gate`)", latest, previous, "gateMs")}\n${renderMetricRow("Boot smoke wall-time (`pnpm smoke:boot`)", latest, previous, "bootSmokeMs")}\n${renderMetricRow("Changed-only test wall-time (`pnpm test`)", latest, previous, "testMs")}\n| Quarantine / flake count | ${latest.quarantineCount} | ${trendCell(latest.quarantineCount, previous?.quarantineCount)} |\n| Deletion-due quarantines | ${quarantine?.deletionDueCount ?? 0} | n/a |\n\n## Measurement failures\n\n${failures}\n\n## Measurement notes\n\n${measurementNoteRowsText}\n\n## Timing snapshot notes\n\n${timingNoteRows}\n\n## Slowest 20 test files\n\n| Rank | File | Package | Duration |\n|---:|---|---|---:|\n${slowRows || "| — | — | — | — |"}\n\n## Quarantine age buckets\n\n| Age bucket | Count |\n|---|---:|\n| 0-6 days | ${quarantine?.byAgeBucket?.["0-6d"] ?? 0} |\n| 7-13 days | ${quarantine?.byAgeBucket?.["7-13d"] ?? 0} |\n| deletion due (>=14 days) | ${quarantine?.byAgeBucket?.deletionDue ?? 0} |\n| unknown/future | ${quarantine?.byAgeBucket?.unknown ?? 0} |\n\n### Deletion-due entries\n\n| File | Quarantined at | Age (days) |\n|---|---:|---:|\n${dueRows || "| — | — | — |"}\n\n## Before / after trend\n\n| Row | Captured at | Gate | Boot smoke | \`pnpm test\` | Quarantine count |\n|---|---|---:|---:|---:|---:|\n${previousRows}\n\n_Future weekly rows append to \`${DEFAULT_HISTORY_PATH}\`; compare the latest row against the previous row before posting to #leads._\n\n## Post to #leads\n\n\`\`\`text\nFN-6612 weekly test velocity: gate ${formatDuration(latest.gateMs)} (${delta(latest, previous, "gateMs")}), boot smoke ${formatDuration(latest.bootSmokeMs)} (${delta(latest, previous, "bootSmokeMs")}), pnpm test ${formatDuration(latest.testMs)} (${delta(latest, previous, "testMs")}), quarantine ledger ${latest.quarantineCount} (${trendCell(latest.quarantineCount, previous?.quarantineCount)}). Slowest file: ${slowest[0]?.file ?? "none"} at ${formatDuration(slowest[0]?.ms)}. Deletion-due quarantines: ${quarantine?.deletionDueCount ?? 0}.\n\`\`\`\n\n## How to refresh\n\n\`\`\`bash\npnpm test:velocity -- --measure --write-report\n\`\`\`\n\nIn measure mode, the script runs a non-measured \`pnpm build\` preflight before timing \`pnpm test:gate\`, \`pnpm smoke:boot\`, or \`pnpm test\`. The preflight time is setup only and is excluded from lane metrics; if it fails, the Measurement failures section records \`Build preflight (pnpm build)\` as the reason. Use \`--skip-build-preflight\` only when the workspace is already built by CI.\n\nReport-only regeneration is cheap and does not run any suite:\n\n\`\`\`bash\npnpm test:velocity\n\`\`\`\n\nAdd a durable measurement verdict without running a suite:\n\n\`\`\`bash\npnpm test:velocity -- --note "<text>" [--note-target <capturedAt|ISO-cycle>]\n\`\`\`\n\nNotes are stored on their history entries and rendered from every past annotated cycle, newest first, with no window cap. The baseline document is generated; never hand-edit it.\n`;
 }
 
 function historyEntries(history) {
@@ -234,7 +320,7 @@ function createEntry({ capturedAt = new Date().toISOString(), gateMs = null, boo
 }
 
 function parseArgs(argv) {
-  const args = { measure: false, writeReport: false, reportOnly: true, timeoutMs: DEFAULT_MEASURE_TIMEOUT_MS, help: false, skipBuildPreflight: false };
+  const args = { measure: false, writeReport: false, reportOnly: true, timeoutMs: DEFAULT_MEASURE_TIMEOUT_MS, help: false, skipBuildPreflight: false, note: null, noteTarget: null };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === "--") continue;
@@ -243,12 +329,21 @@ function parseArgs(argv) {
     else if (arg === "--report-only") args.reportOnly = true;
     else if (arg === "--skip-build-preflight" || arg === "--no-build-preflight") args.skipBuildPreflight = true;
     else if (arg === "--timeout-ms") args.timeoutMs = Number(argv[++index]);
+    else if (arg === "--note") args.note = argv[++index];
+    else if (arg === "--note-target") args.noteTarget = argv[++index];
     else if (arg === "--help" || arg === "-h") args.help = true;
     else throw new Error(`Unknown argument: ${arg}`);
   }
   if (!Number.isFinite(args.timeoutMs) || args.timeoutMs <= 0) {
     throw new Error(`Expected --timeout-ms to be a positive number, got ${args.timeoutMs}`);
   }
+  if (args.note != null && (typeof args.note !== "string" || !args.note.trim())) {
+    throw new Error("Expected --note to contain non-empty text");
+  }
+  if (args.noteTarget != null && (typeof args.noteTarget !== "string" || !args.noteTarget.trim())) {
+    throw new Error("Expected --note-target to contain a capturedAt timestamp or ISO cycle");
+  }
+  if (args.noteTarget && !args.note) throw new Error("--note-target requires --note");
   return args;
 }
 
@@ -315,7 +410,7 @@ export async function measureCommands({ timeoutMs, cwd, stdout, stderr, commandR
   return { ...results, measurementFailures: failures };
 }
 
-function renderFromEntry(entry, previous, quarantine, { rootDir = repoRoot, now = new Date(), slowest = entry?.slowestTop20 ?? [], timingSnapshotCapturedAt = entry?.timingSnapshotCapturedAt ?? null } = {}) {
+function renderFromEntry(entry, previous, quarantine, { entries = [], rootDir = repoRoot, now = new Date(), slowest = entry?.slowestTop20 ?? [], timingSnapshotCapturedAt = entry?.timingSnapshotCapturedAt ?? null } = {}) {
   return renderReport({
     gateMs: entry?.gateMs,
     bootSmokeMs: entry?.bootSmokeMs,
@@ -326,6 +421,7 @@ function renderFromEntry(entry, previous, quarantine, { rootDir = repoRoot, now 
     previous,
     measurementFailures: entry?.measurementFailures ?? [],
     timingSnapshotCapturedAt,
+    entries,
     timingNotes: timingSnapshotNotes({
       slowest,
       timingSnapshotCapturedAt,
@@ -345,74 +441,81 @@ export async function main(argv = process.argv.slice(2), { rootDir = repoRoot, s
   }
 
   if (args.help) {
-    stdout.write("Usage: node scripts/test-velocity-baseline.mjs [--measure] [--write-report] [--report-only] [--skip-build-preflight] [--timeout-ms <ms>]\n");
+    stdout.write("Usage: node scripts/test-velocity-baseline.mjs [--measure] [--write-report] [--report-only] [--skip-build-preflight] [--timeout-ms <ms>] [--note <text> [--note-target <capturedAt|ISO-cycle>]]\n");
     return 0;
   }
 
-  const history = readJson(DEFAULT_HISTORY_PATH, { entries: [] }, rootDir);
-  const entries = historyEntries(history);
   const timings = readJson(DEFAULT_TIMINGS_PATH, { packages: {} }, rootDir);
   const quarantineJson = readJson(DEFAULT_QUARANTINE_PATH, { entries: [] }, rootDir);
   const quarantine = readQuarantineCount(quarantineJson, { now });
   const slowest = topSlowestFiles(timings, 20);
-
-  if (args.measure) {
-    const measured = await measureCommands({ timeoutMs: args.timeoutMs, cwd: rootDir, stdout, stderr, commandRunner, skipBuildPreflight: args.skipBuildPreflight });
-    const entry = createEntry({
-      capturedAt: now.toISOString(),
-      gateMs: measured.gateMs,
-      bootSmokeMs: measured.bootSmokeMs,
-      testMs: measured.testMs,
-      quarantine,
-      slowest,
-      measurementFailures: measured.measurementFailures,
-      timingSnapshotCapturedAt: timings?.capturedAt ?? null,
-      timingNotes: timingSnapshotNotes({
-        slowest,
-        timingSnapshotCapturedAt: timings?.capturedAt ?? null,
-        rootDir,
-        now,
-      }),
-    });
-    entries.push(entry);
-    writeJson(DEFAULT_HISTORY_PATH, { entries }, rootDir);
-  }
-
-  const latest = entries.at(-1) ?? createEntry({
+  const measured = args.measure
+    ? await measureCommands({ timeoutMs: args.timeoutMs, cwd: rootDir, stdout, stderr, commandRunner, skipBuildPreflight: args.skipBuildPreflight })
+    : null;
+  const measuredEntry = measured && createEntry({
     capturedAt: now.toISOString(),
+    gateMs: measured.gateMs,
+    bootSmokeMs: measured.bootSmokeMs,
+    testMs: measured.testMs,
     quarantine,
     slowest,
+    measurementFailures: measured.measurementFailures,
     timingSnapshotCapturedAt: timings?.capturedAt ?? null,
-    timingNotes: timingSnapshotNotes({
-      slowest,
-      timingSnapshotCapturedAt: timings?.capturedAt ?? null,
-      rootDir,
-      now,
-    }),
-  });
-  const previous = entries.length > 1 ? entries.at(-2) : null;
-  /*
-   * FNXC:TestTimingRefresh 2026-07-24-12:20:
-   * Report-only velocity output preserves historical wall-time measurements,
-   * but its slowest-file table must describe the current committed timing
-   * snapshot. Otherwise a refreshed snapshot leaves operators seeing deleted
-   * paths from the last weekly measurement until the next recording cycle.
-   */
-  const report = renderFromEntry(latest, previous, quarantine, {
-    rootDir,
-    now,
-    slowest,
-    timingSnapshotCapturedAt: timings?.capturedAt ?? null,
+    timingNotes: timingSnapshotNotes({ slowest, timingSnapshotCapturedAt: timings?.capturedAt ?? null, rootDir, now }),
   });
 
-  if (args.writeReport || args.reportOnly) {
-    writeText(DEFAULT_REPORT_PATH, report, rootDir);
-    stdout.write(`Updated ${DEFAULT_REPORT_PATH}\n`);
-  } else {
-    stdout.write(report);
+  try {
+    return await withHistoryLock(rootDir, () => {
+      // FNXC:TestVelocityBaseline 2026-08-18-14:41: Re-read while locked because a measurement may have been timing while an annotation was saved.
+      const history = readJson(DEFAULT_HISTORY_PATH, { entries: [] }, rootDir);
+      const entries = historyEntries(history);
+      if (measuredEntry) entries.push(measuredEntry);
+
+      if (args.note) {
+        const targetMatches = args.noteTarget
+          ? entries.filter((entry) => entry?.capturedAt === args.noteTarget || (toDate(entry?.capturedAt) && isoWeek(toDate(entry.capturedAt)) === args.noteTarget))
+          : entries.slice(-1);
+        if (targetMatches.length !== 1) {
+          stderr.write(args.noteTarget
+            ? `Expected --note-target ${args.noteTarget} to match exactly one history entry; matched ${targetMatches.length}.\n`
+            : "Cannot add a note because history has no latest entry. Use --measure first.\n");
+          return 1;
+        }
+        const target = targetMatches[0];
+        const existingNotes = Array.isArray(target.notes) ? target.notes : [];
+        if (!existingNotes.some((note) => note?.text === args.note)) {
+          target.notes = [...existingNotes, { text: args.note, addedAt: now.toISOString() }];
+        }
+      }
+
+      if (measuredEntry || args.note) writeJson(DEFAULT_HISTORY_PATH, { entries }, rootDir);
+      const latest = entries.at(-1) ?? createEntry({
+        capturedAt: now.toISOString(), quarantine, slowest, timingSnapshotCapturedAt: timings?.capturedAt ?? null,
+        timingNotes: timingSnapshotNotes({ slowest, timingSnapshotCapturedAt: timings?.capturedAt ?? null, rootDir, now }),
+      });
+      const previous = entries.length > 1 ? entries.at(-2) : null;
+      /*
+       * FNXC:TestTimingRefresh 2026-07-24-12:20:
+       * Report-only velocity output preserves historical wall-time measurements,
+       * but its slowest-file table must describe the current committed timing
+       * snapshot. Otherwise a refreshed snapshot leaves operators seeing deleted
+       * paths from the last weekly measurement until the next recording cycle.
+       */
+      const report = renderFromEntry(latest, previous, quarantine, {
+        entries, rootDir, now, slowest, timingSnapshotCapturedAt: timings?.capturedAt ?? null,
+      });
+      if (args.writeReport || args.reportOnly) {
+        writeText(DEFAULT_REPORT_PATH, report, rootDir);
+        stdout.write(`Updated ${DEFAULT_REPORT_PATH}\n`);
+      } else {
+        stdout.write(report);
+      }
+      return 0;
+    });
+  } catch (error) {
+    stderr.write(`${error.message}\n`);
+    return 1;
   }
-
-  return 0;
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {

@@ -11,6 +11,8 @@ import { DEFAULT_GLOBAL_SETTINGS } from "@fusion/core";
 import { fetchSettings, fetchSettingsByScope, updateSettings, updateGlobalSettings, fetchAuthStatus, loginProvider, logoutProvider, cancelProviderLogin, saveApiKey, clearApiKey, fetchModels, testNotification, fetchBackups, createBackup, exportSettings, importSettings, fetchMemoryFile, fetchMemoryFiles, saveMemoryFile, compactMemory, installQmd, testMemoryRetrieval, triggerMemoryDreams, fetchGitRemotes, fetchGitRemotesDetailed, fetchGitBranches, fetchProjects, fetchDashboardHealth, checkForUpdates, installUpdate, fetchSystemInfo, requestSystemRestart, fetchRemoteSettings, fetchRemoteStatus, installCloudflared, fetchRemoteQr, fetchRemoteUrl, submitProviderManualCode, fetchPlugins, formatProviderInstanceKey } from "../api";
 import type { AuthProvider, ManualOAuthCodeInfo, ModelInfo, BackupListResponse, SettingsExportData, MemoryFileInfo, MemoryRetrievalTestResult, GitRemote, GitRemoteDetailed, ProjectInfo, RemoteStatus, UpdateCheckResponse, UpdateInstallResponse, OAuthDeviceCodeInfo } from "../api";
 import { resolveScopedMcpSettings, splitSettingsSave, type McpSettingsScope } from "./settings/save-split";
+import { systemRestartRecovery, useSystemRestartRecovery } from "../hooks/useSystemRestartRecovery";
+import { pendingUpdateInstallState, usePendingUpdateInstall } from "../hooks/usePendingUpdateInstall";
 import {
   ALL_PROJECT_RESET_KEYS,
   getResetIneligibleReason,
@@ -23,6 +25,7 @@ import {
   type DashboardShortcutAction,
 } from "../utils/keyboardShortcuts";
 import type { DashboardKeyboardShortcutMap } from "../utils/keyboardShortcuts";
+import { normalizeChatMessageLayout, type ChatMessageLayout } from "../hooks/useAppSettings";
 import { SettingsHelpTip } from "./settings/SettingsHelpTip";
 import type { SectionSaveHandler } from "./settings/sections/context";
 import { AppearanceSection } from "./settings/sections/AppearanceSection";
@@ -72,6 +75,8 @@ import "./SettingsModal.css";
 import { FileBrowser } from "./FileBrowser";
 import { useWorkspaceFileBrowser } from "../hooks/useWorkspaceFileBrowser";
 import { FloatingWindow } from "./FloatingWindow";
+import { ProviderLoginDialog, type ProviderLoginPhase } from "./ProviderLoginDialog";
+import { describeLoginFailure } from "../utils/loginFailure";
 import { ProviderIcon } from "./ProviderIcon";
 import { generateUniquePresetId } from "../utils/modelPresets";
 import { copyTextToClipboard } from "../utils/copyToClipboard";
@@ -97,6 +102,11 @@ import { SETTINGS_SECTION_METADATA } from "../../src/shared/settings-sections";
 // ---------------------------------------------------------------------------
 export const GITHUB_STAR_CACHE_KEY = "fusion_github_star_count";
 export const GITHUB_STAR_CACHE_TTL_MS = 15 * 60 * 1000;
+/*
+FNXC:SettingsAutoSave 2026-08-17-00:20:
+Form-backed Settings persist after this debounce. Named so quality-lane tests flush the same interval instead of inventing a second timeout.
+*/
+export const SETTINGS_AUTOSAVE_DEBOUNCE_MS = 500;
 const GITHUB_STAR_CLICKED_KEY = "fusion:github-star-clicked";
 
 function isSlashPrefixedAbsolutePath(path: string): boolean {
@@ -506,8 +516,6 @@ const KNOWN_EXPERIMENTAL_FEATURES: Record<string, string> = {
   ideationView: "Ideation View",
   qualityPlugin: "Quality Plugin",
   goalsView: "Goals View",
-  /* FNXC:QuickAddSubtaskFlag 2026-06-21-00:00: The AI subtask-breakdown quick-add affordance is exposed only through this default-off experimental flag so missing settings keep every quick-add Subtask button hidden. */
-  subtaskBreakdown: "Subtask Breakdown",
   leftSidebarNav: "Left Sidebar Navigation",
   sandbox: "Sandbox (command isolation)",
   chatRooms: "Chat Rooms",
@@ -626,7 +634,7 @@ type PluginsSubsectionId = "fusion-plugins" | "pi-extensions";
 
 /** Local form state extends Settings with a worktreeInitCommand override and lets tokenCap carry null (delete semantic). */
 type SettingsFormState = Settings & { worktreeInitCommand?: string; tokenCap?: number | null };
-type GlobalSourceControlSettings = Pick<GlobalSettings, "gitlabEnabled" | "gitlabInstanceUrl" | "gitlabApiBaseUrl" | "gitlabAuthToken" | "gitlabAuthTokenType" | "reportRoadmapDedupeEnabled" | "reportRoadmapLabel" | "reportRoadmapRepo">;
+type GlobalSourceControlSettings = Pick<GlobalSettings, "gitlabEnabled" | "gitlabInstanceUrl" | "gitlabApiBaseUrl" | "gitlabAuthToken" | "gitlabAuthTokenType" | "reportRoadmapDedupeEnabled" | "reportRoadmapLabel" | "reportRoadmapRepo" | "jiraEnabled" | "jiraBaseUrl" | "jiraApiBaseUrl" | "jiraAuthEmail" | "jiraAuthTokenSecretKey" | "jiraAuthTokenSecretScope" | "jiraBranchNameTemplate">;
 
 interface SettingsModalProps {
   onClose: () => void;
@@ -654,6 +662,20 @@ interface SettingsModalProps {
   onShadcnCustomColorsChange?: (colors: Record<string, string>) => void;
   /** Mirrors pending Quick Chat launcher changes into the app shell immediately. */
   onQuickChatButtonModeChange?: (mode: "floating" | "footer" | "off") => void;
+  /** Mirrors the pending project conversation layout into mounted chat surfaces immediately. */
+  chatMessageLayout?: ChatMessageLayout;
+  onChatMessageLayoutChange?: (layout: ChatMessageLayout) => void;
+  /** Current App-shell values and optimistic callbacks for mounted Appearance consumers. */
+  openTasksInRightSidebar?: boolean;
+  onOpenTasksInRightSidebarChange?: (enabled: boolean) => void;
+  openMobileTasksInPopup?: boolean;
+  onOpenMobileTasksInPopupChange?: (enabled: boolean) => void;
+  taskPopupsBoardListOnly?: boolean;
+  onTaskPopupsBoardListOnlyChange?: (enabled: boolean) => void;
+  showCostBadgeOnCards?: boolean;
+  onShowCostBadgeOnCardsChange?: (enabled: boolean) => void;
+  taskDetailChatFirst?: boolean;
+  onTaskDetailChatFirstChange?: (enabled: boolean) => void;
   /** Mirrors pending mobile quick-action changes into the app shell immediately. */
   onMobileNavPrimaryItemsChange?: (items: string[]) => void;
   /** Optional callback when user wants to reopen the onboarding guide */
@@ -919,6 +941,18 @@ export function SettingsModal({
   onDashboardFontScaleChange,
   onShadcnCustomColorsChange,
   onQuickChatButtonModeChange,
+  chatMessageLayout = "bubbles",
+  onChatMessageLayoutChange,
+  openTasksInRightSidebar,
+  onOpenTasksInRightSidebarChange,
+  openMobileTasksInPopup,
+  onOpenMobileTasksInPopupChange,
+  taskPopupsBoardListOnly,
+  onTaskPopupsBoardListOnlyChange,
+  showCostBadgeOnCards,
+  onShowCostBadgeOnCardsChange,
+  taskDetailChatFirst,
+  onTaskDetailChatFirstChange,
   onMobileNavPrimaryItemsChange,
   onReopenOnboarding,
   onOpenApprovals,
@@ -1002,6 +1036,7 @@ export function SettingsModal({
     taskPopupsBoardListOnly: true,
     showCostBadgeOnCards: false,
     taskDetailChatFirst: false,
+    chatMessageLayout: "bubbles",
     executorAllowSiblingBranchRename: false,
     worktreeNaming: "random",
     worktreeCopyFiles: [],
@@ -1216,9 +1251,12 @@ export function SettingsModal({
   const [updateInstallLoading, setUpdateInstallLoading] = useState(false);
   const [updateInstallResult, setUpdateInstallResult] = useState<UpdateInstallResponse | null>(null);
   const [restartSupported, setRestartSupported] = useState<boolean | undefined>();
+  const [restartPriorPid, setRestartPriorPid] = useState<number | undefined>();
   const [restartLoading, setRestartLoading] = useState(false);
   const [restartScheduled, setRestartScheduled] = useState(false);
   const [restartError, setRestartError] = useState<string | null>(null);
+  const restartRecovery = useSystemRestartRecovery();
+  const pendingInstall = usePendingUpdateInstall();
   const gitHubStarCount = useGitHubStarCount();
   const [starClicked, markStarClicked] = useStarClickedFlag();
   const [prefixError, setPrefixError] = useState<string | null>(null);
@@ -1252,7 +1290,7 @@ export function SettingsModal({
     loading: worktreesDirPickerLoading,
     error: worktreesDirPickerError,
     refresh: refreshWorktreesDirPicker,
-  } = useWorkspaceFileBrowser("project", worktreesDirPickerOpen, projectId, { allowAbsolutePaths: false });
+  } = useWorkspaceFileBrowser("project", worktreesDirPickerOpen, projectId, { allowAbsolutePaths: true });
 
   const {
     entries: worktreeCopyFilePickerEntries,
@@ -1434,6 +1472,18 @@ export function SettingsModal({
   const [deviceCodes, setDeviceCodes] = useState<Record<string, OAuthDeviceCodeInfo>>({});
   const [manualCodeInputs, setManualCodeInputs] = useState<Record<string, string>>({});
   const [manualCodeSubmitInProgress, setManualCodeSubmitInProgress] = useState<string | null>(null);
+  /*
+  FNXC:ProviderAuth 2026-08-18-06:10:
+  Settings shares onboarding's persistent paste-back login dialog (ProviderLoginDialog). Everything
+  here is keyed by `stateKey` (provider + credential instance), not a bare provider id, because
+  Settings can hold several named accounts for one provider and each runs its own flow.
+  `loginDialog` carries the identity the dialog's handlers need; `loginAuthUrls` re-opens a lost
+  sign-in tab; `loginErrors` keeps the terminal reason on screen after the flow dies, since a toast
+  is gone before the operator is back from the browser tab they were signing in on.
+  */
+  const [loginDialog, setLoginDialog] = useState<{ stateKey: string; providerId: string; instanceId?: string; providerName: string } | null>(null);
+  const [loginAuthUrls, setLoginAuthUrls] = useState<Record<string, string>>({});
+  const [loginErrors, setLoginErrors] = useState<Record<string, string>>({});
   const [apiKeyInputs, setApiKeyInputs] = useState<Record<string, string>>({});
   const [apiKeyErrors, setApiKeyErrors] = useState<Record<string, string>>({});
   const [opencodeApiKeyRefreshStatus, setOpencodeApiKeyRefreshStatus] = useState<Record<string, {
@@ -1644,6 +1694,11 @@ export function SettingsModal({
           */
           taskDetailChatFirst: s.taskDetailChatFirst === true,
           /*
+          FNXC:ChatMessageLayout 2026-08-18-20:27:
+          Normalize legacy or malformed project values before they enter the form so the selector always has exactly its two valid choices and defaults to Bubbles.
+          */
+          chatMessageLayout: normalizeChatMessageLayout(s.chatMessageLayout),
+          /*
           FNXC:GithubImportTracking 2026-07-01-00:00:
           Missing githubLinkImportedIssuesToTracking must render as unchecked and save as project-scoped false only after operator interaction; this keeps upgraded projects on legacy import behavior by default.
           */
@@ -1672,6 +1727,13 @@ export function SettingsModal({
           reportRoadmapDedupeEnabled: scoped.global.reportRoadmapDedupeEnabled,
           reportRoadmapLabel: scoped.global.reportRoadmapLabel,
           reportRoadmapRepo: scoped.global.reportRoadmapRepo,
+          jiraEnabled: scoped.global.jiraEnabled,
+          jiraBaseUrl: scoped.global.jiraBaseUrl,
+          jiraApiBaseUrl: scoped.global.jiraApiBaseUrl,
+          jiraAuthEmail: scoped.global.jiraAuthEmail,
+          jiraAuthTokenSecretKey: scoped.global.jiraAuthTokenSecretKey,
+          jiraAuthTokenSecretScope: scoped.global.jiraAuthTokenSecretScope,
+          jiraBranchNameTemplate: scoped.global.jiraBranchNameTemplate,
         });
         setInitialScopedValues({
           ...scoped,
@@ -1743,6 +1805,7 @@ export function SettingsModal({
 
     try {
       const result = await checkForUpdates();
+      pendingUpdateInstallState.record(result.pendingInstall);
       setUpdateCheckResult(result);
 
       if (result.error) {
@@ -1771,7 +1834,12 @@ export function SettingsModal({
 
     try {
       const result = await installUpdate(projectId);
+      pendingUpdateInstallState.record(result);
       setUpdateInstallResult(result);
+      if (result.restartScheduled && result.latestVersion) {
+        setRestartScheduled(true);
+        systemRestartRecovery.arm(result.latestVersion, result.priorPid ?? restartPriorPid);
+      }
 
       if (result.updated) {
         addToast(t("settings.general.updateSuccessToast", "Update installed. Restart Fusion to apply it."), "success");
@@ -1782,7 +1850,10 @@ export function SettingsModal({
         supervised host permanently unable to restart from Settings.
         */
         void fetchSystemInfo()
-          .then((info) => setRestartSupported(info.restartSupported))
+          .then((info) => {
+            setRestartSupported(info.restartSupported);
+            setRestartPriorPid(info.pid);
+          })
           .catch(() => {
             // Keep whatever the mount probe resolved; the guidance text covers it.
           });
@@ -1804,7 +1875,7 @@ export function SettingsModal({
     } finally {
       setUpdateInstallLoading(false);
     }
-  }, [addToast, appVersion, projectId, t, updateCheckResult]);
+  }, [addToast, appVersion, projectId, restartPriorPid, t, updateCheckResult]);
 
   /*
   FNXC:SettingsUpdate 2026-07-25-10:05:
@@ -1820,7 +1891,10 @@ export function SettingsModal({
 
     void fetchSystemInfo()
       .then((info) => {
-        if (!cancelled) setRestartSupported(info.restartSupported);
+        if (!cancelled) {
+          setRestartSupported(info.restartSupported);
+          setRestartPriorPid(info.pid);
+        }
       })
       .catch(() => {
         // Fail closed: system capability fetch errors must not expose an unavailable restart action.
@@ -1854,6 +1928,8 @@ export function SettingsModal({
       const result = await requestSystemRestart("settings-update");
       if (result.scheduled) {
         setRestartScheduled(true);
+        const targetVersion = pendingInstall?.latestVersion ?? updateInstallResult?.latestVersion ?? updateCheckResult?.latestVersion;
+        if (targetVersion) systemRestartRecovery.arm(targetVersion, restartPriorPid);
       } else {
         setRestartError(t("settings.general.restartFailed", "Restart could not be scheduled. Try restarting Fusion manually."));
       }
@@ -1862,27 +1938,36 @@ export function SettingsModal({
     } finally {
       setRestartLoading(false);
     }
-  }, [restartLoading, t]);
+  }, [pendingInstall, restartLoading, restartPriorPid, t, updateCheckResult, updateInstallResult]);
 
   const renderUpdateCheckResultContent = useCallback(() => {
-    if (!updateCheckResult) {
+    /* FNXC:PendingUpdateInstall 2026-08-21-05:58: A host-retained install takes precedence over this modal's transient check and loading state, including after the modal remounts. */
+    const effectiveCheckResult = pendingInstall
+      ? { currentVersion: pendingInstall.currentVersion, latestVersion: pendingInstall.latestVersion, updateAvailable: true }
+      : updateCheckResult;
+    const effectiveInstallResult = pendingInstall ?? updateInstallResult;
+    if (!effectiveCheckResult) {
       return null;
     }
 
-    if (updateCheckResult.error) {
-      return updateCheckResult.error;
+    if (effectiveCheckResult.externallyManaged) {
+      return <span className="settings-update-install-status">{effectiveCheckResult.message}</span>;
     }
 
-    if (updateCheckResult.updateAvailable && updateCheckResult.latestVersion) {
-      const installSucceeded = updateInstallResult?.updated === true;
-      const installError = updateInstallResult?.error;
-      const installMessage = updateInstallResult?.message ?? installError ?? (updateInstallResult && !updateInstallResult.updated ? t("settings.general.updateUnknown", "Update did not complete — see the Fusion logs") : undefined);
-      const installIsError = updateInstallResult?.outcome === "check-failed" || updateInstallResult?.outcome === "failed" || Boolean(installError && updateInstallResult?.outcome !== "unsupported-install-method");
+    if (effectiveCheckResult.error) {
+      return effectiveCheckResult.error;
+    }
+
+    if (effectiveCheckResult.updateAvailable && effectiveCheckResult.latestVersion) {
+      const installSucceeded = effectiveInstallResult?.updated === true;
+      const installError = effectiveInstallResult?.error;
+      const installMessage = effectiveInstallResult?.message ?? installError ?? (effectiveInstallResult && !effectiveInstallResult.updated ? t("settings.general.updateUnknown", "Update did not complete — see the Fusion logs") : undefined);
+      const installIsError = effectiveInstallResult?.outcome === "check-failed" || effectiveInstallResult?.outcome === "failed" || Boolean(installError && effectiveInstallResult?.outcome !== "unsupported-install-method");
 
       return (
         <>
           <span>
-            {t("settings.general.updateAvailablePrefix", "v{{version}} available", { version: updateCheckResult.latestVersion })} ·{" "}
+            {t("settings.general.updateAvailablePrefix", "v{{version}} available", { version: effectiveCheckResult.latestVersion })} ·{" "}
             <a
               href="https://runfusion.ai"
               target="_blank"
@@ -1896,13 +1981,20 @@ export function SettingsModal({
             <span className="settings-update-install-succeeded">
               <span className="settings-update-install-status settings-update-install-status--success" aria-live="polite">
                 {t("settings.general.updateSuccess", "Updated to v{{version}} — restart Fusion to apply", {
-                  version: updateInstallResult.latestVersion ?? updateCheckResult.latestVersion,
+                  version: effectiveInstallResult.latestVersion ?? effectiveCheckResult.latestVersion,
                 })}
               </span>
-              {restartScheduled ? (
-                <span className="settings-update-install-status" aria-live="polite">
-                  {t("settings.general.restarting", "Restarting… Your connection will close shortly.")}
-                </span>
+              {restartScheduled || pendingInstall?.restartScheduled ? (
+                <>
+                  <span className="settings-update-install-status" aria-live="polite">
+                    {restartRecovery.phase === "back"
+                      ? t("settings.general.backOnline", "Fusion v{{version}} is back online — reloading…", { version: restartRecovery.version })
+                      : restartRecovery.phase === "timeout"
+                        ? t("settings.general.restartTimedOut", "Fusion did not return in time. Refresh when it is back online.")
+                        : t("settings.general.restarting", "Restarting… Your connection will close shortly.")}
+                  </span>
+                  {restartRecovery.phase === "timeout" && <button type="button" className="btn btn-sm settings-update-now-btn" onClick={() => systemRestartRecovery.retry()}>{t("settings.general.retryRestart", "Retry readiness check")}</button>}
+                </>
               ) : (
                 <button
                   type="button"
@@ -1972,7 +2064,7 @@ export function SettingsModal({
     }
 
     return t("settings.general.upToDate", "You're up to date ✓");
-  }, [handleInstallUpdate, handleRestart, restartError, restartLoading, restartScheduled, restartSupported, t, updateCheckResult, updateInstallLoading, updateInstallResult]);
+  }, [handleInstallUpdate, handleRestart, pendingInstall, restartError, restartLoading, restartRecovery, restartScheduled, restartSupported, t, updateCheckResult, updateInstallLoading, updateInstallResult]);
 
   /*
   FNXC:SettingsUpdate 2026-07-25-19:40:
@@ -1983,13 +2075,16 @@ export function SettingsModal({
   Import/Export/Reset/Close were pushed off-screen behind a scroll affordance operators do not see. Giving the banner
   its own row keeps the rail to the controls it was sized for, and the banner wraps normally instead of clipping.
   */
-  const updateCheckResultNode = updateCheckResult ? (
+  const displayedUpdateCheckResult = pendingInstall
+    ? { currentVersion: pendingInstall.currentVersion, latestVersion: pendingInstall.latestVersion, updateAvailable: true }
+    : updateCheckResult;
+  const updateCheckResultNode = displayedUpdateCheckResult ? (
     <span
       aria-live="polite"
       className={`settings-update-result ${
-        updateCheckResult.error
+        displayedUpdateCheckResult.error
           ? "settings-update-result--error"
-          : updateCheckResult.updateAvailable
+          : displayedUpdateCheckResult.updateAvailable
             ? "settings-update-result--available"
             : "settings-update-result--up-to-date"
       }`}
@@ -2402,6 +2497,14 @@ export function SettingsModal({
   }, []);
 
   const clearAuthLoginUiState = useCallback((providerId: string) => {
+    setLoginAuthUrls((prev) => {
+      if (!(providerId in prev)) {
+        return prev;
+      }
+      const next = { ...prev };
+      delete next[providerId];
+      return next;
+    });
     if (providerId in lastAutoCopiedDeviceCodesRef.current) {
       const next = { ...lastAutoCopiedDeviceCodesRef.current };
       delete next[providerId];
@@ -2472,6 +2575,21 @@ export function SettingsModal({
       if (!shouldContinue) {
         return;
       }
+      /*
+      FNXC:ProviderAuth 2026-08-18-06:10:
+      Hand straight from the warning into the persistent dialog, so the paste field and the flow's
+      current step are on screen from the moment the browser tab opens instead of appearing inline in
+      a scrolling provider list.
+      */
+      setLoginErrors((prev) => {
+        if (!(stateKey in prev)) {
+          return prev;
+        }
+        const next = { ...prev };
+        delete next[stateKey];
+        return next;
+      });
+      setLoginDialog({ stateKey, providerId, instanceId, providerName: provider.name });
     }
 
     setAuthActionInProgress((prev) => ({ ...prev, [stateKey]: true }));
@@ -2492,6 +2610,7 @@ export function SettingsModal({
       if (deviceCode && providerId === "github-copilot") {
         setDeviceCodes((prev) => ({ ...prev, [stateKey]: deviceCode }));
       }
+      setLoginAuthUrls((prev) => ({ ...prev, [stateKey]: appendTokenQuery(deviceCode?.verificationUri ?? url) }));
       if (providerId !== "github-copilot" || !deviceCode) {
         openExternalUrl(appendTokenQuery(deviceCode?.verificationUri ?? url));
       }
@@ -2508,6 +2627,7 @@ export function SettingsModal({
               delete pollIntervalRef.current[stateKey];
             }
             setAuthActionInProgress((prev) => { const next = { ...prev }; delete next[stateKey]; return next; });
+            setLoginDialog((current) => (current?.stateKey === stateKey ? null : current));
             clearAuthLoginUiState(stateKey);
             /*
             FNXC:SettingsCredentialInstance 2026-08-01-17:49:
@@ -2529,6 +2649,12 @@ export function SettingsModal({
               delete pollIntervalRef.current[stateKey];
             }
             setAuthActionInProgress((prev) => { const next = { ...prev }; delete next[stateKey]; return next; });
+            /*
+            FNXC:ProviderAuth 2026-08-18-07:10:
+            Prefer the server's own reason over the generic sentence — an `OAuth state mismatch`
+            (pasted URL from an older attempt) is actionable, and "try again" alone reproduces it.
+            */
+            setLoginErrors((prev) => ({ ...prev, [stateKey]: describeLoginFailure(provider?.loginError) }));
             clearAuthLoginUiState(stateKey);
             addToast(t("settings.auth.loginDidNotComplete", "Login did not complete. Please try again."), "error");
           }
@@ -2544,6 +2670,7 @@ export function SettingsModal({
         await loadAuthStatus();
       } else {
         addToast(message, "error");
+        setLoginErrors((prev) => ({ ...prev, [stateKey]: message }));
       }
       setAuthActionInProgress((prev) => { const next = { ...prev }; delete next[stateKey]; return next; });
       clearAuthLoginUiState(stateKey);
@@ -3226,8 +3353,6 @@ export function SettingsModal({
   }, [closeWorktreesDirPicker]);
 
   const selectCurrentWorktreesDir = useCallback(() => {
-    if (isSlashPrefixedAbsolutePath(worktreesDirPickerCurrentPath)) return;
-
     const normalizedPath = worktreesDirPickerCurrentPath === "."
       ? "./"
       : (worktreesDirPickerCurrentPath.endsWith("/") ? worktreesDirPickerCurrentPath : `${worktreesDirPickerCurrentPath}/`);
@@ -3468,6 +3593,19 @@ export function SettingsModal({
         reportRoadmapDedupeEnabled: gitlabFormForSave.reportRoadmapDedupeEnabled,
         reportRoadmapLabel: gitlabFormForSave.reportRoadmapLabel?.trim() || undefined,
         reportRoadmapRepo: gitlabFormForSave.reportRoadmapRepo?.trim() || undefined,
+        /*
+        FNXC:JiraBranchNaming 2026-08-20-05:18:
+        Project forms begin with effective JIRA values inherited from global settings. Preserve
+        unset values here rather than coercing defaults so splitSettingsSave can distinguish an
+        untouched inherited setting from an operator's project override or explicit clear.
+        */
+        jiraEnabled: gitlabFormForSave.jiraEnabled,
+        jiraBaseUrl: gitlabFormForSave.jiraBaseUrl?.trim() || undefined,
+        jiraApiBaseUrl: gitlabFormForSave.jiraApiBaseUrl?.trim() || undefined,
+        jiraAuthEmail: gitlabFormForSave.jiraAuthEmail?.trim() || undefined,
+        jiraAuthTokenSecretKey: gitlabFormForSave.jiraAuthTokenSecretKey?.trim() || undefined,
+        jiraAuthTokenSecretScope: gitlabFormForSave.jiraAuthTokenSecretScope,
+        jiraBranchNameTemplate: gitlabFormForSave.jiraBranchNameTemplate?.trim() || undefined,
         githubAuthToken: formSnapshot.githubAuthToken?.trim() || undefined,
         prTitlePromptInstructions: formSnapshot.prTitlePromptInstructions?.trim() || undefined,
         prDescriptionPromptInstructions: formSnapshot.prDescriptionPromptInstructions?.trim() || undefined,
@@ -3639,7 +3777,7 @@ export function SettingsModal({
     autoSaveTimerRef.current = setTimeout(() => {
       autoSaveTimerRef.current = null;
       void persistSettingsRef.current?.();
-    }, 500);
+    }, SETTINGS_AUTOSAVE_DEBOUNCE_MS);
     return () => {
       if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
     };
@@ -4040,6 +4178,13 @@ export function SettingsModal({
               reportRoadmapDedupeEnabled: current?.reportRoadmapDedupeEnabled,
               reportRoadmapLabel: current?.reportRoadmapLabel,
               reportRoadmapRepo: current?.reportRoadmapRepo,
+              jiraEnabled: current?.jiraEnabled,
+              jiraBaseUrl: current?.jiraBaseUrl,
+              jiraApiBaseUrl: current?.jiraApiBaseUrl,
+              jiraAuthEmail: current?.jiraAuthEmail,
+              jiraAuthTokenSecretKey: current?.jiraAuthTokenSecretKey,
+              jiraAuthTokenSecretScope: current?.jiraAuthTokenSecretScope,
+              jiraBranchNameTemplate: current?.jiraBranchNameTemplate,
               ...patch,
             }))}
             globalTrackingRepoOptions={globalTrackingRepoOptions}
@@ -4151,6 +4296,18 @@ export function SettingsModal({
             onColorThemeChange={onColorThemeChange}
             onDashboardFontScaleChange={onDashboardFontScaleChange}
             onShadcnCustomColorsChange={onShadcnCustomColorsChange}
+            chatMessageLayout={chatMessageLayout}
+            onChatMessageLayoutChange={onChatMessageLayoutChange}
+            openTasksInRightSidebar={openTasksInRightSidebar}
+            onOpenTasksInRightSidebarChange={onOpenTasksInRightSidebarChange}
+            openMobileTasksInPopup={openMobileTasksInPopup}
+            onOpenMobileTasksInPopupChange={onOpenMobileTasksInPopupChange}
+            taskPopupsBoardListOnly={taskPopupsBoardListOnly}
+            onTaskPopupsBoardListOnlyChange={onTaskPopupsBoardListOnlyChange}
+            showCostBadgeOnCards={showCostBadgeOnCards}
+            onShowCostBadgeOnCardsChange={onShowCostBadgeOnCardsChange}
+            taskDetailChatFirst={taskDetailChatFirst}
+            onTaskDetailChatFirstChange={onTaskDetailChatFirstChange}
             sessionBannersHidden={sessionBannersHidden}
             setSessionBannersHidden={setSessionBannersHidden}
           />
@@ -4399,6 +4556,7 @@ export function SettingsModal({
               manualCodeInputs,
               setManualCodeInputs,
               manualCodeSubmitInProgress,
+              activeLoginDialogKey: loginDialog?.stateKey ?? null,
               loadAuthStatus,
               handleLogin,
               handleLogout,
@@ -4467,7 +4625,64 @@ export function SettingsModal({
     </FloatingWindow>
   );
 
-  return renderModalShell(
+  /*
+  FNXC:ProviderAuth 2026-08-18-06:10:
+  The login dialog is rendered OUTSIDE renderModalShell, deliberately. In its modal presentation the
+  shell is a FloatingWindow, and a portaled dialog inside a window's React subtree lifts that window
+  above itself on first click (a portal moves the DOM node, not the React tree, and the window raises
+  itself on every pointerdown it sees). As a sibling it is unaffected in both presentations.
+  */
+  const loginDialogElement = loginDialog ? (() => {
+    const { stateKey, providerId, instanceId, providerName } = loginDialog;
+    const manualCode = manualCodeConfigs[stateKey];
+    const failure = loginErrors[stateKey];
+    const authenticated = authProviders.some((entry) => entry.id === providerId
+      && (entry.instanceId ?? "default") === (instanceId ?? "default")
+      && entry.authenticated);
+    const phase: ProviderLoginPhase = authenticated
+      ? "succeeded"
+      : failure
+        ? "failed"
+        : manualCodeSubmitInProgress === stateKey
+          ? "submitting"
+          : "waiting";
+    return (
+      <ProviderLoginDialog
+        data-testid={`provider-login-dialog-${stateKey}`}
+        providerName={providerName}
+        authUrl={loginAuthUrls[stateKey]}
+        instructions={loginInstructions[stateKey]}
+        phase={phase}
+        errorMessage={failure}
+        manualCode={{
+          prompt: manualCode?.prompt ?? t("settings.auth.pasteRedirectUrl", "Paste the final redirect URL or authorization code"),
+          placeholder: manualCode?.placeholder,
+          helpText: manualCode?.helpText,
+        }}
+        codeValue={manualCodeInputs[stateKey] ?? ""}
+        onCodeChange={(value) => setManualCodeInputs((prev) => ({ ...prev, [stateKey]: value }))}
+        onSubmitCode={() => void handleSubmitManualCode(providerId, instanceId)}
+        onOpenAuthUrl={() => {
+          const url = loginAuthUrls[stateKey];
+          if (url) {
+            openExternalUrl(url);
+          }
+        }}
+        onCancel={() => {
+          setLoginDialog(null);
+          // A still-running flow must be cancelled server-side, or its slot blocks the retry with a 409.
+          if (authActionInProgress[stateKey]) {
+            void handleCancelLogin(providerId, instanceId);
+          }
+        }}
+      />
+    );
+  })() : null;
+
+  return (
+    <>
+      {loginDialogElement}
+      {renderModalShell(
     <>
       <div
         className={isEmbedded ? "modal modal-lg settings-modal settings-modal--embedded" : "modal modal-lg settings-modal"}
@@ -5209,6 +5424,8 @@ export function SettingsModal({
             </div>
           </div>
         </div>
+      )}
+    </>
       )}
     </>
   );

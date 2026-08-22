@@ -3,8 +3,11 @@
  * evaluateTaskDoneScopeLeak peeled from TaskExecutor (U4 Slice B).
  * fn_task_done File Scope leak guard (workspace multi-repo + singular checkout).
  */
+import { execFile } from "node:child_process";
+import { access } from "node:fs/promises";
+import { promisify } from "node:util";
 import type { Settings, Task, TaskStore } from "@fusion/core";
-import { deriveRepoScopeSubset } from "../worktree/workspace-paths.js";
+import { resolveRepoDeclaredScope } from "../worktree/workspace-paths.js";
 import { executorLog } from "../logger.js";
 import type { EngineRunContext, RunAuditor } from "../util/run-audit.js";
 import { parseReviewLevelFromPrompt } from "./prompt-derived-eligibility.js";
@@ -12,6 +15,53 @@ import {
   isAlwaysAllowedScopeLeakPath,
   workflowPathMatchesDeclaredScope,
 } from "./workflow-feedback-paths.js";
+
+const execFileAsync = promisify(execFile);
+
+/**
+ * FNXC:RepositoryScope 2026-08-21-00:58:
+ * Scope capture helpers intentionally degrade Git errors to an empty list for ordinary telemetry.
+ * Completion cannot use that lossy result for an acquired out-of-scope checkout: establish that
+ * the path is readable and Git-addressable first, or fail closed instead of treating unknown work
+ * as clean.
+ */
+async function verifyRepositoryCaptureEvidence(worktreePath: string): Promise<void> {
+  await access(worktreePath);
+  const { stdout } = await execFileAsync("git", ["rev-parse", "--is-inside-work-tree"], {
+    cwd: worktreePath,
+    encoding: "utf8",
+  });
+  if (stdout.trim() !== "true") throw new Error("path is not a Git worktree");
+}
+
+/**
+ * FNXC:RepositoryScope 2026-08-21-01:18:
+ * Completion must distinguish a clean checkout from a lossy capture failure. The historical
+ * capture helpers intentionally return [] for telemetry continuity, so this direct Git evidence
+ * probe executes every diff needed by the scope guard and throws when a base or diff is unreadable.
+ */
+async function captureRepositoryChangeEvidence(
+  worktreePath: string,
+  baseCommitSha: string | undefined,
+): Promise<string[]> {
+  const commands: string[][] = [
+    ["diff", "--name-only"],
+    ["diff", "--name-only", "--cached"],
+  ];
+  if (baseCommitSha) {
+    commands.push(["merge-base", baseCommitSha, "HEAD"]);
+    commands.push(["diff", "--name-only", `${baseCommitSha}..HEAD`]);
+  } else {
+    commands.push(["rev-parse", "--verify", "HEAD"]);
+  }
+  const results = await Promise.all(commands.map((args) => execFileAsync("git", args, {
+    cwd: worktreePath,
+    encoding: "utf8",
+  })));
+  return [...new Set(results
+    .filter((_, index) => !commands[index]?.includes("merge-base") && !commands[index]?.includes("rev-parse"))
+    .flatMap(({ stdout }) => stdout.split("\n").map((file) => file.trim()).filter(Boolean)))];
+}
 
 export type TaskDoneScopeLeakDeps = {
   store: TaskStore;
@@ -43,9 +93,39 @@ export async function evaluateTaskDoneScopeLeak(
   }
 
   const declaredScope = await deps.store.parseFileScopeFromPrompt(task.id).catch(() => [] as string[]);
-  if (declaredScope.length === 0) {
+  // FNXC:RepositoryScope 2026-08-21-00:44:
+  // Empty File Scope disables only declared-path matching. It must not bypass the independent
+  // completion fence for dirty acquired repositories outside confirmed task intent.
+  const workspaceConfig = deps.ensureWorkspaceConfig
+    ? await deps.ensureWorkspaceConfig()
+    : deps.workspaceConfig;
+  if (declaredScope.length === 0 && workspaceConfig) {
+    const scope = new Set(task.repositoryScope?.repositories ?? []);
+    for (const repoRel of Object.keys(task.workspaceWorktrees ?? {}).sort()) {
+      if (scope.has(repoRel)) continue;
+      const repo = task.workspaceWorktrees?.[repoRel];
+      if (!repo) continue;
+      try {
+        await verifyRepositoryCaptureEvidence(repo.worktreePath);
+      } catch (_error) {
+        const message = `workspace repository ${repoRel} cannot establish out-of-scope change evidence; completion is blocked until its checkout is readable`;
+        await deps.store.logEntry(task.id, `[scope-leak] ${message}`, undefined, deps.getRunContextFor(task.id));
+        return { blocked: true, message };
+      }
+      const [uncommitted, committed, strictEvidence] = await Promise.all([
+        deps.captureUncommittedModifiedFiles(repo.worktreePath),
+        deps.captureModifiedFiles(repo.worktreePath, repo.baseCommitSha ?? undefined, task.id, audit, "scope-leak-out-of-scope"),
+        captureRepositoryChangeEvidence(repo.worktreePath, repo.baseCommitSha ?? undefined),
+      ]);
+      if (uncommitted.length > 0 || committed.length > 0 || strictEvidence.length > 0) {
+        const message = `workspace repository ${repoRel} has modified out-of-scope work; approve the repository scope or clean the checkout before completing`;
+        await deps.store.logEntry(task.id, `[scope-leak] ${message}`, undefined, deps.getRunContextFor(task.id));
+        return { blocked: true, message };
+      }
+    }
     return { blocked: false };
   }
+  if (declaredScope.length === 0) return { blocked: false };
 
   const reviewLevel = parseReviewLevelFromPrompt(promptContent);
   const configuredMode = settings.planOnlyScopeLeakEnforcement ?? "warn";
@@ -84,13 +164,18 @@ export async function evaluateTaskDoneScopeLeak(
   // off-scope files and would silently pass; we block it (scope is declared but unverifiable).
   // F6 (deterministic ordering): iterate sorted repo keys so the reported offending repo is stable
   // across runs/rehydrate.
-  const workspaceConfig = deps.ensureWorkspaceConfig
-    ? await deps.ensureWorkspaceConfig()
-    : deps.workspaceConfig;
   let touchedFiles: string[];
   let offendingRepo: string | undefined;
   if (workspaceConfig) {
     const workspaceWorktrees = task.workspaceWorktrees ?? {};
+    /*
+    FNXC:RepositoryScope 2026-08-21-00:29:
+    Review authority is limited to explicit scope, but completion must inspect every acquired
+    checkout. A dirty acquired-out-of-scope repository is evidence that cannot be silently
+    delivered or ignored; it blocks until the operator approves it into scope or the work is
+    cleaned. Clean acquired-out-of-scope repositories remain non-reviewable.
+    */
+    const scope = new Set(task.repositoryScope?.repositories ?? []);
     const repoKeys = Object.keys(workspaceWorktrees).sort();
     // F2: declaredScope is non-empty here (the `declaredScope.length === 0` early-return above
     // handled the unscoped case). A scoped task that acquired no sub-repo worktrees cannot have its
@@ -105,16 +190,26 @@ export async function evaluateTaskDoneScopeLeak(
     for (const repoRel of repoKeys) {
       const repo = workspaceWorktrees[repoRel];
       try {
-        const [repoUncommitted, repoCommitted] = await Promise.all([
+        await verifyRepositoryCaptureEvidence(repo.worktreePath);
+        const [repoUncommitted, repoCommitted, strictEvidence] = await Promise.all([
           deps.captureUncommittedModifiedFiles(repo.worktreePath),
           deps.captureModifiedFiles(repo.worktreePath, repo.baseCommitSha ?? undefined, task.id, audit, "scope-leak-guard"),
+          captureRepositoryChangeEvidence(repo.worktreePath, repo.baseCommitSha ?? undefined),
         ]);
         // Repo-LOCAL touched files (no `${repoRel}/` prefix) so the always-allowed `.changeset/`
         // carve-out and the scope match operate as the reviewer/cwd=repo sees them (F5).
-        const repoTouched = [...new Set([...repoUncommitted, ...repoCommitted])];
+        // The direct evidence cannot degrade a later Git failure to [] like telemetry capture does.
+        const repoTouched = [...new Set([...repoUncommitted, ...repoCommitted, ...strictEvidence])];
+        if (scope.size > 0 && !scope.has(repoRel) && repoTouched.length > 0) {
+          const message = `workspace repository ${repoRel} has modified out-of-scope work; approve the repository scope or clean the checkout before completing`;
+          executorLog.warn(`${task.id}: [scope-leak] ${message}`);
+          await deps.store.logEntry(task.id, `[scope-leak] ${message}`, undefined, deps.getRunContextFor(task.id));
+          return { blocked: true, message };
+        }
         // Repo-LOCAL declared-scope subset for THIS repo (prefix stripped). Same filter as the
-        // non-workspace branch below — one surface.
-        const repoScopeSubset = deriveRepoScopeSubset(declaredScope, repoRel);
+        // non-workspace branch below — one surface. Clean acquired-out-of-scope repositories have
+        // no declared scope and are intentionally informational only.
+        const repoScopeSubset = resolveRepoDeclaredScope(declaredScope, repoRel, repoKeys).scope;
         const repoOffScope = repoTouched
           .filter((filePath) => !workflowPathMatchesDeclaredScope(filePath, repoScopeSubset))
           .filter((filePath) => !isAlwaysAllowedScopeLeakPath(filePath))

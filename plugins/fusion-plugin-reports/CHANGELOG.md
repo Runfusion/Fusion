@@ -1,5 +1,53 @@
 # @fusion-plugin-examples/reports
 
+## 0.1.55-beta.6
+
+### Patch Changes
+
+- @fusion/core@0.77.0-beta.6
+- @fusion/dashboard@0.77.0-beta.6
+- @fusion/plugin-sdk@0.77.0-beta.6
+
+## 0.1.55-beta.5
+
+### Patch Changes
+
+- @fusion/core@0.77.0-beta.5
+- @fusion/dashboard@0.77.0-beta.5
+- @fusion/plugin-sdk@0.77.0-beta.5
+
+## 0.1.55-beta.4
+
+### Patch Changes
+
+- @fusion/core@0.77.0-beta.4
+- @fusion/dashboard@0.77.0-beta.4
+- @fusion/plugin-sdk@0.77.0-beta.4
+
+## 0.1.55-beta.3
+
+### Patch Changes
+
+- @fusion/core@0.77.0-beta.3
+- @fusion/dashboard@0.77.0-beta.3
+- @fusion/plugin-sdk@0.77.0-beta.3
+
+## 0.1.55-beta.2
+
+### Patch Changes
+
+- @fusion/core@0.77.0-beta.2
+- @fusion/dashboard@0.77.0-beta.2
+- @fusion/plugin-sdk@0.77.0-beta.2
+
+## 0.1.55-beta.1
+
+### Patch Changes
+
+- @fusion/core@0.77.0-beta.1
+- @fusion/dashboard@0.77.0-beta.1
+- @fusion/plugin-sdk@0.77.0-beta.1
+
 ## 0.1.55-beta.0
 
 ### Patch Changes

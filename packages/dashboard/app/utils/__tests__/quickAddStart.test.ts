@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveQuickAddStartInitialColumn, resolveQuickAddStartTargetColumn, validateQuickAddStartWorkflow, workflowSupportsQuickAddStart } from "../quickAddStart";
+import { resolveQuickAddStartInitialColumn, resolveQuickAddStartTargetColumn, resolveQuickAddStartWorkflowTarget, validateQuickAddStartWorkflow, workflowSupportsQuickAddStart } from "../quickAddStart";
 
 const workflow = (overrides: Record<string, unknown> = {}) => ({
   id: "custom",
@@ -76,6 +76,20 @@ describe("quick add Start workflow guards", () => {
       id: "builtin:coding-ideas",
       columns: [{ id: "ideas", flags: {} }, { id: "todo", flags: {} }, { id: "todo", flags: {} }],
     }))).toBeNull();
+  });
+
+  it("proves a Start target from the manual intake lane", () => {
+    const valid = validateQuickAddStartWorkflow(workflow({ columns: [
+      { id: "waiting", name: "Waiting", flags: { intake: true, manualIntake: true } },
+      { id: "building", name: "Building", flags: {} },
+      { id: "done", name: "Done", flags: { complete: true } },
+    ] }));
+    expect(resolveQuickAddStartWorkflowTarget(valid)).toBe("building");
+    const noTarget = validateQuickAddStartWorkflow(workflow({ columns: [
+      { id: "waiting", name: "Waiting", flags: { intake: true, manualIntake: true } },
+      { id: "done", name: "Done", flags: { complete: true } },
+    ] }));
+    expect(resolveQuickAddStartWorkflowTarget(noTarget)).toBeNull();
   });
 
   it("only chooses a later visible working destination", () => {

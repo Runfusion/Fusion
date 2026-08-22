@@ -1,4 +1,5 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+import userEvent from "@testing-library/user-event";
 import { render, screen } from "@testing-library/react";
 import { WorkspaceWorktreesSummary, deriveWorkspaceRepoStatus, isWorkspaceTask } from "../WorkspaceWorktreesSummary";
 
@@ -39,10 +40,10 @@ describe("isWorkspaceTask", () => {
     expect(isWorkspaceTask({ worktree: undefined, workspaceWorktrees: {} })).toBe(false);
   });
 
-  it("prefers the singular worktree even if workspaceWorktrees is populated", () => {
+  it("prefers populated acquired workspace entries over stale singular routing", () => {
     expect(
-      isWorkspaceTask({ worktree: "/wt/x", workspaceWorktrees: workspaceTask.workspaceWorktrees }),
-    ).toBe(false);
+      isWorkspaceTask({ worktree: "/wt/stale", workspaceWorktrees: workspaceTask.workspaceWorktrees }),
+    ).toBe(true);
   });
 });
 
@@ -65,12 +66,69 @@ describe("WorkspaceWorktreesSummary", () => {
     expect(screen.getByText("fusion/fn-1-b")).toBeTruthy();
   });
 
+  it("distinguishes a modified scoped repository from a clean acquired peer", () => {
+    render(<WorkspaceWorktreesSummary task={{ worktree: undefined, repositoryScope: { repositories: ["repo-a", "repo-b"] }, modifiedFiles: ["repo-a/src/changed.ts"], workspaceWorktrees: {
+      "repo-a": { worktreePath: "/wt/repo-a", branch: "fusion/fn-1-a" },
+      "repo-b": { worktreePath: "/wt/repo-b", branch: "fusion/fn-1-b" },
+    } }} />);
+    expect(screen.getAllByTestId("workspace-repo-scope-scoped")[0]).toHaveTextContent("Modified");
+    expect(screen.getByText("No changes — not reviewed")).toBeTruthy();
+  });
+
+  it("sends an attributed pre-land scope correction and renders its history", async () => {
+    const user = userEvent.setup();
+    const onScopeChange = vi.fn(async () => undefined);
+    render(<WorkspaceWorktreesSummary task={{ worktree: undefined, repositoryScope: {
+      repositories: ["repo-a"], state: "confirmed", revision: 2,
+      extensions: [{ repository: "repo-b", requestedAt: "2026-08-21T00:00:00.000Z", requestedBy: "executor", reason: "shared API change", status: "accepted" }],
+    }, workspaceWorktrees: workspaceTask.workspaceWorktrees }} onScopeChange={onScopeChange} />);
+    expect(screen.getByText(/repo-b: accepted/i)).toBeTruthy();
+    const inputs = screen.getAllByRole("textbox");
+    await user.type(inputs[0]!, "repo-b");
+    await user.type(inputs[1]!, "needed for shared API");
+    await user.click(screen.getByRole("button", { name: "Add" }));
+    expect(onScopeChange).toHaveBeenCalledWith({ repositories: ["repo-b"], reason: "needed for shared API", action: "add" });
+  });
+
+  it("renders recorded bases and fallback markers only in the full per-repo list", () => {
+    render(<WorkspaceWorktreesSummary task={{ worktree: undefined, workspaceWorktrees: {
+      "repo-a": { worktreePath: "/wt/repo-a", branch: "fusion/fn-1-a", baseBranch: "release/1.2" },
+      "repo-b": { worktreePath: "/wt/repo-b", branch: "fusion/fn-1-b", baseBranch: "main", baseBranchFallbackFrom: "release/1.2" },
+      "repo-legacy": { worktreePath: "/wt/legacy", branch: "fusion/fn-1-legacy" },
+    } }} />);
+    expect(screen.getAllByTestId("workspace-repo-base-branch")).toHaveLength(2);
+    expect(screen.getByTestId("workspace-repo-base-fallback")).toHaveAttribute("title", expect.stringContaining("release/1.2"));
+    expect(screen.getByTestId("workspace-repo-base-fallback")).toHaveAttribute("title", expect.stringContaining("repo-b"));
+  });
+
+  it("renders the acquired workspace entry in full and compact modes despite stale singular routing", () => {
+    const staleWorkspaceTask = {
+      worktree: "/wt/unrelated-stale-worktree",
+      workspaceWorktrees: {
+        "repo-acquired": { worktreePath: "/wt/repo-acquired/.worktrees/FN-080", branch: "fusion/FN-080" },
+      },
+    } as const;
+    const { unmount } = render(<WorkspaceWorktreesSummary task={staleWorkspaceTask} />);
+
+    expect(screen.getByText(/1 repo acquired/i)).toBeTruthy();
+    expect(screen.getByText("repo-acquired")).toBeTruthy();
+    expect(screen.getByText("/wt/repo-acquired/.worktrees/FN-080")).toBeTruthy();
+    expect(screen.getByText("fusion/FN-080")).toBeTruthy();
+    expect(screen.queryByText("/wt/unrelated-stale-worktree")).toBeNull();
+
+    unmount();
+    render(<WorkspaceWorktreesSummary task={staleWorkspaceTask} compact />);
+    expect(screen.getByTestId("workspace-worktrees-placeholder")).toHaveTextContent("1 repo acquired");
+  });
+
   it("renders only the compact placeholder in compact mode", () => {
     render(<WorkspaceWorktreesSummary task={workspaceTask} compact />);
     expect(screen.getByTestId("workspace-worktrees-placeholder").textContent).toContain("2 repos");
     // Compact variant omits the full per-repo list.
     expect(screen.queryByTestId("workspace-worktrees-summary")).toBeNull();
     expect(screen.queryByText("/wt/repo-a")).toBeNull();
+    expect(screen.queryByTestId("workspace-repo-base-branch")).toBeNull();
+    expect(screen.queryByTestId("workspace-repo-base-fallback")).toBeNull();
   });
 
   it("renders landed, failed, and pending statuses with the partial-land detail", () => {

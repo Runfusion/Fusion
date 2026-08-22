@@ -451,25 +451,12 @@ describe("resolveAgentPrompt", () => {
     expect(triageSource).not.toContain(["FAST", "TRIAGE", "SYSTEM", "PROMPT"].join("_"));
     expect(triageSource).not.toMatch(/export const [A-Z_]*TRIAGE[A-Z_]*SYSTEM_PROMPT\s*=/);
     expect(planningPrompt).toBe(corePrompt);
-    expect(corePrompt).toContain("{{triageProactiveSubtaskSplittingEnabled}}");
-    expect(corePrompt).toContain("Explicit user-requested `breakIntoSubtasks: true` remains governed");
+    expect(corePrompt).toContain("Complexity never authorizes replacing a requested task with child tasks");
 
     const renderedPrompt = renderTriagePolicyPlaceholders(corePrompt, {});
-    expect(renderedPrompt).toContain("**Broad-scope decomposition signals:**");
-    expect(renderedPrompt).toContain("step count would reach 9 or more");
-    expect(renderedPrompt).toContain("would reach 12 or more");
-    expect(renderedPrompt).toContain("20 or more entries");
-    expect(renderedPrompt).toContain("at or above 30 items");
-    expect(renderedPrompt).toContain("Even when `breakIntoSubtasks` is not set to `true`, apply these thresholds proactively");
+    expect(renderedPrompt).toContain("Keep every requested task as one detailed plan regardless of size");
+    expect(renderedPrompt).not.toContain("breakIntoSubtasks");
     expect(renderedPrompt).not.toContain("{{");
-
-    const disabledPrompt = renderTriagePolicyPlaceholders(corePrompt, {
-      triageProactiveSubtaskSplittingEnabled: false,
-    } as never);
-    expect(disabledPrompt).toContain("Proactive oversized-task splitting is DISABLED");
-    expect(disabledPrompt).toContain("Only create child tasks when `breakIntoSubtasks: true` is explicitly present");
-    expect(disabledPrompt).not.toContain("Even when `breakIntoSubtasks` is not set to `true`, apply these thresholds proactively");
-    expect(disabledPrompt).not.toContain("{{");
   });
 
   it("resolves custom seam prompts and ignores IRs without matching prompts", () => {

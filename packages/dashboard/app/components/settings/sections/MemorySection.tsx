@@ -264,7 +264,7 @@ export function MemorySection({ form, setForm, memory }: MemorySectionProps) {
                   {formatMemoryFileOptionLabel(file)}
                 </option>))}
             </select>
-            {memoryDirty && (<small>Save or discard the current edits before switching files.</small>)}
+            {memoryDirty && (<small>{t("settings.memory.saveBeforeSwitching", "Save or discard the current edits before switching files.")}</small>)}
           </div>
           {selectedMemoryFile && (<div className="memory-file-summary">
               <span>{memoryLayerNames[selectedMemoryFile.layer]}</span>
@@ -305,7 +305,7 @@ export function MemorySection({ form, setForm, memory }: MemorySectionProps) {
           The descriptive branch moved behind the shared "?" beside the action button — operator requirement: no inline description paragraphs in Settings. The dirty-state line stays inline: it is the live reason the button is DISABLED, not help.
           */}
           <SettingsHelpTip settingKey="memory-compact-file">{`Compacts ${selectedMemoryPath} and writes the result back to the same file.`}</SettingsHelpTip>
-          {memoryDirty && (<small>Save or discard edits before compacting this file.</small>)}
+          {memoryDirty && (<small>{t("settings.memory.saveBeforeCompacting", "Save or discard edits before compacting this file.")}</small>)}
         </div>)}
 
       {memoryDirty && isEditingAllowed && (<div className="form-group">

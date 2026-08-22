@@ -12,21 +12,18 @@ describe("observed task:deleted dispatch", () => {
       observed?: boolean;
       outboxEventId?: string;
       githubIssueAction?: "leave";
-      closureContext?: { kind: "split-into-subtasks"; childTaskIds: string[] };
     } | undefined> = [];
     store.on("task:deleted", () => { throw new Error("listener failure must not stop fan-out"); });
     store.on("task:deleted", (_task, meta) => received.push(meta));
 
     expect(store.emitObservedTaskDeleted(task, "evt_observed", {
       githubIssueAction: "leave",
-      closureContext: { kind: "split-into-subtasks", childTaskIds: ["FN-child"] },
     })).toBe(true);
     expect(store.taskCache.has(task.id)).toBe(false);
     expect(received).toEqual([{
       observed: true,
       outboxEventId: "evt_observed",
       githubIssueAction: "leave",
-      closureContext: { kind: "split-into-subtasks", childTaskIds: ["FN-child"] },
     }]);
 
     // The specified crash-window duplicate remains a harmless cache eviction + bridge notification.

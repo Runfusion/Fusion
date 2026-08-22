@@ -53,7 +53,7 @@ FNXC:PlanningMode 2026-06-21-00:00:
 FN-6886 promotes Planning Mode into the main app content area. The embedded shell fills the available content pane and intentionally disables modal-only sizing/resizing so the left sidebar owns navigation and no backdrop shell remains.
 */
 /*
-FNXC:Planning 2026-06-23-02:00:
+FNXC:Planning 2026-08-16-14:48:
 The embedded Planning wrapper matches Missions' shell: NO outer padding. Missions' inline shell (mission-manager--inline) has no wrapper inset — its header supplies the top/side padding (var(--space-lg) var(--space-xl)) and the split body fills edge-to-edge below. Mirroring that here removes the previous extra var(--space-lg) inset so Planning's header and two-pane body align with Missions.
 */
 .planning-view {
@@ -293,7 +293,7 @@ The embedded planning header must be a visual SIBLING of MissionManager's inline
 }
 
 /*
-FNXC:Planning 2026-06-23-01:15:
+FNXC:Planning 2026-08-16-14:48:
 Embedded Planning is a real two-pane view mirroring Missions (mission-manager__split): the left sidebar is a full-height flex column (list scrolls, footer pinned to bottom) and the right detail pane fills the remaining width AND height. The sidebar surface/border/width treatment matches mission-manager__sidebar — var(--surface) background, a single border-right divider — so the two views read consistently. The flex chain planning-view -> planning-modal--embedded -> planning-modal-body keeps the whole layout filling the main-content pane to the bottom.
 */
 .planning-sidebar {
@@ -308,7 +308,7 @@ Embedded Planning is a real two-pane view mirroring Missions (mission-manager__s
 }
 
 /*
-FNXC:Planning 2026-06-23-02:00:
+FNXC:Planning 2026-08-16-14:48:
 Sidebar resize handle — identical treatment to MissionManager's mission-manager__sidebar-resize-handle: a thin (var(--space-sm)) col-resize strip whose ::before center bar tints with var(--todo) on hover/active, plus a focus ring for keyboard resize. touch-action:none keeps the pointer drag from scrolling on trackpads.
 */
 .planning-sidebar-resize-handle {
@@ -342,8 +342,8 @@ Sidebar resize handle — identical treatment to MissionManager's mission-manage
 }
 
 /*
-FNXC:Planning 2026-06-23-02:00:
-Footer matches MissionManager's mission-manager__sidebar-footer EXACTLY: padding var(--space-md), a single border-top divider (var(--btn-border-width) solid var(--border)), gap var(--space-sm), centered. Missions has no separate footer band styling beyond the centered CTA, so we mirror that — no extra bottom padding/margin and no empty space. The column direction is the only deviation, required because Planning carries the show/hide-archived link beneath the CTA (Missions has a single child); align-items stays stretch so the full-width CTA fills the footer like Missions'.
+FNXC:Planning 2026-08-16-14:48:
+Planning intentionally retains this bottom-pinned session footer at its current metrics. Missions now uses a top-anchored sidebar CTA, so this footer preserves its own padding, border-top, gap, and column layout for the archived-session link.
 */
 .planning-sidebar-footer {
   display: flex;
@@ -377,8 +377,8 @@ Footer matches MissionManager's mission-manager__sidebar-footer EXACTLY: padding
 }
 
 /*
-FNXC:Planning 2026-06-23-02:00:
-The New session button must look EXACTLY like Missions' primary sidebar create button (mission-manager__sidebar-cta with btn btn-primary): same full-width fill, same min-height (calc(--space-lg * 2 + --space-xs)), centered icon+label gap, inherited font-size. The earlier .active "inset ring" outline is REMOVED — Missions' CTA has no ring in any state, so the no-session-selected (.active) state now relies solely on the empty/initial detail pane to signal the new-session view, keeping the two buttons visually identical.
+FNXC:Planning 2026-08-16-14:48:
+Planning intentionally retains this bottom-pinned New session button at its current metrics. Missions now anchors its slightly taller CTA at the top of its sidebar; both controls reuse the shared primary button treatment without requiring exact height parity. The earlier .active "inset ring" outline is REMOVED so the no-session-selected (.active) state relies solely on the empty/initial detail pane.
 */
 .planning-sidebar-new {
   width: 100%;
@@ -1558,7 +1558,6 @@ its refinement menu remain reachable at the bottom of bounded desktop and mobile
   color: var(--text-muted);
 }
 
-/* Taller description textarea in subtask breakdown */
 .planning-summary-form .form-group textarea {
   min-height: 120px;
   resize: vertical;
@@ -2265,109 +2264,6 @@ mobile and desktop offer the same View task / Return to sessions choices.
   color: var(--text-muted);
 }
 
-/* Subtask Drag-and-Drop Styles */
-.subtask-item {
-  transition: opacity var(--transition-fast), transform var(--transition-fast);
-}
-
-.subtask-item-dragging {
-  opacity: 0.5;
-  transform: scale(0.98);
-}
-
-.subtask-item-drop-target {
-  background: color-mix(in srgb, var(--todo) 12%, transparent);
-  border-color: var(--todo);
-}
-
-.subtask-item-drop-before {
-  position: relative;
-}
-
-.subtask-item-drop-before::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 2px;
-  background: var(--todo);
-  z-index: 1;
-}
-
-.subtask-item-drop-after {
-  position: relative;
-}
-
-.subtask-item-drop-after::after {
-  content: '';
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  height: 2px;
-  background: var(--todo);
-  z-index: 1;
-}
-
-.subtask-item-header {
-  display: flex;
-  align-items: center;
-  gap: var(--space-sm);
-}
-
-.subtask-drag-handle {
-  display: flex;
-  align-items: center;
-  gap: var(--space-sm);
-  cursor: grab;
-  color: var(--text-dim);
-  transition: color var(--transition-fast);
-  user-select: none;
-}
-
-.subtask-drag-handle:hover {
-  color: var(--text-muted);
-}
-
-.subtask-item-dragging .subtask-drag-handle {
-  cursor: grabbing;
-  color: var(--todo);
-}
-
-.subtask-item-actions {
-  display: flex;
-  align-items: center;
-  gap: var(--space-xs);
-}
-
-.subtask-item-actions .btn-icon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  padding: 0;
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: var(--radius-md);
-  color: var(--text-dim);
-  cursor: pointer;
-  transition: all var(--transition-fast);
-}
-
-@media (hover: hover) {
-  .subtask-item-actions .btn-icon:hover:not(:disabled) {
-    background: var(--card-hover);
-    border-color: var(--border);
-    color: var(--text);
-  }
-}
-
-.subtask-item-actions .btn-icon:disabled {
-  opacity: 0.3;
-  cursor: not-allowed;
-}
 
 /* Responsive */
 @media (max-width: 768px) {
@@ -2730,27 +2626,8 @@ mobile and desktop offer the same View task / Return to sessions choices.
     padding: 12px;
   }
 
-  /* Subtask breakdown: touch-friendly drag handles with padding */
-  .subtask-drag-handle {
-    min-width: 36px;
-    min-height: 36px;
-    padding: 10px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
 
-  /* Subtask action buttons: mobile-friendly sizing */
-  .subtask-item-actions .btn-icon {
-    min-width: 36px;
-    min-height: 36px;
-  }
 
-  /* Subtask items: prevent overflow */
-  .subtask-item-header {
-    flex-wrap: wrap;
-    gap: var(--space-xs);
-  }
 
   /* Dependency chips: touch-friendly */
   .planning-dep-chip {
@@ -2916,9 +2793,4 @@ Plan selection actions must be visible before document scrolling in phone portra
 }
 .model-selector-current--spaced {
   margin-top: var(--space-sm);
-}
-
-/* Subtask header override */
-.subtask-item-header--between {
-  justify-content: space-between;
 }

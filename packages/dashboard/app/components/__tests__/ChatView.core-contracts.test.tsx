@@ -138,6 +138,8 @@ describe("formatModelTag helper function", () => {
 
     await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
+    await userEvent.click(screen.getByTestId("chat-session-session-001"));
+
     const modelTag = document.querySelector(".chat-model-tag") as HTMLElement | null;
     expect(modelTag?.textContent).toContain("Claude Sonnet");
   });
@@ -159,6 +161,8 @@ describe("formatModelTag helper function", () => {
     });
 
     await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+    await userEvent.click(screen.getByTestId("chat-session-session-001"));
 
     const modelTag = document.querySelector(".chat-model-tag") as HTMLElement | null;
     expect(modelTag?.textContent).toContain("GPT-4o");
@@ -182,6 +186,8 @@ describe("formatModelTag helper function", () => {
 
     await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
+    await userEvent.click(screen.getByTestId("chat-session-session-001"));
+
     const modelTag = document.querySelector(".chat-model-tag") as HTMLElement | null;
     expect(modelTag?.textContent).toContain("Gemini");
   });
@@ -203,6 +209,8 @@ describe("formatModelTag helper function", () => {
 
     await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
+    await userEvent.click(screen.getByTestId("chat-session-session-001"));
+
     const modelTag = document.querySelector(".chat-model-tag") as HTMLElement | null;
     expect(modelTag).not.toBeInTheDocument();
   });
@@ -223,6 +231,8 @@ describe("formatModelTag helper function", () => {
     });
 
     await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+    await userEvent.click(screen.getByTestId("chat-session-session-001"));
 
     const modelTag = document.querySelector(".chat-model-tag") as HTMLElement | null;
     expect(modelTag).not.toBeInTheDocument();
@@ -256,19 +266,23 @@ describe("Chat pinned session sections", () => {
     expect(screen.getByTestId("chat-session-section-recent")).toBeInTheDocument();
   });
 
-  it("separates pinned and recent direct sessions in the mobile switcher", async () => {
+  it("keeps pinned and recent direct sessions in the mobile list after returning from detail", async () => {
     const restoreMatchMedia = mockViewportMode("mobile");
     try {
       setupMockChat({ activeSession: mixedSessions[0], sessions: mixedSessions, filteredSessions: mixedSessions });
       await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
-      await userEvent.click(screen.getByTestId("chat-session-session-pinned"));
-      await userEvent.click(screen.getByTestId("chat-mobile-session-trigger"));
 
-      const pinned = screen.getByTestId("chat-mobile-session-section-pinned");
-      const recent = screen.getByTestId("chat-mobile-session-section-recent");
-      expect(within(pinned).getByTestId("chat-mobile-session-option-session-pinned")).toBeInTheDocument();
-      expect(within(recent).getByTestId("chat-mobile-session-option-session-recent")).toBeInTheDocument();
-      expect(within(recent).getByTestId("chat-mobile-recent-divider")).toHaveTextContent("Recent");
+      const pinned = screen.getByTestId("chat-session-section-pinned");
+      const recent = screen.getByTestId("chat-session-section-recent");
+      expect(within(pinned).getByTestId("chat-session-session-pinned")).toBeInTheDocument();
+      expect(within(recent).getByTestId("chat-session-session-recent")).toBeInTheDocument();
+
+      await userEvent.click(within(pinned).getByTestId("chat-session-session-pinned"));
+      expect(screen.getByTestId("chat-back-btn")).toHaveAccessibleName("Back to conversations");
+      expect(screen.queryByTestId("chat-mobile-session-trigger")).toBeNull();
+      await userEvent.click(screen.getByTestId("chat-back-btn"));
+      expect(screen.getByTestId("chat-session-section-pinned")).toBeInTheDocument();
+      expect(screen.getByTestId("chat-session-section-recent")).toBeInTheDocument();
     } finally {
       restoreMatchMedia();
     }
@@ -414,8 +428,7 @@ describe("Chat Session Action Menu", () => {
     });
 
     expect(screen.getByTestId("chat-session-session-001")).toHaveTextContent("Renamed Chat");
-    const headerTitle = document.querySelector(".chat-thread-header-title") as HTMLElement | null;
-    expect(headerTitle).toHaveTextContent("Renamed Chat");
+    expect(screen.queryByTestId("chat-back-btn")).toBeNull();
   });
 
   it("prefills rename as empty for an untitled session and names it", async () => {
@@ -441,70 +454,31 @@ describe("Chat Session Action Menu", () => {
     expect(renameSession).toHaveBeenCalledWith("session-001", "Named from Untitled");
   });
 
-  it("renames from the mobile session switcher and preserves the active header title surface", async () => {
+  it("renames from the mobile list action menu without adding a detail action", async () => {
     const restoreMatchMedia = mockViewportMode("mobile");
     const renameSession = vi.fn().mockResolvedValue(undefined);
     try {
       const initialSession: ChatSessionInfo = {
-        id: "session-001",
-        agentId: "__fn_agent__",
-        status: "active",
-        title: "Mobile Chat",
-        modelProvider: "minimax",
-        modelId: "m3",
-        createdAt: "2026-04-08T00:00:00.000Z",
-        updatedAt: "2026-04-08T00:00:00.000Z",
+        id: "session-001", agentId: "__fn_agent__", status: "active", title: "Mobile Chat", modelProvider: "minimax", modelId: "m3", createdAt: "2026-04-08T00:00:00.000Z", updatedAt: "2026-04-08T00:00:00.000Z",
       };
-      setupMockChat({
-        activeSession: initialSession,
-        sessions: [initialSession],
-        filteredSessions: [initialSession],
-        renameSession,
-      });
+      setupMockChat({ activeSession: initialSession, sessions: [initialSession], filteredSessions: [initialSession], renameSession });
+      await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
-      const view = await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
-
-      /*
-      FNXC:ChatHeader 2026-07-16-00:00:
-      The mobile session switcher belongs to the direct-thread pane, not the visible session list. Drill into the active session before asserting its header controls so this rename contract matches the user flow.
-      */
-      await userEvent.click(screen.getByTestId("chat-session-session-001"));
-      await waitFor(() => {
-        expect(screen.getByTestId("chat-back-btn")).toBeInTheDocument();
-      });
-
-      expect(screen.getByTestId("chat-mobile-session-trigger")).toHaveTextContent("Mobile Chat");
-      expect(screen.getByTestId("chat-mobile-session-trigger")).not.toHaveTextContent("M3");
-      await userEvent.click(screen.getByTestId("chat-mobile-session-trigger"));
-      await userEvent.click(screen.getByTestId("chat-mobile-session-rename-session-001"));
-
+      await userEvent.click(within(screen.getByTestId("chat-session-session-001")).getByTestId("chat-session-menu-btn"));
+      await userEvent.click(screen.getByTestId("chat-context-rename"));
       const input = screen.getByTestId("chat-rename-input") as HTMLInputElement;
       expect(input.value).toBe("Mobile Chat");
       await userEvent.clear(input);
       await userEvent.type(input, "Mobile Renamed");
       await userEvent.click(screen.getByTestId("chat-rename-save"));
-
       expect(renameSession).toHaveBeenCalledWith("session-001", "Mobile Renamed");
 
-      const renamedSession: ChatSessionInfo = { ...initialSession, title: "Mobile Renamed" };
-      setupMockChat({
-        activeSession: renamedSession,
-        sessions: [renamedSession],
-        filteredSessions: [renamedSession],
-        renameSession,
-      });
-      await act(async () => {
-        view.rerender(<ChatView projectId="proj-123" addToast={vi.fn()} />);
-      });
-
-      const trigger = screen.getByTestId("chat-mobile-session-trigger");
-      expect(trigger).toHaveTextContent("Mobile Renamed");
-      expect(trigger).not.toHaveTextContent("M3");
-      expect(trigger.querySelector(".chat-model-tag")).not.toBeInTheDocument();
-      const headerTitle = document.querySelector(".chat-thread-header-title") as HTMLElement | null;
-      expect(headerTitle).toHaveTextContent("Mobile Renamed");
+      await userEvent.click(screen.getByTestId("chat-session-session-001"));
+      expect(screen.getByTestId("chat-back-btn")).toBeInTheDocument();
+      expect(screen.queryByTestId("chat-mobile-session-trigger")).toBeNull();
+      expect(screen.queryByTestId("chat-mobile-session-rename-session-001")).toBeNull();
     } finally {
-      restoreMatchMedia.mockRestore();
+      restoreMatchMedia();
     }
   });
 
@@ -532,17 +506,10 @@ describe("Chat Session Action Menu", () => {
 describe("ChatView CSS — failure bubble contracts", () => {
   const css = loadAllAppCss();
 
-  it("uses shared error surface tokens for failure bubbles and detail affordances", async () => {
-    const bubbleMatch = css.match(/\.chat-message--failure\s*\{([^}]*)\}/);
-    const badgeMatch = css.match(/\.chat-message-failure-badge\s*\{([^}]*)\}/);
-    const detailsMatch = css.match(/\.chat-message-failure-details\s*\{([^}]*)\}/);
-    const linkMatch = css.match(/\.chat-message-failure-reference-link\s*\{([^}]*)\}/);
-
-    expect(bubbleMatch?.[1]).toContain("background: var(--status-error-bg)");
-    expect(bubbleMatch?.[1]).toContain("border: var(--btn-border-width) solid var(--status-error-bg-deep)");
-    expect(badgeMatch?.[1]).toContain("background: var(--status-error-bg-deep)");
-    expect(detailsMatch?.[1]).toContain("background: var(--status-error-bg-deep)");
-    expect(linkMatch?.[1]).toContain("background: var(--status-error-bg-deep)");
+  it("uses shared error surface tokens for failure bubbles", async () => {
+    expect(css).toContain(".chat-message--failure {\n  background: var(--status-error-bg);");
+    expect(css).toContain(".chat-message-failure-badge {\n  display: inline-flex;");
+    expect(css).toContain("background: var(--status-error-bg-deep);");
   });
 });
 
@@ -696,50 +663,13 @@ describe("Chat Session Row Action CSS", () => {
   });
 });
 
-describe("ChatView CSS — mobile thread switcher", () => {
+describe("ChatView CSS — detail return control", () => {
   const css = loadAllAppCss();
 
-  it("includes mobile session switcher trigger and dropdown tokenized contracts", async () => {
-    const triggerMatch = css.match(/\.chat-mobile-session-trigger\s*\{([^}]*)\}/);
-    const triggerIconMatch = css.match(/\.chat-mobile-session-trigger\s*>\s*svg\s*\{([^}]*)\}/);
-    const dropdownMatch = css.match(/\.chat-mobile-session-dropdown\s*\{([^}]*)\}/);
-    const optionMatch = css.match(/\.chat-mobile-session-option\s*\{([^}]*)\}/);
-    const optionTitleMatch = css.match(/\.chat-mobile-session-option-title\s*\{([^}]*)\}/);
-    expect(triggerMatch).toBeTruthy();
-    expect(triggerIconMatch).toBeTruthy();
-    expect(dropdownMatch).toBeTruthy();
-    expect(optionMatch).toBeTruthy();
-    expect(optionTitleMatch).toBeTruthy();
-    expect(triggerMatch?.[1]).toContain("min-height: calc(var(--space-lg) * 2 + var(--space-xs))");
-    expect(triggerMatch?.[1]).toContain("min-width: 0");
-    expect(triggerMatch?.[1]).toContain("padding: var(--space-xs) var(--space-sm)");
-    expect(triggerMatch?.[1]).toContain("font: inherit");
-    expect(triggerMatch?.[1]).toContain("line-height: normal");
-    expect(triggerMatch?.[1]).toContain("text-align: left");
-    expect(triggerIconMatch?.[1]).toContain("width: var(--icon-size-md)");
-    expect(triggerIconMatch?.[1]).toContain("height: var(--icon-size-md)");
-    expect(dropdownMatch?.[1]).toContain("background: var(--surface)");
-    expect(dropdownMatch?.[1]).toContain("border: 1px solid var(--border)");
-    expect(optionMatch?.[1]).toContain("min-height: calc(var(--space-lg) * 2.25)");
-    expect(optionMatch?.[1]).toContain("align-items: flex-start");
-    expect(optionMatch?.[1]).toContain("line-height: normal");
-    /*
-     * FNXC:ChatMobileSessionSwitcher 2026-07-16-18:54:
-     * FN-8054 intentionally uses inline flex to keep a pinned session's Pin indicator beside its title.
-     * Retain the width and wrapping contracts from FN-4061 so long titles remain readable.
-     */
-    expect(optionTitleMatch?.[1]).toContain("width: 100%");
-    expect(optionTitleMatch?.[1]).toContain("display: inline-flex");
-    expect(optionTitleMatch?.[1]).toContain("align-items: center");
-    expect(optionTitleMatch?.[1]).toContain("gap: var(--space-xs)");
-    expect(optionTitleMatch?.[1]).toContain("line-height: normal");
-    expect(optionTitleMatch?.[1]).toContain("white-space: normal");
-    expect(optionTitleMatch?.[1]).toContain("overflow-wrap: anywhere");
-    expect(css).not.toMatch(/\.chat-mobile-session-trigger\s+\.chat-model-tag/);
-  });
-
-  it("keeps mobile override for header identity overflow visible so dropdown can render", async () => {
-    expect(css).toMatch(/@media\s*\(max-width:\s*768px\)[\s\S]*?\.chat-thread-header-identity\s*\{[^}]*overflow:\s*visible;/);
+  it("removes the mobile session switcher without adding selector-specific chrome", async () => {
+    expect(css).not.toContain("chat-mobile-session-trigger");
+    expect(css).not.toContain("chat-mobile-session-dropdown");
+    expect(css).not.toContain("chat-mobile-session-option");
   });
 });
 

@@ -90,6 +90,7 @@ export async function tryCreateWorktree(
       await installTaskWorktreeIdentityGuard({
         worktreePath: path,
         taskId,
+        expectedBranch: branch,
         commitMsgHookEnabled: settings.commitMsgHookEnabled,
         taskPrefix: settings.taskPrefix,
         taskAttributionTrailerName: settings.taskAttributionTrailerNames?.[0],

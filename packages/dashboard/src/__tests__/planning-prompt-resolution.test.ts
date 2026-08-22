@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { type TaskStore } from "@fusion/core";
+import { resolveTaskOutputLanguage, type TaskStore } from "@fusion/core";
 import { PLANNING_SYSTEM_PROMPT, resolvePlanningModeSystemPrompt } from "../planning.js";
 
 function store(settings: Record<string, unknown> = {}, workflowPrompt?: string): TaskStore {
@@ -17,8 +17,8 @@ describe("resolvePlanningModeSystemPrompt", () => {
     const customWorkflow = await resolvePlanningModeSystemPrompt(store({}, executionMarkers), undefined, "WF-custom");
     const builtInWorkflow = await resolvePlanningModeSystemPrompt(store({}, executionMarkers), undefined, "builtin:coding");
 
-    expect(customWorkflow).toBe(PLANNING_SYSTEM_PROMPT);
-    expect(builtInWorkflow).toBe(PLANNING_SYSTEM_PROMPT);
+    expect(customWorkflow).toContain(PLANNING_SYSTEM_PROMPT);
+    expect(builtInWorkflow).toContain(PLANNING_SYSTEM_PROMPT);
     expect(customWorkflow).not.toContain(executionMarkers);
     expect(builtInWorkflow).not.toContain(executionMarkers);
   });
@@ -31,7 +31,7 @@ describe("resolvePlanningModeSystemPrompt", () => {
       },
     }));
 
-    expect(prompt).toBe(PLANNING_SYSTEM_PROMPT);
+    expect(prompt).toContain(PLANNING_SYSTEM_PROMPT);
     expect(prompt).not.toMatch(/TRIAGE PROMPT\.md NO-CODE CREATE CHILD TASK/);
     expect(prompt).toContain('"type":"question"');
     expect(prompt).toContain("Only the user can validate");
@@ -39,13 +39,26 @@ describe("resolvePlanningModeSystemPrompt", () => {
 
   it("lets a nonblank planning-system override replace the full prompt", async () => {
     await expect(resolvePlanningModeSystemPrompt(store(), { "planning-system": "OPERATOR REPLACEMENT" }))
-      .resolves.toBe("OPERATOR REPLACEMENT");
+      .resolves.toContain("OPERATOR REPLACEMENT\n\n## Task Output Language");
+  });
+
+  it("retains a captured target rather than re-resolving mutable settings", async () => {
+    const captured = resolveTaskOutputLanguage({ taskOutputLanguage: "interface", language: "fr" }, "Plan en español");
+    const prompt = await resolvePlanningModeSystemPrompt(
+      store({ taskOutputLanguage: "english", language: "en" }),
+      undefined,
+      undefined,
+      captured,
+    );
+
+    expect(prompt).toContain("Fusion interface language: Français (fr)");
+    expect(prompt).not.toContain("in English");
   });
 
   it("uses the dedicated prompt for absent or blank overrides and when settings fail", async () => {
-    await expect(resolvePlanningModeSystemPrompt(store())).resolves.toBe(PLANNING_SYSTEM_PROMPT);
-    await expect(resolvePlanningModeSystemPrompt(store({ promptOverrides: { "planning-system": "   " } }))).resolves.toBe(PLANNING_SYSTEM_PROMPT);
+    await expect(resolvePlanningModeSystemPrompt(store())).resolves.toContain(PLANNING_SYSTEM_PROMPT);
+    await expect(resolvePlanningModeSystemPrompt(store({ promptOverrides: { "planning-system": "   " } }))).resolves.toContain(PLANNING_SYSTEM_PROMPT);
     await expect(resolvePlanningModeSystemPrompt({ getSettings: vi.fn().mockRejectedValue(new Error("broken")) } as unknown as TaskStore))
-      .resolves.toBe(PLANNING_SYSTEM_PROMPT);
+      .resolves.toContain(PLANNING_SYSTEM_PROMPT);
   });
 });

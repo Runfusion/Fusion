@@ -84,20 +84,27 @@ precisely the R1 sentinel defect in a new costume: gate and counter talking abou
 different pools, so a finite limit cannot bind. One read in, both derived from it.
 */
 async function resolveWorkflowIrForSelectedWorkflowId(store: TaskStore, workflowId: string | undefined): Promise<WorkflowIr> {
+  /*
+  FNXC:DisabledBuiltinWorkflows 2026-08-19-00:18:
+  Move policy resolution is a no-selection path too. Read the store's effective
+  project default before falling back to the catalog Coding identity, so a task
+  without an explicit selection cannot be evaluated against a disabled workflow.
+  */
+  const effectiveWorkflowId = workflowId ?? await store.getDefaultWorkflowId();
   /* FNXC:WorkflowBuiltins 2026-07-19-10:24: every no-selection/unresolvable fallback goes through resolveDefaultWorkflowIr() so this resolver and prepareWorkflowMovePolicyPreflightImpl agree on the default IR (see the helper's note on the "preflight is stale" drift). */
-  if (!workflowId) {
+  if (!effectiveWorkflowId) {
     return store.applyBuiltInPromptOverridesAsync(DEFAULT_WORKFLOW_ID, resolveDefaultWorkflowIr());
   }
-  if (isBuiltinWorkflowId(workflowId)) {
-    const builtin = getBuiltinWorkflow(workflowId);
+  if (isBuiltinWorkflowId(effectiveWorkflowId)) {
+    const builtin = getBuiltinWorkflow(effectiveWorkflowId);
     const ir = builtin?.ir;
     return store.applyBuiltInPromptOverridesAsync(
-      workflowId,
+      effectiveWorkflowId,
       ir === undefined ? resolveDefaultWorkflowIr() : typeof ir === "string" ? parseWorkflowIr(ir) : ir,
     );
   }
   try {
-    const def = await store.getWorkflowDefinition(workflowId);
+    const def = await store.getWorkflowDefinition(effectiveWorkflowId);
     return def ? parseWorkflowIr(def.ir) : resolveDefaultWorkflowIr();
   } catch {
     return resolveDefaultWorkflowIr();

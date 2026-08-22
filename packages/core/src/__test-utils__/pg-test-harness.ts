@@ -43,8 +43,21 @@ import { randomUUID } from "node:crypto";
 import { Worker } from "node:worker_threads";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
+import { createPostgresDdlAdmissionGate } from "./pg-ddl-admission.js";
 import { tmpdir } from "node:os";
-import { describe as vitestDescribe } from "vitest";
+import {
+  createPgTimeoutBoundaryObserver,
+  type PgTimeoutBoundaryObserver,
+  type PgTimeoutBoundaryProbePayload,
+  type PgTimeoutBoundaryProbeBounds,
+} from "./pg-timeout-boundary-observer.js";
+import {
+  createPgTeardownDiagnostics,
+  getPgTeardownDiagnosticsProbeTimeoutMs,
+  getPgTeardownDiagnosticsStatementTimeoutMs,
+  type PgTeardownActivityRow,
+} from "./pg-teardown-diagnostics.js";
+import { describe as vitestDescribe, expect as vitestExpect } from "vitest";
 import postgres, { type Sql } from "postgres";
 import { drizzle, type PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { sql } from "drizzle-orm";
@@ -183,6 +196,12 @@ function computePgAvailable(): boolean {
 
 export const PG_AVAILABLE = computePgAvailable();
 
+/** Test-only observation seam for proving harness DDL remains structurally bounded. */
+export const __pgTestDdlAdmission = createPostgresDdlAdmissionGate({
+  available: () => PG_AVAILABLE,
+  urlBase: PG_TEST_URL_BASE,
+});
+
 /**
  * A conditional `describe` that runs when PG is available and skips otherwise.
  * Use this instead of bare `describe` for any test file that needs a real
@@ -224,6 +243,8 @@ export interface PgTestHarness {
   readonly rootDir: string;
   /** The unique test database name (for diagnostics). */
   readonly dbName: string;
+  /** The default-off boundary observer retained for this harness lifecycle. */
+  readonly timeoutObserver: PgTimeoutBoundaryObserver;
   /** The full test connection URL. */
   readonly testUrl: string;
   /** Drop the test database, close connections, and remove the temp dir. */
@@ -258,6 +279,114 @@ function uniqueDbName(prefix = "fusion_test"): string {
  * timeout can SET statement_timeout (server cancel) and force-close the
  * socket before the caller returns.
  */
+/**
+ * FNXC:PgTestHarnessTeardownDiagnostics 2026-08-16-19:12:
+ * A watchdog must inspect a separate maintenance connection: adminSql and the
+ * runtime layer can be the close phase currently stuck. Abort force-closes this
+ * dedicated socket so a failed diagnostic cannot outlive the teardown it observes.
+ */
+function createPgStatActivityProbe(
+  probeTimeoutMs = getPgTeardownDiagnosticsProbeTimeoutMs(),
+): (signal: AbortSignal) => Promise<readonly PgTeardownActivityRow[]> {
+  return async (signal) => {
+    const maintUrl = new URL(PG_TEST_URL_BASE);
+    maintUrl.pathname = "/postgres";
+    const client = postgres(maintUrl.toString(), {
+      max: 1,
+      prepare: false,
+      connect_timeout: 1,
+      onnotice: () => {},
+    });
+    const abort = () => { void client.end({ timeout: 0 }).catch(() => {}); };
+    signal.addEventListener("abort", abort, { once: true });
+    try {
+      await client.unsafe(`SET statement_timeout = ${getPgTeardownDiagnosticsStatementTimeoutMs(probeTimeoutMs)}`);
+      return await client.unsafe<PgTeardownActivityRow[]>(`
+        SELECT pid, datname, usename, state, wait_event_type, wait_event, backend_type,
+          now() - query_start AS query_age, left(query, 200) AS query,
+          count(*) OVER ()::int AS total_backends
+        FROM pg_stat_activity
+        ORDER BY datname NULLS LAST, pid
+      `);
+    } finally {
+      signal.removeEventListener("abort", abort);
+      await client.end({ timeout: 5 }).catch(() => {});
+    }
+  };
+}
+
+/**
+ * The timeout-boundary observer owns this separate maintenance connection. It
+ * never reuses a harness pool, so a snapshot cannot wait behind the operation
+ * it is diagnosing.
+ */
+/*
+FNXC:PgTimeoutBoundaryObserver 2026-08-19-14:43:
+FN-9149 requires probe records to describe the same safety bounds the maintenance
+connection actually enforces. The observer resolves and tightens untrusted env
+values once, then passes those resolved limits here rather than allowing this
+production probe to reread a larger raw timeout.
+*/
+function createPgTimeoutBoundaryProbe(): (signal: AbortSignal, bounds: PgTimeoutBoundaryProbeBounds) => Promise<PgTimeoutBoundaryProbePayload> {
+  return async (signal, bounds) => {
+    const maintUrl = new URL(PG_TEST_URL_BASE);
+    maintUrl.pathname = "/postgres";
+    const { probeTimeoutMs: probeTimeout, statementTimeoutMs: statementTimeout } = bounds;
+    const client = postgres(maintUrl.toString(), {
+      max: 1,
+      prepare: false,
+      // postgres accepts whole seconds here; the observer AbortSignal remains
+      // the precise client-side deadline when the resolved bound is subsecond.
+      connect_timeout: Math.max(1, Math.ceil(probeTimeout / 1_000)),
+      onnotice: () => {},
+    });
+    const abort = () => { void client.end({ timeout: 0 }).catch(() => {}); };
+    signal.addEventListener("abort", abort, { once: true });
+    const goldenName = goldenTemplateName();
+    try {
+      await client.unsafe(`SET statement_timeout = ${Math.trunc(statementTimeout)}`);
+      const [activity, locks, marker] = await Promise.all([
+        client.unsafe<Array<PgTeardownActivityRow & { blockingPids?: number[] }>>(`
+          SELECT pid, datname, usename, state, wait_event_type, wait_event, backend_type,
+            now() - query_start AS query_age, left(query, 200) AS query,
+            count(*) OVER ()::int AS total_backends, pg_blocking_pids(pid) AS "blockingPids"
+          FROM pg_stat_activity ORDER BY datname NULLS LAST, pid
+        `),
+        client.unsafe<Array<{ pid: number; locktype: string; granted: boolean; blockingPids: number[] }>>(`
+          SELECT l.pid, l.locktype, l.granted, pg_blocking_pids(l.pid) AS "blockingPids"
+          FROM pg_locks l WHERE l.pid IS NOT NULL
+        `),
+        client.unsafe<Array<{ markerPresent: boolean; ownerPid: number | null; advisoryHolders: number[]; advisoryWaiters: number[] }>>(
+          `SELECT EXISTS(SELECT 1 FROM ${GOLDEN_MARKER_QUALIFIED} WHERE name = $1) AS "markerPresent",
+             NULLIF(regexp_replace($1, '^fusion_schema_template_([0-9]+).*$', '\\1'), $1)::int AS "ownerPid",
+             ARRAY(SELECT pid FROM pg_locks WHERE locktype = 'advisory' AND objid = hashtext($1) AND granted) AS "advisoryHolders",
+             ARRAY(SELECT pid FROM pg_locks WHERE locktype = 'advisory' AND objid = hashtext($1) AND NOT granted) AS "advisoryWaiters"`,
+          [goldenName],
+        ).catch(() => [{ markerPresent: false, ownerPid: null, advisoryHolders: [], advisoryWaiters: [] }]),
+      ]);
+      const template = marker[0] ?? { markerPresent: false, ownerPid: null, advisoryHolders: [], advisoryWaiters: [] };
+      return {
+        cluster: { activity, locks, totalBackends: activity[0]?.total_backends ?? 0 },
+        template: { goldenTemplateName: goldenName, ...template, isOwner: template.ownerPid === process.pid },
+      };
+    } finally {
+      signal.removeEventListener("abort", abort);
+      await client.end({ timeout: 5 }).catch(() => {});
+    }
+  };
+}
+
+/**
+ * FNXC:PgTestDdlAdmission 2026-08-16-21:29:
+ * FN-9130 measured both uniform and drop-only advisory admission as worse than
+ * the recorded ungated baseline. Keep this harness helper direct: the reusable
+ * primitive remains independently tested, but its wiring is intentionally not
+ * shipped until a candidate proves it improves the loaded 12-worker lane.
+ */
+async function gatedDdl(client: ReturnType<typeof postgres>, statement: string): Promise<void> {
+  await client.unsafe(statement);
+}
+
 async function adminExecAsync(statement: string, timeoutMs = 15_000): Promise<void> {
   let timedOut = false;
   let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
@@ -275,7 +404,7 @@ async function adminExecAsync(statement: string, timeoutMs = 15_000): Promise<vo
         // Server-side cancel slightly before the JS race so PG stops the statement.
         const serverTimeoutMs = Math.max(1_000, timeoutMs - 500);
         await client.unsafe(`SET statement_timeout = ${serverTimeoutMs}`);
-        await client.unsafe(statement);
+        await gatedDdl(client, statement);
       })(),
       new Promise<never>((_, reject) => {
         timeoutHandle = setTimeout(() => {
@@ -463,14 +592,14 @@ export const __pgTestTemplateTestHooks = {
   async dropTemplate(): Promise<void> {
     const templateName = templateDbName();
     await withMaintenanceSql(async (client) => {
-      await client.unsafe(`DROP DATABASE IF EXISTS "${templateName}" WITH (FORCE)`);
+      await gatedDdl(client, `DROP DATABASE IF EXISTS "${templateName}" WITH (FORCE)`);
     });
   },
   async createHalfBuiltTemplate(): Promise<void> {
     const templateName = templateDbName();
     await withMaintenanceSql(async (client) => {
-      await client.unsafe(`DROP DATABASE IF EXISTS "${templateName}" WITH (FORCE)`);
-      await client.unsafe(`CREATE DATABASE "${templateName}"`);
+      await gatedDdl(client, `DROP DATABASE IF EXISTS "${templateName}" WITH (FORCE)`);
+      await gatedDdl(client, `CREATE DATABASE "${templateName}"`);
     });
   },
 };
@@ -564,9 +693,7 @@ function ensureGoldenTemplate(): Promise<string> {
         if (row.datname === goldenName) continue;
         const pid = parseTemplatePid(row.datname);
         if (pid !== null && isPidAlive(pid)) continue;
-        await client
-          .unsafe(`DROP DATABASE IF EXISTS "${row.datname}" WITH (FORCE)`)
-          .catch(() => {});
+        await gatedDdl(client, `DROP DATABASE IF EXISTS "${row.datname}" WITH (FORCE)`).catch(() => {});
       }
       await client.unsafe(
         `DELETE FROM ${GOLDEN_MARKER_QUALIFIED} WHERE name NOT IN (SELECT datname FROM pg_database)`,
@@ -587,9 +714,9 @@ function ensureGoldenTemplate(): Promise<string> {
         if (readyRows[0]?.ready === true) return;
 
         // Not ready (missing or half-built): rebuild from scratch under the lock.
-        await client.unsafe(`DROP DATABASE IF EXISTS "${goldenName}" WITH (FORCE)`).catch(() => {});
+        await gatedDdl(client, `DROP DATABASE IF EXISTS "${goldenName}" WITH (FORCE)`).catch(() => {});
         await client.unsafe(`DELETE FROM ${GOLDEN_MARKER_QUALIFIED} WHERE name = $1`, [goldenName]);
-        await client.unsafe(`CREATE DATABASE "${goldenName}"`);
+        await gatedDdl(client, `CREATE DATABASE "${goldenName}"`);
 
         // Apply the baseline on a separate connection to the golden database
         // while this maintenance session keeps holding the advisory lock, then
@@ -655,10 +782,8 @@ function ensureSchemaTemplate(): Promise<string> {
           FROM pg_stat_activity
           WHERE datname = ${goldenName} AND pid <> pg_backend_pid()
         `;
-        await client
-          .unsafe(`DROP DATABASE IF EXISTS "${templateName}" WITH (FORCE)`)
-          .catch(() => {});
-        await client.unsafe(`CREATE DATABASE "${templateName}" TEMPLATE "${goldenName}"`);
+        await gatedDdl(client, `DROP DATABASE IF EXISTS "${templateName}" WITH (FORCE)`).catch(() => {});
+        await gatedDdl(client, `CREATE DATABASE "${templateName}" TEMPLATE "${goldenName}"`);
       });
     });
     return templateName;
@@ -700,8 +825,8 @@ async function cloneDatabaseFromTemplate(dbName: string, template: string): Prom
             FROM pg_stat_activity
             WHERE datname = ${template} AND pid <> pg_backend_pid()
           `;
-          await client.unsafe(`DROP DATABASE IF EXISTS "${dbName}" WITH (FORCE)`).catch(() => {});
-          await client.unsafe(`CREATE DATABASE "${dbName}" TEMPLATE "${template}"`);
+          await gatedDdl(client, `DROP DATABASE IF EXISTS "${dbName}" WITH (FORCE)`).catch(() => {});
+          await gatedDdl(client, `CREATE DATABASE "${dbName}" TEMPLATE "${template}"`);
         });
         lastError = undefined;
         break;
@@ -787,6 +912,14 @@ export async function createEmptyPgTestDatabase(prefix = "fusion_test"): Promise
  *   high-core machines. Use it for shared-harness files that create a single
  *   database and do not exercise the per-module template lifecycle hooks.
  */
+/*
+FNXC:PgTestHarnessConnectionBudget 2026-08-17-02:22:
+FN-9131 leaves the experimental PostgreSQL connection budget deliberately
+unwired because loaded-lane trials regressed broadly. This harness neither
+admits a budget window nor clamps caller poolMax; a successor must prove a
+lifecycle boundary that covers only PostgreSQL participants before wiring the
+characterization primitive in pg-connection-budget.ts.
+*/
 export async function createTaskStoreForTest(options?: {
   readonly poolMax?: number;
   readonly prefix?: string;
@@ -807,6 +940,11 @@ export async function createTaskStoreForTest(options?: {
   const projectId = options?.projectId;
 
   const dbName = uniqueDbName(prefix);
+  const testFile = vitestExpect.getState().testPath;
+  const timeoutObserver = createPgTimeoutBoundaryObserver({
+    probe: createPgTimeoutBoundaryProbe(),
+    ...(testFile ? { testFile } : {}),
+  });
 
   // FNXC:PgTestTemplateDb 2026-07-19-17:20:
   // Create the test database as a fast server-side copy of a pre-baked template.
@@ -816,10 +954,12 @@ export async function createTaskStoreForTest(options?: {
   // Concurrent CREATE DATABASE ... TEMPLATE copies from one connection-free
   // source are safe; only an active session on the source triggers "source
   // database is being accessed".
-  const template = options?.copyFromGolden
-    ? await ensureGoldenTemplate()
-    : await ensureSchemaTemplate();
-  await cloneDatabaseFromTemplate(dbName, template);
+  const template = await timeoutObserver.observeBoundary(
+    "setup",
+    options?.copyFromGolden ? "template.ensure-golden" : "template.ensure-schema",
+    () => options?.copyFromGolden ? ensureGoldenTemplate() : ensureSchemaTemplate(),
+  );
+  await timeoutObserver.observeBoundary("setup", "database.clone", () => cloneDatabaseFromTemplate(dbName, template));
   const testUrl = `${PG_TEST_URL_BASE}/${dbName}`;
 
   // The database already carries the full schema (copied from the template),
@@ -838,11 +978,11 @@ export async function createTaskStoreForTest(options?: {
     directSessionUrl: testUrl,
     directSessionProvenance: "migration-override",
   };
-  const connections = await createConnectionSetFromUrl(schemaBackend, {
+  const connections = await timeoutObserver.observeBoundary("setup", "connections.create", () => createConnectionSetFromUrl(schemaBackend, {
     poolMax,
     connectTimeoutSeconds: 5,
     projectId,
-  });
+  }));
   const layer = createAsyncDataLayer(connections, projectId ? { projectId } : undefined);
 
   // Admin connection for direct row inspection/seeding in tests.
@@ -858,42 +998,62 @@ export async function createTaskStoreForTest(options?: {
 
   // Construct the TaskStore in backend mode.
   const store = new TaskStore(rootDir, undefined, { asyncLayer: layer });
-  await store.init();
+  await timeoutObserver.observeBoundary("setup", "store.init", () => store.init());
 
   let tornDown = false;
   const teardown = async (): Promise<void> => {
     if (tornDown) return;
     tornDown = true;
+    /*
+    FNXC:PgTestHarnessTeardownDiagnostics 2026-08-16-19:40:
+    Loaded-core JSONL evidence must identify the Vitest file that owns a shared
+    harness teardown; database-name prefixes cannot reliably distinguish files.
+    Read Vitest's active caller state only at teardown entry, after the harness
+    has been created from beforeAll, so no global per-test state is retained.
+    */
+    const testFile = vitestExpect.getState().testPath;
+    const diagnostics = createPgTeardownDiagnostics({
+      probe: createPgStatActivityProbe(),
+      ...(testFile ? { testFile } : {}),
+    });
+    diagnostics.beginTeardown();
     try {
-      store.stopWatching();
-    } catch {
-      // best-effort
-    }
-    try {
-      await store.close();
-    } catch {
-      // best-effort
-    }
-    try {
-      await layer.close();
-    } catch {
-      // best-effort
-    }
-    try {
-      await adminSql.end({ timeout: 5 });
-    } catch {
-      // best-effort
-    }
-    try {
-      // FNXC:PgTestHarness 2026-07-18-17:27: FORCE so open pool sockets cannot block drop after close races.
-      await adminExecAsync(`DROP DATABASE IF EXISTS "${dbName}" WITH (FORCE)`);
-    } catch {
-      // best-effort
-    }
-    try {
-      await rm(rootDir, { recursive: true, force: true });
-    } catch {
-      // best-effort
+      try {
+        store.stopWatching();
+      } catch {
+        // best-effort
+      }
+      try {
+        await timeoutObserver.observeBoundary("teardown", "store.close", () => diagnostics.runPhase("store.close", () => store.close()));
+      } catch {
+        // best-effort
+      }
+      try {
+        await timeoutObserver.observeBoundary("teardown", "layer.close", () => diagnostics.runPhase("layer.close", () => layer.close()));
+      } catch {
+        // best-effort
+      }
+      try {
+        await timeoutObserver.observeBoundary("teardown", "adminSql.end", () => diagnostics.runPhase("adminSql.end", () => adminSql.end({ timeout: 5 })));
+      } catch {
+        // best-effort
+      }
+      try {
+        // FNXC:PgTestHarness 2026-07-18-17:27: FORCE so open pool sockets cannot block drop after close races.
+        await timeoutObserver.observeBoundary("teardown", "dropDatabase", () => diagnostics.runPhase("dropDatabase", () => adminExecAsync(`DROP DATABASE IF EXISTS "${dbName}" WITH (FORCE)`)));
+      } catch {
+        // best-effort
+      }
+      try {
+        await timeoutObserver.observeBoundary("teardown", "rmRootDir", () => diagnostics.runPhase("rmRootDir", () => rm(rootDir, { recursive: true, force: true })));
+      } catch {
+        // best-effort
+      }
+    } finally {
+      diagnostics.completeTeardown();
+      diagnostics.dispose();
+      await timeoutObserver.flush().catch(() => {});
+      await timeoutObserver.dispose().catch(() => {});
     }
   };
 
@@ -904,6 +1064,7 @@ export async function createTaskStoreForTest(options?: {
     adminSql,
     rootDir,
     dbName,
+    timeoutObserver,
     testUrl,
     teardown,
   };
@@ -1060,6 +1221,7 @@ export function createSharedPgTaskStoreTestHarness(options?: {
   const boundProjectId = options?.projectId ?? "";
   let harness: PgTestHarness | null = null;
   let store: TaskStore | null = null;
+  let bodyHandle: import("./pg-timeout-boundary-observer.js").PgTimeoutBoundaryHandle | null = null;
   // Lazily import DEFAULT_PROJECT_SETTINGS to avoid pulling the full types
   // graph at module load in environments that only use createTaskStoreForTest.
   let defaultSettingsCache: Record<string, unknown> | null = null;
@@ -1187,8 +1349,15 @@ export function createSharedPgTaskStoreTestHarness(options?: {
       } catch {
         // best-effort: reconciliation is idempotent and fail-soft
       }
+      // beforeEach and afterEach are separate hooks, so only this paired API
+      // can observe the test body without charging reset/setup to it.
+      const testFile = vitestExpect.getState().testPath ?? "unknown-test-file";
+      bodyHandle = harness.timeoutObserver.openBoundary("body", "shared.body", `${process.pid}:${process.env.VITEST_WORKER_ID ?? "main"}:${testFile}`);
     },
     afterEach: async () => {
+      // Close before watcher cleanup so teardown work is never body cost.
+      if (bodyHandle && harness) harness.timeoutObserver.closeBoundary(bodyHandle);
+      bodyHandle = null;
       // No per-test connection teardown — the shared DB lives until afterAll.
       // Just quiesce any watchers/timers the test may have armed.
       if (store) {
@@ -1202,6 +1371,7 @@ export function createSharedPgTaskStoreTestHarness(options?: {
     afterAll: async () => {
       if (harness) {
         await harness.teardown();
+        bodyHandle = null;
         harness = null;
         store = null;
       }
@@ -1230,6 +1400,7 @@ export function createSharedPgTaskStoreTestHarness(options?: {
     teardown: async () => {
       if (harness) {
         await harness.teardown();
+        bodyHandle = null;
         harness = null;
         store = null;
       }

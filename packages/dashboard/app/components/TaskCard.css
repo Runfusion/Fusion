@@ -4,7 +4,6 @@
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   padding: var(--card-padding);
-  cursor: grab;
   transition:
     background var(--transition-fast),
     border-color var(--transition-fast),
@@ -31,13 +30,6 @@
   box-shadow: var(--focus-ring-strong);
   border-color: var(--todo);
   outline: none;
-}
-.card:active {
-  cursor: grabbing;
-}
-.card.dragging {
-  opacity: 0.4;
-  transform: scale(0.98);
 }
 .card.file-drop-target {
   border: 2px dashed var(--todo);
@@ -167,6 +159,18 @@ Lock the id to the same chip-height row as .card-header-actions so the task id, 
   font-size: 0.8125rem;
   line-height: 1.4;
   word-break: break-word;
+}
+
+/*
+FNXC:TaskTitleDisplay 2026-08-19-15:22:
+FN-044 bounds only the display-derived description fallback after title precedence has been resolved.
+The card remains presentation-only: it neither persists a fallback nor restores FN-036's AI-length policy.
+*/
+.card-title--bounded-description {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .card-branch-row {
@@ -422,12 +426,6 @@ and no hardcoded color. Same geometry as every other status badge; only the fill
   color: var(--color-error-dark);
 }
 
-.card-status-badge.stuck {
-  background: var(--status-triage-bg-deep);
-  color: var(--triage);
-  animation: stuck-pulse 2s ease-in-out infinite;
-}
-
 .card-status-badge.in-review-stall {
   background: color-mix(in srgb, var(--color-warning) 14%, transparent);
   color: var(--color-warning);
@@ -547,22 +545,8 @@ not enlarge that shared box, so icon-only and text header chips stay one height 
 }
 
 /*
-FNXC:TaskCard 2026-06-20-03:25:
-FN-6774 removes the saturated stuck-task edge stripe from board cards. Keep the triage-tinted surface plus the stuck status badge so the state remains legible while the card uses the neutral board border.
+FNXC:StuckTagRemoval 2026-08-17-22:30: Operator removed stuck-task tagging from the dashboard; engine recovery sweeps still consume taskStuckTimeoutMs server-side.
 */
-.card.stuck {
-  background: color-mix(in srgb, var(--triage) 6%, transparent);
-}
-
-@keyframes stuck-pulse {
-  0%, 100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.65;
-  }
-}
-
 /*
 FNXC:TaskCardLayout 2026-08-01-04:48 (FN-8665):
 The size chip must derive its box from the shared header-chip padding, line-height, and border so it renders at the same height as status and metadata chips. As a direct child after .card-id, keep it anchored to the header's first row when the middle badge group wraps.

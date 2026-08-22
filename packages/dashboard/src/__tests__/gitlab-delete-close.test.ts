@@ -41,8 +41,7 @@ afterEach(() => {
 
 describe("decideGitLabDeleteAction", () => {
   const issue = { kind: "project_issue" as const, project: "group/project", iid: 42, label: "group/project#42" };
-  it("keeps split deletes, leave, MRs, and missing targets non-mutating", () => {
-    expect(decideGitLabDeleteAction({ closureContext: { kind: "split-into-subtasks" } }, issue).reason).toBe("split-close");
+  it("keeps leave, MRs, and missing targets non-mutating", () => {
     expect(decideGitLabDeleteAction({ githubIssueAction: "leave" }, issue).reason).toBe("leave");
     expect(decideGitLabDeleteAction({}, { ...issue, kind: "merge_request" }).reason).toBe("merge-request");
     expect(decideGitLabDeleteAction({}, null).reason).toBe("no-target");
@@ -73,9 +72,8 @@ describe("GitLabDeleteCloseService", () => {
     expect(fetch.mock.calls[0][0]).toContain("group%2Fproject/issues/42");
   });
 
-  it("does not over-fire for split deletes or merge requests", async () => {
+  it("does not over-fire for merge requests", async () => {
     const fetch = vi.fn(); vi.stubGlobal("fetch", fetch); const s = store(); new GitLabDeleteCloseService(s as any).start();
-    emit(s, sourceTask(), { closureContext: { kind: "split-into-subtasks", childTaskIds: ["FN-child"] } });
     emit(s, sourceTask({ source: { sourceMetadata: { resourceType: "merge_request", projectPath: "group/project", iid: 42 } } }));
     await flush(); expect(fetch).not.toHaveBeenCalled();
   });

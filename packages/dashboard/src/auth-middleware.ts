@@ -8,6 +8,7 @@
 import { timingSafeEqual } from "node:crypto";
 import type { Request, Response, NextFunction } from "express";
 import type { IncomingMessage } from "node:http";
+import { REMOTE_SESSION_COOKIE, readCookie } from "./remote-session.js";
 
 /**
  * Query-string fallback used when the client can't set an Authorization
@@ -156,7 +157,7 @@ export function authenticateUpgradeRequest(token: string, req: IncomingMessage):
  * @param token - The valid bearer token
  * @returns Express middleware function
  */
-export function createAuthMiddleware(token: string) {
+export function createAuthMiddleware(token: string, options?: { validateRemoteSession?: (id: string | undefined) => boolean }) {
   const expectedBuffer = Buffer.from(token, "utf8");
   const unauthorized = (res: Response): void => {
     res.status(401).json({
@@ -179,12 +180,25 @@ export function createAuthMiddleware(token: string) {
     }
 
     const providedToken = extractTokenFromRequest(req);
-    if (!providedToken) {
-      unauthorized(res);
-      return;
-    }
+    const tokenAccepted = providedToken !== undefined && constantTimeEqual(providedToken, expectedBuffer);
 
-    if (!constantTimeEqual(providedToken, expectedBuffer)) {
+    /*
+    FNXC:RemoteAuth 2026-08-19-00:40:
+    THIRD CREDENTIAL SOURCE: an expiring remote-login session cookie. It exists so `/remote-login`
+    can stop redirecting with `?token=<daemonToken>` — that handed every recipient of a shared link
+    the dashboard's real, non-expiring credential, which made the separate remote token pointless
+    (revoking it left the recipient holding the daemon token anyway).
+
+    Checked only AFTER the daemon token, and only when a session validator was installed, so the
+    header/query paths and their constant-time comparison are completely unchanged. A session grants
+    the same API access as the token — it is an authenticated browser, not a lesser scope — but it
+    expires and can be revoked on its own.
+    */
+    const sessionAccepted = !tokenAccepted
+      && options?.validateRemoteSession !== undefined
+      && options.validateRemoteSession(readCookie(req.headers.cookie, REMOTE_SESSION_COOKIE));
+
+    if (!tokenAccepted && !sessionAccepted) {
       unauthorized(res);
       return;
     }

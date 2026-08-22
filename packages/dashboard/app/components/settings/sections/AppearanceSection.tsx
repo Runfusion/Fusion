@@ -3,7 +3,9 @@ import type { ThemeMode, ColorTheme } from "@fusion/core";
 import { ThemeSelector } from "../../ThemeSelector";
 import { LanguageSelector } from "../../LanguageSelector";
 import { SettingsToggleRow } from "../SettingsToggleRow";
+import { SettingsSelectRow } from "../SettingsSelectRow";
 import type { SectionBaseProps } from "./context";
+import { normalizeChatMessageLayout, type ChatMessageLayout } from "../../../hooks/useAppSettings";
 export interface AppearanceSectionProps extends SectionBaseProps {
     themeMode: ThemeMode;
     colorTheme: ColorTheme;
@@ -14,6 +16,18 @@ export interface AppearanceSectionProps extends SectionBaseProps {
     onColorThemeChange?: (theme: ColorTheme) => void;
     onDashboardFontScaleChange?: (scalePct: number) => void;
     onShadcnCustomColorsChange?: (colors: Record<string, string>) => void;
+    chatMessageLayout?: ChatMessageLayout;
+    onChatMessageLayoutChange?: (layout: ChatMessageLayout) => void;
+    openTasksInRightSidebar?: boolean;
+    onOpenTasksInRightSidebarChange?: (enabled: boolean) => void;
+    openMobileTasksInPopup?: boolean;
+    onOpenMobileTasksInPopupChange?: (enabled: boolean) => void;
+    taskPopupsBoardListOnly?: boolean;
+    onTaskPopupsBoardListOnlyChange?: (enabled: boolean) => void;
+    showCostBadgeOnCards?: boolean;
+    onShowCostBadgeOnCardsChange?: (enabled: boolean) => void;
+    taskDetailChatFirst?: boolean;
+    onTaskDetailChatFirstChange?: (enabled: boolean) => void;
     sessionBannersHidden: boolean;
     setSessionBannersHidden: (hidden: boolean) => void;
 }
@@ -25,7 +39,7 @@ Rows render through the shared settings primitives rather than hand-rolled `form
 FNXC:SettingsScope 2026-07-15-17:35:
 Scope badges are per-row because this section genuinely mixes authority levels: theme, color, and font scale are global (DEFAULT_GLOBAL_SETTINGS), while every task-presentation toggle below is project-scoped (DEFAULT_PROJECT_SETTINGS). The nav labels the whole section "global", which is true only of the theme controls, so the badges are what tell an operator which of these travels between projects.
 */
-export function AppearanceSection({ form, setForm, themeMode, colorTheme, dashboardFontScalePct, shadcnCustomColors = {}, resolvedThemeMode, onThemeModeChange, onColorThemeChange, onDashboardFontScaleChange, onShadcnCustomColorsChange, sessionBannersHidden, setSessionBannersHidden, }: AppearanceSectionProps) {
+export function AppearanceSection({ form, setForm, themeMode, colorTheme, dashboardFontScalePct, shadcnCustomColors = {}, resolvedThemeMode, onThemeModeChange, onColorThemeChange, onDashboardFontScaleChange, onShadcnCustomColorsChange, chatMessageLayout = "bubbles", onChatMessageLayoutChange, openTasksInRightSidebar, onOpenTasksInRightSidebarChange, openMobileTasksInPopup, onOpenMobileTasksInPopupChange, taskPopupsBoardListOnly, onTaskPopupsBoardListOnlyChange, showCostBadgeOnCards, onShowCostBadgeOnCardsChange, taskDetailChatFirst, onTaskDetailChatFirstChange, sessionBannersHidden, setSessionBannersHidden, }: AppearanceSectionProps) {
     const { t } = useTranslation("app");
     return (<>
       <h4 className="settings-section-heading">{t("settings.appearance.title", "Appearance")}</h4>
@@ -43,6 +57,24 @@ export function AppearanceSection({ form, setForm, themeMode, colorTheme, dashbo
             onShadcnCustomColorsChange?.(colors);
         }}/>
       <LanguageSelector />
+      <SettingsSelectRow
+        descriptor={{
+          key: "chatMessageLayout",
+          label: t("settings.appearance.chatMessageLayout", "Conversation layout"),
+          help: t("settings.appearance.chatMessageLayoutHelp", "Choose Bubbles or Full width for normal Chat, Quick Chat, dock Chat, task Activity, and Planner Chat. Project-scoped; default: Bubbles."),
+          scope: "project",
+          options: [
+            { value: "bubbles", label: t("settings.appearance.chatMessageLayoutBubbles", "Bubbles") },
+            { value: "full-width", label: t("settings.appearance.chatMessageLayoutFullWidth", "Full width") },
+          ],
+        }}
+        value={normalizeChatMessageLayout(form.chatMessageLayout ?? chatMessageLayout)}
+        onChange={(value) => {
+          const nextLayout = normalizeChatMessageLayout(value);
+          setForm((f) => ({ ...f, chatMessageLayout: nextLayout }));
+          onChatMessageLayoutChange?.(nextLayout);
+        }}
+      />
       <SettingsToggleRow
         descriptor={{
           key: "openTasksInRightSidebar",
@@ -50,8 +82,12 @@ export function AppearanceSection({ form, setForm, themeMode, colorTheme, dashbo
           help: t("settings.appearance.openTasksInRightSidebarHelp", "When enabled, board task cards open detail in the right sidebar when it is available; mobile and hidden-sidebar states keep the full task panel. Default: disabled."),
           scope: "project",
         }}
-        value={form.openTasksInRightSidebar === true}
-        onChange={(v) => setForm((f) => ({ ...f, openTasksInRightSidebar: v === true }))}
+        value={form.openTasksInRightSidebar ?? openTasksInRightSidebar === true}
+        onChange={(v) => {
+          const enabled = v === true;
+          setForm((f) => ({ ...f, openTasksInRightSidebar: enabled }));
+          onOpenTasksInRightSidebarChange?.(enabled);
+        }}
       />
       {/* FNXC:MobileTaskPopups 2026-07-21-00:00 (FN-8478): Keep the stored openMobileTasksInPopup key for compatibility and explain that board-card deep-tab chips now use the same popup routing, preserving the board behind Changes, Retries, or Workflow detail. */}
       <SettingsToggleRow
@@ -61,8 +97,12 @@ export function AppearanceSection({ form, setForm, themeMode, colorTheme, dashbo
           help: t("settings.appearance.openMobileTasksInPopupHelp", "When enabled, board task-card clicks including Changes, Retries, and Workflow chips, plus ordinary List row/card and right-dock Tasks-list clicks, open the existing movable task popup so the board or list remains visible. Other task opens keep their current behavior. Default: disabled."),
           scope: "project",
         }}
-        value={form.openMobileTasksInPopup === true}
-        onChange={(v) => setForm((f) => ({ ...f, openMobileTasksInPopup: v === true }))}
+        value={form.openMobileTasksInPopup ?? openMobileTasksInPopup === true}
+        onChange={(v) => {
+          const enabled = v === true;
+          setForm((f) => ({ ...f, openMobileTasksInPopup: enabled }));
+          onOpenMobileTasksInPopupChange?.(enabled);
+        }}
       />
       {/* FNXC:TaskPopupViewGating 2026-07-15-15:20: FN-8016 scopes task popups to their opening dashboard view by default. Operators may explicitly disable it for legacy globally shared popups; hidden scoped entries retain geometry and reopen on return. */}
       <SettingsToggleRow
@@ -72,8 +112,12 @@ export function AppearanceSection({ form, setForm, themeMode, colorTheme, dashbo
           help: t("settings.appearance.taskPopupsBoardListOnlyHelp", "When enabled, each open task-detail popup appears only on the view where it was opened. Switching views hides it without closing; returning restores it in the same position. Default: enabled."),
           scope: "project",
         }}
-        value={form.taskPopupsBoardListOnly === true}
-        onChange={(v) => setForm((f) => ({ ...f, taskPopupsBoardListOnly: v === true }))}
+        value={form.taskPopupsBoardListOnly ?? taskPopupsBoardListOnly === true}
+        onChange={(v) => {
+          const enabled = v === true;
+          setForm((f) => ({ ...f, taskPopupsBoardListOnly: enabled }));
+          onTaskPopupsBoardListOnlyChange?.(enabled);
+        }}
       />
       {/* FNXC:TaskCardCostBadge 2026-07-11-12:15: This project setting is opt-in because board cards are already dense; when enabled, only tasks with recorded positive token usage render a read-time derived spend badge. */}
       <SettingsToggleRow
@@ -83,8 +127,12 @@ export function AppearanceSection({ form, setForm, themeMode, colorTheme, dashbo
           help: t("settings.appearance.showCostBadgeOnCardsHelp", "Default: disabled. When enabled, board cards show derived model cost next to execution time; unavailable pricing displays — and tasks without token usage show no badge."),
           scope: "project",
         }}
-        value={form.showCostBadgeOnCards === true}
-        onChange={(v) => setForm((f) => ({ ...f, showCostBadgeOnCards: v === true }))}
+        value={form.showCostBadgeOnCards ?? showCostBadgeOnCards === true}
+        onChange={(v) => {
+          const enabled = v === true;
+          setForm((f) => ({ ...f, showCostBadgeOnCards: enabled }));
+          onShowCostBadgeOnCardsChange?.(enabled);
+        }}
       />
       {/* FNXC:TaskDetailActivityFirst 2026-06-30-23:59: The project setting is opt-in because task details now default to Activity-first; explicit Activity/Chat/Logs links keep their destination regardless of this checkbox. */}
       <SettingsToggleRow
@@ -94,8 +142,12 @@ export function AppearanceSection({ form, setForm, themeMode, colorTheme, dashbo
           help: t("settings.appearance.taskDetailChatFirstHelp", "Off by default: task details list Activity first and omitted non-done opens land on Activity. Turn on to restore Chat-first order/default; explicit Chat links still work either way."),
           scope: "project",
         }}
-        value={form.taskDetailChatFirst === true}
-        onChange={(v) => setForm((f) => ({ ...f, taskDetailChatFirst: v === true }))}
+        value={form.taskDetailChatFirst ?? taskDetailChatFirst === true}
+        onChange={(v) => {
+          const enabled = v === true;
+          setForm((f) => ({ ...f, taskDetailChatFirst: enabled }));
+          onTaskDetailChatFirstChange?.(enabled);
+        }}
       />
       {/*
       FNXC:SettingsScope 2026-07-15-17:35:

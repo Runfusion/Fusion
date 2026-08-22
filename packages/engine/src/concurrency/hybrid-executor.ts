@@ -1,5 +1,6 @@
 import { EventEmitter } from "node:events";
-import type { Task, CentralCore, RegisteredProject, IsolationMode } from "@fusion/core";
+import { existsSync } from "node:fs";
+import { createTaskStoreForBackend, resolveEffectiveConcurrency, type Task, type CentralCore, type RegisteredProject, type IsolationMode } from "@fusion/core";
 import { ProjectManager } from "../project/project-manager.js";
 import { NodeHealthMonitor } from "../project/node-health-monitor.js";
 import type {
@@ -184,12 +185,13 @@ export class HybridExecutor extends EventEmitter<HybridExecutorEvents> {
             project.id,
           );
 
+          const capacity = await this.resolveStartupConcurrency(project, workingDirectory);
           await this.addProject({
             projectId: project.id,
             workingDirectory,
             isolationMode: project.isolationMode,
-            maxConcurrent: project.settings?.maxConcurrent ?? 2,
-            maxWorktrees: project.settings?.maxWorktrees ?? 4,
+            maxConcurrent: capacity.maxConcurrent,
+            maxWorktrees: capacity.worktreeLimit ?? capacity.maxConcurrent,
             settings: project.settings,
           });
           hybridExecutorLog.log(`Loaded project runtime for ${project.name}`);
@@ -230,6 +232,25 @@ export class HybridExecutor extends EventEmitter<HybridExecutorEvents> {
     });
 
     return runtime;
+  }
+
+  /*
+  FNXC:CapacityModel 2026-08-21-15:45:
+  FN-9185 requires hybrid runtime startup to read the target project's live settings blob.
+  A registry snapshot is a fallback only when the project root cannot open its scoped TaskStore.
+  */
+  private async resolveStartupConcurrency(project: RegisteredProject, workingDirectory: string) {
+    if (!existsSync(workingDirectory)) return resolveEffectiveConcurrency(project.settings);
+    try {
+      const boot = await createTaskStoreForBackend({ rootDir: workingDirectory, projectId: project.id });
+      try {
+        return resolveEffectiveConcurrency(await boot.taskStore.getSettingsFast());
+      } finally {
+        await boot.shutdown();
+      }
+    } catch {
+      return resolveEffectiveConcurrency(project.settings);
+    }
   }
 
   /**
@@ -293,12 +314,16 @@ export class HybridExecutor extends EventEmitter<HybridExecutorEvents> {
       await this.projectManager.removeProject(projectId);
 
       // Get the full current config
+      const capacity = await this.resolveStartupConcurrency({
+        ...project,
+        settings: config.settings ?? project.settings,
+      }, workingDirectory);
       const fullConfig: ProjectRuntimeConfig = {
         projectId,
         workingDirectory,
         isolationMode: config.isolationMode,
-        maxConcurrent: config.maxConcurrent ?? 2,
-        maxWorktrees: config.maxWorktrees ?? 4,
+        maxConcurrent: capacity.maxConcurrent,
+        maxWorktrees: capacity.worktreeLimit ?? capacity.maxConcurrent,
         settings: config.settings,
       };
 

@@ -192,6 +192,7 @@ describe("settings section-keys registry", () => {
         "gitlabAuthTokenType",
         "gitlabEnabled",
         "gitlabInstanceUrl",
+        "jiraEnabled", "jiraBaseUrl", "jiraApiBaseUrl", "jiraAuthEmail", "jiraAuthTokenSecretKey", "jiraAuthTokenSecretScope", "jiraBranchNameTemplate",
       ]),
     );
 
@@ -215,6 +216,7 @@ describe("settings section-keys registry", () => {
         "reportRoadmapDedupeEnabled",
         "reportRoadmapLabel",
         "reportRoadmapRepo",
+        "jiraEnabled", "jiraBaseUrl", "jiraApiBaseUrl", "jiraAuthEmail", "jiraAuthTokenSecretKey", "jiraAuthTokenSecretScope", "jiraBranchNameTemplate",
       ]),
     );
 

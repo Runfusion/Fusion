@@ -31,6 +31,8 @@ Interactive/user-supervised, task-scoped heartbeat, executor, triage, and workfl
 
 A valid active lineage may name a hand-authored `defined` feature only for its first task. Fusion atomically claims the feature, links that exact task, and promotes the feature to `triaged`; an already-linked feature rejects rather than overwriting its canonical task. This bootstrap exception does not make `defined` executable: later scheduler and symbol-lock admission still uses the stricter contract below.
 
+Both feature→task link transitions emit lifecycle events observable via mission-store subscribers and the dashboard SSE. Linking (`linkFeatureToTask` / claims) emits `feature:updated`, a `feature_status_changed` `mission:event` sourced `mission-link`, and `feature:linked`. Unlinking (`unlinkFeatureFromTask`) mirrors that family: it emits `feature:updated`, a `feature_status_changed` `mission:event` sourced `mission-unlink`, and `feature:unlinked` (the payload carries the detached `taskId`). Unlinking a feature that is not linked to any task is an error — it changes nothing and emits nothing. Consumers that react to `feature:linked` for feature→task automation see unlinks too via `feature:unlinked`, and the `mission-unlink` source distinguishes an unlink from a generic feature status edit.
+
 ## Canonical lineage approval for autonomous symbol locks
 
 Before autonomous scheduler work may acquire a symbol lock, it resolves the task's Mission → Milestone → Slice → Feature lineage and evaluates the single `@fusion/core` contract: `evaluateMissionLineageApproval`. Resolution and lock acquisition remain scheduler responsibilities; downstream schedulers must not redefine the approval rule.
@@ -144,7 +146,7 @@ This keeps member execution isolated per task while still routing member landing
 
 Use the Mission Manager UI to create missions and build hierarchy interactively.
 
-On mobile, Mission Manager surfaces the primary **Plan New Mission** CTA at the top of the mission list for faster access, while desktop keeps the split-layout sidebar CTA anchored in the bottom action region as the primary entry point.
+Mission Manager anchors the primary **Plan New Mission** CTA at the top of the mission list on both mobile stacked and desktop split layouts. The secondary **Create** manual-create link sits beneath it, and both primary controls use the same slightly taller tokenized height. While the inline create form is open, the CTA is suppressed cleanly without leaving an empty container; each surface retains only one primary planning control.
 
 Mission detail refreshes now preserve expanded milestone/slice state and keep the selected milestone expanded, so persisted milestone acceptance criteria remain visible across live updates.
 
@@ -443,6 +445,15 @@ Use this endpoint when a feature's delivery task has already shipped and is now 
 
 <!-- FNXC:MissionReconciliation 2026-07-20-08:34: Operators need a supported atomic terminal-evidence repair because unarchive/move workarounds enter ordinary task lifecycle observers and can wake a parked mission or generate duplicate work. -->
 **Safe duplicate cleanup:** preserve the first `409`; verify through supported APIs that the current linked task is generated duplicate work with no unique delivery or lineage value; call `POST /api/missions/features/:featureId/unlink-task`; archive only the proven duplicate through the supported task archive API; then call `reconcile-done` with the canonical terminal task. Never overwrite a mismatched link, unarchive/move canonical delivery evidence, or use direct storage edits. If the duplicate is ambiguous, leave it untouched and escalate for evidence.
+
+## Unlink / Re-point a feature's task link
+
+A mission feature's forward `taskId` link is single-valued and pinned: `fn_feature_link_task` / `linkFeatureToTask` refuse to re-point an already-linked feature (`Feature … is already linked to task …`). To correct a feature pinned to the wrong task (for example a shared vision document instead of the deterministic delivery task), use the re-point or unlink surface rather than the status-lossy unlink-then-link two-step:
+
+- **Re-point** moves the single-valued `taskId` directly with no status loss: `fn_feature_repoint_task` (engine tool) and the corresponding `fn_feature_repoint_task` CLI/pi-extension tool call the `repointFeatureToTask` store primitive. It atomically clears the old task's reverse `missionId`/`sliceId` linkage, sets the new task's, keeps an already-linked feature's status/loop/attempts, and preserves single-valuedness via the same conflicting-feature guard as linking. Same-task re-point is an idempotent no-op.
+- **Unlink** detaches the feature entirely: `fn_feature_unlink_task` (engine and CLI tools) and the write surface `POST /api/missions/features/:featureId/unlink-task` call the `unlinkFeatureFromTask` store primitive, which clears `taskId`, clears the old task's reverse linkage, and demotes the feature to `defined` — all in one transaction. Unlink of a feature not currently linked to any task is an error: it changes nothing and emits nothing (the CLI/agent surfaces report the error, and the dashboard route maps it to a 4xx).
+
+Both tools are classified as permanent-task-agent mutation surfaces (action gating and readonly workflow-step denial behave like `fn_feature_link_task`). Re-point is preferred over unlink-then-link because it preserves loop/status progress; unlink remains the correct path before the documented safe duplicate-cleanup + `reconcile-done` flow above.
 
 **How this differs from `PATCH /api/missions/features/:featureId`:**
 
@@ -787,6 +798,8 @@ Mission detail includes **Reconcile now** for an on-demand operator pass. It fir
 Selection changes discard reconcile responses silently, including responses arriving before the newly selected mission detail finishes loading. Leaving a mission also releases its busy and preview state so the next mission is immediately actionable. While a new mission detail is loading, the retained previous header's reconcile controls are inert (disabled and handler-refused), preventing reconciliation of the mission just left.
 
 Correction scans every non-archived mission and slice but never activates or triages work. It maps deterministic task lifecycle lanes, failure state, and assertion validation to feature status, repairs stale validation badges when the store supports its fenced repair primitive, and uses explicit task links only to reconcile shipped archived delivery through the store's `terminal-task-reconcile` attribution. A bounded `mission:reconcile-pass` audit event records IDs, source enums, and counters only. Git history, GitHub polling, FR-41 receipts, and FN-8845 spec-lock drift are deliberately deferred extension inputs.
+
+Beyond the single-valued forward `feature.taskId` link, the reconcile also credits a feature as satisfying its acceptance criteria when a **terminal, non-failed** task carries the feature's reverse `mission_lineage` (`sourceMetadata.missionLineage` naming the feature's `missionId`/`sliceId`/`featureId`). This reverse-lineage credit is an additional satisfying input, not a replacement: it leaves the forward link untouched, never fires when any live lineage follow-up keeps the feature active (live withholding takes precedence), and ignores failed/errored lineage tasks. It lets a roadmap feature close `done` even when its forward link is pinned to a shared, non-satisfying task (RUFU-109).
 
 For example, activate a ready work unit with `fn_slice_activate({ id: "SL-…" })`. Link it to live work with `fn_feature_link_task({ featureId: "F-…", taskId: "FN-…" })`. Linking delegates to `MissionStore.linkFeatureToTask()`: it verifies the task is a live row in the same project, changes the feature to `triaged`, and records the mission/slice linkage on the task. Archived, deleted, missing, and other-project tasks are rejected.
 

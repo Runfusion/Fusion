@@ -18,14 +18,11 @@
 
 .custom-provider-form__model-row {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr)) auto;
+  grid-template-columns: repeat(4, minmax(0, 1fr)) auto;
   gap: var(--space-sm);
   align-items: center;
 }
 
-.custom-provider-form__toggle {
-  justify-content: flex-start;
-}
 
 .custom-provider-form__actions {
   display: flex;

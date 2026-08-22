@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { createInterface } from "node:readline";
-import { CentralCore, GlobalSettingsStore, getDefaultCentralDbPath } from "@fusion/core";
+import { resolveEffectiveConcurrency, CentralCore, GlobalSettingsStore, getDefaultCentralDbPath } from "@fusion/core";
 import { createFusionAuthStorage, createFusionModelRegistry } from "@fusion/engine";
 import { resolveProject } from "../project-context.js";
 import { promptOutputStream } from "../output.js";
@@ -12,6 +12,15 @@ import { getModelRegistryModelsPath } from "./auth-paths.js";
 export interface OnboardOptions {
   force?: boolean;
   input?: NodeJS.ReadableStream;
+  /*
+  FNXC:Onboarding 2026-08-19-03:38:
+  False for the AUTO-LAUNCHED path (see onboard-autolaunch): prepare the install and stamp the
+  marker, but ask nothing. Auto-launch fires while the operator is starting something else — a
+  dashboard, a `pnpm dev --tunnel` — so its questions (AI provider setup, project setup, core
+  settings) interrupt work nobody asked to interrupt, and a dev server stopped on a prompt never
+  listens at all. `fn onboard` is the command for the interactive flow and keeps every step.
+  */
+  interactive?: boolean;
 }
 
 const PROMPT_CANCELLED_ERROR = "Interactive prompt cancelled";
@@ -274,6 +283,7 @@ export async function runOnboard(options: OnboardOptions = {}): Promise<void> {
     return;
   }
 
+  const interactive = options.interactive !== false;
   const prompts = createPromptSession(options.input);
 
   try {
@@ -281,16 +291,28 @@ export async function runOnboard(options: OnboardOptions = {}): Promise<void> {
     if (existsSync(centralDbPath)) {
       console.log(`✓ Central DB already exists: ${centralDbPath}`);
     } else {
-      const ranCentralDb = await runSkippableStep(prompts, "Central DB", async () => {
-        console.log(`Creating central DB: ${centralDbPath}`);
-        const central = new CentralCore();
-        await central.init();
-        await central.close();
-        console.log("✓ Central DB initialized");
+      /*
+      FNXC:Onboarding 2026-08-19-03:38:
+      The central DB is created unconditionally — no prompt. Fusion cannot run without it, so
+      declining produced an install that was broken in a way the message ("database was not created
+      or initialized") described but did not fix. It also blocked non-interactive startups: a
+      `pnpm dev --tunnel` sat on "Run central db now? (Y/n)" and never listened, so nothing was
+      served and the tunnel had no dev server to point at.
+      */
+      console.log("\nCentral DB:");
+      console.log(`Creating central DB: ${centralDbPath}`);
+      const central = new CentralCore();
+      await central.init();
+      await central.close();
+      console.log("✓ Central DB initialized");
+    }
+
+    if (!interactive) {
+      await globalSettingsStore.updateSettings({
+        cliOnboardingCompletedAt: new Date().toISOString(),
       });
-      if (!ranCentralDb) {
-        console.log("Central DB setup skipped; database was not created or initialized.");
-      }
+      console.log("\nConnect a provider and finish setup in the dashboard, or run `fn onboard` anytime.");
+      return;
     }
 
     const authStorage = createFusionAuthStorage();
@@ -383,7 +405,7 @@ export async function runOnboard(options: OnboardOptions = {}): Promise<void> {
       if (projectContext) {
         const rawMaxConcurrent = await prompts.prompt(
           "Set maxConcurrent for this project",
-          String((await projectContext.store.getSettings()).maxConcurrent ?? 2),
+          String(resolveEffectiveConcurrency(await projectContext.store.getSettings()).maxConcurrent),
         );
         const maxConcurrent = validateMaxConcurrent(rawMaxConcurrent);
         await projectContext.store.updateSettings({ maxConcurrent });

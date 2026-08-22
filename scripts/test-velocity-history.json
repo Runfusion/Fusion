@@ -2384,6 +2384,12 @@
       "timingSnapshotCapturedAt": "2026-07-24T13:09:41.412Z",
       "timingNotes": [
         "Timing snapshot is 22 days old; verify slowest-file attribution before treating the table as the current culprit."
+      ],
+      "notes": [
+        {
+          "text": "single-sample measurement variance; FN-9144 controlled warm median 9.0s over three samples; see docs/solutions/developer-experience/merge-gate-w33-walltime-regression.md",
+          "addedAt": "2026-08-18T14:37:09.135Z"
+        }
       ]
     }
   ]

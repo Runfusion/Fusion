@@ -52,6 +52,34 @@ stable value so the token survives restarts. See
 [CLI reference → fn dashboard → Authentication](./cli-reference.md#fn-dashboard)
 for the full flow.
 
+## Provider OAuth logins (Anthropic, OpenAI Codex)
+
+Subscription logins finish on a **loopback callback server that the container runs itself**, on fixed
+ports: `53692` for Anthropic and `1455` for OpenAI Codex. Two things make that unreachable by
+default — the port is not published, and the listener binds `127.0.0.1` *inside* the container, so
+publishing alone still would not deliver traffic arriving on the container's external interface.
+The symptom is a browser that lands on a connection-error page after you approve the login.
+
+Publish both ports and bind the listener to all interfaces:
+
+```bash
+docker run -p 4040:4040 -p 53692:53692 -p 1455:1455 \
+  -e PI_OAUTH_CALLBACK_HOST=0.0.0.0 \
+  -v /path/to/project:/workspace \
+  -v fusion-home:/home/node/.fusion \
+  fusion
+```
+
+The browser callback then completes on its own, with nothing to paste. Both ports are fixed by the
+provider's registered redirect URI, so they cannot be remapped to different host ports — `-p
+53692:53693` will not work.
+
+Without this, the fallback is manual: copy the full URL from the browser's address bar after
+approving and paste it into the login card. Note the callback listener accepts connections from
+outside the container while a login is in flight; it is short-lived and validates the OAuth `state`,
+but prefer publishing these ports only on a trusted network (`-p 127.0.0.1:53692:53692` restricts
+them to the host).
+
 ## Pass additional CLI flags
 
 You can append normal CLI arguments after the image name:
@@ -86,6 +114,20 @@ docker run -p 4040:4040 \
 The named volume `fusion-home` persists the embedded database across
 `docker run` invocations; a host directory bind mount works too.
 
+The image pre-creates `/home/node/.fusion` owned by `node`, so a fresh **named
+volume** inherits that ownership and embedded PostgreSQL can initialize on first
+run. A **bind mount** does not inherit it — the host directory's ownership wins —
+so a host path mounted there must already be writable by uid `1000`:
+
+```bash
+mkdir -p /path/to/fusion-home && sudo chown -R 1000:1000 /path/to/fusion-home
+```
+
+Symptom when this is wrong: `initdb: error: could not create directory
+"/home/node/.fusion/embedded-postgres": Permission denied`, followed by the
+dashboard supervisor exhausting its restarts and the container reporting
+`unhealthy`.
+
 ## Complete example
 
 ```bash
@@ -102,6 +144,11 @@ docker run --rm \
 ## Notes
 
 - The container runs as the non-root `node` user.
+- The builder stage runs `pnpm build` with `NODE_OPTIONS=--max-old-space-size=6144`. The dashboard's
+  `vite build` exceeds V8's default old-space on a stock Docker Desktop VM and aborts the image build
+  with `FATAL ERROR: Ineffective mark-compacts near heap limit` (exit 134). The value is a ceiling,
+  not a reservation. If your Docker VM has less than ~8GB, raise its memory allocation rather than
+  lowering this number.
 - `git` must be available in the container runtime. The mounted project volume must preserve `.git` metadata and repository history for worktree operations; Fusion initializes missing repositories during project registration.
 - The root `Dockerfile` installs with `pnpm install --frozen-lockfile` before copying full source, so every current workspace package/plugin manifest selected by `pnpm-workspace.yaml` must be covered by a builder-stage `COPY` before that install. Keep the manifest-only dependency-cache layer; the runner's intentionally filtered production install does not provide builder coverage.
 - `scripts/__tests__/dockerfile-workspace-manifests.test.mjs` expands the current workspace entries and rejects missing or duplicate builder pre-install COPY sources. Run it with `pnpm test:scripts -- scripts/__tests__/dockerfile-workspace-manifests.test.mjs` whenever workspace membership or Docker manifest copies change.

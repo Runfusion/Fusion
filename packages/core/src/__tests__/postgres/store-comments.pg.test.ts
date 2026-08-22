@@ -13,6 +13,9 @@
  */
 
 import { describe, it, expect, beforeAll, beforeEach, afterEach, afterAll } from "vitest";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+import { buildRefinementSeedPrompt } from "../../mesh/mesh-task-replication.js";
 import {
   pgDescribe,
   createSharedPgTaskStoreTestHarness,
@@ -149,6 +152,35 @@ pgTest("TaskStore addComment steering + refinement (PostgreSQL)", () => {
     const after = await store.listTasks({ slim: true } as never);
     expect(after.length).toBe(before + 1);
     expect(after.some((t: { description?: string }) => (t.description ?? "").includes("empty case"))).toBe(true);
+  });
+
+  it("routes a user comment refinement from Coding (Ideas) to Planning", async () => {
+    const store = h.store();
+    const source = await store.createTask({
+      title: "Ideas comment source",
+      description: "Completed Coding (Ideas) work",
+      workflowId: "builtin:coding-ideas",
+      column: "done",
+    } as never);
+    const before = await store.listTasks({ slim: true } as never);
+
+    await store.addComment(source.id, "Please make the empty state actionable", "user");
+
+    const after = await store.listTasks({ slim: true } as never);
+    const children = after.filter((task: { sourceParentTaskId?: string }) => task.sourceParentTaskId === source.id);
+    expect(after.length).toBe(before.length + 1);
+    expect(children).toHaveLength(1);
+    const child = await store.getTask(children[0].id);
+    const prompt = await readFile(join(store.taskDir(child.id), "PROMPT.md"), "utf8");
+    expect(child.column).toBe("todo");
+    expect(child.column).not.toBe("ideas");
+    expect(child.dependencies).toEqual([source.id]);
+    expect(await store.getTaskWorkflowSelectionAsync(child.id)).toMatchObject({ workflowId: "builtin:coding-ideas" });
+    expect(prompt).toBe(buildRefinementSeedPrompt(child.title ?? child.id, child.description));
+
+    const beforeAgentComment = (await store.listTasks({ slim: true } as never)).length;
+    await store.addComment(source.id, "Agent status update", "agent");
+    expect((await store.listTasks({ slim: true } as never)).length).toBe(beforeAgentComment);
   });
 
   it("adds a steering comment and persists it", async () => {

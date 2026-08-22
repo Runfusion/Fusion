@@ -12,6 +12,9 @@ import { isGenericAbortProvenance } from "./paused-abort-provenance.js";
 import { graphFailureValue } from "./graph-failure-pure.js";
 import type { EngineRunContext } from "../util/run-audit.js";
 import { executorLog } from "../logger.js";
+import { MERGE_BOUNDARY_UNPROVEN_VALUE } from "../workflows/workflow-merge-nodes.js";
+import { emitMergeBoundaryUnprovenParked } from "./emit-merge-boundary-unproven-audit.js";
+import type { MergeBoundaryUnprovenReasonCode } from "./workflow-merge-boundary.js";
 
 export type RouteGraphMergeFailureToRetryDeps = {
   store: TaskStore;
@@ -20,7 +23,14 @@ export type RouteGraphMergeFailureToRetryDeps = {
   ensureWorkflowMergeBoundaryTask: (
     live: TaskDetail,
     opts: { reason: string; nodeId: string; workflowId: string; runId: string },
-  ) => Promise<TaskDetail>;
+  ) => Promise<{
+    task: TaskDetail;
+    blocked?: {
+      reason: string;
+      code: MergeBoundaryUnprovenReasonCode;
+      missingInstanceCount: number;
+    };
+  }>;
   persistTokenUsage: (taskId: string) => Promise<void>;
 };
 
@@ -38,13 +48,53 @@ export async function routeGraphMergeFailureToRetry(
     executorLog.warn(`${live.id}: ${message}`);
     await deps.store.logEntry(live.id, message, undefined, deps.getRunContextFor(live.id));
     try {
-      const mergeTask = await deps.ensureWorkflowMergeBoundaryTask(live, {
+      const mergeBoundary = await deps.ensureWorkflowMergeBoundaryTask(live, {
         reason: "workflow-merge-retry-boundary",
         nodeId: failedNode,
         workflowId: result.context?.["workflow:id"] as string | undefined ?? "workflow-graph",
         runId: deps.getRunContextFor(live.id)?.runId ?? "graph-merge-retry",
       });
-      await deps.mergeRequester(mergeTask.id);
+      /*
+      FNXC:WorkflowMerge 2026-08-20-00:50:
+      FN-9157 forbids a bounded retry from repeating an unprovable boundary check.
+      Park visibly so the existing failed-status lease rule releases overlapping
+      work, rather than silently retaining an in-review blocker.
+      */
+      if (mergeBoundary.blocked) {
+        const { reason, code, missingInstanceCount } = mergeBoundary.blocked;
+        await deps.store.logEntry(live.id, `Workflow merge boundary retry parked task: ${reason}`, undefined, deps.getRunContextFor(live.id));
+        const outcome = mergeBoundary.task.status !== "failed" || !mergeBoundary.task.error
+          ? "parked" as const
+          : "already-terminal" as const;
+        if (outcome === "parked") {
+          await deps.store.updateTask(
+            live.id,
+            { status: "failed", error: `${MERGE_BOUNDARY_UNPROVEN_VALUE.toUpperCase().replaceAll("-", "_")}: ${reason}` },
+            deps.getRunContextFor(live.id),
+          );
+        }
+        /*
+        FNXC:RunAudit 2026-08-20-02:00:
+        FN-9168 records exactly one terminal merge-boundary-unproven park here. The boundary
+        helper's blocked return is not a park and remains silent; its bounded audit seam contains
+        failure and hangs, so telemetry cannot delay or alter this terminal write or return path.
+        */
+        await emitMergeBoundaryUnprovenParked(deps.store, {
+          taskId: live.id,
+          nodeId: failedNode,
+          failureValue: MERGE_BOUNDARY_UNPROVEN_VALUE,
+          source: "retry-boundary",
+          reasonCode: code,
+          missingInstanceCount,
+          priorColumn: live.column,
+          priorStatus: live.status,
+          outcome,
+          runId: deps.getRunContextFor(live.id)?.runId,
+        });
+        await deps.persistTokenUsage(live.id);
+        return true;
+      }
+      await deps.mergeRequester(mergeBoundary.task.id);
     } catch (error) {
       executorLog.warn(`${live.id}: bounded auto-merge retry request failed after graph merge failure: ${error instanceof Error ? error.message : String(error)}`);
     }

@@ -48,6 +48,7 @@ import {
   wrapToolsWithRtkRewrite,
   type FallbackModelUsedPayload,
 } from "../pi.js";
+import * as piModuleForRegistration from "../pi.js";
 import type { RunAuditor } from "../util/run-audit.js";
 import { createFusionAuthStorage, resolveCredentialInstanceRef, type FusionAuthStorage } from "../auth/auth-storage.js";
 import { MockAgentRuntime } from "../providers/mock-provider.js";
@@ -1179,4 +1180,29 @@ export async function promptWithAutoRetry(
  */
 export async function describeAgentModel(session: AgentSession): Promise<string> {
   return describeModel(session);
+}
+
+/*
+FNXC:CliRuntimeRouting 2026-08-16-14:37:
+Register this module's createResolvedAgentSession as pi.ts's routed session
+factory so bare `createFnAgent` callers get CLI runtime routing (cursor/claude/
+grok/omp/hermes), mock forcing, and runtime-resolved visibility without every
+lane importing the seam. Late-binding registration (mirrors core's
+setCreateFnAgent) instead of a static pi.ts -> agent-session-helpers import,
+which would create an eval-order-sensitive cycle (this module and
+runtime-resolution both import pi.ts). Runs once at module load; any host that
+loads @fusion/engine's index (all real hosts) gets it.
+
+Namespace access + try/catch on purpose: dozens of engine tests replace
+"../pi.js" with pure vi.mock factories that predate this export, and vitest's
+mock proxy THROWS on access to a missing export. Under such mocks the
+registration is skipped and their mocked createFnAgent behaves as before.
+*/
+try {
+  (piModuleForRegistration as { registerRoutedAgentSessionFactory?: (factory: (options: Record<string, unknown>) => Promise<import("../pi.js").AgentResult>) => void })
+    .registerRoutedAgentSessionFactory?.(
+      createResolvedAgentSession as unknown as (options: Record<string, unknown>) => Promise<import("../pi.js").AgentResult>,
+    );
+} catch {
+  // Mocked pi.js without the export: leave createFnAgent on its raw fallback.
 }

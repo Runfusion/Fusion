@@ -1,19 +1,29 @@
 import type { ChatInFlightGenerationState, ChatMessage, ResolvedModelSelection, Task, TaskDetail } from "@fusion/core";
 import { isWipColumnRole } from "../utils/columnRoles";
 import { getErrorMessage } from "@fusion/core";
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Loader2, Maximize2, Minimize2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { ToastType } from "../hooks/useToast";
 import { useComposerDictation } from "../hooks/useComposerDictation";
+import { getPersistedPendingChatMessages, setPersistedPendingChatMessages } from "../hooks/chatPendingMessageStorage";
 import { MicButton } from "./MicButton";
 import type { ChatMessageInfo, ToolCallInfo } from "../hooks/chatTypes";
-import { attachChatStream, editChatMessage, ensureTaskPlannerChatSession, fetchChatMessages, fetchChatSession, fetchTaskDetail, fetchTaskPlannerChatSession, streamChatResponse, type ChatFailureInfo, type ChatStreamErrorMeta } from "../api";
+import { attachChatStream, cancelChatResponse, ensureTaskPlannerChatSession, fetchChatMessages, fetchChatSession, fetchTaskDetail, fetchTaskPlannerChatSession, streamChatResponse, updateChatSession, type ChatFailureInfo, type ChatStreamErrorMeta } from "../api";
 import { parseQuestionToolCall, type ParsedQuestionToolCall } from "../utils/parseQuestionToolCall";
 import { ChatQuestionResponse } from "./ChatQuestionResponse";
+import { PendingChatMessageQueue } from "./PendingChatMessageQueue";
 import { ProviderIcon } from "./ProviderIcon";
+import { CustomModelDropdown } from "./CustomModelDropdown";
+import { ChatThinkingLevelControl } from "./ChatThinkingLevelControl";
+import { useModelsCache } from "../hooks/useModelsCache";
 import { StandardChatActionButton, StandardChatMessageItem, StandardStreamingMessage, formatModelTag } from "./StandardChatSurface";
 import { CHAT_COMMANDS, filterChatCommands, getSlashTriggerMatch, matchChatCommand, type ChatCommand } from "./chat-commands";
+import { useChatMessageLayout } from "../context/ChatMessageLayoutContext";
+import {
+  createChatInputAutosizeController,
+  type ChatInputAutosizeController,
+} from "../utils/chatInputAutosize";
 import "./TaskPlannerChatTab.css";
 
 interface TaskPlannerChatTabProps {
@@ -24,12 +34,18 @@ interface TaskPlannerChatTabProps {
   active: boolean;
   expanded?: boolean;
   onExpandedChange?: (expanded: boolean) => void;
-  planningModel: ResolvedModelSelection;
+  taskChatModel: ResolvedModelSelection & { thinkingLevel?: string };
   addToast: (msg: string, type?: ToastType) => void;
   onTaskUpdated?: (task: Task) => void;
 }
 
 type ComposerState = "idle" | "sending";
+
+type PendingQueueReservation = {
+  sessionId: string;
+  text: string;
+  index: number;
+};
 
 type PlannerQuestionRenderState = {
   parsed: ParsedQuestionToolCall;
@@ -52,6 +68,10 @@ const BOTTOM_FOLLOW_THRESHOLD = 48;
 
 function isTranscriptNearBottom(container: HTMLElement): boolean {
   return container.scrollHeight - (container.scrollTop + container.clientHeight) <= BOTTOM_FOLLOW_THRESHOLD;
+}
+
+function normalizePendingMessages(messages: readonly string[]): string[] {
+  return messages.map((message) => message.trim()).filter(Boolean);
 }
 
 const TASK_PLANNER_CHAT_STARTER_PROMPTS: StarterPromptDefinition[] = [
@@ -309,12 +329,16 @@ function buildPlannerQuestionRenderStates(messages: readonly ChatMessage[]): Map
   return states;
 }
 
-export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expanded = false, onExpandedChange, planningModel, addToast, onTaskUpdated }: TaskPlannerChatTabProps) {
+export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expanded = false, onExpandedChange, taskChatModel, addToast, onTaskUpdated }: TaskPlannerChatTabProps) {
   const { t } = useTranslation("app");
+  const chatMessageLayout = useChatMessageLayout();
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [draft, setDraft] = useState("");
+  const [pendingMessages, setPendingMessages] = useState<string[]>([]);
+  const [queueActionPending, setQueueActionPending] = useState(false);
   const composerTextareaRef = useRef<HTMLTextAreaElement>(null);
+  const autosizeRef = useRef<ChatInputAutosizeController | null>(null);
   const dictation = useComposerDictation({ textareaRef: composerTextareaRef, value: draft, onChange: setDraft, projectId });
   const [showCommandMenu, setShowCommandMenu] = useState(false);
   const [commandFilter, setCommandFilter] = useState("");
@@ -326,6 +350,17 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const streamRef = useRef<{ close: () => void } | null>(null);
+  const pendingMessagesRef = useRef<string[]>([]);
+  const sessionIdRef = useRef<string | null>(null);
+  const queueDispatchRef = useRef<((sessionId: string, selectedIndex?: number) => void) | null>(null);
+  const streamSnapshotRef = useRef<{
+    requestId: number;
+    sessionId: string;
+    text: string;
+    thinking: string;
+    toolCalls: ToolCallInfo[];
+  } | null>(null);
+  const cancellationInProgressRef = useRef<Promise<void> | null>(null);
   const transcriptRef = useRef<HTMLDivElement | null>(null);
   const [isTranscriptAtBottom, setIsTranscriptAtBottom] = useState(true);
   const isTranscriptAtBottomRef = useRef(true);
@@ -336,22 +371,133 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
   const streamRequestRef = useRef(0);
   const addToastRef = useRef(addToast);
   const onTaskUpdatedRef = useRef(onTaskUpdated);
+  const taskChatModelRef = useRef(taskChatModel);
 
   useEffect(() => {
     addToastRef.current = addToast;
     onTaskUpdatedRef.current = onTaskUpdated;
-  }, [addToast, onTaskUpdated]);
+    taskChatModelRef.current = taskChatModel;
+  }, [addToast, onTaskUpdated, taskChatModel]);
 
-  const planningModelProvider = isUsableModel(planningModel) ? planningModel.provider : undefined;
-  const planningModelId = isUsableModel(planningModel) ? planningModel.modelId : undefined;
-  const planningModelLabel = planningModelProvider && planningModelId ? `${planningModelProvider}/${planningModelId}` : "";
-  const activeModelTag = formatModelTag(planningModelProvider, planningModelId);
+  const [sessionModel, setSessionModel] = useState<ResolvedModelSelection & { thinkingLevel?: string }>(taskChatModel);
+  const hasLocalTargetOverrideRef = useRef(false);
+  const { models, favoriteProviders, favoriteModels } = useModelsCache();
+  const displayedModel = sessionModel;
+  const displayedModelProvider = isUsableModel(displayedModel) ? displayedModel.provider : undefined;
+  const displayedModelId = isUsableModel(displayedModel) ? displayedModel.modelId : undefined;
+  const displayedModelLabel = displayedModelProvider && displayedModelId ? `${displayedModelProvider}/${displayedModelId}` : "";
+  const activeModelTag = formatModelTag(displayedModelProvider, displayedModelId);
   const modelPayload = useMemo(() => {
-    return planningModelProvider && planningModelId
-      ? { modelProvider: planningModelProvider, modelId: planningModelId }
+    return displayedModelProvider && displayedModelId
+      ? {
+          modelProvider: displayedModelProvider,
+          modelId: displayedModelId,
+          ...(displayedModel.thinkingLevel ? { thinkingLevel: displayedModel.thinkingLevel } : {}),
+        }
       : {};
-  }, [planningModelId, planningModelProvider]);
-  const plannerChatScopeKey = `${task.id}\u0000${projectId ?? ""}\u0000${planningModelProvider ?? ""}\u0000${planningModelId ?? ""}`;
+  }, [displayedModel, displayedModelId, displayedModelProvider]);
+
+  /*
+  FNXC:TaskChatDefaultModel 2026-08-19-12:12:
+  Task Chat exposes the same model and thinking controls as Direct Chat, but keeps model-only targeting so a selection never impersonates a durable agent or bypasses the synthetic task authorization contract. Before the first send selections stay local; an existing session is patched in its project scope.
+  */
+  const handleTaskChatModelChange = useCallback(async (value: string) => {
+    const slashIndex = value.indexOf("/");
+    const useProjectDefault = value === "";
+    if (!useProjectDefault && (slashIndex <= 0 || slashIndex === value.length - 1)) return;
+    const modelProvider = useProjectDefault ? taskChatModel.provider : value.slice(0, slashIndex);
+    const modelId = useProjectDefault ? taskChatModel.modelId : value.slice(slashIndex + 1);
+    if (!modelProvider || !modelId) return;
+    hasLocalTargetOverrideRef.current = !useProjectDefault;
+    setSessionModel((current) => ({
+      ...current,
+      provider: modelProvider,
+      modelId,
+      ...(useProjectDefault ? { thinkingLevel: taskChatModel.thinkingLevel } : {}),
+    }));
+    const resolvedSessionId = sessionIdRef.current;
+    if (!resolvedSessionId) return;
+    try {
+      const { session } = await updateChatSession(
+        resolvedSessionId,
+        {
+          modelProvider,
+          modelId,
+          thinkingLevel: useProjectDefault ? taskChatModel.thinkingLevel ?? null : displayedModel.thinkingLevel ?? null,
+        },
+        projectId,
+      );
+      if (sessionIdRef.current !== resolvedSessionId) return;
+      setSessionModel({
+        ...(session.modelProvider && session.modelId ? { provider: session.modelProvider, modelId: session.modelId } : {}),
+        ...(session.thinkingLevel ? { thinkingLevel: session.thinkingLevel } : {}),
+      });
+    } catch (err) {
+      const message = getErrorMessage(err) || t("taskDetail.plannerChat.modelChangeFailed", "Failed to change task chat model");
+      setError(message);
+      addToastRef.current(message, "error");
+    }
+  }, [displayedModel.thinkingLevel, projectId, t, taskChatModel]);
+
+  const handleTaskChatThinkingChange = useCallback(async (thinkingLevel: string) => {
+    hasLocalTargetOverrideRef.current = true;
+    setSessionModel((current) => ({ ...current, ...(thinkingLevel ? { thinkingLevel } : { thinkingLevel: undefined }) }));
+    const resolvedSessionId = sessionIdRef.current;
+    if (!resolvedSessionId) return;
+    try {
+      const { session } = await updateChatSession(resolvedSessionId, { thinkingLevel: thinkingLevel || null }, projectId);
+      if (sessionIdRef.current !== resolvedSessionId) return;
+      setSessionModel((current) => ({
+        ...current,
+        ...(session.thinkingLevel ? { thinkingLevel: session.thinkingLevel } : { thinkingLevel: undefined }),
+      }));
+    } catch (err) {
+      const message = getErrorMessage(err) || t("taskDetail.plannerChat.thinkingChangeFailed", "Failed to change task chat thinking level");
+      setError(message);
+      addToastRef.current(message, "error");
+    }
+  }, [projectId, t]);
+
+  const plannerChatScopeKey = `${task.id}\u0000${projectId ?? ""}`;
+
+  useEffect(() => {
+    if (
+      !sessionId
+      && !hasLocalTargetOverrideRef.current
+      && (sessionModel.provider !== taskChatModel.provider
+        || sessionModel.modelId !== taskChatModel.modelId
+        || sessionModel.thinkingLevel !== taskChatModel.thinkingLevel)
+    ) {
+      setSessionModel(taskChatModel);
+    }
+  }, [sessionId, sessionModel, taskChatModel]);
+
+  const handleComposerRef = useCallback((textarea: HTMLTextAreaElement | null) => {
+    autosizeRef.current?.destroy();
+    autosizeRef.current = null;
+    composerTextareaRef.current = textarea;
+    if (!textarea) return;
+    autosizeRef.current = createChatInputAutosizeController(textarea);
+  }, []);
+
+  useLayoutEffect(() => {
+    autosizeRef.current?.resize();
+  }, [draft]);
+
+  const replacePendingMessages = useCallback((nextMessages: readonly string[], resolvedSessionId = sessionIdRef.current) => {
+    const normalizedMessages = normalizePendingMessages(nextMessages);
+    pendingMessagesRef.current = normalizedMessages;
+    setPendingMessages(normalizedMessages);
+    setPersistedPendingChatMessages(resolvedSessionId, normalizedMessages);
+  }, []);
+
+  const restorePendingQueueReservation = useCallback((reservation: PendingQueueReservation) => {
+    if (sessionIdRef.current !== reservation.sessionId) return;
+    const current = pendingMessagesRef.current;
+    const insertionIndex = Math.min(Math.max(reservation.index, 0), current.length);
+    const next = [...current.slice(0, insertionIndex), reservation.text, ...current.slice(insertionIndex)];
+    replacePendingMessages(next, reservation.sessionId);
+  }, [replacePendingMessages]);
 
   /*
    * FNXC:TaskPlannerChatSlashCommands 2026-07-08-00:00:
@@ -395,7 +541,7 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
       setHistoryLoaded(true);
     } catch (refreshError) {
       if (!isCurrentRequest()) return;
-      const message = getErrorMessage(refreshError) || t("taskDetail.plannerChat.loadFailed", "Failed to load planner chat");
+      const message = getErrorMessage(refreshError) || t("taskDetail.plannerChat.loadFailed", "Failed to load task chat");
       setError(message);
       addToastRef.current(message, "error");
     }
@@ -419,13 +565,41 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
     inFlightGeneration?: ChatInFlightGenerationState | null;
     requestId: number;
     attach: boolean;
+    queueReservation?: PendingQueueReservation;
+    replacementMessageId?: string;
+    replacementTargetIndex?: number;
+    replacementMessage?: ChatMessage;
+    onAccepted?: () => void;
+    onRejected?: (message: string) => void;
   }) => {
-    const { resolvedSessionId, content = "", inFlightGeneration, requestId, attach } = options;
+    const {
+      resolvedSessionId,
+      content = "",
+      inFlightGeneration,
+      requestId,
+      attach,
+      queueReservation,
+      replacementMessageId,
+      replacementTargetIndex,
+      replacementMessage,
+      onAccepted,
+      onRejected,
+    } = options;
     const isCurrentStreamRequest = () => streamRequestRef.current === requestId;
     const inFlightSnapshot = attach ? inFlightGeneration : null;
     let accumulated = inFlightSnapshot?.streamingText ?? "";
     let accumulatedThinking = inFlightSnapshot?.streamingThinking ?? "";
     const streamingToolCalls = cloneToolCalls(inFlightSnapshot?.toolCalls);
+    const updateStreamSnapshot = (): void => {
+      streamSnapshotRef.current = {
+        requestId,
+        sessionId: resolvedSessionId,
+        text: accumulated,
+        thinking: accumulatedThinking,
+        toolCalls: cloneToolCalls(streamingToolCalls),
+      };
+    };
+    updateStreamSnapshot();
 
     /*
      * FNXC:TaskDetailPlannerChat 2026-07-15-00:00:
@@ -448,19 +622,31 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
     applyStreamingSnapshot(resolvedSessionId, accumulated, accumulatedThinking, streamingToolCalls);
 
     const handlers = {
+      onAccepted: () => {
+        if (replacementMessageId && replacementTargetIndex !== undefined && replacementMessage) {
+          setMessages((current) => [
+            ...current.filter((message) => message.id !== replacementMessage.id).slice(0, replacementTargetIndex),
+            replacementMessage,
+          ]);
+        }
+        onAccepted?.();
+      },
       onText: (delta: string) => {
         if (!isCurrentStreamRequest()) return;
         accumulated += delta;
+        updateStreamSnapshot();
         applyStreamingSnapshot(resolvedSessionId, accumulated, accumulatedThinking, streamingToolCalls);
       },
       onThinking: (delta: string) => {
         if (!isCurrentStreamRequest()) return;
         accumulatedThinking += delta;
+        updateStreamSnapshot();
         applyStreamingSnapshot(resolvedSessionId, accumulated, accumulatedThinking, streamingToolCalls);
       },
       onToolStart: ({ toolName, args }: { toolName: string; args?: Record<string, unknown> }) => {
         if (!isCurrentStreamRequest()) return;
         streamingToolCalls.push({ toolName, args, isError: false, status: "running" });
+        updateStreamSnapshot();
         applyStreamingSnapshot(resolvedSessionId, accumulated, accumulatedThinking, streamingToolCalls);
       },
       onToolEnd: ({ toolName, isError, result }: { toolName: string; isError: boolean; result?: unknown }) => {
@@ -479,6 +665,7 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
         if (steeringText) {
           void refreshTaskAfterSteering();
         }
+        updateStreamSnapshot();
         applyStreamingSnapshot(resolvedSessionId, accumulated, accumulatedThinking, streamingToolCalls);
       },
       onDone: (data: { messageId: string; message?: ChatMessage }) => {
@@ -486,6 +673,7 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
         composerStateRef.current = "idle";
         setComposerState("idle");
         setStreamingThinking("");
+        streamSnapshotRef.current = null;
         streamRef.current = null;
         if (data.message) {
           setMessages((current) => {
@@ -495,14 +683,16 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
         } else {
           void refreshMessagesForSession(resolvedSessionId, isCurrentStreamRequest, { mergeOptimistic: Boolean(content) });
         }
+        queueDispatchRef.current?.(resolvedSessionId);
       },
       onError: (streamError: string | ChatFailureInfo, meta?: ChatStreamErrorMeta) => {
         if (!isCurrentStreamRequest()) return;
-        const message = normalizeChatFailureSummary(streamError, t("taskDetail.plannerChat.sendFailed", "Planner chat failed to respond"));
+        const message = normalizeChatFailureSummary(streamError, t("taskDetail.plannerChat.sendFailed", "Task chat failed to respond"));
         setError(message);
         composerStateRef.current = "idle";
         setComposerState("idle");
         setStreamingThinking("");
+        streamSnapshotRef.current = null;
         streamRef.current = null;
         setMessages((current) => {
           const withoutStreaming = current.filter((candidate) => candidate.id !== "streaming-assistant");
@@ -511,8 +701,13 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
           }
           return withoutStreaming;
         });
-        if (meta?.requestAccepted === false) return;
+        if (meta?.requestAccepted === false) {
+          if (queueReservation) restorePendingQueueReservation(queueReservation);
+          onRejected?.(message);
+          return;
+        }
         void refreshMessagesForSession(resolvedSessionId, isCurrentStreamRequest, { mergeOptimistic: Boolean(content) });
+        queueDispatchRef.current?.(resolvedSessionId);
       },
     };
 
@@ -531,9 +726,12 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
           handlers,
           undefined,
           projectId,
-          { taskId: task.id },
+          {
+            taskId: task.id,
+            ...(replacementMessageId ? { replacementMessageId } : {}),
+          },
         );
-  }, [applyStreamingSnapshot, projectId, refreshMessagesForSession, refreshTaskAfterSteering, task.id, t]);
+  }, [applyStreamingSnapshot, projectId, refreshMessagesForSession, refreshTaskAfterSteering, restorePendingQueueReservation, task.id, t]);
 
   const loadSession = useCallback(async () => {
     const requestId = loadRequestRef.current + 1;
@@ -542,21 +740,35 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
     setHistoryLoaded(false);
     setError(null);
     try {
-      const { session: lookupSession } = await fetchTaskPlannerChatSession(task.id, modelPayload, projectId);
+      const { session: lookupSession } = await fetchTaskPlannerChatSession(task.id, {}, projectId);
       if (loadRequestRef.current !== requestId) return;
       if (!lookupSession) {
+        sessionIdRef.current = null;
         setSessionId(null);
+        setSessionModel(taskChatModelRef.current);
+        replacePendingMessages([], null);
         setMessages([]);
         setHistoryLoaded(true);
         return;
       }
+      sessionIdRef.current = lookupSession.id;
       setSessionId(lookupSession.id);
+      replacePendingMessages(getPersistedPendingChatMessages(lookupSession.id), lookupSession.id);
       const [{ messages: loadedMessages }, refreshedSessionResult] = await Promise.all([
         fetchChatMessages(lookupSession.id, { order: "asc" }, projectId),
         fetchChatSession(lookupSession.id, projectId).catch(() => ({ session: lookupSession })),
       ]);
       if (loadRequestRef.current !== requestId) return;
       const resolvedSession = refreshedSessionResult.session;
+      setSessionModel(
+        resolvedSession.modelProvider && resolvedSession.modelId
+          ? {
+              provider: resolvedSession.modelProvider,
+              modelId: resolvedSession.modelId,
+              ...(resolvedSession.thinkingLevel ? { thinkingLevel: resolvedSession.thinkingLevel } : {}),
+            }
+          : taskChatModelRef.current,
+      );
       setMessages(sortMessages(loadedMessages));
       setHistoryLoaded(true);
       if (resolvedSession.isGenerating || resolvedSession.inFlightGeneration) {
@@ -568,10 +780,12 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
           requestId: streamRequestId,
           attach: true,
         });
+      } else {
+        queueDispatchRef.current?.(lookupSession.id);
       }
     } catch (err) {
       if (loadRequestRef.current !== requestId) return;
-      const message = getErrorMessage(err) || t("taskDetail.plannerChat.loadFailed", "Failed to load planner chat");
+      const message = getErrorMessage(err) || t("taskDetail.plannerChat.loadFailed", "Failed to load task chat");
       setError(message);
       setHistoryLoaded(false);
     } finally {
@@ -579,15 +793,20 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
         setLoading(false);
       }
     }
-  }, [modelPayload, projectId, startPlannerStream, task.id, t]);
+  }, [projectId, replacePendingMessages, startPlannerStream, task.id, t]);
 
   useEffect(() => {
     loadRequestRef.current += 1;
     streamRequestRef.current += 1;
     streamRef.current?.close();
     streamRef.current = null;
+    sessionIdRef.current = null;
     setSessionId(null);
-    setMessages([]);
+    hasLocalTargetOverrideRef.current = false;
+    setSessionModel(taskChatModelRef.current);
+    pendingMessagesRef.current = [];
+    setPendingMessages([]);
+    setQueueActionPending(false);
     setDraft("");
     composerStateRef.current = "idle";
     setStreamingThinking("");
@@ -664,9 +883,56 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
     previousMessageCountRef.current = messages.length;
   }, [active, anchorTranscriptToBottom, composerState, isTranscriptAtBottom, messages, setTranscriptAtBottom]);
 
+  const enqueuePendingMessage = useCallback((messageContent: string) => {
+    const content = messageContent.trim();
+    if (!content) return;
+    const resolvedSessionId = sessionIdRef.current;
+    replacePendingMessages([...pendingMessagesRef.current, content], resolvedSessionId);
+    setDraft("");
+    setError(null);
+  }, [replacePendingMessages]);
+
+  const dispatchQueuedMessage = useCallback((resolvedSessionId: string, selectedIndex = 0) => {
+    if (sessionIdRef.current !== resolvedSessionId || composerStateRef.current === "sending" || cancellationInProgressRef.current) return;
+    const current = pendingMessagesRef.current;
+    const content = current[selectedIndex]?.trim();
+    if (!content) return;
+
+    const reservation: PendingQueueReservation = { sessionId: resolvedSessionId, text: content, index: selectedIndex };
+    replacePendingMessages(current.filter((_, index) => index !== selectedIndex), resolvedSessionId);
+    const streamRequestId = streamRequestRef.current + 1;
+    streamRequestRef.current = streamRequestId;
+    composerStateRef.current = "sending";
+    setComposerState("sending");
+    setError(null);
+    setMessages((currentMessages) => [...currentMessages, makeOptimisticUserMessage(resolvedSessionId, content)]);
+    try {
+      startPlannerStream({
+        resolvedSessionId,
+        content,
+        requestId: streamRequestId,
+        attach: false,
+        queueReservation: reservation,
+      });
+    } catch (err) {
+      restorePendingQueueReservation(reservation);
+      composerStateRef.current = "idle";
+      setComposerState("idle");
+      const message = getErrorMessage(err) || t("taskDetail.plannerChat.sendFailed", "Task chat failed to respond");
+      setError(message);
+      addToastRef.current(message, "error");
+    }
+  }, [restorePendingQueueReservation, replacePendingMessages, startPlannerStream, t]);
+
+  queueDispatchRef.current = dispatchQueuedMessage;
+
   const sendMessageContent = useCallback(async (messageContent: string) => {
     const content = messageContent.trim();
-    if (!content || composerStateRef.current === "sending") return;
+    if (!content) return;
+    if (composerStateRef.current === "sending" || cancellationInProgressRef.current) {
+      enqueuePendingMessage(content);
+      return;
+    }
     composerStateRef.current = "sending";
 
     const streamRequestId = streamRequestRef.current + 1;
@@ -678,12 +944,24 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
     setError(null);
 
     try {
-      const { session } = sessionId
-        ? { session: { id: sessionId } }
-        : await ensureTaskPlannerChatSession(task.id, modelPayload, projectId);
+      const { session } = await ensureTaskPlannerChatSession(task.id, modelPayload, projectId);
       if (!isCurrentStreamRequest()) return;
       const resolvedSessionId = session.id;
+      setSessionModel(
+        session.modelProvider && session.modelId
+          ? {
+              provider: session.modelProvider,
+              modelId: session.modelId,
+              ...(session.thinkingLevel ? { thinkingLevel: session.thinkingLevel } : {}),
+            }
+          : taskChatModel,
+      );
+      sessionIdRef.current = resolvedSessionId;
       setSessionId(resolvedSessionId);
+      // FNXC:TaskPlannerChatQueue 2026-08-18-23:13:
+      // Planner queue entries are browser-local and keyed by the resolved session. Persist any
+      // follow-up typed before session creation completes only after that session becomes known.
+      replacePendingMessages(pendingMessagesRef.current, resolvedSessionId);
       setMessages((current) => [...current, makeOptimisticUserMessage(resolvedSessionId, content)]);
       if (!isCurrentStreamRequest()) return;
       startPlannerStream({
@@ -694,14 +972,14 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
       });
     } catch (err) {
       if (!isCurrentStreamRequest()) return;
-      const message = getErrorMessage(err) || t("taskDetail.plannerChat.sendFailed", "Planner chat failed to respond");
+      const message = getErrorMessage(err) || t("taskDetail.plannerChat.sendFailed", "Task chat failed to respond");
       setError(message);
       addToast(message, "error");
       composerStateRef.current = "idle";
       setComposerState("idle");
       setStreamingThinking("");
     }
-  }, [addToast, modelPayload, projectId, sessionId, startPlannerStream, task.id, t]);
+  }, [addToast, enqueuePendingMessage, modelPayload, projectId, replacePendingMessages, startPlannerStream, task.id, taskChatModel, t]);
 
   const refreshTaskAfterEdit = useCallback(async (hadDiscardedSideEffect: boolean) => {
     try {
@@ -723,18 +1001,11 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
   }, [projectId, t, task.id]);
 
   /*
-   * FNXC:TaskDetailPlannerChat 2026-07-07-10:15:
-   * Editing an earlier Planner Chat message resumes the conversation from that point and forgets
-   * everything after it — both the persisted rows (via editChatMessage's server-side truncation)
-   * and the pi session context (via ChatManager.rewindSessionForEdit, reused unmodified from
-   * FN-7628). Product decision for already-applied task-scoped side effects: discarded turns may
-   * have already run fn_task_planner_add_steering (persisted a steering comment) or
-   * fn_task_planner_create_refinement (created a real task). Reverting those is destructive and
-   * out of scope here, so this task deliberately does NOT attempt to undo them — the steering
-   * comment stays on the task and the refinement task stays open. Instead, after a successful
-   * edit-and-resend we refresh task detail (so Activity/steering reflects reality) and, only when
-   * the discarded range contained a steering/refinement tool result, surface an informational
-   * toast so the user is not misled into thinking those changes were reverted.
+   * FNXC:TaskDetailPlannerChat 2026-08-19-03:34:
+   * Planner edits share Direct Chat's replacement-aware POST. The target/later range remains
+   * visible until SSE acceptance; the server owns deletion and pi rewind, while task refresh and
+   * the existing side-effect notice happen only after that accepted replacement begins.
+   * Discarded steering comments/refinement tasks remain durable and are never rolled back.
    */
   const editMessageAndResend = useCallback(async (messageId: string, newContent: string) => {
     if (composerStateRef.current === "sending" || !sessionId) return;
@@ -745,36 +1016,42 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
     const resolvedSessionId = sessionId;
     const targetIndex = messages.findIndex((candidate) => candidate.id === messageId);
     if (targetIndex === -1) return;
-
     const discardedRange = messages.slice(targetIndex);
     const hadDiscardedSideEffect = discardedRange.some((candidate) =>
       extractToolCalls(candidate).some((toolCall) =>
         extractPlannerSteeringResult(toolCall) !== null || extractPlannerRefinementResult(toolCall) !== null,
       ),
     );
+    const replacementMessage = makeOptimisticUserMessage(resolvedSessionId, trimmed);
+    const streamRequestId = streamRequestRef.current + 1;
+    streamRequestRef.current = streamRequestId;
+    composerStateRef.current = "sending";
+    setComposerState("sending");
+    setError(null);
+    // Keep the old range mounted; this temporary row is removed/replaced on acceptance.
+    setMessages((current) => [...current, replacementMessage]);
 
-    try {
-      await editChatMessage(resolvedSessionId, messageId, trimmed, projectId);
-      // Keep the edited row mounted until PATCH success so failure leaves its correction editable.
-      setMessages((current) => current.slice(0, targetIndex));
-    } catch (err) {
-      const message = getErrorMessage(err) || t("taskDetail.plannerChat.editFailed", "Failed to edit planner chat message");
-      setError(message);
-      addToastRef.current(message, "error");
-      // Restore truthful state from the server rather than trusting the optimistic truncation.
-      void refreshMessagesForSession(resolvedSessionId, () => true);
-      /*
-       * FNXC:TaskDetailPlannerChat 2026-07-19-00:00:
-       * Preserve an edited correction after a Planner Chat PATCH failure: StandardChatMessageItem
-       * interprets rejection as failed save and retains its editor, while this surface still owns
-       * the error toast and truthful transcript refresh.
-       */
-      throw err;
-    }
+    await new Promise<void>((resolve, reject) => {
+      startPlannerStream({
+        resolvedSessionId,
+        content: trimmed,
+        requestId: streamRequestId,
+        attach: false,
+        replacementMessageId: messageId,
+        replacementTargetIndex: targetIndex,
+        replacementMessage,
+        onAccepted: resolve,
+        onRejected: (message) => {
+          const failureMessage = message || t("taskDetail.plannerChat.editFailed", "Failed to edit task chat message");
+          setError(failureMessage);
+          addToastRef.current(failureMessage, "error");
+          void refreshMessagesForSession(resolvedSessionId, () => true).finally(() => reject(new Error(failureMessage)));
+        },
+      });
+    });
 
-    await sendMessageContent(trimmed);
     await refreshTaskAfterEdit(hadDiscardedSideEffect);
-  }, [messages, projectId, refreshMessagesForSession, refreshTaskAfterEdit, sendMessageContent, sessionId, t]);
+  }, [messages, refreshMessagesForSession, refreshTaskAfterEdit, sessionId, startPlannerStream, t]);
 
   const dispatchSlashCommand = useCallback(async (command: ChatCommand, remainder: string) => {
     if (!agentRunning) {
@@ -843,15 +1120,134 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
     }
   }, []);
 
-  const stopPlannerStreaming = useCallback(() => {
+  const cancelPlannerGeneration = useCallback((snapshot: NonNullable<typeof streamSnapshotRef.current>, selectedIndex?: number) => {
+    if (cancellationInProgressRef.current) return;
+    setQueueActionPending(true);
     streamRequestRef.current += 1;
     streamRef.current?.close();
     streamRef.current = null;
     composerStateRef.current = "idle";
     setComposerState("idle");
     setStreamingThinking("");
-    setMessages((current) => current.filter((message) => message.id !== "streaming-assistant"));
-  }, []);
+
+    const interruptedLocalId = `interrupted-${snapshot.requestId}`;
+    const hasInterruptedOutput = Boolean(snapshot.text || snapshot.thinking || snapshot.toolCalls.length > 0);
+    if (hasInterruptedOutput) {
+      // FNXC:ChatCancellation 2026-08-18-21:55:
+      // Planner Stop keeps its displayed prefix as a normal transcript bubble until the
+      // scoped cancellation response confirms the durable interrupted assistant message.
+      setMessages((current) => [
+        ...current.filter((message) => message.id !== "streaming-assistant" && message.id !== interruptedLocalId),
+        {
+          id: interruptedLocalId,
+          sessionId: snapshot.sessionId,
+          role: "assistant",
+          content: snapshot.text,
+          thinkingOutput: snapshot.thinking || null,
+          metadata: snapshot.toolCalls.length > 0 ? { toolCalls: snapshot.toolCalls, interrupted: true } : { interrupted: true },
+          createdAt: new Date().toISOString(),
+        },
+      ]);
+    } else {
+      setMessages((current) => current.filter((message) => message.id !== "streaming-assistant"));
+    }
+
+    const cancellation = Promise.resolve(cancelChatResponse(snapshot.sessionId, projectId))
+      .then(async (result) => {
+        const cancellationResult = result ?? { success: true, interrupted: false };
+        if (!cancellationResult.success) {
+          throw new Error(t("taskDetail.plannerChat.cancelFailed", "Failed to save the interrupted planner response"));
+        }
+
+        // Reconciliation is part of the cancellation barrier: queued text is not released
+        // until the durable interrupted assistant row can be read back from chat history.
+        const refreshed = (await fetchChatMessages(snapshot.sessionId, { order: "asc" }, projectId)).messages;
+        if (sessionIdRef.current !== snapshot.sessionId) return;
+        const persisted = cancellationResult.message ? [cancellationResult.message] : [];
+        const reconciled = [
+          ...refreshed,
+          ...persisted.filter((message) => !refreshed.some((candidate) => candidate.id === message.id)),
+        ];
+        const hasDurableInterruptedMessage = Boolean(cancellationResult.message)
+          || reconciled.some((message) =>
+            message.role === "assistant"
+            && message.content === snapshot.text
+            && message.metadata?.interrupted === true,
+          );
+        setMessages((current) => mergePlannerTranscriptWithOptimistic(
+          current.filter((message) =>
+            message.id !== "streaming-assistant"
+            && (!hasDurableInterruptedMessage || message.id !== interruptedLocalId),
+          ),
+          reconciled,
+        ));
+
+        if (cancellationInProgressRef.current === cancellation) {
+          cancellationInProgressRef.current = null;
+        }
+        queueDispatchRef.current?.(snapshot.sessionId, selectedIndex);
+      })
+      .catch((cancelError) => {
+        if (sessionIdRef.current === snapshot.sessionId) {
+          const message = getErrorMessage(cancelError) || t("taskDetail.plannerChat.cancelFailed", "Failed to save the interrupted planner response");
+          setError(message);
+          addToastRef.current(message, "error");
+        }
+      })
+      .finally(() => {
+        streamSnapshotRef.current = null;
+        if (cancellationInProgressRef.current === cancellation) {
+          cancellationInProgressRef.current = null;
+        }
+        setQueueActionPending(false);
+      });
+    cancellationInProgressRef.current = cancellation;
+  }, [projectId, t]);
+
+  const stopPlannerStreaming = useCallback(() => {
+    const snapshot = streamSnapshotRef.current;
+    if (!snapshot) return;
+    cancelPlannerGeneration(snapshot);
+  }, [cancelPlannerGeneration]);
+
+  const updatePendingMessage = useCallback((index: number, content: string) => {
+    const current = pendingMessagesRef.current;
+    if (index < 0 || index >= current.length) return;
+    replacePendingMessages(
+      current.map((pendingMessage, pendingIndex) => pendingIndex === index ? content : pendingMessage),
+      sessionIdRef.current,
+    );
+    setError(null);
+  }, [replacePendingMessages]);
+
+  const movePendingMessage = useCallback((index: number, direction: -1 | 1) => {
+    if (queueActionPending) return;
+    const targetIndex = index + direction;
+    const current = pendingMessagesRef.current;
+    if (index < 0 || targetIndex < 0 || targetIndex >= current.length) return;
+    const next = [...current];
+    [next[index], next[targetIndex]] = [next[targetIndex]!, next[index]!];
+    replacePendingMessages(next, sessionIdRef.current);
+  }, [queueActionPending, replacePendingMessages]);
+
+  const deletePendingMessage = useCallback((index: number) => {
+    if (queueActionPending) return;
+    const current = pendingMessagesRef.current;
+    if (index < 0 || index >= current.length) return;
+    replacePendingMessages(current.filter((_, pendingIndex) => pendingIndex !== index), sessionIdRef.current);
+  }, [queueActionPending, replacePendingMessages]);
+
+  const forceSendPendingMessage = useCallback((index: number) => {
+    if (queueActionPending) return;
+    const resolvedSessionId = sessionIdRef.current;
+    if (!resolvedSessionId || !pendingMessagesRef.current[index]) return;
+    const snapshot = streamSnapshotRef.current;
+    if (snapshot) {
+      cancelPlannerGeneration(snapshot, index);
+      return;
+    }
+    queueDispatchRef.current?.(resolvedSessionId, index);
+  }, [cancelPlannerGeneration, queueActionPending]);
 
   const handleKeyDown = useCallback((event: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (showCommandMenu && event.key === "ArrowDown") {
@@ -890,7 +1286,7 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
     void sendMessage();
   }, [showCommandMenu, filteredCommands, highlightedCommandIndex, handleCommandMenuSelect, sendMessage]);
 
-  const canSend = draft.trim().length > 0 && composerState !== "sending";
+  const canSend = draft.trim().length > 0 && composerState !== "sending" && !queueActionPending;
   const showEmptyState = historyLoaded && !loading && !error && messages.length === 0;
   const questionRenderStates = useMemo(() => buildPlannerQuestionRenderStates(messages), [messages]);
   const starterPrompts = useMemo(() => {
@@ -1017,13 +1413,13 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
   The planner Chat tab owns an in-view expand/collapse button so mobile users can reclaim vertical room while keeping close/back/task identity controls reachable. This state is independent from Activity Live expansion because Activity still represents operational steering/history, not planner-model conversation.
   */
   return (
-    <section className="task-planner-chat" aria-label={t("taskDetail.plannerChat.label", "Planner chat")} data-testid="task-planner-chat-panel">
+    <section className={`task-planner-chat${chatMessageLayout === "full-width" ? " task-planner-chat--full-width" : ""}`} aria-label={t("taskDetail.plannerChat.label", "Task-aware chat")} data-testid="task-planner-chat-panel">
       {onExpandedChange && (
         <button
           type="button"
           className="btn btn-icon btn-sm task-planner-chat-expand-toggle task-planner-chat-expand-toggle--overlay"
           onClick={() => onExpandedChange(!expanded)}
-          aria-label={expanded ? t("taskDetail.plannerChat.collapse", "Collapse planner chat") : t("taskDetail.plannerChat.expand", "Expand planner chat")}
+          aria-label={expanded ? t("taskDetail.plannerChat.collapse", "Collapse task chat") : t("taskDetail.plannerChat.expand", "Expand task chat")}
           aria-pressed={expanded}
           aria-expanded={expanded}
           data-testid="task-planner-chat-expand-toggle"
@@ -1036,26 +1432,26 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
         {loading ? (
           <div className="task-planner-chat-state" role="status" aria-live="polite">
             <Loader2 className="animate-spin" aria-hidden="true" />
-            <span>{t("taskDetail.plannerChat.loading", "Loading planner chat…")}</span>
+            <span>{t("taskDetail.plannerChat.loading", "Loading task chat…")}</span>
           </div>
         ) : showEmptyState ? (
           <div className="task-planner-chat-empty" data-testid="task-planner-chat-empty">
-            {isUsableModel(planningModel) && (
+            {isUsableModel(displayedModel) && (
               <span
                 className="task-planner-chat-empty-model"
                 data-testid="task-planner-chat-model"
-                title={planningModelLabel}
-                aria-label={planningModelLabel}
+                title={displayedModelLabel}
+                aria-label={displayedModelLabel}
               >
-                <ProviderIcon provider={planningModel.provider} size="sm" />
+                <ProviderIcon provider={displayedModel.provider} size="sm" />
               </span>
             )}
             <div className="task-planner-chat-empty-copy">
               <h5>{t("taskDetail.plannerChat.emptyTitle", "Start a task-aware chat")}</h5>
-              <p>{t("taskDetail.plannerChat.emptyBody", "Ask planning questions about this task's current status, recent activity, blockers, next steps, or definition. Starter prompts send as normal chat messages.")}</p>
+              <p>{t("taskDetail.plannerChat.emptyBody", "Ask questions about this task's current status, recent activity, blockers, next steps, or definition. Starter prompts send as normal chat messages.")}</p>
             </div>
             {starterPrompts.length > 0 && (
-              <div className="task-planner-chat-starters" aria-label={t("taskDetail.plannerChat.startersLabel", "Planner chat starter prompts")}>
+              <div className="task-planner-chat-starters" aria-label={t("taskDetail.plannerChat.startersLabel", "Task chat starter prompts")}>
                 {starterPrompts.map((prompt) => (
                   <button
                     key={prompt.id}
@@ -1084,11 +1480,11 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
                     streamingThinking={message.thinkingOutput ?? streamingThinking}
                     streamingToolCalls={streamingToolCalls}
                     forcePlain={false}
-                    agentName={t("taskDetail.plannerChat.assistant", "Planner")}
+                    agentName={t("taskDetail.plannerChat.assistant", "Task Chat")}
                     hideAssistantIdentity={false}
                     showAssistantModelTag={Boolean(activeModelTag)}
                     activeModelTag={activeModelTag}
-                    activeModelProvider={planningModelProvider ?? null}
+                    activeModelProvider={displayedModelProvider ?? null}
                     toolCallRenderer={(toolCall, index) => renderPlannerToolCall(message, toolCall, index)}
                   />
                 );
@@ -1106,11 +1502,11 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
                   key={message.id}
                   message={toStandardChatMessage(message)}
                   forcePlain={false}
-                  agentName={t("taskDetail.plannerChat.assistant", "Planner")}
+                  agentName={t("taskDetail.plannerChat.assistant", "Task Chat")}
                   hideAssistantIdentity={false}
                   showAssistantModelTag={Boolean(activeModelTag)}
                   activeModelTag={activeModelTag}
-                  activeModelProvider={planningModelProvider ?? null}
+                  activeModelProvider={displayedModelProvider ?? null}
                   activeSessionId={sessionId}
                   projectId={projectId}
                   isAwaitingQuestionAnswer={message.role === "assistant"}
@@ -1132,16 +1528,26 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
                 streamingThinking={streamingThinking}
                 streamingToolCalls={[]}
                 forcePlain={false}
-                agentName={t("taskDetail.plannerChat.assistant", "Planner")}
+                agentName={t("taskDetail.plannerChat.assistant", "Task Chat")}
                 hideAssistantIdentity={false}
                 showAssistantModelTag={Boolean(activeModelTag)}
                 activeModelTag={activeModelTag}
-                activeModelProvider={planningModelProvider ?? null}
+                activeModelProvider={displayedModelProvider ?? null}
               />
             )}
           </>
         )}
       </div>
+
+      <PendingChatMessageQueue
+        messages={pendingMessages}
+        disabled={queueActionPending}
+        onEdit={updatePendingMessage}
+        onMove={movePendingMessage}
+        onDelete={deletePendingMessage}
+        onForceSend={forceSendPendingMessage}
+        testIdPrefix="task-planner-chat-pending"
+      />
 
       {showCommandMenu && (
         <div
@@ -1177,18 +1583,44 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
         </div>
       )}
       <div className="task-planner-chat-composer">
+        <div className="task-planner-chat-target-controls" data-testid="task-planner-chat-target-controls">
+          <CustomModelDropdown
+            id="task-planner-chat-model-selector"
+            label={t("taskDetail.plannerChat.modelLabel", "Chat model")}
+            models={models}
+            value={displayedModelProvider && displayedModelId ? `${displayedModelProvider}/${displayedModelId}` : ""}
+            onChange={(value) => void handleTaskChatModelChange(value)}
+            placeholder={t("model.selectPlaceholder", "Select a model…")}
+            defaultOptionLabel={t("models.useDefault", "Use project default")}
+            /*
+            FNXC:TaskChatModelMenu 2026-08-21-01:12:
+            Task Chat keeps its compact composer trigger, but long provider/model names need Direct Chat's readable, viewport-clamped portaled menu on desktop and mobile.
+            */
+            menuWidth="readable"
+            favoriteProviders={favoriteProviders}
+            favoriteModels={favoriteModels}
+            disabled={queueActionPending || composerState === "sending"}
+          />
+          <ChatThinkingLevelControl
+            level={displayedModel.thinkingLevel}
+            defaultThinkingLevel={taskChatModel.thinkingLevel ?? "off"}
+            showTargetSection={false}
+            onChange={(level) => void handleTaskChatThinkingChange(level)}
+            disabled={queueActionPending || composerState === "sending"}
+          />
+        </div>
         <textarea
-          ref={composerTextareaRef}
+          ref={handleComposerRef}
           className="input task-planner-chat-input"
-          aria-label={t("taskDetail.plannerChat.inputLabel", "Message planner chat")}
-          placeholder={t("taskDetail.plannerChat.placeholder", "Ask the planner about this task… Type / for commands")}
+          aria-label={t("taskDetail.plannerChat.inputLabel", "Message task chat")}
+          placeholder={t("taskDetail.plannerChat.placeholder", "Ask about this task… Type / for commands")}
           value={draft}
           onChange={handleDraftChange}
           onKeyDown={handleKeyDown}
-          disabled={composerState === "sending"}
+          disabled={queueActionPending}
           rows={1}
         />
-        <MicButton {...dictation.micProps} disabled={composerState === "sending"} />
+        <MicButton {...dictation.micProps} disabled={queueActionPending} />
         <StandardChatActionButton
           isStreaming={composerState === "sending"}
           canSend={canSend}

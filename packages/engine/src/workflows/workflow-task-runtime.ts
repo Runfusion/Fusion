@@ -1,6 +1,7 @@
 import type { Settings, TaskDetail, WorkflowIr, WorkflowIrArtifact, WorkflowIrNode, WorkflowWorkItem, WorkflowWorkItemState } from "@fusion/core";
 import {
   getBuiltinWorkflow,
+  resolveTaskOutputLanguage,
   isBuiltinWorkflowId,
   parseWorkflowIr,
   type WorkflowIrResolverStore,
@@ -88,6 +89,8 @@ export class WorkflowTaskRuntime {
     task: TaskDetail,
     settings: (Pick<Settings, "experimentalFeatures"> & Partial<Settings>) | undefined,
   ): Promise<WorkflowTaskRuntimeResult> {
+    /* FNXC:TaskOutputLanguage 2026-08-19-15:47: Resolve once per graph invocation so completion fallback is stable across later settings writes. */
+    const outputLanguage = resolveTaskOutputLanguage(settings, task.description ?? "");
     this.emit("start", task.id, "resolve-workflow");
 
     let target: WorkflowRuntimeTarget;
@@ -153,6 +156,9 @@ export class WorkflowTaskRuntime {
         reason: "workflow-runtime-completed",
         workflowId: target.workflowId,
         runId: this.deps.runId ?? `${task.id}:${target.workflowId}`,
+        settings,
+        originalInput: task.description,
+        outputLanguage,
       }).catch(() => undefined);
     }
 
@@ -192,6 +198,9 @@ export class WorkflowTaskRuntime {
       return this.failWorkItem(workItem, `workflow-work-item-task-missing:${err instanceof Error ? err.message : String(err)}`);
     }
 
+    /* FNXC:TaskOutputLanguage 2026-08-19-15:47: Leased and manual-hold work items capture the same output target before fallback prose is emitted. */
+    const outputLanguage = resolveTaskOutputLanguage(settings, task.description ?? "");
+
     let target: WorkflowRuntimeTarget;
     try {
       target = await this.resolveRuntimeTarget(workItem.taskId);
@@ -220,6 +229,9 @@ export class WorkflowTaskRuntime {
         reason: `workflow-work-item:${workItem.kind}`,
         workflowId: target.workflowId,
         runId: workItem.runId,
+        settings,
+        originalInput: task.description,
+        outputLanguage,
       }).catch(() => undefined);
     }
 

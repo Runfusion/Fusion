@@ -30,6 +30,8 @@ import { ClaudeCliProviderCard } from "./ClaudeCliProviderCard";
 import { CursorCliProviderCard } from "./CursorCliProviderCard";
 import { LlamaCppProviderCard } from "./LlamaCppProviderCard";
 import { LoginInstructions } from "./LoginInstructions";
+import { ProviderLoginDialog, type ProviderLoginPhase } from "./ProviderLoginDialog";
+import { describeLoginFailure } from "../utils/loginFailure";
 import { OAuthManualCodeForm } from "./OAuthManualCodeForm";
 import { OnboardingDisclosure } from "./OnboardingDisclosure";
 import { CustomProviderForm } from "./CustomProviderForm";
@@ -180,6 +182,16 @@ function getProviderInfoMap(t: (key: string, defaultValue: string) => string): R
         usageDescription: t("setup.apiKeyUsage.openrouter", "Routes to multiple AI model providers through a single key"),
       },
     },
+    orcarouter: {
+      description: t("setup.providerDesc.orcarouter", "OrcaRouter — one gateway for multiple AI providers with gateway-level agent security"),
+      apiKeyInfo: {
+        fieldLabel: t("setup.apiKeyLabel.orcarouter", "OrcaRouter API Key"),
+        setupInstructions: t("setup.apiKeySetup.orcarouter", "Create an API key from your OrcaRouter dashboard."),
+        dashboardUrl: "https://www.orcarouter.ai",
+        inputPlaceholder: "sk-orca-...",
+        usageDescription: t("setup.apiKeyUsage.orcarouter", "Routes to multiple AI model providers through a single key"),
+      },
+    },
   };
 }
 
@@ -193,6 +205,7 @@ const PROVIDER_KEY_HINTS: Record<string, {
   openai: { pattern: /^sk-/, hint: "Starts with sk-", example: "sk-..." },
   "openai-codex": { pattern: /^sk-/, hint: "Starts with sk-", example: "sk-..." },
   openrouter: { pattern: /^sk-or-/, hint: "Starts with sk-or-", example: "sk-or-v1-..." },
+  orcarouter: { pattern: /^sk-orca-/, hint: "Starts with sk-orca-", example: "sk-orca-..." },
   google: { pattern: /^AIza/, hint: "Starts with AIza", example: "AIza..." },
   gemini: { pattern: /^AIza/, hint: "Starts with AIza", example: "AIza..." },
   minimax: { pattern: /^.{8,}$/, hint: "At least 8 characters", example: "..." },
@@ -216,6 +229,7 @@ const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
   openai: "OpenAI",
   "openai-codex": "OpenAI Codex",
   openrouter: "OpenRouter",
+  orcarouter: "OrcaRouter",
   google: "Google",
   gemini: "Gemini",
   minimax: "MiniMax",
@@ -271,7 +285,7 @@ Keep Anthropic subscription OAuth and raw Anthropic API-key auth as separate fir
 FNXC:Onboarding 2026-07-18-03:40:
 The OpenAI Codex subscription card belongs in quick start (it was buried in Advanced), placed directly AFTER the Anthropic subscription and BEFORE the API-key options — subscription sign-ins are the primary first-run path, keys are the fallback.
 */
-const QUICK_START_PROVIDER_IDS = ["anthropic-subscription", "openai-codex", "anthropic-api-key", "anthropic", "openai", "google", "gemini", "openrouter", "ollama"] as const;
+const QUICK_START_PROVIDER_IDS = ["anthropic-subscription", "openai-codex", "anthropic-api-key", "anthropic", "openai", "google", "gemini", "openrouter", "orcarouter", "ollama"] as const;
 
 const ONBOARDING_CURATED_PROVIDER_FAMILY_ORDER = [
   "anthropic",
@@ -281,6 +295,7 @@ const ONBOARDING_CURATED_PROVIDER_FAMILY_ORDER = [
   "llama-cpp",
   "openai-codex",
   "openrouter",
+  "orcarouter",
   "gemini",
   "minimax",
   "kimi",
@@ -812,8 +827,31 @@ export function ModelOnboardingModal({
   const [deviceCodes, setDeviceCodes] = useState<Record<string, OAuthDeviceCodeInfo>>({});
   const [manualCodeInputs, setManualCodeInputs] = useState<Record<string, string>>({});
   const [manualCodeSubmitInProgress, setManualCodeSubmitInProgress] = useState<string | null>(null);
+  /* FNXC:ProviderAuth 2026-08-18-03:05: auth URL per in-flight login, so the dialog can re-open a lost sign-in tab. */
+  const [loginAuthUrls, setLoginAuthUrls] = useState<Record<string, string>>({});
+  /*
+  FNXC:ProviderAuth 2026-08-18-03:05:
+  Which provider's paste-back login dialog is open, and its terminal error if it failed. Visibility
+  is explicit state rather than derived from the in-flight flags, because the dialog must OUTLIVE the
+  flow on failure: the operator needs to read why it failed, and a toast is gone before they are back
+  from the browser tab they were signing in on.
+  */
+  const [loginDialogProvider, setLoginDialogProvider] = useState<string | null>(null);
+  const [loginErrors, setLoginErrors] = useState<Record<string, string>>({});
   const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
   const [selectedModel, setSelectedModel] = useState<string>("");
+  /*
+  FNXC:Onboarding 2026-08-18-06:20:
+  Picking a default model is the step operators walked past: the section sits below every provider
+  card, reads "(Optional)", and on a fresh install renders as an empty-state until a provider
+  connects — so the moment it becomes actionable is exactly the moment it is off screen. Once a
+  provider is connected and no model is chosen yet, bring the section into view ONCE and mark it as
+  awaiting a choice. It stays skippable; `nudged` makes sure a later re-render never yanks the
+  operator's scroll position back again.
+  */
+  const modelSectionRef = useRef<HTMLDivElement | null>(null);
+  const modelPromptNudgedRef = useRef(false);
+  const [modelChoicePending, setModelChoicePending] = useState(false);
   const [saving, setSaving] = useState(false);
   const [apiKeyInputs, setApiKeyInputs] = useState<Record<string, string>>({});
   const [apiKeyErrors, setApiKeyErrors] = useState<Record<string, string>>({});
@@ -1365,6 +1403,28 @@ export function ModelOnboardingModal({
   }, [agentDraft, handleNext, projectId, t]);
 
   // OAuth login handler
+  /*
+  FNXC:Onboarding 2026-08-18-06:20:
+  The nudge fires only when the choice is actually possible — a provider connected AND its models
+  loaded AND nothing selected — because before that the section is an empty state and scrolling to
+  it would just show the operator "No models available yet".
+  */
+  useEffect(() => {
+    const connected = authProviders.some((provider) => provider.authenticated && provider.id !== "github");
+    const canChoose = connected && availableModels.length > 0 && !selectedModel;
+    setModelChoicePending(canChoose);
+    if (!canChoose || modelPromptNudgedRef.current) {
+      return;
+    }
+    modelPromptNudgedRef.current = true;
+    // Guarded: scrollIntoView is absent in JSDOM and in any non-DOM host, and a nudge is never
+    // important enough to throw out of an effect and take the modal down with it.
+    const section = modelSectionRef.current;
+    if (typeof section?.scrollIntoView === "function") {
+      section.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  }, [authProviders, availableModels, selectedModel]);
+
   const handleLogin = useCallback(
     async (providerId: string) => {
       const provider = authProviders.find((entry) => entry.id === providerId);
@@ -1378,6 +1438,21 @@ export function ModelOnboardingModal({
         if (!shouldContinue) {
           return;
         }
+        /*
+        FNXC:ProviderAuth 2026-08-18-03:05:
+        Hand the operator straight from the warning into the persistent dialog, so the paste field and
+        the flow's current step are on screen from the moment the browser tab opens — not buried in the
+        provider card below the fold of a scrolling modal.
+        */
+        setLoginErrors((prev) => {
+          if (!(providerId in prev)) {
+            return prev;
+          }
+          const next = { ...prev };
+          delete next[providerId];
+          return next;
+        });
+        setLoginDialogProvider(providerId);
       }
 
       // Clear any previous terminal outcome before starting a new login attempt
@@ -1396,6 +1471,20 @@ export function ModelOnboardingModal({
           delete next[providerId];
           lastAutoCopiedDeviceCodesRef.current = next;
         }
+        /*
+        FNXC:ProviderAuth 2026-08-18-03:05:
+        The dialog's own state dies with the flow it belongs to. Clearing the auth URL is what
+        dismisses the dialog, so it must be cleared everywhere this teardown runs (success, cancel,
+        timeout, failure) or a finished login would leave a stuck modal over the dashboard.
+        */
+        setLoginAuthUrls((prev) => {
+          if (!(providerId in prev)) {
+            return prev;
+          }
+          const next = { ...prev };
+          delete next[providerId];
+          return next;
+        });
         setLoginInstructions((prev) => {
           if (!(providerId in prev)) {
             return prev;
@@ -1448,6 +1537,13 @@ export function ModelOnboardingModal({
         if (deviceCode && providerId === "github-copilot") {
           setDeviceCodes((prev) => ({ ...prev, [providerId]: deviceCode }));
         }
+        /*
+        FNXC:ProviderAuth 2026-08-18-03:05:
+        Retain the auth URL so ProviderLoginDialog can re-open it. The sign-in tab is easy to lose
+        behind the dashboard or dismiss by accident, and without the URL the only recovery was to
+        cancel and restart the whole flow.
+        */
+        setLoginAuthUrls((prev) => ({ ...prev, [providerId]: appendTokenQuery(deviceCode?.verificationUri ?? url) }));
         if (providerId !== "github-copilot" || !deviceCode) {
           openExternalUrl(appendTokenQuery(deviceCode?.verificationUri ?? url));
         }
@@ -1467,6 +1563,7 @@ export function ModelOnboardingModal({
               provider.id === providerId ? { ...provider, loginInProgress: false } : provider,
             ));
             setLoginOutcomes((prev) => ({ ...prev, [providerId]: "timeout" }));
+            setLoginErrors((prev) => ({ ...prev, [providerId]: t("setup.loginTimedOut", "Login timed out. Please try again.") }));
             clearAuthLoginUiState();
             addToast(t("setup.loginTimedOut", "Login timed out. Please try again."), "warning");
             return;
@@ -1486,6 +1583,17 @@ export function ModelOnboardingModal({
               }
               setAuthActionInProgress(null);
               setLoginOutcomes((prev) => ({ ...prev, [providerId]: "success" }));
+              /*
+              FNXC:Onboarding 2026-08-18-06:20:
+              A NEWLY CONNECTED PROVIDER MUST REFRESH THE MODEL CATALOGUE. `availableModels` was
+              loaded once at mount and only ever re-fetched for custom providers, so on a fresh
+              install — where nothing is connected at mount and the list starts empty — the Default
+              Model section stayed stuck on "No models available yet. Connect a provider above to see
+              model options." even after the provider connected. The operator was never offered a
+              default model at all (report), and onboarding completed with none set.
+              */
+              void loadModels();
+              setLoginDialogProvider((current) => (current === providerId ? null : current));
               clearAuthLoginUiState();
               if (providerId === "github") {
                 setGitHubSkippedState(false);
@@ -1502,6 +1610,16 @@ export function ModelOnboardingModal({
               }
               setAuthActionInProgress(null);
               setLoginOutcomes((prev) => ({ ...prev, [providerId]: "failed" }));
+              /*
+              FNXC:ProviderAuth 2026-08-18-07:10:
+              PREFER THE SERVER'S REASON. The status row carries why the flow died (`loginError`), and
+              throwing it away for "Login did not complete. Please try again." is how a real, fixable
+              cause reached the operator as a shrug: an `OAuth state mismatch` — the pasted URL
+              belonging to an OLDER sign-in attempt than the one waiting, i.e. a stale provider tab —
+              is indistinguishable from a network failure under the generic text, and "try again"
+              reproduces it exactly if they paste from the same stale tab.
+              */
+              setLoginErrors((prev) => ({ ...prev, [providerId]: describeLoginFailure(provider?.loginError) }));
               clearAuthLoginUiState();
               addToast(t("setup.loginDidNotComplete", "Login did not complete. Please try again."), "error");
             }
@@ -1520,7 +1638,9 @@ export function ModelOnboardingModal({
           setLoginOutcomes((prev) => ({ ...prev, [providerId]: "pending" }));
           void loadAuthStatus();
         } else {
-          addToast(err instanceof Error ? err.message : t("setup.loginFailed", "Login failed"), "error");
+          const failureText = err instanceof Error ? err.message : t("setup.loginFailed", "Login failed");
+          addToast(failureText, "error");
+          setLoginErrors((prev) => ({ ...prev, [providerId]: failureText }));
           setLoginOutcomes((prev) => ({ ...prev, [providerId]: "failed" }));
         }
         setAuthActionInProgress(null);
@@ -1710,6 +1830,8 @@ export function ModelOnboardingModal({
       try {
         await saveApiKey(providerId, key);
         await loadAuthStatus();
+        // Same reason as the OAuth path: a key that just unlocked a provider must populate its models.
+        void loadModels();
         scrollOnboardingContentToTop();
 
         setApiKeyInputs((prev) => {
@@ -1883,10 +2005,19 @@ export function ModelOnboardingModal({
       }
 
       await updateGlobalSettings(updates);
+    } catch {
+      /*
+      FNXC:Onboarding 2026-08-18-07:30:
+      A FAILED SETTINGS WRITE MUST NOT STRAND ONBOARDING AS UNFINISHED. Marking completion used to sit
+      after this await inside the same try, so any failure persisting the default model — a transient
+      request, a restarting backend — skipped it silently, and the dashboard went on advertising
+      "Continue Setup" at the first step to an operator who had finished the whole flow (report:
+      "my dashboard showed I was last on ai setup step but I actually finished it"). Completion is a
+      local fact about what the operator did; it does not depend on the default-model write landing.
+      */
+    } finally {
       // Mark onboarding as completed (preserves state for completion timestamp)
       markOnboardingCompleted();
-    } catch {
-      // Best-effort: continue even if save fails
     }
   }, [selectedModel, availableModels, updateGlobalSettings, markOnboardingCompleted]);
 
@@ -2029,14 +2160,20 @@ export function ModelOnboardingModal({
 
   const aiProviders = authProviders.filter((provider) => provider.id !== "github");
   /*
-   * FNXC:Onboarding 2026-07-03-07:20:
-   * Show the "Connect remote Fusion server" card ONLY when not already connected to a remote server
-   * (no active remote profile) — on any host, web included. Never show it in LOCAL desktop mode: a
-   * local runtime is already the connected backend, so prompting for a remote server URL just confuses
-   * first-run setup (the original report).
+   * FNXC:Onboarding 2026-08-17-23:47:
+   * Show the "Connect remote Fusion server" card ONLY inside a NATIVE SHELL (desktop or mobile app)
+   * that has no active remote profile yet. Two hosts must never see it:
+   *   - LOCAL desktop mode: a local runtime is already the connected backend, so asking for a remote
+   *     server URL just confuses first-run setup (the original 2026-07-03 report).
+   *   - A PLAIN BROWSER (`host === "web"`): there is no native shell to connect at all. The browser
+   *     IS already talking to the server it loaded from, and the card's own copy ("Your native shell
+   *     needs an active remote profile before dashboard handoff can complete") describes machinery
+   *     the visitor does not have. The previous rule keyed only on `desktopMode !== "local"`, and
+   *     `desktopMode` is undefined on web, so every browser first-run opened Set Up AI with a remote
+   *     server form above the AI providers it was supposed to lead with (operator report).
    */
   const showShellConnectionSetup =
-    !shellState.activeProfileId && shellState.desktopMode !== "local";
+    !shellState.activeProfileId && shellState.host !== "web" && shellState.desktopMode !== "local";
   const orderedAiProviders = [...aiProviders].sort(compareOnboardingProviders);
   const hasOauthProviders = orderedAiProviders.some((provider) => !provider.type || provider.type === "oauth");
   const providerSupportsApiKey = (provider: AuthProvider) => provider.type === "api_key";
@@ -2409,13 +2546,25 @@ export function ModelOnboardingModal({
             </div>
           </div>
         )}
-        {(authActionInProgress === provider.id || showRemoteLoginInProgress) && loginInstructions[provider.id] && (
+        {/*
+        FNXC:ProviderAuth 2026-08-18-03:05:
+        Same rule as the paste field below: the dialog already shows these instructions, and rendering
+        them here too printed the same paragraph twice — once in the dialog and once in the card
+        visible around its edges.
+        */}
+        {(authActionInProgress === provider.id || showRemoteLoginInProgress) && loginInstructions[provider.id] && loginDialogProvider !== provider.id && (
           <LoginInstructions
             instructions={loginInstructions[provider.id]}
             data-testid={`onboarding-login-instructions-${provider.id}`}
           />
         )}
-        {(authActionInProgress === provider.id || showRemoteLoginInProgress) && manualCodeConfigs[provider.id] && (
+        {/*
+        FNXC:ProviderAuth 2026-08-18-03:05:
+        The card keeps its own paste field only for flows the dialog is NOT showing (e.g. a remote
+        login adopted from another surface). Rendering both would put two inputs for the same code on
+        screen, one of them hidden behind the dialog.
+        */}
+        {(authActionInProgress === provider.id || showRemoteLoginInProgress) && manualCodeConfigs[provider.id] && loginDialogProvider !== provider.id && (
           <OAuthManualCodeForm
             value={manualCodeInputs[provider.id] ?? ""}
             onChange={(value) => setManualCodeInputs((prev) => ({ ...prev, [provider.id]: value }))}
@@ -2443,6 +2592,7 @@ export function ModelOnboardingModal({
   };
 
   return (
+    <>
     <FloatingWindow
       windowKey="model-onboarding"
       title={t("setup.titleAiSetup", "Set Up AI")}
@@ -2764,9 +2914,15 @@ export function ModelOnboardingModal({
                   </section>
 
                   {/* Model Selection — placed directly after the provider sections */}
-                  <div className="onboarding-model-section">
+                  <div
+                    ref={modelSectionRef}
+                    className={`onboarding-model-section${modelChoicePending ? " onboarding-model-section--pending" : ""}`}
+                    data-testid="onboarding-model-section"
+                  >
                     <h3 className="onboarding-section-title">
-                      {t("setup.defaultModelOptional", "Default Model (Optional)")}
+                      {modelChoicePending
+                        ? t("setup.defaultModelChooseNow", "Choose your default model")
+                        : t("setup.defaultModelOptional", "Default Model (Optional)")}
                     </h3>
                     <p className="model-onboarding-description">
                       {t("setup.defaultModelDescription", "Pick a default model for AI tasks, or leave this blank to choose later. Models vary in speed, capability, and cost.")}
@@ -3605,6 +3761,61 @@ export function ModelOnboardingModal({
           </Suspense>
         </ErrorBoundary>
       )}
+
     </FloatingWindow>
+
+      {/*
+      FNXC:ProviderAuth 2026-08-18-04:20:
+      RENDERED OUTSIDE THE FLOATINGWINDOW SUBTREE, DELIBERATELY. A portal relocates the DOM node but
+      not the React tree, and FloatingWindow raises itself to a fresh `nextFloatingZ()` on every
+      pointerdown/focus that reaches it — so while this lived inside the window's children, every
+      click in the dialog lifted the window above it and the following click landed on the window
+      instead. As a sibling, dialog events never reach the window's raise handler. Keep it here.
+      */}
+      {loginDialogProvider && (() => {
+        const dialogProvider = authProviders.find((entry) => entry.id === loginDialogProvider);
+        const manualCode = manualCodeConfigs[loginDialogProvider];
+        const failure = loginErrors[loginDialogProvider];
+        const phase: ProviderLoginPhase = dialogProvider?.authenticated
+          ? "succeeded"
+          : failure
+            ? "failed"
+            : manualCodeSubmitInProgress === loginDialogProvider
+              ? "submitting"
+              : "waiting";
+        return (
+          <ProviderLoginDialog
+            data-testid={`provider-login-dialog-${loginDialogProvider}`}
+            providerName={dialogProvider?.name ?? loginDialogProvider}
+            authUrl={loginAuthUrls[loginDialogProvider]}
+            instructions={loginInstructions[loginDialogProvider]}
+            phase={phase}
+            errorMessage={failure}
+            manualCode={{
+              prompt: manualCode?.prompt ?? t("setup.pasteRedirectUrl", "Paste the final redirect URL or authorization code"),
+              placeholder: manualCode?.placeholder,
+              helpText: manualCode?.helpText,
+            }}
+            codeValue={manualCodeInputs[loginDialogProvider] ?? ""}
+            onCodeChange={(value) => setManualCodeInputs((prev) => ({ ...prev, [loginDialogProvider]: value }))}
+            onSubmitCode={() => void handleSubmitManualCode(loginDialogProvider)}
+            onOpenAuthUrl={() => {
+              const url = loginAuthUrls[loginDialogProvider];
+              if (url) {
+                openExternalUrl(url);
+              }
+            }}
+            onCancel={() => {
+              const closing = loginDialogProvider;
+              setLoginDialogProvider(null);
+              // A still-running flow must be cancelled server-side, or its slot blocks the retry with a 409.
+              if (authActionInProgress === closing) {
+                void handleCancelLogin(closing);
+              }
+            }}
+          />
+        );
+      })()}
+    </>
   );
 }

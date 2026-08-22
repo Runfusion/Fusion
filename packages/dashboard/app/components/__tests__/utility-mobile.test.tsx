@@ -53,7 +53,6 @@ describe("Utility component mobile adaptations", () => {
       stats: {
         runningTaskCount: 1,
         blockedTaskCount: 2,
-        stuckTaskCount: 0,
         queuedTaskCount: 3,
         inReviewCount: 4,
         executorState: "running",

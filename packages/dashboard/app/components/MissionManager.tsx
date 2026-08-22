@@ -5293,14 +5293,30 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
     );
   });
 
-  const renderMissionListContent = ({ hideBottomButtons = false }: { hideBottomButtons?: boolean } = {}) => {
+  const renderMissionListContent = ({ hideListCta = false }: { hideListCta?: boolean } = {}) => {
     const persistedInterviewMissions = missions.filter((mission) => mission.interviewState === "in_progress");
     const standardMissions = missions.filter((mission) => mission.interviewState !== "in_progress");
-    const showBottomPlanButton = !hideBottomButtons;
+    const showListCta = !hideListCta;
 
     return (
       <div className="mission-list">
-              {/* Create mission form */}
+        {/*
+        FNXC:MissionsUI 2026-08-16-14:48:
+        Mobile Missions anchors its single Plan New Mission CTA above every list state so it is immediately reachable. The inline create form suppresses this whole container rather than leaving an empty header shell.
+        */}
+        {!isCreatingMission && showListCta && (
+          <div className="mission-list__header-actions">
+            <button className="btn btn-sm btn-primary mission-list__primary-cta" onClick={openNewMissionInterview}>
+              <Sparkles size={14} />
+              {t("missions.planNewMission", "Plan New Mission")}
+            </button>
+            <a className="mission-list__manual-create-link" href="#mission-create" onClick={openDirectMissionCreate}>
+              {t("missions.createButton", "Create")}
+            </a>
+          </div>
+        )}
+
+        {/* Create mission form */}
               {isCreatingMission && (
                 <div className="mission-form-card">
                   <input
@@ -5531,34 +5547,9 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
                   <p className="mission-manager__empty-body">
                     {t("missions.noMissionsYetBody", "Missions are large initiatives that bundle milestones, slices, and features into a single plan. Plan a mission to break down a goal end-to-end and let agents work through it autopilot-style.")}
                   </p>
-                  <button
-                    className="btn btn-sm btn-primary mission-manager__empty-cta"
-                    onClick={openNewMissionInterview}
-                  >
-                    <Sparkles size={14} />
-                    {t("missions.planNewMission", "Plan New Mission")}
-                  </button>
-                  <a className="mission-list__manual-create-link" href="#mission-create" onClick={openDirectMissionCreate}>
-                    {t("missions.createButton", "Create")}
-                  </a>
                 </div>
               )}
 
-              {!isCreatingMission && (
-                <div className="mission-list__footer">
-                  {showBottomPlanButton && (
-                    <div className="mission-list__footer-actions">
-                      <button className="btn btn-sm btn-primary mission-list__primary-cta" onClick={openNewMissionInterview}>
-                        <Sparkles size={14} />
-                        {t("missions.planNewMission", "Plan New Mission")}
-                      </button>
-                      <a className="mission-list__manual-create-link" href="#mission-create" onClick={openDirectMissionCreate}>
-                        {t("missions.createButton", "Create")}
-                      </a>
-                    </div>
-                  )}
-                </div>
-              )}
             </div>
     );
   };
@@ -5707,6 +5698,31 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
             aria-label={t("missions.missionList", "Mission list")}
             style={isMobile ? undefined : { width: `${sidebarWidth}px` }}
           >
+            {/*
+            FNXC:MissionsUI 2026-08-16-14:48:
+            Desktop Missions anchors its single Plan New Mission CTA before the scrolling list for immediate reachability. Empty and create-form states never duplicate the CTA, and create mode omits the bar unless the delete confirmation still needs it.
+            */}
+            {(shouldRenderSidebarDeleteConfirm || !isCreatingMission) && (
+              <div className="mission-manager__sidebar-cta-bar" data-testid="mission-sidebar-cta-bar">
+                {shouldRenderSidebarDeleteConfirm && renderDeleteConfirmPanel()}
+                {!isCreatingMission && (
+                  <>
+                    <button
+                      className="btn btn-primary mission-manager__sidebar-cta"
+                      onClick={openNewMissionInterview}
+                      title={t("missions.planNewMission", "Plan New Mission")}
+                      aria-label={t("missions.planNewMission", "Plan New Mission")}
+                    >
+                      <Sparkles size={14} />
+                      {t("missions.planNewMission", "Plan New Mission")}
+                    </button>
+                    <a className="mission-list__manual-create-link" href="#mission-create" onClick={openDirectMissionCreate}>
+                      {t("missions.createButton", "Create")}
+                    </a>
+                  </>
+                )}
+              </div>
+            )}
             <div className="mission-manager__sidebar-list">
               {loading ? (
                 <div className="mission-manager__loading">
@@ -5714,23 +5730,8 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
                   <span>{t("missions.loadingMissions", "Loading missions...")}</span>
                 </div>
               ) : (
-                renderMissionListContent({ hideBottomButtons: true })
+                renderMissionListContent({ hideListCta: true })
               )}
-            </div>
-            <div className="mission-manager__sidebar-footer" data-testid="mission-sidebar-footer">
-              {shouldRenderSidebarDeleteConfirm && renderDeleteConfirmPanel()}
-              <button
-                className="btn btn-primary mission-manager__sidebar-cta"
-                onClick={openNewMissionInterview}
-                title={t("missions.planNewMission", "Plan New Mission")}
-                aria-label={t("missions.planNewMission", "Plan New Mission")}
-              >
-                <Sparkles size={14} />
-                {t("missions.planNewMission", "Plan New Mission")}
-              </button>
-              <a className="mission-list__manual-create-link" href="#mission-create" onClick={openDirectMissionCreate}>
-                {t("missions.createButton", "Create")}
-              </a>
             </div>
           </aside>
 

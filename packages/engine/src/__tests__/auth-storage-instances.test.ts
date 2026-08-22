@@ -40,15 +40,36 @@ describe("instance-aware Fusion auth storage", () => {
     expect(readFileSync(authPath(), "utf8")).toBe(before); expect(statSync(authPath()).mtimeMs).toBe(mtime);
   });
 
-  it("uses legacy bare creation but non-creating calls do not write absent providers", async () => {
+  it("uses legacy bare creation but removal calls do not write absent providers", async () => {
     const store = createFusionAuthStorage();
     await store.set("brand-new", credential("new"));
     expect(JSON.parse(readFileSync(authPath(), "utf8"))).toEqual({ "brand-new": credential("new") });
     const before = readFileSync(authPath(), "utf8"); const mtime = statSync(authPath()).mtimeMs;
-    let invoked = false;
     await store.remove("absent"); await store.logout("absent"); await store.removeInstance({ providerId: "absent", instanceId: "x" });
-    await store.modify("absent", async () => { invoked = true; return credential("bad"); });
-    expect(invoked).toBe(false); expect(readFileSync(authPath(), "utf8")).toBe(before); expect(statSync(authPath()).mtimeMs).toBe(mtime);
+    expect(readFileSync(authPath(), "utf8")).toBe(before); expect(statSync(authPath()).mtimeMs).toBe(mtime);
+  });
+
+  /*
+  FNXC:ProviderAuth 2026-08-18-04:40:
+  `modify` USED TO BE ASSERTED HERE AS NON-CREATING, alongside remove/logout/removeInstance. That
+  grouping was wrong: removal calls must not resurrect an absent provider, but `modify` is the seam
+  pi persists a COMPLETED LOGIN through (`Models.login` -> `credentials.modify(provider.id, ...)`),
+  and refusing to create meant a provider's first-ever login wrote nothing while resolving as
+  success — the operator saw "Login did not complete. Please try again." on every fresh install.
+  Creation is the contract now; declining (returning undefined) still writes nothing.
+  */
+  it("creates an absent provider when the modify callback returns a credential", async () => {
+    const store = createFusionAuthStorage();
+    const before = readFileSync(authPath(), "utf8");
+
+    let declined = false;
+    await store.modify("absent", async () => { declined = true; return undefined; });
+    expect(declined).toBe(true);
+    expect(readFileSync(authPath(), "utf8")).toBe(before);
+
+    await store.modify("absent", async (current) => { expect(current).toBeUndefined(); return credential("first-login"); });
+    expect(store.get("absent")).toEqual(credential("first-login"));
+    expect(JSON.parse(readFileSync(authPath(), "utf8")).absent).toEqual(credential("first-login"));
   });
 
   it("rejects malformed and reserved mutator keys without touching defaults metadata", async () => {

@@ -50,9 +50,11 @@
 import { exec } from "node:child_process";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { isWorkspaceTask, type Task, type TaskCommitAssociation, type TaskCreateInput } from "@fusion/core";
+import { isWorkspaceTask, type Settings, type Task, type TaskCommitAssociation, type TaskCreateInput, type TaskStore } from "@fusion/core";
 import { collectOwnTaskCommitsForRange } from "./branch-attribution.js";
-import { resolveIntegrationBranch, type IntegrationBranchSettings } from "../merge/integration-branch.js";
+import { type IntegrationBranchSettings } from "../merge/integration-branch.js";
+import { recordWorkspaceBaseBranchDecision, resolveWorkspaceRepoBaseBranch } from "../worktree/workspace-base-branch.js";
+import { createRunAuditor, generateSyntheticRunId, type RunAuditor } from "../util/run-audit.js";
 
 const defaultExecAsync = promisify(exec);
 type ExecAsyncImpl = typeof defaultExecAsync;
@@ -1111,6 +1113,9 @@ export interface RevertWorkspaceTaskOptions {
   commitAssociationSource?: TaskCommitAssociationSource;
   /** Resolved effective project autoMerge setting (task.autoMerge overrides this when set). Defaults to true (autoMerge on) when omitted. */
   effectiveAutoMerge?: boolean;
+  /** Optional observability sinks supplied by the route; decision breadcrumbs never affect reversion. */
+  store?: TaskStore;
+  audit?: Pick<RunAuditor, "git">;
 }
 
 interface WorkspaceRepoRevertContext {
@@ -1189,12 +1194,27 @@ export async function revertWorkspaceTask(opts: RevertWorkspaceTaskOptions): Pro
   for (const repoRel of repoKeys) {
     const repoRootDir = join(workspaceRootDir, repoRel);
 
-    // Re-resolve THIS sub-repo's integration branch with the shared overrides
-    // stripped (KTD1), mirroring `landWorkspaceTask`/self-healing, so each
-    // sub-repo resolves its own default rather than inheriting a workspace-wide override.
+    // Recorded acquisition state, not a later task.baseBranch edit, controls the revert target.
     let integrationBranch: string;
     try {
-      integrationBranch = await resolveIntegrationBranch(repoRootDir, { ...opts.settings, integrationBranch: undefined, baseBranch: undefined });
+      const baseResolution = await resolveWorkspaceRepoBaseBranch({
+        mode: "recorded", repoRootDir, repoRelPath: repoRel, task,
+        settings: opts.settings as Partial<Settings>,
+        recordedBaseBranch: workspaceWorktrees[repoRel].baseBranch,
+      });
+      integrationBranch = baseResolution.branch;
+      if (opts.store) {
+        await recordWorkspaceBaseBranchDecision({
+          store: opts.store,
+          audit: opts.audit ?? createRunAuditor(opts.store, {
+            runId: generateSyntheticRunId("workspace-repo-base-branch", task.id),
+            agentId: "system:task-revert",
+            phase: "workspace-repo-base-branch",
+          }),
+          task, repoRelPath: repoRel, repoAbsPath: repoRootDir,
+          resolution: baseResolution, stage: "revert",
+        });
+      }
     } catch (error) {
       throw new TaskRevertError(`failed to resolve integration branch for sub-repo ${repoRel}`, "integration-branch-resolve-failed", error);
     }
@@ -1344,6 +1364,9 @@ export interface PrepareWorkspaceRevertPrBranchesOptions {
   revertBranch: string;
   execAsyncImpl?: ExecAsyncImpl;
   commitAssociationSource?: TaskCommitAssociationSource;
+  /** Optional observability sinks supplied by the route; decision breadcrumbs never affect PR preparation. */
+  store?: TaskStore;
+  audit?: Pick<RunAuditor, "git">;
 }
 
 interface WorkspaceRepoRevertPrContext {
@@ -1478,16 +1501,31 @@ export async function prepareWorkspaceRevertPrBranches(
     commitAssociationSource: opts.commitAssociationSource,
   });
 
-  // Phase 1: resolve each sub-repo's integration branch, refuse (without
-  // mutating) on branch-mismatch/dirty-tree, then dry-run classify EVERY
-  // sub-repo — mirrors `revertWorkspaceTask`'s Phase 1 verbatim.
+  // Phase 1: resolve each recorded per-repository target before every refusal/classification.
   const contexts: WorkspaceRepoRevertPrContext[] = [];
   for (const repoRel of repoKeys) {
     const repoRootDir = join(workspaceRootDir, repoRel);
 
     let integrationBranch: string;
     try {
-      integrationBranch = await resolveIntegrationBranch(repoRootDir, { ...opts.settings, integrationBranch: undefined, baseBranch: undefined });
+      const baseResolution = await resolveWorkspaceRepoBaseBranch({
+        mode: "recorded", repoRootDir, repoRelPath: repoRel, task,
+        settings: opts.settings as Partial<Settings>,
+        recordedBaseBranch: workspaceWorktrees[repoRel].baseBranch,
+      });
+      integrationBranch = baseResolution.branch;
+      if (opts.store) {
+        await recordWorkspaceBaseBranchDecision({
+          store: opts.store,
+          audit: opts.audit ?? createRunAuditor(opts.store, {
+            runId: generateSyntheticRunId("workspace-repo-base-branch", task.id),
+            agentId: "system:task-revert",
+            phase: "workspace-repo-base-branch",
+          }),
+          task, repoRelPath: repoRel, repoAbsPath: repoRootDir,
+          resolution: baseResolution, stage: "revert",
+        });
+      }
     } catch (error) {
       throw new TaskRevertError(`failed to resolve integration branch for sub-repo ${repoRel}`, "integration-branch-resolve-failed", error);
     }

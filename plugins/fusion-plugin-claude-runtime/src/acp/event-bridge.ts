@@ -90,7 +90,13 @@ function normalizeStreamingDelta(previousText: string, nextDelta: string): strin
   const previousChar = previousText.slice(-1);
   const nextChar = nextDelta[0] ?? "";
   if (/\s/.test(previousChar) || /\s/.test(nextChar)) return nextDelta;
-  if (/[.!?]/.test(previousChar) && /[A-Z0-9"'([]/.test(nextChar)) {
+  /*
+   FNXC:ChatStreaming 2026-08-19-13:52:
+   Numeric dotted tokens and URL path segments are one token even when the provider splits them across deltas; do not insert a sentence space between their digits before Chat persistence.
+   */
+  const isNumericTokenContinuation =
+    previousChar === "." && /\d/.test(previousText.slice(-2, -1)) && /\d/.test(nextChar);
+  if (!isNumericTokenContinuation && /[.!?]/.test(previousChar) && /[A-Z0-9"'([]/.test(nextChar)) {
     return ` ${nextDelta}`;
   }
   return nextDelta;

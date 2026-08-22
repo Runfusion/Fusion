@@ -4,8 +4,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const osState = vi.hoisted(() => ({ tempRoot: "" }));
-const fsState = vi.hoisted(() => ({ failRmPath: "", rmCalls: [] as string[] }));
-const childState = vi.hoisted(() => ({ execCalls: [] as string[], execStdout: "" }));
+const fsState = vi.hoisted(() => ({
+  failRmPath: "",
+  rmCalls: [] as string[],
+  rmFailuresRemaining: 0,
+  rmFailureCode: "EACCES",
+  rmPretendAbsentPath: "",
+}));
+const childState = vi.hoisted(() => ({ execCalls: [] as string[], execStdout: "", gitRemoveError: null as Error | null }));
 
 vi.mock("node:os", async () => {
   const actual = await vi.importActual<typeof import("node:os")>("node:os");
@@ -19,9 +25,13 @@ vi.mock("node:fs", async () => {
     rmSync: vi.fn((path: Parameters<typeof actual.rmSync>[0], options?: Parameters<typeof actual.rmSync>[1]) => {
       const pathString = String(path);
       fsState.rmCalls.push(pathString);
-      if (fsState.failRmPath && pathString === fsState.failRmPath) {
+      if (pathString === fsState.rmPretendAbsentPath) {
+        throw Object.assign(new Error("simulated missing worktree"), { code: "ENOENT" });
+      }
+      if (fsState.failRmPath && pathString === fsState.failRmPath && (fsState.rmFailuresRemaining > 0 || fsState.rmFailuresRemaining === -1)) {
+        if (fsState.rmFailuresRemaining > 0) fsState.rmFailuresRemaining--;
         const err = new Error("simulated tempdir rm failure") as NodeJS.ErrnoException;
-        err.code = "EACCES";
+        err.code = fsState.rmFailureCode;
         throw err;
       }
       return actual.rmSync(path, options);
@@ -37,7 +47,8 @@ vi.mock("node:child_process", async () => {
       childState.execCalls.push(command);
       const callback = typeof optionsOrCallback === "function" ? optionsOrCallback : maybeCallback;
       queueMicrotask(() => {
-        if (typeof callback === "function") callback(null, childState.execStdout, "");
+        const error = command.startsWith("git worktree remove") ? childState.gitRemoveError : null;
+        if (typeof callback === "function") callback(error, childState.execStdout, error ? error.message : "");
       });
       return {} as ReturnType<typeof actual.exec>;
     }),
@@ -58,8 +69,12 @@ beforeEach(() => {
   osState.tempRoot = sandboxRoot;
   fsState.failRmPath = "";
   fsState.rmCalls = [];
+  fsState.rmFailuresRemaining = 0;
+  fsState.rmFailureCode = "EACCES";
+  fsState.rmPretendAbsentPath = "";
   childState.execCalls = [];
   childState.execStdout = "";
+  childState.gitRemoveError = null;
   activeSessionRegistry.clear();
 });
 
@@ -68,8 +83,12 @@ afterEach(() => {
   osState.tempRoot = "";
   fsState.failRmPath = "";
   fsState.rmCalls = [];
+  fsState.rmFailuresRemaining = 0;
+  fsState.rmFailureCode = "EACCES";
+  fsState.rmPretendAbsentPath = "";
   childState.execCalls = [];
   childState.execStdout = "";
+  childState.gitRemoveError = null;
   for (const dir of [sandboxRoot, projectRoot]) {
     try { rmSync(dir, RM); } catch { /* best effort */ }
   }
@@ -150,6 +169,11 @@ function gitWorktreeList(names: string[]): string {
   ].join("\n");
 }
 
+function makeReclaimableWorktree(path: string, name: string): void {
+  mkdirSync(path, { recursive: true });
+  writeFileSync(join(path, ".git"), `gitdir: ${join(projectRoot, ".git", "worktrees", name)}\n`);
+}
+
 async function sweep(manager: SelfHealingManager): Promise<number> {
   return await (manager as any).cleanupStaleTempMergeWorktrees();
 }
@@ -166,7 +190,7 @@ describe("SelfHealingManager worktrees-dir sweeps", () => {
     const orphan = join(worktreesDir, "half-built");
     mkdirSync(aiMergeContainer, { recursive: true });
     mkdirSync(recoveryContainer, { recursive: true });
-    mkdirSync(orphan, { recursive: true });
+    makeReclaimableWorktree(orphan, "half-built");
     const { manager } = makeManager({ recycleWorktrees: true });
 
     await expect((manager as any).reapUnregisteredOrphans()).resolves.toBe(1);
@@ -189,7 +213,7 @@ describe("SelfHealingManager worktrees-dir sweeps", () => {
     const idle = join(worktreesDir, "idle-wt");
     mkdirSync(aiMergeContainer, { recursive: true });
     mkdirSync(recoveryContainer, { recursive: true });
-    mkdirSync(idle, { recursive: true });
+    makeReclaimableWorktree(idle, "idle-wt");
     childState.execStdout = gitWorktreeList(["idle-wt"]);
     const { manager } = makeManager({ maxWorktrees: 0 });
 
@@ -357,7 +381,9 @@ describe("SelfHealingManager temp-dir AI merge worktree sweep", () => {
     const succeeding = tempMergeDir("fusion-ai-merge-fn-1-succeeding");
     makeStale(failing);
     makeStale(succeeding);
-    fsState.failRmPath = realpathSync(failing);
+    const canonicalFailing = realpathSync(failing);
+    fsState.failRmPath = canonicalFailing;
+    fsState.rmFailuresRemaining = -1;
     const { manager, audits } = makeManager();
 
     await expect(sweep(manager)).resolves.toBe(1);
@@ -365,9 +391,72 @@ describe("SelfHealingManager temp-dir AI merge worktree sweep", () => {
     expect(existsSync(failing)).toBe(true);
     expect(existsSync(succeeding)).toBe(false);
     expect(sweepAudits(audits)).toEqual(expect.arrayContaining([
-      expect.objectContaining({ metadata: expect.objectContaining({ path: realpathSync(failing), success: false, reason: "fs-rm-failed", error: expect.stringContaining("simulated tempdir rm failure") }) }),
+      expect.objectContaining({ metadata: expect.objectContaining({ path: canonicalFailing, success: false, reason: "fs-rm-failed", error: expect.stringContaining("simulated tempdir rm failure"), attempts: 5, residual: true, registrationRetained: true }) }),
       expect.objectContaining({ metadata: expect.objectContaining({ path: expect.stringContaining("succeeding"), success: true, reason: "stale" }) }),
     ]));
+    expect(fsState.rmCalls.filter((path) => path === canonicalFailing)).toHaveLength(5);
+    expect(childState.execCalls.filter((command) => command === "git worktree prune")).toHaveLength(2);
+  });
+
+  it("retries a Windows-shaped EBUSY filesystem fallback before recording sweep success", async () => {
+    const stale = tempMergeDir("fusion-ai-merge-fn-9169-transient");
+    makeStale(stale);
+    const canonical = realpathSync(stale);
+    fsState.failRmPath = canonical;
+    fsState.rmFailureCode = "EBUSY";
+    fsState.rmFailuresRemaining = 1;
+    const { manager, audits } = makeManager();
+
+    await expect(sweep(manager)).resolves.toBe(1);
+
+    expect(fsState.rmCalls.filter((path) => path === canonical)).toHaveLength(2);
+    expect(existsSync(stale)).toBe(false);
+    expect(sweepAudits(audits)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ metadata: expect.objectContaining({ path: canonical, success: true, reason: "stale" }) }),
+    ]));
+    expect(childState.execCalls.filter((command) => command === "git worktree prune")).toHaveLength(1);
+  });
+
+  it("keeps the sweep's git-remove-failed vocabulary when a registered path is already absent", async () => {
+    const stale = tempMergeDir("fusion-ai-merge-fn-9169-registered-missing");
+    makeStale(stale);
+    const canonical = realpathSync(stale);
+    childState.gitRemoveError = new Error(`fatal: '${canonical}' is not a working tree`);
+    fsState.rmPretendAbsentPath = canonical;
+    const { manager, audits } = makeManager();
+
+    await expect(sweep(manager)).resolves.toBe(1);
+
+    expect(fsState.rmCalls.filter((path) => path === canonical)).toHaveLength(1);
+    expect(sweepAudits(audits)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ metadata: expect.objectContaining({ path: canonical, success: false, reason: "git-remove-failed" }) }),
+      expect.objectContaining({ metadata: expect.objectContaining({ path: canonical, success: true, reason: "stale" }) }),
+    ]));
+    expect(childState.execCalls.filter((command) => command === "git worktree prune")).toHaveLength(1);
+  });
+
+  it("retries an unregistered on-disk sweep leftover after git removal fails", async () => {
+    const stale = tempMergeDir("fusion-ai-merge-fn-9169-sweep-r2");
+    makeStale(stale);
+    const canonical = realpathSync(stale);
+    childState.gitRemoveError = Object.assign(new Error("unregistered clean room"), {
+      stderr: `fatal: failed to delete '${canonical}': Device or resource busy`,
+      code: "1",
+    });
+    fsState.failRmPath = canonical;
+    fsState.rmFailureCode = "EBUSY";
+    fsState.rmFailuresRemaining = 1;
+    const { manager, audits } = makeManager();
+
+    await expect(sweep(manager)).resolves.toBe(1);
+
+    expect(fsState.rmCalls.filter((path) => path === canonical)).toHaveLength(2);
+    expect(existsSync(stale)).toBe(false);
+    expect(sweepAudits(audits)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ metadata: expect.objectContaining({ path: canonical, success: false, reason: "git-remove-failed" }) }),
+      expect.objectContaining({ metadata: expect.objectContaining({ path: canonical, success: true, reason: "stale" }) }),
+    ]));
+    expect(childState.execCalls.filter((command) => command === "git worktree prune")).toHaveLength(1);
   });
 
   it("removes worktree for done task after grace period", async () => {

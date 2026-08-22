@@ -1147,15 +1147,22 @@ export interface AgentOptions {
  * provider register but threw "No API provider registered for api: anthropic"
  * the moment a task tried to stream.
  *
+ * FNXC:CustomProviders 2026-08-19-15:28:
+ * Google-compatible custom providers keep the registered Google dialect. This path and dashboard
+ * registration must agree so pi performs the same thinking-level translation for every custom model.
+ *
  * @param apiType - the custom provider's declared compatibility type.
  * @returns the registered pi-ai api key to stream against.
  */
-function resolveCustomProviderApiType(apiType: string): "anthropic-messages" | "openai-responses" | "openai-completions" {
+function resolveCustomProviderApiType(apiType: string): "anthropic-messages" | "openai-responses" | "google-generative-ai" | "openai-completions" {
   if (apiType === "anthropic-compatible") {
     return "anthropic-messages";
   }
   if (apiType === "openai-responses") {
     return "openai-responses";
+  }
+  if (apiType === "google-generative-ai") {
+    return "google-generative-ai";
   }
   return "openai-completions";
 }
@@ -2313,7 +2320,112 @@ function withMcpPromptOptions(promptOptions: unknown, mcpServers: ResolvedMcpSer
   return { mcpServers };
 }
 
+/*
+FNXC:CliRuntimeRouting 2026-08-16-14:37:
+`createFnAgent` is now a ROUTED entry point: it delegates to the shared
+`createResolvedAgentSession` seam (registered below via
+`registerRoutedAgentSessionFactory` to avoid a static import cycle) so every
+caller — not just chat/executor/planning — gets CLI runtime routing
+(cursor-cli/claude-cli/hermes/omp-cli/no-key grok-cli), mock/test-mode forcing,
+and `session:runtime-resolved` visibility. Bare `createFnAgent` calls used to
+pin sessions to the default pi runtime, so a CLI-runtime model selection died
+with "not found in the pi model registry" in any lane that had not been
+individually migrated to the seam (mission interview was the third such
+incident after planning's 401 and this cursor one).
+
+The raw pi implementation lives on as `createPiAgentSessionRaw`, which is what
+`DefaultPiRuntime` (execution/runtime-resolution.ts) must call — the seam
+resolves to that runtime, so routing the runtime's own bridge through the seam
+again would recurse forever. When no routed factory is registered (isolated
+unit tests importing only pi.ts), `createFnAgent` falls back to the raw path,
+preserving pre-existing test behavior.
+
+Callers without an explicit `pluginRunner` resolve one from the host-registered
+default registry (`registerDefaultAgentPluginRunner`, populated by
+InProcessRuntime at plugin-system init), keyed by project root and matched by
+session cwd prefix so multi-project hosts route each session against its own
+project's plugin set.
+*/
+type RoutedAgentSessionFactory = (options: Record<string, unknown>) => Promise<AgentResult>;
+/*
+FNXC:CliRuntimeRouting 2026-08-16-14:37:
+`var` + lazy-init on purpose: agent-session-helpers registers the factory at
+its own module load, and under the pi.ts <-> helpers import cycle that call can
+run while pi.ts is still mid-evaluation. A `let`/`const` here sits in its
+temporal dead zone during that window and made every hoisted createFnAgent
+call throw "Cannot access before initialization"; `var` is hoisted-initialized
+and the Map is created on first touch.
+*/
+// eslint-disable-next-line no-var
+var routedAgentSessionFactory: RoutedAgentSessionFactory | undefined;
+// eslint-disable-next-line no-var
+var defaultAgentPluginRunners: Map<string, unknown> | undefined;
+
+function agentPluginRunnerRegistry(): Map<string, unknown> {
+  return (defaultAgentPluginRunners ??= new Map());
+}
+
+/** Late-binding registration seam (mirrors core's `setCreateFnAgent`): agent-session-helpers registers `createResolvedAgentSession` at module load. */
+export function registerRoutedAgentSessionFactory(factory: RoutedAgentSessionFactory): void {
+  routedAgentSessionFactory = factory;
+}
+
+/** Register a host PluginRunner as the ambient default for bare `createFnAgent` callers in the project rooted at `rootDir`. */
+export function registerDefaultAgentPluginRunner(rootDir: string, pluginRunner: unknown): void {
+  agentPluginRunnerRegistry().set(rootDir, pluginRunner);
+}
+
+export function unregisterDefaultAgentPluginRunner(rootDir: string): void {
+  agentPluginRunnerRegistry().delete(rootDir);
+}
+
+/** Resolve the ambient PluginRunner for a session cwd: longest registered project-root prefix wins; a sole registered runner matches any cwd. */
+function resolveDefaultAgentPluginRunner(cwd: string | undefined): unknown {
+  const registry = agentPluginRunnerRegistry();
+  if (registry.size === 0) return undefined;
+  if (cwd) {
+    let best: { rootDir: string; runner: unknown } | undefined;
+    for (const [rootDir, runner] of registry) {
+      if ((cwd === rootDir || cwd.startsWith(`${rootDir}/`)) && (!best || rootDir.length > best.rootDir.length)) {
+        best = { rootDir, runner };
+      }
+    }
+    if (best) return best.runner;
+  }
+  if (registry.size === 1) {
+    return registry.values().next().value;
+  }
+  return undefined;
+}
+
 export async function createFnAgent(options: AgentOptions): Promise<AgentResult> {
+  /*
+  FNXC:CliRuntimeRouting 2026-08-16-14:37:
+  `__rawPiSession` is DefaultPiRuntime's re-entry marker: the seam resolves to
+  that runtime, whose bridge calls back into createFnAgent (kept as the bridge
+  target so existing tests that mock createFnAgent still intercept pi-session
+  construction). The marker short-circuits to the raw constructor instead of
+  routing again, which would recurse forever.
+  */
+  const { __rawPiSession, ...routableOptions } = options as AgentOptions & { __rawPiSession?: boolean };
+  if (!__rawPiSession && routedAgentSessionFactory) {
+    const optionsWithRouting = routableOptions as AgentOptions & { pluginRunner?: unknown; runtimeHint?: string };
+    const pluginRunner = optionsWithRouting.pluginRunner ?? resolveDefaultAgentPluginRunner(routableOptions.cwd);
+    return routedAgentSessionFactory({
+      ...routableOptions,
+      sessionPurpose: routableOptions.sessionPurpose ?? "executor",
+      ...(pluginRunner ? { pluginRunner } : {}),
+    });
+  }
+  return createPiAgentSessionRaw(routableOptions as AgentOptions);
+}
+
+/**
+ * Raw pi-runtime session construction. Internal to the runtime layer: only
+ * `DefaultPiRuntime` (and the unregistered-factory fallback above) may call
+ * this — every product lane goes through `createFnAgent`'s routed path.
+ */
+export async function createPiAgentSessionRaw(options: AgentOptions): Promise<AgentResult> {
   /*
   FNXC:EngineDiagnostics 2026-07-26-09:55:
   createFnAgent is invoked on every agent/session start (executor, triage, chat, heartbeat, etc.). The entry log is steady-state bookkeeping — debug-only (FUSION_DEBUG=pi). Failures and auth issues stay on warn/error.

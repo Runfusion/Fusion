@@ -114,6 +114,8 @@ const mockTerm = {
   hasSelection: vi.fn(() => false),
   getSelection: vi.fn(() => ""),
   write: vi.fn((_data: string, cb?: () => void) => cb?.()),
+  // xterm's Terminal has reset(); the scrollback handler clears with it before replaying.
+  reset: vi.fn(),
   refresh: vi.fn(),
   dispose: vi.fn(),
   unicode: { activeVersion: "6" },
@@ -245,6 +247,28 @@ describe("SessionTerminal", () => {
     const b64 = Buffer.from("hello", "utf8").toString("base64");
     ws.onmessage?.({ data: JSON.stringify({ type: "scrollback", data: b64 }) });
     await waitFor(() => expect(mockTerm.write).toHaveBeenCalledWith("hello", expect.any(Function)));
+  });
+
+  /*
+  FNXC:TerminalSharing 2026-08-19-04:00:
+  The server sends scrollback as its own frame so the client can CLEAR before replaying it; this
+  handler used to append it exactly like `data`. That is only harmless while every reattach builds a
+  fresh xterm — add an in-place reconnect and a full replay lands on top of history the terminal
+  still shows, which is the duplicated-prompt bug fixed in the PTY terminal.
+  */
+  it("clears before replaying scrollback, but never on live data", async () => {
+    render(<SessionTerminal sessionId="s1" />);
+    await waitFor(() => expect(FakeWS.instances.length).toBe(1));
+    const ws = FakeWS.instances[0];
+
+    ws.onmessage?.({ data: JSON.stringify({ type: "scrollback", data: Buffer.from("history", "utf8").toString("base64") }) });
+    await waitFor(() => expect(mockTerm.reset).toHaveBeenCalledTimes(1));
+
+    mockTerm.reset.mockClear();
+    ws.onmessage?.({ data: JSON.stringify({ type: "data", data: Buffer.from("live", "utf8").toString("base64") }) });
+    await waitFor(() => expect(mockTerm.write).toHaveBeenCalledWith("live", expect.any(Function)));
+    // Live output must never wipe the screen.
+    expect(mockTerm.reset).not.toHaveBeenCalled();
   });
 
   it.each([

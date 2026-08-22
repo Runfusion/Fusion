@@ -17,8 +17,8 @@ const searchTranslations: Record<string, string> = {
   "settings.projectModels.chatDefaultModel": "Chat Default Model",
   "settings.projectModels.chatDefaultAgent": "Chat Default Agent",
   "settings.projectModels.aITitleAndGitCommitMessageSummarization": "AI Title and Git Commit Message Summarization",
-  "settings.projectModels.autoSummarizeLongDescriptionsAsTitles": "Auto-summarize long descriptions as titles",
-  "settings.projectModels.whenEnabledTasksCreatedWithoutATitleBut": "When enabled, tasks created without a title but with descriptions over 200 characters will automatically get an AI-generated title",
+  "settings.projectModels.autoSummarizeLongDescriptionsAsTitles": "Auto-summarize task titles",
+  "settings.projectModels.whenEnabledTasksCreatedWithoutATitleBut": "When enabled, every non-empty task description created without a title receives an AI-generated title",
   "settings.projectModels.aIMergeCommitSummaries": "AI merge commit summaries",
   "settings.projectModels.whenEnabledMergeCommitMessagesIncludeAnAI": "When enabled, merge commit messages include an AI-generated subject plus body summary",
 };
@@ -48,6 +48,7 @@ describe("SettingsModal Settings search index", () => {
     "summarize",
     "auto summarize",
     "auto-summarize titles",
+    "task titles",
     "title summarization",
     "autoSummarizeTitles",
     "AI title",

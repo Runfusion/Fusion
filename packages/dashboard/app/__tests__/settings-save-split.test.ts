@@ -34,6 +34,10 @@ describe("scope anchors", () => {
     expect(isProjectSettingsKey("gitlabAuthToken")).toBe(true);
     expect(isGlobalSettingsKey("gitlabAuthTokenType")).toBe(true);
     expect(isProjectSettingsKey("gitlabAuthTokenType")).toBe(true);
+    expect(isGlobalSettingsKey("jiraEnabled")).toBe(true);
+    expect(isProjectSettingsKey("jiraEnabled")).toBe(true);
+    expect(isProjectSettingsKey("requireTaskRecommendations")).toBe(true);
+    expect(isGlobalSettingsKey("requireTaskRecommendations")).toBe(false);
   });
 
   it("every MODEL_LANE_KEYS entry is a project settings key", () => {
@@ -74,6 +78,20 @@ describe("resolveScopedMcpSettings", () => {
       global: { mcpServers: { enabled: true, servers: [globalServer] } },
       project: {},
     } as never)).toBeUndefined();
+  });
+});
+
+describe("required recommendation policy ownership", () => {
+  it("routes the changed toggle to the project patch only", () => {
+    const result = splitSettingsSave({
+      payload: { requireTaskRecommendations: true },
+      initialValues: { requireTaskRecommendations: false } as never,
+      initialScopedValues: { global: {}, project: { requireTaskRecommendations: false } } as never,
+      activeSection: "general",
+    });
+
+    expect(result.projectPatch).toEqual({ requireTaskRecommendations: true });
+    expect(result.globalPatch).toEqual({});
   });
 });
 
@@ -524,6 +542,10 @@ describe("splitSettingsSave", () => {
     });
 
     expect(projectPatch).toEqual({});
+    expect(globalPatch.remoteAccess?.tokenStrategy).toEqual({
+      shortLived: expect.any(Object),
+    });
+    expect(JSON.stringify(globalPatch.remoteAccess)).not.toContain("persistent");
     expect(globalPatch).toEqual({
       remoteAccess: expect.objectContaining({
         activeProvider: "tailscale",
@@ -791,5 +813,46 @@ describe("splitSettingsSave", () => {
     // ...and is instead routed to the project patch on the project-scoped
     // "source-control" section, rather than being dropped or erroring.
     expect(onProject.projectPatch).toMatchObject({ githubTrackingDefaultRepo: "org/repo" });
+  });
+
+  it("does not pin untouched inherited JIRA settings into a project override", () => {
+    const result = splitSettingsSave({
+      payload: {
+        jiraEnabled: true,
+        jiraBaseUrl: "https://acme.atlassian.net",
+        jiraAuthTokenSecretScope: "global",
+      },
+      initialValues: {
+        jiraEnabled: true,
+        jiraBaseUrl: "https://acme.atlassian.net",
+        jiraAuthTokenSecretScope: "global",
+      } as never,
+      initialScopedValues: {
+        global: {
+          jiraEnabled: true,
+          jiraBaseUrl: "https://acme.atlassian.net",
+          jiraAuthTokenSecretScope: "global",
+        },
+        project: {},
+      } as never,
+      activeSection: "source-control",
+    });
+
+    expect(result.globalPatch).toEqual({});
+    expect(result.projectPatch).toEqual({});
+  });
+
+  it("clears a project JIRA override with null-as-delete", () => {
+    const { projectPatch } = splitSettingsSave({
+      payload: { jiraBaseUrl: undefined },
+      initialValues: { jiraBaseUrl: "https://project.atlassian.net" } as never,
+      initialScopedValues: {
+        global: { jiraBaseUrl: "https://global.atlassian.net" },
+        project: { jiraBaseUrl: "https://project.atlassian.net" },
+      } as never,
+      activeSection: "source-control",
+    });
+
+    expect(projectPatch).toEqual({ jiraBaseUrl: null });
   });
 });

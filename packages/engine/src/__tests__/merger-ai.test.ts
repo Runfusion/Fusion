@@ -31,6 +31,7 @@ import {
   buildReviewPrompt,
   buildReviewSystemPrompt,
   REVIEW_VERDICT_MARKER,
+  RESOLVED_PRIOR_FINDINGS_MARKER,
   AiMergeBlockedError,
 } from "../merge/merger-ai.js";
 import { EXECUTOR_FAILED_INCOMPLETE_REASON } from "../overseer/planner-overseer.js";
@@ -97,6 +98,11 @@ function makeStore(
     getTask: vi.fn(async () => task),
     getSettings: vi.fn(async () => ({ merger: { mode: "ai", maxReviewPasses: 1 }, ...settingsOverrides })),
     updateTask: vi.fn(async (_id: string, patch: Record<string, unknown>) => { Object.assign(task, patch); return task; }),
+    updateTaskAtomic: vi.fn(async (_id: string, updater: (current: typeof task) => Record<string, unknown> | undefined) => {
+      const patch = await updater(task);
+      if (patch) Object.assign(task, patch);
+      return task;
+    }),
     moveTask: vi.fn(async (_id: string, column: string) => { task.column = column; return task; }),
     emit: vi.fn((event: string, payload: unknown) => { emitted.push({ event, payload }); }),
     logEntry: vi.fn(async (_id: string, m: string) => { logs.push(m); }),
@@ -134,16 +140,16 @@ function realMergeAgent(branch: string) {
 
 describe("parseReviewVerdict", () => {
   it("approves cleanly", () => {
-    expect(parseReviewVerdict("ok\nREVIEW_VERDICT: approve")).toEqual({ verdict: "approve", reasons: [] });
+    expect(parseReviewVerdict("ok\nREVIEW_VERDICT: approve")).toEqual({ verdict: "approve", reasons: [], resolvedPriorReasons: [] });
   });
   it("rejects with blocking severity by default", () => {
     expect(parseReviewVerdict("REVIEW_VERDICT: reject\n- dropped a hunk")).toEqual({
-      verdict: "reject", severity: "blocking", reasons: ["dropped a hunk"],
+      verdict: "reject", severity: "blocking", reasons: ["dropped a hunk"], resolvedPriorReasons: [],
     });
   });
   it("parses advisory severity and drops the SEVERITY line from reasons", () => {
     expect(parseReviewVerdict("REVIEW_VERDICT: reject\nSEVERITY: advisory\n- nit")).toEqual({
-      verdict: "reject", severity: "advisory", reasons: ["nit"],
+      verdict: "reject", severity: "advisory", reasons: ["nit"], resolvedPriorReasons: [],
     });
   });
   it("fails safe to blocking on empty/garbled output", () => {
@@ -244,146 +250,88 @@ describe("parseReviewVerdict", () => {
 });
 
 describe("runAiMerge", () => {
-  it("carries blocking review reasons across a concurrent-main rebuild", async () => {
+  /*
+  FNXC:AIMergeReviewReconciliation 2026-08-20-22:14:
+  FN-090 preserves an approval as approval. Two clean approvals must review the exact same
+  candidate and land it without a corrective merger invocation or a rejected review log.
+  */
+  it("lands after two clean approvals of the same candidate without an empty corrective pass", async () => {
     const { dir } = initRepoWithBranch({ branch: "fusion/fn-1" });
-    const blocker = "server pages still bypass the live authorization guard";
-    const { store } = makeStore(dir);
+    const { store, logs } = makeStore(dir);
     const mergeAgent = realMergeAgent("fusion/fn-1");
-    const reviewPrompts: string[] = [];
-    let reviewCount = 0;
+    const reviewedCandidates: string[] = [];
     const reviewAgent = vi.fn(async (_cwd: string, prompt: string) => {
-      reviewPrompts.push(prompt);
-      reviewCount++;
-      if (reviewCount === 1) {
-        return `${blocker}\nSEVERITY: blocking\nREVIEW_VERDICT: reject`;
-      }
-      if (reviewCount === 2) {
-        writeFileSync(join(dir, "concurrent.txt"), "main advanced\n");
-        git(dir, "add concurrent.txt");
-        git(dir, "commit -q -m 'main: concurrent advance'");
+      reviewedCandidates.push(prompt.match(/Squash commit:\s+([0-9a-f]+)/i)?.[1] ?? "");
+      return "REVIEW_VERDICT: approve";
+    });
+
+    const result = await runAiMerge(store, dir, "FN-1", { manual: true }, { mergeAgent, reviewAgent });
+
+    expect(result.merged).toBe(true);
+    expect(mergeAgent).toHaveBeenCalledOnce();
+    expect(reviewAgent).toHaveBeenCalledTimes(2);
+    expect(reviewedCandidates[0]).toBeTruthy();
+    expect(reviewedCandidates[1]).toBe(reviewedCandidates[0]);
+    expect(logs.some((line) => /rejected \(blocking\)/i.test(line))).toBe(false);
+    expect(logs.some((line) => /reviewer reconciliation/i.test(line))).toBe(false);
+  });
+
+  /*
+  FNXC:AIMergeReviewReconciliation 2026-08-20-22:38:
+  A source push between clean confirmations invalidates the reviewed candidate. The direct second
+  review must restart on the new identity instead of landing the candidate approved before push.
+  */
+  it("rebuilds when the source changes between clean confirmation reviews", async () => {
+    const { dir } = initRepoWithBranch({ branch: "fusion/fn-1" });
+    const { store } = makeStore(dir);
+    let changedSource = false;
+    const reviewAgent = vi.fn(async () => {
+      if (!changedSource) {
+        changedSource = true;
+        git(dir, "checkout -q fusion/fn-1");
+        writeFileSync(join(dir, "after-review.txt"), "new source identity\n");
+        git(dir, "add after-review.txt");
+        git(dir, "commit -q -m 'feat: source moved during review'");
+        git(dir, "checkout -q main");
       }
       return "REVIEW_VERDICT: approve";
     });
 
     const result = await runAiMerge(store, dir, "FN-1", { manual: true }, {
-      mergeAgent,
+      mergeAgent: realMergeAgent("fusion/fn-1"),
       reviewAgent,
     });
 
     expect(result.merged).toBe(true);
-    expect(reviewPrompts).toHaveLength(3);
-    expect(reviewPrompts[2]).toContain(blocker);
-    expect(reviewPrompts[2]).toContain("complete resulting tree");
+    expect(reviewAgent).toHaveBeenCalledTimes(3);
+    expect(git(dir, "show main:after-review.txt")).toContain("new source identity");
   });
 
-  it("rechecks a durable blocker when a later merge retry starts", async () => {
+  it("passes explicit still-present findings to a corrective merger", async () => {
     const { dir } = initRepoWithBranch({ branch: "fusion/fn-1" });
     const blocker = "server pages still bypass the live authorization guard";
-    const { store } = makeStore(dir, {
-      log: [{
-        action: `AI merge BLOCKED after 3 corrective pass(es) — unresolved correctness concern: ${blocker}`,
-        timestamp: new Date().toISOString(),
-      }],
-    });
-    const reviewAgent = vi.fn(async () => "REVIEW_VERDICT: approve");
-
-    await runAiMerge(store, dir, "FN-1", { manual: true }, {
-      mergeAgent: realMergeAgent("fusion/fn-1"),
-      reviewAgent,
-    });
-
-    expect(reviewAgent.mock.calls[0]?.[1]).toContain(blocker);
-    expect(reviewAgent.mock.calls[0]?.[1]).toContain("complete resulting tree");
-  });
-
-  it("reviews a durable blocker even when the retried branch has zero commits ahead", async () => {
-    const { dir } = initRepoWithBranch({ branch: "fusion/fn-1" });
-    git(dir, "merge -q fusion/fn-1");
-    const blocker = "the integrated tree still bypasses authorization";
-    const { store } = makeStore(dir, {
-      log: [{
-        action: `AI merge BLOCKED after 1 corrective pass(es) — unresolved correctness concern: ${blocker}`,
-        timestamp: new Date().toISOString(),
-      }],
-    });
-    const reviewAgent = vi.fn(async () => "REVIEW_VERDICT: approve");
-
-    await runAiMerge(store, dir, "FN-1", { manual: true }, {
-      mergeAgent: vi.fn(async () => { /* zero-ahead corrective review */ }),
-      reviewAgent,
-    });
-
-    expect(reviewAgent).toHaveBeenCalledOnce();
-    expect(reviewAgent.mock.calls[0]?.[1]).toContain(blocker);
-  });
-
-  it("reviews an empty corrective rebuild before accepting it as a no-op", async () => {
-    const { dir } = initRepoWithBranch({ branch: "fusion/fn-1" });
-    const blocker = "the merged tree still bypasses authorization";
-    const { store } = makeStore(dir);
-    const integrationTipBefore = git(dir, "rev-parse main");
-    let mergeCount = 0;
-    const mergeAgent = vi.fn(async (cwd: string) => {
-      mergeCount++;
-      if (mergeCount === 1) await realMergeAgent("fusion/fn-1")(cwd, "");
-      /*
-      FNXC:MergeReviewBlockers 2026-07-21-21:50:
-      The corrective pass deliberately leaves the clean-room tree at the integration tip so the regression proves an empty rebuild still receives review and cannot advance the integration ref.
-      */
-    });
-    const reviewAgent = vi.fn()
-      .mockResolvedValueOnce(`${blocker}\nSEVERITY: blocking\nREVIEW_VERDICT: reject`)
-      .mockResolvedValueOnce("REVIEW_VERDICT: approve");
-
-    const result = await runAiMerge(store, dir, "FN-1", { manual: true }, { mergeAgent, reviewAgent });
-
-    expect(mergeAgent).toHaveBeenCalledTimes(2);
-    expect(reviewAgent).toHaveBeenCalledTimes(2);
-    expect(reviewAgent.mock.calls[1]?.[1]).toContain(blocker);
-    expect(result.merged).toBe(false);
-    expect(git(dir, "rev-parse main")).toBe(integrationTipBefore);
-  });
-
-  it("keeps earlier blockers when later reviews discover different failures", async () => {
-    const { dir } = initRepoWithBranch({ branch: "fusion/fn-1" });
-    const blockerX = "authorization is bypassed";
-    const blockerY = "audit metadata is missing";
     const { store } = makeStore(dir, {}, { merger: { mode: "ai", maxReviewPasses: 2 } });
-    const reviewAgent = vi.fn()
-      .mockResolvedValueOnce(`${blockerX}\nREVIEW_VERDICT: reject`)
-      .mockResolvedValueOnce(`${blockerY}\nREVIEW_VERDICT: reject`)
-      .mockResolvedValueOnce("REVIEW_VERDICT: approve");
+    const mergePrompts: string[] = [];
+    let reviewCount = 0;
 
     await runAiMerge(store, dir, "FN-1", { manual: true }, {
-      mergeAgent: realMergeAgent("fusion/fn-1"),
-      reviewAgent,
+      mergeAgent: async (cwd, prompt) => {
+        mergePrompts.push(prompt);
+        await realMergeAgent("fusion/fn-1")(cwd, prompt);
+      },
+      reviewAgent: async () => {
+        reviewCount++;
+        if (reviewCount === 1) return blocker + "\nSEVERITY: blocking\nREVIEW_VERDICT: reject";
+        if (reviewCount === 2) return "PRIOR_FINDING_DISPOSITIONS:\nfinding-1-1: still-present\nREVIEW_VERDICT: approve";
+        if (reviewCount === 3) return "PRIOR_FINDING_DISPOSITIONS:\nfinding-1-1: corrected\nREVIEW_VERDICT: approve";
+        return "REVIEW_VERDICT: approve";
+      },
     });
 
-    expect(reviewAgent.mock.calls[2]?.[1]).toContain(blockerX);
-    expect(reviewAgent.mock.calls[2]?.[1]).toContain(blockerY);
+    expect(mergePrompts).toHaveLength(3);
+    expect(mergePrompts.slice(1).every((prompt) => prompt.includes("[finding-1-1] " + blocker))).toBe(true);
+    expect(mergePrompts.slice(1).every((prompt) => !prompt.includes("reviewer reconciliation"))).toBe(true);
   });
-
-  it("recovers every blocker from interrupted per-pass rejection logs", async () => {
-    const { dir } = initRepoWithBranch({ branch: "fusion/fn-1" });
-    const blockerX = "authorization is bypassed";
-    const blockerY = "audit metadata is missing";
-    const { store } = makeStore(dir, {
-      log: [
-        { action: `AI merge review (pass 1): rejected (blocking) — ${blockerX}` },
-        { action: `AI merge review (pass 2): rejected (blocking) — ${blockerY}` },
-      ],
-    });
-    const reviewAgent = vi.fn(async () => "REVIEW_VERDICT: approve");
-
-    await runAiMerge(store, dir, "FN-1", { manual: true }, {
-      mergeAgent: realMergeAgent("fusion/fn-1"),
-      reviewAgent,
-    });
-
-    expect(reviewAgent.mock.calls[0]?.[1]).toContain(blockerX);
-    expect(reviewAgent.mock.calls[0]?.[1]).toContain(blockerY);
-  });
-
   it("merges a clean branch, advances main, and finalizes the task", async () => {
     const { dir } = initRepoWithBranch({ branch: "fusion/fn-1" });
     const { store, emitted } = makeStore(dir);
@@ -444,10 +392,17 @@ describe("runAiMerge", () => {
     const { store, logs } = makeStore(dir, {
       id: taskId,
       branch,
-      log: [
-        { action: "Task marked done by agent", timestamp: new Date(Date.now() - 20 * 60_000).toISOString() },
-        { action: `AI merge review (pass 1): approved squash ${strandedSha}`, timestamp: new Date(Date.now() - 12 * 60_000).toISOString() },
-      ],
+      aiMergeReviewReconciliation: {
+        sourceSha: git(dir, `rev-parse ${branch}`),
+        integrationTipSha: mainBefore,
+        candidateSha: strandedSha,
+        candidateTreeSha: git(strandedRoot, "rev-parse HEAD^{tree}"),
+        findings: [],
+        consecutiveCleanApprovals: 2,
+        correctivePasses: 0,
+      },
+      // Historical approval text is intentionally irrelevant to recovery.
+      log: [{ action: "Task marked done by agent", timestamp: new Date(Date.now() - 20 * 60_000).toISOString() }],
     });
     const mergeAgent = vi.fn(async () => { throw new Error("should not re-merge"); });
 
@@ -552,8 +507,9 @@ describe("runAiMerge", () => {
     review session retains its own usage lifecycle boundary and tool callbacks after future refactors.
     */
     const usageEvents = store.emitUsageEvent.mock.calls.map(([event]: [{ kind: string; category?: string; agentId?: string | null; taskId?: string | null; toolName?: string }]) => event);
-    expect(usageEvents.filter((event) => event.kind === "session_start" && event.category === "agent-session")).toHaveLength(2);
-    expect(usageEvents.filter((event) => event.kind === "tool_call" && event.toolName === "read")).toHaveLength(2);
+    // FNXC:AIMergeReviewReconciliation 2026-08-20-22:14: FN-090 directly confirms a clean candidate, so this run creates one merger and two reviewer sessions.
+    expect(usageEvents.filter((event) => event.kind === "session_start" && event.category === "agent-session")).toHaveLength(3);
+    expect(usageEvents.filter((event) => event.kind === "tool_call" && event.toolName === "read")).toHaveLength(3);
     expect(usageEvents.every((event) => event.agentId === null && event.taskId === "FN-1")).toBe(true);
     createResolvedAgentSessionMock.mockReset();
   });

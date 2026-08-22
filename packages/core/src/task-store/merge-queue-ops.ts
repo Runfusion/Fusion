@@ -16,6 +16,7 @@ import {resolveWorkflowIrForTask} from "../workflows/workflow-ir-resolver.js";
 import {resolveReviewColumns, resolveTaskLifecycleColumns} from "../workflows/workflow-lifecycle-traits.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 import {assertSafeGitBranchName, assertSafeAbsolutePath} from "../task-store/shell-safety.js";
+import {isFusionDeletableBranch} from "../branch/branch-assignment.js";
 import {acquireMergeQueueLease as acquireMergeQueueLeaseAsync} from "../task-store/async/async-merge-coordination.js";
 
 export type StepStartDisposition = "started" | "resumed" | "blocked" | "terminal";
@@ -382,13 +383,15 @@ export async function mergeTaskImpl(store: TaskStore, id: string): Promise<Merge
           }
         }
 
-        const deleteBranch = await store.runGitCommand(`git branch -d "${branch}"`);
-        if (deleteBranch.exitCode === 0) {
-          result.branchDeleted = true;
-        } else {
-          const forceDeleteBranch = await store.runGitCommand(`git branch -D "${branch}"`);
-          if (forceDeleteBranch.exitCode === 0) {
+        if (isFusionDeletableBranch(task, branch)) {
+          const deleteBranch = await store.runGitCommand(`git branch -d "${branch}"`);
+          if (deleteBranch.exitCode === 0) {
             result.branchDeleted = true;
+          } else {
+            const forceDeleteBranch = await store.runGitCommand(`git branch -D "${branch}"`);
+            if (forceDeleteBranch.exitCode === 0) {
+              result.branchDeleted = true;
+            }
           }
         }
 
@@ -539,14 +542,16 @@ export async function mergeTaskImpl(store: TaskStore, id: string): Promise<Merge
       }
 
       // 4. Delete the branch
-      const deleteBranch = await store.runGitCommand(`git branch -d "${branch}"`);
-      if (deleteBranch.exitCode === 0) {
-        result.branchDeleted = true;
-      } else {
-        // Branch might not be fully merged in some edge cases; try force
-        const forceDeleteBranch = await store.runGitCommand(`git branch -D "${branch}"`);
-        if (forceDeleteBranch.exitCode === 0) {
+      if (isFusionDeletableBranch(task, branch)) {
+        const deleteBranch = await store.runGitCommand(`git branch -d "${branch}"`);
+        if (deleteBranch.exitCode === 0) {
           result.branchDeleted = true;
+        } else {
+          // Branch might not be fully merged in some edge cases; try force.
+          const forceDeleteBranch = await store.runGitCommand(`git branch -D "${branch}"`);
+          if (forceDeleteBranch.exitCode === 0) {
+            result.branchDeleted = true;
+          }
         }
       }
 

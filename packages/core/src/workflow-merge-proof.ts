@@ -12,6 +12,8 @@ export interface ForeachMergeProofInput {
 export interface ForeachMergeProof {
   expectedInstanceIds: string[];
   satisfiedInstanceIds: string[];
+  /** Expected identities satisfied specifically by terminal live task steps. */
+  liveStepSatisfiedInstanceIds: string[];
   missingInstanceIds: string[];
   hasForeachStepExecute: boolean;
 }
@@ -20,10 +22,18 @@ export interface ForeachMergeProof {
  * FNXC:WorkflowMerge 2026-07-27-12:00:
  * FN-8601 requires every expanded step-execute identity to have a terminal-success
  * workflowStepResult, unless its live task step is already done/skipped. Callers
- * must independently require a relevant pre-merge node result and that every such
- * result is passed/skipped: coverage is vacuously complete on non-foreach/no-seam
- * shapes and is never sole proof. Persisted rows only widen expectation; partial
- * projections cannot complete a checklist, prove implementation, or enter merge.
+ * must independently require relevant implementation proof: coverage is vacuously
+ * complete on non-foreach/no-seam shapes and is never sole proof without expected
+ * terminal live steps or a relevant node result. Persisted rows only widen
+ * expectation; partial projections cannot complete a checklist, prove
+ * implementation, or enter merge.
+ *
+ * FNXC:WorkflowMerge 2026-08-20-00:50:
+ * FN-9157 / issue #3490 makes Review Level 0's explicit optional-group opt-out
+ * mergeable. On builtin:coding, only reviewKind/skillName nodes record node
+ * progress, so enabledWorkflowSteps: [] leaves terminal step-execute coverage as
+ * the only implementation evidence. Expose that subset without letting persisted
+ * rows or node results satisfy a live-step identity.
  */
 export function evaluateForeachMergeProof(input: ForeachMergeProofInput): ForeachMergeProof {
   const steps = input.steps ?? [];
@@ -64,10 +74,12 @@ export function evaluateForeachMergeProof(input: ForeachMergeProofInput): Foreac
       .map((result) => result.workflowStepId),
   );
   const expectedInstanceIds = [...expected].sort();
+  const liveStepSatisfiedInstanceIds = expectedInstanceIds.filter((id) => terminalLiveSteps.has(id));
   const satisfiedInstanceIds = expectedInstanceIds.filter((id) => terminalLiveSteps.has(id) || successfulResults.has(id));
   return {
     expectedInstanceIds,
     satisfiedInstanceIds,
+    liveStepSatisfiedInstanceIds,
     missingInstanceIds: expectedInstanceIds.filter((id) => !terminalLiveSteps.has(id) && !successfulResults.has(id)),
     hasForeachStepExecute,
   };

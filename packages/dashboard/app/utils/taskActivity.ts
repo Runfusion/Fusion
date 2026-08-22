@@ -18,7 +18,7 @@ export const ACTIVE_STATUSES = new Set([
 export interface TaskAgentActivityOptions {
   globalPaused?: boolean;
   queued?: boolean;
-  isStuck?: boolean;
+  // FNXC:StuckTagRemoval 2026-08-17-22:30: the isStuck gate was deleted with the dashboard's stuck-task tagging; the engine-written "stuck-killed" status below still suppresses the pulse.
   /*
   FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — R8 drift conversion):
   The task's own column traits, when the caller has them. This predicate drives the
@@ -66,7 +66,6 @@ export function isTaskAgentActive(
   if (
     options.globalPaused === true ||
     options.queued === true ||
-    options.isStuck === true ||
     status === "queued" ||
     status === "stuck-killed" ||
     task.paused === true ||

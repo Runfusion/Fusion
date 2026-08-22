@@ -7,6 +7,7 @@ import type { Task, TaskDetail, TaskStore, WorkflowIr, WorkflowWorkEngineDispatc
 import { getWorkflowExtensionRegistry, resolveWorkflowIrForTask } from "@fusion/core";
 import { executorLog } from "../logger.js";
 import { generateSyntheticRunId } from "../util/run-audit.js";
+import { emitBoundedRunAudit } from "./emit-bounded-run-audit.js";
 
 export type MaybeDispatchWorkflowWorkEngineDeps = {
   store: TaskStore;
@@ -73,8 +74,7 @@ export async function maybeDispatchWorkflowWorkEngine(
       task.id,
       result.message ?? `Workflow work engine ${extensionId} claimed execution`,
     );
-    try {
-      await deps.store.recordRunAuditEvent?.({
+      await emitBoundedRunAudit(deps.store, {
         taskId: task.id,
         agentId: "workflow-work-engine",
         runId: result.runId ?? generateSyntheticRunId("workflow-work-engine", task.id),
@@ -87,9 +87,6 @@ export async function maybeDispatchWorkflowWorkEngine(
           pluginId: definition.pluginId,
         },
       });
-    } catch (error) {
-      executorLog.warn(`${task.id}: failed to record workflow work-engine claim audit: ${error instanceof Error ? error.message : String(error)}`);
-    }
     return true;
   }
 

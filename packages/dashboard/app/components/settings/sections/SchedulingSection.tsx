@@ -1,4 +1,6 @@
 import { useTranslation } from "react-i18next";
+import { DEFAULT_PROJECT_SETTINGS } from "@fusion/core";
+import { resolveEffectiveConcurrency } from "../../../../../core/src/workflows/workflow-capacity.js";
 import { MovedSettingsStub } from "./MovedSettingsStub";
 import { SettingsToggleRow } from "../SettingsToggleRow";
 import { SettingsSelectRow } from "../SettingsSelectRow";
@@ -32,6 +34,7 @@ The `overlapIgnorePaths` allowlist deliberately keeps its bespoke markup: it is 
 */
 export function SchedulingSection({ form, setForm, concurrencyLoading = false, onOverlapIgnorePathChange, onOpenOverlapPathPicker, onRemoveOverlapIgnorePath, onAddOverlapIgnorePath, onOpenWorkflowSettings, }: SchedulingSectionProps) {
     const { t } = useTranslation("app");
+    const concurrency = resolveEffectiveConcurrency(form);
     return (<>
       <h4 className="settings-section-heading">{t("settings.scheduling.scheduling", "Scheduling")}</h4>
       {/* FNXC:ExecutorToolFailureRetry 2026-08-06-14:56: project controls tune bounded same-model retry before terminal executor parking; one terminal tool error qualifies by default while values still floor to core's resolver contract. */}
@@ -45,15 +48,20 @@ export function SchedulingSection({ form, setForm, concurrencyLoading = false, o
         descriptor={{
           key: "maxConcurrent",
           label: t("settings.scheduling.maxConcurrentTasks", "Max Concurrent Tasks"),
-          help: t("settings.scheduling.maxConcurrentTasksHint", "Default: 2."),
+          help: t("settings.scheduling.maxConcurrentTasksHint", `Default: ${DEFAULT_PROJECT_SETTINGS.maxConcurrent}. The effective ceiling is the lower of Max Concurrent Tasks and Max Worktrees while worktree limiting is on.`),
           scope: "project",
           min: 1,
-          max: 10,
+          max: 50,
           disabled: concurrencyLoading,
         }}
         value={form.maxConcurrent ?? null}
         onChange={(v) => setForm((f) => ({ ...f, maxConcurrent: v ?? undefined } as SettingsFormState))}
       />
+      {concurrency.bindingKnob === "maxWorktrees" && (
+        <SettingsHelpTip>
+          {`Effective concurrency ceiling: ${concurrency.effectiveLimit}, bound by Max Worktrees.`}
+        </SettingsHelpTip>
+      )}
       <SettingsNumberRow
         descriptor={{
           key: "maxConcurrentVerifications",

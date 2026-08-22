@@ -15,7 +15,7 @@
  * executable work for resume or fail in-place; `in-review` is reserved for
  * clean completion handoffs.
  */
-import type { Task, TaskDetail, TaskStore } from "@fusion/core";
+import type { ResolvedTaskOutputLanguage, Task, TaskDetail, TaskStore } from "@fusion/core";
 import { isMergeRequestContractShadowEnabled, resolveAgentActivityAttribution } from "@fusion/core";
 import { ensureWorkflowCompletionSummary } from "../workflows/workflow-completion-summary.js";
 import { executorLog } from "../logger.js";
@@ -35,13 +35,21 @@ export async function handoffTaskToReview(
   task: Task,
   reason: string,
   runId = deps.getRunContextFor(task.id)?.runId,
+  outputLanguage?: ResolvedTaskOutputLanguage,
 ): Promise<Task> {
   const agentId = deps.getRunContextFor(task.id)?.agentId;
   await deps.generateCompletionFeatureVideo(task);
   if (reason.startsWith("workflow-")) {
+    /*
+     * FNXC:TaskOutputLanguage 2026-08-19-16:14:
+     * A graph handoff can finish long after its agent session starts. Its missing-summary
+     * fallback must use that invocation's resolved target, not mutable project settings.
+     */
     await ensureWorkflowCompletionSummary(deps.store, task as TaskDetail, {
       reason,
       runId,
+      originalInput: task.description,
+      outputLanguage,
     }).catch((error: unknown) => {
       executorLog.warn(`${task.id}: failed to record workflow completion summary: ${error instanceof Error ? error.message : String(error)}`);
     });

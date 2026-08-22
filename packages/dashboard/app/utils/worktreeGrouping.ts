@@ -57,12 +57,12 @@ function resolveDependencyOrder(tasks: Task[]): string[] {
  * Queued tasks (eligible "todo" tasks whose dependencies are all satisfied)
  * are always placed in the "Up Next" group — they are never distributed
  * to worktree-specific groups since they have no worktree assignment yet.
- * The number of queued tasks shown is capped at `maxConcurrent`.
+ * The number of queued tasks shown is capped at the engine's effective concurrency ceiling.
  */
 export function groupByWorktree(
   inProgressTasks: Task[],
   allTasks: Task[],
-  maxConcurrent: number,
+  effectiveConcurrencyLimit: number,
   /*
   FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — R8 drift conversion):
   The ids of TASKS whose own column is a hold lane in their own workflow, when the caller
@@ -90,14 +90,15 @@ export function groupByWorktree(
   dependencyColumnFlags?: ReadonlyMap<string, Parameters<typeof isCompleteColumnRole>[0]>,
 ): WorktreeGroupData[] {
   /*
-  FNXC:Workspace 2026-08-15-03:35:
-  A workspace task legitimately has no singular `worktree` while owning one per-repository
-  worktree. Boolean(task.worktree) therefore is not its assignment test. Workspace worktrees
-  commonly share a basename, so groups use stable ids rather than labels as React keys.
+  FNXC:Workspace 2026-08-20-20:05:
+  A populated workspaceWorktrees map is authoritative over a stale singular worktree delivered
+  before asynchronous store normalization. Classify it as workspace first so a one-repository
+  workspace cannot be hidden under an unrelated singular group; stable ids still prevent
+  basename collisions between acquired repository paths.
   */
-  const assigned = inProgressTasks.filter((task) => Boolean(task.worktree));
-  const workspaceTasks = inProgressTasks.filter((task) => !task.worktree && isWorkspaceTask(task));
-  const unassigned = inProgressTasks.filter((task) => !task.worktree && !isWorkspaceTask(task));
+  const workspaceTasks = inProgressTasks.filter(isWorkspaceTask);
+  const assigned = inProgressTasks.filter((task) => !isWorkspaceTask(task) && Boolean(task.worktree));
+  const unassigned = inProgressTasks.filter((task) => !isWorkspaceTask(task) && !task.worktree);
 
   // Group assigned tasks by worktree
   const worktreeMap = new Map<string, Task[]>();
@@ -185,8 +186,8 @@ export function groupByWorktree(
     });
   }
 
-  // All eligible queued tasks go into the "Up Next" group (capped at maxConcurrent)
-  const queued = orderedEligible.slice(0, maxConcurrent);
+  // All eligible queued tasks go into the "Up Next" group (capped at the effective ceiling).
+  const queued = orderedEligible.slice(0, effectiveConcurrencyLimit);
   if (queued.length > 0) {
     groups.push({
       id: "up-next",

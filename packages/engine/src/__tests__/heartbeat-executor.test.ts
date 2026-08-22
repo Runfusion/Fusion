@@ -3389,7 +3389,8 @@ describe("executeHeartbeat", () => {
       // fn_artifact_register/list/view, agent config/provisioning, mission hierarchy, ideation, goals/evaluations/identity,
       // task read discovery (incl. logs_read), workflow discovery/authoring, task promotion, bounded research, clarification, web fetch, memory, and fn_heartbeat_done.
       // FN-8948 added fn_mission_reconcile and the feature-validation repair surface added fn_feature_repair_validation. Count rose 66→68; keep exact so new tools fail loudly.
-      expect(callArgs.customTools).toHaveLength(68);
+      // RUFU-110 added fn_feature_repoint_task and fn_feature_unlink_task to the mission surface. Count rose 68→70; keep exact so new tools fail loudly.
+      expect(callArgs.customTools).toHaveLength(70);
       expect(callArgs.customTools!.map((tool) => tool.name)).toEqual([
         "fn_task_create",
         "fn_task_log",
@@ -3425,6 +3426,8 @@ describe("executeHeartbeat", () => {
         "fn_feature_set_status",
         "fn_feature_delete",
         "fn_feature_link_task",
+        "fn_feature_repoint_task",
+        "fn_feature_unlink_task",
         "fn_research_promote_finding",
         "fn_ideation_list",
         "fn_ideation_show",
@@ -4014,7 +4017,6 @@ describe("executeHeartbeat", () => {
         description: "Follow-up task",
         dependencies: undefined,
         priority: undefined,
-        summarize: true,
         source: expect.objectContaining({
           sourceType: "agent_heartbeat",
           sourceAgentId: "agent-001",

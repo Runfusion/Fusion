@@ -72,11 +72,17 @@ function normalizeStreamingDelta(previousText: string, nextDelta: string): strin
     return nextDelta;
   }
 
+  /*
+   FNXC:ChatStreaming 2026-08-19-13:52:
+   Numeric dotted tokens and URL path segments are one token even when the provider splits them across deltas; do not insert a sentence space between their digits before Chat persistence.
+   */
+  const isNumericTokenContinuation =
+    previousChar === "." && /\d/.test(previousText.slice(-2, -1)) && /\d/.test(nextChar);
+
   // Claude sometimes splits adjacent sentences across separate deltas or text
-  // blocks without preserving the separating space. Only repair the specific
-  // "sentence punctuation + uppercase/quoted sentence start" case so code,
-  // domains, and lowercase continuations remain untouched.
-  if (/[.!?]/.test(previousChar) && /[A-Z0-9"'([]/.test(nextChar)) {
+  // blocks without preserving the separating space. Keep the repair narrow so
+  // code, domains, lowercase continuations, and numeric tokens remain intact.
+  if (!isNumericTokenContinuation && /[.!?]/.test(previousChar) && /[A-Z0-9"'([]/.test(nextChar)) {
     return ` ${nextDelta}`;
   }
 

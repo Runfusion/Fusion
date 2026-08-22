@@ -176,14 +176,6 @@ export interface EnsureProjectForPathInput {
   isolationMode?: IsolationMode;
   nodeId?: string;
   settings?: ProjectSettings;
-  /*
-  FNXC:ProjectSetup 2026-07-18-04:30:
-  Operator-confirmed "create anyway without a git repo" when git is not
-  installed on the host. Skips ensureGitRepositoryForProjectPath entirely so
-  registration succeeds on a plain directory; the repo can be initialized
-  later once git exists.
-  */
-  skipGitInit?: boolean;
 }
 
 export interface EnsureProjectForPathResult {
@@ -583,37 +575,44 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
   async ensureProjectForPath(input: EnsureProjectForPathInput): Promise<EnsureProjectForPathResult> {
     this.ensureInitialized();
 
+    /*
+    FNXC:ProjectSetup 2026-08-19-12:44:
+    Git readiness is deliberately awaited before both new registration and existing-row
+    repair. A failed init, ignore reconciliation, member preparation, or baseline commit
+    therefore cannot be followed by a PostgreSQL insert or activation, while a retry remains
+    safe because the filesystem seam is idempotent. Validate an orphan identity conflict
+    first so a bad marker never mutates an unrelated incoming directory.
+    */
     const existing = await this.getProjectByPath(input.path);
     if (existing) {
-      return { project: existing, reattached: false, outcome: "existing" };
+      const gitRepository = await this.ensureGitRepositoryForProjectPath(input.path);
+      return { project: existing, reattached: false, outcome: "existing", gitRepository };
     }
 
     if (input.identity?.id) {
       const byId = await this.getProject(input.identity.id);
-      if (!byId) {
-        const gitRepository = input.skipGitInit
-          ? undefined
-          : await this.ensureGitRepositoryForProjectPath(input.path);
-        const reattached = await this.registerProject({
-          id: input.identity.id,
-          name: input.name ?? basename(input.path),
-          path: input.path,
-          isolationMode: input.isolationMode,
-          nodeId: input.nodeId,
-          settings: input.settings,
-        });
-        this.emit("project:reattached", reattached, "identity-recovered");
-        return { project: reattached, reattached: true, outcome: "reattached", gitRepository };
-      }
-      if (byId.path !== input.path) {
+      if (byId && byId.path !== input.path) {
         throw new ProjectIdentityConflictError(input.identity.id, byId.path, input.path);
       }
-      return { project: byId, reattached: false, outcome: "existing" };
+      if (byId) {
+        const gitRepository = await this.ensureGitRepositoryForProjectPath(input.path);
+        return { project: byId, reattached: false, outcome: "existing", gitRepository };
+      }
+
+      const gitRepository = await this.ensureGitRepositoryForProjectPath(input.path);
+      const reattached = await this.registerProject({
+        id: input.identity.id,
+        name: input.name ?? basename(input.path),
+        path: input.path,
+        isolationMode: input.isolationMode,
+        nodeId: input.nodeId,
+        settings: input.settings,
+      });
+      this.emit("project:reattached", reattached, "identity-recovered");
+      return { project: reattached, reattached: true, outcome: "reattached", gitRepository };
     }
 
-    const gitRepository = input.skipGitInit
-      ? undefined
-      : await this.ensureGitRepositoryForProjectPath(input.path);
+    const gitRepository = await this.ensureGitRepositoryForProjectPath(input.path);
     const registered = await this.registerProject({
       name: input.name ?? basename(input.path),
       path: input.path,
@@ -2063,13 +2062,16 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
   /**
    * Get recent activity from the unified feed.
    *
-   * @param options — Query options (limit, projectId filter, type filter)
+   * @param options — Query options (limit, older-than cursor, projectId filter, type filter)
    * @returns Array of activity entries, newest first
    */
   async getRecentActivity(options?: {
     limit?: number;
+    /** Strictly older-than pagination cursor for descending activity history. */
+    since?: string;
     projectId?: string;
     types?: ActivityEventType[];
+    taskId?: string;
   }): Promise<CentralActivityLogEntry[]> {
     this.ensureInitialized();
 

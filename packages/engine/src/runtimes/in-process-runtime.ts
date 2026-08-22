@@ -29,6 +29,7 @@ import {
   resolveTaskLifecycleColumns,
 } from "@fusion/core";
 import { Scheduler } from "../scheduler.js";
+import { registerDefaultAgentPluginRunner, unregisterDefaultAgentPluginRunner } from "../pi.js";
 import type { PrMonitor, PrComment } from "../merge/pr-monitor.js";
 import type { PrInfo } from "@fusion/core";
 import { TaskExecutor, type TaskExecutorOptions } from "../executor.js";
@@ -65,6 +66,7 @@ import { TriageProcessor } from "../triage.js";
 import { validateProjectNodeMapping } from "../project/node-dispatch-validation.js";
 import { attachAgentLinkSync } from "../agents/task-agent-sync.js";
 import { createRunAuditor, generateSyntheticRunId } from "../util/run-audit.js";
+import { emitBoundedRunAudit } from "../util/emit-bounded-run-audit.js";
 import { setImmediate as setImmediateCb } from "node:timers";
 import { seedPreReleasePlanReviewContinuation, type PlanReviewSeedBailReason } from "../plan-review-continuation.js";
 import {
@@ -614,8 +616,8 @@ export async function admitPlanningContinuation(input: {
   await projectAdmissionCoordinator.admitNext({
     projectId: input.projectId,
     maxConcurrent: resolveActiveTaskCapacityLimit({
-      maxConcurrent: settings.maxConcurrent ?? 2,
-      maxWorktrees: settings.maxWorktrees ?? 4,
+      maxConcurrent: settings.maxConcurrent,
+      maxWorktrees: settings.maxWorktrees,
       worktreeLimitEnabled: settings.worktreeLimitEnabled,
     }),
     claimed: async () => (await getAdmissionSnapshot()).count,
@@ -662,8 +664,8 @@ export async function admitPlanningContinuation(input: {
   }
   const snapshot = await getAdmissionSnapshot();
   const limit = resolveActiveTaskCapacityLimit({
-    maxConcurrent: settings.maxConcurrent ?? 2,
-    maxWorktrees: settings.maxWorktrees ?? 4,
+    maxConcurrent: settings.maxConcurrent,
+    maxWorktrees: settings.maxWorktrees,
     worktreeLimitEnabled: settings.worktreeLimitEnabled,
   });
   if (snapshot.count >= limit) {
@@ -674,8 +676,8 @@ export async function admitPlanningContinuation(input: {
     execute, triage, and merge admission; unchanged retries remain deduplicated.
     */
     const reason = formatAdmissionCapacityQueuedReason({
-      maxConcurrent: settings.maxConcurrent ?? 2,
-      maxWorktrees: settings.maxWorktrees ?? 4,
+      maxConcurrent: settings.maxConcurrent,
+      maxWorktrees: settings.maxWorktrees,
       worktreeLimitEnabled: settings.worktreeLimitEnabled,
       claimed: snapshot.count,
       holderTaskIds: snapshot.ids,
@@ -845,6 +847,25 @@ function formatRuntimeGitDetectionWarning(workingDirectory: string, detection: E
     : "";
   return `Project directory "${workingDirectory}" could not be verified as a Git repository. ` +
     `Task execution will fail until the Git error is resolved. Git reported: ${stderr}.${remedy}`;
+}
+
+/**
+ * FNXC:RunAudit 2026-08-20-06:06:
+ * Credential rotation is runtime-owned recovery plumbing. Its optional audit adapter must use the
+ * bounded seam so an unavailable telemetry sink cannot delay a production rotation candidate.
+ */
+export function createRuntimeCredentialRotationAuditAdapter(taskStore: TaskStore) {
+  return async (mutationType: string, metadata: Record<string, unknown>): Promise<void> => {
+    await emitBoundedRunAudit(taskStore, {
+      taskId: typeof metadata.taskId === "string" ? metadata.taskId : undefined,
+      agentId: typeof metadata.agentId === "string" ? metadata.agentId : "runtime",
+      runId: generateSyntheticRunId("credential-instance-rotation", typeof metadata.taskId === "string" ? metadata.taskId : String(metadata.providerId ?? "unknown")),
+      domain: "database",
+      mutationType,
+      target: String(metadata.providerId ?? "unknown"),
+      metadata,
+    });
+  };
 }
 
 export class InProcessRuntime
@@ -1029,17 +1050,7 @@ export class InProcessRuntime
         // Rotation evidence is emitted through the runtime-owned audit seam. Metadata
         // is supplied by the rotator as ids/counts/outcomes only; audit failures stay
         // non-fatal so an observability outage cannot prevent rate-limit recovery.
-        recordRunAuditEvent: async (mutationType, metadata) => {
-          await this.taskStore.recordRunAuditEvent?.({
-            taskId: typeof metadata.taskId === "string" ? metadata.taskId : undefined,
-            agentId: typeof metadata.agentId === "string" ? metadata.agentId : "runtime",
-            runId: generateSyntheticRunId("credential-instance-rotation", typeof metadata.taskId === "string" ? metadata.taskId : String(metadata.providerId ?? "unknown")),
-            domain: "database",
-            mutationType,
-            target: String(metadata.providerId ?? "unknown"),
-            metadata,
-          });
-        },
+        recordRunAuditEvent: createRuntimeCredentialRotationAuditAdapter(this.taskStore),
       });
       this.usageLimitPauser ??= new UsageLimitPauser(this.taskStore, {
         credentialRotator: this.credentialRotator,
@@ -1123,6 +1134,17 @@ export class InProcessRuntime
         rootDir: this.config.workingDirectory,
       });
       await this.pluginRunner.init();
+      /*
+      FNXC:CliRuntimeRouting 2026-08-16-14:37:
+      Publish this project's PluginRunner as the ambient default for bare
+      `createFnAgent` callers (research providers, cron, evaluator, reflection,
+      core DI lanes, dashboard side-lanes) so their sessions route CLI-runtime
+      model selections (cursor-cli etc.) through the plugin runtime instead of
+      dying in pi's model registry. Keyed by project root; createFnAgent matches
+      the session cwd against registered roots so multi-project hosts stay
+      project-scoped.
+      */
+      registerDefaultAgentPluginRunner(this.config.workingDirectory, this.pluginRunner);
       /*
        * FNXC:PluginMcpServers 2026-07-22-12:00:
        * FN-8491 installs the sole session-facing provider on the project store.
@@ -1961,6 +1983,15 @@ export class InProcessRuntime
           return !!run;
         },
       });
+      /*
+      FNXC:PauseGatedMaintenance 2026-08-13-03:08 (RUFU-076):
+      SelfHealingManager.start() is now itself pause-aware: it registers the settings:updated re-arm
+      listener unconditionally, but its periodic-maintenance timer is only armed when the project is not
+      paused (globalPause/enginePaused). This call runs before the startup pause gate below, yet a
+      project that starts paused never arms the setInterval that drives batch-1 git churn — fixing the
+      production perf collapse where pausing every project failed to cut CPU because maintenance ran at
+      the task-store/runtime level, not per-agent. The listener re-arms the timer on unpause.
+      */
       this.selfHealingManager.start();
       this.stuckTaskDetector.start();
       this.detachAgentLinkSync = attachAgentLinkSync({
@@ -2343,6 +2374,8 @@ export class InProcessRuntime
 
       // 8. Shutdown plugin runner
       if (this.pluginRunner) {
+        // FNXC:CliRuntimeRouting 2026-08-16-14:37: retract the ambient default runner published at init so bare createFnAgent callers never resolve a shut-down runner.
+        unregisterDefaultAgentPluginRunner(this.config.workingDirectory);
         await this.pluginRunner.shutdown();
         runtimeLog.log("PluginRunner shutdown complete");
       }

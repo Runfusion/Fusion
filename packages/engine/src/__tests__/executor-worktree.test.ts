@@ -66,6 +66,79 @@ function createWorktreeExecutor(store: any, rootDir: string, options: any = {}) 
 }
 
 describe("worktree workflow routing fixture", () => {
+  /*
+  FNXC:EngineTests 2026-08-21-08:34:
+  The shared executor fake is a production-contract seam: concurrent callback merges must preserve
+  every repository entry, missing required entries are no-ops, and workspace routing clears all
+  singular-checkout metadata.
+
+  FNXC:EngineTests 2026-08-21-09:29:
+  Cleared singular-checkout metadata must use null, matching the persisted TaskStore row shape;
+  undefined would let fixture-only behavior diverge from production reads.
+  */
+  it("mirrors atomic workspace worktree merge semantics", async () => {
+    const store = createMockStore();
+    store._setRow("FN-workspace-merge", {
+      worktree: "/tmp/singular",
+      branch: "fusion/singular",
+      executionStartBranch: "main",
+      baseCommitSha: "base",
+      workspaceWorktrees: {},
+    });
+
+    const missing = await store.mergeWorkspaceWorktreeEntry(
+      "FN-workspace-merge",
+      "missing",
+      { worktreePath: "/tmp/missing" },
+      { requireExistingEntry: true },
+    );
+    expect(missing.workspaceWorktrees?.missing).toBeUndefined();
+
+    let releaseFirst!: () => void;
+    let markFirstStarted!: () => void;
+    const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    const firstStarted = new Promise<void>((resolve) => { markFirstStarted = resolve; });
+    const first = store.mergeWorkspaceWorktreeEntry(
+      "FN-workspace-merge",
+      "repo-a",
+      async () => {
+        markFirstStarted();
+        await firstGate;
+        return { worktreePath: "/tmp/repo-a", branch: "fusion/a" };
+      },
+    );
+    await firstStarted;
+    store._setRow("FN-workspace-merge", {
+      workspaceWorktrees: {
+        "repo-c": { worktreePath: "/tmp/repo-c", branch: "fusion/c" },
+      },
+    });
+
+    let secondStarted = false;
+    const second = store.mergeWorkspaceWorktreeEntry(
+      "FN-workspace-merge",
+      "repo-b",
+      async (freshTask: Task) => {
+        secondStarted = true;
+        expect(freshTask.workspaceWorktrees?.["repo-a"]?.worktreePath).toBe("/tmp/repo-a");
+        return { worktreePath: "/tmp/repo-b", branch: "fusion/b" };
+      },
+      { clearSingularWorktree: true },
+    );
+
+    await Promise.resolve();
+    expect(secondStarted).toBe(false);
+    releaseFirst();
+    const [, result] = await Promise.all([first, second]);
+
+    expect(Object.keys(result.workspaceWorktrees ?? {}).sort()).toEqual(["repo-a", "repo-b", "repo-c"]);
+    expect(result).toEqual(expect.objectContaining({ branchWriteOrigin: "engine" }));
+    expect(result.worktree).toBeNull();
+    expect(result.branch).toBeNull();
+    expect(result.executionStartBranch).toBeNull();
+    expect(result.baseCommitSha).toBeNull();
+  });
+
   it("selects its eligible executor from the role pool", async () => {
     const store = createMockStore();
     const fixture = createWorkflowRoutingAgentStore(store);
@@ -479,8 +552,9 @@ describe("TaskExecutor worktree naming", () => {
     expect(store.updateTask).toHaveBeenCalledWith("FN-030", {
       worktree: "/tmp/test/.worktrees/swift-falcon",
       branch: "fusion/fn-030",
+      branchWriteOrigin: "engine",
     });
-    expect(mockedGenerateWorktreeName).toHaveBeenCalledWith("/tmp/test", expect.any(Object));
+    expect(mockedGenerateWorktreeName).toHaveBeenCalledWith("/tmp/test", expect.any(Object), undefined);
   });
 
   it("does NOT use task ID as worktree directory name for fresh worktrees", async () => {
@@ -561,7 +635,7 @@ describe("TaskExecutor worktree naming", () => {
     await executor.execute(makeTask("FN-032", stalePath));
 
     expect(store.updateTask).toHaveBeenCalledWith("FN-032", expect.objectContaining({ worktree: null, branch: null }));
-    expect(mockedGenerateWorktreeName).toHaveBeenCalledWith("/tmp/test", expect.any(Object));
+    expect(mockedGenerateWorktreeName).toHaveBeenCalledWith("/tmp/test", expect.any(Object), undefined);
     const worktreeAddCalls = mockedExecSync.mock.calls.filter(
       (call) => typeof call[0] === "string" && call[0].includes("git worktree add"),
     );
@@ -587,7 +661,8 @@ describe("TaskExecutor worktree naming", () => {
       expect(store.updateTask).toHaveBeenCalledWith("FN-042", {
         worktree: "/tmp/test/.worktrees/fn-042",
         branch: "fusion/fn-042",
-      });
+        branchWriteOrigin: "engine",
+    });
       // Should NOT call generateWorktreeName when using task-id
       expect(mockedGenerateWorktreeName).not.toHaveBeenCalled();
     });
@@ -621,7 +696,8 @@ describe("TaskExecutor worktree naming", () => {
       expect(store.updateTask).toHaveBeenCalledWith("FN-043", {
         worktree: `/tmp/test/.worktrees/${expectedSlug}`,
         branch: "fusion/fn-043",
-      });
+        branchWriteOrigin: "engine",
+    });
       expect(mockedGenerateWorktreeName).not.toHaveBeenCalled();
     });
 
@@ -655,7 +731,8 @@ describe("TaskExecutor worktree naming", () => {
       expect(store.updateTask).toHaveBeenCalledWith("FN-044", {
         worktree: `/tmp/test/.worktrees/${expectedSlug}`,
         branch: "fusion/fn-044",
-      });
+        branchWriteOrigin: "engine",
+    });
     });
 
     it("uses generateWorktreeName when worktreeNaming is 'random'", async () => {
@@ -676,8 +753,9 @@ describe("TaskExecutor worktree naming", () => {
       expect(store.updateTask).toHaveBeenCalledWith("FN-045", {
         worktree: "/tmp/test/.worktrees/swift-falcon",
         branch: "fusion/fn-045",
-      });
-      expect(mockedGenerateWorktreeName).toHaveBeenCalledWith("/tmp/test", expect.any(Object));
+        branchWriteOrigin: "engine",
+    });
+      expect(mockedGenerateWorktreeName).toHaveBeenCalledWith("/tmp/test", expect.any(Object), undefined);
     });
 
     it("defaults to random naming when worktreeNaming is undefined", async () => {
@@ -698,8 +776,9 @@ describe("TaskExecutor worktree naming", () => {
       expect(store.updateTask).toHaveBeenCalledWith("FN-046", {
         worktree: "/tmp/test/.worktrees/swift-falcon",
         branch: "fusion/fn-046",
-      });
-      expect(mockedGenerateWorktreeName).toHaveBeenCalledWith("/tmp/test", expect.any(Object));
+        branchWriteOrigin: "engine",
+    });
+      expect(mockedGenerateWorktreeName).toHaveBeenCalledWith("/tmp/test", expect.any(Object), undefined);
     });
 
     it("ignores worktreeNaming setting when using pooled worktree (recycle mode)", async () => {
@@ -734,8 +813,9 @@ describe("TaskExecutor worktree naming", () => {
       expect(store.updateTask).toHaveBeenCalledWith("FN-047", {
         worktree: "/tmp/test/.worktrees/swift-falcon",
         branch: "fusion/fn-047",
-      });
-      expect(mockedGenerateWorktreeName).toHaveBeenCalledWith("/tmp/test", expect.any(Object));
+        branchWriteOrigin: "engine",
+    });
+      expect(mockedGenerateWorktreeName).toHaveBeenCalledWith("/tmp/test", expect.any(Object), undefined);
     });
   });
 });
@@ -2467,7 +2547,12 @@ describe("TaskExecutor dependency-based worktree creation", () => {
       "/tmp/test/.worktrees/idle-wt",
       "fusion/fn-064",
       "fusion/fn-063",
-      { allowSiblingBranchRename: false, repoDir: "/tmp/test", requestingTaskId: "FN-064" },
+      {
+        allowSiblingBranchRename: false,
+        repoDir: "/tmp/test",
+        requestingTaskId: "FN-064",
+        branchOrigin: "engine-canonical",
+      },
     );
   });
 
@@ -2500,7 +2585,12 @@ describe("TaskExecutor dependency-based worktree creation", () => {
       "/tmp/test/.worktrees/idle-wt",
       "fusion/fn-065",
       "main",
-      { allowSiblingBranchRename: false, repoDir: "/tmp/test", requestingTaskId: "FN-065" },
+      {
+        allowSiblingBranchRename: false,
+        repoDir: "/tmp/test",
+        requestingTaskId: "FN-065",
+        branchOrigin: "engine-canonical",
+      },
     );
   });
 
@@ -2574,6 +2664,7 @@ describe("TaskExecutor dependency-based worktree creation", () => {
     expect(store.updateTask).toHaveBeenCalledWith("FN-066", {
       worktree: "/tmp/test/.worktrees/idle-wt",
       branch: "fusion/fn-066-2",
+      branchWriteOrigin: "engine",
     });
   });
 });

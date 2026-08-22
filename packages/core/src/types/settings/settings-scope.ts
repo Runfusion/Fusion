@@ -552,6 +552,10 @@ export interface GlobalSettings {
    *  opencode-go provider list without waiting for a later session bootstrap.
    *  Default: true. */
   opencodeGoModelSync?: boolean;
+  /** When true (default), startup syncs the OrcaRouter model catalog from
+   *  `https://api.orcarouter.ai/v1/models` into model pickers so operators can
+   *  select OrcaRouter-hosted models by name. Default: true. */
+  orcarouterModelSync?: boolean;
   /** When true (default), checks npm for new versions of @runfusion/fusion and
    *  shows update notices in the CLI and dashboard. The actual cadence is
    *  governed by `updateCheckFrequency`. Disabled = no automatic checks at all. */
@@ -586,6 +590,14 @@ export interface GlobalSettings {
   gitlabAuthToken?: string;
   /** Global fallback GitLab token type label. Defaults effectively to "personal" when a token exists and this is unset. */
   gitlabAuthTokenType?: GitlabAuthTokenType;
+  /** JIRA branch naming is opt-in and supports project-over-global configuration. */
+  jiraEnabled?: boolean;
+  jiraBaseUrl?: string;
+  jiraApiBaseUrl?: string;
+  jiraAuthEmail?: string;
+  jiraAuthTokenSecretKey?: string;
+  jiraAuthTokenSecretScope?: "project" | "global";
+  jiraBranchNameTemplate?: string;
   /** Cadence for automatic update checks. The dashboard's `/update-check`
    *  route uses this to decide whether to consult npm or return a cached
    *  result.
@@ -625,6 +637,14 @@ export interface GlobalSettings {
    * install entirely and logs why instead.
    */
   autoUpdateAndRestart?: boolean;
+  /*
+  FNXC:UpdateAutomation 2026-08-21-02:17:
+  Automatic installation and post-install restart are separate operator choices.
+  An explicit new value wins; the deprecated combined key is read only as a
+  compatibility fallback for existing opt-ins.
+  */
+  autoUpdateEnabled?: boolean;
+  autoRestartAfterUpdate?: boolean;
   /** When true (default), the dashboard automatically reloads when a new build
    *  version is detected via /version.json polling or service worker activation.
    *  Set to false to suppress automatic reloads — the user must manually
@@ -1040,6 +1060,14 @@ export interface ProjectSettings {
    */
   maxRecommendationsPerTask?: number;
   /**
+   * FNXC:TaskRecommendations 2026-08-19-13:05:
+   * Default-off project policy requiring an explicit completion recommendation
+   * evaluation when the cap is positive. The executor targets the cap for
+   * relevant, task-ready findings, but a shorter list or [] is correct when
+   * grounded candidates do not qualify; this setting never authorizes filler.
+   */
+  requireTaskRecommendations?: boolean;
+  /**
    * FNXC:TaskRecommendations 2026-08-13-03:56:
    * The operator requested an on/off switch for recommendation mailbox notices. This controls
    * best-effort observability only; disabling it never changes recommendation capture or storage.
@@ -1430,6 +1458,11 @@ export interface ProjectSettings {
    * Default-off project setting that lets operators opt board cards into showing derived read-time task cost next to the execution-time badge. Missing/false preserves existing card density and no badge shell renders unless a task has positive token usage.
    */
   showCostBadgeOnCards?: boolean;
+  /**
+   * FNXC:ChatMessageLayout 2026-08-18-20:27:
+   * One project-scoped choice controls message presentation in normal Chat and task Activity/Planner Chat. Missing or invalid persisted values resolve to the historical bubble layout.
+   */
+  chatMessageLayout?: "bubbles" | "full-width";
   /**
    * FNXC:TaskDetailActivityFirst 2026-06-30-23:59:
    * Default-off keeps task details Activity-first so omitted non-done opens land on the legacy `chat` Activity → Live surface. Operators can set true to restore Chat-first ordering/default while explicit Activity/Chat/Logs deep links remain stable.
@@ -2076,6 +2109,14 @@ export interface ProjectSettings {
   gitlabAuthToken?: string;
   /** Project GitLab token type label. Defaults effectively to "personal" when a token exists and this is unset. */
   gitlabAuthTokenType?: GitlabAuthTokenType;
+  /** JIRA branch naming is opt-in and supports project-over-global configuration. */
+  jiraEnabled?: boolean;
+  jiraBaseUrl?: string;
+  jiraApiBaseUrl?: string;
+  jiraAuthEmail?: string;
+  jiraAuthTokenSecretKey?: string;
+  jiraAuthTokenSecretScope?: "project" | "global";
+  jiraBranchNameTemplate?: string;
   /**
    * FNXC:GitLabLifecycle 2026-07-02-00:00:
    * GitLab comment and auto-close settings mirror GitHub lifecycle side effects but remain disabled by default and use the configured GitLab instance/API URL so GitLab.com and self-managed hosts behave consistently.
@@ -2112,9 +2153,12 @@ export interface ProjectSettings {
    *  - "all": backups both project and per-agent memory
    *  Default: "all". */
   memoryBackupScope?: "project" | "agents" | "all";
-  /** When true, tasks created without titles but with descriptions longer than 200
-   *  characters will automatically receive an AI-generated title (max 60 chars).
-   *  Default: false. */
+  /*
+  FNXC:TitleSummarization 2026-08-19-13:43:
+  This project-scoped opt-in controls automatic title attempts for every non-empty task
+  description created without a title. It is a create-time snapshot, defaults to false, and
+  does not govern explicit per-request or manual summarization actions.
+  */
   autoSummarizeTitles?: boolean;
   /*
   FNXC:TaskDefinitionInputLanguage 2026-07-16-05:00:
@@ -2126,6 +2170,8 @@ export interface ProjectSettings {
   /** When true, writes generated task-definition prose in the operator's detected supported
    *  input language. Default: false; uncertain or unsupported input falls back to English. */
   taskDefinitionInInputLanguage?: boolean;
+  /** Project policy for human-readable AI-authored task output. Unset preserves legacy compatibility. */
+  taskOutputLanguage?: import("../../ai/ai-output-language.js").TaskOutputLanguage;
   /** When true, merge commit messages include an AI-generated summary of the
    *  changes instead of just listing step commit subjects. Body composition
    *  includes a narrative line, bullet summary, and `git diff --stat` when

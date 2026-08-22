@@ -120,6 +120,7 @@ export const centralActivityLog = centralSchema.table("central_activity_log", {
   index("idxActivityLogTimestamp").on(t.timestamp),
   index("idxActivityLogType").on(t.type),
   index("idxActivityLogProjectId").on(t.projectId),
+  index("idxCentralActivityLogTaskIdTimestamp").on(t.taskId, t.timestamp),
 ]);
 
 // ── Global concurrency state (single row) ────────────────────────────

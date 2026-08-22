@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   REVIEW_VERDICT_MARKER,
+  RESOLVED_PRIOR_FINDINGS_MARKER,
   buildMergeSystemPrompt,
   buildReviewSystemPrompt,
   parseReviewVerdict,
@@ -13,6 +14,7 @@ describe("merger-ai prompt/verdict re-exports", () => {
       verdict: "reject",
       reasons: ["reviewer produced no output"],
       severity: "blocking",
+      resolvedPriorReasons: [],
     });
   });
 
@@ -23,6 +25,7 @@ describe("merger-ai prompt/verdict re-exports", () => {
         `reviewer did not emit a "${REVIEW_VERDICT_MARKER} approve|reject" line`,
       ],
       severity: "blocking",
+      resolvedPriorReasons: [],
     });
   });
 
@@ -35,6 +38,7 @@ describe("merger-ai prompt/verdict re-exports", () => {
       verdict: "reject",
       reasons: ["dropped a conflict hunk"],
       severity: "blocking",
+      resolvedPriorReasons: [],
     });
   });
 
@@ -47,6 +51,7 @@ describe("merger-ai prompt/verdict re-exports", () => {
       verdict: "reject",
       reasons: ["commit message is vague"],
       severity: "advisory",
+      resolvedPriorReasons: [],
     });
   });
 
@@ -56,6 +61,7 @@ describe("merger-ai prompt/verdict re-exports", () => {
     ).toEqual({
       verdict: "approve",
       reasons: [],
+      resolvedPriorReasons: [],
     });
   });
 
@@ -72,6 +78,21 @@ describe("merger-ai prompt/verdict re-exports", () => {
         "skipped docs update",
       ],
       severity: "blocking",
+      resolvedPriorReasons: [],
+    });
+  });
+
+  it("parses explicitly acknowledged resolved prior findings", () => {
+    expect(parseReviewVerdict([
+      `${RESOLVED_PRIOR_FINDINGS_MARKER}`,
+      "- Missing generated types.",
+      "- Drops task export",
+      "SEVERITY: blocking",
+      "- newly found defect",
+      `${REVIEW_VERDICT_MARKER} reject`,
+    ].join("\n"))).toMatchObject({
+      resolvedPriorReasons: ["Missing generated types.", "Drops task export"],
+      reasons: ["newly found defect"],
     });
   });
 
@@ -82,6 +103,8 @@ describe("merger-ai prompt/verdict re-exports", () => {
     );
     expect(buildReviewSystemPrompt()).toContain(REVIEW_VERDICT_MARKER);
     expect(buildReviewSystemPrompt()).toContain("Do NOT edit, stage, commit");
+    expect(buildReviewSystemPrompt()).toContain("Whole-tree semantic");
+    expect(buildReviewSystemPrompt()).toContain("never a blocking veto");
   });
 });
 
@@ -191,7 +214,7 @@ describe("parseReviewVerdict — reason recovery (FN-8004)", () => {
     const result = parseReviewVerdict(
       `Everything checks out.\n${REVIEW_VERDICT_MARKER} approve`
     );
-    expect(result).toEqual({ verdict: "approve", reasons: [] });
+    expect(result).toEqual({ verdict: "approve", reasons: [], resolvedPriorReasons: [] });
   });
 
   it("gives the reviewer an unambiguous, self-consistent ordering instruction", () => {

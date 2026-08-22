@@ -44,7 +44,6 @@ describe("FN-4815 triage duplicate-search regression", () => {
     const tools = (processor as any).createTriageTools({
       parentTaskId: "FN-TRIAGE",
       allowTaskCreate: true,
-      createdSubtasksRef: { current: [] },
     });
 
     expect(tools.map((tool: any) => tool.name)).toContain("fn_task_search");
@@ -73,7 +72,6 @@ describe("FN-4815 triage duplicate-search regression", () => {
     const tools = (processor as any).createTriageTools({
       parentTaskId: "FN-TRIAGE",
       allowTaskCreate: true,
-      createdSubtasksRef: { current: [] },
     });
 
     const taskSearchTool = tools.find((tool: any) => tool.name === "fn_task_search");
@@ -107,7 +105,6 @@ describe("FN-4815 triage duplicate-search regression", () => {
     const tools = (processor as any).createTriageTools({
       parentTaskId: "FN-TRIAGE",
       allowTaskCreate: true,
-      createdSubtasksRef: { current: [] },
     });
     const taskSearchTool = tools.find((tool: any) => tool.name === "fn_task_search");
 

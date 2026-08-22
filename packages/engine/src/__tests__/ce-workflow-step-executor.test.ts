@@ -27,7 +27,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { BUILTIN_WORKFLOWS, type WorkflowIr } from "@fusion/core";
+import { BUILTIN_WORKFLOWS, resolveTaskOutputLanguage, type WorkflowIr } from "@fusion/core";
 import "./executor-test-helpers.js";
 // captureBaseCommitSha was peeled off TaskExecutor into executor/worktree-git-refs.ts (wave 18),
 // so the old per-test `vi.spyOn(executor, "captureBaseCommitSha")` seam no longer exists.
@@ -322,6 +322,49 @@ describe("CE workflow-step executor integration", () => {
       expect(captured.step.prompt).toContain('Invoke the "compound-engineering:ce-plan" skill');
       // Original node prompt still present after the preamble.
       expect(captured.step.prompt).toContain("Plan the work.");
+    });
+
+    it("preserves the graph-start output target when a later prompt step sees edited input and settings", async () => {
+      const store = createMockStore();
+      const live = baseStepTask({
+        description: "Necesito desplegar el flujo de validación del proyecto en español.",
+      });
+      store.getTask.mockResolvedValue(live as any);
+      const { executor } = makeExecutor(store);
+      const graphStartTarget = resolveTaskOutputLanguage(
+        { taskOutputLanguage: "input" },
+        "Bonjour, ceci est une demande détaillée pour déployer le flux de validation.",
+      );
+      const executeWorkflowStep = vi.spyOn(executor as any, "executeWorkflowStep").mockResolvedValue({ success: true, output: "ok" });
+      const node = {
+        id: "language-snapshot-review",
+        kind: "prompt",
+        column: "review",
+        config: { prompt: "Review the implementation." },
+      };
+
+      await (executor as any).runGraphCustomNode(
+        node,
+        live,
+        { taskOutputLanguage: "interface", language: "es" },
+        undefined,
+        undefined,
+        graphStartTarget,
+      );
+
+      /*
+      FNXC:TaskOutputLanguage 2026-08-19-16:34:
+      A graph can yield before a custom prompt node executes. The node must use the
+      graph-start target rather than re-detecting this later live Spanish description.
+      */
+      expect(executeWorkflowStep).toHaveBeenCalledWith(
+        expect.objectContaining({ description: live.description }),
+        expect.anything(),
+        expect.any(String),
+        expect.objectContaining({ taskOutputLanguage: "interface", language: "es" }),
+        expect.anything(),
+        expect.objectContaining({ outputLanguage: graphStartTarget }),
+      );
     });
 
     it("lets the graph prepare a task worktree before the first CE coding-mode node runs", async () => {

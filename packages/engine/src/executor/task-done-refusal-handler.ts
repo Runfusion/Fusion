@@ -42,7 +42,7 @@ export async function handleImplicitTaskDoneRefusal(
       paused: false,
       pausedByAgentId: null,
       worktree: null,
-      branch: null,
+      branch: null, branchWriteOrigin: "engine" as const,
       sessionFile: null,
     });
     await deps.store.logEntry(
@@ -61,7 +61,7 @@ export async function handleImplicitTaskDoneRefusal(
       paused: false,
       pausedByAgentId: null,
       worktree: null,
-      branch: null,
+      branch: null, branchWriteOrigin: "engine" as const,
       sessionFile: null,
     });
     await deps.store.logEntry(task.id, `${refusal.message} — execution failed because implicit fn_task_done was refused`, undefined, deps.getRunContextFor(task.id));

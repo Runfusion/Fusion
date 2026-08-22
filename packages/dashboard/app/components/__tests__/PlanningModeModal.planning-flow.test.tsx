@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { PlanningModeModal, resetPlanningAutoRetryAttemptsForTests } from "../PlanningModeModal";
 import { mockCreatePlanningDraft, mockFetchAiSession, mockFetchAiSessions, mockRespondToPlanning, mockRetryPlanningSession, mockStartPlanningStreaming, mockStopPlanningGeneration, mockValidatePlanningSession, mockCreateTaskFromPlanning, mockTasks, mockSummary } from "./PlanningModeModal.test-helpers";
 
@@ -647,6 +648,72 @@ describe("PlanningModeModal sequential flow", () => {
     expect(await screen.findByText("New question?")).toBeInTheDocument();
     expect(screen.queryByText("Old question?")).toBeNull();
     expect(mockConnectPlanningStream).not.toHaveBeenCalled();
+  });
+
+  /*
+  FNXC:PlanningMode 2026-08-16-08:54:
+  A same-session background hydration may start after a user has answered but before Next is
+  pressed. Keep the real desktop and mobile modal question mounted through that deferred commit,
+  so the live action submits the locally chosen payload rather than a discarded draft.
+  */
+  it.each(["desktop", "mobile"] as const)("submits an answer after deferred same-session hydration on %s", async (viewport) => {
+    mockViewportMode.mockReturnValue(viewport);
+    const question = viewport === "desktop"
+      ? { id: "q-deferred-text", type: "text" as const, question: "What must stay actionable?" }
+      : {
+          id: "q-deferred-choice",
+          type: "single_select" as const,
+          question: "Which mobile answer must stay actionable?",
+          options: [{ id: "one", label: "First direction" }],
+        };
+    let resolveHydration!: (session: Record<string, unknown>) => void;
+    mockFetchAiSession.mockImplementationOnce(() => Promise.resolve({
+      ...base,
+      status: "awaiting_input",
+      currentQuestion: JSON.stringify(question),
+      result: JSON.stringify(summaryWithRefinements),
+      inputPayload: "{}",
+    })).mockImplementationOnce(() => new Promise((resolve) => { resolveHydration = resolve; }));
+    mockRespondToPlanning.mockResolvedValue({ summary: summaryWithRefinements, currentQuestion: null });
+
+    renderSession();
+    await screen.findByText(question.question);
+    const user = userEvent.setup();
+    if (viewport === "desktop") {
+      await user.type(screen.getByPlaceholderText("Type your answer here..."), "Keep this response");
+    } else {
+      await user.click(screen.getByRole("radio", { name: /other \(write your own\)/i }));
+      await user.type(screen.getByTestId("planning-other-input"), "Keep this mobile response");
+    }
+    expect(screen.getByRole("button", { name: "Next" })).toBeEnabled();
+
+    mockPlanningSse.events?.["ai_session:updated"]?.(new MessageEvent("ai_session:updated", {
+      data: JSON.stringify({ ...base, type: "planning", status: "awaiting_input" }),
+    }));
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      resolveHydration({
+        ...base,
+        status: "awaiting_input",
+        currentQuestion: JSON.stringify(question),
+        result: JSON.stringify(summaryWithRefinements),
+        inputPayload: "{}",
+      });
+      await Promise.resolve();
+    });
+
+    expect(screen.getByRole("button", { name: "Next" })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "Next" }));
+    await waitFor(() => expect(mockRespondToPlanning).toHaveBeenCalledWith(
+      "session-1",
+      viewport === "desktop"
+        ? { "q-deferred-text": "Keep this response" }
+        : { _other: "Keep this mobile response" },
+      "project-1",
+    ));
   });
 
   it("opens question, answer, and collapsed AI reasoning history without a Sessions toggle", async () => {
@@ -1766,6 +1833,71 @@ describe("PlanningModeModal sequential flow", () => {
     expect(mockConnectPlanningStream).toHaveBeenCalledTimes(2);
     expect(screen.queryByText("Stream error")).toBeNull();
   });
+  /*
+  FNXC:PlanningMode 2026-08-16-08:20:
+  Stopping a generating session restores its summary view and intentionally reuses the session id.
+  A recovery-poll request begun before Stop must still lose its load/turn ownership, otherwise its
+  stale durable question can replace the terminal plan review after the operator has stopped.
+  */
+  it.each(["desktop", "mobile"] as const)("keeps post-Stop plan review when a pre-Stop loading poll resolves on %s", async (viewport) => {
+    mockViewportMode.mockReturnValue(viewport);
+    let resolveStalePoll!: (session: Record<string, unknown>) => void;
+    let fetchCount = 0;
+    mockFetchAiSession.mockImplementation(() => {
+      fetchCount += 1;
+      if (fetchCount === 1) {
+        return Promise.resolve({
+          ...base,
+          status: "generating",
+          currentQuestion: null,
+          result: JSON.stringify(summaryWithRefinements),
+          inputPayload: JSON.stringify({ generationPurpose: "initial_plan" }),
+        });
+      }
+      return new Promise((resolve) => { resolveStalePoll = resolve; });
+    });
+
+    vi.useFakeTimers();
+    renderSession();
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(screen.getByRole("button", { name: "Stop" })).toBeInTheDocument();
+    act(() => {
+      vi.advanceTimersByTime(8000);
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(fetchCount).toBe(2);
+
+    let resolveStop!: (value: { success: boolean }) => void;
+    mockStopPlanningGeneration.mockImplementationOnce(() => new Promise((resolve) => { resolveStop = resolve; }));
+    fireEvent.click(screen.getByRole("button", { name: "Stop" }));
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(mockStopPlanningGeneration).toHaveBeenCalledWith("session-1", "project-1");
+
+    await act(async () => {
+      // Resolve Stop first: it restores the session ref before React cleans up the loading poll.
+      // The old poll then resolves in that same commit window, when only the load epoch can reject it.
+      resolveStop({ success: true });
+      await Promise.resolve();
+      resolveStalePoll({
+        ...base,
+        status: "awaiting_input",
+        currentQuestion: JSON.stringify({ id: "q-stale-poll", type: "text", question: "What did stale polling ask?" }),
+        result: JSON.stringify(summaryWithRefinements),
+        inputPayload: "{}",
+      });
+      await Promise.resolve();
+    });
+
+    expect(screen.getByTestId("planning-plan-review")).toBeInTheDocument();
+    expect(screen.queryByText("What did stale polling ask?")).toBeNull();
+  });
+
   it("can restart initial planning after stopping its first generation", async () => {
     render(<PlanningModeModal isOpen onClose={vi.fn()} onTaskCreated={vi.fn()} onTasksCreated={vi.fn()} tasks={mockTasks} projectId="project-1" />);
     fireEvent.change(screen.getByLabelText("What do you want to build?"), { target: { value: "Build secure accounts" } });

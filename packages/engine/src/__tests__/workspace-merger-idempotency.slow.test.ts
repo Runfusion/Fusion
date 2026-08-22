@@ -81,6 +81,10 @@ function createStore(task: Task, settings: Record<string, unknown> = {}): TaskSt
       Object.assign(store.task, patch);
       return undefined;
     }),
+    updateTaskAtomic: vi.fn(async (_id: string, updater: (live: Task) => Partial<Task>) => {
+      Object.assign(store.task, updater(store.task));
+      return store.task;
+    }),
     logEntry: vi.fn().mockResolvedValue(undefined),
     appendAgentLog: vi.fn().mockResolvedValue(undefined),
     getTask: vi.fn(async () => store.task),
@@ -174,6 +178,10 @@ function makeTask(workspaceWorktrees: Task["workspaceWorktrees"]): Task {
     currentStep: 0,
     log: [],
     workspaceWorktrees,
+    repositoryScope: {
+      state: "confirmed",
+      repositories: Object.keys(workspaceWorktrees).sort(),
+    },
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   } as Task;
@@ -422,12 +430,9 @@ describeIfGit("landWorkspaceTask — DB-failure resilience (Phase C review A1/A4
     });
     const task = makeTask({ "repo-a": { worktreePath: fx.repoPath("repo-a"), branch: BRANCH } });
     const store = createStore(task);
-    const result = await landWorkspaceTask(store, store.task, fx.rootDir, {}, {
+    await expect(landWorkspaceTask(store, store.task, fx.rootDir, {}, {
       mergeAgent: squashMergeAgent(BRANCH), reviewAgent: approveReviewAgent,
-    });
-    const repo = result.repos[0]!;
-    expect(repo.alreadyLanded).toBeFalsy();
-    expect(repo.status).toBe("empty");
+    })).rejects.toThrow(/Cannot capture fresh merge evidence/);
   });
 
   it("A4: WorkspacePartialLandError is a real class (instanceof + retryable + payload)", () => {

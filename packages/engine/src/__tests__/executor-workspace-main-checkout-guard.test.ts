@@ -62,6 +62,19 @@ describeIfGit("workspace main-checkout guard", () => {
     expect(result.violations.find((finding) => finding.repo === "repo-b")?.files).toContain("src/new.ts");
   });
 
+  it("treats repo-local File Scope as declared scope for a single workspace repository", async () => {
+    fixture = await createWorkspaceFixture(["repo-a"]);
+    const activeTask = task();
+    const file = path.join(fixture.repoPath("repo-a"), "src", "local.ts");
+    mkdirSync(path.dirname(file), { recursive: true });
+    writeFileSync(file, "export {};\n");
+    const changed = new Date(Date.parse(activeTask.firstExecutionAt!) + 10_000);
+    await import("node:fs/promises").then(({ utimes }) => utimes(file, changed, changed));
+
+    const result = await detectWorkspaceMainCheckoutWork({ rootDir: fixture.rootDir, settings }, activeTask, fixture.repos, ["src/**"]);
+    expect(result.violations).toContainEqual(expect.objectContaining({ repo: "repo-a", files: ["src/local.ts"], evidence: "declared-scope-change" }));
+  });
+
   it("uses firstExecutionAt instead of the later retry attempt anchor", async () => {
     fixture = await createWorkspaceFixture(["repo-a"]);
     const first = new Date(Date.now() + 1_000).toISOString();
@@ -114,21 +127,21 @@ describeIfGit("workspace main-checkout guard", () => {
     expect(result.ok ? "" : result.observed).toContain("task-attributed-commit");
   });
 
-  it("keeps task-attributed backdated commits and skips configured non-repositories", async () => {
+  it("ignores pre-execution task-attributed commits and skips configured non-repositories", async () => {
     fixture = await createWorkspaceFixture(["repo-a"]);
     const activeTask = task({ workspaceWorktrees: {} });
     const file = path.join(fixture.repoPath("repo-a"), "backdated.ts");
     writeFileSync(file, "export const direct = true;\n");
     fixture.git("repo-a", "git add backdated.ts");
     fixture.git("repo-a", "GIT_AUTHOR_DATE='2000-01-01T00:00:00Z' GIT_COMMITTER_DATE='2000-01-01T00:00:00Z' git commit -m 'fix(FN-1001): skewed' ");
-    // The bypass commit predates acquisition, so it is already at the recorded base and a base..HEAD
-    // detector would be empty; task attribution must still make the bounded HEAD scan block it.
+    // This task-ID commit predates execution and is already at the recorded base. Historical
+    // attribution alone must not permanently block workspace completion.
     const acquired = addEmptyWorktree(fixture);
     activeTask.workspaceWorktrees = { "repo-a": { ...acquired, branch: "fusion/fn-1001" } };
     const direct = await detectWorkspaceMainCheckoutWork(
       { rootDir: fixture.rootDir, settings }, activeTask, ["repo-a", "repo-a/not-a-repo"], [],
     );
-    expect(direct.violations).toContainEqual(expect.objectContaining({ repo: "repo-a", evidence: "task-attributed-commit" }));
+    expect(direct.violations).not.toContainEqual(expect.objectContaining({ repo: "repo-a", evidence: "task-attributed-commit" }));
     expect(direct.skipped).toContain("repo-a/not-a-repo");
   });
 

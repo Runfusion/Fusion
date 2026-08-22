@@ -570,20 +570,12 @@ When you plan to list a task in the \`## Dependencies\` section, first call \`fn
 Use what you learn — file scope, APIs, patterns, completion criteria — to make the new spec accurate: reference the right paths, avoid conflicting assumptions, and describe what the dependency must deliver before this task starts.
 If the dependency task has no PROMPT.md yet (not yet specified), note that in the Dependencies section.
 
-## Triage subtask breakdown
-When the task includes \`breakIntoSubtasks: true\`, first decide whether it should be split.
-
-- Split only when the work is meaningfully decomposable into 2-5 independently executable child tasks.
-- If splitting: use the \`fn_task_create\` tool to create child tasks in triage, include clear descriptions and dependencies between them, then stop. Do NOT write a PROMPT.md for the parent task.
-- **CRITICAL — subtask dependencies:** the parent task is deleted once all subtasks are created. \`dependencies\` on a new subtask may ONLY reference sibling subtasks you have created earlier in this same split (or unrelated existing tasks). **Never depend on the parent task's id.** If a child conceptually "waits for the parent's remaining work", create a sibling subtask that does that work and depend on the sibling instead. The \`fn_task_create\` tool will reject parent-id dependencies with an error.
-- If not splitting: proceed with a normal PROMPT.md specification.
-
-## Proactive Subtask Breakdown for M/L Tasks
+## One-task planning
 <!--
-FNXC:TriagePolicy 2026-07-04-00:00:
-Workflow policy can disable proactive oversized-task splitting for operators who want triage to keep large tasks whole by default. Explicit user-requested \`breakIntoSubtasks: true\` remains governed by the mandatory breakdown section above and must not be weakened by this toggle.
+FNXC:TriagePlanning 2026-08-20-17:42:
+Complexity never authorizes replacing a requested task with child tasks. Preserve the original task ID, dependencies, and documents; write one complete, detailed PROMPT.md with focused steps, realistic scope, risks, and quality gates.
 -->
-{{triageProactiveSubtaskSplittingEnabled}}
+Create independent follow-up tasks only when they are genuinely separate work, never as an automatic decomposition of the task being planned.
 
 ## Triage tools
 You have these extra tools during triage:
@@ -642,7 +634,7 @@ This bullet is the planning-side half of the artifact-pipeline contract; keep it
 -->
 - For tasks with a visible UI surface or whose deliverable is visual/media (wireframes, mockups, designs, diagrams, screenshots, screen recordings, HTML prototypes, PDF exports), include an explicit step or checkbox instructing the executor to save each deliverable to disk and register it via \`fn_artifact_register\` (images via \`type="image", path=...\`; recordings via \`type="video", path=...\`; HTML mockups via \`type="document", mimeType="text/html"\` for live gallery previews; PDFs via \`type="document", mimeType="application/pdf", path=...\`) so it appears in the dashboard Artifacts gallery
 - Include a "Do NOT" section with project-appropriate guardrails
-- Size assessment: S (<{{triageSizeSmallMaxHours}}h), M ({{triageSizeSmallMaxHours}}-{{triageSizeMediumMaxHours}}h), L ({{triageSizeMediumMaxHours}}-{{triageSizeLargeMaxHours}}h). Split if XL ({{triageSizeLargeMaxHours}}h+)
+- Size assessment: S (<{{triageSizeSmallMaxHours}}h), M ({{triageSizeSmallMaxHours}}-{{triageSizeMediumMaxHours}}h), L ({{triageSizeMediumMaxHours}}-{{triageSizeLargeMaxHours}}h+). Keep every requested task as one detailed plan regardless of size.
 - Review level scoring: Blast radius (0-2), Pattern novelty (0-2), Security (0-2), Reversibility (0-2)
   - 0-1 → Level 0, 2-3 → Level 1, 4-5 → Level 2, 6-8 → Level 3
 
@@ -657,11 +649,11 @@ FNXC:WorkflowRouting 2026-06-22-17:24:
 Standard triage must not infer workflow changes from task type. Agents preserve the project default unless the user names or explicitly requests a workflow, or the agent created the task; no-commit decisions use the header marker without automatic workflow selection.
 -->
 ## Workflow Routing
-- Keep the project default workflow (\`{{triageDefaultWorkflowId}}\`) unless the user explicitly requested a specific workflow for this task or subtask, or you created that task yourself.
+- Keep the project default workflow (\`{{triageDefaultWorkflowId}}\`) unless the user explicitly requested a specific workflow for this task, or you created that task yourself.
 - Do NOT call \`fn_workflow_select\` or pass \`workflow_id\` to \`fn_task_create\` just because a task looks like investigation, audit, research, operational routing/coordination, decision-only work, or standard coding work.
 - When you create a task via \`fn_task_create\` or \`fn_delegate_task\`, you may select that created task's workflow with \`workflow_id\` at create time or \`fn_workflow_select\` afterward; do not move a task you did not create unless the user asked.
 - For decision-only tasks ({{triageNoCommitsDecisionVerbs}}) or other no-code tasks, set \`**No commits expected:** true\` in the PROMPT.md header when the no-commits criteria above are met; this is a header marker only and does not select \`{{triageDecisionOnlyWorkflowId}}\` or any custom investigation workflow by itself.
-- If the user explicitly asks for a workflow, call \`fn_workflow_list\` to discover valid IDs, then use \`fn_workflow_select\` to set the workflow on the current task or pass \`workflow_id\` to \`fn_task_create\` when creating a requested subtask.
+- If the user explicitly asks for a workflow, call \`fn_workflow_list\` to discover valid IDs, then use \`fn_workflow_select\` to set the workflow on the current task or pass \`workflow_id\` to \`fn_task_create\` when creating requested independent work.
 
 ## Plan Review
 
@@ -810,44 +802,11 @@ Concrete examples:
 - **Documentation completeness:** [Must Update / Check If Affected sections present?]
 - **Dangling task-document references:** [No \`.fusion/tasks/<id>/<file>\` path is cited in Context, Steps, or File Scope unless the file exists or is explicitly created as a \`(new)\` artifact in this spec. References to nonexistent task-local artifacts are a blocking REVISE.]
 - **Sizing & review level:** [Size and review level appropriate for the work?]
-- **Subtask breakdown:** [Only flag genuinely oversized specs (12+ implementation steps, OR 5+ truly independent deliverables that could ship separately). Do NOT flag a coherent vertical change just because it touches multiple packages. When borderline, prefer leaving the task whole.]
 - **User comment coverage:** [Were all user comments addressed? Every user comment must be reflected in the spec — missing coverage is a blocking REVISE]
 
 ### Suggestions
 - [Optional improvements, not blocking]
 \`\`\`
-
-## Spec Review — Undersplit Task Detection
-
-When reviewing specs, assess whether the task should have been broken into subtasks. The bar for splitting is high — most tasks should remain whole. Coordination overhead (worktrees, dependency wiring, merge sequencing) is real, so splitting must clearly pay for itself.
-
-**Default position:** do NOT flag undersplit. Reach for it only when the spec is genuinely oversized.
-
-**Flag as REVISE only when ALL of the following are true:**
-- The spec has 12+ implementation steps, OR contains 5+ clearly independent deliverables that could be shipped separately by different people
-- The deliverables are NOT a coherent vertical change (a single feature touching core + dashboard + tests is coherent — do not split it)
-- Splitting would produce children that each have ≥4 steps and a clearly distinct scope
-
-If the spec is borderline (under those thresholds, or arguable), put your splitting suggestion in the **Suggestions** section instead of REVISE — the planner can take it or leave it.
-
-**How to flag an undersplit task (only when the criteria above are met):**
-Say explicitly: "This task should be broken into subtasks because [specific reason]."
-Recommend the number of child tasks (2-5) and what each should cover.
-Instruct the planner to:
-1. Use the \`fn_task_create\` tool to create 2–5 child tasks from the oversized spec
-2. Do NOT write a parent PROMPT.md — the parent will be closed automatically after children are created
-   (Not write a parent PROMPT.md is also unacceptable.)
-3. Make each child cover one coherent deliverable with clear scope boundaries
-
-Example REVISE feedback for a genuinely oversized task:
-"This task has 14 steps and contains 4 independent deliverables (engine integration, dashboard UI, CLI command, migration tooling) that could ship separately. Use fn_task_create to split into: (1) engine logic, (2) dashboard UI, (3) CLI integration, (4) migration tooling. Do not write a parent PROMPT."
-
-**Do NOT flag if ANY of these apply:**
-- The spec has 11 or fewer implementation steps
-- Steps are sequential and tightly coupled (e.g., a pipeline where each step depends on the previous)
-- The task is a vertical change touching multiple packages for one coherent feature (typical in this monorepo)
-- The task is a bug fix, regardless of how many files it touches
-- Splitting would create coordination overhead that exceeds the benefit
 
 ## Plan Granularity
 
@@ -1168,7 +1127,6 @@ submissions to a high bar for correctness, security, and maintainability.
 - **Surface enumeration:** [For bug-fix specs, is \`## Surface Enumeration\` present and does it enumerate the relevant providers/bridges/execution paths, desktop + mobile breakpoints/platforms, empty/undefined/duplicate/populated states, and shared hooks/components/modules/helpers? Missing or incomplete coverage is a blocking REVISE.]
 - **Documentation completeness:** [Must Update / Check If Affected sections present?]
 - **Sizing & review level:** [Size and review level appropriate for the work?]
-- **Subtask breakdown:** [Were complex tasks appropriately split into 2-5 child tasks?]
 - **User comment coverage:** [Were all user comments addressed? Every user comment must be reflected in the spec — missing coverage is a blocking REVISE]
 - **Security considerations:** [Are security-sensitive areas identified and addressed?]
 - **Edge case coverage:** [Does the spec account for failure modes and boundary conditions?]

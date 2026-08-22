@@ -364,6 +364,18 @@ export type TaskBranchAssignmentMode = "shared" | "per-task-derived";
 
 export interface TaskBranchContext {
   /**
+   * FNXC:BranchNaming 2026-08-20-03:40:
+   * A branch override records operator ownership at the same write boundary as
+   * `Task.branch`. It intentionally survives without branch-group fields: an
+   * operator-owned `fusion/...` name must never be mistaken for Fusion-owned.
+   */
+  branchOverride?: {
+    by: "operator";
+    at: string;
+    branch: string;
+    previousBranch?: string;
+  };
+  /**
    * The owning BranchGroup id (`BG-…`). Only set for shared-mode members that
    * were actually assigned to an ensured branch group. Non-shared members
    * (per-task-derived) carry branch context (source/assignmentMode) without a
@@ -371,8 +383,10 @@ export interface TaskBranchContext {
    * synthetic-groupId membership fallback (see filterTasksByBranchGroup).
    */
   groupId?: string;
-  source: TaskBranchGroupSource;
-  assignmentMode: TaskBranchAssignmentMode;
+  /** Omitted for a provenance-only operator override payload. */
+  source?: TaskBranchGroupSource;
+  /** Omitted for a provenance-only operator override payload. */
+  assignmentMode?: TaskBranchAssignmentMode;
   inheritedBaseBranch?: string;
 }
 
@@ -681,13 +695,81 @@ The atomic per-repository store mutation and its engine callers share this entry
 per-key merges preserve every durable workspace worktree field rather than drifting into
 independent inline shapes.
 */
+/*
+FNXC:Workspace 2026-08-20-00:56:
+Each sub-repository records the base ref selected at acquisition because later land, self-heal,
+and revert operations must target the ref the worktree was actually derived from. A requested
+base missing in one repo falls back to that repo's integration branch and records the requested
+name in baseBranchFallbackFrom. Legacy entries without these fields remain pinned to their own
+integration branch and ignore task.baseBranch. Ref names live here and in task logs, never audit metadata.
+*/
+/*
+FNXC:RepositoryScope 2026-08-20-23:07:
+Repository acquisition is an implementation detail, not task intent. This durable scope is the
+sole authority for workspace review, landing, and recovery; unprefixed file scope can seed it but
+must never expand it to every acquired checkout.
+*/
+export interface TaskRepositoryScope {
+  repositories: string[];
+  /** A proposal is visible before the planner confirms the repository intent. */
+  state?: "proposed" | "confirmed";
+  /** Monotonic intent generation used to fence stale review callbacks. */
+  revision?: number;
+  confirmedAt?: string;
+  confirmedBy?: "operator" | "plan" | "inferred";
+  /** FNXC:RepositoryScope 2026-08-21-01:18: Fresh landing accepts only the exact repository diff approved by Code Review. */
+  reviewEvidence?: Record<string, { fingerprint: string; approvedAt: string }>;
+  /*
+  FNXC:WorkspaceFinalization 2026-08-21-09:09:
+  A repeated workspace Code Review REVISE must survive result cleanup and engine restart. Store the
+  reviewed repository and normalized input signature with its scope generation, never a root path
+  or checkout path, so a changed scope or diff opens a new remediation episode safely.
+  */
+  reviewRemediation?: { scopeRevision: number; repository: string; inputSignature: string };
+  extensions?: Array<{
+    repository: string;
+    requestedAt: string;
+    requestedBy: string;
+    reason: string;
+    status: "accepted" | "refused";
+    refusedAt?: string;
+    refusedBy?: string;
+    refusalReason?: string;
+  }>;
+}
+
 export interface WorkspaceWorktreeEntry {
   worktreePath: string;
   branch: string;
+  /** The ref this sub-repository worktree was derived from and must later target. */
+  baseBranch?: string;
+  /** The operator-requested ref when this repository instead used its integration branch. */
+  baseBranchFallbackFrom?: string;
   baseCommitSha?: string;
   landedSha?: string;
   revertBoundarySha?: string;
   landFailure?: { message: string; at: string; branch?: string };
+}
+
+export type AiMergeFindingDisposition = "pending" | "corrected" | "absent-from-squash" | "still-present" | "dismissed";
+
+export interface AiMergeReviewFinding {
+  id: string;
+  text: string;
+  disposition: AiMergeFindingDisposition;
+  audit?: Array<{ at: string; actor: string; disposition: AiMergeFindingDisposition; reason?: string }>;
+}
+
+/** Durable authority for AI merge review reconciliation; it is never reconstructed from task logs. */
+export interface AiMergeReviewReconciliation {
+  sourceSha: string;
+  integrationTipSha: string;
+  candidateSha?: string;
+  candidateTreeSha?: string;
+  findings: AiMergeReviewFinding[];
+  consecutiveCleanApprovals: number;
+  correctivePasses: number;
+  terminal?: boolean;
 }
 
 export interface Task {
@@ -709,8 +791,6 @@ export interface Task {
   /** Source column captured when this task is archived; used to restore sensibly. */
   preArchiveColumn?: Column;
   dependencies: string[];
-  /** User-requested hint for triage: prefer splitting into child tasks when appropriate. */
-  breakIntoSubtasks?: boolean;
   /** When true, this decision-only task is expected to complete without creating git commits. */
   noCommitsExpected?: boolean;
   worktree?: string;
@@ -748,6 +828,8 @@ export interface Task {
    * it alongside `landedSha`.
    */
   workspaceWorktrees?: Record<string, WorkspaceWorktreeEntry>;
+  /** Explicit repository intent. Missing legacy scope is intentionally not inferred from checkouts. */
+  repositoryScope?: TaskRepositoryScope;
   steps: TaskStep[];
   currentStep: number;
   /**
@@ -982,6 +1064,12 @@ export interface Task {
   workflowStepResults?: WorkflowStepResult[];
   /** Number of merge retry attempts made for this task (auto-merge conflict recovery) */
   mergeRetries?: number;
+  /*
+  FNXC:AIMergeReviewReconciliation 2026-08-20-21:56:
+  FN-090 keeps finding authority, candidate identity, confirmation count, and corrective budget
+  together so interruption cannot grant a fresh budget to an old reviewer finding.
+  */
+  aiMergeReviewReconciliation?: AiMergeReviewReconciliation;
   /** Number of workflow step failure retry attempts made for this task.
    *  When pre-merge workflow steps fail, the executor retries up to MAX_WORKFLOW_STEP_RETRIES
    *  times before marking the task as failed. Cleared on successful workflow step completion. */
@@ -1185,7 +1273,8 @@ export interface Task {
    * mislabel a completed implementation as a plan awaiting approval.
    * Undefined means either no hold or a routine manual plan-approval hold.
    */
-  awaitingApprovalReason?: "release-authorization" | "plan-review-replan-cap" | "merge-blocked-by-policy";
+  /** FNXC:RepositoryScope 2026-08-21-01:53: repeated unchanged Code Review revisions park for an operator before a third remediation loop. */
+  awaitingApprovalReason?: "release-authorization" | "plan-review-replan-cap" | "merge-blocked-by-policy" | "code-review-non-convergence";
   /*
    * FNXC:PlanApproval 2026-07-04-22:41:
    * FN-7569 — records the computePlanApprovalFingerprint (packages/core/src/plan-approval.ts)
@@ -1479,6 +1568,8 @@ export interface TaskCreateInput {
   baseBranch?: string;
   /** Actual git working branch name used for this task's worktree. */
   branch?: string;
+  /** Required with `branch` so durable ownership never has to guess the writer. */
+  branchWriteOrigin?: "operator" | "engine";
   /** Optional planning/mission branch-group metadata carried across related tasks. */
   branchContext?: TaskBranchContext;
   /**
@@ -1511,9 +1602,10 @@ export interface TaskCreateInput {
    *  task can be replicated/created; flag-OFF creation only ever uses legacy ids. */
   column?: ColumnId;
   dependencies?: string[];
-  breakIntoSubtasks?: boolean;
   /** When true, this task is expected to complete without creating git commits. */
   noCommitsExpected?: boolean;
+  /** Explicit workspace repository intent selected by the operator at creation. */
+  repositoryScope?: string[];
   /** IDs of workflow steps to enable for this task */
   enabledWorkflowSteps?: string[];
   /**
@@ -1585,7 +1677,7 @@ export interface TaskCreateInput {
   planningThinkingLevel?: ThinkingLevel;
   /** Independent per-task merger reasoning-effort override; unset inherits merger settings. */
   mergerThinkingLevel?: ThinkingLevel;
-  /** When true, trigger AI title summarization if description is long and no title provided */
+  /** Explicitly force an AI title attempt for this create when no title is provided; project automatic policy is separate. */
   summarize?: boolean;
   /** Mission ID to link this task to (for mission hierarchy) */
   missionId?: string;

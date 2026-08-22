@@ -48,7 +48,7 @@ jobs:
         run: pnpm build
 
       - name: Create Release Pull Request or Publish to npm
-        uses: changesets/action@v1
+        uses: changesets/action@v2
         with:
           version: pnpm release:version
           # Explicit --tag latest: every publish path names its dist-tag (see channel note above).

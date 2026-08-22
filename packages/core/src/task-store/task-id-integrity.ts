@@ -10,6 +10,8 @@
  */
 
 import { TaskStore } from "../store.js";
+import { emitBoundedRunAudit } from "../run-audit/emit-bounded-run-audit.js";
+/* FNXC:RunAudit 2026-08-20-05:49: FN-9177 bounds optional audit telemetry so synchronous store helpers remain non-blocking. */
 import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { ArchiveDatabase } from "../db/archive-db.js";
@@ -577,18 +579,20 @@ export function insertRunAuditEventRowImpl(store: TaskStore, input: Omit<RunAudi
       const eventId = randomUUID();
       const agentId = input.agentId ?? "store";
       const runId = input.runId ?? `store:${input.mutationType}:${input.taskId ?? input.target}:${eventId}`;
-      void recordRunAuditEventAsync(store.asyncLayer, {
-        timestamp: input.timestamp,
-        taskId: input.taskId,
-        agentId,
-        runId,
-        domain: input.domain,
-        mutationType: input.mutationType,
-        target: input.target,
-        metadata: input.metadata as Record<string, unknown> | undefined,
-      }).catch((err) => {
-        storeLog.warn(`[run-audit-event-failed] ${input.mutationType}:${input.taskId ?? input.target}`, { error: getErrorMessage(err) });
-      });
+      void emitBoundedRunAudit(
+        { recordRunAuditEvent: (event) => recordRunAuditEventAsync(store.asyncLayer!, event) },
+        {
+          timestamp: input.timestamp,
+          taskId: input.taskId,
+          agentId,
+          runId,
+          domain: input.domain,
+          mutationType: input.mutationType,
+          target: input.target,
+          metadata: input.metadata as Record<string, unknown> | undefined,
+        },
+        { log: { warn: (detail) => storeLog.warn(`[run-audit-event-failed] ${input.mutationType}:${input.taskId ?? input.target}`, { error: detail }) } },
+      );
       return;
     }
     const eventId = randomUUID();
@@ -836,17 +840,19 @@ export function recordDependencyCycleRejectedAuditImpl(store: TaskStore,
      */
     if (store.backendMode && store.asyncLayer) {
       const mutationType = source === "replication" ? "task:dependency-cycle-rejected-replication" : "task:dependency-cycle-rejected";
-      void recordRunAuditEventAsync(store.asyncLayer, {
-        taskId,
-        agentId: "store",
-        runId: `store:${mutationType}:${taskId}`,
-        domain: "database",
-        mutationType,
-        target: taskId,
-        metadata: { taskId, cyclePath, source } as Record<string, unknown>,
-      }).catch((err) => {
-        storeLog.warn(`[dependency-cycle-rejected-audit-failed] ${taskId}`, { error: getErrorMessage(err) });
-      });
+      void emitBoundedRunAudit(
+        { recordRunAuditEvent: (event) => recordRunAuditEventAsync(store.asyncLayer!, event) },
+        {
+          taskId,
+          agentId: "store",
+          runId: `store:${mutationType}:${taskId}`,
+          domain: "database",
+          mutationType,
+          target: taskId,
+          metadata: { taskId, cyclePath, source } as Record<string, unknown>,
+        },
+        { log: { warn: (detail) => storeLog.warn(`[dependency-cycle-rejected-audit-failed] ${taskId}`, { error: detail }) } },
+      );
       return;
     }
     store.insertRunAuditEventRow({

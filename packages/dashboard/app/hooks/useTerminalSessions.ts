@@ -1,5 +1,6 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { createTerminalSession, killPtyTerminalSession, listTerminalSessions } from "../api";
+import type { PtyTerminalSessionInfo } from "../api";
 /*
 FNXC:CodeOrganization 2026-07-26-07:30:
 Wave17 moved system-panel under api/system/. useTerminalSessions must import the nested path so Vite/tsc resolve after the domain peel (PR #2398 CI).
@@ -11,6 +12,15 @@ const STORAGE_KEY = "kb-terminal-tabs";
 
 /** Timeout for the list-terminal-sessions validation call during bootstrap. */
 const BOOTSTRAP_LIST_TIMEOUT_MS = 15000;
+/*
+FNXC:TerminalSharing 2026-08-19-03:05:
+Adoption must decide BEFORE auto-create fires (auto-create runs on a 0ms timer, so a background list
+can never win the race), which means a fresh open waits for the listing FN-7686 removed. The wait is
+capped well below the 15s bootstrap budget: FN-7686's guarantee weakens from "never waits" to "waits
+at most ADOPT_LIST_TIMEOUT_MS, then behaves exactly as before", so an unreachable or hung server
+still cannot hold the terminal hostage.
+*/
+const ADOPT_LIST_TIMEOUT_MS = 1500;
 /** Timeout for the auto-create createTerminalSession call during bootstrap. */
 const BOOTSTRAP_CREATE_TIMEOUT_MS = 15000;
 /** Timeout for the server-platform probe consulted by Windows browser clients. */
@@ -59,8 +69,22 @@ interface UseTerminalSessionsReturn {
   bootstrapError: string | null;
   /** Creates a new tab with a fresh server session */
   createTab: (input?: CreateTerminalTabInput) => Promise<TerminalTab>;
-  /** Closes a specific tab (kills server session) */
-  closeTab: (tabId: string) => void;
+  /**
+   * Closes a specific tab.
+   *
+   * FNXC:TerminalSharing 2026-08-19-04:10:
+   * Closing is two distinct intents now that sessions are shared: DETACH removes the tab from this
+   * browser and leaves the PTY running for other viewers (and for reopening later), while killing
+   * ends it for everyone. `killSession` defaults to true so existing callers keep their old
+   * behaviour; the terminal UI asks the operator which one they meant.
+   */
+  closeTab: (tabId: string, options?: { killSession?: boolean }) => void;
+  /** Server sessions that are running but not open as a tab in this browser. */
+  detachedSessions: PtyTerminalSessionInfo[];
+  /** Re-query the server for sessions this browser is not showing. */
+  refreshDetachedSessions: () => Promise<void>;
+  /** Reopen a still-running server session as a tab in this browser. */
+  reopenSession: (sessionId: string) => void;
   /** Switches to a different tab */
   setActiveTab: (tabId: string) => void;
   /** Updates the display title of a tab */
@@ -217,6 +241,34 @@ function buildTabTitle(input: CreateTerminalTabInput | undefined, terminalNumber
   return `Terminal ${terminalNumber}`;
 }
 
+/*
+FNXC:TerminalSharing 2026-08-19-03:05:
+Terminal sessions live on the SERVER (one PTY registry per project root), but the tab list is
+per-browser localStorage. A browser with no stored tabs used to skip the session listing entirely
+and spawn its own PTY, so two people on the same Fusion — or the same person in a second browser —
+never saw each other's terminals and silently accumulated parallel sessions.
+
+A browser with no tabs now adopts whatever sessions the server already has, oldest first, so every
+client converges on the same set. Only the zero-tab path adopts: a client with stored tabs keeps
+validating them as before, because adopting there would resurrect tabs the user deliberately closed
+in this browser.
+
+The cost is the round trip FN-7686 removed from cold open, bounded by ADOPT_LIST_TIMEOUT_MS and
+falling back to auto-create, so a slow or unreachable list degrades to the old behaviour rather than
+blocking the terminal.
+*/
+function adoptServerSessions(sessions: PtyTerminalSessionInfo[]): TerminalTab[] {
+  const ordered = [...sessions].sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
+  return normalizeActiveTab(ordered.map((session, index) => ({
+    id: generateTabId(),
+    sessionId: session.id,
+    title: session.cwd ? titleFromCwd(session.cwd) : (session.shell || `Terminal ${index + 1}`),
+    ...(session.cwd ? { cwd: session.cwd } : {}),
+    isActive: index === 0,
+    createdAt: Date.parse(session.createdAt) || Date.now(),
+  })));
+}
+
 /**
  * Wrap a promise with a timeout that rejects with a TimeoutError.
  * Uses an AbortSignal-style approach so only the winning path resolves.
@@ -347,7 +399,32 @@ export function useTerminalSessions(projectId?: string, options: UseTerminalSess
       the list call below, since its result IS decision-relevant there (which
       sessionIds still exist server-side).
       */
+      /*
+      FNXC:TerminalSharing 2026-08-19-03:05:
+      Zero stored tabs no longer means "spawn a private terminal". List first and ADOPT whatever the
+      server already runs, so a second browser (or a second person on a shared Fusion) opens onto the
+      same sessions instead of a parallel one nobody else can see. See adoptServerSessions.
+
+      A failed or slow list falls through to auto-create, preserving FN-7686's guarantee that a cold
+      open cannot be blocked by this round trip.
+      */
       if (readTabsFromStorage(projectId, storageScope).length === 0) {
+        try {
+          const serverSessions = await withTimeout(
+            listTerminalSessions(projectId),
+            ADOPT_LIST_TIMEOUT_MS,
+            "listTerminalSessions"
+          );
+          if (cancelled || gen !== generationRef.current) return;
+          if (serverSessions.length > 0) {
+            setTabs(adoptServerSessions(serverSessions));
+          }
+        } catch (err) {
+          if (cancelled || gen !== generationRef.current) return;
+          if (!isRelativeUrlFetchError(err)) {
+            console.warn("Failed to adopt existing terminal sessions:", err);
+          }
+        }
         if (cancelled || gen !== generationRef.current) return;
         setServerAvailable(true);
         setIsReady(true);
@@ -563,15 +640,23 @@ export function useTerminalSessions(projectId?: string, options: UseTerminalSess
    * If closing the active tab, activates the next or previous tab.
    * If closing the last tab, auto-creates a new one.
    */
-  const closeTab = useCallback((tabId: string): void => {
+  const closeTab = useCallback((tabId: string, options?: { killSession?: boolean }): void => {
+    const killSession = options?.killSession ?? true;
     setTabs((currentTabs) => {
       const tabToClose = currentTabs.find((t) => t.id === tabId);
       if (!tabToClose) return currentTabs;
 
-      // Non-blocking server session kill
-      killPtyTerminalSession(tabToClose.sessionId, projectId).catch((err) => {
-        console.warn(`Failed to kill terminal session ${tabToClose.sessionId}:`, err);
-      });
+      /*
+      FNXC:TerminalSharing 2026-08-19-04:10:
+      Detaching must leave the PTY alone: another browser may be attached to it, and the footer's
+      reopen control exists to bring it back here. Only an explicit kill ends it for everyone.
+      */
+      if (killSession) {
+        // Non-blocking server session kill
+        killPtyTerminalSession(tabToClose.sessionId, projectId).catch((err) => {
+          console.warn(`Failed to kill terminal session ${tabToClose.sessionId}:`, err);
+        });
+      }
 
       const tabIndex = currentTabs.findIndex((t) => t.id === tabId);
       const wasActive = tabToClose.isActive;
@@ -593,6 +678,55 @@ export function useTerminalSessions(projectId?: string, options: UseTerminalSess
       }
 
       return remainingTabs;
+    });
+    // FNXC:TerminalSharing 2026-08-19-04:10: projectId is read inside (the kill call), so it must be
+    // a dependency — an empty list froze it at the first render's project.
+  }, [projectId]);
+
+  /*
+  FNXC:TerminalSharing 2026-08-19-04:10:
+  Sessions this browser is not showing but the server still runs — either detached here, or started
+  by someone else's browser. The raw server list is stored and the "detached" set derived from it, so
+  opening or closing a tab updates the reopen control without another round trip.
+  */
+  const [knownServerSessions, setKnownServerSessions] = useState<PtyTerminalSessionInfo[]>([]);
+  const knownServerSessionsRef = useRef<PtyTerminalSessionInfo[]>([]);
+  knownServerSessionsRef.current = knownServerSessions;
+
+  const refreshDetachedSessions = useCallback(async (): Promise<void> => {
+    try {
+      setKnownServerSessions(await listTerminalSessions(projectId));
+    } catch (err) {
+      if (!isRelativeUrlFetchError(err)) {
+        console.warn("Failed to list terminal sessions:", err);
+      }
+    }
+  }, [projectId]);
+
+  const detachedSessions = useMemo(() => {
+    const openSessionIds = new Set(tabs.map((tab) => tab.sessionId));
+    return knownServerSessions
+      .filter((session) => !openSessionIds.has(session.id))
+      .sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
+  }, [knownServerSessions, tabs]);
+
+  const reopenSession = useCallback((sessionId: string): void => {
+    setTabs((currentTabs) => {
+      if (currentTabs.some((tab) => tab.sessionId === sessionId)) {
+        return normalizeActiveTab(currentTabs.map((tab) => ({ ...tab, isActive: tab.sessionId === sessionId })));
+      }
+      const session = knownServerSessionsRef.current.find((candidate) => candidate.id === sessionId);
+      if (!session) return currentTabs;
+
+      const reopened: TerminalTab = {
+        id: generateTabId(),
+        sessionId: session.id,
+        title: session.cwd ? titleFromCwd(session.cwd) : (session.shell || "Terminal"),
+        ...(session.cwd ? { cwd: session.cwd } : {}),
+        isActive: true,
+        createdAt: Date.parse(session.createdAt) || Date.now(),
+      };
+      return [...currentTabs.map((tab) => ({ ...tab, isActive: false })), reopened];
     });
   }, []);
 
@@ -731,6 +865,9 @@ export function useTerminalSessions(projectId?: string, options: UseTerminalSess
     bootstrapError,
     createTab,
     closeTab,
+    detachedSessions,
+    refreshDetachedSessions,
+    reopenSession,
     setActiveTab,
     updateTabTitle,
     restartActiveTab,

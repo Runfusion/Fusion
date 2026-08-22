@@ -1,0 +1,4 @@
+ ✓ src/__tests__/postgres/healthy.test.ts (2 tests)
+
+ Test Files  1 passed (1)
+ Tests  2 passed (2)

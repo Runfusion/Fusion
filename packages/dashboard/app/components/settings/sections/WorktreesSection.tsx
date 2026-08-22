@@ -219,7 +219,7 @@ export function WorktreesSection({ form, setForm, gitRemotes, worktrunkInstall, 
           <SettingsHelpTip settingKey="worktreesDir">
             {form.worktrunk?.enabled === true
               ? "Disabled because Worktrunk integration is enabled — worktrunk manages the worktree directory layout. Disable worktrunk integration to use a custom directory."
-              : <>{t("settings.worktrees.optionalSupports", " Optional. Supports ")}<code>~</code>{t("settings.worktrees.and", " and ")}<code>{"{repo}"}</code>{t("settings.worktrees.defaultsTo", ". Defaults to ")}<code>&lt;projectRoot&gt;/.worktrees</code>{t("settings.worktrees.whenUnsetOnlyAffectsNewlyCreatedWorktrees", " when unset. Only affects newly-created worktrees. ")}</>}
+              : <>{t("settings.worktrees.optionalSupports", " Optional. Supports ")}<code>~</code>{t("settings.worktrees.and", " and ")}<code>{"{repo}"}</code>{t("settings.worktrees.defaultsTo", ". Absolute paths are allowed. Workspace projects group configured roots by workspace and repository. Defaults to ")}<code>&lt;projectRoot&gt;/.worktrees</code>{t("settings.worktrees.whenUnsetOnlyAffectsNewlyCreatedWorktrees", " when unset. Only affects newly-created worktrees. ")}</>}
           </SettingsHelpTip>
         </div>
         <div className="settings-overlap-ignore-path-controls">

@@ -601,22 +601,49 @@ describe("ProjectModelsSection", () => {
     expect(screen.getByTestId("mock-model-dropdown-preset-validator-model")).toHaveAttribute("data-menu-width", "readable");
   });
 
-  it("renders and updates the supported input-language task-definition toggle", () => {
+  it("renders the three-mode task-output language selector and deactivates legacy authority", () => {
     const setForm = vi.fn();
     render(
       <ProjectModelsSection
-        form={{ taskDefinitionInInputLanguage: false } as SettingsFormState}
+        form={{ taskDefinitionInInputLanguage: true } as SettingsFormState}
         setForm={setForm}
         models={models}
         addToast={vi.fn()}
       />,
     );
 
-    const toggle = screen.getByRole("checkbox", { name: "Write task definitions in the operator's input language" });
-    expect(toggle).not.toBeChecked();
-    expect(screen.getByText(/supported detectable input languages/i)).toBeInTheDocument();
+    const select = screen.getByRole("combobox", { name: "AI-authored task language" });
+    expect(select).toHaveValue("input");
+    expect(screen.getByRole("option", { name: "English (default)" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "User input language" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Fusion interface language" })).toBeInTheDocument();
+    fireEvent.change(select, { target: { value: "interface" } });
+    expect(setForm).toHaveBeenCalledWith(expect.any(Function));
+    const update = setForm.mock.calls[0]?.[0] as (form: SettingsFormState) => SettingsFormState;
+    expect(update({ taskDefinitionInInputLanguage: true } as SettingsFormState)).toMatchObject({
+      taskOutputLanguage: "interface",
+      taskDefinitionInInputLanguage: false,
+    });
+  });
+
+  it("places the sole title toggle directly after task language and updates project form state", () => {
+    const setForm = vi.fn();
+    render(
+      <ProjectModelsSection
+        form={{ autoSummarizeTitles: false } as SettingsFormState}
+        setForm={setForm}
+        models={models}
+        addToast={vi.fn()}
+      />,
+    );
+
+    const language = screen.getByRole("combobox", { name: "AI-authored task language" });
+    const toggle = screen.getByRole("checkbox", { name: "Auto-summarize task titles" });
+    expect(screen.getAllByRole("checkbox", { name: "Auto-summarize task titles" })).toHaveLength(1);
+    expect(language.compareDocumentPosition(toggle) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     fireEvent.click(toggle);
-    expect(setForm).toHaveBeenCalled();
+    const update = setForm.mock.calls[0]?.[0] as (form: SettingsFormState) => SettingsFormState;
+    expect(update({ autoSummarizeTitles: false } as SettingsFormState)).toMatchObject({ autoSummarizeTitles: true });
   });
 
   it("colocates summarization model controls with AI summarization settings", () => {
@@ -639,14 +666,13 @@ describe("ProjectModelsSection", () => {
 
     const summarizationSection = screen.getByTestId("project-models-ai-summarization");
     const heading = screen.getByRole("heading", { name: "AI Title and Git Commit Message Summarization" });
-    const autoSummarizeTitles = screen.getByRole("checkbox", { name: "Auto-summarize long descriptions as titles" });
     const summarizationDropdown = screen.getByTestId("mock-model-dropdown-summarizationModel");
     const fallbackDropdown = screen.getByTestId("mock-model-dropdown-titleSummarizerFallbackModel");
     const defaultDropdown = screen.getByTestId("mock-model-dropdown-defaultModel");
     const mergerDropdown = screen.getByTestId("mock-model-dropdown-mergerModel");
 
     expect(summarizationSection).toContainElement(heading);
-    expect(summarizationSection).toContainElement(autoSummarizeTitles);
+    expect(summarizationSection).not.toContainElement(screen.getByRole("checkbox", { name: "Auto-summarize task titles" }));
     expect(summarizationSection).toContainElement(summarizationDropdown);
     expect(summarizationSection).toContainElement(fallbackDropdown);
     expect(defaultDropdown.compareDocumentPosition(heading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
@@ -833,6 +859,16 @@ describe("ProjectModelsSection", () => {
       "validator",
       "validator-fallback",
     ]);
+
+    const projectLanes = screen.getByTestId("project-models-project-lanes");
+    const workflowLanes = screen.getByTestId("project-models-workflow-lanes");
+    const chat = screen.getByTestId("project-models-chat-kind");
+    const summarizationSection = screen.getByTestId("project-models-ai-summarization");
+    expect(projectLanes.nextElementSibling).toBe(workflowLanes);
+    expect(projectLanes).toContainElement(screen.getByTestId("project-models-summarization-pointer"));
+    expect(workflowLanes).toContainElement(screen.getByTestId("workflow-model-lane-planning"));
+    expect(workflowLanes.compareDocumentPosition(chat) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(workflowLanes.compareDocumentPosition(summarizationSection) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it("wires workflow fallback lane thinking render, persist, and reset", async () => {

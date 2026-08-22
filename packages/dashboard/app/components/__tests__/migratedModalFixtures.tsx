@@ -10,7 +10,6 @@ import { MailboxModal } from "../MailboxModal";
 import { MilestoneSliceInterviewModal } from "../MilestoneSliceInterviewModal";
 import { NativeShellOnboardingModal } from "../NativeShellOnboardingModal";
 import { SetupWizardModal } from "../SetupWizardModal";
-import { SubtaskBreakdownModal } from "../SubtaskBreakdownModal";
 
 export type MigratedModalFixture = {
   name: string;
@@ -48,5 +47,4 @@ export const migratedModalFixtures: readonly MigratedModalFixture[] = [
   { name: "DockerNodeOnboardingModal", file: "DockerNodeOnboardingModal.tsx", key: "floating-window:docker-node-onboarding", outside: true, render: (onClose) => createElement(DockerNodeOnboardingModal, { isOpen: true, onClose, onSubmit: async () => {}, addToast: toast }) },
   { name: "MailboxModal", file: "MailboxModal.tsx", key: "floating-window:mailbox", outside: true, render: (onClose) => createElement(MailboxModal, { isOpen: true, onClose, addToast: toast, onOpenTask: noop, onOpenPlanningSession: noop, onOpenNativeStructure: noop, nativeStructureCandidates: [] }) },
   { name: "MilestoneSliceInterviewModal", file: "MilestoneSliceInterviewModal.tsx", key: "floating-window:milestone-slice-interview", outside: true, render: (onClose) => createElement(MilestoneSliceInterviewModal, { isOpen: true, onClose, onApplied: noop, targetType: "milestone", targetId: "m-1", targetTitle: "Mission", missionContext: "Test context" }) },
-  { name: "SubtaskBreakdownModal", file: "SubtaskBreakdownModal.tsx", key: "floating-window:subtask-breakdown", outside: true, render: (onClose) => createElement(SubtaskBreakdownModal, { isOpen: true, onClose, initialDescription: "Test task", onTasksCreated: noop, parentTaskId: "task-1" }) },
 ] as const;

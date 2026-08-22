@@ -240,3 +240,7 @@ other secret references remain key-only, so importing a bundle requires the dest
 operator to provision the referenced secrets. `secretsAccessPolicy` and
 `secretsSyncPassphraseConfigured` remain because they are configuration/state rather
 than secret values.
+
+### JIRA API token
+
+Store a JIRA API token or PAT as `JIRA_API_TOKEN` (or the configured `jiraAuthTokenSecretKey`). Fusion checks project scope first and falls back to global scope. The token is revealed only in-process when deriving a branch name and is never logged or returned.

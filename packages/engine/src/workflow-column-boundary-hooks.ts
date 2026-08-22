@@ -21,6 +21,7 @@ import { ACTIVE_WORKFLOW_WORK_ITEM_STATES } from "@fusion/core";
 import { createStoreIrPinPersistence, type WorkflowIrPinStoreSurface } from "./workflows/workflow-column-boundary.js";
 import type { WorkflowColumnBoundaryHooks } from "./workflows/workflow-graph-task-runner.js";
 import { generateSyntheticRunId } from "./util/run-audit.js";
+import { emitBoundedRunAudit } from "./util/emit-bounded-run-audit.js";
 
 export interface ExecutorColumnBoundaryHooksDeps {
   store: TaskStore;
@@ -108,7 +109,7 @@ export function createExecutorColumnBoundaryHooks(
       }
     },
     emitAudit: async (event) => {
-      await store.recordRunAuditEvent?.({
+      await emitBoundedRunAudit(store, {
         taskId: event.taskId,
         agentId: "executor",
         runId: generateSyntheticRunId("workflow-column-boundary", event.taskId),

@@ -185,8 +185,20 @@ describe("Header", () => {
       expect(workflowSlot).toBeInTheDocument();
       expect(workflowSlot).toHaveClass("header-workflow-slot--mobile");
       expect(workflowSlot.closest(".header-left")).toBeInTheDocument();
-      expect(screen.getByTestId("mobile-view-toggle-board")).toBeInTheDocument();
-      expect(screen.getByTestId("mobile-view-toggle-list")).toBeInTheDocument();
+      expect(screen.queryByTestId("mobile-view-toggle")).toBeNull();
+      expect(screen.queryByTestId("mobile-view-toggle-board")).toBeNull();
+      expect(screen.queryByTestId("mobile-view-toggle-list")).toBeNull();
+    });
+
+    it("renders one mobile New Task action only for an active project callback", () => {
+      const onNewTask = vi.fn();
+      const rendered = renderHeader({ mobileNavEnabled: true, projectId: "project-1", onNewTask }, "mobile");
+      fireEvent.click(screen.getByTestId("mobile-header-new-task"));
+      expect(onNewTask).toHaveBeenCalledOnce();
+
+      rendered.unmount();
+      renderHeader({ mobileNavEnabled: true, onNewTask }, "mobile");
+      expect(screen.queryByTestId("mobile-header-new-task")).toBeNull();
     });
 
     it("shows board view as active by default", () => {

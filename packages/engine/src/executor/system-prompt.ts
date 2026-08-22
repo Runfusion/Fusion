@@ -262,7 +262,7 @@ policy rather than malfunction. It is appended last so it wins over the base tex
 applies to a custom operator prompt too (an operator who overrode the prompt still gets a
 truthful statement of what this session may do).
 */
-function getCompletionRecommendationGuidance(maximum: number): string {
+function getCompletionRecommendationGuidance(maximum: number, required: boolean): string {
   /*
   FNXC:TaskRecommendations 2026-08-09-04:06:
   Engine-appended guidance preserves the accepted-completion recommendation contract even when an
@@ -277,9 +277,14 @@ function getCompletionRecommendationGuidance(maximum: number): string {
 
 Recommendation capture is disabled for this project (maxRecommendationsPerTask is 0). Ignore any earlier generic recommendation guidance: do not send recommendations, including \`recommendations: []\`; use an honest summary or task log for non-blocking context, and do not fabricate a finding.`;
   }
+  if (required) {
+    return `## Completion recommendations
+
+At the final accepted \`fn_task_done(outcome="completed")\` checkpoint, you MUST explicitly evaluate optional, non-blocking work discovered outside this task by sending a \`recommendations\` array. Aim toward ${maximum} distinct, grounded, task-ready recommendations from concrete source-task or worktree findings, but stop before relevance degrades: a shorter list or \`recommendations: []\` is correct when fewer candidates qualify. Reject scope drift, restatements of this task, duplicates, speculation, filler, required current-task work, blockers, secrets, executable commands, and reasoning. Each item needs a stable unique \`id\`, \`title\`, \`description\`, and \`category\`. Recommendations are only for completed outcomes; never send them with \`outcome="blocked"\`. Use immediate task creation/delegation only for an explicit task requirement, necessary dependency coordination, or operator direction.`;
+  }
   return `## Completion recommendations
 
-At the final accepted \`fn_task_done(outcome="completed")\` checkpoint, evaluate optional, non-blocking work discovered outside this task. Send at most ${maximum} task-ready recommendations, each with a stable unique \`id\`, \`title\`, \`description\`, and \`category\`, or explicitly send \`recommendations: []\` when none genuinely qualify. Example populated payload: \`recommendations: [{ id: "follow-up-export", title: "Add task export", description: "Provide a CSV export for completed tasks.", category: "feature" }]\`. Do not fabricate filler or include required current-task work, blockers, secrets, executable commands, reasoning, or duplicate ids. Recommendations are only for completed outcomes; never send them with \`outcome="blocked"\`. Use immediate task creation/delegation only for an explicit task requirement, necessary dependency coordination, or operator direction.`;
+At the final accepted \`fn_task_done(outcome="completed")\` checkpoint, optionally evaluate grounded, non-blocking work discovered outside this task. Send at most ${maximum} task-ready recommendations, each with a stable unique \`id\`, \`title\`, \`description\`, and \`category\`, or explicitly send \`recommendations: []\` when none genuinely qualify. Example populated payload: \`recommendations: [{ id: "follow-up-export", title: "Add task export", description: "Provide CSV export outside the completed task's scope.", category: "feature" }]\`. Stop before relevance degrades: do not fabricate filler or include scope drift, restatements, duplicates, speculation, required current-task work, blockers, secrets, executable commands, or reasoning. Recommendations are only for completed outcomes; never send them with \`outcome="blocked"\`. Use immediate task creation/delegation only for an explicit task requirement, necessary dependency coordination, or operator direction.`;
 }
 
 /*
@@ -289,14 +294,16 @@ partial restore recovered this function from a pre-FN-8850 base, so a withheld s
 at fn_task_log instead of the completion recommendation route its validator accepts — and when capture is
 disabled the prompt must say so rather than invite an unavailable write.
 */
-function getWithheldTaskCreationGuidance(taskCreateWithheld: boolean, delegateWithheld: boolean, maximum: number): string {
+function getWithheldTaskCreationGuidance(taskCreateWithheld: boolean, delegateWithheld: boolean, maximum: number, required: boolean): string {
   if (!taskCreateWithheld && !delegateWithheld) return "";
   const withheld = [
     ...(taskCreateWithheld ? ["`fn_task_create`"] : []),
     ...(delegateWithheld ? ["`fn_delegate_task`"] : []),
   ].join(" and ");
   const recommendationRoute = maximum > 0
-    ? `For optional, non-blocking discoveries, use the available completion recommendation route at accepted completion (or \`recommendations: []\` if none qualify).`
+    ? required
+      ? `For non-blocking discoveries, the required completion evaluation must use the available recommendation route at accepted completion; aim toward ${maximum} grounded candidates, but send a shorter list or \`recommendations: []\` when relevance does not support more.`
+      : `For optional, non-blocking discoveries, use the available completion recommendation route at accepted completion (or \`recommendations: []\` if none qualify).`
     : "Recommendation capture is disabled, so retain non-blocking context in an honest task log or completion summary without inventing a follow-up.";
   return `## Follow-up task creation is disabled for this session
 
@@ -323,14 +330,17 @@ export function getExecutorSystemPrompt(
   the validator it pairs with — the two must be added or removed together.
   */
   const maximumRecommendations = settings.maxRecommendationsPerTask ?? 3;
+  // FNXC:TaskRecommendations 2026-08-19-13:05: Cap zero is the final disabled state; otherwise required mode makes the executor submit an explicit quality-first evaluation at completion.
+  const requireTaskRecommendations = settings.requireTaskRecommendations === true && maximumRecommendations > 0;
   const sections = [
     basePrompt,
     isResearchToolSurfaceEnabled(settings) ? getResearchGuidanceForSurface("executor") : "",
-    getCompletionRecommendationGuidance(maximumRecommendations),
+    getCompletionRecommendationGuidance(maximumRecommendations, requireTaskRecommendations),
     getWithheldTaskCreationGuidance(
       toolAvailability?.taskCreateWithheld === true,
       toolAvailability?.delegateWithheld === true,
       maximumRecommendations,
+      requireTaskRecommendations,
     ),
   ].filter((section) => section.trim());
   return sections.join("\n\n");

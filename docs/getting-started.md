@@ -86,7 +86,16 @@ In each repository you want Fusion to manage, run:
 fn init
 ```
 
-On fresh init, Fusion also installs its bundled `fusion` skill into supported agent homes (`~/.claude/skills/fusion`, `~/.codex/skills/fusion`, `~/.gemini/skills/fusion`) when those targets are missing. Existing installs are left untouched.
+Registration is fail-closed on Git readiness. For a new or unborn repository, Fusion creates a real baseline `HEAD` containing only its managed `.gitignore`; an existing committed repository keeps its history, branch, remotes, configuration, index, and user changes. Fusion adds missing managed ignore rules without committing an existing repository's changes:
+
+- `.fusion/`
+- `.pi/`
+- `.worktrees/`
+- `fusion.db`
+- `fusion.db-wal`
+- `fusion.db-shm`
+
+If Git, `.gitignore` reconciliation, or baseline creation fails, the project is not registered or activated. Install Git on the Fusion host and retry; Fusion never offers a create-anyway bypass. On fresh init, Fusion also installs its bundled `fusion` skill into supported agent homes (`~/.claude/skills/fusion`, `~/.codex/skills/fusion`, `~/.gemini/skills/fusion`) when those targets are missing. Existing installs are left untouched.
 
 ## First Run and Onboarding
 
@@ -101,9 +110,9 @@ On first launch, Fusion opens an onboarding wizard with guided setup steps:
 1. **AI Setup** — choose a provider and authenticate (you only need one to start). Anthropic/Claude and OpenAI Codex use a pasted authorization-code OAuth flow in onboarding and Settings (sign in, then paste the final redirect URL or code back into Fusion), and Fusion warns before login so you remember to copy the browser address bar URL before the redirect tab appears to fail. After the initial Claude OAuth login, Fusion normally refreshes the OAuth credential automatically with the stored refresh token when the access token expires, so repeated manual re-login is not usually required. **Anthropic — via Claude CLI** remains available as a separate optional path. Deprecated Google Gemini CLI / Antigravity entries are hidden; Google/Gemini API key, Google Generative AI, Vertex, and Cloud Code options remain available.
 2. **GitHub (Optional)** — connect GitHub for issue import and PR workflows. When dashboard OAuth is configured, this step includes an in-flow **Connect GitHub OAuth** action. It also shows whether the Fusion host has GitHub CLI (`gh`) available: run `gh auth login` on the host when `gh` is installed but unauthenticated, or use the GitHub CLI releases/install guidance when `gh` is missing. The step also checks whether the Fusion host can run `git`; if Git is missing, onboarding shows platform install guidance before you reach clone, init, or repository registration flows. Install Git and GitHub CLI on the machine or service container running Fusion, not just on the browser/client device. See [Git downloads](https://git-scm.com/downloads) and [GitHub CLI releases](https://github.com/cli/cli/releases/latest) for macOS, Windows, and Linux options.
 3. **Project Setup** — choose how Fusion should prepare a repository:
-   - **Use Existing Directory** registers a folder that is already a git repository or a workspace root with detected sub-repositories. See [Workspaces](./workspaces.md) for multi-repository setup and operation.
-   - **Initialize New Repository** registers an existing local folder and lets the server run `git init` during registration when the folder is not already a git repository.
-   - **Clone Git Repository** runs `git clone` from a remote URL into an empty or absent destination directory, then registers the cloned folder. Fusion rejects blank clone URLs and populated destinations.
+   - **Use Existing Directory** registers a folder that is already a git repository or a workspace root with detected sub-repositories, then verifies Git readiness before activation. See [Workspaces](./workspaces.md) for multi-repository setup and operation.
+   - **Initialize New Repository** registers an existing local folder and lets the server run `git init`, create a baseline `HEAD`, and reconcile managed ignores before activation.
+   - **Clone Git Repository** runs `git clone` from a remote URL into an empty or absent destination directory, then verifies the cloned checkout before activation. Fusion rejects blank clone URLs, populated destinations, and any readiness failure; a cloned checkout remains available for retry.
    - Creating a folder from the project directory picker automatically selects that new folder for registration.
 4. **First Task** — create your first task or import one from GitHub.
 

@@ -1,4 +1,4 @@
-import { resolveImportTranslateSettingsModel, resolveTitleSummarizerSettingsModel } from "@fusion/core";
+import { resolveImportTranslateSettingsModel, resolveTaskOutputLanguage, resolveTitleSummarizerSettingsModel } from "@fusion/core";
 import { createSessionDiagnostics } from "../ai-session-diagnostics.js";
 import { ApiError, badRequest, rateLimited, rethrowAsApiError } from "../api-error.js";
 import type { ApiRouteRegistrar } from "./types.js";
@@ -278,8 +278,8 @@ router.post("/ai/draft-goal-description", async (req, res) => {
  * Body: { description: string, provider?: string, modelId?: string }
  * Returns: { title: string }
  *
- * Generates a concise title (≤60 characters) from descriptions longer than 200 characters.
- * Long descriptions are accepted; core truncates model input before prompting.
+ * Generates a concise title (≤60 characters) from any non-empty description.
+ * Model input is bounded by the core summarizer before prompting.
  * Rate limited: 10 requests per hour per IP
  */
 router.post("/ai/summarize-title", async (req, res) => {
@@ -294,7 +294,6 @@ router.post("/ai/summarize-title", async (req, res) => {
       getRateLimitResetTime,
       summarizeTitle,
       validateDescription,
-      MIN_DESCRIPTION_LENGTH,
       RateLimitError: _RateLimitError4,
       ValidationError: _ValidationError2,
       AiServiceError: _AiServiceError2,
@@ -356,10 +355,17 @@ router.post("/ai/summarize-title", async (req, res) => {
     }
 
     // Process summarization
-    const title = await summarizeTitle(description, rootDir, resolvedProvider, resolvedModelId);
+    /* FNXC:TaskOutputLanguage 2026-08-19-15:36: Explicit title requests capture the project target once per request. */
+    const title = await summarizeTitle(
+      description,
+      rootDir,
+      resolvedProvider,
+      resolvedModelId,
+      resolveTaskOutputLanguage(settings, description),
+    );
 
     if (!title) {
-      throw badRequest(`Description must be at least ${MIN_DESCRIPTION_LENGTH} characters for summarization`);
+      throw badRequest("AI returned empty title");
     }
 
     res.json({ title });

@@ -1,7 +1,7 @@
 import { access, mkdir, readFile, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import type { Settings, TaskStore } from "@fusion/core";
-import { resolveProjectDefaultModel } from "@fusion/core";
+import { resolveProjectDefaultModel, resolveTaskPrHeadBranch } from "@fusion/core";
 import { createResolvedAgentSession, resolveMcpServersForStore, type PluginRunner } from "@fusion/engine";
 import { runGitCommand } from "./routes/resolve-diff-base.js";
 
@@ -51,10 +51,6 @@ export interface ResolvePrConflictsResult {
   pushed: boolean;
   conflictedFiles: string[];
   message: string;
-}
-
-function getHeadBranch(taskId: string): string {
-  return `fusion/${taskId.toLowerCase()}`;
 }
 
 /*
@@ -223,7 +219,13 @@ async function runResolutionAgent(params: {
 export async function resolvePrConflicts(input: ResolvePrConflictsInput): Promise<ResolvePrConflictsResult> {
   const { taskId, baseRef, rootDir, store } = input;
   const task = await store.getTask(taskId);
-  const branchName = getHeadBranch(taskId);
+  /*
+  FNXC:WorkspacePrHead 2026-08-20-03:38:
+  Conflict resolution checks out the same persisted branch PR creation exposes.
+  A workspace task may intentionally reuse an operator branch, so deriving
+  fusion/<task-id> here would resolve conflicts on the wrong ref.
+  */
+  const branchName = resolveTaskPrHeadBranch(task);
   const reusableWorktree = await resolveUsableWorktree(task.worktree, branchName);
   const tempWorktreePath = join(rootDir, ".fusion", "worktrees", `conflict-${taskId.toLowerCase()}`);
   const cwd = reusableWorktree ?? tempWorktreePath;

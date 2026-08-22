@@ -70,7 +70,7 @@ vi.mock("../runtimes/in-process-runtime.js", () => ({
 import { ProjectEngine } from "../project-engine.js";
 import { runtimeLog } from "../logger.js";
 import { VerificationError } from "../merger.js";
-import { runAiMerge } from "../merge/merger-ai.js";
+import { AiMergeBlockedError, runAiMerge } from "../merge/merger-ai.js";
 
 type MockTask = {
   id: string;
@@ -95,6 +95,7 @@ type MockTask = {
   customFields?: Record<string, unknown>;
   updatedAt: string;
   log: Array<{ action?: string }>;
+  aiMergeReviewReconciliation?: { candidateSha?: string };
 };
 
 type MockTaskStore = {
@@ -360,6 +361,33 @@ describe("ProjectEngine merge error recovery", () => {
       "MergeConflictBounce",
     );
     expect(hasErrorLog(errorSpy, "failed to bounce")).toBe(false);
+  });
+
+  it("parks typed AI review blocks containing conflicts without retrying or bouncing", async () => {
+    vi.useFakeTimers();
+    const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
+    const store = makeStore({
+      tasks: [makeTask({ mergeRetries: 0, aiMergeReviewReconciliation: { candidateSha: "abc123def456" } }), makeTask({ mergeRetries: 3, aiMergeReviewReconciliation: { candidateSha: "abc123def456" } })],
+    });
+    vi.mocked(runAiMerge).mockRejectedValueOnce(
+      new AiMergeBlockedError(TASK_ID, ["review assertions conflicts with builtin settings"]),
+    );
+
+    const engine = createEngine(store);
+    await runMergeCycle(engine);
+
+    expect(store.updateTask).toHaveBeenCalledWith(TASK_ID, {
+      status: "failed",
+      mergeRetries: 3,
+      error: "AI merge review blocked landing at abc123def456: review assertions conflicts with builtin settings. Rebase/re-push, dismiss a finding with a reason, or land manually.",
+    });
+    expect(store.updateTask).not.toHaveBeenCalledWith(TASK_ID, expect.objectContaining({ status: null }));
+    expect(store.moveTask).not.toHaveBeenCalled();
+    expect(store.logEntry).not.toHaveBeenCalledWith(TASK_ID, expect.any(String), "MergeConflictBounce");
+    expect(setTimeoutSpy).not.toHaveBeenCalledWith(expect.any(Function), expect.any(Number));
+    const canMergeTask = (engine as unknown as { canMergeTask: (task: MockTask, retries: number) => boolean }).canMergeTask.bind(engine);
+    expect(canMergeTask(makeTask({ status: "failed", updatedAt: new Date(0).toISOString() }), 3)).toBe(false);
+    vi.useRealTimers();
   });
 
   it("logs when bouncing fails after conflict retries are exhausted", async () => {

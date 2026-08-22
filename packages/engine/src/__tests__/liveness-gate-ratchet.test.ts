@@ -104,7 +104,13 @@ function findDiscardedCalls(source: string, name: string): string[] {
 }
 
 const SELF_HEALING = "packages/engine/src/self-healing.ts";
-const EXECUTOR = "packages/engine/src/executor.ts";
+/*
+FNXC:CodeOrganization 2026-08-17-22:04:
+The wave20 extraction moved the TaskExecutor session facades (hasLiveSessionSurface,
+clearPhantomExecutorBinding) out of executor.ts into executor/task-executor-session-facades.ts.
+The facade scans follow the extraction; the peeled bodies below were already tracked separately.
+*/
+const EXECUTOR_SESSION_FACADES = "packages/engine/src/executor/task-executor-session-facades.ts";
 /*
 FNXC:CodeOrganization 2026-08-03-20:25:
 U4 peels move free-function bodies under executor/*. Source-scan ratchets must
@@ -152,7 +158,7 @@ describe("FN-6756 liveness-gate ratchet", () => {
   */
   it("clearPhantomExecutorBinding delegates to the shared hasLiveSessionSurface probe", () => {
     // Facade on TaskExecutor must forward to the free function (or call the probe).
-    const facadeSource = stripComments(readSource(EXECUTOR));
+    const facadeSource = stripComments(readSource(EXECUTOR_SESSION_FACADES));
     const facadeStart = facadeSource.indexOf("clearPhantomExecutorBinding(taskId: string");
     expect(facadeStart, "clearPhantomExecutorBinding not found in executor source").toBeGreaterThan(-1);
     const facadeBody = facadeSource.slice(facadeStart, facadeStart + 1200);
@@ -224,7 +230,7 @@ describe("FN-6756 liveness-gate ratchet", () => {
   */
   it("hasLiveSessionSurface counts registered session paths, not just executor maps", () => {
     // Facade must remain on TaskExecutor (public API for self-healing wiring).
-    const facadeSource = stripComments(readSource(EXECUTOR));
+    const facadeSource = stripComments(readSource(EXECUTOR_SESSION_FACADES));
     const facadeStart = facadeSource.indexOf("hasLiveSessionSurface(taskId: string): boolean");
     expect(facadeStart, "hasLiveSessionSurface not found — the probe was removed or renamed").toBeGreaterThan(-1);
     /*

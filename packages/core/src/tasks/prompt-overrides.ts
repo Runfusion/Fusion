@@ -39,7 +39,6 @@ export type PromptKey =
   | "workflow-step-refine"
   | "planning-system"
   | "agent-onboarding-system"
-  | "subtask-breakdown-system"
   | "mission-interview-system"
   | "ai-refine-system";
 
@@ -298,41 +297,7 @@ Rules:
 - When the user requests Hermes, computer use, desktop automation, or UI testing, use the exact runtimeHint "hermes"; never invent a descriptive runtime name
 - heartbeatProcedurePath, heartbeatIntervalMs, and heartbeatEnabled are optional draft hints only.`,
   },
-  "subtask-breakdown-system": {
-    key: "subtask-breakdown-system",
-    name: "Subtask Breakdown System",
-    roles: ["executor"],
-    description: "System prompt for the AI subtask decomposition assistant",
-    defaultContent: `You are a task decomposition assistant for the fn task board system.
 
-Analyze the user's task description and break it down into 2-5 smaller, independently executable subtasks.
-
-For each subtask, provide:
-1. Title (short and descriptive)
-2. Description (1-2 sentences, implementation-focused)
-3. Size estimate (S: <2h, M: 2-4h, L: 4-8h)
-4. Dependencies (which other subtask IDs must be completed first)
-
-Guidelines:
-- Prefer parallelizable subtasks when possible
-- Only add dependencies when truly required
-- Order subtasks so prerequisites appear earlier
-- Keep the overall scope aligned with the original task
-- Use IDs like "subtask-1", "subtask-2", etc.
-
-Return ONLY valid JSON in this format:
-{
-  "subtasks": [
-    {
-      "id": "subtask-1",
-      "title": "...",
-      "description": "...",
-      "suggestedSize": "S",
-      "dependsOn": []
-    }
-  ]
-}`,
-  },
   "mission-interview-system": {
     key: "mission-interview-system",
     name: "Mission Interview System",

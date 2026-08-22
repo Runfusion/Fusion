@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
-import type { AgentCapability, PlanningQuestion, TaskStore } from "@fusion/core";
+import type { AgentCapability, PlanningQuestion, TaskStore, ThinkingLevel } from "@fusion/core";
 import { resolvePrompt, type PromptOverrideMap } from "@fusion/core";
 import { buildSessionSkillContextSync, createFnAgent as engineCreateFnAgent, resolveMcpServersForStore } from "@fusion/engine";
 import { SessionEventBuffer, type SessionBufferedEvent } from "./sse-buffer.js";
@@ -9,7 +9,7 @@ export interface AgentOnboardingSummary {
   name: string;
   role: AgentCapability | "custom";
   instructionsText: string;
-  thinkingLevel: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+  thinkingLevel: ThinkingLevel;
   maxTurns: number;
   title?: string;
   icon?: string;
@@ -42,7 +42,7 @@ export interface ExistingAgentOnboardingConfig {
   reportsTo?: string;
   skills?: string[];
   model?: string;
-  thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+  thinkingLevel?: ThinkingLevel;
   maxTurns?: number;
   runtimeHint?: string;
   heartbeatIntervalMs?: number;
@@ -99,7 +99,7 @@ When ready, return a final summary JSON in this exact format:
 
 Rules:
 - role must be one of triage|executor|reviewer|merger|scheduler|engineer|custom
-- thinkingLevel must be off|minimal|low|medium|high
+- thinkingLevel must be one of off|minimal|low|medium|high|xhigh|max; model-bound controls may narrow this list from registry metadata
 - maxTurns must be a positive integer
 - Use instructionsText for starter operating guidance/playbook content; do not create a separate playbook field
 - Prefer structuring instructionsText with these markdown sections when drafting: ## Description, ## Expertise, ## Priorities, ## Boundaries, ## Communication, ## Collaboration & Escalation

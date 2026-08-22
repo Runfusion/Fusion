@@ -1,14 +1,14 @@
 import { exec, execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { constants, copyFileSync, existsSync, linkSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmdirSync, unlinkSync } from "node:fs";
+import { constants, copyFileSync, existsSync, linkSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, rmdirSync, unlinkSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve, isAbsolute } from "node:path";
-import type { SecretsStore, Settings, TaskStore, WorktrunkSettings } from "@fusion/core";
+import type { SecretsStore, Settings, TaskStore, WorktrunkSettings, WorkspaceWorktreeContext } from "@fusion/core";
 import { assertCleanBranchAtBase, inspectBranchConflict } from "../execution/branch-conflicts.js";
 import { worktreePoolLog } from "../logger.js";
 /*
 */
-import { isInsideConfiguredWorktreesDir, isWorktreeContainerDir, WORKTREE_RECOVERY_DIRNAME, resolveWorktreesDir } from "./worktree-paths.js";
+import { isInsideConfiguredWorktreesDir, isReclaimableWorktreeCandidate, isWorktreeContainerDir, WORKTREE_RECOVERY_DIRNAME, resolveWorktreesDir } from "./worktree-paths.js";
 import { canonicalFusionBranchName } from "./worktree-names.js";
 import {
   resolveWorktrunkBinary,
@@ -419,8 +419,9 @@ export function isInsideWorktreesDir(
   rootDir: string,
   worktreePath: string,
   settings?: Pick<Settings, "worktreesDir">,
+  workspaceContext?: WorkspaceWorktreeContext,
 ): boolean {
-  return isInsideConfiguredWorktreesDir(rootDir, settings, worktreePath);
+  return isInsideConfiguredWorktreesDir(rootDir, settings, worktreePath, workspaceContext);
 }
 
 export type ReclaimableWorktreePlacement =
@@ -708,7 +709,7 @@ export class WorktreePool {
     worktreePath: string,
     branchName: string,
     startPoint?: string,
-    options?: { allowSiblingBranchRename?: boolean; repoDir?: string; requestingTaskId?: string },
+    options?: { allowSiblingBranchRename?: boolean; repoDir?: string; requestingTaskId?: string; branchOrigin?: "engine-canonical" | "group-derived" | "operator-supplied" },
   ): Promise<PrepareForTaskResult> {
     // Clean tracked modifications
     try {
@@ -761,6 +762,21 @@ export class WorktreePool {
       }
     }
     const taskId = deriveTaskIdFromBranch(branchName);
+    /*
+    FNXC:WorkspaceBranches 2026-08-20-04:18:
+    Recycling must not turn an operator's requested branch into a new branch at the base. When the
+    branch already exists, attach it intact; Git continues to refuse a live checkout in another worktree.
+    */
+    if (options?.branchOrigin === "operator-supplied") {
+      const branchExists = await execAsync(`git show-ref --verify --quiet "refs/heads/${branchName}"`, { cwd: worktreePath })
+        .then(() => true)
+        .catch(() => false);
+      if (branchExists) {
+        // A checkout failure here is intentional: Git preserves its live-worktree refusal.
+        await execAsync(`git checkout "${branchName}"`, { cwd: worktreePath });
+        return { branch: branchName, worktreePath, reclaimed: false };
+      }
+    }
     try {
       await execAsync(checkoutCmd, {
         cwd: worktreePath,
@@ -881,8 +897,13 @@ export class WorktreePool {
 export async function scanIdleWorktrees(
   rootDir: string,
   store: TaskStore,
-  settings?: Pick<Settings, "worktreesDir">,
+  settings?: Pick<Settings, "worktreesDir" | "workspaceMode">,
 ): Promise<string[]> {
+  /* FNXC:WorkspaceWorktree 2026-08-20-01:20: Group containers are not task worktrees; workspace cleanup uses recorded member paths rather than directory walking. */
+  if (settings?.workspaceMode) {
+    worktreePoolLog.debug?.("Skipping directory walk for workspace worktrees; recorded paths are reclaimed addressably.");
+    return [];
+  }
   const worktreesDir = resolveWorktreesDir(rootDir, settings);
 
   if (!existsSync(worktreesDir)) {
@@ -902,9 +923,10 @@ export async function scanIdleWorktrees(
     return [];
   }
 
-  if (dirs.length === 0) {
-    return [];
-  }
+  dirs = (await Promise.all(dirs.map(async (dir) =>
+    (await isReclaimableWorktreeCandidate(dir, { rootDir })) ? dir : null,
+  ))).filter((dir): dir is string => dir !== null);
+  if (dirs.length === 0) return [];
 
   const registeredWorktrees = await getRegisteredWorktreePaths(rootDir);
   const registeredDirs = dirs.filter((dir) => registeredWorktrees.has(resolve(dir)));
@@ -967,8 +989,12 @@ export async function scanIdleWorktrees(
 export async function cleanupOrphanedWorktrees(
   rootDir: string,
   store: TaskStore,
-  settings?: Pick<Settings, "worktreesDir">,
+  settings?: Pick<Settings, "worktreesDir" | "workspaceMode">,
 ): Promise<number> {
+  if (settings?.workspaceMode) {
+    worktreePoolLog.debug?.("Skipping workspace orphan sweep; recorded paths are reclaimed addressably.");
+    return 0;
+  }
   const worktreesDir = resolveWorktreesDir(rootDir, settings);
   if (!existsSync(worktreesDir)) {
     return 0;
@@ -977,9 +1003,35 @@ export async function cleanupOrphanedWorktrees(
   const orphaned = await scanIdleWorktrees(rootDir, store, settings);
   const registeredWorktrees = await getRegisteredWorktreePaths(rootDir);
 
+  // FNXC:WorktreeMerge KB-001 2026-08-22-04:20:
+  // Dual-semantics merge resolution: main's newer sweep added a directory scan
+  // that also collects UNREGISTERED but reclaimable worktree candidates via
+  // isReclaimableWorktreeCandidate, while this branch's dirty-orphan preservation
+  // governs how every candidate is removed. Keep both: the scan block from main,
+  // and the branch's removal path (secrets-env cleanup + preserveGeneratedResidue
+  // before any probe/removal, restore on failure) now applied to the combined
+  // candidate list instead of only recorded orphans.
+  let dirs: string[] = [];
+  if (existsSync(worktreesDir)) {
+    try {
+      dirs = readdirSync(worktreesDir, { withFileTypes: true })
+        .filter((e) => e.isDirectory() && !isWorktreeContainerDir(e.name))
+        .map((e) => join(worktreesDir, e.name));
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      worktreePoolLog.warn(`Failed to read .worktrees/ directory for cleanup: ${errorMessage}`);
+      dirs = [];
+    }
+  }
+
+  const ownedDirs = (await Promise.all(dirs.map(async (dir) =>
+    (await isReclaimableWorktreeCandidate(dir, { rootDir })) ? dir : null,
+  ))).filter((dir): dir is string => dir !== null);
+  const unregistered = ownedDirs.filter((dir) => !registeredWorktrees.has(resolve(dir)));
+  const candidates = [...orphaned, ...unregistered];
   let cleaned = 0;
 
-  for (const worktreePath of orphaned) {
+  for (const worktreePath of candidates) {
     try {
       if (registeredWorktrees.has(resolve(worktreePath))) {
         // FNXC:WorktreeCleanup 2026-08-15-19:00:
@@ -1023,7 +1075,7 @@ export async function cleanupOrphanedWorktrees(
             rootDir,
             worktreePath,
             settings: settings ?? {},
-            reason: RemovalReason.SelfHealingIdleSweep,
+            reason: RemovalReason.PoolPrune,
           });
         } catch (error) {
           try {
@@ -1036,7 +1088,41 @@ export async function cleanupOrphanedWorktrees(
           throw error;
         }
       } else {
-        continue;
+        // FNXC:WorktreeMerge KB-001 2026-08-22-04:20:
+        // Ported main's unregistered-candidate removal onto the branch's
+        // preservation discipline: generated residue leaves the path before the
+        // rmSync probe (so --ignored-style content checks never delete user data)
+        // and is restored if the removal fails. Main's containment guard
+        // (isInsideWorktreesDir) is kept verbatim.
+        if (!isInsideWorktreesDir(rootDir, worktreePath, settings)) {
+          throw new Error(`Refusing to remove path outside .worktrees: ${worktreePath}`);
+        }
+        let restoreUnregisteredResidue: (() => Promise<void>) | undefined;
+        try {
+          restoreUnregisteredResidue = await preserveGeneratedResidue(worktreePath, rootDir, worktreePoolLog);
+        } catch (error) {
+          worktreePoolLog.warn(
+            `generated-residue preservation failed for unregistered orphan ${worktreePath}: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+        try {
+          rmSync(worktreePath, { recursive: true, force: true });
+        } catch (error) {
+          try {
+            await restoreUnregisteredResidue?.();
+          } catch (restoreError) {
+            worktreePoolLog.warn(
+              `generated-residue restore failed for unregistered orphan ${worktreePath}: ${restoreError instanceof Error ? restoreError.message : String(restoreError)}`,
+            );
+          }
+          throw error;
+        }
+        await pruneWorktreeAdminEntries({
+          rootDir,
+          reason: "pool-cleanup-orphan",
+          target: worktreePath,
+          logger: worktreePoolLog,
+        }).catch(() => undefined);
       }
       worktreePoolLog.log(`Cleaned up orphaned worktree: ${worktreePath}`);
       cleaned++;
@@ -1235,8 +1321,12 @@ function restoreReplacedDotGit(dotGit: string, dotGitDelete: string, dotGitStash
 
 export async function reapOrphanWorktrees(
   projectRoot: string,
-  settings?: Pick<Settings, "worktreesDir">,
+  settings?: Pick<Settings, "worktreesDir" | "workspaceMode">,
 ): Promise<number> {
+  if (settings?.workspaceMode) {
+    worktreePoolLog.debug?.("Skipping workspace orphan reaping; recorded paths are reclaimed addressably.");
+    return 0;
+  }
   const worktreesDir = resolveWorktreesDir(projectRoot, settings);
 
   if (!existsSync(worktreesDir)) {
@@ -1249,7 +1339,7 @@ export async function reapOrphanWorktrees(
     entries = readdirSync(worktreesDir, { withFileTypes: true })
       .filter((e) => {
         // Only real directories — never symlinks or internal worktree containers.
-        if (!e.isDirectory() || isWorktreeContainerDir(e.name)) return false;
+        if (!e.isDirectory() || isWorktreeContainerDir(e.name) || !existsSync(join(worktreesDir, e.name, ".git"))) return false;
         try {
           return lstatSync(join(worktreesDir, e.name)).isDirectory() && !lstatSync(join(worktreesDir, e.name)).isSymbolicLink();
         } catch {
@@ -1263,6 +1353,10 @@ export async function reapOrphanWorktrees(
     return 0;
   }
 
+  if (entries.length === 0) return 0;
+  entries = (await Promise.all(entries.map(async (entry) =>
+    (await isReclaimableWorktreeCandidate(entry.fullPath, { rootDir: projectRoot })) ? entry : null,
+  ))).filter((entry): entry is { name: string; fullPath: string } => entry !== null);
   if (entries.length === 0) return 0;
 
   // Get the set of paths registered with git

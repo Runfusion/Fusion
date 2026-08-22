@@ -52,6 +52,23 @@ export interface WorkflowReviewFinding {
   resolution?: WorkflowReviewFindingResolution;
 }
 
+/*
+FNXC:RepositoryScope 2026-08-21-02:17:
+Workspace review aggregates must retain repository identity, review input, and verdict data as structured task state. Rendered prose is not a remediation or merge authority because clean repositories have no verdict and identical feedback can describe different diffs.
+*/
+export interface WorkflowRepositoryReviewOutcome {
+  repository: string;
+  status: "REVIEWED" | "NOT_REVIEWED";
+  verdict?: "APPROVE" | "APPROVE_WITH_NOTES" | "REVISE" | "RETHINK" | "UNAVAILABLE";
+  findings?: WorkflowReviewFinding[];
+  output?: string;
+  fingerprint?: string;
+  /** Stable identifier for the single reviewer session that produced this record. */
+  episodeId: string;
+  scopeRevision?: number;
+  reviewedAt: string;
+}
+
 /** Lifecycle phase for workflow step execution. */
 export type WorkflowStepPhase = "pre-merge" | "post-merge";
 
@@ -280,6 +297,10 @@ export interface WorkflowStepResult {
   output?: string;
   /** Normalized structured advisory findings from an explicitly classified review node. */
   findings?: WorkflowReviewFinding[];
+  /** Per-repository review records for workspace code-review nodes; clean peers carry NOT_REVIEWED without a verdict. */
+  repositoryReviewOutcomes?: WorkflowRepositoryReviewOutcome[];
+  /** Confirmed repository-scope generation that supplied the workspace review input. */
+  repositoryScopeRevision?: number;
   /** Prior result containing the finding IDs this review step explicitly declared superseded. */
   supersededFindingSourceWorkflowStepId?: string;
   /** Prior-lane finding IDs this review step explicitly declared superseded; audit-only. */

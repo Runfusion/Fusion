@@ -150,6 +150,25 @@ describe("ProjectEngineManager", () => {
       );
     });
 
+    it("uses the live scoped settings blob over a stale registry snapshot at runtime startup", async () => {
+      const liveStore = {
+        getRootDir: () => "/mapped/proj_aaa",
+        getSettingsFast: vi.fn().mockResolvedValue({ maxConcurrent: 6 }),
+      } as any;
+      const staleProject = { ...projectA, settings: {} } as RegisteredProject;
+      (centralCore.getProject as ReturnType<typeof vi.fn>).mockResolvedValue(staleProject);
+      const manager = new ProjectEngineManager(centralCore, { externalTaskStore: liveStore });
+
+      await manager.ensureEngine("proj_aaa");
+
+      expect(liveStore.getSettingsFast).toHaveBeenCalledOnce();
+      expect(ProjectEngine).toHaveBeenLastCalledWith(
+        expect.objectContaining({ maxConcurrent: 6 }),
+        centralCore,
+        expect.any(Object),
+      );
+    });
+
     it("returns existing engine on repeated calls", async () => {
       const manager = new ProjectEngineManager(centralCore);
       const engine1 = await manager.ensureEngine("proj_aaa");

@@ -5,6 +5,7 @@ import { resolveWorkflowIrForTask } from "../workflows/workflow-ir-resolver.js";
 
 export type TaskMoveSource = "user" | "engine" | "scheduler";
 export type TaskMoveDisposer = (task: Task) => Promise<void>;
+export type TaskResetDisposer = TaskMoveDisposer;
 
 export interface TaskMoveDisposalInput {
   task: Task;
@@ -118,6 +119,30 @@ export async function disposeTaskBeforeMove(store: TaskStore, input: TaskMoveDis
       new Promise<void>((_resolve, reject) => {
         timeout = setTimeout(() => {
           reject(new Error(`Timed out stopping active work for ${input.task.id} before moving to Todo`));
+        }, taskMoveDisposalTimeoutMs);
+        timeout.unref?.();
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
+/*
+FNXC:TaskReset 2026-08-19-06:30:
+Reset is a destructive fresh-planning boundary, so it fences every registered runtime owner regardless of the task's current column before filesystem cleanup begins. The timeout is fail-closed: worktree and plan deletion never starts while an executor, agent, CLI, or planner still holds the task.
+*/
+export async function disposeTaskBeforeReset(store: TaskStore, task: Task): Promise<void> {
+  const disposer = getTaskMoveDisposer(store);
+  if (!disposer) return;
+
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      disposer(task),
+      new Promise<void>((_resolve, reject) => {
+        timeout = setTimeout(() => {
+          reject(new Error(`Timed out stopping active work for ${task.id} before resetting the task`));
         }, taskMoveDisposalTimeoutMs);
         timeout.unref?.();
       }),

@@ -11,6 +11,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { isFullScreenSheetViewport, isShortViewport, isTabletTouchViewport, useViewportMode } from "../hooks/useViewportMode";
 import { currentFloatingZ, currentTaskDetailFloatingZ, nextFloatingZ, nextTaskDetailFloatingZ } from "./floatingWindowStack";
 import { isInsidePortalSafeSurface } from "../utils/portalSurfaces";
@@ -211,6 +212,7 @@ export function FloatingWindow({
   ariaLabel,
   ariaLabelledBy,
 }: FloatingWindowProps) {
+  const { t } = useTranslation("app");
   const resolvedMinSize: FloatingWindowSize = minSize ?? { width: DEFAULT_MIN_WIDTH, height: DEFAULT_MIN_HEIGHT };
   const viewportMode = useViewportMode();
   /*
@@ -224,14 +226,15 @@ export function FloatingWindow({
   FNXC:ModalTouchGeometry 2026-08-01-04:23:
   NAMING CONTRACT — FloatingWindow has two distinct tablet markers; do not conflate them:
   - `floating-window--tablet-viewport`: the viewport MODE classifies as tablet (769-1024px
-    width OR a known 768px touch tablet), touch or not. Pure styling surface — currently the
-    FN-8015 gutter zeroing lives here.
+    width OR a known 768px touch tablet), touch or not. Pure styling surface.
   - `floating-window--touch-geometry`: tablet AND touch-capable (`isTabletTouchViewport`) —
     enlarged 44px drag/resize targets only.
-  A 900px non-touch window is `--tablet-viewport` but NOT `--touch-geometry`, and operators
-  still see the FN-8015 scrollbar gutter as an uneven right inset there (third recurrence of
-  the Task Detail right-padding bug — FN-8630/FN-8634 fixed only the `.modal-overlay` shells,
-  while every tablet task popup and floating terminal renders through THIS host).
+  A 900px non-touch window is `--tablet-viewport` but NOT `--touch-geometry`; the marker exists so
+  such a window still gets tablet STYLING. It used to carry FN-8015's gutter zeroing, because that
+  shared gutter read as an uneven right inset on tablet (third recurrence of the Task Detail
+  right-padding bug — FN-8630/FN-8634 fixed only the `.modal-overlay` shells, while every tablet
+  task popup and floating terminal renders through THIS host). The gutter is deleted outright as of
+  2026-08-17, so no gutter zeroing hangs off this class any more.
   */
   const isTabletViewportMode = viewportMode === "tablet";
   const initialGeometry = useRef<{ size: FloatingWindowSize; position: FloatingWindowPosition } | null>(null);
@@ -660,7 +663,7 @@ export function FloatingWindow({
             data-testid={`floating-window-resize-${direction}`}
             {...(hasTabletTouchGeometry ? { "data-resize-hit-target": "true" } : {})}
             role="separator"
-            aria-label="Resize floating window"
+            aria-label={t("floatingWindow.resize", "Resize floating window")}
             onPointerDown={(event) => handleResizePointerDown(event, direction)}
           />
         ))}
@@ -676,7 +679,7 @@ export function FloatingWindow({
               type="button"
               className="floating-window__close"
               onClick={onClose}
-              aria-label="Close floating window"
+              aria-label={t("floatingWindow.close", "Close floating window")}
               data-testid={`floating-window-close-${windowKey}`}
             >
               <X size={18} />

@@ -25,8 +25,6 @@ import { __resetBatchImportRateLimiter, __setCreateFnAgentForRefine } from "../r
 import * as agentGenerationModule from "../agent-generation.js";
 import { __resetPlanningState, __setCreateFnAgent, planningStreamManager } from "../planning.js";
 import * as planningModule from "../planning.js";
-import { __resetSubtaskBreakdownState, subtaskStreamManager } from "../subtask-breakdown.js";
-import * as subtaskBreakdownModule from "../subtask-breakdown.js";
 import { SESSION_CLEANUP_DEFAULT_MAX_AGE_MS } from "../ai-session-store.js";
 import * as usageModule from "../usage.js";
 import * as claudeCliProbeModule from "../claude-cli-probe.js";
@@ -820,7 +818,7 @@ describe("Automation routes", () => {
         ],
       }), { "Content-Type": "application/json" });
       expect(res.status).toBe(400);
-      expect(res.body.error).toContain("thinkingLevel must be one of off, minimal, low, medium, high, xhigh");
+      expect(res.body.error).toContain("thinkingLevel must be one of off, minimal, low, medium, high, xhigh, max");
     });
 
     it("returns 400 for missing name", async () => {
@@ -2102,7 +2100,7 @@ describe("Routine routes", () => {
         ],
       }), { "Content-Type": "application/json" });
       expect(res.status).toBe(400);
-      expect(res.body.error).toContain("thinkingLevel must be one of off, minimal, low, medium, high, xhigh");
+      expect(res.body.error).toContain("thinkingLevel must be one of off, minimal, low, medium, high, xhigh, max");
     });
 
     it("creates a routine with webhook trigger (requires secret)", async () => {

@@ -163,7 +163,6 @@ function buildModalManager(overrides: Partial<ModalManager> = {}): ModalManager 
     resumePlanning: noop,
     openPlanningWithSession: noop,
     closePlanning: noop,
-    openSubtaskBreakdown: noop,
     openSubtaskWithSession: noop,
     closeSubtask: noop,
     openDetailTask: noop,

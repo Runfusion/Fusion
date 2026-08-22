@@ -9,6 +9,7 @@ import {
   registerSettingsMemoryRoutes,
 } from "../register-settings-memory-routes.js";
 import { request as performRequest } from "../../test-request.js";
+import * as sse from "../../sse.js";
 
 const {
   resolveWorktrunkBinaryMock,
@@ -94,6 +95,11 @@ function createApp(pluginRunner?: Record<string, unknown>, daemonToken?: string)
     {
       githubToken: undefined,
       validateModelPresets: vi.fn(() => undefined),
+      sanitizeBooleanSetting: vi.fn((name: string, value: unknown) => {
+        if (value === undefined || value === null) return undefined;
+        if (typeof value !== "boolean") throw new Error(`${name} must be a boolean`);
+        return value;
+      }),
       sanitizeOverlapIgnorePaths: vi.fn(() => undefined),
       discoverDashboardPiExtensions: vi.fn(async () => ({
         manifestPaths: [],
@@ -180,6 +186,65 @@ describe("register-settings-memory-routes worktrunk gate", () => {
     expect(resolveWorktrunkBinaryMock).not.toHaveBeenCalled();
     expect(probeWorktrunkMock).not.toHaveBeenCalled();
     expect(scopedStore.updateSettings).toHaveBeenCalledTimes(1);
+  });
+
+  it("sanitizes required recommendation policy as a project boolean", async () => {
+    const { app, scopedStore } = createApp();
+
+    expect((await patchSettings(app, { requireTaskRecommendations: true })).status).toBe(200);
+    expect(scopedStore.updateSettings).toHaveBeenCalledWith(
+      { requireTaskRecommendations: true },
+      expect.anything(),
+    );
+
+    scopedStore.updateSettings.mockClear();
+    expect((await patchSettings(app, { requireTaskRecommendations: false })).status).toBe(200);
+    expect(scopedStore.updateSettings).toHaveBeenCalledWith(
+      { requireTaskRecommendations: false },
+      expect.anything(),
+    );
+
+    scopedStore.updateSettings.mockClear();
+    const malformed = await patchSettings(app, { requireTaskRecommendations: "true" });
+    expect(malformed.status).toBe(400);
+    expect(malformed.body.error).toContain("requireTaskRecommendations must be a boolean");
+    expect(scopedStore.updateSettings).not.toHaveBeenCalled();
+  });
+
+  it("rejects an empty built-in workflow set before persistence", async () => {
+    const { app, scopedStore } = createApp();
+
+    const res = await patchSettings(app, { enabledBuiltinWorkflowIds: [] });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("at least one built-in workflow");
+    expect(scopedStore.updateSettings).not.toHaveBeenCalled();
+  });
+
+  it("accepts a single valid built-in workflow", async () => {
+    const { app, scopedStore } = createApp();
+
+    const res = await patchSettings(app, { enabledBuiltinWorkflowIds: ["builtin:quick-fix"] });
+
+    expect(res.status).toBe(200);
+    expect(scopedStore.updateSettings).toHaveBeenCalledWith(
+      { enabledBuiltinWorkflowIds: ["builtin:quick-fix"] },
+      { kind: "api", id: "http:unverified" },
+    );
+  });
+
+  it("emits one workflow invalidation only after enablement persistence", async () => {
+    const { app } = createApp();
+    const emit = vi.spyOn(sse, "emitWorkflowSseEvent");
+
+    expect((await patchSettings(app, { autoMerge: true })).status).toBe(200);
+    expect(emit).not.toHaveBeenCalled();
+    const res = await patchSettings(app, { enabledBuiltinWorkflowIds: ["builtin:quick-fix"] });
+
+    expect(res.status).toBe(200);
+    expect(emit).toHaveBeenCalledTimes(1);
+    expect(emit).toHaveBeenCalledWith("workflow:updated", { reason: "enabledBuiltinWorkflowIds" }, "p1");
+    emit.mockRestore();
   });
 
   it("rejects recycleWorktrees + worktreeNaming:task-id together (mutually exclusive) with 400", async () => {

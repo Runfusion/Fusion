@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { Settings, TaskDetail, WorkflowIr, WorkflowWorkItem, WorkflowWorkItemState } from "@fusion/core";
 
 import { WorkflowTaskRuntime, type WorkflowTaskRuntimeDeps } from "../workflows/workflow-task-runtime.js";
+import { buildWorkflowCompletionSummary } from "../workflows/workflow-completion-summary.js";
 import type { WorkflowNodeResult } from "../workflows/workflow-graph-executor.js";
 import type { PreparedWorktree, WorkflowRuntimePrimitives } from "../execution/runtime-primitives.js";
 
@@ -223,6 +224,28 @@ describe("WorkflowTaskRuntime", () => {
     expect(logs).toEqual([
       expect.objectContaining({ taskId: task.id, action: "Workflow completion summary recorded" }),
     ]);
+  });
+
+  it("localizes every deterministic fallback clause from the input snapshot", () => {
+    const summary = buildWorkflowCompletionSummary({
+      id: task.id,
+      title: "Titre généré",
+      description: "Necesito resumir este flujo.",
+      steps: [{ title: "Étape", status: "done" }],
+      workflowStepResults: [{ status: "passed" }],
+      modifiedFiles: ["src/flux.ts"],
+    } as TaskDetail, {
+      reason: "workflow-runtime-completed",
+      settings: { taskOutputLanguage: "interface", language: "fr" },
+      originalInput: "Necesito resumir este flujo.",
+    });
+
+    expect(summary).toContain("Flux de travail terminé");
+    expect(summary).toContain("Étapes de tâche terminées : 1/1.");
+    expect(summary).toContain("Contrôles du flux de travail réussis ou ignorés : 1/1.");
+    expect(summary).toContain("Fichiers modifiés : src/flux.ts.");
+    expect(summary).toContain("Source de fin : workflow-runtime-completed.");
+    expect(summary).not.toContain("Completion source");
   });
 
   it("preserves an existing workflow completion summary", async () => {

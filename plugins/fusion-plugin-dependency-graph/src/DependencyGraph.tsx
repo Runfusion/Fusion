@@ -31,7 +31,6 @@ export interface DependencyGraphProps {
   onDeleteTask?: (id: string, options?: { removeDependencyReferences?: boolean }) => Promise<Task>;
   onRetryTask?: (id: string) => Promise<Task>;
   onOpenDetailWithTab?: (task: Task, initialTab: "changes") => void;
-  taskStuckTimeoutMs?: number;
   onOpenMission?: (missionId: string) => void;
   onMoveTask?: (id: string, column: Task["column"], optionsOrPosition?: { preserveProgress?: boolean } | number) => Promise<Task>;
   lastFetchTimeMs?: number;
@@ -53,7 +52,6 @@ export function DependencyGraph({
   onDeleteTask,
   onRetryTask,
   onOpenDetailWithTab,
-  taskStuckTimeoutMs,
   onOpenMission,
   onMoveTask,
   lastFetchTimeMs,
@@ -500,7 +498,6 @@ export function DependencyGraph({
                     onDeleteTask={onDeleteTask}
                     onRetryTask={onRetryTask}
                     onOpenDetailWithTab={onOpenDetailWithTab}
-                    taskStuckTimeoutMs={taskStuckTimeoutMs}
                     onOpenMission={onOpenMission}
                     onMoveTask={onMoveTask}
                     lastFetchTimeMs={lastFetchTimeMs}

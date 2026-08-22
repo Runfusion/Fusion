@@ -7,6 +7,7 @@ import { SettingsSelectRow } from "../SettingsSelectRow";
 import { SettingsNumberRow } from "../SettingsNumberRow";
 import { SettingsTextRow } from "../SettingsTextRow";
 import { SettingsHelpTip } from "../SettingsHelpTip";
+import { WorkspaceReposCard } from "./WorkspaceReposCard";
 import { ReportActionMenu } from "../../ReportActionMenu";
 import { ReportModal } from "../../ReportModal";
 import { resolveReportContextRefs } from "../../../utils/reportContextRefs";
@@ -128,10 +129,18 @@ export function GeneralSection({ form, setForm, projectId, addToast, prefixError
         const configured = Array.isArray(form.enabledBuiltinWorkflowIds) ? form.enabledBuiltinWorkflowIds : undefined;
         return new Set(configured ?? builtinWorkflows.map((workflow) => workflow.id));
     }, [builtinWorkflows, form.enabledBuiltinWorkflowIds]);
+    const enabledBuiltinWorkflowCount = builtinWorkflows.filter((workflow) => enabledBuiltinWorkflowIds.has(workflow.id)).length;
     const setBuiltinWorkflowEnabled = (workflowId: string, enabled: boolean) => {
         setForm((f) => {
             const allIds = builtinWorkflows.map((workflow) => workflow.id);
             const current = new Set(Array.isArray(f.enabledBuiltinWorkflowIds) ? f.enabledBuiltinWorkflowIds : allIds);
+            const currentEnabledCount = allIds.filter((id) => current.has(id)).length;
+            /*
+            FNXC:DisabledBuiltinWorkflows 2026-08-19-00:18:
+            The form itself enforces the persistence invariant, including callers
+            that invoke the setter without clicking the disabled final checkbox.
+            */
+            if (!enabled && current.has(workflowId) && currentEnabledCount <= 1) return f;
             if (enabled) {
                 current.add(workflowId);
             }
@@ -192,6 +201,17 @@ export function GeneralSection({ form, setForm, projectId, addToast, prefixError
         value={form.maxRecommendationsPerTask ?? 3}
         onChange={(value) => setForm((current) => ({ ...current, maxRecommendationsPerTask: value ?? 3 }))}
       />
+      {/* FNXC:TaskRecommendations 2026-08-19-13:05: A single shared project toggle makes completion evaluation mandatory only for positive caps; relevance wins over filling the configured maximum, and cap 0 remains authoritative. */}
+      <SettingsToggleRow
+        descriptor={{
+          key: "requireTaskRecommendations",
+          label: t("settings.general.requireTaskRecommendations", "Require automatic task recommendations"),
+          help: t("settings.general.requireTaskRecommendationsHelp", "Default: disabled. When enabled, successful completion must explicitly evaluate grounded follow-ups. The executor aims toward the configured maximum, but fewer or [] are correct when relevance does not support more; cap 0 disables capture regardless of this setting."),
+          scope: "project",
+        }}
+        value={form.requireTaskRecommendations === true}
+        onChange={(value) => setForm((current) => ({ ...current, requireTaskRecommendations: value === true }))}
+      />
       {/*
         FNXC:TaskRecommendations 2026-08-13-03:56:
         The operator asked to be notified in the mailbox when a completed task produces
@@ -250,11 +270,16 @@ export function GeneralSection({ form, setForm, projectId, addToast, prefixError
             <SettingsHelpTip settingKey="enabledBuiltinWorkflowIds">{t("settings.general.disabledFusionWorkflowsAreHiddenFromWorkflow", "Disabled Fusion workflows are hidden from workflow pickers. Existing tasks that already use one continue to resolve. Default: all built-in workflows enabled (unset).")}</SettingsHelpTip>
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-sm)" }}>
-            {builtinWorkflows.map((workflow) => (<label key={workflow.id} htmlFor={`builtin-workflow-${workflow.id}`} className="checkbox-label">
-                <input id={`builtin-workflow-${workflow.id}`} type="checkbox" checked={enabledBuiltinWorkflowIds.has(workflow.id)} onChange={(e) => setBuiltinWorkflowEnabled(workflow.id, e.target.checked)}/>
+            <span id="builtin-workflow-enablement-hint" className="sr-only">{t("settings.general.builtinWorkflowAtLeastOneEnabled", "At least one built-in workflow must remain enabled.")}</span>
+            {builtinWorkflows.map((workflow) => {
+                const checked = enabledBuiltinWorkflowIds.has(workflow.id);
+                const isLastEnabled = checked && enabledBuiltinWorkflowCount <= 1;
+                return (<label key={workflow.id} htmlFor={`builtin-workflow-${workflow.id}`} className="checkbox-label" title={isLastEnabled ? t("settings.general.builtinWorkflowAtLeastOneEnabled", "At least one built-in workflow must remain enabled.") : undefined}>
+                <input id={`builtin-workflow-${workflow.id}`} type="checkbox" checked={checked} disabled={isLastEnabled} aria-describedby="builtin-workflow-enablement-hint" onChange={(e) => setBuiltinWorkflowEnabled(workflow.id, e.target.checked)}/>
                 <WorkflowIcon workflowId={workflow.id} decorative />
                 <span>{workflow.name}</span>
-              </label>))}
+              </label>);
+            })}
           </div>
         </div>)}
       <div className="form-group">
@@ -350,6 +375,8 @@ export function GeneralSection({ form, setForm, projectId, addToast, prefixError
         value={form.workspaceMode === true}
         onChange={(v) => setForm((f) => ({ ...f, workspaceMode: v === true }))}
       />
+      {/* FNXC:Workspace 2026-08-20-02:03: Membership remains editable after registration; the mode toggle alone never adds repository members. */}
+      <WorkspaceReposCard projectId={projectId} />
       {/*
         FNXC:FileBrowser 2026-06-29-00:00:
         This project-scoped General toggle is intentionally default-off because slash-prefixed file-browser paths can browse outside the workspace. It only affects workspace file-browser routes and keeps task-local file APIs and other path validators confined.

@@ -38,6 +38,27 @@ const reviseInfo = {
   verdict: "REVISE",
 };
 
+function workspaceReviseResult(fingerprint: string, output: string, priorAttempts?: NonNullable<Task["workflowStepResults"]>[number]["priorAttempts"]) {
+  return {
+    workflowStepId: "code-review",
+    workflowStepName: "Code Review",
+    status: "advisory_failure" as const,
+    verdict: "REVISE" as const,
+    output,
+    repositoryScopeRevision: 3,
+    repositoryReviewOutcomes: [{
+      repository: "repo-a",
+      status: "REVIEWED" as const,
+      verdict: "REVISE" as const,
+      fingerprint,
+      findings: [{ id: "finding-1", title: "Missing guard", body: "Validate repository scope." }],
+      episodeId: "episode-1",
+      reviewedAt: "2026-08-21T02:17:00.000Z",
+    }],
+    priorAttempts,
+  };
+}
+
 function revisionLog(stepName: string, key: string, attempt: number) {
   return {
     timestamp: new Date().toISOString(),
@@ -1177,6 +1198,43 @@ describe("TaskExecutor pre-merge optional-step fix seam", () => {
     expect(store.logEntry).toHaveBeenCalledWith("FN-7066", expect.stringContaining("attempt 1/1"), expect.stringContaining("Workflow revision key: code-review"), undefined);
     expect(store.updateTask).toHaveBeenCalledWith("FN-7066", { postReviewFixCount: 2 }, undefined);
     expect(sendBack).toHaveBeenCalledOnce();
+  });
+
+  it("parks two identical Code Review revisions before scheduling a third remediation", async () => {
+    const store = createMockStore();
+    const prior = workspaceReviseResult("same-diff", "Earlier reviewer prose");
+    const liveTask = task({
+      workflowStepResults: [workspaceReviseResult("same-diff", reviseInfo.feedback, [prior])],
+    });
+    store.getTask.mockResolvedValue(liveTask);
+    store.getSettings.mockResolvedValue({ maxPostReviewFixes: 9 });
+    store.recordRunAuditEvent = vi.fn().mockResolvedValue(undefined);
+    const executor = new TaskExecutor(store, "/tmp/test");
+    const sendBack = vi.spyOn(executor as any, "sendTaskBackForFix").mockResolvedValue(undefined);
+
+    await expect((executor as any).requestPreMergeOptionalStepFix(liveTask.id, liveTask, reviseInfo)).resolves.toBe(false);
+
+    expect(sendBack).not.toHaveBeenCalled();
+    expect(store.updateTask).toHaveBeenCalledWith(liveTask.id, expect.objectContaining({
+      status: "awaiting-approval",
+      awaitingApprovalReason: "code-review-non-convergence",
+    }), undefined);
+    expect(store.logEntry).toHaveBeenCalledWith(liveTask.id, expect.stringContaining("did not converge"), expect.any(String), undefined);
+  });
+
+  it("does not park a changed workspace review input that repeats reviewer prose", async () => {
+    const store = createMockStore();
+    const prior = workspaceReviseResult("old-diff", reviseInfo.feedback);
+    const liveTask = task({ workflowStepResults: [workspaceReviseResult("new-diff", reviseInfo.feedback, [prior])] });
+    store.getTask.mockResolvedValue(liveTask);
+    store.getSettings.mockResolvedValue({ maxPostReviewFixes: 9 });
+    const executor = new TaskExecutor(store, "/tmp/test");
+    const sendBack = vi.spyOn(executor as any, "sendTaskBackForFix").mockResolvedValue(undefined);
+
+    await expect((executor as any).requestPreMergeOptionalStepFix(liveTask.id, liveTask, reviseInfo)).resolves.toBe(true);
+
+    expect(sendBack).toHaveBeenCalledOnce();
+    expect(store.updateTask).not.toHaveBeenCalledWith(liveTask.id, expect.objectContaining({ awaitingApprovalReason: "code-review-non-convergence" }), undefined);
   });
 
   it("honors unbounded and zero per-step maxRevisions states", async () => {

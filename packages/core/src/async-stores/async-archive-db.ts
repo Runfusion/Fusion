@@ -43,6 +43,7 @@ import { and, asc, desc, eq, ilike, inArray, or, sql, type SQL } from "drizzle-o
 import * as schema from "../postgres/schema/index.js";
 import type { AsyncDataLayer, DbTransaction } from "../postgres/data-layer.js";
 import type { ArchivedTaskEntry } from "../types.js";
+import type { TaskColumnSortMode } from "../tasks/task-priority.js";
 import { buildTsqueryFragment, sanitizeSearchTokens } from "../task-store/async/async-search.js";
 
 /** A query-capable handle: either the top-level db or a transaction handle. */
@@ -175,23 +176,28 @@ export async function listArchivedTasksByCreatedOrder(
 }
 
 /**
- * FNXC:ArchivePagination 2026-07-08-00:00:
- * Bounded page of archived task snapshots for the Archived board column
- * (FN-7659), ordered `archivedAt DESC` with an `id DESC` tie-break (Postgres
- * has no rowid; id is the deterministic stand-in for same-timestamp rows).
- * Mirrors sync `ArchiveDatabase.listPage()`.
+ * FNXC:TaskColumnSorting 2026-08-18-21:24:
+ * Archive order is selected before LIMIT/OFFSET, not after the browser merges pages. The
+ * numeric task suffix plus textual id tie-break is deterministic for both numeric and legacy
+ * nonnumeric ids, so bounded pages have no gaps or duplicates when task-id mode is selected.
+ * The project predicate remains on every query because the archive table is shared.
  */
 export async function listArchivedTaskEntriesPage(
   handle: QueryHandle,
   limit: number,
   offset: number,
   projectId?: string,
+  sortMode: TaskColumnSortMode = "completion-date-desc",
 ): Promise<ArchivedTaskEntry[]> {
+  const numericTaskSuffix = sql`COALESCE(substring(${archivedTaskColumns.id} from '-([0-9]+)$')::numeric, 0)`;
+  const orderBy = sortMode === "task-id-desc"
+    ? [desc(numericTaskSuffix), desc(archivedTaskColumns.id)]
+    : [desc(archivedTaskColumns.archivedAt), desc(numericTaskSuffix), desc(archivedTaskColumns.id)];
   const rows = await handle
     .select({ taskJson: archivedTaskColumns.taskJson })
     .from(schema.archive.archivedTasks)
     .where(archiveProjectScope(projectId))
-    .orderBy(desc(archivedTaskColumns.archivedAt), desc(archivedTaskColumns.id))
+    .orderBy(...orderBy)
     .limit(limit)
     .offset(offset);
   return rows.map((row) => JSON.parse((row as { taskJson: string }).taskJson) as ArchivedTaskEntry);

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
-import { formatProviderInstanceKey, removeProviderInstance, renameProviderInstance, setProviderDefaultInstance, newProviderInstanceId } from "../../../api";
+import { formatProviderInstanceKey, refreshBuiltInModels, removeProviderInstance, renameProviderInstance, setProviderDefaultInstance, newProviderInstanceId } from "../../../api";
 import type { AuthProvider, ManualOAuthCodeInfo, OAuthDeviceCodeInfo, ProviderCredentialInstance } from "../../../api";
 import type { ToastType } from "../../../hooks/useToast";
 import { useTranslation } from "react-i18next";
@@ -42,6 +42,13 @@ export interface AuthenticationSectionData {
     manualCodeInputs: Record<string, string>;
     setManualCodeInputs: Dispatch<SetStateAction<Record<string, string>>>;
     manualCodeSubmitInProgress: string | null;
+    /*
+    FNXC:ProviderAuth 2026-08-18-06:10:
+    stateKey whose login is showing in the persistent ProviderLoginDialog, or null. That dialog
+    already renders the instructions and paste field, so the row must not render its own copies —
+    two inputs for the same code, one of them behind the dialog.
+    */
+    activeLoginDialogKey?: string | null;
     loadAuthStatus: () => void | Promise<void>;
     handleLogin: (providerId: string, instanceId?: string, label?: string) => void;
     handleLogout: (providerId: string, instanceId?: string) => void;
@@ -87,8 +94,9 @@ const compareAuthProviderDisplayOrder = (a: AuthProvider, b: AuthProvider) => {
 };
 export function AuthenticationSection({ auth, form, setForm }: AuthenticationSectionProps) {
     const { t } = useTranslation("app");
-    const { projectId, addToast, authProviders, authLoading, authActionInProgress, apiKeyInputs, setApiKeyInputs, apiKeyErrors, opencodeApiKeyRefreshStatus, deviceCodes, loginInstructions, manualCodeConfigs, manualCodeInputs, setManualCodeInputs, manualCodeSubmitInProgress, loadAuthStatus, handleLogin, handleLogout, handleCancelLogin, handleSaveApiKey, handleClearApiKey, handleSubmitManualCode, onReopenOnboarding, } = auth;
+    const { projectId, addToast, authProviders, authLoading, authActionInProgress, apiKeyInputs, setApiKeyInputs, apiKeyErrors, opencodeApiKeyRefreshStatus, deviceCodes, loginInstructions, manualCodeConfigs, manualCodeInputs, setManualCodeInputs, manualCodeSubmitInProgress, activeLoginDialogKey, loadAuthStatus, handleLogin, handleLogout, handleCancelLogin, handleSaveApiKey, handleClearApiKey, handleSubmitManualCode, onReopenOnboarding, } = auth;
     const [pendingInstances, setPendingInstances] = useState<Record<string, { instanceId: string; label: string }>>({});
+    const [builtInRefreshStatus, setBuiltInRefreshStatus] = useState<"idle" | "pending" | "completed" | "timed_out" | "failed" | "stale_in_flight">("idle");
     const isAuthActionActive = (stateKey: string) => typeof authActionInProgress === "string"
         ? authActionInProgress === stateKey
         : Boolean(authActionInProgress?.[stateKey]);
@@ -125,6 +133,23 @@ export function AuthenticationSection({ auth, form, setForm }: AuthenticationSec
     const handleCliProviderToggled = () => {
         void loadAuthStatus();
         void refreshModelsCache();
+    };
+    /*
+    FNXC:BuiltInModelRefresh 2026-08-18-23:11:
+    Keep built-in catalog refresh manual and panel-local: disable only this action while its request runs, propagate a completed catalog through the shared models cache, and keep the previous picker rows for every deferred or failed outcome.
+    */
+    const handleBuiltInModelsRefresh = async () => {
+        if (builtInRefreshStatus === "pending") return;
+        setBuiltInRefreshStatus("pending");
+        try {
+            const result = await refreshBuiltInModels();
+            setBuiltInRefreshStatus(result.outcome);
+            if (result.outcome === "completed") {
+                await refreshModelsCache();
+            }
+        } catch {
+            setBuiltInRefreshStatus("failed");
+        }
     };
     const renderCliProviderCard = (provider: AuthProvider) => {
         if (provider.id === "claude-cli") {
@@ -320,8 +345,8 @@ export function AuthenticationSection({ auth, form, setForm }: AuthenticationSec
             <button className="btn btn-sm" onClick={() => openExternalUrl(appendTokenQuery(deviceCodes[stateKey].verificationUri))}>{t("settings.auth.openGitHub", "Open GitHub")}</button>
           </div>
         </div>}
-        {loginInstructions[stateKey] && isActive && <LoginInstructions instructions={loginInstructions[stateKey]} data-testid={`auth-login-instructions-${stateKey}`}/>}
-        {manualCodeConfigs[stateKey] && isActive && <OAuthManualCodeForm value={manualCodeInputs[stateKey] ?? ""} onChange={(value) => setManualCodeInputs((prev) => ({ ...prev, [stateKey]: value }))} onSubmit={() => void handleSubmitManualCode(provider.id, instanceId)} prompt={manualCodeConfigs[stateKey].prompt} placeholder={manualCodeConfigs[stateKey].placeholder} helpText={manualCodeConfigs[stateKey].helpText} disabled={manualCodeSubmitInProgress === stateKey} submitLabel={manualCodeSubmitInProgress === stateKey ? "Submitting…" : "Submit code"} data-testid={`auth-manual-code-${stateKey}`}/>}
+        {loginInstructions[stateKey] && isActive && activeLoginDialogKey !== stateKey && <LoginInstructions instructions={loginInstructions[stateKey]} data-testid={`auth-login-instructions-${stateKey}`}/>}
+        {manualCodeConfigs[stateKey] && isActive && activeLoginDialogKey !== stateKey && <OAuthManualCodeForm value={manualCodeInputs[stateKey] ?? ""} onChange={(value) => setManualCodeInputs((prev) => ({ ...prev, [stateKey]: value }))} onSubmit={() => void handleSubmitManualCode(provider.id, instanceId)} prompt={manualCodeConfigs[stateKey].prompt} placeholder={manualCodeConfigs[stateKey].placeholder} helpText={manualCodeConfigs[stateKey].helpText} disabled={manualCodeSubmitInProgress === stateKey} submitLabel={manualCodeSubmitInProgress === stateKey ? "Submitting…" : "Submit code"} data-testid={`auth-manual-code-${stateKey}`}/>}
       </div>;
     };
     /*
@@ -334,6 +359,23 @@ export function AuthenticationSection({ auth, form, setForm }: AuthenticationSec
       <div className="settings-field-label-row">
         <h4 className="settings-section-heading">{t("settings.auth.title", "Authentication")}</h4>
         <SettingsHelpTip settingKey="auth-section">{t("settings.auth.hint", "Authentication changes take effect immediately — no need to save.")}</SettingsHelpTip>
+      </div>
+      <div className="auth-model-refresh" data-testid="built-in-model-refresh">
+        <button
+          type="button"
+          className="btn btn-sm"
+          onClick={() => void handleBuiltInModelsRefresh()}
+          disabled={builtInRefreshStatus === "pending"}
+          aria-busy={builtInRefreshStatus === "pending"}
+        >
+          {builtInRefreshStatus === "pending"
+            ? t("settings.auth.refreshModelsPending", "Refreshing models…")
+            : t("settings.auth.refreshModels", "Refresh Models")}
+        </button>
+        {builtInRefreshStatus === "completed" && <span className="auth-model-refresh-feedback auth-model-refresh-feedback--success" role="status">{t("settings.auth.refreshModelsSuccess", "Models refreshed.")}</span>}
+        {builtInRefreshStatus === "timed_out" && <span className="auth-model-refresh-feedback auth-model-refresh-feedback--warning" role="status">{t("settings.auth.refreshModelsTimedOut", "Refresh timed out; showing the last available models. Try again.")}</span>}
+        {builtInRefreshStatus === "stale_in_flight" && <span className="auth-model-refresh-feedback auth-model-refresh-feedback--warning" role="status">{t("settings.auth.refreshModelsDeferred", "Another refresh is still running; showing the last available models. Try again shortly.")}</span>}
+        {builtInRefreshStatus === "failed" && <span className="auth-model-refresh-feedback auth-model-refresh-feedback--error" role="alert">{t("settings.auth.refreshModelsFailed", "Refresh failed; showing the last available models. Try again.")}</span>}
       </div>
       {authLoading ? (<div className="settings-empty-state"><LoadingSpinner label={t("settings.auth.loadingStatus", "Loading authentication status…")} /></div>) : authProviders.length === 0 ? (<div className="settings-empty-state settings-muted">
           {t("settings.auth.noProviders", "No providers available")}

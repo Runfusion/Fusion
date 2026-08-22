@@ -17,6 +17,7 @@ import { graphFailureValue, isStalePauseAbortParkFailure } from "./graph-failure
 import { isTerminalMergeGraphFailureValue } from "./task-predicates.js";
 import type { ResumeLanes } from "./resolve-resume-lanes.js";
 import { generateSyntheticRunId, type EngineRunContext } from "../util/run-audit.js";
+import { emitBoundedRunAudit } from "./emit-bounded-run-audit.js";
 import { executorLog } from "../logger.js";
 import { WORKFLOW_NODE_ENGINE_PAUSE_ABORT_KIND } from "../workflows/workflow-graph-executor.js";
 
@@ -96,8 +97,7 @@ export async function handleStaleInReviewParsePauseAbortReplay(
     await deps.store.logEntry(live.id, message, undefined, deps.getRunContextFor(live.id));
     await deps.store.logEntry(live.id, "Auto-recovered: retrying stale in-review parse pause/resume replay — failure notification suppressed", undefined, deps.getRunContextFor(live.id));
     await deps.store.updateTask(live.id, { graphResumeRetryCount: nextRetries, status: null, error: null }, deps.getRunContextFor(live.id));
-    try {
-      await deps.store.recordRunAuditEvent?.({
+      await emitBoundedRunAudit(deps.store, {
         taskId: live.id,
         agentId: "executor",
         runId: generateSyntheticRunId("workflow-stale-parse-retry", live.id),
@@ -114,9 +114,6 @@ export async function handleStaleInReviewParsePauseAbortReplay(
           mode: "preserved-in-review-retry-graph",
         },
       });
-    } catch (error) {
-      executorLog.warn(`${live.id}: failed to record stale parse replay retry audit: ${error instanceof Error ? error.message : String(error)}`);
-    }
     await deps.persistTokenUsage(live.id);
 
     const scheduleRetry = () => {

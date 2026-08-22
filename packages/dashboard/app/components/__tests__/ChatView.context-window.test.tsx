@@ -57,14 +57,12 @@ function expectNoContextWindowShell() {
 }
 
 /*
-FNXC:ChatHeader 2026-07-16-00:00:
-The mobile and floating-narrow session switcher is rendered only in the direct-thread pane. Tests exercising its header must select the session from the list first, matching the mobile drill-in flow.
+FNXC:ChatNavigation 2026-08-19-21:10:
+FN-054 keeps the context indicator tests on the selected thread while the conversation list owns all switching and management. Opening detail through a list row verifies the constrained host without restoring a selector.
 */
-async function openMobileDirectThread(sessionId = "session-001") {
+async function openDirectThread(sessionId = "session-001") {
   await userEvent.click(screen.getByTestId(`chat-session-${sessionId}`));
-  await waitFor(() => {
-    expect(screen.getByTestId("chat-mobile-session-trigger")).toBeInTheDocument();
-  });
+  await waitFor(() => expect(screen.getByTestId("chat-back-btn")).toBeInTheDocument());
 }
 
 function setupDirectChat(options: { content?: string; streamingText?: string } = {}) {
@@ -92,6 +90,7 @@ describe("ChatView context-window indicator", () => {
     setupDirectChat({ content: "abcd" });
 
     await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+    await openDirectThread();
 
     const indicator = await screen.findByTestId("chat-thread-context-window");
     expect(indicator).toHaveTextContent("1 / 200k");
@@ -104,7 +103,7 @@ describe("ChatView context-window indicator", () => {
       setupDirectChat({ content: "abcd" });
 
       await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
-      await openMobileDirectThread();
+      await openDirectThread();
 
       /*
       FNXC:DashboardTests 2026-07-14-20:15:
@@ -144,11 +143,11 @@ describe("ChatView context-window indicator", () => {
       setupDirectChat({ content: "abcd" });
 
       await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} floating />);
-      await openMobileDirectThread();
+      await openDirectThread();
 
       /*
       FNXC:DashboardTests 2026-07-14-20:15:
-      Floating narrow chat is marked chat-view--floating + --narrow; do not require the mobile session trigger (only present after explicit mobile-direct-thread entry).
+      Floating narrow chat is marked chat-view--floating + --narrow; do not require the mobile session trigger (after explicit list-to-detail entry).
       */
       expect(document.querySelector(".chat-view--floating.chat-view--narrow")).toBeTruthy();
       expectNoContextWindowShell();
@@ -180,6 +179,7 @@ describe("ChatView context-window indicator", () => {
     const expectedUsed = formatTokenCount(estimateChatTokens([{ content }], streamingText));
 
     await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+    await openDirectThread();
 
     const indicator = await screen.findByTestId("chat-thread-context-window");
     expect(expectedUsed).toBe("~1k");
@@ -209,6 +209,7 @@ describe("ChatView context-window indicator", () => {
     });
 
     await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} experimentalFeatures={{ chatRooms: true }} />);
+    await userEvent.click(screen.getByTestId("chat-room-item-context-room"));
 
     expect(document.querySelector(".chat-room-thread-header")).toBeInTheDocument();
     expectNoContextWindowShell();

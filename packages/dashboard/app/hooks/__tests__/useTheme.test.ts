@@ -210,6 +210,32 @@ describe("useTheme", () => {
     expect(document.documentElement.getAttribute("data-color-theme")).toBe("dawn");
   });
 
+  it("hydrates, caches, and applies Medieval from backend settings", async () => {
+    mockFetchGlobalSettings.mockResolvedValue({ colorTheme: "medieval" });
+
+    const { result } = renderHook(() => useTheme());
+
+    await waitFor(() => {
+      expect(result.current.colorTheme).toBe("medieval");
+    });
+    expect(localStorageMock[COLOR_THEME_STORAGE_KEY]).toBe("medieval");
+    expect(document.documentElement.getAttribute("data-color-theme")).toBe("medieval");
+  });
+
+  it.each(["dark", "light"] as const)("preserves Medieval's selected font scales in %s mode", (themeMode) => {
+    localStorageMock[THEME_MODE_STORAGE_KEY] = themeMode;
+    localStorageMock[COLOR_THEME_STORAGE_KEY] = "medieval";
+
+    const { result } = renderHook(() => useTheme());
+    for (const fontScale of [90, 100, 110, 120]) {
+      act(() => result.current.setDashboardFontScalePct(fontScale));
+      expect(result.current.dashboardFontScalePct).toBe(fontScale);
+      expect(document.documentElement.style.fontSize).toBe(`${fontScale}%`);
+      expect(document.documentElement.getAttribute("data-color-theme")).toBe("medieval");
+      expect(document.documentElement.getAttribute("data-theme")).toBe(themeMode);
+    }
+  });
+
   it("hydrates dashboard font scale from backend on mount", async () => {
     mockFetchGlobalSettings.mockResolvedValue({ dashboardFontScalePct: 110 });
 
@@ -824,6 +850,22 @@ describe("useTheme", () => {
 
     expect(result.current.colorTheme).toBe("shadcn-mono");
     expect(document.documentElement.getAttribute("data-color-theme")).toBe("shadcn-mono");
+  });
+
+  it("preserves explicit Medieval color theme from localStorage and writes it through", () => {
+    localStorageMock[COLOR_THEME_STORAGE_KEY] = "medieval";
+
+    const { result } = renderHook(() => useTheme());
+
+    expect(result.current.colorTheme).toBe("medieval");
+    expect(document.documentElement.getAttribute("data-color-theme")).toBe("medieval");
+
+    act(() => {
+      result.current.setColorTheme("medieval");
+    });
+
+    expect(localStorageMock[COLOR_THEME_STORAGE_KEY]).toBe("medieval");
+    expect(mockUpdateGlobalSettings).toHaveBeenCalledWith({ colorTheme: "medieval" });
   });
 
   it("preserves explicit Glass and Glass Silver color themes from localStorage", () => {

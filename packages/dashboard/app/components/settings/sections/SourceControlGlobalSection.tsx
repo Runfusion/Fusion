@@ -7,7 +7,7 @@ import { SettingsTextRow } from "../SettingsTextRow";
 import { SettingsHelpTip } from "../SettingsHelpTip";
 import type { SectionBaseProps } from "./context";
 
-type GlobalSourceControlSettings = Pick<GlobalSettings, "gitlabEnabled" | "gitlabInstanceUrl" | "gitlabApiBaseUrl" | "gitlabAuthToken" | "gitlabAuthTokenType" | "reportRoadmapDedupeEnabled" | "reportRoadmapLabel" | "reportRoadmapRepo">;
+type GlobalSourceControlSettings = Pick<GlobalSettings, "gitlabEnabled" | "gitlabInstanceUrl" | "gitlabApiBaseUrl" | "gitlabAuthToken" | "gitlabAuthTokenType" | "reportRoadmapDedupeEnabled" | "reportRoadmapLabel" | "reportRoadmapRepo" | "jiraEnabled" | "jiraBaseUrl" | "jiraApiBaseUrl" | "jiraAuthEmail" | "jiraAuthTokenSecretKey" | "jiraAuthTokenSecretScope" | "jiraBranchNameTemplate">;
 
 export interface SourceControlGlobalSectionProps extends SectionBaseProps {
     globalSettings: GlobalSourceControlSettings | null;
@@ -145,6 +145,24 @@ export function SourceControlGlobalSection({ form, setForm, globalSettings, onGl
             value={globalGitlab.gitlabAuthToken ?? ""}
             onChange={(v) => onGlobalSourceControlSettingsChange({ gitlabAuthToken: v || undefined })}
           />
+        </div>
+      </details>
+      {/* FNXC:JiraBranchNaming 2026-08-20-05:10: JIRA remains opt-in and stores only a secret key reference; this global disclosure edits scoped fallback values, never the merged project form. */}
+      <details className="settings-gitlab-disclosure" data-testid="global-jira-configuration-disclosure">
+        <summary>
+          <span className="settings-gitlab-disclosure__title">{t("settings.jira.configuration", "JIRA Configuration")}</span>
+          <label className="checkbox-label settings-gitlab-disclosure__toggle" htmlFor="globalJiraEnabled" onClick={(event) => event.stopPropagation()}>
+            <input id="globalJiraEnabled" type="checkbox" checked={globalSourceControl.jiraEnabled === true} onChange={(event) => onGlobalSourceControlSettingsChange({ jiraEnabled: event.target.checked })}/>
+            {t("settings.jira.enable", "Enable JIRA integration")}
+          </label>
+        </summary>
+        <div className="settings-gitlab-disclosure__body" aria-disabled={globalSourceControl.jiraEnabled !== true}>
+          <SettingsTextRow descriptor={{ key: "jiraBaseUrl", label: t("settings.jira.globalBaseUrl", "Global JIRA site URL"), help: t("settings.jira.baseUrlHelp", "JIRA site URL. Default: unset."), type: "url", disabled: globalSourceControl.jiraEnabled !== true }} value={globalSourceControl.jiraBaseUrl ?? ""} onChange={(v) => onGlobalSourceControlSettingsChange({ jiraBaseUrl: v || undefined })}/>
+          <SettingsTextRow descriptor={{ key: "jiraApiBaseUrl", label: t("settings.jira.globalApiBaseUrl", "Global JIRA API base URL (optional)"), help: t("settings.jira.apiBaseUrlHelp", "Default: <site>/rest/api/3."), type: "url", disabled: globalSourceControl.jiraEnabled !== true }} value={globalSourceControl.jiraApiBaseUrl ?? ""} onChange={(v) => onGlobalSourceControlSettingsChange({ jiraApiBaseUrl: v || undefined })}/>
+          <SettingsTextRow descriptor={{ key: "jiraAuthEmail", label: t("settings.jira.globalEmail", "Global JIRA account email (optional)"), help: t("settings.jira.emailHelp", "Email selects Basic authentication. Default: unset."), disabled: globalSourceControl.jiraEnabled !== true }} value={globalSourceControl.jiraAuthEmail ?? ""} onChange={(v) => onGlobalSourceControlSettingsChange({ jiraAuthEmail: v || undefined })}/>
+          <SettingsTextRow descriptor={{ key: "jiraAuthTokenSecretKey", label: t("settings.jira.globalSecretKey", "Global JIRA token secret key"), help: t("settings.jira.secretHelp", "Secret-store key only. Default: JIRA_API_TOKEN."), disabled: globalSourceControl.jiraEnabled !== true }} value={globalSourceControl.jiraAuthTokenSecretKey ?? ""} onChange={(v) => onGlobalSourceControlSettingsChange({ jiraAuthTokenSecretKey: v || undefined })}/>
+          <SettingsSelectRow descriptor={{ key: "jiraAuthTokenSecretScope", label: t("settings.jira.globalSecretScope", "Global JIRA token secret scope"), help: t("settings.jira.scopeHelp", "Default: project."), disabled: globalSourceControl.jiraEnabled !== true, options: [{ value: "project", label: "Project" }, { value: "global", label: "Global" }] }} value={globalSourceControl.jiraAuthTokenSecretScope ?? "project"} onChange={(v) => onGlobalSourceControlSettingsChange({ jiraAuthTokenSecretScope: v as "project" | "global" })}/>
+          <SettingsTextRow descriptor={{ key: "jiraBranchNameTemplate", label: t("settings.jira.globalTemplate", "Global JIRA branch-name template"), help: t("settings.jira.templateHelp", "Default: feature/{key}-{summary}."), disabled: globalSourceControl.jiraEnabled !== true }} value={globalSourceControl.jiraBranchNameTemplate ?? ""} onChange={(v) => onGlobalSourceControlSettingsChange({ jiraBranchNameTemplate: v || undefined })}/>
         </div>
       </details>
     </>);

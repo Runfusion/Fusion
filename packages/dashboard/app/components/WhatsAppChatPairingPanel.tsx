@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import "./WhatsAppChatPairingPanel.css";
 
 type WhatsAppStatus = {
@@ -27,6 +28,7 @@ function pluginUrl(path: string, projectId?: string): string {
  * WhatsApp pairing belongs in Plugin Manager settings: operators need a scannable QR, connection feedback, and configuration guidance without discovering raw plugin API routes.
  */
 export function WhatsAppChatPairingPanel({ projectId, settings }: WhatsAppChatPairingPanelProps) {
+  const { t } = useTranslation("app");
   const [connection, setConnection] = useState<WhatsAppStatus | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [phoneNumber, setPhoneNumber] = useState(() => String(settings?.pairingPhoneNumber ?? ""));
@@ -108,56 +110,56 @@ export function WhatsAppChatPairingPanel({ projectId, settings }: WhatsAppChatPa
     <section className="whatsapp-pairing-panel" aria-labelledby="whatsapp-pairing-heading">
       <div className="whatsapp-pairing-heading-row">
         <div>
-          <h5 id="whatsapp-pairing-heading" className="plugin-detail-section-heading">WhatsApp pairing</h5>
-          <p className="whatsapp-pairing-description">Pair and monitor this project&apos;s WhatsApp connection here.</p>
+          <h5 id="whatsapp-pairing-heading" className="plugin-detail-section-heading">{t("whatsapp.pairing", "WhatsApp pairing")}</h5>
+          <p className="whatsapp-pairing-description">{t("whatsapp.description", "Pair and monitor this project's WhatsApp connection here.")}</p>
         </div>
-        <button className="btn btn-secondary btn-sm" type="button" onClick={() => void refreshStatus()}>Refresh status</button>
+        <button className="btn btn-secondary btn-sm" type="button" onClick={() => void refreshStatus()}>{t("whatsapp.refreshStatus", "Refresh status")}</button>
       </div>
 
       <div className={`whatsapp-pairing-status whatsapp-pairing-status--${state}`} role="status" data-testid="whatsapp-pairing-status">
-        <strong>Status: {state}</strong>
-        {connection?.jid && <span>Connected as {connection.jid}</span>}
+        <strong>{t("whatsapp.status", "Status:")} {state}</strong>
+        {connection?.jid && <span>{t("whatsapp.connectedAs", "Connected as {{jid}}", { jid: connection.jid })}</span>}
         {(connection?.lastError || loadError) && <span className="field-error">{connection?.lastError ?? loadError}</span>}
       </div>
 
       {state === "awaiting-qr" && (
         <div className="whatsapp-pairing-qr" data-testid="whatsapp-pairing-qr">
           {connection?.qrDataUrl ? (
-            <img src={connection.qrDataUrl} alt="WhatsApp pairing QR code" className="whatsapp-pairing-qr-image" />
+            <img src={connection.qrDataUrl} alt={t("whatsapp.qrCode", "WhatsApp pairing QR code")} className="whatsapp-pairing-qr-image" />
           ) : (
-            <p className="text-muted">Waiting for a fresh QR code. Keep this panel open and refresh if needed.</p>
+            <p className="text-muted">{t("whatsapp.waitingQr", "Waiting for a fresh QR code. Keep this panel open and refresh if needed.")}</p>
           )}
         </div>
       )}
 
       {(pairingMode === "code" || state === "awaiting-code") && (
         <div className="whatsapp-pairing-code">
-          <label htmlFor="whatsapp-pairing-phone">Phone number (E.164 digits without +)</label>
+          <label htmlFor="whatsapp-pairing-phone">{t("whatsapp.phoneNumber", "Phone number (E.164 digits without +)")}</label>
           <div className="whatsapp-pairing-code-controls">
             <input id="whatsapp-pairing-phone" className="input" value={phoneNumber} onChange={(event) => setPhoneNumber(event.target.value)} inputMode="numeric" />
             <button className="btn btn-secondary" type="button" onClick={() => void requestPairingCode()} disabled={busy !== null}>
-              {busy === "code" ? "Requesting code..." : "Request pairing code"}
+              {busy === "code" ? t("whatsapp.requestingCode", "Requesting code...") : t("whatsapp.requestPairingCode", "Request pairing code")}
             </button>
           </div>
           {connection?.pairingCode && <output className="whatsapp-pairing-code-output">{connection.pairingCode}</output>}
         </div>
       )}
 
-      {state === "connected" && <p className="whatsapp-pairing-success">WhatsApp is paired and ready to receive messages from allowed senders.</p>}
+      {state === "connected" && <p className="whatsapp-pairing-success">{t("whatsapp.connectedSuccess", "WhatsApp is paired and ready to receive messages from allowed senders.")}</p>}
       {actionError && <p className="field-error">{actionError}</p>}
 
       <button className="btn btn-danger" type="button" onClick={() => void logoutForRepair()} disabled={busy !== null} data-testid="whatsapp-pairing-logout">
-        {busy === "logout" ? "Logging out..." : "Logout and re-pair"}
+        {busy === "logout" ? t("whatsapp.loggingOut", "Logging out...") : t("whatsapp.logoutRepair", "Logout and re-pair")}
       </button>
 
-      <aside className="whatsapp-pairing-instructions" aria-label="WhatsApp pairing instructions" data-testid="whatsapp-pairing-instructions">
-        <h6>Pairing and configuration</h6>
+      <aside className="whatsapp-pairing-instructions" aria-label={t("whatsapp.instructionsLabel", "WhatsApp pairing instructions")} data-testid="whatsapp-pairing-instructions">
+        <h6>{t("whatsapp.pairingConfiguration", "Pairing and configuration")}</h6>
         <ol>
-          <li>Install and enable this plugin, then keep this settings panel open.</li>
-          <li>Set <strong>Allowed WhatsApp Senders</strong>; an empty list blocks all inbound messages.</li>
-          <li>Choose <strong>QR</strong> to scan in WhatsApp Linked Devices, or <strong>code</strong> to enter a phone number and request a pairing code.</li>
-          <li>Wait for the status above to become <strong>connected</strong>.</li>
-          <li>Use Logout and re-pair to start over. If QR is still pending, wait briefly or refresh status for a new code.</li>
+          <li>{t("whatsapp.installPlugin", "Install and enable this plugin, then keep this settings panel open.")}</li>
+          <li>{t("whatsapp.allowedSenders", "Set {{label}}; an empty list blocks all inbound messages.", { label: "Allowed WhatsApp Senders" })}</li>
+          <li>{t("whatsapp.choosePairingMethod", "Choose {{qr}} to scan in WhatsApp Linked Devices, or {{code}} to enter a phone number and request a pairing code.", { qr: "QR", code: "code" })}</li>
+          <li>{t("whatsapp.waitConnected", "Wait for the status above to become {{status}}.", { status: "connected" })}</li>
+          <li>{t("whatsapp.repairInstructions", "Use Logout and re-pair to start over. If QR is still pending, wait briefly or refresh status for a new code.")}</li>
         </ol>
       </aside>
     </section>

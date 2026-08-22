@@ -919,7 +919,7 @@ export function MailboxModal({
             <Send size={14} />
             <span>{t("mailbox.outboxTab", "Outbox")}</span>
           </button>
-          <button className={`btn btn-sm btn-secondary mailbox-tab ${isMailboxArchivedTab(activeTab) ? "active" : ""}`} onClick={() => { consumeCurrentDeepLink(); setActiveTab("archived"); setSelectedMessage(null); }} data-testid="mailbox-tab-archived"><Archive size={14} /><span>Archived</span></button>
+          <button className={`btn btn-sm btn-secondary mailbox-tab ${isMailboxArchivedTab(activeTab) ? "active" : ""}`} onClick={() => { consumeCurrentDeepLink(); setActiveTab("archived"); setSelectedMessage(null); }} data-testid="mailbox-tab-archived"><Archive size={14} /><span>{t("mailbox.archived", "Archived")}</span></button>
           <button
             className={`btn btn-sm btn-secondary mailbox-tab ${activeTab === "agents" ? "active" : ""}`}
             onClick={() => { consumeCurrentDeepLink(); setActiveTab("agents"); setSelectedMessage(null); }}
@@ -959,7 +959,7 @@ export function MailboxModal({
                       <span>{t("mailbox.replyButton", "Reply")}</span>
                     </button>
                   )}
-                  {selectedMessage.archived ? <button className="btn btn-sm btn-secondary" onClick={() => handleUnarchiveMessage(selectedMessage.id)} data-testid="mailbox-unarchive"><Archive size={14} /><span>Restore</span></button> : <button className="btn btn-sm btn-secondary" onClick={() => handleArchiveMessage(selectedMessage.id)} data-testid="mailbox-archive"><Archive size={14} /><span>Archive</span></button>}
+                  {selectedMessage.archived ? <button className="btn btn-sm btn-secondary" onClick={() => handleUnarchiveMessage(selectedMessage.id)} data-testid="mailbox-unarchive"><Archive size={14} /><span>{t("mailbox.restore", "Restore")}</span></button> : <button className="btn btn-sm btn-secondary" onClick={() => handleArchiveMessage(selectedMessage.id)} data-testid="mailbox-archive"><Archive size={14} /><span>{t("mailbox.archive", "Archive")}</span></button>}
                   {pendingDeleteMessageId === selectedMessage.id ? (
                     <>
                       {/* FNXC:MessageArchive 2026-08-12-22:51: Deletion requires a second intentional click so archive remains the safe default removal action. */}
@@ -1110,15 +1110,15 @@ export function MailboxModal({
               {/* Inbox Tab */}
               {isMailboxArchivedTab(activeTab) && (
                 <div className="mailbox-list" data-testid="mailbox-archived-list">
-                  {archivedInbox?.messages.length === 0 && <div className="mailbox-empty" data-testid="mailbox-archived-empty">No archived messages</div>}
+                  {archivedInbox?.messages.length === 0 && <div className="mailbox-empty" data-testid="mailbox-archived-empty">{t("mailbox.noArchivedMessages", "No archived messages")}</div>}
                   {archivedInbox?.messages.map((message) => <button type="button" className="mailbox-item" key={message.id} onClick={() => void handleOpenMessage(message)} data-testid={`mailbox-item-${message.id}`}>{message.content}</button>)}
                 </div>
               )}
               {activeTab === "inbox" && (
                 <div className="mailbox-list" data-testid="mailbox-inbox-list">
-          <div className="mailbox-structural-filter" role="group" aria-label="Inbox filter">
-            <button type="button" className="btn btn-sm btn-secondary" aria-pressed={structuralFilter === "all"} data-testid="mailbox-structural-filter-all" onClick={() => setStructuralFilter("all")}>All</button>
-            <button type="button" className="btn btn-sm btn-secondary" aria-pressed={structuralFilter === "structural"} data-testid="mailbox-structural-filter-structural" onClick={() => setStructuralFilter("structural")}>Reports & approvals</button>
+          <div className="mailbox-structural-filter" role="group" aria-label={t("mailbox.inboxFilter", "Inbox filter")}>
+            <button type="button" className="btn btn-sm btn-secondary" aria-pressed={structuralFilter === "all"} data-testid="mailbox-structural-filter-all" onClick={() => setStructuralFilter("all")}>{t("mailbox.all", "All")}</button>
+            <button type="button" className="btn btn-sm btn-secondary" aria-pressed={structuralFilter === "structural"} data-testid="mailbox-structural-filter-structural" onClick={() => setStructuralFilter("structural")}>{t("mailbox.reportsApprovals", "Reports & approvals")}</button>
           </div>
                   {isLoading && !inbox && <MailboxSkeleton />}
                   {inbox && inbox.messages.length === 0 && (

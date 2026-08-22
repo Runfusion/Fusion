@@ -2,17 +2,19 @@
  * AI Title Summarization Service
  *
  * Provides AI-powered title generation from task descriptions.
- * Automatically generates concise titles (≤60 characters) from descriptions
- * longer than 200 characters.
+ * Automatically generates concise titles (≤60 characters) from any non-empty
+ * task description when the caller's project policy enables the attempt.
  *
  * Features:
  * - Rate limiting per IP (10 requests per hour)
  * - Dynamic import of @fusion/engine for AI agent creation
- * - Text length validation (minimum 201 characters; model input is truncated)
+ * - Text validation rejects only missing, non-string, empty, or whitespace-only input
+ * - Model input is truncated to a bounded prompt size
  */
 
 import { getFnAgent, type AgentMessage } from "./ai-engine-loader.js";
 import { detectContentLanguage, localeDisplayName } from "../i18n/detect-content-language.js";
+import type { ResolvedTaskOutputLanguage } from "./ai-output-language.js";
 import { DANGLING_TAIL_STOPWORDS, stripDanglingTail, stripEmptyPlaceholders } from "../tasks/task-title-id-drift.js";
 import { createLogger } from "../process/logger.js";
 const log = createLogger("ai-summarize");
@@ -51,8 +53,8 @@ export const MAX_DESCRIPTION_LENGTH = 2000;
  */
 export const MAX_TITLE_SUMMARIZE_INPUT_LENGTH = 4000;
 
-/** Minimum description length for summarization in characters */
-export const MIN_DESCRIPTION_LENGTH = 201;
+/** Compatibility name for the non-empty description minimum. */
+export const MIN_DESCRIPTION_LENGTH = 1;
 
 /** Maximum title length in characters */
 export const MAX_TITLE_LENGTH = 60;
@@ -197,12 +199,13 @@ export function validateDescription(description: unknown): string {
     throw new ValidationError("description must be a string");
   }
 
-  // Validate description length floor. There is intentionally no upper bound:
-  // runTitleSummarizer truncates model input before prompting.
-  if (description.length < MIN_DESCRIPTION_LENGTH) {
-    throw new ValidationError(
-      `description must be at least ${MIN_DESCRIPTION_LENGTH} characters for summarization`
-    );
+  /*
+   FNXC:TitleSummarization 2026-08-19-13:43:
+   Title generation is intentionally length-independent. Reject only empty content here;
+   the model prompt remains bounded by MAX_TITLE_SUMMARIZE_INPUT_LENGTH below.
+   */
+  if (description.trim().length === 0) {
+    throw new ValidationError("description must not be empty");
   }
 
   return description;
@@ -225,7 +228,10 @@ function formatConfiguredModel(provider?: string, modelId?: string): string {
  * the generated title must match the operator's description language without another model call.
  * Detection only adds a medium-or-higher confidence hint; matching the description remains the rule.
  */
-function buildTitleLanguageInstruction(description: string): string {
+function buildTitleLanguageInstruction(description: string, target?: ResolvedTaskOutputLanguage): string {
+  /* FNXC:TaskOutputLanguage 2026-08-19-14:56: Deferred title generation receives a start-time snapshot and never re-reads mutable settings. */
+  if (target?.mode === "english") return "Write the title in English.";
+  if (target?.mode === "interface" && target.locale) return `Write the title in ${localeDisplayName(target.locale)} (${target.locale}).`;
   const detected = detectContentLanguage(description);
   if (detected.locale !== "unknown" && detected.confidence !== "low") {
     return `Write the title in the SAME language as the task description. Likely language: ${localeDisplayName(detected.locale)}.`;
@@ -240,6 +246,7 @@ async function runTitleSummarizer(
   rootDir: string,
   provider?: string,
   modelId?: string,
+  target?: ResolvedTaskOutputLanguage,
 ): Promise<string> {
   const agentOptions: {
     cwd: string;
@@ -280,7 +287,7 @@ async function runTitleSummarizer(
       : description;
     const wrappedPrompt =
       "Summarize the following task description into a title (≤60 chars). " +
-      buildTitleLanguageInstruction(description) + " " +
+      buildTitleLanguageInstruction(description, target) + " " +
       "Output ONLY the title text on a single line. Do not call any tools.\n\n" +
       "<description>\n" +
       truncatedDescription +
@@ -347,7 +354,7 @@ async function runTitleSummarizer(
 
 /**
  * Summarize a task description into a concise title using AI.
- * @param description - The task description to summarize (must be >200 chars; model input is truncated)
+ * @param description - The non-empty task description to summarize; model input is truncated
  * @param rootDir - Project root directory for AI agent context
  * @param provider - Optional AI model provider (e.g., "anthropic")
  * @param modelId - Optional AI model ID (e.g., "claude-sonnet-4-5")
@@ -357,12 +364,11 @@ export async function summarizeTitle(
   description: string,
   rootDir: string,
   provider?: string,
-  modelId?: string
+  modelId?: string,
+  target?: ResolvedTaskOutputLanguage,
 ): Promise<string | null> {
-  // Validate description length first
-  if (description.length <= 200) {
-    return null; // Too short for summarization
-  }
+  // Validate before creating an agent so invalid input never incurs model work.
+  validateDescription(description);
 
   const createFnAgent = await getFnAgent();
   if (!createFnAgent) {
@@ -371,7 +377,7 @@ export async function summarizeTitle(
   }
 
   try {
-    return await runTitleSummarizer(createFnAgent, description, rootDir, provider, modelId);
+    return await runTitleSummarizer(createFnAgent, description, rootDir, provider, modelId, target);
   } catch (err) {
     if (!provider || !modelId || !isConfiguredModelNotFoundError(err)) {
       throw err;
@@ -383,7 +389,7 @@ export async function summarizeTitle(
     );
 
     try {
-      return await runTitleSummarizer(createFnAgent, description, rootDir);
+      return await runTitleSummarizer(createFnAgent, description, rootDir, undefined, undefined, target);
     } catch (retryError) {
       const message = retryError instanceof Error ? retryError.message : String(retryError);
       log.warn(`Automatic title summarizer fallback after stale model ${staleModel} failed: ${message}`);

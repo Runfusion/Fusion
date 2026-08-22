@@ -44,6 +44,16 @@ The board needs a neutral first-paint shell whenever workflow lanes are enabled 
   inline-size: 75%;
 }
 
+/*
+FNXC:BoardNavigation 2026-08-20-04:47:
+Feedback begins only after an eligible desktop/tablet safe-surface drag crosses horizontal intent.
+It never activates for excluded cards or controls, the unbound skeleton, or the disabled mobile path.
+*/
+.board.board-workflow-columns.is-mouse-panning {
+  cursor: grabbing;
+  user-select: none;
+}
+
 @keyframes board-workflows-skeleton-pulse {
   0%, 100% {
     opacity: 0.55;

@@ -281,6 +281,38 @@ describe("WorkflowGraphExecutor optional-group", () => {
     expect(result.outcome).toBe("success");
   });
 
+  it("fences a Code Review edge when scope changes after terminal result persistence", async () => {
+    const calls: string[] = [];
+    const records: WorkflowStepResult[] = [];
+    const edgeAdmission = vi.fn(async () => false);
+    const executor = new WorkflowGraphExecutor({
+      handlers: {
+        prompt: async (node) => {
+          calls.push(node.id);
+          return node.id === "review"
+            ? { outcome: "success", value: "APPROVE", contextPatch: { repositoryScopeRevision: 2 } }
+            : { outcome: "success" };
+        },
+      },
+      recordWorkflowStepResult: async (_taskId, result) => { records.push(result); return true; },
+      isRepositoryScopeReviewEdgeCurrent: edgeAdmission,
+    });
+    const ir = reviseGroupIr();
+    const group = ir.nodes.find((node) => node.id === "group");
+    if (!group) throw new Error("review group missing");
+    group.config = { ...group.config, reviewKind: "code" };
+
+    const result = await executor.run(taskWith(["group"]), settingsOn(), ir);
+
+    /* FNXC:RepositoryScope 2026-08-21-03:05: The callback models an operator scope mutation after terminal CAS. */
+    expect(records).toEqual(expect.arrayContaining([
+      expect.objectContaining({ workflowStepId: "group", status: "passed", repositoryScopeRevision: 2 }),
+    ]));
+    expect(edgeAdmission).toHaveBeenCalledWith("FN-OG", "group", 2);
+    expect(calls).not.toContain("after");
+    expect(result.outcome).toBe("failure");
+  });
+
   it("pre-merge advisory REVISE requests a bounded fix and aborts forward traversal when scheduled", async () => {
     const calls: string[] = [];
     const records: unknown[] = [];

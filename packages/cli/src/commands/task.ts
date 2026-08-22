@@ -1,5 +1,5 @@
 import { TaskStore, COLUMNS, COLUMN_LABELS, resolveProjectColumnsForRoles, TERMINAL_ROLES, resolveReviewColumns, resolveTaskLifecycleColumns, resolveWorkflowIrForTask, CentralCore, buildAutoPauseClearPatch, buildManualRetryResetPatch, extractIntentSignature, findNearDuplicates, getTaskDuplicateLineage, isValidRepoSlug, isWorkspaceTask, reconcileDeterministicDuplicate, resolveTaskGithubTracking, runDeterministicDuplicateGuard, evaluateArchiveTaskLiveness, describeArchiveLiveness, TaskIsLiveError, type Settings, type Column, type ColumnId, type StepStatus, type AgentLogType, type AgentLogEntry, type IntentSignature, type NearDuplicateCandidate, type NearDuplicateMatch, type TaskDependencyMutation } from "@fusion/core";
-import { isInReviewMissingWorktreeSessionStartFailure, runAiMerge, landWorkspaceTask, installBaselineArchiveWorktreeDisposer } from "@fusion/engine";
+import { isInReviewMissingWorktreeSessionStartFailure, runAiMerge, landWorkspaceTask, installBaselineArchiveWorktreeDisposer, clearOwnedMergeStamp, reconcileUnownedStaleMergeStamp } from "@fusion/engine";
 import { createInterface } from "node:readline/promises";
 import type { PlanningQuestion, PlanningSummary } from "@fusion/core";
 import { createSession, createTaskFromPlanSession, ensureDurablePlanningSessionStore, getSession as getPlanningSession, submitResponse, validateSession, RateLimitError, SessionNotFoundError, InvalidSessionStateError } from "@fusion/dashboard/planning";
@@ -1246,87 +1246,133 @@ async function runTaskShowWithStore(id: string, store: TaskStore) {
 }
 
 export async function runTaskMerge(id: string, projectName?: string) {
-  // FNXC:CliBoardMutation 2026-07-09-00:00 (FN-7734): resolve context ONCE
-  // (retried — replaces the previous double resolution via `getStore` +
-  // `getProjectPath`, each of which independently called `getCommandContext`)
-  // and close it in a `finally` covering EVERY exit path, including the
-  // `process.exit(1)` calls below. The AI merge (`runAiMerge`) and
-  // workspace-land (`landWorkspaceTask`) subflows are deliberately NOT
-  // retry-wrapped — they drive non-idempotent external git/AI operations,
-  // so retrying the whole flow on a lock blip could double-drive a merge or
-  // land (Step 1 audit decision).
+  // FNXC:CliBoardMutation 2026-07-09-00:00 (FN-7734): resolve context ONCE.
   const context = await resolveBoardContext(projectName, id, "resolve project");
   const store = context.store;
   const projectPath = context.projectPath;
+  const abortController = new AbortController();
+  let wroteLocalMergeStamp = false;
+  let handlingSignal = false;
+  let handlersInstalled = false;
+  let storeClosed = false;
+  let signalShutdown: Promise<void> | undefined;
+
+  const closeStoreOnce = async () => {
+    if (storeClosed) return;
+    storeClosed = true;
+    await closeProjectStore(context).catch(() => undefined);
+  };
+
+  /*
+  FNXC:MergeReliability 2026-08-20-02:41:
+  Authorization B requires proof that this one-shot process wrote the stamp; a signal can arrive
+  after handlers install but before a merge body claims anything. Observe a successful local
+  `merging` write instead of inferring ownership from an indistinguishable row status, so cleanup
+  cannot clear another process's fresh generation. A write whose database outcome is unknown stays
+  unowned and is recoverable later only through authorization C's age evidence.
+  */
+  const mergeStore = new Proxy(store, {
+    get(target, property) {
+      if (property === "updateTask") {
+        return async (...args: Parameters<TaskStore["updateTask"]>) => {
+          const result = await target.updateTask(...args);
+          const patch = args[1];
+          if (args[0] === id && patch?.status === "merging") wroteLocalMergeStamp = true;
+          return result;
+        };
+      }
+      const value = Reflect.get(target, property, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  }) as TaskStore;
+
+  const removeSignalHandlers = () => {
+    for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) process.off(signal, onSignal);
+    handlersInstalled = false;
+  };
+  const onSignal = (signal: NodeJS.Signals) => {
+    if (handlingSignal) return;
+    handlingSignal = true;
+    const exitCode = signal === "SIGINT" ? 130 : signal === "SIGTERM" ? 143 : 129;
+    // FNXC:MergeReliability 2026-08-20-02:00: A signal can make the merge body reject
+    // before its owner-clear settles. Share this promise with catch so only the signal
+    // path exits and it cannot terminate before authorization-B cleanup commits.
+    signalShutdown = (async () => {
+      abortController.abort();
+      if (wroteLocalMergeStamp) {
+        await clearOwnedMergeStamp(store, id, "MergeAborted").catch(() => undefined);
+      }
+      await closeStoreOnce();
+      removeSignalHandlers();
+      process.exit(exitCode);
+    })();
+  };
 
   console.log(`\n  Merging ${id} with AI...\n`);
 
   try {
     /*
-    FNXC:GrokCliRouting 2026-07-15-10:17:
-    `fn task merge` is a bare CLI door: ProjectContext only has store/path, not a live ProjectEngine, so no engine.getPluginRunner() is available. Do not invent a full PluginRunner bootstrap here (that belongs to InProcessRuntime / ProjectEngineManager). Omitting pluginRunner is intentional — grok-cli/no-key merge selections surface the dual-remediation error. Engine-backed merge already forwards this.getPluginRunner().
+    FNXC:MergeReliability 2026-08-20-02:00:
+    Authorization C applies before this one-shot CLI claims a merge: residue may belong to a hard-
+    killed process, so age evidence (not an indistinguishable `merging` compare) is required.
     */
+    if (await reconcileUnownedStaleMergeStamp(store, id)) {
+      console.log("  Cleared an age-proven stale merge status before claiming the task.");
+    }
 
-    // FNXC:Workspace 2026-06-21-23:40 (Phase C U1, KTD2):
-    // User-triggered `fn task merge`. A workspace-mode task routes through the
-    // ENGINE per-repo merge loop `landWorkspaceTask` (each sub-repo lands on its own
-    // LOCAL integration ref, no push) instead of throwing — manual merge works in
-    // Phase C (user decision). U0's R7 throw is replaced here by routing; the
-    // engine chokepoint + store.mergeTask/aiMergeTask keep throwing.
+    /*
+    FNXC:MergeReliability 2026-08-20-02:00:
+    Terminal closure is a named interruption. Unlike long-lived serve/dashboard/daemon processes,
+    this foreground command handles SIGHUP by aborting, owner-clearing (authorization B), closing,
+    and exiting 129; ignoring it would leave an invisible detached merge and Node otherwise exits.
+    */
+    for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) process.on(signal, onSignal);
+    handlersInstalled = true;
+
     const mergeTaskRecord = await store.getTask(id).catch(() => null);
-    // FNXC:Workspace 2026-06-22-09:30 (Phase C review B10): use the exported `isWorkspaceTask`
-    // (the engine/CLI canonical predicate) instead of re-inlining the workspaceWorktrees check.
     const isWorkspaceMerge = !!mergeTaskRecord && isWorkspaceTask(mergeTaskRecord);
     if (isWorkspaceMerge) {
-      const workspaceResult = await landWorkspaceTask(store, mergeTaskRecord!, projectPath, {
+      const workspaceResult = await landWorkspaceTask(mergeStore, mergeTaskRecord!, projectPath, {
         onAgentText: (delta) => process.stdout.write(delta),
+        signal: abortController.signal,
       });
       console.log();
       for (const repo of workspaceResult.repos) {
-        const label =
-          repo.status === "landed" ? `landed ${repo.landedSha?.slice(0, 8) ?? ""} → ${repo.integrationBranch}`
-          : repo.status === "empty" ? "no net changes"
-          : `failed: ${repo.error ?? "unknown"}`;
+        const label = repo.status === "landed" ? `landed ${repo.landedSha?.slice(0, 8) ?? ""} → ${repo.integrationBranch}` : repo.status === "empty" ? "no net changes" : `failed: ${repo.error ?? "unknown"}`;
         console.log(`  ${repo.status === "failed" ? "✗" : "✓"} ${repo.repo}: ${label}`);
       }
-      /*
-      FNXC:Workspace 2026-08-15-04:22:
-      `finalized`, not `allLanded`, is the merged signal. A blocked finalize is already parked
-      with progress preserved, so the CLI must report it as blocked and exit non-zero rather than
-      claiming success for sub-repos that landed without the task reaching `done`.
-      */
       const workspaceMerged = workspaceResult.allLanded && workspaceResult.finalized;
-      console.log(
-        `\n  ${workspaceMerged
-          ? "✓ All sub-repos landed — task finalized to done"
-          : workspaceResult.allLanded
-            ? `✗ Merge blocked — ${workspaceResult.finalizeBlockedReason ?? "workspace finalize was blocked"} (task moved back with progress preserved)`
-            : "✗ Partial land — see failures above (task remains in review; landed repos stay landed locally)"}\n`,
-      );
+      console.log(`\n  ${workspaceMerged ? "✓ All sub-repos landed — task finalized to done" : workspaceResult.allLanded ? `✗ Merge blocked — ${workspaceResult.finalizeBlockedReason ?? "workspace finalize was blocked"} (task moved back with progress preserved)` : "✗ Partial land — see failures above (task remains in review; landed repos stay landed locally)"}\n`);
       if (!workspaceMerged) await closeBoardContextAndExit(context, 1);
       return;
     }
 
-    const result = await runAiMerge(store, projectPath, id, {
+    const result = await runAiMerge(mergeStore, projectPath, id, {
       onAgentText: (delta) => process.stdout.write(delta),
+      signal: abortController.signal,
     });
-
     console.log();
     if (result.merged) {
       console.log(`  ✓ Merged ${result.task.id}`);
       console.log(`    Branch:   ${result.branch}`);
       console.log(`    Worktree: ${result.worktreeRemoved ? "removed" : "not found"}`);
       console.log(`    Branch:   ${result.branchDeleted ? "deleted" : "kept"}`);
-    } else {
-      console.log(`  ✓ Closed ${result.task.id} (${result.error})`);
-    }
-    console.log(`    Status:   done`);
-    console.log();
+    } else console.log(`  ✓ Closed ${result.task.id} (${result.error})`);
+    console.log("    Status:   done\n");
   } catch (err) {
+    // FNXC:MergeReliability 2026-08-20-02:27: A signal owns shutdown once installed;
+    // await its cleanup promise rather than racing a generic exit(1) against its clear.
+    if (signalShutdown) {
+      await signalShutdown;
+      return;
+    }
+    abortController.abort();
+    if (wroteLocalMergeStamp) await clearOwnedMergeStamp(store, id, "MergeAborted");
     console.error(`\n  ✗ ${err instanceof Error ? err.message : String(err)}\n`);
     await closeBoardContextAndExit(context, 1);
   } finally {
-    await closeProjectStore(context).catch(() => {});
+    if (handlersInstalled) removeSignalHandlers();
+    await closeStoreOnce();
   }
 }
 
@@ -1479,7 +1525,7 @@ export async function runTaskRefine(id: string, feedbackArg?: string, projectNam
 
     console.log();
     console.log(`  ✓ Created refinement ${newTask.id} for ${id}`);
-    console.log(`    Column: triage`);
+    console.log(`    Column: ${newTask.column}`);
     console.log(`    Dependency: ${id}`);
     console.log(`    Path: .fusion/tasks/${newTask.id}/`);
     console.log();
@@ -1641,7 +1687,7 @@ export async function runTaskRetry(id: string, projectName?: string) {
         status: null,
         error: null,
         worktree: null,
-        branch: null,
+        branch: null, branchWriteOrigin: "engine" as const,
         sessionFile: null,
         ...autoPauseClearPatch,
         ...buildManualRetryResetPatch({ resetMergeRetries: true }),
@@ -1713,7 +1759,7 @@ export async function runTaskRetry(id: string, projectName?: string) {
       status: null,
       error: null,
       worktree: null,
-      branch: null,
+      branch: null, branchWriteOrigin: "engine" as const,
       baseBranch: null,
       baseCommitSha: null,
       ...autoPauseClearPatch,

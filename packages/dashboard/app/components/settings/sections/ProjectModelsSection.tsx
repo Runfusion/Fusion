@@ -337,7 +337,7 @@ export function ProjectModelsSection({ form, setForm, models, projectId, onOpenW
     // workflow settings below.
     // FNXC:Settings-MergerModel 2026-07-13-07:52: Merger is project-scoped (like summarization), not workflow-moved.
     // FNXC:GitHubImportTranslate 2026-07-15-09:30: The import-translate lane is project-scoped (like merger/summarization), so its project override must be editable here — otherwise the lane's projectProviderKey/projectModelKey would be unreachable and only the global lane could ever be set.
-    // FNXC:SettingsModels 2026-07-15-12:00: Summarization is still project-scoped but is rendered with the AI summarization section below rather than the general Model Lanes list.
+    // FNXC:SettingsModels 2026-08-18-06:41: Summarization remains project-scoped but stays with its AI summarization enable toggles instead of the Model Overrides group.
     const projectModelLanes = modelLanes.filter((lane) => ["default", "merger", "import-translate"].includes(lane.laneId));
     const credentialInstanceKeyForLane = (lane: ModelLane): keyof Settings | undefined => PROJECT_LANE_CREDENTIAL_INSTANCE_KEYS[lane.laneId as keyof typeof PROJECT_LANE_CREDENTIAL_INSTANCE_KEYS];
     const credentialInstanceValueForLane = (lane: ModelLane): string => {
@@ -383,7 +383,7 @@ export function ProjectModelsSection({ form, setForm, models, projectId, onOpenW
     /*
      * FNXC:SettingsModels 2026-07-16-00:00:
      * The merger fallback is project-scoped and must sit directly after Project Merger
-     * in Model Lanes so operators configure the primary and retry models together.
+     * in Project lanes so operators configure the primary and retry models together.
      */
     const mergerFallbackValue = form.mergerFallbackProvider && form.mergerFallbackModelId
         ? `${form.mergerFallbackProvider}/${form.mergerFallbackModelId}`
@@ -527,27 +527,17 @@ export function ProjectModelsSection({ form, setForm, models, projectId, onOpenW
     };
     return (<>
 
-      {/* --- Token Cap --- */}
-      <h4 className="settings-section-heading">{t("settings.projectModels.tokenCap", "Token Cap")}</h4>
       {/*
-      FNXC:SettingsModels 2026-07-15-17:35:
-      The reset affordance stays conditional on an actual cap being set: "no cap" is the unset state, so offering to reset a lane that is already unset would advertise an action with nothing to undo.
-      `v ? Math.trunc(v) : null` reproduces the previous `val ? parseInt(val, 10) : null` contract exactly \u2014 a token cap is a whole number of tokens, and 0 means "no cap" (null), not a cap of zero.
+      FNXC:SettingsModels 2026-08-18-06:41:
+      Operators configure which model does what in one pass, so project lanes and workflow lanes must remain one contiguous Model Overrides group. Chat, presets, and token-cap controls must not split the groups; summarization stays with its enable toggles below, with this pointer instead of moving the gated controls.
       */}
-      <SettingsNumberRow
-        descriptor={{
-          key: "tokenCap",
-          label: t("settings.projectModels.tokenCap", "Token Cap"),
-          help: t("settings.projectModels.automaticallyCompactContextWhenApproachingThisTokenCount", "Automatically compact context when approaching this token count. Leave empty for no cap (compact only on overflow errors). Set a number to proactively compact when reaching this token count. No default \u2014 unset (no cap)."),
-          scope: "project",
-          placeholder: t("settings.projectModels.noCap", "No cap"),
-        }}
-        value={form.tokenCap ?? null}
-        onChange={(v) => setForm((f) => ({ ...f, tokenCap: v ? Math.trunc(v) : null } as SettingsFormState))}
-        clearable={form.tokenCap != null}
-      />
-
-      {/* --- Project Model Lanes --- */}
+      <div className="settings-field-label-row">
+        <h4 className="settings-section-heading">{t("settings.projectModels.modelOverrides", "Model Overrides")}</h4>
+        <SettingsHelpTip settingKey="project-model-lanes">{t("settings.projectModels.overrideGlobalModelSettingsAtTheProjectLevel", " Override global model settings at the project level. Each lane controls a specific AI usage context. Unset lanes inherit from the corresponding global lane. The Project Default Model is the fallback for this project when a more specific lane is unset. ")}</SettingsHelpTip>
+      </div>
+      <div data-testid="project-models-project-lanes">
+        <h5 className="settings-section-heading">{t("settings.projectModels.projectLanesSubheading", "Project lanes")}</h5>
+      {/* --- Project lanes --- */}
       {/*
       FNXC:ExecutorEscalation 2026-08-03-05:43:
       The alternate executor target is a project model choice, while Scheduling owns only the retry policy and optional node routing. Use the shared provider-aware dropdown so complete persisted pairs hydrate together, selecting a model updates both existing keys, and the default choice clears both without accepting arbitrary text.
@@ -586,17 +576,69 @@ export function ProjectModelsSection({ form, setForm, models, projectId, onOpenW
           menuWidth="readable"
         />
       </SettingsFieldRow>
-      {/* FNXC:SettingsHelp 2026-07-16-12:45: Section description moved behind the shared "?" affordance beside the heading — operator requirement: no inline description paragraphs in Settings. */}
-      <div className="settings-field-label-row">
-        <h4 className="settings-section-heading settings-section-heading--spaced">{t("settings.projectModels.modelLanes", "Model Lanes")}</h4>
-        <SettingsHelpTip settingKey="project-model-lanes">{t("settings.projectModels.overrideGlobalModelSettingsAtTheProjectLevel", " Override global model settings at the project level. Each lane controls a specific AI usage context. Unset lanes inherit from the corresponding global lane. The Project Default Model is the fallback for this project when a more specific lane is unset. ")}</SettingsHelpTip>
-      </div>
       {modelsLoading ? (<div className="settings-empty-state"><LoadingSpinner label={t("settings.projectModels.loadingAvailableModels", "Loading available models\u2026")} /></div>) : availableModels.length === 0 ? (<div className="settings-empty-state settings-muted">{t("settings.projectModels.noModelsAvailableConfigureAuthenticationFirst", " No models available. Configure authentication first. ")}</div>) : (<>
           {projectModelLanes.filter((lane) => lane.laneId === "default" || lane.laneId === "merger").map(renderProjectLane)}
           {renderMergerFallbackLane()}
           {projectModelLanes.filter((lane) => lane.laneId === "import-translate").map(renderProjectLane)}
         </>)}
 
+        <p className="settings-field-help" data-testid="project-models-summarization-pointer">{t("settings.projectModels.summarizationPointer", "Summarization models are configured under AI Title and Git Commit Message Summarization below.")}</p>
+      </div>
+      <div data-testid="project-models-workflow-lanes">
+      {/* --- Workflow lanes --- */}
+      {/* FNXC:ProjectWorkflowModelBaseline 2026-07-22-00:00: These controls persist on the active default workflow as the cross-workflow project baseline. Runtime precedence is task-specific selection > project baseline > global lane > selected-workflow lane; keep this explanation in the shared heading help tip rather than restoring per-control prose. */}
+      <div className="settings-field-label-row">
+        <h5 className="settings-section-heading">{t("settings.projectModels.workflowLanesSubheading", "Workflow lanes")}</h5>
+        <SettingsHelpTip settingKey="default-workflow-model-lanes">
+          {t("settings.movedStub.modelLanes", "Per-phase model lanes (execution, planning, reviewer, and their fallbacks) are stored on the active default workflow.")}{t("settings.projectModels.theseProjectOverridesApplyToTheActiveDefault", " They apply as the project baseline for every workflow and take precedence over global and per-workflow values; task-specific selections still win. ")}</SettingsHelpTip>
+      </div>
+      {!projectId ? (<div className="settings-empty-state settings-muted">{t("settings.projectModels.openAProjectToEditWorkflowModelLanes", "Open a project to edit workflow model lanes.")}</div>) : workflowLoading ? (<div className="settings-empty-state"><LoadingSpinner label={t("settings.projectModels.loadingWorkflowModelLanes", "Loading workflow model lanes\u2026")} /></div>) : availableModels.length === 0 ? (<div className="settings-empty-state settings-muted">{t("settings.projectModels.noModelsAvailableConfigureAuthenticationBeforeSelectingWorkflow", " No models available. Configure authentication before selecting workflow model lanes. ")}</div>) : (<>
+          {workflowModelPairs.map((pair) => {
+                const value = modelPairValue(effectiveWorkflowValues, pair);
+                const rawThinkingValue = pair.thinkingId ? effectiveWorkflowValues[pair.thinkingId] : undefined;
+                const thinkingValue: string = typeof rawThinkingValue === "string" ? rawThinkingValue : "";
+                const rawCredentialInstanceId = pair.credentialInstanceId ? effectiveWorkflowValues[pair.credentialInstanceId] : undefined;
+                const credentialInstanceId = typeof rawCredentialInstanceId === "string" ? rawCredentialInstanceId : "";
+                const modelCustomized = Object.prototype.hasOwnProperty.call(workflowPending, pair.providerId)
+                    ? workflowPending[pair.providerId] !== null
+                    : Boolean(workflowPayload?.stored && (Object.prototype.hasOwnProperty.call(workflowPayload.stored, pair.providerId)
+                        || Object.prototype.hasOwnProperty.call(workflowPayload.stored, pair.modelId)));
+                const thinkingCustomized = pair.thinkingId
+                    ? (Object.prototype.hasOwnProperty.call(workflowPending, pair.thinkingId)
+                        ? workflowPending[pair.thinkingId] !== null
+                        : Boolean(workflowPayload?.stored && Object.prototype.hasOwnProperty.call(workflowPayload.stored, pair.thinkingId)))
+                    : false;
+                const credentialInstanceCustomized = pair.credentialInstanceId
+                    ? (Object.prototype.hasOwnProperty.call(workflowPending, pair.credentialInstanceId)
+                        ? workflowPending[pair.credentialInstanceId] !== null
+                        : Boolean(workflowPayload?.stored && Object.prototype.hasOwnProperty.call(workflowPayload.stored, pair.credentialInstanceId)))
+                    : false;
+                const customized = modelCustomized || thinkingCustomized || credentialInstanceCustomized;
+                const error = workflowRejections[pair.providerId]?.message ?? workflowRejections[pair.modelId]?.message ?? (pair.thinkingId ? workflowRejections[pair.thinkingId]?.message : undefined) ?? (pair.credentialInstanceId ? workflowRejections[pair.credentialInstanceId]?.message : undefined);
+                return (<div className="form-group" key={pair.id} data-testid={`workflow-model-lane-${pair.id}`}>
+                <div className="settings-model-lane-label-row">
+                  <label htmlFor={`workflow-${pair.id}-model`}>{pair.label}</label>
+                  <span className={`settings-lane-badge ${customized ? "settings-lane-badge--override" : "settings-lane-badge--inherited"}`} title={customized ? "Explicitly set as the project baseline" : "Inherited from global, workflow, or default settings"}>
+                    {customized ? "Project baseline" : "Inherited (Workflow)"}
+                  </span>
+                  {/* FNXC:SettingsHelp 2026-07-15-23:10: Same affordance as the project lanes above — a workflow lane is the same shape, so its help hangs off the label row too rather than sitting under the dropdown as prose. */}
+                  {pair.help ? <SettingsHelpTip settingKey={`workflow-${pair.id}-model`}>{pair.help}</SettingsHelpTip> : null}
+                </div>
+                <div className="settings-model-lane-control-row">
+                  <div className="settings-model-lane-control-main">
+                    <CustomModelDropdown id={`workflow-${pair.id}-model`} label={pair.label} models={availableModels} value={value} onChange={(next) => setWorkflowPairValue(pair, next)} placeholder={t("settings.projectModels.useWorkflowDefault", "Use workflow default")} defaultOptionLabel="Use workflow default" favoriteProviders={favoriteProviders} onToggleFavorite={onToggleFavorite} favoriteModels={favoriteModels} onToggleModelFavorite={onToggleModelFavorite} menuWidth="readable" credentialInstanceId={credentialInstanceId} onCredentialInstanceChange={pair.credentialInstanceId ? (instanceId) => setWorkflowCredentialInstanceValue(pair, instanceId) : undefined} showThinkingLevel={Boolean(pair.thinkingId)} thinkingLevel={thinkingValue} onThinkingLevelChange={pair.thinkingId ? (level) => setWorkflowThinkingValue(pair, level) : undefined} defaultThinkingLevel={typeof form.defaultThinkingLevel === "string" ? form.defaultThinkingLevel : "off"}/>
+                  </div>
+                  {customized && (<button type="button" className="btn btn-ghost btn-sm" title={t("settings.projectModels.resetToInheritFromWorkflow", "Reset to inherit from workflow")} onClick={() => resetWorkflowPairValue(pair)} style={{ whiteSpace: "nowrap" }}>{t("settings.projectModels.reset", " Reset ")}</button>)}
+                </div>
+                {error ? <small className="settings-error" data-testid={`workflow-model-lane-error-${pair.id}`}>{error}</small> : null}
+              </div>);
+            })}
+          {onOpenWorkflowSettings ? (<div className="settings-model-lane-actions" aria-label={t("settings.projectModels.defaultWorkflowModelLaneActions", "Default workflow model lane actions")}>
+              <button type="button" className="btn btn-ghost btn-sm" onClick={onOpenWorkflowSettings}>{t("settings.projectModels.advancedWorkflowPolicy", " Advanced workflow policy ")}</button>
+            </div>) : null}
+        </>)}
+
+      </div>
       {/* FNXC:ChatModels 2026-07-12-20:45: Project Models owns the Direct-chat default because New Chat needs a project-scoped model-or-agent target plus prompt-vs-direct creation mode without changing workflow or in-chat switcher settings. */}
       {/* FNXC:SettingsHelp 2026-07-16-12:45: Section description moved behind the shared "?" affordance beside the heading — operator requirement: no inline description paragraphs in Settings. */}
       <div className="settings-field-label-row">
@@ -665,60 +707,6 @@ export function ProjectModelsSection({ form, setForm, models, projectId, onOpenW
           </div>
           {agents.length === 0 && !agentsLoading ? (<small>{t("settings.projectModels.chatDefaultAgentEmpty", "No agents are available for this project yet.")}</small>) : null}
         </div>)}
-
-      {/* --- Project workflow model lanes --- */}
-      {/* FNXC:SettingsHelp 2026-07-16-12:45: Section description moved behind the shared "?" affordance beside the heading — operator requirement: no inline description paragraphs in Settings. */}
-      {/* FNXC:ProjectWorkflowModelBaseline 2026-07-22-00:00: These controls persist on the active default workflow as the cross-workflow project baseline. Runtime precedence is task-specific selection > project baseline > global lane > selected-workflow lane; keep this explanation in the shared heading help tip rather than restoring per-control prose. */}
-      <div className="settings-field-label-row">
-        <h4 className="settings-section-heading settings-section-heading--spaced">{t("settings.projectModels.defaultWorkflowModelLanes", "Project workflow model lanes")}</h4>
-        <SettingsHelpTip settingKey="default-workflow-model-lanes">
-          {t("settings.movedStub.modelLanes", "Per-phase model lanes (execution, planning, reviewer, and their fallbacks) are stored on the active default workflow.")}{t("settings.projectModels.theseProjectOverridesApplyToTheActiveDefault", " They apply as the project baseline for every workflow and take precedence over global and per-workflow values; task-specific selections still win. ")}</SettingsHelpTip>
-      </div>
-      {!projectId ? (<div className="settings-empty-state settings-muted">{t("settings.projectModels.openAProjectToEditWorkflowModelLanes", "Open a project to edit workflow model lanes.")}</div>) : workflowLoading ? (<div className="settings-empty-state"><LoadingSpinner label={t("settings.projectModels.loadingWorkflowModelLanes", "Loading workflow model lanes\u2026")} /></div>) : availableModels.length === 0 ? (<div className="settings-empty-state settings-muted">{t("settings.projectModels.noModelsAvailableConfigureAuthenticationBeforeSelectingWorkflow", " No models available. Configure authentication before selecting workflow model lanes. ")}</div>) : (<>
-          {workflowModelPairs.map((pair) => {
-                const value = modelPairValue(effectiveWorkflowValues, pair);
-                const rawThinkingValue = pair.thinkingId ? effectiveWorkflowValues[pair.thinkingId] : undefined;
-                const thinkingValue: string = typeof rawThinkingValue === "string" ? rawThinkingValue : "";
-                const rawCredentialInstanceId = pair.credentialInstanceId ? effectiveWorkflowValues[pair.credentialInstanceId] : undefined;
-                const credentialInstanceId = typeof rawCredentialInstanceId === "string" ? rawCredentialInstanceId : "";
-                const modelCustomized = Object.prototype.hasOwnProperty.call(workflowPending, pair.providerId)
-                    ? workflowPending[pair.providerId] !== null
-                    : Boolean(workflowPayload?.stored && (Object.prototype.hasOwnProperty.call(workflowPayload.stored, pair.providerId)
-                        || Object.prototype.hasOwnProperty.call(workflowPayload.stored, pair.modelId)));
-                const thinkingCustomized = pair.thinkingId
-                    ? (Object.prototype.hasOwnProperty.call(workflowPending, pair.thinkingId)
-                        ? workflowPending[pair.thinkingId] !== null
-                        : Boolean(workflowPayload?.stored && Object.prototype.hasOwnProperty.call(workflowPayload.stored, pair.thinkingId)))
-                    : false;
-                const credentialInstanceCustomized = pair.credentialInstanceId
-                    ? (Object.prototype.hasOwnProperty.call(workflowPending, pair.credentialInstanceId)
-                        ? workflowPending[pair.credentialInstanceId] !== null
-                        : Boolean(workflowPayload?.stored && Object.prototype.hasOwnProperty.call(workflowPayload.stored, pair.credentialInstanceId)))
-                    : false;
-                const customized = modelCustomized || thinkingCustomized || credentialInstanceCustomized;
-                const error = workflowRejections[pair.providerId]?.message ?? workflowRejections[pair.modelId]?.message ?? (pair.thinkingId ? workflowRejections[pair.thinkingId]?.message : undefined) ?? (pair.credentialInstanceId ? workflowRejections[pair.credentialInstanceId]?.message : undefined);
-                return (<div className="form-group" key={pair.id} data-testid={`workflow-model-lane-${pair.id}`}>
-                <div className="settings-model-lane-label-row">
-                  <label htmlFor={`workflow-${pair.id}-model`}>{pair.label}</label>
-                  <span className={`settings-lane-badge ${customized ? "settings-lane-badge--override" : "settings-lane-badge--inherited"}`} title={customized ? "Explicitly set as the project baseline" : "Inherited from global, workflow, or default settings"}>
-                    {customized ? "Project baseline" : "Inherited (Workflow)"}
-                  </span>
-                  {/* FNXC:SettingsHelp 2026-07-15-23:10: Same affordance as the project lanes above — a workflow lane is the same shape, so its help hangs off the label row too rather than sitting under the dropdown as prose. */}
-                  {pair.help ? <SettingsHelpTip settingKey={`workflow-${pair.id}-model`}>{pair.help}</SettingsHelpTip> : null}
-                </div>
-                <div className="settings-model-lane-control-row">
-                  <div className="settings-model-lane-control-main">
-                    <CustomModelDropdown id={`workflow-${pair.id}-model`} label={pair.label} models={availableModels} value={value} onChange={(next) => setWorkflowPairValue(pair, next)} placeholder={t("settings.projectModels.useWorkflowDefault", "Use workflow default")} defaultOptionLabel="Use workflow default" favoriteProviders={favoriteProviders} onToggleFavorite={onToggleFavorite} favoriteModels={favoriteModels} onToggleModelFavorite={onToggleModelFavorite} menuWidth="readable" credentialInstanceId={credentialInstanceId} onCredentialInstanceChange={pair.credentialInstanceId ? (instanceId) => setWorkflowCredentialInstanceValue(pair, instanceId) : undefined} showThinkingLevel={Boolean(pair.thinkingId)} thinkingLevel={thinkingValue} onThinkingLevelChange={pair.thinkingId ? (level) => setWorkflowThinkingValue(pair, level) : undefined} defaultThinkingLevel={typeof form.defaultThinkingLevel === "string" ? form.defaultThinkingLevel : "off"}/>
-                  </div>
-                  {customized && (<button type="button" className="btn btn-ghost btn-sm" title={t("settings.projectModels.resetToInheritFromWorkflow", "Reset to inherit from workflow")} onClick={() => resetWorkflowPairValue(pair)} style={{ whiteSpace: "nowrap" }}>{t("settings.projectModels.reset", " Reset ")}</button>)}
-                </div>
-                {error ? <small className="settings-error" data-testid={`workflow-model-lane-error-${pair.id}`}>{error}</small> : null}
-              </div>);
-            })}
-          {onOpenWorkflowSettings ? (<div className="settings-model-lane-actions" aria-label={t("settings.projectModels.defaultWorkflowModelLaneActions", "Default workflow model lane actions")}>
-              <button type="button" className="btn btn-ghost btn-sm" onClick={onOpenWorkflowSettings}>{t("settings.projectModels.advancedWorkflowPolicy", " Advanced workflow policy ")}</button>
-            </div>) : null}
-        </>)}
 
       {/* --- Model Presets --- */}
       <h4 className="settings-section-heading settings-section-heading--spaced">{t("settings.projectModels.modelPresets", "Model Presets")}</h4>
@@ -855,20 +843,45 @@ export function ProjectModelsSection({ form, setForm, models, projectId, onOpenW
         </div>) : null}
 
       {/*
-      FNXC:TaskDefinitionInputLanguage 2026-07-16-05:00:
-      Keep task-definition language outside title and merge summarization controls: it changes
-      triage authoring only, uses no summarizer lane, and is opt-in for supported detectable
-      languages. The shared toggle row carries the responsive Project Models layout.
+      FNXC:TaskOutputLanguage 2026-08-19-14:56:
+      This is the sole task-output control in the shared desktop/mobile Project Models section.
+      The UI derives legacy true for display only; selecting a mode makes the project write authoritative.
+      */}
+      <SettingsSelectRow
+        descriptor={{
+          key: "taskOutputLanguage",
+          label: t("settings.projectModels.taskOutputLanguage", "AI-authored task language"),
+          help: t("settings.projectModels.taskOutputLanguageHelp", "Choose the language for AI-authored task plans, titles, steps, summaries, and recommendations. No stored default — unset resolves English. Changes apply to new generation sessions only."),
+          scope: "project",
+          options: [
+            { value: "english", label: t("settings.projectModels.taskOutputLanguageEnglish", "English (default)") },
+            { value: "input", label: t("settings.projectModels.taskOutputLanguageInput", "User input language") },
+            { value: "interface", label: t("settings.projectModels.taskOutputLanguageInterface", "Fusion interface language") },
+          ],
+        }}
+        value={form.taskOutputLanguage ?? (form.taskDefinitionInInputLanguage ? "input" : "english")}
+        onChange={(value) => setForm((current) => ({
+          ...current,
+          taskOutputLanguage: value as "english" | "input" | "interface",
+          taskDefinitionInInputLanguage: false,
+        }))}
+      />
+
+      {/*
+      FNXC:TitleSummarization 2026-08-20-20:19:
+      The automatic title policy belongs immediately beside its task-language selector so operators
+      can see that every enabled create snapshots this language for title generation. Keep this
+      project form row outside the model guard: availability of a model must not hide the policy.
       */}
       <SettingsToggleRow
         descriptor={{
-          key: "taskDefinitionInInputLanguage",
-          label: t("settings.projectModels.taskDefinitionInInputLanguage", "Write task definitions in the operator's input language"),
-          help: t("settings.projectModels.taskDefinitionInInputLanguageHelp", "When enabled, generated task-definition prose uses supported detectable input languages (Spanish, French, Korean, or Chinese as zh-CN). Headings, markers, and code stay English. Unsupported or undetectable input stays English. Default: disabled."),
+          key: "autoSummarizeTitles",
+          label: t("settings.projectModels.autoSummarizeLongDescriptionsAsTitles", " Auto-summarize task titles "),
+          help: t("settings.projectModels.whenEnabledTasksCreatedWithoutATitleBut", " When enabled, every non-empty task description created without a title receives an AI-generated title (max 60 characters). Explicit titles are preserved, and manual or explicit force requests remain available when this is disabled. The same model is also used for merge commit summaries and GitHub tracking issue titles. Default: disabled. "),
           scope: "project",
         }}
-        value={form.taskDefinitionInInputLanguage || false}
-        onChange={(v) => setForm((f) => ({ ...f, taskDefinitionInInputLanguage: v === true }))}
+        value={form.autoSummarizeTitles || false}
+        onChange={(v) => setForm((f) => ({ ...f, autoSummarizeTitles: v === true }))}
       />
 
       {/* --- AI Title and Git Commit Message Summarization --- */}
@@ -881,7 +894,7 @@ export function ProjectModelsSection({ form, setForm, models, projectId, onOpenW
         <div className="settings-field-label-row">
           <h4 className="settings-section-heading settings-section-heading--spaced">{t("settings.projectModels.aITitleAndGitCommitMessageSummarization", " AI Title and Git Commit Message Summarization ")}</h4>
           <SettingsHelpTip settingKey="project-ai-summarization">
-            {t("settings.projectModels.configuresTheModelUsedForTwoShortSummary", " Configures the model used for two short-summary jobs: auto-generating task titles from long descriptions, and generating merge commit summaries from step commits and diff stats. ")}
+            {t("settings.projectModels.configuresTheModelUsedForTwoShortSummary", " Configures the model used for two short-summary jobs: auto-generating task titles from task descriptions, and generating merge commit summaries from step commits and diff stats. ")}
             {(form.autoSummarizeTitles || form.useAiMergeCommitSummary || form.githubTrackingEnabledByDefault || false)
               ? t("settings.movedStub.summarizerModelInline", "These summarization model controls govern title auto-summarization, merge commit summaries, GitHub tracking titles, and PR metadata generation.")
               : ""}
@@ -909,21 +922,6 @@ export function ProjectModelsSection({ form, setForm, models, projectId, onOpenW
               </div>
             </div>
           </>)}
-        {/*
-        FNXC:SettingsSearch 2026-07-15-17:35:
-        This is the row operators searched "summarize" for and could not find (FN-7907, patched again 2026-07-14). It is now indexed by descriptor key from ProjectModelsSection.search.ts, so the word in its own label is what search matches — no hand-maintained keyword list to fall behind again.
-        */}
-        <SettingsToggleRow
-          descriptor={{
-            key: "autoSummarizeTitles",
-            label: t("settings.projectModels.autoSummarizeLongDescriptionsAsTitles", " Auto-summarize long descriptions as titles "),
-            help: t("settings.projectModels.whenEnabledTasksCreatedWithoutATitleBut", " When enabled, tasks created without a title but with descriptions over 200 characters will automatically get an AI-generated title (max 60 characters). The same model is also used to generate fallback merge commit message bodies when the branch's commit log is empty (e.g. squash merges with no unique commits), and GitHub tracking issue titles when a tracked task has no title yet. Default: disabled. "),
-            scope: "project",
-          }}
-          value={form.autoSummarizeTitles || false}
-          onChange={(v) => setForm((f) => ({ ...f, autoSummarizeTitles: v === true }))}
-        />
-
         <SettingsToggleRow
           descriptor={{
             key: "useAiMergeCommitSummary",
@@ -959,6 +957,27 @@ export function ProjectModelsSection({ form, setForm, models, projectId, onOpenW
         onChange={(v) => setForm((f) => ({ ...f, prDescriptionPromptInstructions: v ?? "" }))}
       />
       </section>
-    </>);
+    </>)
+      {/* --- Token Cap --- */}
+      <h4 className="settings-section-heading">{t("settings.projectModels.tokenCap", "Token Cap")}</h4>
+      {/*
+      FNXC:SettingsModels 2026-07-15-17:35:
+      The reset affordance stays conditional on an actual cap being set: "no cap" is the unset state, so offering to reset a lane that is already unset would advertise an action with nothing to undo.
+      `v ? Math.trunc(v) : null` reproduces the previous `val ? parseInt(val, 10) : null` contract exactly \u2014 a token cap is a whole number of tokens, and 0 means "no cap" (null), not a cap of zero.
+      */}
+      <SettingsNumberRow
+        descriptor={{
+          key: "tokenCap",
+          label: t("settings.projectModels.tokenCap", "Token Cap"),
+          help: t("settings.projectModels.automaticallyCompactContextWhenApproachingThisTokenCount", "Automatically compact context when approaching this token count. Leave empty for no cap (compact only on overflow errors). Set a number to proactively compact when reaching this token count. No default \u2014 unset (no cap)."),
+          scope: "project",
+          placeholder: t("settings.projectModels.noCap", "No cap"),
+        }}
+        value={form.tokenCap ?? null}
+        onChange={(v) => setForm((f) => ({ ...f, tokenCap: v ? Math.trunc(v) : null } as SettingsFormState))}
+        clearable={form.tokenCap != null}
+      />
+
+;
 }
 export default ProjectModelsSection;

@@ -121,7 +121,7 @@ When the dock body is at least this wide there is clearly room for the Files tre
 const RIGHT_DOCK_FILES_TWO_PANE_MIN_WIDTH = 640;
 /*
 FNXC:RightDockChat 2026-06-27-23:12:
-ChatView's desktop split pane is unusable in the default 360px right dock, so compact dock hosts force ChatView's narrow list/detail layout until the dock is wider than the tablet/mobile breakpoint. The expanded pop-out keeps the full desktop layout.
+ChatView shares one full-pane list/detail flow across dock widths, so compact dock hosts retain the narrow-layout signal only for surrounding chat chrome. The expanded pop-out keeps the same navigation contract.
 */
 const RIGHT_DOCK_CHAT_COMPACT_MAX_WIDTH = 768;
 

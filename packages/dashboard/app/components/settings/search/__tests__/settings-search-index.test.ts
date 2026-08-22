@@ -227,7 +227,7 @@ describe("settings search ranking", () => {
       sectionId: "project-models",
       key: "autoSummarizeTitles",
       labelKey: "settings.projectModels.autoSummarizeLongDescriptionsAsTitles",
-      labelFallback: "Auto-summarize long descriptions as titles",
+      labelFallback: "Auto-summarize task titles",
     };
     const results = rankSettingsSearchResults([autoSummarize], "summarize", resolveEnglish);
     expect(results).toHaveLength(1);

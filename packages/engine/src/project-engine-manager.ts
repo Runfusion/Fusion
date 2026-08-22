@@ -13,14 +13,9 @@
  *   - Graceful shutdown of all engines via `stopAll()`
  */
 
-import { realpathSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { resolve as pathResolve } from "node:path";
-import type {
-  CentralCore,
-  TaskStore,
-  RegisteredProject,
-  MigrationProgressEvent,
-} from "@fusion/core";
+import { createTaskStoreForBackend, resolveEffectiveConcurrency, type CentralCore, type TaskStore, type RegisteredProject, type MigrationProgressEvent } from "@fusion/core";
 import { ProjectEngine } from "./project-engine.js";
 import type { ProjectEngineOptions } from "./project-engine.js";
 import type { ProjectRuntimeConfig } from "./project/project-runtime.js";
@@ -528,20 +523,49 @@ export class ProjectEngineManager {
   }
 
   private async buildRuntimeConfig(project: RegisteredProject): Promise<ProjectRuntimeConfig> {
-    const settings = project.settings as
-      | Record<string, unknown>
-      | undefined;
+    const workingDirectory = await this.centralCore.resolveLocalProjectWorkingDirectory(project.id);
+    const capacity = await this.resolveStartupConcurrency(project, workingDirectory);
 
     return {
       projectId: project.id,
-      workingDirectory: await this.centralCore.resolveLocalProjectWorkingDirectory(project.id),
+      workingDirectory,
       isolationMode:
         (project.isolationMode as "in-process" | "child-process") ??
         "in-process",
-      maxConcurrent: (settings?.maxConcurrent as number) ?? 4,
-      maxWorktrees: (settings?.maxWorktrees as number) ?? 10,
+      maxConcurrent: capacity.maxConcurrent,
+      maxWorktrees: capacity.worktreeLimit ?? capacity.maxConcurrent,
       onMigrationProgress: this.options.onMigrationProgress,
     };
+  }
+
+  /*
+  FNXC:CapacityModel 2026-08-21-15:45:
+  FN-9185 makes live project settings authoritative even while a runtime is starting.
+  The registry snapshot is used only when a project-scoped TaskStore cannot be opened; this avoids
+  constructing a startup capacity from a stale central record that omits a persisted project override.
+  */
+  private async resolveStartupConcurrency(project: RegisteredProject, workingDirectory: string) {
+    const externalStore = this.options.externalTaskStore;
+    const getExternalSettingsFast = externalStore?.getSettingsFast;
+    if (externalStore && typeof getExternalSettingsFast === "function" && sameProjectRoot(externalStore.getRootDir(), workingDirectory)) {
+      return resolveEffectiveConcurrency(await getExternalSettingsFast.call(externalStore));
+    }
+
+    // A missing root cannot host a project-scoped store (notably a stale registry row).
+    if (!existsSync(workingDirectory)) {
+      return resolveEffectiveConcurrency(project.settings as Record<string, unknown> | undefined);
+    }
+
+    try {
+      const boot = await createTaskStoreForBackend({ rootDir: workingDirectory, projectId: project.id });
+      try {
+        return resolveEffectiveConcurrency(await boot.taskStore.getSettingsFast());
+      } finally {
+        await boot.shutdown();
+      }
+    } catch {
+      return resolveEffectiveConcurrency(project.settings as Record<string, unknown> | undefined);
+    }
   }
 
   private buildEngineOptions(

@@ -24,6 +24,7 @@ import { projectScopeFor, type AsyncDataLayer, type DbTransaction } from "../pos
 // FNXC:ApprovalLifecycleSecurity 2026-07-26-12:25:
 import { isApprovalRequestExpired } from "../types/agents/agents.js";
 import {
+  APPROVAL_REQUEST_AUDIT_EVENT_TYPES,
   isValidApprovalRequestTransition,
   normalizeApprovalRequestActionCategory,
   type ApprovalRequest,
@@ -121,6 +122,16 @@ function rowToAuditEvent(row: ApprovalRequestAuditEventRow): ApprovalRequestAudi
  *
  * FNXC:ApprovalAnalyticsIsolation 2026-07-14-01:04:
  * Audit events must carry the bound layer's project ID at write time because request IDs alone do not provide a reliable tenant ownership join for Command Center intervention analytics. The live `(project_id, id)` key also permits deterministic audit IDs to collide safely across partitions; preserve the explicit value so the ownership trigger observes blank writes unchanged.
+ *
+ * FNXC:ApprovalAuditIdentity 2026-08-16-23:50:
+ * A deterministic ID collision needs one physical project partition, request ID,
+ * event type, and millisecond. `created` cannot repeat because the request-row
+ * primary key rejects ID reuse first; the transition matrix rejects same-state
+ * and terminal replays; and a concurrent non-terminal loser gets an empty
+ * status-guarded update before this append runs. The database-free
+ * `approval-request-audit-id-race.test.ts` pins that last branch, while the
+ * fail-closed PostgreSQL lifecycle overlap probes confirm it end to end. Keep
+ * this format unchanged unless a reachable writer defeats all three barriers.
  */
 async function appendAuditEvent(
   tx: DbTransaction,
@@ -225,8 +236,13 @@ export async function getApprovalRequest(
 }
 
 /**
- * FNXC:ApprovalRequestStore 2026-06-24-07:40:
- * List approval requests with optional filters. Ordered by createdAt DESC.
+ * FNXC:ApprovalRequestOrdering 2026-08-16-23:07:
+ * Lists are newest-first by createdAt. id DESC makes same-millisecond ties a
+ * deterministic total order for stable limit/offset pagination only: random request
+ * IDs carry no lifecycle or recency meaning, so consumers must not call either tied
+ * row "most recent." This differs from audit history, whose deterministic event IDs
+ * encode lifecycle and are ordered by FN-9132's lifecycle rank. The executable
+ * contract is approval-request-list-ordering.pg.test.ts.
  */
 export async function listApprovalRequests(
   handle: QueryHandle,
@@ -357,7 +373,12 @@ export async function markApprovalRequestCompleted(
 }
 
 /**
- * Get the audit history for a request, ordered by createdAt ASC.
+ * Get the audit history for a request ordered by timestamp, then lifecycle rank, then ID.
+ *
+ * FNXC:ApprovalAuditOrdering 2026-08-16-22:26:
+ * Deterministic audit IDs embed the event type. Sorting same-millisecond records by ID
+ * therefore put `approved` before `created`, narrating an approval before its request.
+ * Derive the tiebreak rank from the declared lifecycle order; never infer lifecycle from IDs.
  *
  * FNXC:ApprovalAuditProjectIsolation 2026-08-12-15:37:
  * Owner and superuser connections can enable `fusion.project_bypass`, so RLS cannot backstop this bare request-id lookup. Scope in SQL from the public ApprovalRequestStore layer binding; projectScopeFor intentionally treats blank and whitespace-only bindings as unbound even though fusion_assign_project_id preserves whitespace writes literally.
@@ -367,12 +388,15 @@ export async function getApprovalAuditHistory(
   requestId: string,
   projectId?: string,
 ): Promise<ApprovalRequestAuditEvent[]> {
+  const eventType = schema.project.approvalRequestAuditEvents.eventType;
+  const lifecycleRank = sql`CASE ${eventType} ${sql.join(
+    APPROVAL_REQUEST_AUDIT_EVENT_TYPES.map((type, rank) => sql`WHEN ${type} THEN ${rank}`),
+    sql` `,
+  )} ELSE ${APPROVAL_REQUEST_AUDIT_EVENT_TYPES.length} END`;
   const rows = await handle
     .select()
     .from(schema.project.approvalRequestAuditEvents)
     .where(and(eq(schema.project.approvalRequestAuditEvents.requestId, requestId), projectScopeFor(schema.project.approvalRequestAuditEvents.projectId, projectId)))
-    .orderBy(
-      sql`${schema.project.approvalRequestAuditEvents.createdAt} ASC, ${schema.project.approvalRequestAuditEvents.id} ASC`,
-    );
+    .orderBy(sql`${schema.project.approvalRequestAuditEvents.createdAt} ASC, ${lifecycleRank} ASC, ${schema.project.approvalRequestAuditEvents.id} ASC`);
   return rows.map((row) => rowToAuditEvent(row as ApprovalRequestAuditEventRow));
 }

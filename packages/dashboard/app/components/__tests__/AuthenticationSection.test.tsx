@@ -240,6 +240,13 @@ describe("AuthenticationSection", () => {
     expect(header?.nextElementSibling).toBe(alert);
   });
 
+  it("renders the built-in catalog action without removing the custom provider section", () => {
+    renderAuthSection([{ id: "openai", name: "OpenAI", authenticated: false, type: "api_key" }]);
+
+    expect(screen.getByRole("button", { name: "Refresh Models" })).toBeInTheDocument();
+    expect(screen.getByTestId("custom-providers-section")).toBeInTheDocument();
+  });
+
   it("wraps the provider loginError banner inside the card on a narrow Settings width", () => {
     const css = loadComponentCss("settings/sections/AuthenticationSection.css");
     expect(css).toMatch(/\.auth-provider-login-error\s*\{[^}]*display:\s*block/);
@@ -247,6 +254,9 @@ describe("AuthenticationSection", () => {
     expect(css).toMatch(/\.auth-provider-login-error\s*\{[^}]*overflow-wrap:\s*anywhere/);
     expect(css).toMatch(/\.auth-provider-login-error\s*\{[^}]*word-break:\s*break-word/);
     expect(css).toMatch(/@media[^{]*\(max-width:\s*768px\)[^{]*\{[\s\S]*\.auth-provider-login-error\s*\{[\s\S]*margin-inline:\s*var\(--space-sm\)/);
+    expect(css).toMatch(/\.auth-model-refresh\s*\{[\s\S]*display:\s*flex/);
+    expect(css).toMatch(/\.auth-model-refresh-feedback--error\s*\{[^}]*color:\s*var\(--color-error\)/);
+    expect(css).toMatch(/@media[^{]*\(max-width:\s*768px\)[^{]*\{[\s\S]*\.auth-model-refresh\s*>\s*\.btn\s*\{[\s\S]*flex:\s*1 1 100%/);
   });
 
   it("keeps Anthropic OAuth logout separate from a stored API key clear action", () => {
@@ -287,5 +297,54 @@ describe("AuthenticationSection", () => {
     fireEvent.click(within(subscriptionCard).getByRole("button", { name: "Login" }));
     expect(handleLogin).toHaveBeenCalledWith("anthropic-subscription");
     expect(handleSaveApiKey).not.toHaveBeenCalled();
+  });
+
+  /*
+  FNXC:ProviderAuth 2026-08-18-06:10:
+  Settings shares onboarding's persistent login dialog. While that dialog owns a flow, the provider
+  row must NOT also render the instructions and paste field — two inputs for the same code, one of
+  them behind the dialog. Suppression is keyed by `stateKey` (provider + credential instance), so a
+  second named account for the same provider keeps its own inline field while the first is in the
+  dialog; that is the case a bare provider-id check would break.
+  */
+  describe("persistent login dialog handoff", () => {
+    const dialogFlowOverrides = {
+      loginInstructions: { "anthropic-subscription": "Complete login in your browser." },
+      manualCodeConfigs: { "anthropic-subscription": { prompt: "Paste the final redirect URL" } },
+      authActionInProgress: { "anthropic-subscription": true },
+    } as unknown as Partial<AuthenticationSectionData>;
+
+    const subscriptionProvider = [{
+      id: "anthropic-subscription",
+      name: "Anthropic Subscription",
+      authenticated: false,
+      type: "oauth",
+    } as AuthProvider];
+
+    it("renders its own paste field when no dialog owns the flow", () => {
+      renderAuthSection(subscriptionProvider, { ...dialogFlowOverrides, activeLoginDialogKey: null });
+
+      expect(screen.getByText("Paste the final redirect URL")).toBeInTheDocument();
+      expect(screen.getByText("Complete login in your browser.")).toBeInTheDocument();
+    });
+
+    it("yields both to the dialog that owns the flow", () => {
+      renderAuthSection(subscriptionProvider, {
+        ...dialogFlowOverrides,
+        activeLoginDialogKey: "anthropic-subscription",
+      });
+
+      expect(screen.queryByText("Paste the final redirect URL")).not.toBeInTheDocument();
+      expect(screen.queryByText("Complete login in your browser.")).not.toBeInTheDocument();
+    });
+
+    it("keeps a sibling account's inline field when another instance is in the dialog", () => {
+      renderAuthSection(subscriptionProvider, {
+        ...dialogFlowOverrides,
+        activeLoginDialogKey: "anthropic-subscription[work]",
+      });
+
+      expect(screen.getByText("Paste the final redirect URL")).toBeInTheDocument();
+    });
   });
 });

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { EventEmitter } from "node:events";
 import { execSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Task, TaskStore } from "@fusion/core";
@@ -35,6 +36,11 @@ function storeFor(task: Task, scope: string[]): TaskStore & { updates: Array<Rec
     getSettings: vi.fn(async () => ({ autoMerge: false, merger: { mode: "ai", maxReviewPasses: 0 } })),
     parseFileScopeFromPrompt: vi.fn(async () => scope),
     updateTask: vi.fn(async (_id: string, patch: Record<string, unknown>) => { updates.push(patch); Object.assign(task, patch); return task; }),
+    updateTaskAtomic: vi.fn(async (_id: string, updater: (current: Task) => Record<string, unknown> | null | undefined | Promise<Record<string, unknown> | null | undefined>) => {
+      const patch = await updater(task);
+      if (patch) Object.assign(task, patch);
+      return task;
+    }),
     appendAgentLog: vi.fn(async () => undefined),
     logEntry: vi.fn(async () => undefined),
     moveTask: vi.fn(async () => task),
@@ -42,6 +48,14 @@ function storeFor(task: Task, scope: string[]): TaskStore & { updates: Array<Rec
     accumulateTokenUsage: vi.fn(async () => undefined),
     recordRunAuditEvent: vi.fn(async (event: unknown) => { audit.push(event); }),
   }) as unknown as TaskStore & { updates: Array<Record<string, unknown>>; audit: any[] };
+}
+
+function reviewEvidence(workspaceWorktrees: NonNullable<Task["workspaceWorktrees"]>): NonNullable<Task["repositoryScope"]>["reviewEvidence"] {
+  return Object.fromEntries(Object.entries(workspaceWorktrees).map(([repo, entry]) => {
+    const mergeBase = execSync(`git merge-base HEAD ${entry.branch}`, { cwd: entry.worktreePath, encoding: "utf8" }).trim();
+    const diff = execSync(`git diff --binary ${entry.baseCommitSha ?? mergeBase}..HEAD`, { cwd: entry.worktreePath, encoding: "utf8" });
+    return [repo, { fingerprint: createHash("sha256").update(diff).digest("hex"), approvedAt: new Date().toISOString() }];
+  }));
 }
 
 function squashAgent(branch: string) {
@@ -80,6 +94,16 @@ describeIfGit("landWorkspaceTask file-scope gates", () => {
         "repo-a": { worktreePath: fx.repoPath("repo-a"), branch: BRANCH },
         "repo-b": { worktreePath: fx.repoPath("repo-b"), branch: BRANCH },
       },
+      repositoryScope: {
+        repositories: ["repo-a", "repo-b"], state: "confirmed", revision: 1,
+        // FNXC:RepositoryScope 2026-08-21-01:36: merge gate fixtures carry
+        // the Code Review fingerprint required for each fresh land candidate.
+        reviewEvidence: reviewEvidence({
+          "repo-a": { worktreePath: fx.repoPath("repo-a"), branch: BRANCH },
+          "repo-b": { worktreePath: fx.repoPath("repo-b"), branch: BRANCH },
+        }),
+      },
+      modifiedFiles: ["repo-a/feature.txt", "repo-b/repo-a/feature.txt"],
     } as Task;
     const store = storeFor(task, ["repo-a/feature.txt"]);
     const beforeA = fx.git("repo-a", "git rev-parse main");
@@ -97,6 +121,35 @@ describeIfGit("landWorkspaceTask file-scope gates", () => {
     expect(store.audit.some((event) => event.mutationType === "merge:file-scope-violation")).toBe(true);
   });
 
+  it("refuses landing when an acquired repository changed outside confirmed scope", async () => {
+    policy.mockResolvedValue({ fileScope: "strict", fileScopeRules: [] });
+    fx = await createWorkspaceFixture(["repo-a", "repo-b"]);
+    addBranch(fx, "repo-a");
+    addBranch(fx, "repo-b", "unapproved.ts");
+    const task = {
+      id: TASK_ID, title: "workspace scope", description: "", column: "in-review", branch: BRANCH,
+      comments: [], steeringComments: [], dependencies: [], steps: [], log: [], currentStep: 0,
+      workspaceWorktrees: {
+        "repo-a": { worktreePath: fx.repoPath("repo-a"), branch: BRANCH },
+        "repo-b": { worktreePath: fx.repoPath("repo-b"), branch: BRANCH },
+      },
+      repositoryScope: {
+        repositories: ["repo-a"], state: "confirmed", revision: 1,
+        reviewEvidence: reviewEvidence({ "repo-a": { worktreePath: fx.repoPath("repo-a"), branch: BRANCH } }),
+      },
+      modifiedFiles: ["repo-a/feature.txt"],
+    } as Task;
+    const store = storeFor(task, ["repo-a/feature.txt"]);
+    const beforeA = fx.git("repo-a", "git rev-parse main");
+
+    await expect(landWorkspaceTask(store, task, fx.rootDir, {}, {
+      mergeAgent: squashAgent(BRANCH), reviewAgent: async () => "REVIEW_VERDICT: approve",
+    })).rejects.toThrow("modified outside confirmed scope");
+
+    expect(fx.git("repo-a", "git rev-parse main")).toBe(beforeA);
+    expect(store.updates).not.toContainEqual(expect.objectContaining({ modifiedFiles: expect.anything() }));
+  });
+
   it("uses unprefixed scope as a repo-local fallback instead of blocking every workspace repo", async () => {
     policy.mockResolvedValue({ fileScope: "strict", fileScopeRules: [] });
     fx = await createWorkspaceFixture(["repo-a"]);
@@ -105,6 +158,11 @@ describeIfGit("landWorkspaceTask file-scope gates", () => {
       id: TASK_ID, title: "workspace scope", description: "", column: "in-review", branch: BRANCH,
       comments: [], steeringComments: [], dependencies: [], steps: [], log: [], currentStep: 0,
       workspaceWorktrees: { "repo-a": { worktreePath: fx.repoPath("repo-a"), branch: BRANCH } },
+      repositoryScope: {
+        repositories: ["repo-a"], state: "confirmed", revision: 1,
+        reviewEvidence: reviewEvidence({ "repo-a": { worktreePath: fx.repoPath("repo-a"), branch: BRANCH } }),
+      },
+      modifiedFiles: ["repo-a/feature.txt"],
     } as Task;
     const store = storeFor(task, ["feature.txt"]);
 

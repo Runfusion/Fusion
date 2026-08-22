@@ -24,11 +24,12 @@ Coverage (FN-5893 surfaces):
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { EventEmitter } from "node:events";
 import { execSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import path from "node:path";
-import type { Task, TaskStore } from "@fusion/core";
+import type { Task, TaskStore, WorkspaceLeaseHandle } from "@fusion/core";
 import { createSharedPgTaskStoreTestHarness, pgDescribe, type SharedPgTaskStoreHarness } from "../../../core/src/__test-utils__/pg-test-harness.js";
-import { landSquash, landWorkspaceTask, WorkspaceMergeDispatchSupersededError, WorkspaceRepoLandBusyError } from "../merge/merger-ai.js";
+import { landSquash, landWorkspaceTask, WorkspaceMergeDispatchSupersededError, WorkspaceMergeTechnicalError, WorkspaceRepoLandBusyError } from "../merge/merger-ai.js";
 import { ensureTenancyFenceRef, mergeDispatchFenceRef, WorkspaceFenceRefError } from "../merge/workspace-fence-ref.js";
 import { activeSessionRegistry } from "../agents/active-session-registry.js";
 import { createWorkspaceFixture, hasGit, type WorkspaceFixture } from "./_workspace-fixture.js";
@@ -59,6 +60,14 @@ function createStore(task: Task): TaskStore & RecordingStore {
     updateTask: vi.fn(async (_id: string, patch: Partial<Task>) => {
       Object.assign(store.task, patch);
       return undefined;
+    }),
+    updateTaskAtomic: vi.fn(async (
+      _id: string,
+      updater: (current: Task) => Partial<Task> | null | undefined | Promise<Partial<Task> | null | undefined>,
+    ) => {
+      const patch = await updater(store.task);
+      if (patch) Object.assign(store.task, patch);
+      return store.task;
     }),
     mergeWorkspaceWorktreeEntry: vi.fn(async (
       _id: string,
@@ -130,6 +139,22 @@ function makeTask(id: string, workspaceWorktrees: Task["workspaceWorktrees"]): T
     currentStep: 0,
     log: [],
     workspaceWorktrees,
+    /*
+    FNXC:RepositoryScope 2026-08-21-02:05:
+    Lease scenarios must model the Code Review fingerprint that production requires before a
+    scoped repository can land; confirmed membership and a file list alone are not approval.
+    */
+    repositoryScope: {
+      repositories: Object.keys(workspaceWorktrees ?? {}),
+      state: "confirmed",
+      revision: 1,
+      reviewEvidence: Object.fromEntries(Object.entries(workspaceWorktrees ?? {}).map(([repoRel, entry]) => {
+        const mergeBase = execSync(`git merge-base HEAD ${entry.branch}`, { cwd: entry.worktreePath, encoding: "utf8" }).trim();
+        const diff = execSync(`git diff --binary ${entry.baseCommitSha ?? mergeBase}..HEAD`, { cwd: entry.worktreePath, encoding: "utf8" });
+        return [repoRel, { fingerprint: createHash("sha256").update(diff).digest("hex"), approvedAt: new Date().toISOString() }];
+      })),
+    },
+    modifiedFiles: Object.keys(workspaceWorktrees ?? {}).map((repoRel) => `${repoRel}/feature.txt`),
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   } as Task;
@@ -232,6 +257,88 @@ pgDescribeIfGit("workspace land dispatch finalization (PostgreSQL)", () => {
     expect(fx.git("repo-b", `git ls-remote origin ${mergeDispatchFenceRef(taskId)}`)).toMatch(/^[0-9a-f]{40,64}\s/);
   });
 
+  /*
+  FNXC:Workspace 2026-08-20-20:08:
+  A per-repository lander must lose every post-loss commit point when a durable successor
+  reclaims its expired repo lease. Exercise that ownership change through PostgreSQL rather
+  than a false-return mock, so the predecessor cannot write intent, push, persist landedSha,
+  or release the successor's handle.
+  */
+  it("fences a real repository lander after a successor reclaims its durable repo lease", async () => {
+    const store = h.store();
+    const taskId = "FN-078-PG-REPO-TAKEOVER";
+    const repoRel = "repo-a";
+    const repo = fx.repoPath(repoRel);
+    const remote = path.join(fx.rootDir, "origin.git");
+    execSync(`git init --bare ${remote}`, { stdio: "pipe" });
+    fx.git(repoRel, `git remote add origin ${remote}`);
+    fx.git(repoRel, "git push -u origin main");
+    addRepoBranchWithEdit(fx, repoRel, taskId, "predecessor must be fenced\n");
+
+    await store.createTaskWithReservedId(
+      { description: "repository lease successor takeover", column: "in-review" },
+      { taskId, applyDefaultWorkflowSteps: false },
+    );
+    await store.updateTask(taskId, {
+      branch: BRANCH,
+      workspaceWorktrees: { [repoRel]: { worktreePath: repo, branch: BRANCH } },
+    } as Partial<Task>);
+    const task = (await store.getTask(taskId))!;
+    const tipBefore = fx.git(repoRel, "git rev-parse main");
+    const realRenew = store.renewWorkspaceLease.bind(store);
+    const recordIntent = vi.spyOn(store, "recordWorkspaceLandIntent");
+    const resolveIntent = vi.spyOn(store, "resolveWorkspaceLandIntent");
+    const releaseLease = vi.spyOn(store, "releaseWorkspaceLease");
+    let successorHandle: WorkspaceLeaseHandle | undefined;
+    let successorClaimed = false;
+
+    vi.spyOn(store, "renewWorkspaceLease").mockImplementation(async (handle, leaseMs) => {
+      if (!successorClaimed) {
+        await h.adminSql().unsafe(`UPDATE project.workspace_coordination_leases
+          SET expires_at = '${new Date(Date.now() - 1_000).toISOString()}'
+          WHERE lease_key = '${handle.leaseKey}'`);
+        const successor = await store.acquireWorkspaceLease({
+          leaseKey: handle.leaseKey,
+          kind: "land",
+          owner: { taskId: "FN-078-PG-SUCCESSOR", nodeId: "node-successor", incarnationId: "inc-successor" },
+          leaseMs,
+        });
+        expect(successor.outcome).toBe("reclaimed-expired");
+        if (successor.outcome === "conflict") throw new Error("expected successor repo lease claim");
+        successorHandle = successor.handle;
+        successorClaimed = true;
+      }
+      return realRenew(handle, leaseMs);
+    });
+
+    vi.useFakeTimers();
+    await expect(landWorkspaceTask(store, task, fx.rootDir, {}, {
+      mergeAgent: squashMergeAgent(BRANCH, async () => {
+        await vi.advanceTimersByTimeAsync(60_000);
+      }),
+      reviewAgent: approveReviewAgent,
+    })).rejects.toBeInstanceOf(WorkspaceRepoLandBusyError);
+
+    expect(successorClaimed).toBe(true);
+    expect(successorHandle).toBeDefined();
+    const successor = successorHandle!;
+    expect(recordIntent).not.toHaveBeenCalled();
+    expect(resolveIntent).not.toHaveBeenCalled();
+    expect(fx.git(repoRel, "git rev-parse main")).toBe(tipBefore);
+    const [heldLease] = await store.inspectWorkspaceLeases({ leaseKeys: [`repo:${repoRel}`] });
+    expect(heldLease).toMatchObject({
+      status: "held",
+      owner: successor.owner,
+      fenceToken: successor.fenceToken,
+    });
+    expect(releaseLease).toHaveBeenCalledWith(expect.objectContaining({
+      owner: expect.not.objectContaining(successor.owner),
+      fenceToken: expect.not.toBe(successor.fenceToken),
+    }));
+    expect(vi.getTimerCount()).toBe(0);
+    vi.useRealTimers();
+  });
+
   it("leaves a real pushed land unfinalized when a successor reclaims the dispatch fence", async () => {
     const store = h.store();
     const taskId = "FN-9059-PG-DISPATCH";
@@ -307,6 +414,7 @@ pgDescribeIfGit("workspace land dispatch finalization (PostgreSQL)", () => {
 describeIfGit("landWorkspaceTask — per-repo land lease (Phase C U3, KTD4)", () => {
   let fx: WorkspaceFixture;
   afterEach(() => {
+    vi.useRealTimers();
     fx?.cleanup();
     activeSessionRegistry.clear();
     vi.restoreAllMocks();
@@ -448,6 +556,116 @@ describeIfGit("landWorkspaceTask — per-repo land lease (Phase C U3, KTD4)", ()
     expect(store.moveTaskCalls).toEqual([]);
     expect(store.task.mergeDetails).toBeUndefined();
     expect(fx.git("repo-a", "git rev-parse main")).not.toBe(tipBefore);
+  });
+
+  /*
+  FNXC:Workspace 2026-08-20-19:59:
+  Repository land renewal is a liveness aid, not a substitute for the durable owner/fence check.
+  These real-Git tests force the periodic seam while a clean-room merge is active so an expired or
+  successor-reclaimed owner cannot create an intent, push, or terminal workspace mutation.
+  */
+  it("renews a repository land lease through the former TTL before intent and landed persistence", async () => {
+    fx = await createWorkspaceFixture(["repo-a"]);
+    const repoRel = "repo-a";
+    const repo = fx.repoPath(repoRel);
+    const remote = path.join(fx.rootDir, "origin.git");
+    execSync(`git init --bare ${remote}`, { stdio: "pipe" });
+    fx.git(repoRel, `git remote add origin ${remote}`);
+    fx.git(repoRel, "git push -u origin main");
+    addRepoBranchWithEdit(fx, repoRel, "FN-078-RENEW", "renewed land\n");
+    const task = makeTask("FN-078-RENEW", { [repoRel]: { worktreePath: repo, branch: BRANCH } });
+    const store = createStore(task);
+    const initialHandle = {
+      leaseKey: `repo:${repoRel}`, kind: "land" as const,
+      owner: { taskId: task.id, nodeId: "node-a", incarnationId: "inc-a" }, fenceToken: 1n,
+    };
+    let latestHandle = initialHandle;
+    const renewWorkspaceLease = vi.fn(async (handle: typeof initialHandle) => {
+      latestHandle = { ...handle };
+      return latestHandle;
+    });
+    const resolveWorkspaceLandIntent = vi.fn(async (input: any) => {
+      expect(input.handle).toBe(latestHandle);
+      await input.persistLandedSha();
+      return { outcome: "resolved" };
+    });
+    Object.assign(store, {
+      acquireWorkspaceLease: vi.fn().mockResolvedValue({ outcome: "acquired", handle: initialHandle }),
+      renewWorkspaceLease,
+      recordWorkspaceLeaseFenceRef: vi.fn(async (input: any) => ({ ...input.handle, fenceRefName: input.fenceRefName, fenceRefSha: input.fenceRefSha })),
+      recordWorkspaceLandIntent: vi.fn().mockResolvedValue({ outcome: "valid" }),
+      resolveWorkspaceLandIntent,
+      releaseWorkspaceLease: vi.fn().mockResolvedValue(true),
+    });
+    vi.useFakeTimers();
+    const result = await landWorkspaceTask(store, task, fx.rootDir, {}, {
+      mergeAgent: squashMergeAgent(BRANCH, async () => {
+        // Advance beyond the incident's five-minute TTL while the land critical section is live.
+        await vi.advanceTimersByTimeAsync(5 * 60_000);
+      }),
+      reviewAgent: approveReviewAgent,
+    });
+
+    expect(result.repos[0]?.status).toBe("landed");
+    expect(renewWorkspaceLease).toHaveBeenCalledTimes(5);
+    expect(resolveWorkspaceLandIntent).toHaveBeenCalledOnce();
+    expect((store.releaseWorkspaceLease as any).mock.calls[0][0]).toBe(latestHandle);
+    expect(vi.getTimerCount()).toBe(0);
+    vi.useRealTimers();
+  });
+
+  it.each([
+    ["returns no renewed handle", async () => undefined],
+    ["throws while renewing", async () => { throw new Error("renewal transport failure"); }],
+  ])("fences a stale repository lander when renewal %s", async (_description, renew) => {
+    fx = await createWorkspaceFixture(["repo-a"]);
+    const repoRel = "repo-a";
+    const repo = fx.repoPath(repoRel);
+    const remote = path.join(fx.rootDir, "origin.git");
+    execSync(`git init --bare ${remote}`, { stdio: "pipe" });
+    fx.git(repoRel, `git remote add origin ${remote}`);
+    fx.git(repoRel, "git push -u origin main");
+    addRepoBranchWithEdit(fx, repoRel, "FN-078-LOSS", "stale land\n");
+    const tipBefore = fx.git(repoRel, "git rev-parse main");
+    const task = makeTask("FN-078-LOSS", { [repoRel]: { worktreePath: repo, branch: BRANCH } });
+    const store = createStore(task);
+    const predecessorHandle = {
+      leaseKey: `repo:${repoRel}`, kind: "land" as const,
+      owner: { taskId: task.id, nodeId: "node-a", incarnationId: "inc-a" }, fenceToken: 1n,
+    };
+    const successorHandle = { ...predecessorHandle, owner: { taskId: "FN-078-SUCCESSOR", nodeId: "node-b", incarnationId: "inc-b" }, fenceToken: 2n };
+    const recordWorkspaceLandIntent = vi.fn().mockResolvedValue({ outcome: "valid" });
+    Object.assign(store, {
+      acquireWorkspaceLease: vi.fn().mockResolvedValue({ outcome: "acquired", handle: predecessorHandle }),
+      renewWorkspaceLease: vi.fn(renew),
+      recordWorkspaceLeaseFenceRef: vi.fn(async (input: any) => ({ ...input.handle, fenceRefName: input.fenceRefName, fenceRefSha: input.fenceRefSha })),
+      recordWorkspaceLandIntent,
+      resolveWorkspaceLandIntent: vi.fn(),
+      releaseWorkspaceLease: vi.fn().mockResolvedValue(true),
+    });
+    vi.useFakeTimers();
+    await expect(landWorkspaceTask(store, task, fx.rootDir, {}, {
+      mergeAgent: squashMergeAgent(BRANCH, async () => {
+        // The renewal refusal models a successor reclaiming the expired durable handle.
+        await vi.advanceTimersByTimeAsync(60_000);
+      }),
+      reviewAgent: approveReviewAgent,
+    })).rejects.toBeInstanceOf(WorkspaceMergeTechnicalError);
+
+    expect(recordWorkspaceLandIntent).not.toHaveBeenCalled();
+    expect((store.resolveWorkspaceLandIntent as any)).not.toHaveBeenCalled();
+    expect(fx.git(repoRel, "git rev-parse main")).toBe(tipBefore);
+    // Release carries the predecessor identity/fence and can never release the successor's claim.
+    expect((store.releaseWorkspaceLease as any).mock.calls[0][0]).toMatchObject({
+      owner: predecessorHandle.owner,
+      fenceToken: predecessorHandle.fenceToken,
+    });
+    expect((store.releaseWorkspaceLease as any).mock.calls[0][0]).not.toMatchObject({
+      owner: successorHandle.owner,
+      fenceToken: successorHandle.fenceToken,
+    });
+    expect(vi.getTimerCount()).toBe(0);
+    vi.useRealTimers();
   });
 
   it("concurrency: two tasks landing the SAME sub-repo serialize — one acquires the land lease, the other fast-fails (no interleaved update-ref)", async () => {

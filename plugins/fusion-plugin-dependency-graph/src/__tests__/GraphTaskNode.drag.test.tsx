@@ -42,7 +42,6 @@ function props(overrides: Partial<React.ComponentProps<typeof GraphTaskNode>> = 
     onOpenDetailWithTab: vi.fn(),
     onMoveTask: vi.fn(),
     onOpenMission: vi.fn(),
-    taskStuckTimeoutMs: 1000,
     lastFetchTimeMs: Date.now(),
     workflowStepNameLookup: new Map<string, string>(),
     ...overrides,

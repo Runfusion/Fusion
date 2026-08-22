@@ -23,9 +23,23 @@ const execFileAsync: (file: string, args: string[], opts?: import("node:child_pr
  * checks for the exact value "1" so a leaked/empty var cannot accidentally
  * bypass agent commits.
  */
-function mergerCommitEnv(): NodeJS.ProcessEnv {
-  return { ...process.env, [IDENTITY_GUARD_BYPASS_ENV]: "1" };
+/*
+FNXC:GitIdentity 2026-08-18-07:55:
+Every merge commit runs through this env, which is why the identity is applied here rather than at
+eight separate call sites. Without it these commits inherited whatever git identity the host
+happened to have — and on a host with none (container, CI, fresh machine) git refuses to commit at
+all, so the merge stalled at `status:merging` with no error surfaced. `resolveCommitIdentity`
+returns undefined only when the operator sets `commitAuthorEnabled: false`, which restores the old
+ambient-config behaviour for anyone who wants commits authored as themselves.
+*/
+function mergerCommitEnv(identity?: CommitIdentity): NodeJS.ProcessEnv {
+  return {
+    ...process.env,
+    [IDENTITY_GUARD_BYPASS_ENV]: "1",
+    ...commitIdentityEnv(identity ?? resolveCommitIdentity()),
+  };
 }
+import { commitIdentityEnv, resolveCommitIdentity, type CommitIdentity } from "./git-identity.js";
 import {
   detectMissingWorkspaceEntry,
   runVerificationCommand as runVerificationCommandShared,
@@ -111,6 +125,7 @@ import {
   resolveCompleteColumn,
   resolveMergeOrchestrationColumn,
   resolveTaskLifecycleColumns,
+  isFusionDeletableBranch,
   type WorkflowIr, resolveReviewColumns
 } from "@fusion/core";
 import { evaluateAutoMergeFactProviders } from "./merge/auto-merge-fact-providers.js";
@@ -138,6 +153,7 @@ import { activeSessionRegistry } from "./agents/active-session-registry.js";
 import { AgentLogger } from "./agents/agent-logger.js";
 import { attachAgentUsageTelemetry, emitAgentSessionStart } from "./agents/agent-usage-telemetry.js";
 import { mergerLog } from "./logger.js";
+import { emitBoundedRunAudit } from "./util/emit-bounded-run-audit.js";
 
 /*
 FNXC:EngineDiagnostics 2026-07-26-10:10:
@@ -6613,7 +6629,7 @@ async function tryEarlyEmptyOwnDiffFinalize(input: {
       }
     }
   }
-  if (ownedBranchOnEntry) {
+  if (ownedBranchOnEntry && isFusionDeletableBranch(task, ownedBranchOnEntry)) {
     try {
       // Branch must be deleted from the project root, not from inside a
       // worktree that may still be checked out to it.
@@ -6633,6 +6649,7 @@ async function tryEarlyEmptyOwnDiffFinalize(input: {
       await store.updateTask(taskId, {
         worktree: worktreeRemoved ? null : task.worktree,
         branch: branchDeleted ? null : task.branch,
+        ...(branchDeleted ? { branchWriteOrigin: "engine" as const } : {}),
       });
       // Keep the in-memory task in sync with the DB so the returned
       // MergeResult.task does not advertise a removed path / deleted branch.
@@ -6749,7 +6766,7 @@ export async function aiMergeTask(
   if (finalizedColumns.has(task.column)) {
     const message = `merger: skipping squash for ${taskId} — task already finalized (column=${task.column})`;
     mergerLog.log(message);
-    await (store as any).recordRunAuditEvent?.({
+    await emitBoundedRunAudit(store, {
       domain: "database",
       mutationType: "task:auto-merge-skipped-already-done",
       target: taskId,
@@ -6757,7 +6774,7 @@ export async function aiMergeTask(
         column: task.column,
         mergeConfirmed: task.mergeDetails?.mergeConfirmed ?? false,
       },
-    });
+    }, { log: mergerLog });
     return {
       task,
       branch: resolveTaskWorkingBranch(task),
@@ -6829,7 +6846,7 @@ export async function aiMergeTask(
       settings,
     });
     try {
-      await (store as any).recordRunAuditEvent?.({
+      await emitBoundedRunAudit(store, {
         taskId,
         agentId: "merger",
         runId: `merge-${taskId}`,
@@ -6843,7 +6860,7 @@ export async function aiMergeTask(
           effectiveEligible: promotionEligibility.eligible,
           reason: promotionEligibility.reason,
         },
-      });
+      }, { log: mergerLog });
     } catch {
       // best-effort audit
     }
@@ -6870,7 +6887,7 @@ export async function aiMergeTask(
       }).catch((err) => {
         // Non-fatal: never fail the merge/landing because PR sync failed.
         try {
-          void store.recordRunAuditEvent({
+          void emitBoundedRunAudit(store, {
             taskId,
             agentId: "merger",
             runId: `merge-${taskId}`,
@@ -6881,7 +6898,7 @@ export async function aiMergeTask(
               groupId,
               error: err instanceof Error ? err.message : String(err),
             },
-          });
+          }, { log: mergerLog });
         } catch {
           // best-effort audit
         }
@@ -6892,7 +6909,7 @@ export async function aiMergeTask(
   if (groupRouting) {
     const auditRunId = `merge-${taskId}`;
     try {
-      await (store as any).recordRunAuditEvent?.({
+      await emitBoundedRunAudit(store, {
         taskId,
         agentId: "merger",
         runId: auditRunId,
@@ -6905,7 +6922,7 @@ export async function aiMergeTask(
           mergeTargetBranch: mergeTarget.branch,
           mergeTargetSource: mergeTarget.source,
         },
-      });
+      }, { log: mergerLog });
     } catch {
       // best-effort audit
     }
@@ -6920,7 +6937,7 @@ export async function aiMergeTask(
       `${taskId}: merge target rejected (${mergeTarget.rejected.reason}): ${mergeTarget.rejected.source}=${mergeTarget.rejected.branch} → using ${mergeTarget.branch}`,
     );
     try {
-      await (store as any).recordRunAuditEvent?.({
+      await emitBoundedRunAudit(store, {
         domain: "git",
         mutationType: "merge:merge-target-rejected-fusion-sibling",
         target: taskId,
@@ -6931,7 +6948,7 @@ export async function aiMergeTask(
           fallbackBranch: mergeTarget.branch,
           fallbackSource: mergeTarget.source,
         },
-      });
+      }, { log: mergerLog });
     } catch {
       // best-effort audit; never block the merge on telemetry
     }
@@ -7162,7 +7179,7 @@ export async function aiMergeTask(
             rootDir,
             integrationBranch: mergeTarget.branch,
           });
-          await store.updateTask(taskId, { worktree: reusableMatch.path, branch: reusableMatch.branch });
+          await store.updateTask(taskId, { worktree: reusableMatch.path, branch: reusableMatch.branch, branchWriteOrigin: "engine" as const });
           await emitReuseHandoffAuditEvent(
             "merge:reuse-fallback-reused-existing-registration",
             {
@@ -7602,7 +7619,7 @@ export async function aiMergeTask(
             lane: "legacy-no-op-classifier",
           }, null, 2),
         );
-        await (store as any).recordRunAuditEvent?.({
+        await emitBoundedRunAudit(store, {
           domain: "database",
           mutationType: "task:no-commits-finalize-blocked-incomplete-steps",
           target: taskId,
@@ -7614,7 +7631,7 @@ export async function aiMergeTask(
             baseRef: classification.baseRef,
             lane: "legacy-no-op-classifier",
           },
-        });
+        }, { log: mergerLog });
         await store.moveTask(taskId, await resolveMergerLifecycleColumn(store, taskId, "rebound"), { preserveProgress: true, moveSource: "engine" } as any);
         await releaseReuseHandoffEarly("no-commits-incomplete-blocked");
         return {
@@ -7640,7 +7657,7 @@ export async function aiMergeTask(
             classification: classification.kind,
           }, null, 2),
         );
-        await (store as any).recordRunAuditEvent?.({
+        await emitBoundedRunAudit(store, {
           domain: "database",
           mutationType: "task:finalize-lost-work-blocked",
           target: taskId,
@@ -7648,7 +7665,7 @@ export async function aiMergeTask(
             modifiedFilesCount: task.modifiedFiles.length,
             classification: classification.kind,
           },
-        });
+        }, { log: mergerLog });
         await store.moveTask(taskId, await resolveMergerLifecycleColumn(store, taskId, "rebound"), { preserveProgress: true, moveSource: "engine" } as any);
         await releaseReuseHandoffEarly("lost-work-blocked");
         return {
@@ -7706,12 +7723,12 @@ export async function aiMergeTask(
       `Finalize blocked: unproven ownership evidence (${classification.reason}); no owned landed commit was found — auto-retrying via todo requeue`,
       JSON.stringify(classification.details, null, 2),
     );
-    await (store as any).recordRunAuditEvent?.({
+    await emitBoundedRunAudit(store, {
       domain: "database",
       mutationType: "task:finalize-unproven-blocked",
       target: taskId,
       metadata: { reason: classification.reason, details: classification.details, autoRetry: true },
-    });
+    }, { log: mergerLog });
     await store.moveTask(taskId, await resolveMergerLifecycleColumn(store, taskId, "rebound"), { preserveProgress: true, moveSource: "engine" } as any);
     await releaseReuseHandoffEarly(unprovenError);
     return {
@@ -7841,12 +7858,12 @@ export async function aiMergeTask(
         `Finalize blocked: unproven ownership evidence (${classification.reason}); branch missing and no owned landed commit was found — auto-retrying via todo requeue`,
         JSON.stringify(classification.details, null, 2),
       );
-      await (store as any).recordRunAuditEvent?.({
+      await emitBoundedRunAudit(store, {
         domain: "database",
         mutationType: "task:finalize-unproven-blocked",
         target: taskId,
         metadata: { reason: classification.reason, details: classification.details, branchMissing: true, autoRetry: true },
-      });
+      }, { log: mergerLog });
       await store.moveTask(taskId, await resolveMergerLifecycleColumn(store, taskId, "rebound"), { preserveProgress: true, moveSource: "engine" } as any);
       return result;
     }
@@ -7909,7 +7926,7 @@ export async function aiMergeTask(
             lane: "legacy-branch-missing-no-op",
           }, null, 2),
         );
-        await (store as any).recordRunAuditEvent?.({
+        await emitBoundedRunAudit(store, {
           domain: "database",
           mutationType: "task:no-commits-finalize-blocked-incomplete-steps",
           target: taskId,
@@ -7921,7 +7938,7 @@ export async function aiMergeTask(
             baseRef: classification.baseRef,
             lane: "legacy-branch-missing-no-op",
           },
-        });
+        }, { log: mergerLog });
         await store.moveTask(taskId, await resolveMergerLifecycleColumn(store, taskId, "rebound"), { preserveProgress: true, moveSource: "engine" } as any);
         return result;
       }
@@ -9691,19 +9708,23 @@ export async function aiMergeTask(
     }
   }
 
-  // 6. Delete branch
-  try {
-    await execAsync(`git branch -d "${branch}"`, { cwd: rootDir });
-    result.branchDeleted = true;
-    // Audit trail: record branch deletion (FN-1404)
-    await audit.git({ type: "branch:delete", target: branch });
-  } catch {
+  // 6. Delete only a Fusion-proven branch; a skipped delete has no audit event.
+  if (isFusionDeletableBranch(task, branch)) {
     try {
-      await execAsync(`git branch -D "${branch}"`, { cwd: rootDir });
+      await execAsync(`git branch -d "${branch}"`, { cwd: rootDir });
       result.branchDeleted = true;
-      // Audit trail: record branch deletion (force) (FN-1404)
-      await audit.git({ type: "branch:delete", target: branch, metadata: { force: true } });
-    } catch { /* non-fatal */ }
+      // Audit trail: record branch deletion (FN-1404)
+      await audit.git({ type: "branch:delete", target: branch });
+    } catch {
+      try {
+        await execAsync(`git branch -D "${branch}"`, { cwd: rootDir });
+        result.branchDeleted = true;
+        // Audit trail: record branch deletion (force) (FN-1404)
+        await audit.git({ type: "branch:delete", target: branch, metadata: { force: true } });
+      } catch { /* non-fatal */ }
+    }
+  } else {
+    mergerLog.log(`${taskId}: kept operator-supplied branch ${branch}`);
   }
 
   if (result.branchDeleted) {
@@ -9758,7 +9779,7 @@ export async function aiMergeTask(
           mergerLog.warn(`${taskId}: failed to detach pooled worktree before release: ${msg}`);
         }
         try {
-          await store.updateTask(taskId, { worktree: null, branch: null });
+          await store.updateTask(taskId, { worktree: null, branch: null, branchWriteOrigin: "engine" });
         } catch (err: unknown) {
           const msg = err instanceof Error ? err.message : String(err);
           mergerLog.warn(`${taskId}: failed to clear worktree pointer before pool release: ${msg}`);
@@ -9791,7 +9812,7 @@ export async function aiMergeTask(
         }
         if (result.worktreeRemoved) {
           try {
-            await store.updateTask(taskId, { worktree: null, branch: null });
+            await store.updateTask(taskId, { worktree: null, branch: null, branchWriteOrigin: "engine" });
           } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : String(err);
             mergerLog.warn(`${taskId}: failed to clear worktree pointer after removal: ${msg}`);

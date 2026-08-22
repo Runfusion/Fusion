@@ -1,3 +1,5 @@
+import { emitBoundedRunAudit } from "../run-audit/emit-bounded-run-audit.js";
+/* FNXC:RunAudit 2026-08-20-05:49: FN-9177 bounds optional audit telemetry so a hostile sink cannot alter this lifecycle path. */
 /**
  * audit-ops operations.
  *
@@ -79,7 +81,7 @@ export async function runPluginColumnTransitionHooksImpl(store: TaskStore, taskI
       const resolved = registry.resolveTraitHook(traitId, hookKind);
       if (resolved.warning) {
         // Degraded (no impl / force-disabled) → passive no-op, audit the warning.
-        void store.recordRunAuditEvent({
+        void emitBoundedRunAudit(store, {
           taskId,
           agentId: "system",
           runId: `plugin-trait-hook-${traitId}-${taskId}-${Date.now()}`,
@@ -93,7 +95,7 @@ export async function runPluginColumnTransitionHooksImpl(store: TaskStore, taskI
           await resolved.impl({ task: taskDetail, context: { fromColumn, toColumn, hookKind } });
         } catch (err) {
           // A throwing plugin hook DEGRADES — audited, never wedges the lock.
-          void store.recordRunAuditEvent({
+          void emitBoundedRunAudit(store, {
             taskId,
             agentId: "system",
             runId: `plugin-trait-hook-${traitId}-${taskId}-${Date.now()}`,

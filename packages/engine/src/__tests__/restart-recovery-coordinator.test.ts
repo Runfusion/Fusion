@@ -10,6 +10,7 @@ import {
   isRecoverableMissingWorktreeReviewFailureNoProgress,
   isRecoverableMissingWorktreeReviewFailureWithProgress,
 } from "../healing/restart-recovery-coordinator.js";
+import { NO_PROGRESS_REQUEUE_BUDGET_EXHAUSTED_PREFIX } from "../healing/no-progress-requeue-budget.js";
 
 function createTask(overrides: Partial<Task>): Task {
   return {
@@ -182,6 +183,19 @@ describe("RestartRecoveryCoordinator", () => {
     expect(store.updateTask).toHaveBeenCalledWith("FN-1", expect.objectContaining({ status: "stuck-killed" }));
     expect(store.moveTask).toHaveBeenCalledWith("FN-1", "todo");
     expect(executor.resumeOrphaned).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not reopen an exhausted no-progress park", async () => {
+    const store = {
+      listTasks: vi.fn().mockResolvedValue([
+        createTask({ id: "FN-parked", status: "failed", error: `${NO_PROGRESS_REQUEUE_BUDGET_EXHAUSTED_PREFIX} 3/3 attempts spent. Agent finished without calling fn_task_done`, steps: [] }),
+      ]),
+      updateTask: vi.fn(), logEntry: vi.fn(), moveTask: vi.fn(),
+    } as unknown as TaskStore;
+    const executor = { resumeOrphaned: vi.fn().mockResolvedValue(undefined) } as any;
+    await new RestartRecoveryCoordinator(store, executor).recoverInterruptedRuns();
+    expect(store.updateTask).not.toHaveBeenCalled();
+    expect(store.moveTask).not.toHaveBeenCalled();
   });
 
   it("does not requeue when step progress exists", async () => {

@@ -27,11 +27,20 @@ describe("evaluateForeachMergeProof", () => {
     expect(evaluateForeachMergeProof({ ir: foreachIr(), steps: steps(["pending"]), workflowStepResults: [result(ids[0]), result(ids[0])] }).missingInstanceIds).toEqual([]);
   });
 
-  it("uses persisted rows only to widen expected identities, never as satisfaction", () => {
+  it("reports only terminal live steps as live-step implementation evidence", () => {
+    const ids = [0, 1, 2].map((index) => instanceNodeId("steps", index, "step-execute"));
+    expect(evaluateForeachMergeProof({ ir: foreachIr(), steps: steps(["pending", "pending", "pending"]), workflowStepResults: ids.map((id) => result(id)) }).liveStepSatisfiedInstanceIds).toEqual([]);
+    expect(evaluateForeachMergeProof({ ir: foreachIr(), steps: steps(["done", "done", "done"]), workflowStepResults: [] }).liveStepSatisfiedInstanceIds).toEqual(ids);
+    expect(evaluateForeachMergeProof({ ir: foreachIr(), steps: steps(["skipped", "done", "skipped"]), workflowStepResults: [] }).liveStepSatisfiedInstanceIds).toEqual(ids);
+    expect(evaluateForeachMergeProof({ ir: foreachIr(), steps: [], workflowStepResults: [] }).liveStepSatisfiedInstanceIds).toEqual([]);
+  });
+
+  it("uses persisted rows only to widen expected identities, never as live-step satisfaction", () => {
     const id0 = instanceNodeId("steps", 0, "step-execute");
     const id1 = instanceNodeId("steps", 1, "step-execute");
     const proof = evaluateForeachMergeProof({ ir: foreachIr(), steps: steps(["pending"]), workflowStepResults: [result(id0)], persistedInstances: [{ foreachNodeId: "steps", stepIndex: 1, pinnedStepCount: 2 }] });
     expect(proof.expectedInstanceIds).toEqual([id0, id1]);
+    expect(proof.liveStepSatisfiedInstanceIds).toEqual([]);
     expect(proof.missingInstanceIds).toEqual([id1]);
   });
 

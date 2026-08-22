@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { ChatView, clampChatInputHeight } from "../ChatView";
+import { getChatInputAutomaticMaxHeight, getChatInputBoxMetrics } from "../../utils/chatInputAutosize";
 import * as useChatModule from "../../hooks/useChat";
 import * as useChatRoomsModule from "../../hooks/useChatRooms";
 import type { ChatSessionInfo, UseChatReturn } from "../../hooks/useChat";
@@ -129,6 +130,10 @@ function renderChatView() {
   return render(<ChatView projectId="proj-123" addToast={vi.fn()} experimentalFeatures={{ chatRooms: true }} />);
 }
 
+function expectedAutomaticHeight(textarea: HTMLTextAreaElement, scrollHeight: number) {
+  return clampChatInputHeight(scrollHeight, getChatInputAutomaticMaxHeight(getChatInputBoxMetrics(textarea)));
+}
+
 describe("ChatView composer autosize", () => {
   beforeEach(() => {
     _resetInitialViewportHeight();
@@ -161,7 +166,7 @@ describe("ChatView composer autosize", () => {
       expect(textarea).toHaveValue("");
       const resetHeight = Number.parseInt(textarea.style.height, 10);
       expect(resetHeight).toBeLessThan(expandedHeight);
-      expect(resetHeight).toBe(clampChatInputHeight(24));
+      expect(resetHeight).toBe(expectedAutomaticHeight(textarea, 24));
     });
   });
 
@@ -182,7 +187,8 @@ describe("ChatView composer autosize", () => {
 
     await waitFor(() => {
       expect(textarea).toHaveValue("long long long long long");
-      expect(textarea.style.height).toBe(`${clampChatInputHeight(640)}px`);
+      expect(textarea.style.height).toBe(`${expectedAutomaticHeight(textarea, 640)}px`);
+      expect(textarea.style.overflowY).toBe("auto");
     });
 
     setup({
@@ -194,7 +200,7 @@ describe("ChatView composer autosize", () => {
 
     await waitFor(() => {
       expect(textarea).toHaveValue("ok");
-      expect(textarea.style.height).toBe(`${clampChatInputHeight(20)}px`);
+      expect(textarea.style.height).toBe(`${expectedAutomaticHeight(textarea, 20)}px`);
     });
 
     if (originalScrollHeight) {
@@ -217,11 +223,11 @@ describe("ChatView composer autosize", () => {
     await userEvent.type(textarea, "\nTwo\nThree");
     const threeLineHeight = Number.parseInt(textarea.style.height, 10);
 
-    expect(threeLineHeight).toBe(clampChatInputHeight(textarea.scrollHeight));
+    expect(threeLineHeight).toBe(expectedAutomaticHeight(textarea, textarea.scrollHeight));
     expect(threeLineHeight).toBeGreaterThan(oneLineHeight);
   });
 
-  it("keeps direct-chat text visible for growth between old and new caps", async () => {
+  it("caps direct-chat text at five rendered lines and scrolls overflow internally", async () => {
     renderChatView();
 
     const textarea = screen.getByPlaceholderText("Type a message...") as HTMLTextAreaElement;
@@ -232,7 +238,8 @@ describe("ChatView composer autosize", () => {
 
     await userEvent.type(textarea, "large draft");
 
-    expect(textarea.style.height).toBe("500px");
+    expect(textarea.style.height).toBe(`${expectedAutomaticHeight(textarea, 500)}px`);
+    expect(textarea.style.overflowY).toBe("auto");
   });
 
   it("grows composer height in rooms scope", async () => {
@@ -247,11 +254,11 @@ describe("ChatView composer autosize", () => {
 
     await userEvent.type(textarea, "line one\nline two\nline three");
 
-    expect(textarea.style.height).toBe(`${clampChatInputHeight(textarea.scrollHeight)}px`);
-    expect(Number.parseInt(textarea.style.height, 10)).toBeGreaterThan(clampChatInputHeight(40));
+    expect(textarea.style.height).toBe(`${expectedAutomaticHeight(textarea, textarea.scrollHeight)}px`);
+    expect(Number.parseInt(textarea.style.height, 10)).toBeGreaterThan(expectedAutomaticHeight(textarea, 40));
   });
 
-  it("keeps rooms text visible for growth between old and new caps", async () => {
+  it("caps rooms text at five rendered lines and scrolls overflow internally", async () => {
     localStorage.setItem("fusion:chat-scope", "rooms");
     renderChatView();
 
@@ -263,7 +270,8 @@ describe("ChatView composer autosize", () => {
 
     await userEvent.type(textarea, "room draft");
 
-    expect(textarea.style.height).toBe("500px");
+    expect(textarea.style.height).toBe(`${expectedAutomaticHeight(textarea, 500)}px`);
+    expect(textarea.style.overflowY).toBe("auto");
   });
 
   it("recomputes rooms composer height on room switch", async () => {
@@ -286,7 +294,7 @@ describe("ChatView composer autosize", () => {
 
     await waitFor(() => {
       expect(textarea).toHaveValue("this is a much longer room draft");
-      expect(textarea.style.height).toBe(`${clampChatInputHeight(220)}px`);
+      expect(textarea.style.height).toBe(`${expectedAutomaticHeight(textarea, 220)}px`);
     });
 
     setup({}, { rooms: [roomOne, roomTwo], activeRoom: roomTwo });
@@ -294,12 +302,69 @@ describe("ChatView composer autosize", () => {
 
     await waitFor(() => {
       expect(textarea).toHaveValue("ok");
-      expect(textarea.style.height).toBe(`${clampChatInputHeight(60)}px`);
+      expect(textarea.style.height).toBe(`${expectedAutomaticHeight(textarea, 60)}px`);
     });
 
     if (originalScrollHeight) {
       Object.defineProperty(HTMLTextAreaElement.prototype, "scrollHeight", originalScrollHeight);
     }
+  });
+
+  it("ignores the former top-edge pointer drag and clears direct chat to its minimum", async () => {
+    const sendMessage = vi.fn();
+    setup({ sendMessage });
+    renderChatView();
+
+    const textarea = screen.getByPlaceholderText("Type a message...") as HTMLTextAreaElement;
+    Object.defineProperty(textarea, "scrollHeight", {
+      configurable: true,
+      get: () => textarea.value.length > 0 ? 500 : 24,
+    });
+
+    await userEvent.type(textarea, "long draft");
+    const automaticHeight = Number.parseInt(textarea.style.height, 10);
+    const pointer = (type: string, clientY: number) => textarea.dispatchEvent(Object.assign(
+      new Event(type, { bubbles: true, cancelable: true }), { clientY, pointerId: 1, pointerType: "mouse" },
+    ));
+    pointer("pointerdown", 0);
+    pointer("pointermove", -200);
+    pointer("pointerup", -200);
+
+    expect(Number.parseInt(textarea.style.height, 10)).toBe(automaticHeight);
+
+    await userEvent.click(screen.getAllByTestId("chat-send-btn")[0]);
+    await waitFor(() => {
+      expect(textarea).toHaveValue("");
+      expect(textarea.style.height).toBe(`${expectedAutomaticHeight(textarea, 24)}px`);
+      expect(textarea.style.overflowY).toBe("hidden");
+    });
+  });
+
+  it("ignores the former top-edge pointer drag and clears rooms chat to its minimum", async () => {
+    localStorage.setItem("fusion:chat-scope", "rooms");
+    renderChatView();
+
+    const textarea = screen.getByTestId("chat-input") as HTMLTextAreaElement;
+    Object.defineProperty(textarea, "scrollHeight", {
+      configurable: true,
+      get: () => textarea.value.length > 0 ? 500 : 24,
+    });
+    await userEvent.type(textarea, "long room draft");
+    const automaticHeight = Number.parseInt(textarea.style.height, 10);
+    const pointer = (type: string, clientY: number) => textarea.dispatchEvent(Object.assign(
+      new Event(type, { bubbles: true, cancelable: true }), { clientY, pointerId: 1, pointerType: "mouse" },
+    ));
+    pointer("pointerdown", 0);
+    pointer("pointermove", -200);
+    pointer("pointerup", -200);
+    expect(Number.parseInt(textarea.style.height, 10)).toBe(automaticHeight);
+
+    await userEvent.clear(textarea);
+    await waitFor(() => {
+      expect(textarea).toHaveValue("");
+      expect(textarea.style.height).toBe(`${expectedAutomaticHeight(textarea, 24)}px`);
+      expect(textarea.style.overflowY).toBe("hidden");
+    });
   });
 
   it("uses the same clamp for direct typing and programmatic resets", async () => {
@@ -316,13 +381,14 @@ describe("ChatView composer autosize", () => {
     await userEvent.type(textarea, "oversized");
 
     const typingHeight = textarea.style.height;
-    expect(typingHeight).toBe(`${clampChatInputHeight(2000)}px`);
+    expect(typingHeight).toBe(`${expectedAutomaticHeight(textarea, 2000)}px`);
+    expect(textarea.style.overflowY).toBe("auto");
 
     await userEvent.click(screen.getAllByTestId("chat-send-btn")[0]);
 
     await waitFor(() => {
       expect(textarea).toHaveValue("");
-      expect(textarea.style.height).toBe(`${clampChatInputHeight(2000)}px`);
+      expect(textarea.style.height).toBe(`${expectedAutomaticHeight(textarea, 2000)}px`);
       expect(textarea.style.height).toBe(typingHeight);
     });
   });

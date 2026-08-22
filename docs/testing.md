@@ -6,25 +6,46 @@ This guide consolidates the detailed testing guidance moved from `AGENTS.md`.
 
 ## The merge gate
 
-CI blocks PRs on exactly four checks (`.github/workflows/pr-checks.yml`): **Lint, Typecheck, Build, Gate**. The Gate job runs the boot smoke (`scripts/boot-smoke.mjs`: independent CLI `--help` and real `fn init` preflights run concurrently, the latter proving a durable `.fusion/project.json` marker, then a real `fn serve` answers `GET /api/health`, all against one isolated home) and `pnpm test:gate`: 12 static policy validators, 22 curated `engine-core` files, two PostgreSQL canaries, four core unit files, then the CI-shape test.
+CI blocks PRs on exactly four checks (`.github/workflows/pr-checks.yml`): **Lint, Typecheck, Build, Gate**. The Gate job runs the boot smoke (`scripts/boot-smoke.mjs`: independent CLI `--help` and real `fn init` preflights run concurrently, the latter proving a durable `.fusion/project.json` marker, then a real `fn serve` answers `GET /api/health`, all against one isolated home) and `pnpm test:gate`: 15 static policy validators, 21 curated `engine-core` files, two PostgreSQL canaries, four core unit files, then the CI-shape test.
 
 Set `BOOT_SMOKE_TIMINGS=1` when invoking `pnpm smoke:boot` to print per-attempt help, init, health, and SIGTERM phase timings for diagnosis; the flag is off by default so normal gate output stays concise. Everything else — the 4-way shards, the engine slow tier, the dashboard inventory guard — runs NON-BLOCKING in `.github/workflows/full-suite.yml` on push to main.
 
 Gate membership is the explicit allow-list in `packages/engine/vitest.config.ts` (`engine-core` project). Admission requires evidence of value (the test catches real regressions); tests never graduate in by default. A flaky gate test is evicted by deleting its allow-list line — the eviction PR does not need the flaky test to pass. The whole `engine-core` project must stay under ~60s wall-clock.
 
-<!-- FNXC:MergeGatePerformance 2026-08-04-15:44: FN-8783 removes only independent static-validator scheduling overhead. The exact policy inventory, all 22 engine files, every PG/unit canary, their nonzero propagation, and CI-shape-after-success remain blocking; a timing win that weakens any of those contracts is not accepted. -->
-**Static-validator and lane ordering:** `test:gate:static` declares the 14 canonical, directly runnable read-only validators. `scripts/run-static-gate-checks.mjs` starts them concurrently and waits for **every** result, so zero, one, or multiple policy failures remain fail-closed and observable before tests start. It then starts `engine-core`, `test:pg-gate`, and `test:unit-gate` concurrently; the shell waits for all **three** and returns nonzero if any fail. CI-shape runs only after that successful wait.
+<!-- FNXC:MergeGatePerformance 2026-08-16-10:41: FN-9122 corrected the W33 composition ledger: all 15 static validators, all 21 engine-core files, every PG/unit canary, nonzero propagation, and CI-shape-after-success remain blocking; a timing win that weakens any of those contracts is not accepted. -->
+**Static-validator and lane ordering:** `test:gate:static` declares the 15 canonical, directly runnable read-only validators. `scripts/run-static-gate-checks.mjs` starts them concurrently and waits for **every** result, so zero, one, or multiple policy failures remain fail-closed and observable before tests start. It then starts `engine-core`, `test:pg-gate`, and `test:unit-gate` concurrently; the shell waits for all **three** and returns nonzero if any fail. CI-shape runs only after that successful wait.
 
-<!-- FNXC:MergeGatePerformance 2026-08-04-16:09: FN-8783 keeps engine-core's forks, worker budget, parallelism, bundle rebuild, and all 22 files while caching only Vitest transform artifacts between warm runs. This is never a test-result cache: every assertion and mock boundary remains evaluated for each invocation. -->
+<!-- FNXC:MergeGatePerformance 2026-08-16-10:41: FN-9122 confirmed engine-core retains 21 files, fork worker budgeting, parallelism, bundle rebuild, and transform caching. This is never a test-result cache: every assertion and mock boundary remains evaluated for each invocation. -->
 **FN-8783 warm result:** The paired W32 protocol recorded in task document `FN-8783/docs` measured the complete-gate median at **15.4s baseline** and **10.2s candidate** across five serialized AB/BA pairs on the same macOS arm64 host (Node 26.3.0, pnpm 10.33.0, identical lockfile). The final engine-core transform-cache profile used one priming run (6.3s), then five warm runs (**5.1, 5.2, 5.1, 5.0, 5.2s; median 5.1s**) versus the pre-cache 6.2s focused engine-core result. The residual full-gate critical path is the unchanged concurrent engine/PG/unit/CI-shape work; task evidence records commands, SHAs, preparation, raw timing order, and coverage counts.
 
+**FN-9122 W33 re-measure:** the reported 14.0s weekly row did not reproduce. After a build preflight and priming pass, three serialized warm `pnpm test:gate` samples measured **9.5s, 9.3s, and 9.9s** (median **9.5s**); post-ledger-repair samples measured **10.1s, 9.5s, and 9.0s** (median **9.5s**). A cold-cache sample was 10.9s. Static fan-out was 2.0s, engine-core 5.3s, PG gate 3.5s, unit gate 5.5s, and CI-shape 0.7s, so no gate-only seam explained a three-second increase. Treat an isolated weekly spike as a diagnosis trigger: retain raw samples and only change the gate after at least three warm samples have median above 11.0s. See [the W33 gate investigation](solutions/developer-experience/merge-gate-w33-walltime-regression.md).
+
 **PostgreSQL and unit gate policy:** `packages/core`'s `test:pg-gate` intentionally runs `handoff-to-review-atomicity.pg.test.ts` and `task-lifecycle-e2e.pg.test.ts`, preserving atomic-handoff and lifecycle real-backend canaries. `sync-workflow-ir-is-always-default.pg.test.ts` was evicted under the merge-gate flake rule; its coverage remains in the non-blocking core suite (see the [observed suite-only flakes register](solutions/test-failures/suite-only-flakes-observed-register.md#6-sync-workflow-ir-default-canary-setup-hook)). `test:unit-gate` runs `task-merge.test.ts`, `legacy-adoption.test.ts`, `no-hardcoded-lifecycle-columns.test.ts`, and `sync-workflow-ir-callsite-allowlist.test.ts`. Every other former PG gate member remains enabled and discovered by the non-blocking command `pnpm --filter @fusion/core test` (default config: `src/**/*.test.ts`, no PG quarantine exclusions). `scripts/__tests__/engine-vitest-gate-policy.test.mjs` pins the exact two PG and four unit files, all waits, CI-shape ordering, and every engine/static member.
+
+<!-- FNXC:PgTestBootstrap 2026-08-16-18:59: PostgreSQL integration fixtures must use pg-test-harness bootstrap primitives so reachability, bounded maintenance DDL, and forced cleanup do not drift between files under forked loaded runs. Select createEmptyPgTestDatabase when the test proves first application/upgrades; use a baselined clone only when the schema-present state itself is the contract. -->
+**PostgreSQL fixture bootstrap:** Do not hand-roll per-file `CREATE DATABASE` or drop helpers. Use `createEmptyPgTestDatabase` for migration-application and upgrade contracts, and `createBaselinedPgTestDatabase` only when an already-applied schema is the intended fixture state. Both keep database lifecycle and cleanup behavior aligned with the shared harness. Engine reliability fixtures follow the same bounded maintenance-connection and forced-cleanup contract; see [the reliability helper DDL audit](solutions/test-failures/postgres-reliability-helper-ddl-audit.md).
+
+### PostgreSQL connection-budget experiment
+
+FN-9131 retains `pg-connection-budget.ts` as a tested cluster-shared advisory-lock primitive, but it is deliberately **not wired into the shared harness**. The experiment charges a backend slot at the pool ceiling (runtime + dedicated migration + admin), partitions fixed lease/work bands, derives a conservative degraded floor, and records bootstrap/admission counters (`bootstrapRetries`, `bootstrapTokenWaits`, `bootstrapTokenReclaims`, `deburstDelayMs`, `floorAdmissionWaits`, `maxFloorWaitMs`, `lazyAdmissions`, `concurrencyRejections`, and `degradedCount`). A non-zero degradation count invalidates a capacity measurement.
+
+The initial harness wiring made a 27-worker PostgreSQL directory run worse, even after registry contention was changed from bounded rejection to queueing. Do not restore the wiring, alter test timeouts, add retries, or cap workers as a workaround. FN-9139 owns selecting a per-worker lifecycle point that is inert for non-PostgreSQL lanes and can charge admission wait outside individual test budgets. See [the terminal-negative record](solutions/test-failures/pg-harness-connection-budget.md).
+
+### PostgreSQL setup-boundary participation and measurement
+
+<!-- FNXC:PgTestPreAdmission 2026-08-17-03:20: FN-9139 requires the shared Vitest setup path to remain connectionless for every non-PostgreSQL lane. Participation is an explicit environment signal, rather than a reachability probe, because importing the harness itself performs a TCP probe. -->
+
+`FUSION_PG_TEST_SETUP_PARTICIPANT=1` is the only opt-in for a PostgreSQL setup participant. It is intentionally accepted from a bare exported environment variable as well as the dedicated PostgreSQL configuration, so an ad-hoc directory reproduction has the same participation semantics. Any absent, malformed, empty, whitespace, or `0` value is non-participating; `FUSION_PG_TEST_SKIP=1` overrides participation. Setup work on the shared file must leave non-participating lanes with no PostgreSQL import, socket, filesystem token, or environment mutation.
+
+`FUSION_PG_TEST_PREADMISSION_PROBE=1` is reserved for a default-off, observation-only measurement probe and is consulted only by a participating lane. A boundary probe must publish no token, lease, registry, singleton, or environment value that the harness can consume: coupling it would be an unmeasured admission rewiring, not a boundary experiment. `FUSION_PG_TEST_TEARDOWN_DIAGNOSTICS=1` enables the existing JSONL measurement channel in both arms.
+
+Use `scripts/pg-setup-boundary-probe.mjs` to survey setup boundaries before changing a shared setup hook. Its temporary, connectionless fixture uses a falsifying four-arm budget matrix: only a duration-verified `both-small` pass proves off-budget work; a reference-only pass is `completed-within-budget`. Every cell is repeated, calibration controls must pass, and unclassified, timed-out, flapping, or indeterminate data is `insufficient-data`. The ledger compares monotonic clocks only within a process and requires an epoch separation margin across processes. See [the recorded ownership survey](solutions/test-failures/vitest-setup-boundary-timeout-ownership.md). The campaign driver is executed only by a successor after that prerequisite is established; its pure unit suite is always safe to run. The loaded campaign is driven only by `scripts/pg-preadmission-campaign.mjs`, which alternates control and candidate arms, samples one shell's diagnostics, and enforces a five-minute run limit and sixty-minute campaign limit. Collect at least five valid runs per arm. The candidate is affordable only when its median wall time is no worse than the control maximum, its maximum failed-file count is no worse than control, its peak backend footprint is at most one above control, and it records no probe degradation. Fewer than five valid samples, invalid candidate probe records, a capped campaign, or an unavailable environment is deterministically `insufficient-data`, not a reason to tune timeouts or repeat unfavorable results.
 
 <!-- FNXC:EngineTests 2026-07-08-03:00: FN-7667 decouples the engine-core gate's module graph from full-barrel growth so new feature modules don't silently inflate every gate fork's transform/import cost. -->
 **Gate-safe `@fusion/core` barrel:** the `engine-core` project resolves `@fusion/core` to `packages/core/src/index.gate.ts` (a project-scoped `resolve.alias`, not the root map), not the full `packages/core/src/index.ts` barrel. `index.gate.ts` is a byte-for-byte copy of the full barrel minus the `export ... from` statements for modules added to the barrel after the last re-audit baseline — i.e. it re-exports everything the full barrel does except genuinely new, gate-irrelevant feature modules (diffed against the prior baseline commit's barrel, not hand-picked from what gate *test* files import — production modules under test pull in far more of the barrel transitively than their own imports suggest). `engine-default`/`engine-reliability`/`engine-slow` are unaffected and keep resolving the full barrel. `@fusion/engine` is untouched (no gate file imports it). When adding a new barrel module that no gate test needs, mirror the exclusion in `index.gate.ts` rather than letting gate wall-time grow — see the FNXC comment at the top of `index.gate.ts` and `packages/engine/vitest.config.ts`'s `engine-core` project for the audit procedure.
 
 <!-- FNXC:EngineTests 2026-07-08-05:30: FN-7669 pre-bundles the gate-safe @fusion/core barrel to attack the FN-7668-identified import-phase-dominated wall-time cost. -->
-**Pre-bundled `@fusion/core` gate bundle:** FN-7668 profiled the gate's dominant wall-time cost as vitest/Vite SSR's **import-phase** — each fork worker independently re-resolves+evaluates the barrel closure from scratch with zero cross-fork sharing. `engine-core`'s `@fusion/core` alias now points at a single esbuild-bundled ESM file (`scripts/build-engine-core-gate-bundle.mjs`, entrypoint `packages/core/src/index.gate.ts`, `packages:"external"` so only the first-party closure — 220 files — is inlined) instead of directly at `index.gate.ts`'s source, collapsing 220 per-fork Vite SSR module-loader round-trips into 1 file load per fork. The bundle is **rebuilt fresh on every gate invocation** via the `engine-core` project's `globalSetup` (the builder's own esbuild dependency graph determines what gets bundled — never a hand-maintained file/symbol list, so there is no drift surface), and lives at `packages/core/.gate-bundle/core.mjs` — a gitignored, non-committed artifact placed as a **sibling of `packages/core/node_modules/`, deliberately not nested inside it**: nesting inside `node_modules` triggers Vite's SSR external-dep heuristic (loads the whole bundle via Node's native loader, bypassing Vite's mock-interception pipeline) and silently defeats `vi.mock` for imports nested inside the bundle (see the FNXC comment in the builder script for the full repro/fix). Measured A/B (5 alternating runs each, FN-7669 task docs): median real wall-time −5.5%, import-phase aggregate −14.0%, transform-phase aggregate −25.9%, with full coverage parity (335/335 gate tests, identical per-file counts) — a modest but real, reproducible, zero-downside win. `@fusion/engine` stays on the full (unbundled) barrel: no gate file imports it directly, so bundling it would be zero-benefit churn against the core↔engine circular-import DI. Bundling the `@fusion/engine` relative-import graph (`merger.ts` et al., the untouched remainder of FN-7668's ~430-file closure) is a natural, larger-payoff follow-up, filed separately.
+**Pre-bundled `@fusion/core` gate bundle:** FN-7668 profiled the gate's dominant wall-time cost as vitest/Vite SSR's **import-phase** — each fork worker independently re-resolves+evaluates the barrel closure from scratch with zero cross-fork sharing. `engine-core`'s `@fusion/core` alias now points at a single esbuild-bundled ESM file (`scripts/build-engine-core-gate-bundle.mjs`, entrypoint `packages/core/src/index.gate.ts`, `packages:"external"` so only the first-party closure — 411 inputs in the FN-9122 re-measurement — is inlined) instead of directly at `index.gate.ts`'s source, collapsing those per-fork Vite SSR module-loader round-trips into 1 file load per fork. The bundle is **rebuilt fresh on every gate invocation** via the `engine-core` project's `globalSetup` (the builder's own esbuild dependency graph determines what gets bundled — never a hand-maintained file/symbol list, so there is no drift surface), and lives at `packages/core/.gate-bundle/core.mjs` — a gitignored, non-committed artifact placed as a **sibling of `packages/core/node_modules/`, deliberately not nested inside it**: nesting inside `node_modules` triggers Vite's SSR external-dep heuristic (loads the whole bundle via Node's native loader, bypassing Vite's mock-interception pipeline) and silently defeats `vi.mock` for imports nested inside the bundle (see the FNXC comment in the builder script for the full repro/fix). Measured A/B (5 alternating runs each, FN-7669 task docs): median real wall-time −5.5%, import-phase aggregate −14.0%, transform-phase aggregate −25.9%, with full coverage parity (335/335 gate tests, identical per-file counts) — a modest but real, reproducible, zero-downside win. `@fusion/engine` stays on the full (unbundled) barrel: no gate file imports it directly, so bundling it would be zero-benefit churn against the core↔engine circular-import DI. Bundling the `@fusion/engine` relative-import graph (`merger.ts` et al., the untouched remainder of FN-7668's ~430-file closure) is a natural, larger-payoff follow-up, filed separately.
 
 ## Weekly signal-per-second baseline
 
@@ -50,7 +71,27 @@ pnpm verify:workspace  # deep opt-in verification: lint -> test:full -> build (N
 <!-- FNXC:TestInfrastructure 2026-06-25-00:00: verify:fast is the opt-in test-free verification path. docs/testing.md observes the broad test gate caught no recalled real bugs while consuming ~70% of shipping time in flake triage; typecheck+build+boot-smoke gives deterministic, flake-free signal without running tests. It changes no default — pnpm test, the merge gate, and CI are untouched; the full suite stays available and runs non-blocking. -->
 <!-- FNXC:TestInfrastructure 2026-06-26-00:49: verify:fast must bootstrap missing workspace dist artifacts and build @runfusion/fusion even when the CLI package is not in the changed-package set because package builds and the boot smoke invoke source-checkout wrappers that require dist outputs in fresh worktrees. -->
 <!-- FNXC:TestInfrastructure 2026-07-22-12:00: Cheap deterministic policy gates must fail before verify:fast's expensive work. Read canonical package.json pretest commands and invoke their validator entry points directly so test-free verification and the merge gate cannot drift. -->
-`pnpm verify:fast` (`scripts/verify-fast.mjs`) is the recommended **test-free verification** command. It first runs the canonical, read-only static validators from root `pretest` — `check-no-nohup`, `check-no-kill-4040`, `check-no-getdatabase`, `check-prerebase-inert`, `check-cli-runtime-routing`, `check-no-node-only-core-imports-in-dashboard`, `check-pi-versions-pinned`, `check-workspace-package-graph`, `check-no-test-timeout-appeasement`, `check-changeset-format`, `check-routes-modular`, and `check-runtime-skill-loader-drift` (which enforces the Claude/Grok runtime skill loaders' clean rename-diff) — then bootstraps missing/stale workspace dist artifacts, runs **typecheck + build scoped to the changed packages** (reusing the same git-diff / changed-package resolution as `pnpm test`), always builds the `@runfusion/fusion` CLI package required by the source-checkout boot smoke, and runs the existing **boot smoke** once. The static phase invokes each existing validator entry point without update flags, is bounded and fail-fast, and runs **no Vitest or test lane**. It gives deterministic, flake-free signal in seconds, so it is a sound project `testCommand`/verification command when you want non-test verification. With no affected package (root/docs-only diff) it runs static checks, artifact bootstrap, the CLI prerequisite build, and boot smoke. Each step is bounded by the shared `runWithWatchdog` (class `changed`) so a hang fails fast, and it exits nonzero on the first failing step. This is purely additive: it does not change `pnpm test`, the merge gate, or CI, and the full suite stays available (`pnpm test:full`, non-blocking on push to main).
+`pnpm verify:fast` (`scripts/verify-fast.mjs`) is the recommended **test-free verification** command. It first runs the canonical, read-only static validators from root `pretest`:
+
+<!-- pretest-validators:start -->
+- `check-no-nohup`
+- `check-no-cwd-relative-dashboard-test-reads`
+- `check-no-kill-4040`
+- `check-no-getdatabase`
+- `check-prerebase-inert`
+- `check-capacity-pool-id`
+- `check-cli-runtime-routing`
+- `check-no-node-only-core-imports-in-dashboard`
+- `check-pi-versions-pinned`
+- `check-workspace-package-graph`
+- `check-no-test-timeout-appeasement`
+- `check-changeset-format`
+- `check-pre-json-anchor`
+- `check-routes-modular`
+- `check-runtime-skill-loader-drift`
+<!-- pretest-validators:end -->
+
+`check-runtime-skill-loader-drift` enforces the Claude/Grok runtime skill loaders' clean rename-diff. It then bootstraps missing/stale workspace dist artifacts, runs **typecheck + build scoped to the changed packages** (reusing the same git-diff / changed-package resolution as `pnpm test`), always builds the `@runfusion/fusion` CLI package required by the source-checkout boot smoke, and runs the existing **boot smoke** once. The static phase invokes each existing validator entry point without update flags, is bounded and fail-fast, and runs **no Vitest or test lane**. It gives deterministic, flake-free signal in seconds, so it is a sound project `testCommand`/verification command when you want non-test verification. With no affected package (root/docs-only diff) it runs static checks, artifact bootstrap, the CLI prerequisite build, and boot smoke. Each step is bounded by the shared `runWithWatchdog` (class `changed`) so a hang fails fast, and it exits nonzero on the first failing step. This is purely additive: it does not change `pnpm test`, the merge gate, or CI, and the full suite stays available (`pnpm test:full`, non-blocking on push to main).
 
 `pnpm check:workspace-package-graph` verifies that every `workspace:` dependency or override in the root importer or a glob-matched workspace manifest resolves to a glob-covered workspace package, and that no package directory under `packages/` or `plugins/` falls outside `pnpm-workspace.yaml` package globs.
 
@@ -393,7 +434,7 @@ The CI job uses `fetch-depth: 0` because these tests run real git operations.
 
 ## Quarantine ledger and the deletion ratchet
 
-Flaky tests are quarantined ON SIGHT and deleted on a 2-week clock. This is written policy with minimal mechanics — deliberately no loader module, no automation (see the AGENTS.md standing rule "Flaky Tests Are Quarantined on Sight").
+Flaky tests are quarantined ON SIGHT and deleted on a 2-week clock. The ledger remains a simple JSON record, while `scripts/check-quarantine-ledger.mjs` mechanically checks every ledger/exclude pair (see the AGENTS.md standing rule "Flaky Tests Are Quarantined on Sight").
 
 Quarantine is the default when a sighting is reproducible enough to justify evicting a file's coverage. The only exception is the narrow first-sighting record authority in AGENTS.md: a high-value file may be recorded in the [observed suite-only flakes register](solutions/test-failures/suite-only-flakes-observed-register.md) instead (`docs/solutions/test-failures/suite-only-flakes-observed-register.md`). A second sighting of a registered flake moves it to the ledger plus matching Vitest `exclude` in one lockstep commit.
 
@@ -409,13 +450,15 @@ Quarantine is the default when a sighting is reproducible enough to justify evic
 
 ### Quarantine deadline visibility check
 
-Run `pnpm check:quarantine-ledger` to print a soonest-deadline-first summary of `scripts/lib/test-quarantine.json`. The command uses the same 14-day deletion clock (`quarantinedAt + 14d`) as the velocity baseline and reports each entry as expired, near-deadline, healthy, or unknown when `quarantinedAt` is missing/invalid. It is a visibility aid only: default mode exits 0 even when entries are near or expired, preserving the deliberately-unwired policy and leaving rescue-or-delete decisions to maintainers.
+Run `pnpm check:quarantine-ledger` to print a soonest-deadline-first summary of `scripts/lib/test-quarantine.json`. The command uses the same 14-day deletion clock (`quarantinedAt + 14d`) as the velocity baseline and reports each entry as expired, near-deadline, healthy, or unknown when `quarantinedAt` is missing/invalid. Default mode remains report-only for deadline status.
+
+The checker also enforces the quarantine lockstep. It reads only comment-stripped `exclude:` array literals in every `packages/*/vitest.config.ts`; include-shard lists and identifier/spread excludes are deliberately out of scope. It reports `missing-file` (a ledger entry names no file), `missing-exclude` (a ledger file lacks its package exclusion), and `dangling-exclude` (an exclusion names no file). `--strict` fails on any of those violations as well as near/expired deadlines.
 
 Flags:
 
 - `--warn-within=<days>` changes the near-deadline window from the default 5 days.
-- `--json` emits the computed rows plus summary counts for machine consumption.
-- `--strict` exits 1 when any entry is expired or near-deadline, for opt-in local or project-specific gates only. Do not wire this into `pretest`, `test:gate`, or other default blocking lanes without an explicit policy change.
+- `--json` emits the computed rows, lockstep violations, and summary counts for machine consumption.
+- `--strict` exits 1 when an entry is expired/near-deadline or a lockstep violation exists; this is enforced by the PR check.
 
 **Rescue** (before the clock runs out) requires both: evidence the test catches real regressions, and a root-cause fix for the flake. Stabilization passes — widened timeouts, retries, loosened assertions — are appeasement, not rescue, and are banned (for agents especially).
 
@@ -428,6 +471,12 @@ Flags:
 
 <!-- FNXC:TestSubprocessGuard 2026-08-10-09:35: FN-8937 rescues project-engine.test.ts by fixing real-git and virtual-watchdog seam defects, without treating a guard budget as a scheduling interval. -->
 **2026-08-10 project-engine disposition (FN-8937):** Rescued `project-engine.test.ts` before its 2026-08-20 deadline. The suite's un-mocked `exec`-based integration-branch probe spawned real git, while the shared subprocess guard watchdog used fakeable timers; a duplicate-registration path could also orphan a watchdog handle. The resolver is now a deterministic suite seam, and watchdogs use captured real timers with owner-scoped failure draining, preserving sibling-test failure ownership. The ledger claim that runtime schedules 120s was a misread of `FUSION_TEST_SUBPROCESS_TIMEOUT_MS`: production retains its correct 60s ladder at `packages/engine/src/project-engine.ts:4551`, and the test correctly forbids its uncapped 120000ms rung. Thus the request to update the assertion to 120s is a documented deviation; no timeout was widened, retry added, or assertion weakened. The ledger/config exclusions were removed together, while the file remains outside `engine-core` pending separate gate-admission evidence.
+
+<!--
+FNXC:PluginRunnerFlake 2026-08-17-12:11:
+FN-9141's completed shuffled worker-reuse/repeated-subject campaign reproduced a fixture defect rather than a product failure: cross-file `vi.clearAllMocks()` erased logger mock-result history between module initialization and the lifecycle warning assertion. Keep a stable hoisted mock logger and directly cover that cleanup sequence; do not replace the structural rescue with waits, retries, or weaker assertions.
+-->
+**2026-08-17 plugin-runner disposition (FN-9141):** Rescued `packages/engine/src/__tests__/plugin-runner.test.ts` before the 2026-08-30 deletion-ratchet deadline. The seed-recorded completed lane combined shuffled order, no-isolation worker reuse, and a temporary byte-for-byte subject repeat. It reproduced one hot-reload warning assertion failure in the original subject because an unrelated worker-reused file cleared `createLogger.mock.results`; the repeat passed. The suite now keeps the initialized mock logger in a stable hoisted reference and explicitly proves cleanup cannot erase it, retaining the strict `stopPlugin` rejection/warning and renamed-complete-lane `onTaskCompleted` dispatch contracts. The ledger row and default-lane exclusion remain removed together. No timeout, retry, assertion weakening, skip, polling, or permanent worker-policy change was used.
 
 ### Validate before excluding and preserve timeout budgets
 
@@ -458,6 +507,127 @@ Legitimate legacy exceptions must be recorded in `scripts/lib/test-timeout-appea
 <!-- FNXC:CliTestReliability 2026-06-19-13:32: FN-6734 found the same CLI affected-lane symptom can mix leaked real TaskStore handles, oversized truncation fixtures, and runtime-dist mocking order. Rescue this class by closing stores before fixture cleanup, keeping truncation data deterministic but small, and importing complete built barrels through Vitest before doMock; do not reduce workers, widen timeouts, or add quarantine entries unless the loaded package lane still fails after those seams are proven. -->
 
 **2026-06-19 CLI affected-lane rescue (FN-6734):** a broad `@runfusion/fusion` lane reported default 5s test-body timeouts and `fusion-test-workers-*`/fixture `ENOTEMPTY` cleanup noise while isolated files exposed closeable real-store handles and a runtime-dist mock that was sensitive to package-lane module graph ordering. The rescue closed each real `TaskStore`/`AgentStore` before removing its temp fixture, kept task-list truncation coverage under the default timeout by reducing filler size rather than assertions, and preloaded the built `@fusion/core` barrel with `vi.importActual` before `vi.doMock` so complete dist artifacts exercise the CLI surface while partial stale dist skips cleanly. Prove this class with targeted file runs, `pnpm --filter @runfusion/fusion test`, the timeout-appeasement guard, bounded temp-prefix cleanup output, and the normal workspace gate/build; leave the CLI quarantine array empty when no file is actually quarantined.
+
+<!-- FNXC:PostgresFlakeDiagnosis 2026-08-16-17:30: FN-9125 requires a suspected PostgreSQL cluster to be split by actual imports and retained full runner output before changing the shared harness. A mocked engine unit with no harness import is an independent deletion-ratchet decision; current non-reproduction of a core PG first sighting is escalated because policy keeps the core PG quarantine array empty. -->
+
+**2026-08-16 PostgreSQL first-sighting diagnosis (FN-9125):** First classify each file by its real dependency path, not nearby failure timing. Retain complete `tee` output for repeated package lanes and record fan-out, server capacity, and target identities. If a current run cannot link a PostgreSQL test assertion to golden-template, DDL, pool, or teardown evidence, do not add timeouts/retries or infer a harness change: obtain CI/host activity and phase timings. A core PostgreSQL file is escalated rather than quarantined because `quarantinedCoreTests` remains policy-pinned empty; a non-PG engine file follows normal ledger-plus-exclude lockstep.
+
+<!-- FNXC:PgTestHarnessTeardownDiagnostics 2026-08-16-19:32: FN-9127 requires a 15s PostgreSQL afterAll abort to preserve evidence before a hook can be killed. Diagnostics therefore observe pending teardown work with unref'd watchdogs, synchronously flush evidence, and cap a separate short-lived activity probe rather than extending or perturbing the teardown. -->
+
+### PostgreSQL teardown diagnostics
+
+Set `FUSION_PG_TEST_TEARDOWN_DIAGNOSTICS=1` only while investigating an integration-test teardown. The default is off: no timer, probe connection, query, or sink file is created. When enabled, the shared PG harness records `store.close`, `layer.close`, `adminSql.end`, `dropDatabase`, and `rmRootDir` timings. `FUSION_PG_TEST_TEARDOWN_DIAGNOSTICS_THRESHOLD_MS` (default `2000`) arms each phase watchdog; `FUSION_PG_TEST_TEARDOWN_DIAGNOSTICS_HOOK_WATCHDOG_MS` (default `12000`) covers the whole teardown, safely below the inherited 15s hook budget. These are diagnostic observation bounds, never timeout extensions: a watchdog fires while work is still pending, so an aborted/hung teardown has evidence rather than only a post-hoc silence.
+
+On a watchdog breach, the harness lazily opens one dedicated maintenance connection and queries `pg_stat_activity` across all databases. `FUSION_PG_TEST_TEARDOWN_DIAGNOSTICS_PROBE_TIMEOUT_MS` (default `1500`) bounds connect/query/close; `FUSION_PG_TEST_TEARDOWN_DIAGNOSTICS_MAX_PROBES` (default `3`) caps probes per process. Probes are single-flight, use no runtime or admin pool, are force-closed on abort, and are never awaited by teardown work. Timers are unref'd and every diagnostics failure is fenced, so the observer cannot keep a worker alive or change the outcome it measures.
+
+Set `FUSION_PG_TEST_TEARDOWN_DIAGNOSTICS_LOG=/path/to/teardown.jsonl` to synchronously append one JSON object per record. The schema includes timestamp, pid/worker, `trigger` (`phase-complete`, `phase-watchdog`, `teardown-watchdog`, or `snapshot`), phase-duration map, thresholds, `phaseIncomplete`/`elapsedAtSnapshotMs`, probe outcome/suppression, and snapshot rows (`datname`, state, wait event, backend type, query age, and backend count). Sink errors only fall back to `[pg-teardown-diagnostics]` stderr output. For the next loaded sighting, preserve full output and structured evidence with:
+
+```bash
+FUSION_PG_TEST_TEARDOWN_DIAGNOSTICS=1 \
+FUSION_PG_TEST_TEARDOWN_DIAGNOSTICS_LOG=/tmp/fn-9127-diag-core.jsonl \
+VITEST_MAX_WORKERS=12 \
+pnpm --filter @fusion/core test 2>&1 | tee /tmp/fn-9127-core.log
+```
+
+Checkpoint parsed JSONL and run metadata in a durable task document after every run; `/tmp` is scratch storage, not the evidence system of record.
+
+<!-- FNXC:PostgresFlakeDiagnosis 2026-08-19-11:56: FN-9146 requires loaded-flake campaigns to make a per-identity verdict rather than treating one red lane as proof for every subject. Capacity and gate selection are recorded because a configured gate may not include the investigated files. -->
+
+For a pre-registered loaded-flake campaign, record PostgreSQL version, `max_connections`, reserved slots, baseline and peak backend counts, and each run's selected file list. Track each registered test or hook independently: a capture satisfies only that exact identity; every uncaptured identity requires the full pre-registered subject-containing run set. Preserve all runner output and JSONL as task attachments as well as checkpointing parsed counters in task documents. Do not count a configured lane that does not select a subject as negative evidence for that subject.
+
+<!-- FNXC:PgDdlLaneMetric 2026-08-17-00:59: FN-9134 requires a pre-registered end-to-end band because teardown watchdogs become structurally meaningless when cleanup leaves the hook. The parser is intentionally report-only and the alternating samples are campaign observations, never Vitest retries. -->
+
+<!-- FNXC:PgLoadedFailureCensus 2026-08-19-12:41: FN-9148 requires a retained loaded-lane failure population to be classified without contacting PostgreSQL, so a complete green log remains evidence rather than being conflated with a truncated capture. -->
+
+### PostgreSQL loaded-failure census
+
+Use `scripts/pg-loaded-failure-census.mjs` to inspect an already-retained Vitest runner log and its optional teardown-diagnostics JSONL. The script never opens a cluster or runs tests. Supply `--log`, `--diagnostics`, and the recorded `--ordinary-slot-ceiling`; repeat `--subject` to label campaign files without dropping them. Its output contains total and failing files, lifecycle and failure-shape breakdowns, observed backend peak/headroom, wait histogram, phase-duration order statistics, and watchdog/probe-degradation counts.
+
+A run is `insufficient-data` when its runner log lacks a complete `Test Files` summary or when the reported failed-file count cannot be reconciled to parsed failure blocks. A complete passing summary instead produces `status: "measured"` with `failingFileCount: 0`; never treat that zero as missing evidence or coerce incomplete input to a healthy result.
+
+<!-- FNXC:PgTimeoutBoundaryObserver 2026-08-19-14:33: FN-9149 requires a default-off observer that attributes setup, body, and teardown timeout boundaries without widening the budget it measures. The paired body window is necessary because Vitest invokes shared-harness beforeEach and afterEach as distinct hooks. -->
+
+### PostgreSQL timeout-boundary observer
+
+`FUSION_PG_TEST_TIMEOUT_BOUNDARY_OBSERVER=1` enables a diagnostic-only JSONL channel; when unset it creates no timer, probe connection, sink write, listener, or environment mutation. `observeBoundary()` wraps harness-owned setup and teardown work. `openBoundary()`/`closeBoundary()` span the shared harness's separate `beforeEach` and `afterEach` hooks, so `shared.body` measures test bodies without editing consumers. Each open body window receives a unique record `joinKey`; its stable file-level `supersessionKey` only closes a stale handle. Closing is idempotent; an abandoned window is superseded by a later open or disposed without inventing a completion.
+
+The observer arms an unref'd watchdog at boundary start. Only a pending watchdog dispatches a maintenance-connection probe; completion records are host-only and emit when elapsed time meets `FUSION_PG_TEST_TIMEOUT_BOUNDARY_OBSERVER_THRESHOLD_MS` (default 2000; `0` measures every completion). With `FUSION_PG_TEST_TIMEOUT_BOUNDARY_OBSERVER_LADDER_MS` above zero, an independent unref'd checkpoint timer synchronously emits keyed payload-free `kind:"progress"` rows and rearms at that spacing. The last progress row is an elapsed lower bound for an abandoned boundary, with the configured spacing as its resolution; it is never a PostgreSQL-state snapshot. A settle/reject emits a keyed `kind:"terminal"` outcome without error text and clears both timers exactly once.
+
+The watchdog first synchronously appends a keyed `kind:"breach"`, `payloadFree:true` record, then appends its enriched `kind:"watchdog"` probe result. This two-phase form preserves a joinable elapsed boundary when Vitest abandons work during the watchdog-to-probe residual window; a payload-free breach never affirms a cluster-state mechanism. A dispatched probe survives boundary settlement and appends when it resolves, with `settledDuringProbe`, `probeLatencyMs`, and optionally `probeStartDelayMs`; records can therefore be out of order and consumers must join by the per-window `joinKey`, never by JSONL order or the shared `supersessionKey`. `flush()`/`dispose()` drain bounded pending and queued probes; a missed drain becomes `probeSuppressed:"drain-timeout"`. The enabled-only `beforeExit` hook performs the same best-effort drain.
+
+<!-- FNXC:PgTimeoutBoundaryObserver 2026-08-19-16:11: FN-9150 records checkpoint progress because settle-only telemetry censors exactly the boundaries Vitest abandons. Checkpoints and breach rows establish elapsed coverage, never cluster-state attribution or a reason to extend a timeout. -->
+
+<!-- FNXC:PgTimeoutBoundaryObserver 2026-08-19-16:06: FN-9150 records a payload-free breach before probe scheduling because an inherited 15-second Vitest budget can abandon a boundary before the maintenance probe resolves. The record is coverage evidence only, never a cluster-state attribution. -->
+
+<!-- FNXC:PgTimeoutBoundaryObserver 2026-08-19-16:56: Consecutive shared-harness bodies reuse a lifecycle supersession key, but each emitted window has a unique join key so a later healthy terminal cannot hide an earlier abandoned ladder boundary. -->
+
+The independent, tighten-only bounds are `statement timeout < probe timeout < inherited budget`, `queue timeout < probe timeout`, and `threshold <= per-boundary watchdog < inherited budget`. A probe timeout is deliberately **not** tied to a short watchdog: forced wiring runs need a fast watchdog and a real cluster round trip. Floors are `MIN_WATCHDOG_MS`, `MIN_PROBE_TIMEOUT_MS`, and `MIN_STATEMENT_TIMEOUT_MS`; an impossible floor yields `bounds-floor`, never a wider budget.
+
+| variable | default | purpose |
+|---|---:|---|
+| `..._LOG` | unset | JSONL destination |
+| `..._THRESHOLD_MS` | 2000 | completion-record threshold; 0 measures all |
+| `..._WATCHDOG_MS`, `..._WATCHDOG_SETUP_MS`, `..._WATCHDOG_BODY_MS`, `..._WATCHDOG_TEARDOWN_MS` | 12000 | global and per-boundary watchdogs |
+| `..._PROBE_TIMEOUT_MS` / `..._STATEMENT_TIMEOUT_MS` | 1500 / derived below probe | bounded client/server probe stack |
+| `..._PROBE_DRAIN_TIMEOUT_MS` | 3000 | bounded `flush()`/`dispose()` drain |
+| `..._MAX_CONCURRENT_PROBES` | 1 | counting limiter, capped by `MAX_CONCURRENT_PROBES_CEILING` (8) |
+| `..._PROBE_QUEUE_TIMEOUT_MS` | 0 | bounded slot wait; a queued probe records delay |
+| `..._MAX_PROBES` | 4 | per-process diagnostic cost cap |
+
+At concurrency 1 the cost profile matches the older single-flight observer. `probeSuppressed:"concurrency"` supersedes legacy `single-flight`; neither is a valid forced-wiring payload. The cap is configurable because once probes survive settle, a strict single flight would suppress simultaneous setup/body/teardown breaches. Probe payloads contain host load/CPU and watchdog scheduling drift (`eventLoopLagMs`, measured as the monotonic callback delay past its deadline at the snapshot instant), active SQL and lock/blocking rows, backend count, and golden-template owner/readiness plus separately reported granted advisory holders and non-granted advisory waiters. Only a non-owner waiter supports a template-convoy attribution; a holder alone does not.
+
+For an enabled-wiring check, first run disabled and normal enabled bounds to compare duration, then threshold 0 to verify setup, `shared.body`, and teardown completion records, then force per-boundary watchdogs below measured elapsed times while independently retaining a probe/drain timeout above cluster round-trip and raising probe cap/concurrency to at least 3. Every forced boundary must have a non-suppressed payload; `cap`, `concurrency`, `bounds-floor`, `drain-timeout`, and `error` require diagnosis, not acceptance. Files using the shared harness are body-observable; direct `createTaskStoreForTest` files deliberately have no harness-owned body bracket and must be reported as `body-unobservable`.
+
+Pass `--boundary-observer <jsonl>`, `--vitest-json <reporter.json>`, `--body-unobservable-files <list>`, and `--fully-unobservable-files <list>` to `scripts/pg-loaded-failure-census.mjs`. Capture the reporter per run with `--reporter=dot --reporter=json --outputFile=<reporter.json>`; it provides per-test duration and file identifiers but Vitest 3 provides no hook duration or failure position, so a hook-clock offset is unmeasurable rather than a point estimate. The census tolerates malformed and out-of-order rows, joins ladder/breach/enriched rows by key, and reports joined, `attributed-by-ladder`, `body-unobservable`, `position-unobservable`, and `unjoined` coverage counts plus probe suppression and latency distributions. `afterEach` consumer hooks are position-unobservable because the shared-harness body bracket closes before those hooks run. Failures from fully-unobservable files remain `unjoined` but are counted and listed separately so the known no-harness limitation is never mistaken for a missing observer join. Missing/empty input stays explicitly absent rather than a measured zero.
+
+<!-- FNXC:PgClusterHygiene 2026-08-19-18:24: FN-9154 requires PostgreSQL campaign admission to distinguish a measured zero from an empty, failed, or truncated `psql -qAt` capture. The offline report consumes a complete envelope only and cannot authorize destructive cleanup.
+
+FNXC:PgClusterHygiene 2026-08-19-18:58: PostgreSQL's unaligned boolean output is `false`/`true`, while the offline capture parser intentionally accepts the harness-compatible `f`/`t` representation. The documented query must normalize `datistemplate` so a live populated capture cannot be misread as a malformed measured zero. -->
+
+### PostgreSQL campaign cluster-hygiene report
+
+Before every FN-9152/FN-9153 campaign run, capture the maintenance-cluster rows and retain the three capture files plus the JSON report in the task document. The four counted hygiene classes are `fusion_test_%`, `fusion_schema_template%` per-module templates, `fusion_schema_template_<pid>_golden<token>` golden templates, and `fusion_pool_%`. The report classifies names itself, so the deliberately conservative SQL patterns cannot silently hide an unexpected matching name.
+
+A capture is an envelope, not bare `psql -qAt` output: the `# fusion-hygiene-capture v1` banner, `kind`, cluster identity, ISO timestamp, query identity, declared row count, body, and terminal `# end` make `rows: 0` a measured zero. Missing, empty, header-less, truncated, count-mismatched, or wrong-kind captures are `insufficient-data`, never clean evidence. A supplied-but-unmeasured or wrong-kind `--markers`/`--liveness` companion makes the whole report `insufficient-data`; an omitted companion is not evidence, so Path A/C/D clean evidence requires all three captures supplied, measured, and bearing the same cluster identity. A stale marker row is dirty terminal evidence even when all four database counts are zero. With `PG_URL="${FUSION_PG_TEST_URL_BASE:-postgresql://localhost:5432}"`, capture the database and marker rows as follows (write the displayed envelope fields around each query result):
+
+```bash
+capture() { # capture KIND QUERY SQL OUTPUT
+  kind="$1" query="$2" sql="$3" output="$4"
+  cluster="$(psql "$PG_URL/postgres" -qAt -c "SELECT current_setting('port') || '|' || version() || '|' || current_database();")"
+  rows="$(psql "$PG_URL/postgres" -qAt -c "$sql")"
+  { printf '%s\n' '# fusion-hygiene-capture v1' "# kind: $kind" "# cluster: $cluster" "# captured_at: $(date -u +%Y-%m-%dT%H:%M:%SZ)" "# query: $query" "# rows: $(printf '%s\n' "$rows" | sed '/^$/d' | wc -l | tr -d ' ')"; printf '%s\n' "$rows"; printf '%s\n' '# end'; } > "$output"
+}
+capture databases leftover-v1 "SELECT datname, pg_get_userbyid(datdba), CASE WHEN datistemplate THEN 't' ELSE 'f' END, (SELECT count(*) FROM pg_stat_activity a WHERE a.datname = d.datname) FROM pg_database d WHERE datname LIKE 'fusion_test_%' OR datname LIKE 'fusion_schema_template%' OR datname LIKE 'fusion_pool_%' ORDER BY 1;" databases.capture
+capture markers markers-v1 "SELECT name, created_at FROM public._fusion_golden_templates ORDER BY 1;" markers.capture
+# For each parsed template owner PID, record exactly one `<pid>|alive` or `<pid>|dead` body row from `ps -p "$pid" -o pid=` in an analogous `kind: liveness`, `query: liveness-v1` envelope.
+node scripts/pg-cluster-hygiene-report.mjs --databases databases.capture --markers markers.capture --liveness liveness.capture --json
+```
+
+<!-- FNXC:PgClusterHygiene 2026-08-20-00:54: FN-9154 requires a broken supplied companion to fail closed and makes a safe-but-incomplete cleanup terminal, so campaign admission never mistakes unread evidence or a refused drop for hygiene. -->
+
+The report is advisory: `reclaimable-dead-owner` means only recorded `dead` liveness plus zero sessions; missing liveness, an alive owner, an unparseable name, or sessions retains the row. It never grants approval. Removal requires all of G2–G6: that recorded liveness verdict, immediate zero-session recheck, one literal name-scoped `DROP DATABASE` **without** `FORCE` against a present target, equality-only deletion of that same marker row (never a broad stale-marker sweep), and a human-authored, verbatim, action-explicit, evidence-informed approval recorded after the pre-state evidence in the task's `removal-approval` document. Agents may never self-issue or infer that approval. A refused drop, pre-check abort, partial marker reconciliation, or unmeasurable/dirty post-state is terminal: record the evidence, file or reuse one scoped follow-up, exit honest-blocked, and never retry, force, or claim clean. Record the four counts for every campaign run; an absent report is FN-9152 R3 `leftover-counts-unrecorded` evidence, not a clean arm.
+
+### PostgreSQL DDL loaded-lane acceptance metric
+
+Use `scripts/pg-ddl-lane-metric.mjs` before judging a PostgreSQL DDL structural candidate. Run at least seven **interleaved** control/candidate pairs at `VITEST_MAX_WORKERS=12`; preserve one diagnostics JSONL sink and complete runner log per invocation. The exact lane is:
+
+```bash
+FUSION_PG_TEST_TEARDOWN_DIAGNOSTICS=1 \
+FUSION_PG_TEST_TEARDOWN_DIAGNOSTICS_LOG=/tmp/fn-9134-control-01.jsonl \
+VITEST_MAX_WORKERS=12 \
+pnpm --filter @fusion/core exec vitest run src/__tests__/postgres --reporter=dot 2>&1 \
+| tee /tmp/fn-9134-control-01.log
+```
+
+Alternate the default control and enabled candidate; do not repeat an unfavorable completed run. The primary metric is median complete lane wall-clock time. Every run must be green and report zero surviving `fusion_test_%` databases. Completed `dropDatabase` p95/max, watchdog counts, and teardown-watchdog counts are descriptive only: moving cleanup out of the hook can zero them by construction.
+
+The pre-registered verdict is `improved` only when each lane has at least seven valid samples, the candidate median is below the control's 25th percentile, and the candidate worst wall time does not exceed the control median. Any red run, missing wall time, or non-zero leak count is `no-improvement`; fewer than seven samples in either lane is `insufficient-data`. Generate a report without contacting the cluster:
+
+```bash
+node scripts/pg-ddl-lane-metric.mjs \
+  --run control:/tmp/fn-9134-control-01.jsonl:/tmp/fn-9134-control-01.log:0 \
+  --run candidate:/tmp/fn-9134-candidate-01.jsonl:/tmp/fn-9134-candidate-01.log:0
+```
 
 <!-- FNXC:EngineTestReliability 2026-06-27-10:05: FN-7119 rescued the 2026-06-26 engine scheduler/reliability quarantine burst by completing local TaskStore fakes for the scheduler heartbeat `updateSettings({ engineLastActiveAt })` write before adjusting any call-count assertions. When a scheduler batch reports zero mock calls or missing audit events after a heartbeat-era scheduler change, first mirror the production store surface in shared fakes and re-run the exact files together under `engine-default` / `engine-reliability`; do not weaken call-count invariants or quarantine ledger/config rows after the fake drift is fixed. -->
 
@@ -581,6 +751,8 @@ pnpm test:velocity
 ```
 
 Each week, copy the `Post to #leads` block from `docs/test-velocity-baseline.md`. If a measured command fails because the local environment is not ready, keep the failure recorded in the report instead of fabricating a time, then fix or rerun separately as appropriate. Do not wire `pnpm test:velocity`, `test:full`, or any slow-suite expansion into PR checks; the merge gate stays the thin Lint, Typecheck, Build, and Gate path.
+
+The baseline document is generated; never hand-edit it. Attach a durable measurement verdict with `pnpm test:velocity -- --note "<text>" [--note-target <capturedAt|ISO-cycle>]`. Notes are persisted on their history entries and the report renders all annotated cycles newest first with no history window cap, so an old investigation remains visible after later weekly appends. `--note-target` must match exactly one entry; use its `capturedAt` timestamp when an ISO week would be ambiguous.
 
 ## Targeted commands
 
@@ -759,3 +931,29 @@ pnpm --filter @fusion/dashboard test:touch-geometry
 The shared task-modal/FloatingWindow lane in `packages/dashboard/src/__tests__/task-modal-touch-resize-browser.test.ts` covers 768px and wider tablets, a 767px phone sheet, and true phones on an ephemeral Vite port (`port: 0`); it must never bind port 4040. This is required where `elementFromPoint` and real touch hit testing matter; jsdom pointer dispatch does not provide layout hit testing.
 
 This repository has no Playwright test runner: Vitest runs `playwright-core` as the Chromium CDP driver. Do not use `--project chromium` or `browserName` guidance from FN-8605/FN-8607. The lane finds an already-installed browser via `FUSION_BROWSER_SMOKE_BROWSER`, `CHROME_BIN`, or platform candidates, and skips with an explicit reason when none is available; it never downloads a browser. `FUSION_DASHBOARD_DEEP=1` does not collect this spec a second time — the dedicated project remains its only collection lane.
+
+### PostgreSQL DDL admission bound
+
+FN-9136 evaluated and rejected per-fork `TRUNCATE` database reuse: its two-sided golden-template gate passed the cluster smoke, but the required seven-pair 12-worker campaign left dead-fork pooled databases because the experiment lacked an awaited fork-exit flush and degraded to a shared local identity. The experimental wiring was removed rather than weaken isolation; see `docs/solutions/test-failures/postgres-ddl-admission-bound.md`.
+
+<!-- FNXC:PgTestDdlAdmission 2026-08-16-21:29: FN-9130 measured uniform and DROP-only advisory wiring as worse than the ungated 12-worker baseline. The primitive stays independently tested, but harness DDL remains direct until a structural candidate proves non-regression; do not mask this with timeout, retry, quarantine, or worker-cap changes. -->
+
+FN-9130 evaluated a reusable advisory admission primitive: server session locks coordinate forks while a process-local ledger coordinates counted same-session locks within a fork; async context allows true nesting only. It uses one maintenance-database connection per fork, holds a slot for one statement only, and reports fail-open degradation. `FUSION_PG_TEST_DDL_MAX_CONCURRENCY` and `FUSION_PG_TEST_DDL_ADMISSION_ACQUIRE_TIMEOUT_MS` configure that primitive for its deterministic coverage.
+
+The harness does **not** currently wire the primitive into `CREATE DATABASE` or `DROP DATABASE`. Uniform CREATE/DROP pooling regressed the 12-worker lane (49 watchdogs / 5,068ms versus a 4–5 / 3,284ms baseline); drop-only wiring also regressed (27 / 3,361ms). A bounded off-hook reaper (R=2/Q=8, flush, and dead-pid sweep) was then measured and reverted: its watchdog zero was structural, but green runs took 117.2s and 122.4s against a 108.1s baseline maximum and a later run timed out. FN-9136 subsequently evaluated and rejected candidate C (per-fork reuse plus `TRUNCATE`) because its seven-pair campaign leaked dead-fork pooled databases. The pg-gate's four-worker cap remains a separate lane-shape policy.
+
+### Workspace lifecycle parity regression
+
+Use focused workspace tests for a two-repository task with one explicitly scoped, modified repository:
+
+```bash
+pnpm --filter @fusion/core exec vitest run src/__tests__/postgres/workspace-worktrees-concurrent-merge.pg.test.ts --silent=passed-only --reporter=dot
+pnpm --filter @fusion/engine exec vitest run src/__tests__/reviewer-workspace.test.ts src/__tests__/self-healing-workspace.test.ts src/__tests__/workspace-merger.test.ts --silent=passed-only --reporter=dot
+pnpm --filter @fusion/dashboard exec vitest run app/components/__tests__/WorkspaceWorktreesSummary.test.tsx --silent=passed-only --reporter=dot
+```
+
+The parity invariant is that a mono-repository task and a workspace task changing one scoped repository have identical review, completion, and landing outcomes. The acquired clean peer must be displayed as **No changes — not reviewed**, must not get a blocking verdict, and must not become a partial-land target.
+
+### Branch-writer validation regressions
+
+When task-branch validation changes, test production acquisition and task creation callers in addition to the validation boundary. Keep a source census of direct and computed branch patches, and exercise single-repository assignment persistence failure plus workspace suppression so a caller cannot silently omit provenance.

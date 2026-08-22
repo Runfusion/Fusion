@@ -71,6 +71,7 @@ import { FileBrowserProvider } from "./context/FileBrowserContext";
 import { ShellProvider } from "./context/ShellContext";
 import { RetryWarningProvider } from "./context/RetryWarningContext";
 import { CostBadgeProvider } from "./context/CostBadgeContext";
+import { ChatMessageLayoutProvider } from "./context/ChatMessageLayoutContext";
 import { ShellHostProvider, useShellHostContext } from "./context/ShellHostContext";
 import { useShellConnection } from "./hooks/useShellConnection";
 import { useStashOrphanCount } from "./hooks/useStashOrphanCount";
@@ -562,7 +563,7 @@ function AppInner() {
       ?.columns.find((column) => column.id === task.column)?.flags;
   }, [footerBoardWorkflows, isRemote]);
 
-  const { tasks, isStale, createTask, moveTask, pauseTask, unpauseTask, deleteTask, mergeTask, retryTask, bypassReview, resetTask, updateTask, duplicateTask, archiveTask, unarchiveTask, revertTask, archiveAllDone, loadArchivedTasks, loadMoreArchivedTasks, archivedHasMore, archivedLoadingMore, ingestCreatedTasks, lastFetchTimeMs } = useTasks(
+  const { tasks, isStale, createTask, moveTask, pauseTask, unpauseTask, deleteTask, mergeTask, retryTask, bypassReview, resetTask, updateTask, duplicateTask, archiveTask, unarchiveTask, revertTask, archiveAllDone, loadArchivedTasks, loadMoreArchivedTasks, changeArchivedSortMode, archivedSortMode, archivedHasMore, archivedLoadingMore, ingestCreatedTasks, lastFetchTimeMs } = useTasks(
     {
       ...(currentProject ? { projectId: currentProject.id } : {}),
       searchQuery: searchQuery || undefined,
@@ -844,13 +845,13 @@ function AppInner() {
   // Settings state
   const {
     maxConcurrent,
+    effectiveMaxConcurrent,
     autoMerge,
     mergeStrategy,
     planAutoApproveEnabled,
     showWorktreeGrouping,
     globalPaused,
     isTestMode,
-    taskStuckTimeoutMs,
     staleHighFanoutBlockerAgeThresholdMs,
     capacityRiskBannerEnabled,
     capacityRiskTodoThreshold,
@@ -860,6 +861,7 @@ function AppInner() {
     showCostBadgeOnCards,
     modelPricingOverrides,
     taskDetailChatFirst,
+    chatMessageLayout,
     quickChatButtonMode,
     mobileNavPrimaryItems,
     quickChatCloseOnOutsideClick,
@@ -876,6 +878,12 @@ function AppInner() {
     devServerEnabled,
     goalsEnabled,
     setQuickChatButtonModeImmediate,
+    setChatMessageLayoutImmediate,
+    setOpenTasksInRightSidebarImmediate,
+    setOpenMobileTasksInPopupImmediate,
+    setTaskPopupsBoardListOnlyImmediate,
+    setShowCostBadgeOnCardsImmediate,
+    setTaskDetailChatFirstImmediate,
     setMobileNavPrimaryItemsImmediate,
     toggleAutoMerge,
     togglePlanAutoApprove,
@@ -935,8 +943,6 @@ function AppInner() {
   const researchEnabled = experimentalFeatures.researchView === true;
   const evalsEnabled = experimentalFeatures.evalsView === true;
   const ideationEnabled = experimentalFeatures.ideationView === true;
-  /* FNXC:QuickAddSubtaskFlag 2026-06-21-00:00: Missing or false `subtaskBreakdown` settings must hide the AI Subtask quick-add handoff across List, Board, and New Task Modal surfaces; only an explicit true wires the callback. */
-  const subtaskBreakdownEnabled = experimentalFeatures.subtaskBreakdown === true;
   /*
   FNXC:Navigation 2026-06-19-00:00:
   Experimental left sidebar navigation replaces the Header view shortcuts with a persistent sidebar on non-mobile project screens, while mobile continues to use the bottom navigation bar as the only primary navigation surface.
@@ -1107,14 +1113,12 @@ function AppInner() {
     handleModalCreate,
     handlePlanningTaskCreated,
     handlePlanningTasksCreated,
-    handleSubtaskTasksCreated,
     handleGitHubImport,
   } = useTaskHandlers({
     createTask,
     ingestCreatedTasks,
     onPlanningTaskCreated: modalManager.onPlanningTaskCreated,
     onPlanningTasksCreated: modalManager.onPlanningTasksCreated,
-    onSubtaskTasksCreated: modalManager.onSubtaskTasksCreated,
     addToast,
   });
 
@@ -1250,8 +1254,8 @@ function AppInner() {
     handleTaskViewChange("command-center");
   }, [handleTaskViewChange]);
 
-  const openNewTaskWithNav = useCallback(() => {
-    modalManager.openNewTask();
+  const openNewTaskWithNav = useCallback((workflowId?: string | null) => {
+    modalManager.openNewTask(workflowId);
     pushNav({ type: "modal", close: modalManager.closeNewTask });
   }, [modalManager, pushNav]);
 
@@ -1284,10 +1288,6 @@ function AppInner() {
     handleTaskViewChange("planning");
   }, [handleTaskViewChange, modalManager]);
 
-  const openSubtaskBreakdownWithNav = useCallback((description: string, workflowId?: string | null) => {
-    modalManager.openSubtaskBreakdown(description, workflowId);
-    pushNav({ type: "modal", close: modalManager.closeSubtask });
-  }, [modalManager, pushNav]);
 
   const openGroupModalWithNav = useCallback((groupId: string) => {
     modalManager.openGroupModal(groupId);
@@ -1339,7 +1339,6 @@ function AppInner() {
           [modalManager.settingsOpen, modalManager.closeSettings],
           [Boolean(modalManager.detailTask), modalManager.closeDetailTask],
           [Boolean(modalManager.groupModalGroupId), modalManager.closeGroupModal],
-          [modalManager.isSubtaskOpen, modalManager.closeSubtask],
           [modalManager.isPlanningOpen, modalManager.closePlanning],
           [modalManager.newTaskModalOpen, modalManager.closeNewTask],
           [modalManager.setupWizardOpen, modalManager.closeSetupWizard],
@@ -1464,8 +1463,6 @@ function AppInner() {
       */
       modalManager.openPlanningWithSession(session.id);
       handleChangeTaskView("planning");
-    } else if (session.type === "subtask") {
-      modalManager.openSubtaskWithSession(session.id);
     } else if (session.type === "mission_interview") {
       setMissionTargetId(undefined);
       setMissionResumeSessionId(session.id);
@@ -1664,6 +1661,12 @@ function AppInner() {
     setShadcnCustomColors,
     resolvedThemeMode,
     setQuickChatButtonModeImmediate,
+    setChatMessageLayoutImmediate,
+    setOpenTasksInRightSidebarImmediate,
+    setOpenMobileTasksInPopupImmediate,
+    setTaskPopupsBoardListOnlyImmediate,
+    setShowCostBadgeOnCardsImmediate,
+    setTaskDetailChatFirstImmediate,
     setMobileNavPrimaryItemsImmediate,
     reopenOnboardingWithNav,
     viewMode,
@@ -1690,8 +1693,12 @@ function AppInner() {
     mergeStrategy,
     planAutoApproveEnabled,
     settingsLoaded,
+    openTasksInRightSidebar,
     openMobileTasksInPopup,
+    taskPopupsBoardListOnly,
+    showCostBadgeOnCards,
     taskDetailChatFirst,
+    chatMessageLayout,
     skillsEnabled,
     experimentalFeatures,
     setQuickChatOpen,
@@ -1734,6 +1741,7 @@ function AppInner() {
     mainPanelDetailTask,
     filteredBoardTasks,
     maxConcurrent,
+    effectiveMaxConcurrent,
     showWorktreeGrouping,
     moveTask,
     pauseTask,
@@ -1742,8 +1750,6 @@ function AppInner() {
     openGroupModalWithNav,
     handleBoardQuickCreate,
     openNewTaskWithNav,
-    subtaskBreakdownEnabled,
-    openSubtaskBreakdownWithNav,
     toggleAutoMerge,
     togglePlanAutoApprove,
     globalPaused,
@@ -1756,6 +1762,8 @@ function AppInner() {
     archiveAllDone,
     loadArchivedTasks,
     loadMoreArchivedTasks,
+    changeArchivedSortMode,
+    archivedSortMode,
     archivedHasMore,
     archivedLoadingMore,
     searchQuery,
@@ -1765,7 +1773,6 @@ function AppInner() {
     handleOpenDetailWithTab,
     handleToggleFavorite,
     handleToggleModelFavorite,
-    taskStuckTimeoutMs,
     staleHighFanoutBlockerAgeThresholdMs,
     lastFetchTimeMs,
     openCreateWorkflowWithNav,
@@ -1862,6 +1869,7 @@ function AppInner() {
   };
   return (
     <ConfirmDialogProvider skipConfirmations={skipConfirmationDialogs}>
+      <ChatMessageLayoutProvider value={chatMessageLayout}>
       <ModalDismissPreferenceProvider enabled={dismissModalsOnOutsideClick}>
         <QuickAddSubmitOnEnterProvider enabled={quickAddSubmitOnEnter}>
       <NavigationHistoryProvider value={{ pushNav, replaceCurrent, removeNav }}>
@@ -1894,6 +1902,7 @@ function AppInner() {
         filesOpen={modalManager.filesOpen}
         view={taskView}
         onChangeView={viewMode === "project" && currentProject ? handleTaskViewChange : undefined}
+        onNewTask={viewMode === "project" && currentProject ? openNewTaskWithNav : undefined}
         showSkillsTab={skillsEnabled}
         showAgentsTab={agentsEnabled}
         searchQuery={searchQuery}
@@ -2032,7 +2041,6 @@ function AppInner() {
           tasks={footerTasks}
           projectId={currentProject.id}
           columnFlagsByTaskId={footerColumnFlagsByTaskId}
-          taskStuckTimeoutMs={taskStuckTimeoutMs}
           staleHighFanoutBlockerAgeThresholdMs={staleHighFanoutBlockerAgeThresholdMs}
           lastFetchTimeMs={lastFetchTimeMs}
           currentProjectPath={currentProject.path}
@@ -2098,14 +2106,14 @@ function AppInner() {
         }
       />
       {/*
-      FNXC:ChatModal 2026-06-22-13:24:
-      Quick Chat is replaced by the full ChatView in a movable/resizable FloatingWindow. The launcher icon is only the minimized entry point: clicking it opens the Chat modal, and the modal's minimize button closes the window back into that icon. Main Chat can also pop out into this same full Chat modal.
+      FNXC:ChatModal 2026-08-20-05:25:
+      FN-068 keeps Quick Chat's launcher as the only minimized entry point. Its floating Chat header exposes Close for dismissal and Open in Chat view for navigation, so no redundant minimize control can compete with Close. Main Chat can also pop out into this same full Chat modal.
 
       FNXC:ChatModal 2026-06-22-14:57:
       Reopening Quick Chat from the FAB restores the last floating Chat window geometry through FloatingWindow's persisted/clamped geometry key. The modal's maximize button routes to the full Chat view and closes the floating modal without clearing ChatView's shared session selection state.
 
       FNXC:ChatModal 2026-06-27-00:00:
-      Quick Chat is a transient utility window, so it opts into FloatingWindow's outside-click dismissal in addition to minimize, close, and maximize controls. Task pop-outs intentionally do not opt in because they are persistent workspace windows that should survive page clicks.
+      Quick Chat is a transient utility window, so it opts into FloatingWindow's outside-click dismissal in addition to close and Open in Chat view controls. Task pop-outs intentionally do not opt in because they are persistent workspace windows that should survive page clicks.
 
       FNXC:ChatModal 2026-06-28-00:00:
       Outside-click dismissal is now governed by the project-scoped quickChatCloseOnOutsideClick setting, default-on to preserve FN-7152 behavior. Other FloatingWindow callers still do not pass closeOnOutsidePointerDown, so task pop-outs and utility windows remain persistent.
@@ -2147,7 +2155,7 @@ function AppInner() {
           defaultSize={{ width: 980, height: 680 }}
           /*
           FNXC:ChatModal 2026-06-23-22:14:
-          The full Chat pop-out must be resizable into a very narrow desktop utility window. ChatView already switches to its mobile one-pane layout at narrow widths, so allow the FloatingWindow to shrink below the old two-pane desktop minimum while preserving enough width for composer controls.
+          The full Chat pop-out must be resizable into a very narrow desktop utility window. ChatView uses the same full-pane list/detail flow at narrow widths, so allow the FloatingWindow to shrink below the old two-pane desktop minimum while preserving enough width for composer controls.
           */
           minSize={{ width: 300, height: 420 }}
         >
@@ -2164,7 +2172,6 @@ function AppInner() {
                 handleTaskViewChange("chat");
                 setQuickChatOpen(false);
               }}
-              onMinimize={() => setQuickChatOpen(false)}
               onClose={() => setQuickChatOpen(false)}
             />
           </Suspense>
@@ -2229,6 +2236,7 @@ function AppInner() {
               onBypassReview={bypassReview}
               onResetTask={resetTask}
               onDuplicateTask={duplicateTask}
+              onRefinementCreated={(task) => ingestCreatedTasks([task])}
               onRequestClose={close}
               addToast={addToast}
               prAuthAvailable={prAuthAvailable}
@@ -2254,15 +2262,14 @@ function AppInner() {
           handleModalCreate,
           handlePlanningTaskCreated,
           handlePlanningTasksCreated,
-          handleSubtaskTasksCreated,
           handleGitHubImport,
         }}
+        onRefinementCreated={(task) => ingestCreatedTasks([task])}
         onPlanningMode={openPlanningWithInitialPlanWithNav}
         onOpenChatWithPrefill={openChatWithPrefill}
-        onSubtaskBreakdown={subtaskBreakdownEnabled ? openSubtaskBreakdownWithNav : undefined}
         taskOperations={{ moveTask, deleteTask, mergeTask, archiveTask, revertTask, retryTask, pauseTask, unpauseTask, bypassReview, resetTask, duplicateTask }}
         deepLink={{ handleDetailClose }}
-        settings={{ prAuthAvailable, autoMerge, taskDetailChatFirst, themeMode, colorTheme, dashboardFontScalePct, shadcnCustomColors, resolvedThemeMode, setThemeMode, setColorTheme, setDashboardFontScalePct, setShadcnCustomColors, setQuickChatButtonModeImmediate, setMobileNavPrimaryItemsImmediate }}
+        settings={{ prAuthAvailable, autoMerge, openTasksInRightSidebar, openMobileTasksInPopup, taskPopupsBoardListOnly, showCostBadgeOnCards, taskDetailChatFirst, chatMessageLayout, themeMode, colorTheme, dashboardFontScalePct, shadcnCustomColors, resolvedThemeMode, setThemeMode, setColorTheme, setDashboardFontScalePct, setShadcnCustomColors, setQuickChatButtonModeImmediate, setChatMessageLayoutImmediate, setOpenTasksInRightSidebarImmediate, setOpenMobileTasksInPopupImmediate, setTaskPopupsBoardListOnlyImmediate, setShowCostBadgeOnCardsImmediate, setTaskDetailChatFirstImmediate, setMobileNavPrimaryItemsImmediate }}
         onSettingsClose={handleSettingsCloseWithNav}
         onReopenOnboarding={reopenOnboardingWithNav}
         onOpenApprovals={(_approvalId) => handleTaskViewChange("mailbox")}
@@ -2293,6 +2300,7 @@ function AppInner() {
       </NavigationHistoryProvider>
         </QuickAddSubmitOnEnterProvider>
       </ModalDismissPreferenceProvider>
+      </ChatMessageLayoutProvider>
     </ConfirmDialogProvider>
   );
 }

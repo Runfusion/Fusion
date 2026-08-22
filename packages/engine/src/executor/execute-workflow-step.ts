@@ -10,6 +10,7 @@ import { exec } from "node:child_process";
 import { promisify } from "node:util";
 import type {
   AgentStore,
+  ResolvedTaskOutputLanguage,
   Settings,
   Task,
   TaskStore,
@@ -26,6 +27,7 @@ import {
   resolvePersistAgentThinkingLog,
   resolveReviewBlockingSeverity,
   resolveValidatorFallbackModel,
+  resolveTaskOutputLanguage,
   startPlanningSegment,
 } from "@fusion/core";
 import type { AgentSession, ToolDefinition } from "@earendil-works/pi-coding-agent";
@@ -125,7 +127,7 @@ export async function executeWorkflowStep(
   worktreePath: string,
   settings: Settings,
   taskEnv?: NodeJS.ProcessEnv,
-  stepOptions?: { unattended?: boolean; principalAgentId?: string },
+  stepOptions?: { unattended?: boolean; principalAgentId?: string; outputLanguage?: ResolvedTaskOutputLanguage },
 ): Promise<WorkflowStepOutcome> {
     let toolMode: "coding" | "readonly" = workflowStep.toolMode || "readonly";
     // (U3) Genuinely-unattended run — set FUSION_HEADLESS=1 below so skills record
@@ -421,6 +423,11 @@ CRITICAL SCOPING RULES — read before doing anything else:
   - After any inline edit, treat your own change as untrusted: re-read the fresh diff, restart the mandatory review procedure from its requirements ledger and production-reachability checks, and rerun the smallest relevant verification. Never approve solely because the local fix compiles or its narrow test passes.`
       : "";
 
+    /*
+    FNXC:TaskOutputLanguage 2026-08-19-16:34:
+    Graph dispatch supplies a start-time target so input-mode detection survives task edits between
+    nodes. Direct workflow-step callers retain the live resolver for backward compatibility.
+    */
     const systemPrompt = `You are a workflow step agent executing: ${workflowStep.name}
 
   Task Context:
@@ -439,6 +446,10 @@ CRITICAL SCOPING RULES — read before doing anything else:
 
   Your Instructions:
   ${workflowStep.prompt}
+
+  ## Task Output Language
+  ${stepOptions?.outputLanguage?.instruction ?? resolveTaskOutputLanguage(settings, task.description).instruction}
+  Apply this only to human-readable task-facing output; do not translate this operator-authored workflow prompt, verdict tokens, JSON, identifiers, tools, or schema fields.
 
   You have access to the file system to review changes.${inlineFixBlock}${verdictBlock}`;
 

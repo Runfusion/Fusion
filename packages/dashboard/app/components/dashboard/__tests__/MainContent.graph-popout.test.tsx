@@ -65,6 +65,13 @@ const LazyStub = lazy(async () => ({ default: () => null }));
 const LazySettingsCloseStub = lazy(async () => ({
   default: ({ onClose }: { onClose: () => void }) => <button type="button" onClick={onClose}>Close settings view</button>,
 }));
+let embeddedSettingsProps: Record<string, unknown> | undefined;
+const LazySettingsBridgeStub = lazy(async () => ({
+  default: (props: Record<string, unknown>) => {
+    embeddedSettingsProps = props;
+    return <div>Embedded settings bridge</div>;
+  },
+}));
 
 function mainContentProps(overrides: Partial<MainContentProps> = {}): MainContentProps {
   return {
@@ -94,6 +101,12 @@ function mainContentProps(overrides: Partial<MainContentProps> = {}): MainConten
     setShadcnCustomColors: vi.fn(),
     resolvedThemeMode: "light",
     setQuickChatButtonModeImmediate: vi.fn(),
+    setChatMessageLayoutImmediate: vi.fn(),
+    setOpenTasksInRightSidebarImmediate: vi.fn(),
+    setOpenMobileTasksInPopupImmediate: vi.fn(),
+    setTaskPopupsBoardListOnlyImmediate: vi.fn(),
+    setShowCostBadgeOnCardsImmediate: vi.fn(),
+    setTaskDetailChatFirstImmediate: vi.fn(),
     reopenOnboardingWithNav: vi.fn(),
     viewMode: "project",
     projects: [],
@@ -136,6 +149,12 @@ function mainContentProps(overrides: Partial<MainContentProps> = {}): MainConten
     autoMerge: true,
     mergeStrategy: "direct",
     settingsLoaded: true,
+    openTasksInRightSidebar: false,
+    openMobileTasksInPopup: false,
+    taskPopupsBoardListOnly: true,
+    showCostBadgeOnCards: false,
+    taskDetailChatFirst: false,
+    chatMessageLayout: "bubbles",
     skillsEnabled: true,
     experimentalFeatures: {},
     setQuickChatOpen: vi.fn(),
@@ -180,7 +199,6 @@ function mainContentProps(overrides: Partial<MainContentProps> = {}): MainConten
     handleBoardQuickCreate: vi.fn(),
     openNewTaskWithNav: vi.fn(),
     subtaskBreakdownEnabled: true,
-    openSubtaskBreakdownWithNav: vi.fn(),
     toggleAutoMerge: vi.fn(),
     globalPaused: false,
     updateTask: vi.fn(),
@@ -197,7 +215,6 @@ function mainContentProps(overrides: Partial<MainContentProps> = {}): MainConten
     handleOpenDetailWithTab: vi.fn(),
     handleToggleFavorite: vi.fn(),
     handleToggleModelFavorite: vi.fn(),
-    taskStuckTimeoutMs: undefined,
     staleHighFanoutBlockerAgeThresholdMs: 0,
     lastFetchTimeMs: undefined,
     openCreateWorkflowWithNav: vi.fn(),
@@ -259,6 +276,54 @@ describe("MainContent graph task pop-out wiring", () => {
     expect(closeSettings).toHaveBeenCalledTimes(1);
     expect(handleChangeTaskView).toHaveBeenCalledWith("board");
     expect(refreshAppSettings).toHaveBeenCalledTimes(1);
+  });
+
+  it("forwards every live Appearance value and callback to embedded Settings", async () => {
+    embeddedSettingsProps = undefined;
+    const setters = {
+      setChatMessageLayoutImmediate: vi.fn(),
+      setOpenTasksInRightSidebarImmediate: vi.fn(),
+      setOpenMobileTasksInPopupImmediate: vi.fn(),
+      setTaskPopupsBoardListOnlyImmediate: vi.fn(),
+      setShowCostBadgeOnCardsImmediate: vi.fn(),
+      setTaskDetailChatFirstImmediate: vi.fn(),
+    };
+
+    render(<MainContent {...mainContentProps({
+      taskView: "settings",
+      chatMessageLayout: "full-width",
+      openTasksInRightSidebar: true,
+      openMobileTasksInPopup: true,
+      taskPopupsBoardListOnly: false,
+      showCostBadgeOnCards: true,
+      taskDetailChatFirst: true,
+      ...setters,
+      _SettingsView: LazySettingsBridgeStub as MainContentProps["_SettingsView"],
+    })} />);
+
+    await screen.findByText("Embedded settings bridge");
+    expect(embeddedSettingsProps).toMatchObject({
+      chatMessageLayout: "full-width",
+      openTasksInRightSidebar: true,
+      openMobileTasksInPopup: true,
+      taskPopupsBoardListOnly: false,
+      showCostBadgeOnCards: true,
+      taskDetailChatFirst: true,
+    });
+
+    (embeddedSettingsProps?.onChatMessageLayoutChange as (value: "bubbles" | "full-width") => void)("bubbles");
+    (embeddedSettingsProps?.onOpenTasksInRightSidebarChange as (value: boolean) => void)(false);
+    (embeddedSettingsProps?.onOpenMobileTasksInPopupChange as (value: boolean) => void)(false);
+    (embeddedSettingsProps?.onTaskPopupsBoardListOnlyChange as (value: boolean) => void)(true);
+    (embeddedSettingsProps?.onShowCostBadgeOnCardsChange as (value: boolean) => void)(false);
+    (embeddedSettingsProps?.onTaskDetailChatFirstChange as (value: boolean) => void)(false);
+
+    expect(setters.setChatMessageLayoutImmediate).toHaveBeenCalledWith("bubbles");
+    expect(setters.setOpenTasksInRightSidebarImmediate).toHaveBeenCalledWith(false);
+    expect(setters.setOpenMobileTasksInPopupImmediate).toHaveBeenCalledWith(false);
+    expect(setters.setTaskPopupsBoardListOnlyImmediate).toHaveBeenCalledWith(true);
+    expect(setters.setShowCostBadgeOnCardsImmediate).toHaveBeenCalledWith(false);
+    expect(setters.setTaskDetailChatFirstImmediate).toHaveBeenCalledWith(false);
   });
 
   it("routes dependency-graph bridge and rendered task-card opens to the shared pop-out", () => {

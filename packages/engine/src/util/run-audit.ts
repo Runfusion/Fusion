@@ -42,6 +42,7 @@
  */
 
 import type { TaskStore, RunAuditEventInput } from "@fusion/core";
+import { emitBoundedRunAudit } from "./emit-bounded-run-audit.js";
 
 /** Structured context for a run correlation ID. */
 export interface EngineRunContext {
@@ -129,6 +130,12 @@ export type GitMutationType =
   // -failed: a sub-repo worktree acquisition threw; surfaced + audited, never swallowed.
   | "worktree:workspace-repo-acquire-busy"
   | "worktree:workspace-repo-acquire-failed"
+  /*
+  FNXC:Workspace 2026-08-20-00:56:
+  Per-repo base decisions carry only { taskId, repoRelPath, stage, source, outcome,
+  fallbackReason? }; operator-supplied ref names are excluded from both metadata and target.
+  */
+  | "worktree:workspace-repo-base-branch"
   /* FNXC:Workspace 2026-08-15-07:05: Main-checkout guard reports only ids/counts/fixed outcomes. */
   | "worktree:workspace-main-checkout-edit"
   /**
@@ -528,6 +535,9 @@ export type DatabaseMutationType =
   */
   | "task:auto-recover-terminal-failure"
   | "task:auto-recover-terminal-failure-exhausted"
+  /** Metadata: { taskId, column, attempt, maxAttempts, delayMs?, outcome } — ids/counts/outcomes only. */
+  | "task:no-progress-no-task-done-requeue"
+  | "task:no-progress-no-task-done-requeue-exhausted"
   | "task:auto-recover-finalize-already-on-main"
   /** Metadata: { taskId, previousColumn, targetColumn, commitSha, status, blockedBy, overlapBlockedBy, reason } */
   | "task:auto-merge-finalize-column-mismatch-reconciled"
@@ -567,6 +577,8 @@ export type DatabaseMutationType =
   // task:auto-archived-duplicate metadata: { siblingTaskIds: string[]; scores: Record<string, number> }
   | "task:auto-archived-ghost-bug"
   | "task:auto-archived-duplicate"
+  /** Metadata: { taskId, attempts, maxAttempts, reason: "lineage-children" | "task-live" | "dependents" | "not-found" | "unknown" } */
+  | "task:auto-archive-failure-budget-exhausted"
   | "task:auto-reconciled-self-defeating-dep"
   | "task:soft-delete-column-reconciled"
   | "task:dependency-cycle-rejected"
@@ -842,6 +854,16 @@ export type DatabaseMutationType =
   | "task:in-review-stall-deadlock-disposed"
   | "task:in-review-stall-terminal-provider-error"
   | "task:finalize-unproven-blocked"
+  /**
+   * FNXC:RunAudit 2026-08-20-02:02:
+   * Records one terminal park when a workflow merge boundary cannot be proven, at the retry
+   * boundary or graph-terminal park. Metadata is { taskId, nodeId, failureValue, source,
+   * reasonCode?, missingInstanceCount?, priorColumn, priorStatus, outcome }; it is strictly
+   * ids/counts/outcomes-only and never includes reason prose, instance IDs, or error text.
+   * This is best-effort telemetry: an absent, failed, or hung write must not alter, block, or
+   * stall the terminal park.
+   */
+  | "task:merge-boundary-unproven-parked"
   /**
    * FN-5490/FN-5517/FN-5526/FN-5540 lost-work guard: the merger or self-heal
    * sweep refused to finalize a task as no-op because its record claimed
@@ -1170,7 +1192,7 @@ export function createRunAuditor(store: TaskStore, context: EngineRunContext | n
           ...input.metadata,
         },
       };
-      await store.recordRunAuditEvent(eventInput);
+      await emitBoundedRunAudit(store, eventInput);
     },
 
     database: async (input: DatabaseAuditInput) => {
@@ -1195,7 +1217,7 @@ export function createRunAuditor(store: TaskStore, context: EngineRunContext | n
           ...input.metadata,
         },
       };
-      await store.recordRunAuditEvent(eventInput);
+      await emitBoundedRunAudit(store, eventInput);
     },
 
     filesystem: async (input: FilesystemAuditInput) => {
@@ -1213,7 +1235,7 @@ export function createRunAuditor(store: TaskStore, context: EngineRunContext | n
           ...input.metadata,
         },
       };
-      await store.recordRunAuditEvent(eventInput);
+      await emitBoundedRunAudit(store, eventInput);
     },
 
     sandbox: async (input: SandboxAuditInput) => {
@@ -1231,7 +1253,7 @@ export function createRunAuditor(store: TaskStore, context: EngineRunContext | n
           ...input.metadata,
         },
       };
-      await store.recordRunAuditEvent(eventInput);
+      await emitBoundedRunAudit(store, eventInput);
     },
   };
 }

@@ -123,6 +123,20 @@ describe("modalPersistence", () => {
     });
   });
 
+  describe("bounded free-text persistence", () => {
+    it.each([
+      ["planning", STORED_PLANNING_KEY, savePlanningDescription],
+      ["subtask", STORED_SUBTASK_KEY, saveSubtaskDescription],
+      ["mission", STORED_MISSION_KEY, saveMissionGoal],
+    ] as const)("does not persist an over-cap %s draft", (_name, key, save) => {
+      const projectId = "project-a";
+      localStorage.setItem(scopedKey(key, projectId), "prior value");
+
+      expect(() => save("x".repeat(64_001), projectId)).not.toThrow();
+      expect(localStorage.getItem(scopedKey(key, projectId))).toBeNull();
+    });
+  });
+
   describe("Planning active-session persistence", () => {
     it("saves, reads, and clears an active session per project", () => {
       savePlanningActiveSession("planning-123", "proj-123");
@@ -182,7 +196,7 @@ describe("modalPersistence", () => {
 
       expect(() => save(value, "project-a")).not.toThrow();
 
-      expect(setItem).toHaveBeenCalledTimes(2);
+      expect(setItem).toHaveBeenCalledTimes(3);
       expect(removeItem).toHaveBeenCalledTimes(1);
       expect(removeItem).toHaveBeenCalledWith(planningKey);
       expect(localStorage.getItem("unrelated-key")).toBe("preserved");
@@ -198,7 +212,7 @@ describe("modalPersistence", () => {
       });
 
       expect(() => savePlanningDescription("new description", "project-a")).not.toThrow();
-      expect(setItem).toHaveBeenCalledTimes(2);
+      expect(setItem).toHaveBeenCalledTimes(3);
       expect(removeItem).toHaveBeenCalledWith(planningKey);
 
       vi.restoreAllMocks();
@@ -242,11 +256,11 @@ describe("modalPersistence", () => {
 
       expect(removeItem).toHaveBeenCalledWith(descriptionKey);
       expect(removeItem).toHaveBeenCalledWith(activeSessionKey);
-      expect(setItem.mock.calls.filter(([key]) => key === descriptionKey)).toHaveLength(2);
-      // The durable draft hand-off and the selected-session effect each retry their same active key once.
-      expect(setItem.mock.calls.filter(([key]) => key === activeSessionKey)).toHaveLength(4);
-      expect(setItem).toHaveBeenCalledTimes(6);
-      expect(localStorage.getItem("kb:project-2:kb-planning-last-description")).toBe("other project");
+      expect(setItem.mock.calls.filter(([key]) => key === descriptionKey)).toHaveLength(3);
+      // The shared seam makes a final write after its bounded reclaim attempt for each persistence call.
+      expect(setItem.mock.calls.filter(([key]) => key === activeSessionKey)).toHaveLength(6);
+      expect(setItem).toHaveBeenCalledTimes(9);
+      expect(localStorage.getItem("kb:project-2:kb-planning-last-description")).toBeNull();
       expect(localStorage.getItem("unrelated-key")).toBe("preserved");
       expect(screen.queryByText("Quota exceeded")).toBeNull();
     });

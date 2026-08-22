@@ -26,8 +26,6 @@ import { __resetBatchImportRateLimiter, __setCreateFnAgentForRefine } from "../r
 import * as agentGenerationModule from "../agent-generation.js";
 import { __resetPlanningState, __setCreateFnAgent, planningStreamManager } from "../planning.js";
 import * as planningModule from "../planning.js";
-import { __resetSubtaskBreakdownState, subtaskStreamManager } from "../subtask-breakdown.js";
-import * as subtaskBreakdownModule from "../subtask-breakdown.js";
 import { SESSION_CLEANUP_DEFAULT_MAX_AGE_MS } from "../ai-session-store.js";
 import * as usageModule from "../usage.js";
 import * as claudeCliProbeModule from "../claude-cli-probe.js";
@@ -1036,6 +1034,24 @@ describe("GET /auth/status", () => {
       { id: "kimi-coding", name: "Kimi" },
     ]);
     vi.mocked(authStorage.hasApiKey).mockReturnValue(false);
+    const globalSettingsStore = store.getGlobalSettingsStore();
+    vi.mocked(globalSettingsStore.getSettings).mockReset().mockResolvedValue({});
+  });
+
+  it.each([
+    ["missing", undefined, false],
+    ["empty", [], false],
+    ["one", [{ id: "custom-one" }], true],
+    ["multiple duplicate and corrupt entries", [{ id: "custom-one" }, { id: "custom-one" }, null], true],
+  ])("reports custom-provider setup for %s without changing provider cards", async (_label, customProviders, expected) => {
+    const globalSettingsStore = store.getGlobalSettingsStore();
+    vi.mocked(globalSettingsStore.getSettings).mockResolvedValue({ customProviders } as never);
+
+    const res = await GET(app, "/api/auth/status");
+
+    expect(res.status).toBe(200);
+    expect(res.body.customProvidersConfigured).toBe(expected);
+    expect(res.body.providers).not.toContainEqual(expect.objectContaining({ id: "custom-one" }));
   });
 
   it("returns provider list with auth status", async () => {

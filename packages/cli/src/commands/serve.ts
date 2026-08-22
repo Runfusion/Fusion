@@ -35,6 +35,7 @@ import {
   createFusionAuthStorage,
   createFusionModelRegistry,
   refreshFusionModelRegistry,
+  setLocalDashboardPort,
 } from "@fusion/engine";
 import { setHostTaskStore, clearHostTaskStores } from "../extension.js";
 import { resolveServeDaemonToken } from "./serve-daemon-token.js";
@@ -1105,6 +1106,9 @@ export async function runServe(
   });
 
   const actualPort = (server.address() as AddressInfo).port;
+  // FNXC:RemoteAccess 2026-08-19-04:00: headless serve must publish its bound port too, or a remote
+  // tunnel started from it targets a hardcoded 4040. See local-dashboard-port.
+  setLocalDashboardPort(actualPort);
   logPhase(`startup phase time-to-listen: ${Date.now() - serveStartedAt}ms`);
 
   /*

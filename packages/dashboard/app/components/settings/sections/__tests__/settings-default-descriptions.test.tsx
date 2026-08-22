@@ -75,6 +75,13 @@ const SETTING_DESCRIPTION_KEYS: Record<string, string> = {
   githubTrackingDefaultRepo: "globalGeneral.projectsInheritThisValueWhenTheyDoNot",
   gitlabEnabled: "merge.gitLabAuthDetails",
   gitlabInstanceUrl: "globalGeneral.gitLabInstanceUrlHint",
+  jiraEnabled: "jira.enabledHelp",
+  jiraBaseUrl: "jira.baseUrlHelp",
+  jiraApiBaseUrl: "jira.apiBaseUrlHelp",
+  jiraAuthEmail: "jira.emailHelp",
+  jiraAuthTokenSecretKey: "jira.secretHelp",
+  jiraAuthTokenSecretScope: "jira.scopeHelp",
+  jiraBranchNameTemplate: "jira.templateHelp",
   gitlabApiBaseUrl: "globalGeneral.gitLabApiBaseUrlHint",
   gitlabAuthTokenType: "globalGeneral.gitLabTokenTypeHint",
   gitlabAuthToken: "globalGeneral.gitLabAuthTokenHint",
@@ -92,7 +99,10 @@ const SETTING_DESCRIPTION_KEYS: Record<string, string> = {
   autoReloadOnVersionChange: "globalGeneral.whenEnabledDefaultTheDashboardAutomaticallyReloadsWhen",
   updateChannel: "globalGeneral.releaseChannelHelp",
   autoUpdateAndRestart: "globalGeneral.autoUpdateAndRestartHelp",
+  autoUpdateEnabled: "globalGeneral.autoUpdateEnabledHelp",
+  autoRestartAfterUpdate: "globalGeneral.autoRestartAfterUpdateHelp",
   // AppearanceSection
+  chatMessageLayout: "appearance.chatMessageLayoutHelp",
   openTasksInRightSidebar: "appearance.openTasksInRightSidebarHelp",
   openMobileTasksInPopup: "appearance.openMobileTasksInPopupHelp",
   taskPopupsBoardListOnly: "appearance.taskPopupsBoardListOnlyHelp",
@@ -295,6 +305,7 @@ const SETTING_DESCRIPTION_KEYS: Record<string, string> = {
   showTaskChatsInCommonFeed: "general.showTaskChatsInCommonFeedHint",
   taskPrefix: "general.prefixForNewTaskIDsEGKB",
   maxRecommendationsPerTask: "general.maxRecommendationsPerTaskHelp",
+  requireTaskRecommendations: "general.requireTaskRecommendationsHelp",
   recommendationMailboxNoticeEnabled: "general.recommendationMailboxNoticeEnabledHelp",
   workspaceMode: "general.workspaceModeHint",
   defaultWorkflowId: "general.newTasksInheritThisCustomWorkflowsStepsOverridable",
@@ -306,7 +317,7 @@ const SETTING_DESCRIPTION_KEYS: Record<string, string> = {
   // ProjectModelsSection
   autoSelectModelPreset: "projectModels.autoSelectModelPresetHint",
   autoSummarizeTitles: "projectModels.whenEnabledTasksCreatedWithoutATitleBut",
-  taskDefinitionInInputLanguage: "projectModels.taskDefinitionInInputLanguageHelp",
+  taskOutputLanguage: "projectModels.taskOutputLanguageHelp",
   defaultPresetBySize: "projectModels.autoSelectModelPresetHint",
   modelPresets: "projectModels.autoSelectModelPresetHint",
   prDescriptionPromptInstructions: "projectModels.prDescriptionPromptInstructionsHelp",
@@ -323,6 +334,8 @@ const SETTING_DESCRIPTION_KEYS: Record<string, string> = {
 
 /** Setting keys intentionally not surfaced as a plain Settings UI description field, with reasons. */
 const NOT_SURFACED_ALLOWLIST: Record<string, string> = {
+  // FNXC:TaskOutputLanguage 2026-08-19-14:56: Legacy compatibility remains persisted but hidden behind the three-mode selector.
+  taskDefinitionInInputLanguage: "legacy task-output-language compatibility flag, not a rendered Settings field",
   /*
   FNXC:OriginWorkflowSelection 2026-07-26-19:40:
   Server-side mirror of the operator's Board workflow lane, written by the dashboard

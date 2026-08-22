@@ -18,7 +18,11 @@ import { EngineControlMenu, type EngineControlMenuHandle } from "./EngineControl
 import { TerminalLauncher } from "./TerminalLauncher";
 import { useViewportMode } from "../hooks/useViewportMode";
 
-type FooterStatId = "queued" | "running" | "stuck" | "blocked" | "fanout";
+/*
+FNXC:StuckTagRemoval 2026-08-17-22:30: Operator removed stuck-task tagging from the dashboard; engine recovery sweeps still consume taskStuckTimeoutMs server-side.
+The footer no longer renders a Stuck segment or takes taskStuckTimeoutMs.
+*/
+type FooterStatId = "queued" | "running" | "blocked" | "fanout";
 
 interface OpenStatTooltip {
   id: FooterStatId;
@@ -63,11 +67,9 @@ interface ExecutorStatusBarProps {
   projectId?: string;
   /** Optional task-scoped board trait index supplied by an embedding board. */
   columnFlagsByTaskId?: ReadonlyMap<string, ExecutorColumnFlags>;
-  /** Project-level stuck task timeout in milliseconds (undefined = disabled) */
-  taskStuckTimeoutMs?: number;
   /** Age threshold in milliseconds before high fan-out blockers escalate in dashboard surfaces. */
   staleHighFanoutBlockerAgeThresholdMs?: number;
-  /** Timestamp (ms) when task data was last confirmed fresh from the server. Used for freshness-aware stuck detection. */
+  /** Timestamp (ms) when task data was last confirmed fresh from the server. */
   lastFetchTimeMs?: number;
   /** Absolute path for the currently selected project directory. */
   currentProjectPath?: string;
@@ -143,7 +145,7 @@ function getStateDisplay(state: ExecutorState, t: TFunction<"app">): { label: st
  * - Executor state badge (idle/running/paused/stopped)
  * - Last activity timestamp
  */
-export function ExecutorStatusBar({ tasks, projectId, columnFlagsByTaskId: suppliedColumnFlagsByTaskId, taskStuckTimeoutMs, staleHighFanoutBlockerAgeThresholdMs, lastFetchTimeMs, currentProjectPath, onOpenProjectDirectory, keyboardOpen, hideWhenKeyboardOpen, onToggleTerminal, onOpenScripts, onRunScript, quickChatButtonMode = "off", onOpenQuickChat }: ExecutorStatusBarProps) {
+export function ExecutorStatusBar({ tasks, projectId, columnFlagsByTaskId: suppliedColumnFlagsByTaskId, staleHighFanoutBlockerAgeThresholdMs, currentProjectPath, onOpenProjectDirectory, keyboardOpen, hideWhenKeyboardOpen, onToggleTerminal, onOpenScripts, onRunScript, quickChatButtonMode = "off", onOpenQuickChat }: ExecutorStatusBarProps) {
   const { t } = useTranslation("app");
   const viewportMode = useViewportMode();
   const isMobile = viewportMode === "mobile";
@@ -159,7 +161,7 @@ export function ExecutorStatusBar({ tasks, projectId, columnFlagsByTaskId: suppl
    * Settings can route Quick Chat to a footer launcher beside Terminal, keep the draggable floating FAB, or hide the launcher entirely. Footer launch stays desktop/tablet-only like Terminal while mobile opens from the floating path as a full-screen modal.
    */
   const showQuickChatFooterLauncher = !isMobile && quickChatButtonMode === "footer" && Boolean(onOpenQuickChat);
-  const { stats, loading, error } = useExecutorStats(tasks, projectId, taskStuckTimeoutMs, lastFetchTimeMs, columnFlagsByTaskId);
+  const { stats, loading, error } = useExecutorStats(tasks, projectId, columnFlagsByTaskId);
   const [isProjectPathVisible, setIsProjectPathVisible] = useState(false);
   const [openStatTooltip, setOpenStatTooltip] = useState<OpenStatTooltip | null>(null);
   const engineControlMenuRef = useRef<EngineControlMenuHandle>(null);
@@ -224,7 +226,7 @@ export function ExecutorStatusBar({ tasks, projectId, columnFlagsByTaskId: suppl
         staleHighFanoutBlockerAgeThresholdMs ?? STALE_HIGH_FANOUT_BLOCKER_AGE_THRESHOLD_MS,
       /*
       FNXC:WorkflowResolvedColumns 2026-07-30-23:55:
-      The same per-task trait index this bar already takes for its stuck/running counts. Without it
+      The same per-task trait index this bar already takes for its running counts. Without it
       the fan-out classified against `todo`/`in-review`/`done`, so on a renamed board the overlap
       bottleneck this segment exists to surface was never detected at all.
       */
@@ -333,25 +335,6 @@ export function ExecutorStatusBar({ tasks, projectId, columnFlagsByTaskId: suppl
 
       {/* Separator */}
       <span className="executor-status-bar__divider" aria-hidden="true" />
-
-      {/* Stuck tasks */}
-      {stats.stuckTaskCount > 0 && (
-        <>
-          <MobileStatSegment
-            className="executor-status-bar__segment--stuck"
-            id="stuck"
-            isMobile={isMobile}
-            isOpen={openStatTooltip?.id === "stuck"}
-            label={t("executor.stuck", "Stuck")}
-            onToggle={toggleStatTooltip}
-          >
-            <span className="executor-status-bar__indicator executor-status-bar__indicator--stuck executor-status-bar__indicator--active" aria-hidden="true" />
-            <span className="executor-status-bar__label">{t("executor.stuck", "Stuck")}</span>
-            <span className="executor-status-bar__count executor-status-bar__count--error">{stats.stuckTaskCount}</span>
-          </MobileStatSegment>
-          <span className="executor-status-bar__divider" aria-hidden="true" />
-        </>
-      )}
 
       {/* Blocked tasks */}
       <MobileStatSegment

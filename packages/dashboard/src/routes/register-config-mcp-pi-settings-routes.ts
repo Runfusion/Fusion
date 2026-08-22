@@ -1,5 +1,5 @@
 import type { McpServerDefinition, PluginMcpServerContribution, TaskStore } from "@fusion/core";
-import { mapPluginMcpServerContribution, validateMcpServerDefinitionDetailed } from "@fusion/core";
+import { mapPluginMcpServerContribution, resolveEffectiveConcurrency, validateMcpServerDefinitionDetailed } from "@fusion/core";
 import { resolveFusionMemoryMcpEntry } from "@fusion/core/mcp-builtin-servers";
 import {
   discoverMcpServers,
@@ -112,20 +112,27 @@ async function resolveMcpServerForValidation(
 }
 
 export const registerConfigMcpPiSettingsRoutes: ApiRouteRegistrar = (ctx) => {
-  const { router, getProjectContext, options, rethrowAsApiError } = ctx;
+  const { router, getProjectContext, rethrowAsApiError } = ctx;
 
   router.get("/config", async (req, res) => {
     try {
       const { store: scopedStore } = await getProjectContext(req);
       const settings = await scopedStore.getSettingsFast();
+      const capacity = resolveEffectiveConcurrency(settings);
       res.json({
-        maxConcurrent: settings.maxConcurrent ?? options?.maxConcurrent ?? 2,
-        maxWorktrees: settings.maxWorktrees ?? 4,
+        maxConcurrent: capacity.maxConcurrent,
+        maxWorktrees: capacity.worktreeLimit ?? settings.maxWorktrees,
+        effectiveMaxConcurrent: capacity.effectiveLimit,
+        worktreeLimitEnabled: settings.worktreeLimitEnabled !== false,
+        concurrencyBindingKnob: capacity.bindingKnob,
         rootDir: scopedStore.getRootDir(),
       });
     } catch {
       const { store: scopedStore } = await getProjectContext(req);
-      res.json({ maxConcurrent: options?.maxConcurrent ?? 2, maxWorktrees: 4, rootDir: scopedStore.getRootDir() });
+      // FNXC:CapacityModel 2026-08-21-15:25: a failed live read reports shipped resolver defaults,
+      // never a private route literal or a stale boot option.
+      const capacity = resolveEffectiveConcurrency(undefined);
+      res.json({ maxConcurrent: capacity.maxConcurrent, maxWorktrees: capacity.worktreeLimit, effectiveMaxConcurrent: capacity.effectiveLimit, worktreeLimitEnabled: true, concurrencyBindingKnob: capacity.bindingKnob, rootDir: scopedStore.getRootDir() });
     }
   });
 

@@ -6,8 +6,8 @@
 import type {
   PlanningQuestion,
   PlanningSummary,
+  ThinkingLevel,
 } from "@fusion/core";
-import type { SubtaskItem, PlanningSubtaskDraft } from "./ai-text.js";
 import type { AgentCapability } from "@fusion/core";
 import type { Task } from "@fusion/core";
 import { api, buildApiUrl } from "../client/client.js";
@@ -40,7 +40,7 @@ export interface AgentOnboardingSummary {
   name: string;
   role: AgentCapability | "custom";
   instructionsText: string;
-  thinkingLevel: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+  thinkingLevel: ThinkingLevel;
   maxTurns: number;
   title?: string;
   icon?: string;
@@ -62,7 +62,7 @@ export interface AgentOnboardingSummary {
 }
 
 export type OnboardingMode = "create" | "edit";
-export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+export type { ThinkingLevel };
 
 export interface ExistingAgentOnboardingConfig {
   name?: string;
@@ -306,51 +306,6 @@ export function createTaskFromPlanning(
     }),
   }).then((response) => response.task);
 }
-
-/** Start subtask breakdown from a completed planning session */
-export function startPlanningBreakdown(
-  sessionId: string,
-  summary?: PlanningSummary,
-  projectId?: string,
-): Promise<{ sessionId: string; subtasks: SubtaskItem[] }> {
-  return api<{ sessionId: string; subtasks: SubtaskItem[] }>(
-    withProjectId("/planning/start-breakdown", projectId),
-    {
-      method: "POST",
-      body: JSON.stringify(summary ? { sessionId, summary } : { sessionId }),
-    },
-  );
-}
-
-/** Create multiple tasks from a completed planning session */
-export function createTasksFromPlanning(
-  planningSessionId: string,
-  subtasks: PlanningSubtaskDraft[],
-  projectId?: string,
-  options?: {
-    branchSelection?: {
-      mode: "project-default" | "auto-new" | "existing" | "custom-new";
-      branchName?: string;
-      baseBranch?: string;
-    };
-    branchAssignment?: {
-      mode: "shared" | "per-task-derived";
-    };
-    workflowId?: string | null;
-  },
-): Promise<{ tasks: Task[] }> {
-  return api<{ tasks: Task[] }>(withProjectId("/planning/create-tasks", projectId), {
-    method: "POST",
-    body: JSON.stringify({
-      planningSessionId,
-      subtasks,
-      ...(options?.branchSelection ? { branchSelection: options.branchSelection } : {}),
-      ...(options?.branchAssignment ? { branchAssignment: options.branchAssignment } : {}),
-      ...(options?.workflowId !== undefined ? { workflowId: options.workflowId } : {}),
-    }),
-  });
-}
-
 
 
 export function getPlanningStreamUrl(sessionId: string, projectId?: string): string {

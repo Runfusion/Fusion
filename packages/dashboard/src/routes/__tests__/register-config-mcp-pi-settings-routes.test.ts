@@ -39,14 +39,37 @@ describe("registerConfigMcpPiSettingsRoutes", () => {
     const response = await request(createApp(), "GET", "/config");
 
     expect(response.status).toBe(200);
-    expect(response.body).toEqual({ maxConcurrent: 6, maxWorktrees: 2, rootDir: "/workspace" });
+    expect(response.body).toEqual({
+      maxConcurrent: 6,
+      maxWorktrees: 2,
+      effectiveMaxConcurrent: 2,
+      worktreeLimitEnabled: true,
+      concurrencyBindingKnob: "maxWorktrees",
+      rootDir: "/workspace",
+    });
   });
 
-  it("uses option and fixed defaults for missing scheduler settings", async () => {
+  it("uses shipped resolver defaults for missing scheduler settings", async () => {
     const response = await request(createApp({}), "GET", "/config");
 
     expect(response.status).toBe(200);
-    expect(response.body).toEqual({ maxConcurrent: 9, maxWorktrees: 4, rootDir: "/workspace" });
+    expect(response.body).toEqual({
+      maxConcurrent: 2,
+      maxWorktrees: 4,
+      effectiveMaxConcurrent: 2,
+      worktreeLimitEnabled: true,
+      concurrencyBindingKnob: "maxConcurrent",
+      rootDir: "/workspace",
+    });
+  });
+
+  it("reports the resolver defaults when the authoritative settings read fails", async () => {
+    const app = express();
+    const store = { getRootDir: () => "/workspace", getSettingsFast: async () => { throw new Error("unavailable"); } };
+    registerConfigMcpPiSettingsRoutes({ router: app, getProjectContext: async () => ({ store }), rethrowAsApiError(error: unknown): never { throw error; } } as unknown as ApiRoutesContext);
+
+    const response = await request(app, "GET", "/config");
+    expect(response.body).toMatchObject({ maxConcurrent: 2, maxWorktrees: 4, effectiveMaxConcurrent: 2, concurrencyBindingKnob: "maxConcurrent" });
   });
 
   it("lists only provider-filtered valid project plugin MCP contributions", async () => {

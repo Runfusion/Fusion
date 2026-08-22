@@ -999,6 +999,7 @@ describe("TaskCard", () => {
     );
 
     fireEvent.contextMenu(document.querySelector(".card")!, { clientX: 24, clientY: 28 });
+    fireEvent.click(screen.getByRole("menuitem", { name: "Move to" }));
     fireEvent.click(screen.getByRole("menuitem", { name: "Move to Todo" }));
 
     await waitFor(() => expect(onMoveTask).toHaveBeenCalledWith("FN-001", "todo", { preserveProgress: true }));
@@ -1945,43 +1946,14 @@ describe("TaskCard", () => {
     expect(screen.queryByTestId("branch-progress-badge")).toBeNull();
   });
 
-  it("keeps native card dragging enabled by default", () => {
+  /*
+  FNXC:TaskMovementContextMenu 2026-08-19-18:37:
+  Task cards must never expose native HTML drag behavior. Movement is intentional
+  context-menu work, which keeps board and touch input paths consistent.
+  */
+  it("does not expose native card dragging", () => {
     const { container } = render(<TaskCard task={makeTask()} onOpenDetail={noop} addToast={noop} />);
-    const card = container.querySelector(".card") as HTMLElement;
-    expect(card.getAttribute("draggable")).toBe("true");
-  });
-
-  it("disables native card dragging when disableDrag is true", () => {
-    const { container } = render(<TaskCard task={makeTask()} onOpenDetail={noop} addToast={noop} disableDrag={true} />);
-    const card = container.querySelector(".card") as HTMLElement;
-    expect(card.getAttribute("draggable")).toBe("false");
-  });
-
-  // FN-6389 follow-up: native HTML5 drag is desktop-mouse only and doesn't move
-  // cards via touch, but a `draggable` element still arms the browser's touch-drag
-  // heuristic, which intermittently hijacks horizontal swipes meant to scroll the
-  // mobile board. On touch-primary (coarse pointer) devices we drop `draggable`.
-  it("disables native card dragging on touch-primary (coarse pointer) devices", () => {
-    const original = window.matchMedia;
-    window.matchMedia = vi.fn().mockImplementation((query: string) => ({
-      matches: query === "(hover: none) and (pointer: coarse)",
-      media: query,
-      onchange: null,
-      addEventListener: vi.fn(),
-      removeEventListener: vi.fn(),
-      dispatchEvent: vi.fn(),
-    })) as unknown as typeof window.matchMedia;
-    try {
-      const { container } = render(<TaskCard task={makeTask()} onOpenDetail={noop} addToast={noop} />);
-      const card = container.querySelector(".card") as HTMLElement;
-      expect(card.getAttribute("draggable")).toBe("false");
-      // No drag-start handler should be wired on touch (would arm the heuristic).
-      const dragStart = new Event("dragstart", { bubbles: true, cancelable: true });
-      const prevented = !card.dispatchEvent(dragStart);
-      expect(prevented).toBe(false);
-    } finally {
-      window.matchMedia = original;
-    }
+    expect(container.querySelector(".card")).not.toHaveAttribute("draggable");
   });
 
   it.each([
@@ -4815,6 +4787,7 @@ describe("TaskCard", () => {
     expect(screen.queryByRole("button", { name: "Send back" })).toBeNull();
 
     fireEvent.click(screen.getByTestId("card-menu-btn-FN-001"));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Move to", exact: true }));
 
     expect(screen.getByRole("menuitem", { name: "Done (no merge)" })).toBeTruthy();
     expect(screen.getByRole("menuitem", { name: "Move to Planning" })).toBeTruthy();
@@ -4824,6 +4797,106 @@ describe("TaskCard", () => {
     fireEvent.click(screen.getByRole("menuitem", { name: "Done (no merge)" }));
 
     expect(onMoveTask).toHaveBeenCalledWith("FN-001", "done", undefined);
+  });
+
+  it("offers only declared default-workflow targets from the in-review three-dot menu", async () => {
+    const onMoveTask = vi.fn();
+    const taskMoveColumns = [
+      { id: "todo" as const, label: "Planning", flags: { hold: true, intake: true } },
+      { id: "in-progress" as const, label: "In progress", flags: { countsTowardWip: true } },
+      { id: "in-review" as const, label: "In review", flags: { mergeBlocker: true, humanReview: true }, moveTargets: ["done", "in-progress", "todo"] },
+      { id: "done" as const, label: "Done", flags: { complete: true } },
+      { id: "archived" as const, label: "Archived", flags: { archived: true } },
+    ];
+    render(
+      <TaskCard
+        task={makeTask({ column: "in-review" })}
+        onOpenDetail={noop}
+        addToast={noop}
+        onMoveTask={onMoveTask}
+        taskMoveColumns={taskMoveColumns}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("card-menu-btn-FN-001"));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Move to", exact: true }));
+
+    const planningMoves = screen.getAllByRole("menuitem", { name: "Move to Planning" });
+    expect(planningMoves).toHaveLength(1);
+    expect(screen.queryByRole("menuitem", { name: "Move to Triage" })).toBeNull();
+
+    fireEvent.click(planningMoves[0]);
+    expect(onMoveTask).toHaveBeenCalledWith("FN-001", "todo", undefined);
+    await waitFor(() => expect(screen.queryByRole("menu")).not.toBeInTheDocument());
+
+    fireEvent.contextMenu(document.querySelector(".card")!, { clientX: 24, clientY: 28 });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Move to", exact: true }));
+    await waitFor(() => expect(screen.getAllByRole("menuitem", { name: "Move to Planning" })).toHaveLength(1));
+    expect(screen.getByRole("menuitem", { name: "Move to Done" })).toBeTruthy();
+  });
+
+  it("keeps the declared legacy triage target and hides hidden supplemental targets", () => {
+    const onMoveTask = vi.fn();
+    const legacyMoveColumns = [
+      { id: "triage" as const, label: "Planning", flags: { intake: true } },
+      { id: "todo" as const, label: "Todo", flags: { hold: true } },
+      { id: "in-progress" as const, label: "In progress", flags: { countsTowardWip: true } },
+      { id: "in-review" as const, label: "In review", flags: { mergeBlocker: true }, moveTargets: ["todo", "in-progress"] },
+      { id: "done" as const, label: "Done", flags: { complete: true } },
+    ];
+    const { rerender } = render(
+      <TaskCard
+        task={makeTask({ column: "in-review" })}
+        onOpenDetail={noop}
+        addToast={noop}
+        onMoveTask={onMoveTask}
+        taskMoveColumns={legacyMoveColumns}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("card-menu-btn-FN-001"));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Move to", exact: true }));
+    const planningMoves = screen.getAllByRole("menuitem", { name: "Move to Planning" });
+    expect(planningMoves).toHaveLength(1);
+    fireEvent.click(planningMoves[0]);
+    expect(onMoveTask).toHaveBeenCalledWith("FN-001", "triage", undefined);
+
+    rerender(
+      <TaskCard
+        task={makeTask({ column: "in-review" })}
+        onOpenDetail={noop}
+        addToast={noop}
+        onMoveTask={onMoveTask}
+        taskMoveColumns={legacyMoveColumns.map((column) => column.id === "done" ? { ...column, flags: { ...column.flags, hiddenFromBoard: true } } : column)}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("card-menu-btn-FN-001"));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Move to", exact: true }));
+    expect(screen.queryByRole("menuitem", { name: "Done (no merge)" })).toBeNull();
+    expect(screen.getAllByRole("menuitem", { name: "Move to Planning" })).toHaveLength(1);
+  });
+
+  it("leaves non-review menu transitions unchanged when workflow metadata is present", () => {
+    const taskMoveColumns = [
+      { id: "todo" as const, label: "Planning", flags: { hold: true } },
+      { id: "in-progress" as const, label: "In progress", flags: { countsTowardWip: true }, moveTargets: ["todo", "done"] },
+      { id: "done" as const, label: "Done", flags: { complete: true } },
+    ];
+    render(
+      <TaskCard
+        task={makeTask({ column: "in-progress" })}
+        onOpenDetail={noop}
+        addToast={noop}
+        onMoveTask={vi.fn()}
+        taskMoveColumns={taskMoveColumns}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("card-menu-btn-FN-001"));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Move to", exact: true }));
+    expect(screen.getByRole("menuitem", { name: "Move to Planning" })).toBeTruthy();
+    expect(screen.getByRole("menuitem", { name: "Move to Done" })).toBeTruthy();
+    expect(screen.queryByRole("menuitem", { name: "Done (no merge)" })).toBeNull();
   });
 
   it("uses the three-dot menu for every in-progress move target without a Send back shell", () => {
@@ -4840,6 +4913,7 @@ describe("TaskCard", () => {
     expect(screen.queryByRole("button", { name: "Send back" })).toBeNull();
 
     fireEvent.click(screen.getByTestId("card-menu-btn-FN-001"));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Move to", exact: true }));
 
     expect(screen.getByRole("menuitem", { name: "Move to Todo" })).toBeTruthy();
     expect(screen.getByRole("menuitem", { name: "Move to Planning" })).toBeTruthy();
@@ -7558,16 +7632,7 @@ describe("TaskCard memo comparator provenance behavior", () => {
     ).toBe(false);
   });
 
-  it("returns false when disableDrag changes", () => {
-    const task = makeTask();
 
-    expect(
-      __test_areTaskCardPropsEqual(
-        { task, onOpenDetail: noop, addToast: noop, disableDrag: false } as any,
-        { task, onOpenDetail: noop, addToast: noop, disableDrag: true } as any,
-      ),
-    ).toBe(false);
-  });
 
   it("returns false when board context-menu action handlers change", () => {
     const task = makeTask();
@@ -8924,5 +8989,48 @@ describe("TaskCard field editability resolves column traits (U12 — R8)", () =>
     // The pre-load window, and what every board did before the conversion.
     render(<TaskCard task={makeTask({ column: "todo" as any })} onUpdateTask={noop} onOpenDetail={noop} addToast={noop} />);
     expect(screen.getByRole("button", EDIT_LABEL)).toBeInTheDocument();
+  });
+});
+
+describe("TaskCard titleless display fallback (FN-044)", () => {
+  const description200 = "d".repeat(200);
+  const description201 = "e".repeat(201);
+
+  function cardTitle(container: HTMLElement): HTMLDivElement {
+    return container.querySelector(".card-title") as HTMLDivElement;
+  }
+
+  it("keeps titleless descriptions through 200 characters unchanged", () => {
+    const { container } = render(<TaskCard task={makeTask({ title: undefined, description: description200 })} onOpenDetail={noop} addToast={noop} />);
+    expect(cardTitle(container)).toHaveTextContent(description200);
+    expect(cardTitle(container)).not.toHaveClass("card-title--bounded-description");
+  });
+
+  it("bounds a 201-character titleless description with literal dots while retaining its full tooltip", () => {
+    const { container } = render(<TaskCard task={makeTask({ title: undefined, description: description201 })} onOpenDetail={noop} addToast={noop} />);
+    const title = cardTitle(container);
+    expect(title).toHaveTextContent(description201.slice(0, 197) + "...");
+    expect(title.textContent).toHaveLength(200);
+    expect(title).toHaveClass("card-title--bounded-description");
+    expect(title).toHaveAttribute("title", description201);
+  });
+
+  it("uses description or task ID for whitespace-only titles and blank descriptions", () => {
+    const fallback = render(<TaskCard task={makeTask({ title: "   ", description: "Description fallback" })} onOpenDetail={noop} addToast={noop} />);
+    expect(cardTitle(fallback.container)).toHaveTextContent("Description fallback");
+    fallback.unmount();
+
+    const idFallback = render(<TaskCard task={makeTask({ id: "FN-blank", title: " ", description: "   " })} onOpenDetail={noop} addToast={noop} />);
+    expect(cardTitle(idFallback.container)).toHaveTextContent("FN-blank");
+  });
+
+  it("preserves explicit titles and their existing TaskCard truncation", () => {
+    const explicitTitle = "t".repeat(201);
+    const { container } = render(<TaskCard task={makeTask({ title: explicitTitle, description: description201 })} onOpenDetail={noop} addToast={noop} />);
+    const title = cardTitle(container);
+    expect(title).toHaveTextContent(explicitTitle.slice(0, 140) + "…");
+    expect(title).toHaveAttribute("title", explicitTitle);
+    expect(title).not.toHaveClass("card-title--bounded-description");
+    expect(title.textContent).not.toContain("...");
   });
 });

@@ -1,6 +1,7 @@
 import { FileText, Package } from "lucide-react";
 import type { TFunction } from "i18next";
 import type { ArtifactType, ArtifactWithTask } from "@fusion/core";
+import { ArtifactImage } from "./ArtifactImageViewer";
 
 export function getArtifactTypeLabel(t: TFunction<"app">, type: ArtifactType): string {
   switch (type) {
@@ -18,8 +19,9 @@ export function getArtifactTypeLabel(t: TFunction<"app">, type: ArtifactType): s
 }
 
 interface ArtifactMediaProps {
-  artifact: Pick<ArtifactWithTask, "type">;
+  artifact: Pick<ArtifactWithTask, "id" | "type">;
   mediaUrl: string;
+  projectId?: string;
   title: string;
   preview?: string;
   t: TFunction<"app">;
@@ -29,10 +31,10 @@ interface ArtifactMediaProps {
  * FNXC:ArtifactRegistry 2026-06-21-21:31:
  * The global Documents gallery and the per-task Artifacts tab must share one media renderer so image, video, audio, document, and generic artifact previews cannot drift across dashboard surfaces.
  */
-export function ArtifactMedia({ artifact, mediaUrl, title, preview, t }: ArtifactMediaProps) {
+export function ArtifactMedia({ artifact, mediaUrl, projectId, title, preview, t }: ArtifactMediaProps) {
   switch (artifact.type) {
     case "image":
-      return <img className="documents-artifact-media" src={mediaUrl} alt={title} loading="lazy" />;
+      return <ArtifactImage className="documents-artifact-media" artifactId={artifact.id} projectId={projectId} title={title} />;
     case "video":
       return <video className="documents-artifact-media" controls src={mediaUrl} aria-label={t("documents.artifactVideoLabel", "Video artifact: {{title}}", { title })} />;
     case "audio":

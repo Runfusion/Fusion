@@ -1,3 +1,5 @@
+import { emitBoundedRunAudit } from "../run-audit/emit-bounded-run-audit.js";
+/* FNXC:RunAudit 2026-08-20-05:49: FN-9177 bounds optional audit telemetry so a hostile sink cannot alter this lifecycle path. */
 /**
  * workflow-workitems-ops-2 operations.
  *
@@ -101,7 +103,7 @@ export async function acquireWorkflowWorkItemLeaseImpl(store: TaskStore, id: str
     });
     if (!updated) return null;
     // Record the audit event (fire-and-forget).
-    void store.recordRunAuditEvent({
+    void emitBoundedRunAudit(store, {
       taskId: updated.taskId,
       agentId: "system",
       runId: updated.runId,

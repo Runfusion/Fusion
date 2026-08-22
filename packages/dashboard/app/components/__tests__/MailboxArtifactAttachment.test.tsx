@@ -1,5 +1,5 @@
-import { render, screen, fireEvent } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { cleanup, render, screen, fireEvent } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MailboxArtifactAttachment } from "../MailboxArtifactAttachment";
 import { artifactMediaUrlWithToken } from "../../api";
 
@@ -7,10 +7,21 @@ vi.mock("../../api", () => ({
   artifactMediaUrlWithToken: vi.fn((id: string, projectId?: string) => `/api/artifacts/${id}/media${projectId ? `?projectId=${projectId}&` : "?"}fn_token=daemon-token`),
 }));
 
+vi.mock("../ArtifactImageViewer", () => ({
+  ArtifactImage: ({ title, onError }: { title: string; onError?: () => void }) => <img alt={title} src="blob:secure-preview" onError={onError} />,
+  ArtifactImageViewer: ({ title, onClose }: { title: string; onClose: () => void }) => <div role="dialog"><img alt={title} src="blob:secure-preview" /><button type="button" aria-label="Close image artifact preview" onClick={onClose}>Close</button></div>,
+}));
+
 const mockArtifactMediaUrlWithToken = vi.mocked(artifactMediaUrlWithToken);
 
 describe("MailboxArtifactAttachment", () => {
-  it("renders image artifacts inline with the project-scoped media URL", () => {
+  beforeEach(() => {
+    cleanup();
+    mockArtifactMediaUrlWithToken.mockClear();
+  });
+  afterEach(() => cleanup());
+
+  it("renders image artifacts through a blob preview and viewer without a tokenized link", () => {
     render(
       <MailboxArtifactAttachment
         artifactId="art-image"
@@ -21,10 +32,13 @@ describe("MailboxArtifactAttachment", () => {
       />,
     );
 
-    expect(mockArtifactMediaUrlWithToken).toHaveBeenCalledWith("art-image", "proj-1");
+    expect(mockArtifactMediaUrlWithToken).not.toHaveBeenCalledWith("art-image", "proj-1");
     const image = screen.getByRole("img", { name: "Screenshot" });
-    expect(image).toHaveAttribute("src", "/api/artifacts/art-image/media?projectId=proj-1&fn_token=daemon-token");
-    expect(screen.getByRole("link", { name: "Open artifact: Screenshot" })).toHaveAttribute("href", "/api/artifacts/art-image/media?projectId=proj-1&fn_token=daemon-token");
+    expect(image).toHaveAttribute("src", "blob:secure-preview");
+    fireEvent.click(screen.getAllByRole("button", { name: "Open artifact: Screenshot" }).at(-1)!);
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(document.body.innerHTML).not.toContain("fn_token");
+    expect(document.body.innerHTML).not.toContain("daemon-token");
   });
 
   it("renders a View task affordance when task metadata and a handler are present", () => {
@@ -49,14 +63,14 @@ describe("MailboxArtifactAttachment", () => {
     render(<MailboxArtifactAttachment artifactId="art-image" artifactType="image" title="Screenshot" taskId="FN-1234" />);
 
     expect(screen.queryByTestId("mailbox-artifact-view-task")).toBeNull();
-    expect(screen.getByRole("link", { name: "Open artifact: Screenshot" })).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Open artifact: Screenshot" })).toHaveLength(2);
   });
 
   it("does not render a View task affordance without task metadata", () => {
     render(<MailboxArtifactAttachment artifactId="art-image" artifactType="image" title="Screenshot" onOpenTask={vi.fn()} />);
 
     expect(screen.queryByTestId("mailbox-artifact-view-task")).toBeNull();
-    expect(screen.getByRole("link", { name: "Open artifact: Screenshot" })).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Open artifact: Screenshot" })).toHaveLength(2);
   });
 
   it.each([
@@ -86,13 +100,13 @@ describe("MailboxArtifactAttachment", () => {
     expect(screen.queryByTestId("mailbox-artifact-attachment")).toBeNull();
   });
 
-  it("degrades image load failures to the open artifact link", () => {
+  it("keeps the safe viewer action available after an image load failure", () => {
     render(<MailboxArtifactAttachment artifactId="art-broken" artifactType="image" title="Broken screenshot" taskId="FN-1234" onOpenTask={vi.fn()} />);
 
     fireEvent.error(screen.getByRole("img", { name: "Broken screenshot" }));
 
     expect(screen.queryByRole("img", { name: "Broken screenshot" })).toBeNull();
-    expect(screen.getByRole("link", { name: "Open artifact: Broken screenshot" })).toHaveAttribute("href", "/api/artifacts/art-broken/media?fn_token=daemon-token");
+    expect(screen.getByRole("button", { name: "Open artifact: Broken screenshot" })).toBeInTheDocument();
     expect(screen.getByTestId("mailbox-artifact-view-task")).toBeInTheDocument();
   });
 });

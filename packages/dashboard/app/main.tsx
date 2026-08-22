@@ -9,6 +9,7 @@ import { installSwUpdate } from "./swUpdate";
 import { bootstrapShellHostContext } from "./shell-host";
 import { registerBundledPluginViews } from "./plugins/registerBundledPluginViews";
 import { i18nReady } from "./i18n";
+import "@fontsource/pixelify-sans/400.css";
 import "./styles.css";
 
 // Install the bearer-token fetch wrapper before React mounts so every API

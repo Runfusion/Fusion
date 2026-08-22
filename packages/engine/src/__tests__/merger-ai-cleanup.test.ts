@@ -11,7 +11,37 @@ import { classifyTransientMergeError } from "../errors/transient-merge-error-cla
 import { resolveAiMergeRootPath, resolveLegacyAiMergeRootPath, resolveWorktreesDir } from "../worktree/worktree-paths.js";
 import type { RunAuditor } from "../util/run-audit.js";
 
-const fsState = vi.hoisted(() => ({ failReaddirPath: "" }));
+const fsState = vi.hoisted(() => ({
+  failReaddirPath: "",
+  rmFailurePath: "",
+  rmFailuresRemaining: 0,
+  rmFailureCode: "EBUSY",
+  rmPretendAbsentPath: "",
+  rmCalls: [] as string[],
+}));
+
+const childState = vi.hoisted(() => ({
+  worktreeRemoveError: undefined as Error | undefined,
+  execFileCalls: [] as string[][],
+}));
+
+vi.mock("node:child_process", async () => {
+  const actual = await vi.importActual<typeof import("node:child_process")>("node:child_process");
+  const { promisify } = await import("node:util");
+  const execFile = (file: string, args: string[], options: object, callback: (error: Error | null, stdout: string, stderr: string) => void) => {
+    childState.execFileCalls.push(args);
+    if (file === "git" && args[0] === "worktree" && args[1] === "remove" && childState.worktreeRemoveError) {
+      queueMicrotask(() => callback(childState.worktreeRemoveError!, "", ""));
+      return undefined;
+    }
+    return actual.execFile(file, args, options, callback);
+  };
+  // merger-ai-worktree promisifies execFile and expects the native { stdout, stderr } shape.
+  (execFile as typeof execFile & { [promisify.custom]: unknown })[promisify.custom] = (file: string, args: string[], options: object) => new Promise((resolve, reject) => {
+    execFile(file, args, options, (error, stdout, stderr) => error ? reject(error) : resolve({ stdout, stderr }));
+  });
+  return { ...actual, execFile };
+});
 
 vi.mock("node:fs", async () => {
   const actual = await vi.importActual<typeof import("node:fs")>("node:fs");
@@ -20,6 +50,18 @@ vi.mock("node:fs", async () => {
     readdirSync: vi.fn((path: Parameters<typeof actual.readdirSync>[0], options?: Parameters<typeof actual.readdirSync>[1]) => {
       if (String(path) === fsState.failReaddirPath) throw new Error("simulated readdir failure");
       return actual.readdirSync(path, options as never);
+    }),
+    rmSync: vi.fn((path: Parameters<typeof actual.rmSync>[0], options?: Parameters<typeof actual.rmSync>[1]) => {
+      const pathString = String(path);
+      fsState.rmCalls.push(pathString);
+      if (pathString === fsState.rmPretendAbsentPath) {
+        throw Object.assign(new Error("simulated missing worktree"), { code: "ENOENT" });
+      }
+      if (pathString === fsState.rmFailurePath && fsState.rmFailuresRemaining > 0) {
+        fsState.rmFailuresRemaining--;
+        throw Object.assign(new Error(`simulated filesystem cleanup ${fsState.rmFailureCode}`), { code: fsState.rmFailureCode });
+      }
+      return actual.rmSync(path, options);
     }),
   };
 });
@@ -30,6 +72,13 @@ const RM = { recursive: true, force: true, maxRetries: 5, retryDelay: 50 } as co
 afterEach(() => {
   vi.restoreAllMocks();
   fsState.failReaddirPath = "";
+  fsState.rmFailurePath = "";
+  fsState.rmFailuresRemaining = 0;
+  fsState.rmFailureCode = "EBUSY";
+  fsState.rmPretendAbsentPath = "";
+  fsState.rmCalls = [];
+  childState.worktreeRemoveError = undefined;
+  childState.execFileCalls = [];
   /*
   FNXC:EngineTests 2026-06-14-02:10:
   This file observes AI-merge active-session state while sibling files may also be asserting live registrations. Do not clear the shared registry here; production cleanup paths must unregister their own entries, and broad singleton clears make package-load rescue nondeterministic.
@@ -296,6 +345,150 @@ describe("AI merge temp worktree cleanup", () => {
         expect.objectContaining({ type: "merge:ai-worktree-cleanup", metadata: expect.objectContaining({ taskId: "FN-777", mergeRoot, phase: "pre-merge-prune", success: true }) }),
       ]));
     }
+  });
+
+  it("retries an unregistered clean room filesystem leftover after a transient EBUSY", async () => {
+    const gitError = Object.assign(new Error("unregistered clean room"), { stderr: "fatal: failed to delete '/tmp/clean-room': Device or resource busy", code: "1" });
+    const rmRunner = vi.fn(async (path: string, options: Parameters<typeof rm>[1]) => {
+      if (rmRunner.mock.calls.length === 1) throw Object.assign(new Error("busy"), { code: "EBUSY" });
+      await rm(path, options);
+    }) as typeof rm;
+    const gitRunner = vi.fn(async (args: string[]) => {
+      if (args[1] === "remove") throw gitError;
+      return "";
+    });
+
+    const { mergeRoot, events } = await cleanup({ gitRunner, rmRunner });
+
+    expect(rmRunner).toHaveBeenCalledTimes(2);
+    expect(existsSync(mergeRoot)).toBe(false);
+    expect(gitRunner.mock.calls.filter(([args]) => args[1] === "prune")).toHaveLength(1);
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ metadata: expect.objectContaining({ phase: "fs-rm", success: true }) }),
+    ]));
+    expect(events.some((event) => event.metadata.residual)).toBe(false);
+  });
+
+  it("audits a residual inline clean room and retains its registration for a later prune pass", async () => {
+    const busy = Object.assign(new Error("still busy"), { code: "EBUSY" });
+    const gitRunner = vi.fn(async () => "");
+    const rmRunner = vi.fn(async () => { throw busy; }) as typeof rm;
+
+    const { mergeRoot, events } = await cleanup({ gitRunner, rmRunner });
+
+    expect(rmRunner).toHaveBeenCalledTimes(10);
+    expect(existsSync(mergeRoot)).toBe(true);
+    expect(gitRunner.mock.calls.filter(([args]) => args[1] === "prune")).toHaveLength(1);
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ metadata: expect.objectContaining({ phase: "fs-rm", success: false, attempts: 5, residual: true, registrationRetained: true, code: "EBUSY" }) }),
+    ]));
+  });
+
+  it("treats an inline registered-but-missing clean room as idempotent without retrying", async () => {
+    const mergeRoot = mkdtempSync(join(tmpdir(), "fusion-ai-merge-fn-9169-inline-r1-"));
+    tracked.add(mergeRoot);
+    const canonical = realpathSync(mergeRoot);
+    rmSync(mergeRoot, RM);
+    const registeredMissing = Object.assign(new Error(`fatal: '${canonical}' is not a working tree`), { code: "1" });
+    const gitRunner = vi.fn(async (args: string[]) => {
+      if (args[1] === "remove") throw registeredMissing;
+      return "";
+    });
+    const rmRunner = vi.fn(async () => {
+      throw Object.assign(new Error("missing worktree"), { code: "ENOENT" });
+    }) as typeof rm;
+
+    const { events } = await cleanup({ mergeRoot, gitRunner, rmRunner });
+
+    expect(gitRunner.mock.calls.filter(([args]) => args[0] === "worktree" && args[1] === "remove")).toHaveLength(1);
+    expect(rmRunner).toHaveBeenCalledTimes(1);
+    expect(gitRunner.mock.calls.filter(([args]) => args[1] === "prune")).toHaveLength(1);
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ metadata: expect.objectContaining({ phase: "git-remove", success: true, alreadyAbsent: true, idempotent: true }) }),
+      expect.objectContaining({ metadata: expect.objectContaining({ phase: "fs-rm", success: true, alreadyAbsent: true, idempotent: true }) }),
+    ]));
+    expect(events.some((event) => event.metadata.residual || event.metadata.registrationRetained)).toBe(false);
+  });
+
+  it("retries an inline EPERM filesystem fallback after a Windows-shaped git failure", async () => {
+    const gitError = Object.assign(new Error("git removal denied"), { stderr: "fatal: failed to delete '/tmp/clean-room': Permission denied", code: "1" });
+    const rmRunner = vi.fn(async (path: string, options: Parameters<typeof rm>[1]) => {
+      if (rmRunner.mock.calls.length === 1) throw Object.assign(new Error("read-only file"), { code: "EPERM" });
+      await rm(path, options);
+    }) as typeof rm;
+    const gitRunner = vi.fn(async (args: string[]) => {
+      if (args[1] === "remove") throw gitError;
+      return "";
+    });
+
+    const { mergeRoot, events } = await cleanup({ gitRunner, rmRunner });
+
+    expect(rmRunner).toHaveBeenCalledTimes(2);
+    expect(existsSync(mergeRoot)).toBe(false);
+    expect(gitRunner.mock.calls.filter(([args]) => args[1] === "prune")).toHaveLength(1);
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ metadata: expect.objectContaining({ phase: "git-remove", success: false }) }),
+      expect.objectContaining({ metadata: expect.objectContaining({ phase: "fs-rm", success: true }) }),
+    ]));
+  });
+
+  it("retries the pre-merge filesystem fallback without bypassing stale-path pruning", async () => {
+    const projectRoot = tempProjectRoot();
+    const stale = tempAiMergeDir("fusion-ai-merge-fn-9169-premerge-retry");
+    makeAge(stale, MIN_TEMP_WORKTREE_REAP_AGE_MS + 1_000);
+    const canonical = realpathSync(stale);
+    fsState.rmFailurePath = canonical;
+    fsState.rmFailuresRemaining = 1;
+    const { audit, events } = makeAudit();
+
+    await expect(pruneExistingAiMergeWorktrees("FN-9169", projectRoot, audit, vi.fn(async () => undefined))).resolves.toBe(1);
+
+    expect(fsState.rmCalls.filter((path) => path === canonical)).toHaveLength(2);
+    expect(existsSync(stale)).toBe(false);
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ metadata: expect.objectContaining({ phase: "pre-merge-prune", success: true }) }),
+    ]));
+  });
+
+  it("treats a pre-merge registered-but-missing clean room as idempotent without retrying", async () => {
+    const projectRoot = tempProjectRoot();
+    const stale = tempAiMergeDir("fusion-ai-merge-fn-9169-premerge-r1");
+    makeAge(stale, MIN_TEMP_WORKTREE_REAP_AGE_MS + 1_000);
+    const canonical = realpathSync(stale);
+    const registeredMissing = Object.assign(new Error(`fatal: '${canonical}' is not a working tree`), { code: "1" });
+    childState.worktreeRemoveError = registeredMissing;
+    fsState.rmPretendAbsentPath = canonical;
+    const { audit, events } = makeAudit();
+    const logs: string[] = [];
+
+    await expect(pruneExistingAiMergeWorktrees("FN-9169", projectRoot, audit, vi.fn(async (message: string) => { logs.push(message); }))).resolves.toBe(1);
+
+    expect(logs.join("\n")).toContain("already absent/de-registered");
+    expect(childState.execFileCalls.filter((args) => args[0] === "worktree" && args[1] === "remove")).toHaveLength(1);
+    expect(childState.execFileCalls.filter((args) => args[0] === "worktree" && args[1] === "prune")).toHaveLength(1);
+    expect(fsState.rmCalls.filter((path) => path === canonical)).toHaveLength(1);
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ metadata: expect.objectContaining({ phase: "pre-merge-prune", success: true, alreadyAbsent: true, idempotent: true }) }),
+    ]));
+    expect(events.some((event) => event.metadata.residual || event.metadata.registrationRetained)).toBe(false);
+  });
+
+  it("records a residual pre-merge clean room after bounded retries", async () => {
+    const projectRoot = tempProjectRoot();
+    const stale = tempAiMergeDir("fusion-ai-merge-fn-9169-premerge-r3");
+    makeAge(stale, MIN_TEMP_WORKTREE_REAP_AGE_MS + 1_000);
+    const canonical = realpathSync(stale);
+    fsState.rmFailurePath = canonical;
+    fsState.rmFailuresRemaining = 5;
+    const { audit, events } = makeAudit();
+
+    await expect(pruneExistingAiMergeWorktrees("FN-9169", projectRoot, audit, vi.fn(async () => undefined))).resolves.toBe(0);
+
+    expect(existsSync(stale)).toBe(true);
+    expect(fsState.rmCalls.filter((path) => path === canonical)).toHaveLength(5);
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ metadata: expect.objectContaining({ phase: "pre-merge-prune", success: false, attempts: 5, residual: true, registrationRetained: true, code: "EBUSY" }) }),
+    ]));
   });
 
   it("pruneExistingAiMergeWorktrees skips too-new same-task directories", async () => {

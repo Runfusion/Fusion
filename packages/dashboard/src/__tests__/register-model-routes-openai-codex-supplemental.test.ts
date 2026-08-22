@@ -68,6 +68,7 @@ interface FakeOpenAiCodexModel {
   id: string;
   name: string;
   reasoning: boolean;
+  thinkingLevelMap?: Record<string, string | null>;
   input?: string[];
   cost?: { input: number; output: number; cacheRead: number; cacheWrite: number };
   contextWindow: number;
@@ -102,7 +103,7 @@ function createFakeModelRegistry(initialOpenAiCodexModels: FakeOpenAiCodexModel[
       ];
       for (const [providerName, config] of registeredProviders) {
         for (const model of config.models) {
-          rows.push({ provider: providerName, id: model.id, name: model.name, reasoning: model.reasoning, contextWindow: model.contextWindow });
+          rows.push({ provider: providerName, id: model.id, name: model.name, reasoning: model.reasoning, contextWindow: model.contextWindow, thinkingLevelMap: model.thinkingLevelMap });
         }
       }
       return rows;
@@ -113,6 +114,7 @@ function createFakeModelRegistry(initialOpenAiCodexModels: FakeOpenAiCodexModel[
 function createRouterHarness(modelRegistry: ReturnType<typeof createFakeModelRegistry> | ModelRegistry, options: { openAiCodexConfigured: boolean }, authStorage = createOpenAiCodexAuthStorage(options.openAiCodexConfigured)) {
   const getHandlers = new Map<string, (req: unknown, res: { json: (body: unknown) => void }) => Promise<void>>();
   const router = {
+    post: vi.fn(),
     get: vi.fn((path: string, handler: (req: unknown, res: { json: (body: unknown) => void }) => Promise<void>) => {
       getHandlers.set(path, handler);
     }),
@@ -138,7 +140,9 @@ function createRouterHarness(modelRegistry: ReturnType<typeof createFakeModelReg
 async function callModels(handler: (req: unknown, res: { json: (body: unknown) => void }) => Promise<void>) {
   const json = vi.fn();
   await handler({}, { json });
-  return json.mock.calls[0][0] as { models: Array<{ provider: string; id: string }> };
+  return json.mock.calls[0][0] as {
+    models: Array<{ provider: string; id: string; supportedThinkingLevels?: string[] }>;
+  };
 }
 
 describe("FN-7745: GPT-5.6 codenamed OpenAI Codex variants — /api/models", () => {
@@ -202,6 +206,42 @@ describe("FN-7745: GPT-5.6 codenamed OpenAI Codex variants — /api/models", () 
 
     const keys = response.models.map((m) => `${m.provider}/${m.id}`);
     expect(new Set(keys).size).toBe(keys.length);
+  });
+
+  it("exposes a max-only thinking map without fabricating xhigh support", async () => {
+    const modelRegistry = createFakeModelRegistry([{
+      id: "gpt-5.6-luna",
+      name: "GPT-5.6 Luna",
+      reasoning: true,
+      contextWindow: 272000,
+      maxTokens: 128000,
+      thinkingLevelMap: { xhigh: null, max: "max" },
+    }]);
+    const response = await callModels(createRouterHarness(modelRegistry, { openAiCodexConfigured: true }));
+    const model = response.models.find((row) => row.provider === "openai-codex" && row.id === "gpt-5.6-luna");
+    expect(model?.supportedThinkingLevels).toEqual(["off", "minimal", "low", "medium", "high", "max"]);
+  });
+
+  it("exposes an explicit xhigh map and omits capability metadata when the map is absent", async () => {
+    const modelRegistry = createFakeModelRegistry([{
+      id: "gpt-5.6-sol",
+      name: "GPT-5.6 Sol",
+      reasoning: true,
+      contextWindow: 272000,
+      maxTokens: 128000,
+      thinkingLevelMap: { xhigh: "xhigh", max: null },
+    }, {
+      id: "unmapped-model",
+      name: "Unmapped model",
+      reasoning: true,
+      contextWindow: 272000,
+      maxTokens: 128000,
+    }]);
+    const response = await callModels(createRouterHarness(modelRegistry, { openAiCodexConfigured: true }));
+    const explicit = response.models.find((row) => row.provider === "openai-codex" && row.id === "gpt-5.6-sol");
+    expect(explicit?.supportedThinkingLevels).toEqual(["off", "minimal", "low", "medium", "high", "xhigh"]);
+    const metadataUnknown = response.models.find((row) => row.provider === "openai-codex" && row.id === "unmapped-model");
+    expect(metadataUnknown).not.toHaveProperty("supportedThinkingLevels");
   });
 
   it("keeps real-registry GPT-5.6 rows gated when openai-codex auth is absent", async () => {

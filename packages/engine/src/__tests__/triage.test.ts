@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { Agent, TaskStore, Task, TaskDetail, Settings } from "@fusion/core";
-import { applyOriginalDescription, builtinSeamPrompt, buildBootstrapPrompt, computePlanApprovalFingerprint, MAX_TASK_LIST_TEXT_CHARS, renderTriagePolicyPlaceholders, resolveAgentPrompt } from "@fusion/core";
+import { applyOriginalDescription, builtinSeamPrompt, buildBootstrapPrompt, computePlanApprovalFingerprint, deriveFallbackTaskTitle, MAX_TASK_LIST_TEXT_CHARS, renderTriagePolicyPlaceholders, resolveAgentPrompt } from "@fusion/core";
 import {
   TriageProcessor,
   buildSpecificationPrompt,
@@ -305,7 +305,7 @@ describe("buildSpecificationPrompt", () => {
 
       expect(prompt).toContain("## Task Definition Language");
       expect(prompt).toContain(`${displayName} (${locale})`);
-      expect(prompt).toContain("Keep every `##`/`###` section heading");
+      expect(prompt).toContain("every `##`/`###` heading");
       expect(prompt).toContain("`## Original Description`");
     });
 
@@ -333,14 +333,15 @@ describe("buildSpecificationPrompt", () => {
       ["short input", languageSettings, "Très court"],
       ["low-confidence input", languageSettings, "Atypical vocabulary provides no familiar stopwords despite being long enough for language detection to inspect this ambiguous prose sample."],
       ["unsupported Japanese input", languageSettings, "ユーザーが作業内容と必要な手順を日本語で詳細に説明し、すべての利用者が理解できるように要件と確認方法を記載しています。"],
-    ])("keeps English behavior when %s", (_reason, settings, description) => {
+    ])("uses the explicit English contract when %s", (_reason, settings, description) => {
       const prompt = buildSpecificationPrompt(
         { ...baseTask, description },
         ".fusion/tasks/KB-001/PROMPT.md",
         settings,
       );
 
-      expect(prompt).not.toContain("## Task Definition Language");
+      expect(prompt).toContain("## Task Definition Language");
+      expect(prompt).toContain(settings.taskDefinitionInInputLanguage ? "same language as the original user input" : "in English");
     });
   });
 
@@ -530,44 +531,72 @@ describe("buildSpecificationPrompt", () => {
     expect(prompt).toContain("FN-002, FN-003");
   });
 
-  it("handles task without title", () => {
-    const taskWithoutTitle: TaskDetail = {
-      ...baseTask,
-      title: undefined,
-    };
+  describe("short titleless task title fallback", () => {
+    it.each([1, 199, 200, 201, 4001])("uses the deterministic description title at the %i-character boundary", (length) => {
+      const description = "a".repeat(length);
+      const prompt = buildSpecificationPrompt(
+        { ...baseTask, title: undefined, description },
+        ".fusion/tasks/KB-001/PROMPT.md",
+      );
+      const fallbackTitle = deriveFallbackTaskTitle(description);
 
-    const prompt = buildSpecificationPrompt(
-      taskWithoutTitle,
-      ".fusion/tasks/KB-001/PROMPT.md",
-    );
+      expect(prompt).toContain(`- **Title:** ${fallbackTitle}`);
+      expect(prompt).not.toContain("- **Title:** (none)");
+    });
 
-    expect(prompt).toContain("(none)");
+    it("preserves an explicit nonblank title", () => {
+      const prompt = buildSpecificationPrompt(
+        { ...baseTask, title: "Operator-provided title", description: "short request" },
+        ".fusion/tasks/KB-001/PROMPT.md",
+      );
+
+      expect(prompt).toContain("- **Title:** Operator-provided title");
+      expect(prompt).not.toContain("- **Title:** Short request");
+    });
+
+    it.each([
+      ["", "empty"],
+      ["   \n\t", "whitespace-only"],
+    ])("keeps (none) for %s descriptions", (description) => {
+      const prompt = buildSpecificationPrompt(
+        { ...baseTask, title: undefined, description },
+        ".fusion/tasks/KB-001/PROMPT.md",
+      );
+
+      expect(prompt).toContain("- **Title:** (none)");
+    });
+
+    it("keeps the deterministic fallback above the former AI threshold", () => {
+      const description = "a".repeat(201);
+      const prompt = buildSpecificationPrompt(
+        { ...baseTask, title: undefined, description },
+        ".fusion/tasks/KB-001/PROMPT.md",
+      );
+
+      expect(prompt).toContain(`- **Title:** ${deriveFallbackTaskTitle(description)}`);
+      expect(prompt).not.toContain("- **Title:** (none)");
+    });
+
+    it("uses the helper-safe first meaningful line for markdown and multiline text", () => {
+      const description = "\n### Restore the short task title\n\nAdditional details stay in the description.";
+      const prompt = buildSpecificationPrompt(
+        { ...baseTask, title: undefined, description },
+        ".fusion/tasks/KB-001/PROMPT.md",
+      );
+      const fallbackTitle = deriveFallbackTaskTitle(description);
+
+      expect(fallbackTitle).toBe("Restore the short task title");
+      expect(prompt).toContain(`- **Title:** ${fallbackTitle}`);
+      expect(prompt).not.toContain("- **Title:** (none)");
+    });
   });
 
-  it("includes proactive subtask guidance when breakdown was not explicitly requested", () => {
-    const prompt = buildSpecificationPrompt(
-      baseTask,
-      ".fusion/tasks/KB-001/PROMPT.md",
-    );
+  it("keeps complex tasks in one detailed planning prompt", () => {
+    const prompt = buildSpecificationPrompt(baseTask, ".fusion/tasks/KB-001/PROMPT.md");
 
-    expect(prompt).toContain("## Subtask Consideration");
-    expect(prompt).toContain("MORE THAN 7 implementation steps");
-    expect(prompt).toContain("GOOD TO SPLIT");
-    expect(prompt).not.toContain("## Subtask Breakdown Requested");
-  });
-
-  it("keeps explicit breakIntoSubtasks flow mandatory when requested", () => {
-    const prompt = buildSpecificationPrompt(
-      {
-        ...baseTask,
-        breakIntoSubtasks: true,
-      },
-      ".fusion/tasks/KB-001/PROMPT.md",
-    );
-
-    expect(prompt).toContain("## Subtask Breakdown Requested");
-    expect(prompt).toContain("If splitting: use the \\\`fn_task_create\\\` tool");
-    expect(prompt).not.toContain("## Subtask Consideration");
+    expect(prompt).toContain("## One-task planning");
+    expect(prompt).toContain("Keep this task intact regardless of complexity");
+    expect(prompt).not.toContain("Subtask Breakdown");
   });
 
   describe("memoryEnabled setting", () => {
@@ -878,34 +907,12 @@ describe("canonical triage policy prompt", () => {
 });
 
 describe("canonical triage policy prompt", () => {
-  it("includes proactive M/L subtask breakdown guidance", () => {
-    expect(TRIAGE_POLICY_PROMPT).toContain(
-      "## Proactive Subtask Breakdown for M/L Tasks",
-    );
-    expect(TRIAGE_POLICY_PROMPT).toContain("{{triageProactiveSubtaskSplittingEnabled}}");
-    expect(RENDERED_TRIAGE_POLICY_PROMPT).toContain(
-      "Even when `breakIntoSubtasks` is not set to `true`",
-    );
-    expect(RENDERED_TRIAGE_POLICY_PROMPT).toContain(
-      "Size S tasks should NOT be split",
-    );
+  it("requires one detailed plan for complex work", () => {
+    expect(TRIAGE_POLICY_PROMPT).toContain("Complexity never authorizes replacing a requested task with child tasks");
+    expect(RENDERED_TRIAGE_POLICY_PROMPT).toContain("Keep every requested task as one detailed plan regardless of size");
+    expect(RENDERED_TRIAGE_POLICY_PROMPT).not.toContain("breakIntoSubtasks");
   });
 
-  it("includes explicit rendered subtask breakdown thresholds", () => {
-    expect(RENDERED_TRIAGE_POLICY_PROMPT).toContain("MORE THAN 7 implementation steps");
-    expect(RENDERED_TRIAGE_POLICY_PROMPT).toContain(
-      "MORE THAN 3 different packages/modules",
-    );
-    expect(RENDERED_TRIAGE_POLICY_PROMPT).not.toContain("{{triageSubtaskStepThreshold}}");
-  });
-
-  it("biases toward keeping tasks whole and acknowledges coordination overhead", () => {
-    expect(RENDERED_TRIAGE_POLICY_PROMPT).toContain("Default to keeping the task whole");
-    expect(RENDERED_TRIAGE_POLICY_PROMPT).toContain("Coordination overhead");
-    expect(RENDERED_TRIAGE_POLICY_PROMPT).toContain(
-      "7-10 focused steps within a coherent scope is fine as one unit",
-    );
-  });
 });
 
 describe("FN-5893 invariant regression wording", () => {
@@ -1189,53 +1196,6 @@ describe("fast-mode triage", () => {
     expect(capturedSystemPrompt).not.toContain("Keep the project default workflow (`WF-005`)");
   });
 
-  it("renders disabled proactive splitting while preserving explicit breakIntoSubtasks prompts", async () => {
-    const task = createTriageTask({ id: "FN-FAST-003", executionMode: "standard", breakIntoSubtasks: true });
-    const rootDir = await createTriageFixtureRoot("fn-7491-triage-");
-    const detail = { ...mockTaskDetail, id: task.id, breakIntoSubtasks: true, attachments: [], comments: [] };
-    const store = createMockStore({
-      getTask: vi.fn().mockResolvedValue(detail),
-      getSettings: vi.fn().mockResolvedValue({
-        maxConcurrent: 2,
-        maxWorktrees: 4,
-        pollIntervalMs: 10000,
-        groupOverlappingFiles: false,
-        autoMerge: true,
-        triageProactiveSubtaskSplittingEnabled: false,
-      } as Settings),
-    });
-
-    let capturedSystemPrompt = "";
-    const { promptWithFallback } = await import("../pi.js");
-    (promptWithFallback as ReturnType<typeof vi.fn>).mockImplementationOnce(async (_session: unknown, prompt: string) => {
-      await mkdir(join(rootDir, ".fusion", "tasks", "FN-FAST-003"), { recursive: true }).catch(() => undefined);
-      await writeFile(join(rootDir, ".fusion", "tasks", "FN-FAST-003", "PROMPT.md"), "# Task: FN-FAST-003 - Split\n\n## Mission\n\nDone.", { flag: "w" }).catch(() => undefined);
-      expect(prompt).toContain("## Subtask Breakdown Requested");
-      expect(prompt).toContain("The user has requested that this task be broken into smaller subtasks");
-      expect(prompt).not.toContain("## Subtask Consideration");
-    });
-    mockCreateFnAgent.mockImplementationOnce(async (opts: any) => {
-      capturedSystemPrompt = opts.systemPrompt;
-      return {
-        session: {
-          state: {},
-          sessionManager: { getLeafId: vi.fn().mockReturnValue(null) },
-          prompt: vi.fn().mockResolvedValue(undefined),
-          dispose: vi.fn(),
-          navigateTree: vi.fn(),
-        },
-      };
-    });
-
-    const processor = new TriageProcessor(store, rootDir);
-    await processor.specifyTask(task);
-
-    expect(capturedSystemPrompt).toContain("Proactive oversized-task splitting is DISABLED");
-    expect(capturedSystemPrompt).toContain("Only create child tasks when `breakIntoSubtasks: true` is explicitly present");
-    expect(capturedSystemPrompt).not.toContain("Even when `breakIntoSubtasks` is not set to `true`, apply these thresholds proactively");
-    expect(promptWithFallback).toHaveBeenCalled();
-    await cleanupTriageFixtureRoot(rootDir);
-  });
 
   it("includes triage plugin contributions when provided", async () => {
     const task = createTriageTask({ id: "FN-FAST-PLUGIN-001", executionMode: "standard" });
@@ -3620,6 +3580,54 @@ Apply the scoped implementation changes.
     expect(metadataPatch.intentSignature.filePaths).not.toContain("AtlasNotes.xcodeproj/**");
   });
 
+  it("writes the short deterministic planning title through normal heading finalization", async () => {
+    const description = "Restore the short task title after planning";
+    const planningPrompt = buildSpecificationPrompt(
+      {
+        ...mockTaskDetail,
+        id: "FN-001",
+        title: undefined,
+        description,
+      },
+      ".fusion/tasks/FN-001/PROMPT.md",
+    );
+    const fallbackTitle = deriveFallbackTaskTitle(description);
+    expect(planningPrompt).toContain(`- **Title:** ${fallbackTitle}`);
+
+    await writeFile(
+      join(rootDir, ".fusion", "tasks", "FN-001", "PROMPT.md"),
+      `# Task: FN-001 - ${fallbackTitle}\n\n**Size:** M\n\n## Steps\n\n### Step 1: Preserve the title\n\nKeep the planned title.`,
+    );
+
+    const store = createMockStore({
+      getSettings: vi.fn().mockResolvedValue({
+        maxConcurrent: 2,
+        maxWorktrees: 4,
+        pollIntervalMs: 10000,
+        groupOverlappingFiles: false,
+        autoMerge: true,
+        requirePlanApproval: false,
+      } as Settings),
+    });
+
+    const processor = new TriageProcessor(store, rootDir);
+    const recovered = await processor.recoverApprovedTask({
+      id: "FN-001",
+      description,
+      column: "triage",
+      status: "planning",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [{ timestamp: "2026-01-01T00:00:00.000Z", action: "Spec review: APPROVE" }],
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:02:00.000Z",
+    });
+
+    expect(recovered).toBe(true);
+    expect(store.updateTask).toHaveBeenCalledWith("FN-001", expect.objectContaining({ title: fallbackTitle }));
+  });
+
   it("updates malformed metadata title from prompt heading when task ID matches", async () => {
     await writeFile(
       join(rootDir, ".fusion", "tasks", "FN-001", "PROMPT.md"),
@@ -3990,414 +3998,6 @@ describe("taskCreate tool model inheritance", () => {
     }));
   });
 
-  describe("proactive subtask creation (fn_task_create always available)", () => {
-    it("fn_task_create tool is included in triage tools regardless of breakIntoSubtasks", () => {
-      const store = createMockStore();
-      const processor = new TriageProcessor(store, "/test/root");
-      const createdSubtasksRef = { current: [] };
-
-      const tools = (processor as any).createTriageTools({
-        parentTaskId: "FN-400",
-        allowTaskCreate: true,
-        createdSubtasksRef,
-      });
-
-      const toolNames = tools.map((t: any) => t.name);
-      expect(toolNames).toContain("fn_task_create");
-      expect(toolNames).toContain("fn_task_list");
-      expect(toolNames).toContain("fn_task_search");
-      expect(toolNames).toContain("fn_task_show");
-      expect(tools).toHaveLength(4);
-    });
-
-    it("fn_task_create tool succeeds and tracks created subtask", async () => {
-      const parentTask: Task = {
-        id: "FN-400",
-        description: "Large task without breakIntoSubtasks",
-        column: "triage",
-        dependencies: [],
-        steps: [],
-        currentStep: 0,
-        log: [],
-        createdAt: "2026-01-01T00:00:00.000Z",
-        updatedAt: "2026-01-01T00:00:00.000Z",
-      };
-
-      const createdSubtask: Task = {
-        id: "FN-401",
-        description: "Child task",
-        column: "triage",
-        dependencies: [],
-        steps: [],
-        currentStep: 0,
-        log: [],
-        createdAt: "2026-01-01T00:00:00.000Z",
-        updatedAt: "2026-01-01T00:00:00.000Z",
-      };
-
-      const store = createMockStore({
-        getTask: vi.fn().mockResolvedValue(parentTask),
-        createTask: vi.fn().mockResolvedValue(createdSubtask),
-      });
-
-      const processor = new TriageProcessor(store, "/test/root");
-      const createdSubtasksRef = { current: [] };
-
-      const tools = (processor as any).createTriageTools({
-        parentTaskId: "FN-400",
-        allowTaskCreate: true,
-        createdSubtasksRef,
-      });
-
-      const taskCreateTool = tools.find((t: any) => t.name === "fn_task_create");
-      const result = await taskCreateTool.execute("call-1", {
-        description: "Child task description",
-        title: "Child Task",
-        dependencies: [],
-      });
-
-      // Should NOT return an error about task creation being disabled
-      const text = result.content[0].text;
-      expect(text).not.toContain("ERROR");
-      expect(text).not.toContain("not enabled");
-      expect(text).toContain("Created child task FN-401");
-
-      // Subtask should be tracked in the ref
-      expect(createdSubtasksRef.current).toContain("FN-401");
-
-      // Should inherit parent model settings
-      expect(store.createTask).toHaveBeenCalledWith(expect.objectContaining({
-        title: "Child Task",
-        description: "Child task description",
-      }), expect.objectContaining({
-        settings: expect.objectContaining({
-          maxConcurrent: 2,
-          maxWorktrees: 4,
-        }),
-      }));
-    });
-
-    it("fn_task_create passes workflow_id and noCommitsExpected through to child tasks", async () => {
-      const parentTask: Task = {
-        id: "FN-410",
-        description: "Parent task",
-        column: "triage",
-        dependencies: [],
-        steps: [],
-        currentStep: 0,
-        log: [],
-        createdAt: "2026-01-01T00:00:00.000Z",
-        updatedAt: "2026-01-01T00:00:00.000Z",
-      };
-
-      const createdSubtask: Task = {
-        ...parentTask,
-        id: "FN-411",
-        description: "Decision child task",
-        workflowId: "builtin:quick-fix",
-        noCommitsExpected: true,
-      };
-
-      const store = createMockStore({
-        getTask: vi.fn().mockResolvedValue(parentTask),
-        createTask: vi.fn().mockResolvedValue(createdSubtask),
-      });
-      const processor = new TriageProcessor(store, "/test/root");
-      const createdSubtasksRef = { current: [] };
-
-      const tools = (processor as any).createTriageTools({
-        parentTaskId: "FN-410",
-        allowTaskCreate: true,
-        createdSubtasksRef,
-      });
-      const taskCreateTool = tools.find((t: any) => t.name === "fn_task_create");
-
-      const result = await taskCreateTool.execute("call-1", {
-        description: "Investigate and report the routing decision",
-        workflow_id: "builtin:quick-fix",
-        noCommitsExpected: true,
-      });
-
-      expect(result.content[0].text).toContain("Created child task FN-411");
-      expect(store.createTask).toHaveBeenCalledWith(expect.objectContaining({
-        description: "Investigate and report the routing decision",
-        workflowId: "builtin:quick-fix",
-        noCommitsExpected: true,
-      }), expect.objectContaining({
-        settings: expect.objectContaining({
-          maxConcurrent: 2,
-          maxWorktrees: 4,
-        }),
-      }));
-      expect(createdSubtasksRef.current).toContain("FN-411");
-    });
-
-    it("fn_task_create rejects a dependency on the parent task being split", async () => {
-      // Regression: triage used to accept any id in `dependencies`. If the AI
-      // named the parent, the parent got deleted after the split and the child
-      // was blocked forever by a nonexistent dep (FN-2163/FN-2164 incident).
-      const parentTask: Task = {
-        id: "FN-600",
-        description: "Parent about to be split",
-        column: "triage",
-        dependencies: [],
-        steps: [],
-        currentStep: 0,
-        log: [],
-        createdAt: "2026-01-01T00:00:00.000Z",
-        updatedAt: "2026-01-01T00:00:00.000Z",
-      };
-
-      const store = createMockStore({
-        getTask: vi.fn().mockResolvedValue(parentTask),
-        createTask: vi.fn(),
-      });
-      const processor = new TriageProcessor(store, "/test/root");
-      const createdSubtasksRef = { current: [] };
-
-      const tools = (processor as any).createTriageTools({
-        parentTaskId: "FN-600",
-        allowTaskCreate: true,
-        createdSubtasksRef,
-      });
-      const taskCreateTool = tools.find((t: any) => t.name === "fn_task_create");
-
-      const result = await taskCreateTool.execute("call-1", {
-        description: "Child that tries to wait for the parent",
-        dependencies: ["FN-600"],
-      });
-
-      const text = result.content[0].text;
-      expect(text).toContain("ERROR");
-      expect(text).toContain("FN-600");
-      expect(text).toContain("parent task is deleted after splitting");
-      // Must not create the child — the caller has to fix the deps and retry.
-      expect(store.createTask).not.toHaveBeenCalled();
-      expect(createdSubtasksRef.current).toEqual([]);
-    });
-
-    it("fn_task_create accepts dependencies on sibling subtasks created earlier in the same split", async () => {
-      // The valid case: two siblings where the second depends on the first.
-      const parentTask: Task = {
-        id: "FN-700",
-        description: "Parent to split",
-        column: "triage",
-        dependencies: [],
-        steps: [],
-        currentStep: 0,
-        log: [],
-        createdAt: "2026-01-01T00:00:00.000Z",
-        updatedAt: "2026-01-01T00:00:00.000Z",
-      };
-      const sibling1: Task = { ...parentTask, id: "FN-701", description: "Sibling 1" };
-      const sibling2: Task = { ...parentTask, id: "FN-702", description: "Sibling 2" };
-
-      const createTaskMock = vi
-        .fn()
-        .mockResolvedValueOnce(sibling1)
-        .mockResolvedValueOnce(sibling2);
-
-      const store = createMockStore({
-        getTask: vi.fn().mockResolvedValue(parentTask),
-        createTask: createTaskMock,
-      });
-      const processor = new TriageProcessor(store, "/test/root");
-      const createdSubtasksRef = { current: [] };
-
-      const tools = (processor as any).createTriageTools({
-        parentTaskId: "FN-700",
-        allowTaskCreate: true,
-        createdSubtasksRef,
-      });
-      const taskCreateTool = tools.find((t: any) => t.name === "fn_task_create");
-
-      const firstRes = await taskCreateTool.execute("c1", {
-        description: "Sibling 1",
-        dependencies: [],
-      });
-      expect(firstRes.content[0].text).toContain("Created child task FN-701");
-
-      const secondRes = await taskCreateTool.execute("c2", {
-        description: "Sibling 2 depending on sibling 1",
-        dependencies: ["FN-701"],
-      });
-      expect(secondRes.content[0].text).toContain("Created child task FN-702");
-      expect(secondRes.content[0].text).not.toContain("ERROR");
-
-      // The second createTask call should have the resolved sibling id preserved.
-      expect(createTaskMock).toHaveBeenLastCalledWith(
-        expect.objectContaining({ dependencies: ["FN-701"] }),
-        expect.objectContaining({
-          settings: expect.objectContaining({
-            maxConcurrent: 2,
-            maxWorktrees: 4,
-          }),
-        }),
-      );
-      expect(createdSubtasksRef.current).toEqual(["FN-701", "FN-702"]);
-    });
-
-    it("fn_task_create rejects an unknown dependency id that is neither sibling nor existing task", async () => {
-      const parentTask: Task = {
-        id: "FN-800",
-        description: "Parent",
-        column: "triage",
-        dependencies: [],
-        steps: [],
-        currentStep: 0,
-        log: [],
-        createdAt: "2026-01-01T00:00:00.000Z",
-        updatedAt: "2026-01-01T00:00:00.000Z",
-      };
-      // getTask returns the parent when asked, but throws for unknown ids.
-      const store = createMockStore({
-        getTask: vi.fn(async (id: string) => {
-          if (id === "FN-800") return parentTask;
-          throw new Error(`Task ${id} not found`);
-        }) as unknown as TaskStore["getTask"],
-        createTask: vi.fn(),
-      });
-      const processor = new TriageProcessor(store, "/test/root");
-      const createdSubtasksRef = { current: [] };
-
-      const tools = (processor as any).createTriageTools({
-        parentTaskId: "FN-800",
-        allowTaskCreate: true,
-        createdSubtasksRef,
-      });
-      const taskCreateTool = tools.find((t: any) => t.name === "fn_task_create");
-
-      const result = await taskCreateTool.execute("c1", {
-        description: "Child naming a nonexistent dep",
-        dependencies: ["FN-9999"],
-      });
-
-      expect(result.content[0].text).toContain("ERROR");
-      expect(result.content[0].text).toContain("FN-9999");
-      expect(result.content[0].text).toContain("task not found");
-      expect(store.createTask).not.toHaveBeenCalled();
-    });
-
-    it("closes parent after proactive split even when breakIntoSubtasks is undefined", async () => {
-      // Test that the post-session closure path doesn't gate on breakIntoSubtasks.
-      // Strategy: capture the customTools from createFnAgent, then have
-      // promptWithFallback invoke the fn_task_create tool to simulate the agent
-      // proactively splitting an oversized task.
-      const task: Task = {
-        id: "FN-500",
-        description: "Oversized task without breakIntoSubtasks flag",
-        column: "triage",
-        dependencies: [],
-        steps: [],
-        currentStep: 0,
-        log: [],
-        createdAt: "2026-01-01T00:00:00.000Z",
-        updatedAt: "2026-01-01T00:00:00.000Z",
-      };
-
-      const childTask1: Task = {
-        id: "FN-501",
-        description: "Child part 1",
-        column: "triage",
-        dependencies: [],
-        steps: [],
-        currentStep: 0,
-        log: [],
-        createdAt: "2026-01-01T00:00:00.000Z",
-        updatedAt: "2026-01-01T00:00:00.000Z",
-      };
-      const childTask2: Task = {
-        id: "FN-502",
-        description: "Child part 2",
-        column: "triage",
-        dependencies: [],
-        steps: [],
-        currentStep: 0,
-        log: [],
-        createdAt: "2026-01-01T00:00:00.000Z",
-        updatedAt: "2026-01-01T00:00:00.000Z",
-      };
-
-      const taskDetail: TaskDetail = {
-        ...task,
-        prompt: "",
-        attachments: [],
-        // breakIntoSubtasks is explicitly undefined
-      };
-
-      const store = createMockStore({
-        getTask: vi.fn().mockResolvedValue(taskDetail),
-        createTask: vi.fn()
-          .mockResolvedValueOnce(childTask1)
-          .mockResolvedValueOnce(childTask2),
-      });
-
-      // Capture customTools from createFnAgent call
-      let capturedCustomTools: any[] = [];
-      const mockDispose = vi.fn();
-      mockCreateFnAgent.mockImplementation(async (opts: any) => {
-        capturedCustomTools = opts.customTools || [];
-        return {
-          session: {
-            prompt: vi.fn().mockResolvedValue(undefined),
-            dispose: mockDispose,
-            subscribe: vi.fn(),
-            sessionManager: {
-              getLeafId: vi.fn().mockReturnValue(null),
-              navigateTree: vi.fn(),
-            },
-          },
-        };
-      });
-
-      // Make promptWithFallback invoke the fn_task_create tool twice to simulate
-      // the agent proactively splitting the oversized task
-      const { promptWithFallback } = await import("../pi.js");
-      (promptWithFallback as ReturnType<typeof vi.fn>).mockImplementationOnce(
-        async () => {
-          const taskCreateTool = capturedCustomTools.find(
-            (t: any) => t.name === "fn_task_create",
-          );
-          expect(taskCreateTool).toBeDefined();
-          // Simulate agent creating two child tasks
-          await taskCreateTool.execute("call-1", {
-            description: "Child part 1",
-            title: "Part 1",
-            dependencies: [],
-          });
-          await taskCreateTool.execute("call-2", {
-            description: "Child part 2",
-            title: "Part 2",
-            dependencies: [],
-          });
-        },
-      );
-
-      const processor = new TriageProcessor(store, "/test/root", {
-        pollIntervalMs: 100_000,
-      });
-
-      await processor.specifyTask(task);
-
-      // The parent task should be deleted because subtasks were created,
-      // even though breakIntoSubtasks was NOT set
-      expect(store.logEntry).toHaveBeenCalledWith(
-        "FN-500",
-        expect.stringContaining("Converted into subtasks: FN-501, FN-502"),
-      );
-      expect(store.deleteTask).toHaveBeenCalledWith("FN-500", expect.objectContaining({
-        removeLineageReferences: true,
-        closureContext: {
-          kind: "split-into-subtasks",
-          childTaskIds: ["FN-501", "FN-502"],
-        },
-        auditContext: expect.objectContaining({
-          agentId: "triage",
-          runId: expect.stringMatching(/^triage-delete-FN-500-/),
-        }),
-      }));
-    });
-  });
 
   describe("bounded recovery retries for triage", () => {
     beforeEach(async () => {
@@ -7775,7 +7375,6 @@ describe("TriageProcessor delegation tools", () => {
     const tools = (processor as any).createTriageTools({
       parentTaskId: "FN-TRIAGE",
       allowTaskCreate: true,
-      createdSubtasksRef: { current: [] },
     });
 
     const toolNames = tools.map((t: any) => t.name);
@@ -7810,7 +7409,6 @@ describe("TriageProcessor delegation tools", () => {
     const tools = (processor as any).createTriageTools({
       parentTaskId: "FN-TRIAGE",
       allowTaskCreate: true,
-      createdSubtasksRef: { current: [] },
     });
 
     const taskSearchTool = tools.find((t: any) => t.name === "fn_task_search");
@@ -7836,7 +7434,6 @@ describe("TriageProcessor delegation tools", () => {
     const tools = (processor as any).createTriageTools({
       parentTaskId: "FN-TRIAGE",
       allowTaskCreate: true,
-      createdSubtasksRef: { current: [] },
     });
 
     const taskSearchTool = tools.find((t: any) => t.name === "fn_task_search");
@@ -7858,7 +7455,6 @@ describe("TriageProcessor delegation tools", () => {
     const tools = (processor as any).createTriageTools({
       parentTaskId: "FN-TRIAGE",
       allowTaskCreate: true,
-      createdSubtasksRef: { current: [] },
     });
 
     const taskSearchTool = tools.find((t: any) => t.name === "fn_task_search");
@@ -7922,7 +7518,6 @@ describe("FN-4774 regression: triage duplicate detection over done/archived task
     const tools = (processor as any).createTriageTools({
       parentTaskId: "FN-TRIAGE",
       allowTaskCreate: true,
-      createdSubtasksRef: { current: [] },
     });
 
     const taskSearchTool = tools.find((t: any) => t.name === "fn_task_search");
@@ -7982,7 +7577,6 @@ describe("FN-4774 regression: triage duplicate detection over done/archived task
     const tools = (processor as any).createTriageTools({
       parentTaskId: "FN-TRIAGE",
       allowTaskCreate: true,
-      createdSubtasksRef: { current: [] },
     });
 
     const taskSearchTool = tools.find((t: any) => t.name === "fn_task_search");

@@ -65,6 +65,26 @@ describe("useBoardWorkflows", () => {
     expect(deps.writeBoardWorkflowsCache).toHaveBeenCalledWith("p1", payload);
   });
 
+  it("hides disabled definitions from options while retaining explicit task metadata", async () => {
+    localStorage.setItem("kb:p1:kb-dashboard-board-workflow-selection", "builtin:coding");
+    const payload = makePayload({
+      defaultWorkflowId: "builtin:quick-fix",
+      workflows: [
+        { id: "builtin:coding", name: "Coding", selectable: false, columns: [] },
+        { id: "builtin:quick-fix", name: "Quick Fix", selectable: true, columns: [] },
+      ],
+      taskWorkflowIds: { "FN-CODING": "builtin:coding" },
+    });
+    const deps = makeDeps(() => Promise.resolve(payload));
+    const { result } = renderHook(() => useBoardWorkflows({ projectId: "p1", ...deps }));
+
+    await waitFor(() => expect(result.current.selectedWorkflow?.id).toBe("builtin:quick-fix"));
+    expect(result.current.workflowOptions.map((workflow) => workflow.id)).toEqual(["builtin:quick-fix"]);
+    expect(result.current.boardWorkflows?.workflows.find((workflow) => workflow.id === "builtin:coding")).toMatchObject({ selectable: false });
+    expect(result.current.boardWorkflows?.taskWorkflowIds["FN-CODING"]).toBe("builtin:coding");
+    expect(localStorage.getItem("kb:p1:kb-dashboard-board-workflow-selection")).toBeNull();
+  });
+
   it("hydrates board workflows synchronously from cache before refetch resolves", () => {
     const cachedPayload = makePayload({
       defaultWorkflowId: "wf-b",

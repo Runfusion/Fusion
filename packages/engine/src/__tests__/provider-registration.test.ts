@@ -146,7 +146,7 @@ describe("seedDashboardProviders", () => {
       baseUrl: provider.baseUrl,
       api: "openai-completions",
       apiKey: provider.apiKey,
-      models: [{ id: "acme-1", name: "Acme Model 1", reasoning: false, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 128000, maxTokens: 16384 }],
+      models: [{ id: "acme-1", name: "Acme Model 1", reasoning: true, thinkingLevelMap: { xhigh: "xhigh", max: "max" }, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 128000, maxTokens: 16384 }],
     });
 
     const registryB = await createInMemoryModelRegistry();
@@ -182,6 +182,24 @@ describe("seedDashboardProviders", () => {
 
     const providerIds = wrapped.getApiKeyProviders().map((p) => p.id);
     expect(providerIds).toEqual(expect.arrayContaining(["zai", "openrouter", "acme-one", "acme-two"]));
+  });
+
+  it("registers a google-generative-ai custom provider under the Google api key", async () => {
+    const modelRegistry = makeModelRegistry();
+    const provider = customProvider({ apiType: "google-generative-ai", baseUrl: "https://google.test" });
+
+    await registerCustomProviders(modelRegistry, [provider], vi.fn());
+
+    expect(modelRegistry.registerProvider).toHaveBeenCalledWith(
+      "acme-ai",
+      expect.objectContaining({
+        api: "google-generative-ai",
+        models: [expect.objectContaining({
+          reasoning: true,
+          thinkingLevelMap: { xhigh: "xhigh", max: "max" },
+        })],
+      }),
+    );
   });
 
   it("registers an anthropic-compatible custom provider under the anthropic-messages api key (FN-7690)", async () => {

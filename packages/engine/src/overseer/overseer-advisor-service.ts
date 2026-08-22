@@ -16,6 +16,7 @@ import {
   type Settings,
 } from "@fusion/core";
 import { createLogger } from "../logger.js";
+import { emitBoundedRunAudit } from "../util/emit-bounded-run-audit.js";
 import { evaluateOverseerHumanControl } from "./overseer-human-control-policy.js";
 import {
   OverseerAdvisorRuntime,
@@ -408,8 +409,8 @@ export class OverseerAdvisorService {
     outcome: "pending" | "succeeded",
   ): void {
     if (!this.store.recordRunAuditEvent || !this.store.getRunAuditEvents) return;
-    try {
-      emitOverseerSteering({
+    void emitBoundedRunAudit({
+      recordRunAuditEvent: () => emitOverseerSteering({
         store: this.store as Parameters<typeof emitOverseerSteering>[0]["store"],
         taskId,
         stage: "executor",
@@ -417,9 +418,7 @@ export class OverseerAdvisorService {
         outcome,
         severity,
         source: "session-advisor",
-      });
-    } catch (err) {
-      log.warn(`emitOverseerSteering failed: ${err instanceof Error ? err.message : String(err)}`);
-    }
+      }),
+    }, { mutationType: "overseer:intervention" }, { log });
   }
 }

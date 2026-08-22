@@ -1,6 +1,6 @@
 import "./TaskContextMenu.css";
 import type { KeyboardEvent, PointerEvent as ReactPointerEvent, MouseEvent as ReactMouseEvent, ReactNode } from "react";
-import { Fragment, useCallback, useEffect, useRef } from "react";
+import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { TFunction } from "i18next";
 import type { ColumnId, Task, TaskDetail, WorkflowStepResult } from "@fusion/core";
 import { VALID_TRANSITIONS, isColumn } from "@fusion/core";
@@ -36,6 +36,15 @@ export interface TaskMenuActionDescriptor {
   disabled?: boolean;
   onSelect?: () => void;
 }
+
+/** A non-action menu parent whose children are the selectable menu items. */
+export interface TaskMenuSubmenuDescriptor {
+  id: string;
+  label: string;
+  items: TaskMenuActionDescriptor[];
+}
+
+export type TaskMenuItemDescriptor = TaskMenuActionDescriptor | TaskMenuSubmenuDescriptor;
 
 export interface TaskMoveActionDescriptor {
   column: ColumnId;
@@ -386,6 +395,32 @@ export function getTaskMoveTransitions(
   });
 }
 
+/*
+FNXC:TaskCardMovement 2026-08-19-18:35:
+Task movement is contextual rather than drag-and-drop. Group only multiple legal destinations so
+one-target menus remain direct, and de-duplicate by column before rendering to prevent supplemental
+review targets from creating repeated Move to entries.
+*/
+export function buildTaskMoveMenuItems(
+  transitions: readonly TaskMoveActionDescriptor[],
+  onSelect: (column: ColumnId) => void,
+  parentLabel: string,
+): TaskMenuItemDescriptor[] {
+  const uniqueByColumn = new Map<ColumnId, TaskMoveActionDescriptor>();
+  for (const transition of transitions) {
+    if (!uniqueByColumn.has(transition.column)) uniqueByColumn.set(transition.column, transition);
+  }
+  const uniqueTransitions = Array.from(uniqueByColumn.values());
+  const items = uniqueTransitions.map((transition) => ({
+    id: `move-${transition.column}`,
+    label: transition.label,
+    onSelect: () => onSelect(transition.column),
+  }));
+  return items.length > 1
+    ? [{ id: "move-to", label: parentLabel, items }]
+    : items;
+}
+
 export function getTaskReviewAction(
   task: Task | TaskDetail,
   options: Pick<BuildTaskActionMenuModelOptions, "t" | "currentColumnFlags" | "mergeStrategy" | "autoMergeEnabled" | "prAutomationLabel" | "isCheckingPrStatus" | "onMerge" | "onStartPrReview" | "onCheckPrStatus">,
@@ -571,7 +606,7 @@ export function buildTaskActionMenuModel(options: BuildTaskActionMenuModelOption
 }
 
 export interface TaskContextMenuProps {
-  actions: TaskMenuActionDescriptor[];
+  actions: TaskMenuItemDescriptor[];
   role?: "menu" | "list";
   className?: string;
   itemClassName?: string;
@@ -599,6 +634,9 @@ export function TaskContextMenu({
 }: TaskContextMenuProps) {
   const menuRef = useRef<HTMLDivElement | null>(null);
   const touchSelectedActionRef = useRef<{ id: string; at: number } | null>(null);
+  const submenuRef = useRef<HTMLDivElement | null>(null);
+  const [openSubmenuId, setOpenSubmenuId] = useState<string | null>(null);
+  const [submenuOpensLeft, setSubmenuOpensLeft] = useState(false);
 
   const selectAction = useCallback((action: TaskMenuActionDescriptor) => {
     if (action.disabled || action.tone === "note" || !action.onSelect) return;
@@ -643,7 +681,40 @@ export function TaskContextMenu({
     firstItem?.focus({ preventScroll: true });
   }, [actions, autoFocusFirstItem]);
 
+  useEffect(() => {
+    if (!openSubmenuId) return;
+    menuRef.current?.querySelector<HTMLButtonElement>(`[data-task-submenu="${openSubmenuId}"] button:not(:disabled)`)?.focus({ preventScroll: true });
+  }, [openSubmenuId]);
+
+  /*
+  FNXC:TaskCardMovement 2026-08-19-18:52:
+  The root menu is clamped to the viewport, but a nested Move to menu can still overflow from a
+  rightmost Board lane or dock. Measure its rendered edge before paint and flip it left so every
+  legal destination remains reachable with mouse, keyboard, and touch.
+  */
+  useLayoutEffect(() => {
+    if (!openSubmenuId) {
+      setSubmenuOpensLeft(false);
+      return;
+    }
+    setSubmenuOpensLeft((submenuRef.current?.getBoundingClientRect().right ?? 0) > window.innerWidth);
+  }, [openSubmenuId]);
+
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    const activeSubmenu = (document.activeElement as HTMLElement | null)?.closest<HTMLElement>("[data-task-submenu]");
+    if (event.key === "Escape" && activeSubmenu) {
+      event.preventDefault();
+      event.stopPropagation();
+      setOpenSubmenuId(null);
+      menuRef.current?.querySelector<HTMLButtonElement>(`[data-task-submenu-toggle="${activeSubmenu.dataset.taskSubmenu}"]`)?.focus();
+      return;
+    }
+    if (event.key === "ArrowLeft" && activeSubmenu) {
+      event.preventDefault();
+      setOpenSubmenuId(null);
+      menuRef.current?.querySelector<HTMLButtonElement>(`[data-task-submenu-toggle="${activeSubmenu.dataset.taskSubmenu}"]`)?.focus();
+      return;
+    }
     if (event.key !== "ArrowDown" && event.key !== "ArrowUp" && event.key !== "Home" && event.key !== "End") return;
     const items = Array.from(menuRef.current?.querySelectorAll<HTMLButtonElement>("button:not(:disabled)") ?? []);
     if (items.length === 0) return;
@@ -662,29 +733,65 @@ export function TaskContextMenu({
 
   return (
     <div ref={menuRef} className={className} role={role} onKeyDown={handleKeyDown}>
-      {actions.map((action) => {
+      {actions.map((item) => {
+        if ("items" in item) {
+          const isOpen = openSubmenuId === item.id;
+          return (
+            <div className="task-context-menu__submenu-parent" key={item.id}>
+              <button
+                type="button"
+                className={`${itemClassName} task-context-menu__submenu-toggle`}
+                role={role === "menu" ? "menuitem" : undefined}
+                aria-haspopup="menu"
+                aria-expanded={isOpen}
+                data-task-submenu-toggle={item.id}
+                onClick={() => setOpenSubmenuId((current) => current === item.id ? null : item.id)}
+                onKeyDown={(event) => {
+                  if (event.key !== "ArrowRight" && event.key !== "Enter" && event.key !== " ") return;
+                  event.preventDefault();
+                  setOpenSubmenuId(item.id);
+                }}
+              >
+                {item.label}
+              </button>
+              {isOpen && (
+                <div
+                  ref={submenuRef}
+                  className={`task-context-menu__submenu${submenuOpensLeft ? " task-context-menu__submenu--opens-left" : ""}`}
+                  role="menu"
+                  data-task-submenu={item.id}
+                >
+                  {item.items.map((action) => {
+                    const classes = [itemClassName, "task-context-menu__submenu-item"];
+                    if (action.tone === "danger") classes.push(dangerItemClassName);
+                    return (
+                      <button
+                        key={action.id}
+                        type="button"
+                        className={classes.join(" ")}
+                        role={role === "menu" ? "menuitem" : undefined}
+                        disabled={action.disabled}
+                        onPointerUp={(event) => handleActionPointerUp(event, action)}
+                        onClick={(event) => handleActionClick(event, action)}
+                      >
+                        {action.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        }
+        const action = item;
         const classes = [itemClassName];
         if (action.tone === "danger") classes.push(dangerItemClassName);
         if (action.tone === "note") classes.push(noteItemClassName);
-
         const defaultNode = action.tone === "note" ? (
-          <span key={action.id} className={classes.join(" ")} role="note">
-            {action.label}
-          </span>
+          <span key={action.id} className={classes.join(" ")} role="note">{action.label}</span>
         ) : (
-          <button
-            key={action.id}
-            type="button"
-            className={classes.join(" ")}
-            role={role === "menu" ? "menuitem" : undefined}
-            disabled={action.disabled}
-            onPointerUp={(event) => handleActionPointerUp(event, action)}
-            onClick={(event) => handleActionClick(event, action)}
-          >
-            {action.label}
-          </button>
+          <button key={action.id} type="button" className={classes.join(" ")} role={role === "menu" ? "menuitem" : undefined} disabled={action.disabled} onPointerUp={(event) => handleActionPointerUp(event, action)} onClick={(event) => handleActionClick(event, action)}>{action.label}</button>
         );
-
         return <Fragment key={action.id}>{renderAction ? renderAction(action, defaultNode) : defaultNode}</Fragment>;
       })}
     </div>

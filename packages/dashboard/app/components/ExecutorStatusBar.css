@@ -99,10 +99,9 @@ FN-6887 makes the footer status bar the canonical desktop/tablet terminal launch
   border-radius: var(--radius-sm);
 }
 
-.executor-status-bar__segment--stuck {
-  color: var(--color-error);
-}
-
+/*
+FNXC:StuckTagRemoval 2026-08-17-22:30: Operator removed stuck-task tagging from the dashboard; engine recovery sweeps still consume taskStuckTimeoutMs server-side.
+*/
 .executor-status-bar__segment--fanout {
   color: var(--color-error);
   min-width: 0;
@@ -134,14 +133,6 @@ FN-6887 makes the footer status bar the canonical desktop/tablet terminal launch
 
 .executor-status-bar__indicator--blocked.executor-status-bar__indicator--active {
   background: var(--triage);
-}
-
-.executor-status-bar__indicator--stuck {
-  background: var(--color-error);
-}
-
-.executor-status-bar__indicator--stuck.executor-status-bar__indicator--active {
-  animation: executor-pulse 1s ease-in-out infinite;
 }
 
 .executor-status-bar__indicator--queued {

@@ -132,6 +132,7 @@ export function ActivityLogModal({
   const EVENT_TYPE_LABELS = getEventTypeLabels(t);
   const [filteredType, setFilteredType] = useState<ActivityEventType | "all">("all");
   const [filteredProjectId, setFilteredProjectId] = useState<string | "all">(projectId || "all");
+  const [taskIdSearch, setTaskIdSearch] = useState("");
   const [showConfirmClear, setShowConfirmClear] = useState(false);
   
   // Sync with external projectId prop
@@ -142,6 +143,12 @@ export function ActivityLogModal({
   // Convert filters to the format expected by useActivityLog
   const activityType = filteredType === "all" ? undefined : filteredType;
   const activeProjectId = filteredProjectId === "all" ? undefined : filteredProjectId;
+  /*
+  FNXC:ActivityLogTaskSearch 2026-08-20-04:17:
+  The shared modal and embedded dock pass one canonical task ID to durable read boundaries. Blank input stays
+  undefined so it restores unfiltered history; normalization makes operator casing irrelevant without broad search.
+  */
+  const taskId = taskIdSearch.trim().toUpperCase() || undefined;
   
   // Determine data source:
   // - In project view (currentProject set): use per-project activity log (/api/activity)
@@ -157,11 +164,13 @@ export function ActivityLogModal({
     entries, 
     loading: isLoading, 
     error, 
-    refresh, 
-    hasMore 
+    refresh,
+    hasMore,
+    loadMore,
   } = useActivityLog({ 
     projectId: activeProjectId, 
-    type: activityType, 
+    type: activityType,
+    taskId,
     limit: 100,
     autoRefresh: isOpen,
     useCentralFeed,
@@ -220,7 +229,14 @@ export function ActivityLogModal({
   }, [isOpen, escapeEnabled, onClose, showConfirmClear]);
 
   // Determine if any filter is active
-  const isFilterActive = filteredType !== "all" || filteredProjectId !== "all";
+  const isFilterActive = filteredType !== "all" || filteredProjectId !== "all" || taskId !== undefined;
+
+  const clearFilters = () => {
+    setFilteredType("all");
+    setFilteredProjectId("all");
+    setTaskIdSearch("");
+    onProjectFilterChange?.(undefined);
+  };
 
   if (!isOpen) return null;
 
@@ -315,10 +331,22 @@ export function ActivityLogModal({
           )}
         </div>
 
-        {/* Active filters display */}
-        {isFilterActive && (
-          <div className="activity-log-active-filters">
-            <span className="activity-log-filter-label">{t("activityLog.activeFilters", "Active filters:")}</span>
+        {/* Task search remains inline in every presentation; the active badges compose beside it. */}
+        <div className="activity-log-active-filters">
+          <label className="activity-log-task-search-label" htmlFor="activity-log-task-search">
+            {t("activityLog.taskId", "Task ID")}
+          </label>
+          <input
+            id="activity-log-task-search"
+            className="input activity-log-task-search"
+            data-testid="activity-task-search"
+            type="search"
+            value={taskIdSearch}
+            onChange={(event) => setTaskIdSearch(event.target.value)}
+            placeholder={t("activityLog.taskIdSearchPlaceholder", "Search task ID (e.g. FN-066)")}
+            aria-label={t("activityLog.taskIdSearchPlaceholder", "Search task ID (e.g. FN-066)")}
+          />
+          {isFilterActive && <span className="activity-log-filter-label">{t("activityLog.activeFilters", "Active filters:")}</span>}
             {filteredProjectId !== "all" && (
               <span className="activity-log-filter-badge">
                 {t("activityLog.projectFilterBadge", "Project: {{project}}", { project: projects.find(p => p.id === filteredProjectId)?.name || filteredProjectId })}
@@ -329,18 +357,18 @@ export function ActivityLogModal({
                 {t("activityLog.typeFilterBadge", "Type: {{type}}", { type: EVENT_TYPE_LABELS[filteredType] })}
               </span>
             )}
-            <button
+            {taskId && (
+              <span className="activity-log-filter-badge">
+                {t("activityLog.taskIdFilterBadge", "Task: {{taskId}}", { taskId })}
+              </span>
+            )}
+            {isFilterActive && <button
               className="activity-log-clear-filters"
-              onClick={() => {
-                setFilteredType("all");
-                setFilteredProjectId("all");
-                onProjectFilterChange?.(undefined);
-              }}
+              onClick={clearFilters}
             >
               {t("activityLog.clearFilters", "Clear all")}
-            </button>
+            </button>}
           </div>
-        )}
 
         {/* Content */}
         <div className="activity-log-content" data-testid="activity-log-content">
@@ -362,11 +390,7 @@ export function ActivityLogModal({
               {isFilterActive && (
                 <button
                   className="btn btn-secondary"
-                  onClick={() => {
-                    setFilteredType("all");
-                    setFilteredProjectId("all");
-                    onProjectFilterChange?.(undefined);
-                  }}
+                  onClick={clearFilters}
                 >
                   {t("activityLog.clearFiltersBtnLabel", "Clear Filters")}
                 </button>
@@ -432,7 +456,7 @@ export function ActivityLogModal({
           {hasMore && !isLoading && (
             <button
               className="activity-log-load-more"
-              onClick={refresh}
+              onClick={loadMore}
               data-testid="activity-load-more"
             >
               {t("activityLog.loadMore", "Load More")}

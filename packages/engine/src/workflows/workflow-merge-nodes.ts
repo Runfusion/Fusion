@@ -2,6 +2,11 @@ import type { TaskDetail } from "@fusion/core";
 import type { MergePrimitiveResult, WorkflowPrimitiveContext, WorkflowRuntimePrimitives } from "../execution/runtime-primitives.js";
 import type { WorkflowNodeResult } from "./workflow-graph-executor.js";
 
+/** A terminal graph value: retrying cannot create missing merge-boundary proof. */
+export const MERGE_BOUNDARY_UNPROVEN_VALUE = "merge-boundary-unproven";
+
+export const PRESERVED_MERGE_FAILURE_REASONS = new Set(["implementation-incomplete", "merge-unavailable"]);
+
 export interface WorkflowMergeNodeDeps {
   primitives: Pick<WorkflowRuntimePrimitives, "requestMerge" | "audit">;
 }
@@ -34,6 +39,16 @@ export function classifyMergePrimitiveResult(
   value: string | undefined,
   primitiveOutcome: WorkflowNodeResult["outcome"],
 ): WorkflowNodeResult {
+  /*
+  FNXC:WorkflowMerge 2026-08-20-00:50:
+  FN-9157 requires an unprovable merge boundary to remain terminal on direct
+  merge-attempt dispatch. Preserve this explicit value before failed-data
+  classification, whose unknown-reason fallback is merge-failed and would repeat
+  the boundary retry.
+  */
+  if (value === MERGE_BOUNDARY_UNPROVEN_VALUE) {
+    return { outcome: "failure", value: MERGE_BOUNDARY_UNPROVEN_VALUE };
+  }
   if (data?.status === "merged") {
     return { outcome: "success", value: data.noOp ? "already-landed" : "merged" };
   }
@@ -59,7 +74,19 @@ export function classifyMergePrimitiveResult(
 }
 
 function classifyMergeFailure(reason: string): WorkflowNodeResult {
-  const normalized = reason.toLowerCase();
+  const normalized = reason.trim().toLowerCase();
+  /*
+  FNXC:WorkflowMerge 2026-08-20-02:36:
+  Structured engine sentinels must survive classification: these heuristics are only for free-text
+  merge-requester reasons, and renaming exact literals made primitive merge-attempt dispatch disagree
+  with the legacy merge seam for the same engine state. implementation-incomplete protects its no-op
+  merge-proof route; merge-unavailable deliberately remains non-terminal because it is emitted only
+  when mergeRequester is absent and routeGraphMergeFailureToRetry returns false on that same absence.
+  Marking it terminal would instead park both paths as operator-action-required failures.
+  */
+  if (PRESERVED_MERGE_FAILURE_REASONS.has(normalized)) {
+    return { outcome: "failure", value: normalized };
+  }
   if (normalized.includes("file scope") || normalized.includes("filescope")) {
     return { outcome: "failure", value: "file-scope-violation" };
   }

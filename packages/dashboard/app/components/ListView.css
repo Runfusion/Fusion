@@ -367,7 +367,7 @@ List rows and mobile cards expose the same task lifecycle menu as Board cards fr
   gap: var(--space-sm);
 }
 
-/* Drop zones for drag and drop */
+/* Clickable workflow column filters. */
 .list-drop-zones {
   display: flex;
   gap: var(--space-sm);
@@ -400,12 +400,6 @@ List rows and mobile cards expose the same task lifecycle menu as Board cards fr
   border-color: var(--todo);
   background: color-mix(in srgb, var(--todo) 15%, transparent);
   box-shadow: 0 0 0 1px var(--todo);
-}
-
-.list-drop-zone.drag-over {
-  border-color: var(--todo);
-  box-shadow: 0 0 0 1px var(--todo);
-  background: color-mix(in srgb, var(--todo) 10%, transparent);
 }
 
 .drop-zone-dot {
@@ -599,10 +593,6 @@ No border-left on the detail pane. Keeping a border-left here would produce a se
   box-shadow: inset 0 0 0 1px var(--todo);
 }
 
-.list-row.dragging {
-  opacity: 0.4;
-}
-
 .list-row.failed {
   border-left: 3px solid var(--color-error-dark);
 }
@@ -612,13 +602,8 @@ No border-left on the detail pane. Keeping a border-left here would produce a se
 }
 
 /*
-FNXC:ListView 2026-06-20-03:25:
-FN-6774 removes the saturated stuck-task edge stripe from list rows. Keep the subtle triage background and stuck status badge so stuck rows stay distinguishable without changing the neutral row border.
+FNXC:StuckTagRemoval 2026-08-17-22:30: Operator removed stuck-task tagging from the dashboard; engine recovery sweeps still consume taskStuckTimeoutMs server-side.
 */
-.list-row.stuck {
-  background: color-mix(in srgb, var(--triage) 8%, transparent);
-}
-
 /*
 FNXC:ListView 2026-06-16-00:00:
 FN-6529 requires list-view agent-active tasks to use a simple static highlight instead of the animated board-card glow, so the list row keeps a flat inset indicator and subtle background without referencing agent-glow.
@@ -782,12 +767,6 @@ rows while preserving their existing badge geometry.
 .list-status-badge.failed {
   background: var(--status-error-bg);
   color: var(--color-error-dark);
-}
-
-.list-status-badge.stuck {
-  background: color-mix(in srgb, var(--triage) 20%, transparent);
-  color: var(--triage);
-  animation: stuck-pulse 2s ease-in-out infinite;
 }
 
 .list-status-badge.pulsing {

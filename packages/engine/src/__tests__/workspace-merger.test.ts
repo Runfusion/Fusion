@@ -26,11 +26,13 @@ extraction is byte-for-byte; runAiMerge is landOneRepo's single-repo caller).
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { EventEmitter } from "node:events";
 import { execSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import path from "node:path";
 import type { Task, TaskStore } from "@fusion/core";
 import { assertNotWorkspaceTaskMerge } from "@fusion/core";
-import { landWorkspaceTask, runAiMerge } from "../merge/merger-ai.js";
+import { RESOLVED_PRIOR_FINDINGS_MARKER, landWorkspaceTask, runAiMerge } from "../merge/merger-ai.js";
+import { PRIOR_FINDING_DISPOSITIONS_MARKER } from "../merge/merger-ai-prompts.js";
 import { createWorkspaceFixture, hasGit, type WorkspaceFixture } from "./_workspace-fixture.js";
 
 const describeIfGit = hasGit ? describe : describe.skip;
@@ -58,6 +60,13 @@ function createStore(settings: Record<string, unknown> = {}): TaskStore & Record
     emitted,
     getSettings: vi.fn().mockResolvedValue({ autoMerge: false, ...settings }),
     updateTask: vi.fn().mockResolvedValue(undefined),
+    /* FNXC:WorkspaceMergeTests 2026-08-20-23:23: the durable merge-review reconciliation path atomically records its episode before a workspace repository can land. Keep this narrow store double compatible with that production contract. */
+    updateTaskAtomic: vi.fn(async (_id: string, mutate: (task: Task) => Partial<Task> | undefined) => {
+      const current = await store.getTask(TASK_ID) as Task;
+      const patch = mutate(current);
+      if (patch) Object.assign(current, patch);
+      return current;
+    }),
     mergeWorkspaceWorktreeEntry: vi.fn().mockResolvedValue(undefined),
     logEntry: vi.fn().mockResolvedValue(undefined),
     appendAgentLog: vi.fn().mockResolvedValue(undefined),
@@ -166,6 +175,20 @@ function makeTask(workspaceWorktrees: Task["workspaceWorktrees"]): Task {
     currentStep: 0,
     log: [],
     workspaceWorktrees,
+    // FNXC:RepositoryScope 2026-08-21-00:12: merge fixtures model planner-confirmed intent and fresh qualified diff evidence; acquisition alone is deliberately insufficient to land.
+    repositoryScope: {
+      repositories: Object.keys(workspaceWorktrees ?? {}).sort(),
+      state: "confirmed",
+      revision: 1,
+      // FNXC:RepositoryScope 2026-08-21-01:36: fixtures persist the same
+      // merge-boundary fingerprint that production requires from Code Review.
+      reviewEvidence: Object.fromEntries(Object.entries(workspaceWorktrees ?? {}).map(([repo, entry]) => {
+        const mergeBase = execSync(`git merge-base HEAD ${entry.branch}`, { cwd: entry.worktreePath, encoding: "utf8" }).trim();
+        const diff = execSync(`git diff --binary ${entry.baseCommitSha ?? mergeBase}..HEAD`, { cwd: entry.worktreePath, encoding: "utf8" });
+        return [repo, { fingerprint: createHash("sha256").update(diff).digest("hex"), approvedAt: new Date().toISOString() }];
+      })),
+    },
+    modifiedFiles: Object.keys(workspaceWorktrees ?? {}).sort().map((repo) => `${repo}/feature.txt`),
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   } as Task;
@@ -217,6 +240,32 @@ describeIfGit("landWorkspaceTask — per-repo merge loop (Phase C U1)", () => {
     expect(store.emitted.filter((e) => e.event === "task:merged")).toHaveLength(1);
   });
 
+  it("reuses reconciled review findings for a workspace sub-repository", async () => {
+    fx = await createWorkspaceFixture(["repo-a"]);
+    addRepoBranchWithEdit(fx, "repo-a", "a feature\n");
+    const store = createStore({ merger: { mode: "ai", maxReviewPasses: 1 } });
+    const task = makeTask({ "repo-a": { worktreePath: fx.repoPath("repo-a"), branch: BRANCH } });
+    const finding = "drops the workspace task export";
+    const reviewPrompts: string[] = [];
+    let reviews = 0;
+
+    const result = await landWorkspaceTask(store, task, fx.rootDir, {}, {
+      mergeAgent: squashMergeAgent(BRANCH),
+      reviewAgent: async (_cwd, prompt) => {
+        reviewPrompts.push(prompt);
+        reviews++;
+        return reviews === 1
+          ? `${finding}\nSEVERITY: blocking\nREVIEW_VERDICT: reject`
+          : `${RESOLVED_PRIOR_FINDINGS_MARKER} ${finding}\n${PRIOR_FINDING_DISPOSITIONS_MARKER}\nfinding-1-1: corrected\nREVIEW_VERDICT: approve`;
+      },
+    });
+
+    expect(result.allLanded).toBe(true);
+    /* FNXC:WorkspaceMergeTests 2026-08-20-23:23: FN-090 requires two clean confirmations after a corrected finding, so the final approval pass is intentionally a second independent reviewer session. */
+    expect(reviewPrompts).toHaveLength(3);
+    expect(reviewPrompts[1]).toContain(finding);
+  });
+
   it("per-repo resolution: each repo lands on its OWN origin/HEAD branch (override-stripping)", async () => {
     fx = await createWorkspaceFixture(["repo-a", "repo-b"]);
     // Give each repo a different default integration branch via a bare origin whose
@@ -263,6 +312,34 @@ describeIfGit("landWorkspaceTask — per-repo merge loop (Phase C U1)", () => {
     expect(fx.git("repo-b", "git rev-parse refs/heads/release")).toBe(byRepo["repo-b"].landedSha);
   });
 
+  it("rejects a modified repository with no approving review fingerprint", async () => {
+    fx = await createWorkspaceFixture(["repo-a"]);
+    addRepoBranchWithEdit(fx, "repo-a", "review evidence is mandatory\n");
+    const store = createStore();
+    const task = makeTask({ "repo-a": { worktreePath: fx.repoPath("repo-a"), branch: BRANCH } });
+    task.repositoryScope!.reviewEvidence = {};
+
+    await expect(landWorkspaceTask(store, task, fx.rootDir, {}, {
+      mergeAgent: squashMergeAgent(BRANCH),
+      reviewAgent: approveReviewAgent,
+    })).rejects.toThrow("changed after review");
+    expect(store.mergeWorkspaceWorktreeEntry).not.toHaveBeenCalled();
+  });
+
+  it("returns a fresh repository file to Code Review instead of landing it without review evidence", async () => {
+    fx = await createWorkspaceFixture(["repo-a"]);
+    addRepoBranchWithEdit(fx, "repo-a", "review this newly discovered file\n");
+    const store = createStore();
+    const task = makeTask({ "repo-a": { worktreePath: fx.repoPath("repo-a"), branch: BRANCH } });
+    task.modifiedFiles = [];
+
+    await expect(landWorkspaceTask(store, task, fx.rootDir, {}, {
+      mergeAgent: squashMergeAgent(BRANCH),
+      reviewAgent: approveReviewAgent,
+    })).rejects.toThrow("changed after review");
+    expect(store.mergeWorkspaceWorktreeEntry).not.toHaveBeenCalled();
+  });
+
   it("partial: repo B conflict → repo A lands, B reports failure, task NOT moved done", async () => {
     fx = await createWorkspaceFixture(["repo-a", "repo-b"]);
     addRepoBranchWithEdit(fx, "repo-a", "a feature\n");
@@ -275,6 +352,9 @@ describeIfGit("landWorkspaceTask — per-repo merge loop (Phase C U1)", () => {
       "repo-a": { worktreePath: fx.repoPath("repo-a"), branch: BRANCH },
       "repo-b": { worktreePath: fx.repoPath("repo-b"), branch: BRANCH },
     });
+    // FNXC:RepositoryScope 2026-08-21-00:58: the merge boundary only admits fresh
+    // changes that were present in the persisted Code Review evidence.
+    task.modifiedFiles = ["repo-a/feature.txt", "repo-b/README.md"];
 
     (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(task);
     const result = await landWorkspaceTask(store, task, fx.rootDir, {}, {

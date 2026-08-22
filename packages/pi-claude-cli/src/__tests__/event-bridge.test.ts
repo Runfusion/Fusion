@@ -179,7 +179,35 @@ describe("createEventBridge", () => {
       expect(textEnd1.content).toBe("Second");
     });
 
-    it("repairs a missing sentence boundary between consecutive text blocks", () => {
+    /*
+  FNXC:ChatStreaming 2026-08-19-13:52:
+  The Claude CLI bridge must classify numeric period boundaries before mutating its output accumulator, otherwise source labels and URL paths reach Chat already corrupted.
+  */
+  it("preserves the reported dotted model links across text deltas", () => {
+    const bridge = createBridgeWithStart();
+    bridge.handleEvent({ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } } as any);
+    for (const text of [
+      "[GPT‑5.",
+      "6 Luna](https://developers.openai.com/api/docs/models/gpt-5.",
+      "6-luna) [GPT‑5.",
+      "6 Sol](https://developers.openai.com/api/docs/models/gpt-5.",
+      "6-sol) [GPT‑5.",
+      "6 Terra](https://developers.openai.com/api/docs/models/gpt-5.",
+      "6-terra)",
+    ]) {
+      bridge.handleEvent({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text } } as any);
+    }
+
+    const output = bridge.getOutput();
+    const text = (output.content[0] as any).text as string;
+    expect(text).toContain("GPT‑5.6 Luna");
+    expect(text).not.toContain("5. 6");
+    expect(text).toContain("/gpt-5.6-luna");
+    expect(text).toContain("/gpt-5.6-sol");
+    expect(text).toContain("/gpt-5.6-terra");
+  });
+
+  it("repairs a missing sentence boundary between consecutive text blocks", () => {
       const bridge = createBridgeWithStart();
 
       bridge.handleEvent({

@@ -8,7 +8,7 @@
  * Idempotent: if already initialized, reports success without recreating.
  */
 
-import { existsSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { join, resolve, basename } from "node:path";
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
@@ -24,7 +24,6 @@ import {
   writeProjectIdentity,
 } from "@fusion/core";
 import { maybeInstallClaudeSkillForNewProject } from "./claude-skills-runner.js";
-import { isGitRepo } from "./git.js";
 import {
   installBundledShippedSkills,
   type SkillInstallResult,
@@ -36,7 +35,7 @@ export interface InitOptions {
   name?: string;
   /** Path to initialize (defaults to cwd) */
   path?: string;
-  /** Initialize a git repository if one does not exist */
+  /** Compatibility flag; project readiness is now always established. */
   git?: boolean;
 }
 
@@ -66,6 +65,12 @@ export async function runInit(options: InitOptions = {}): Promise<void> {
 
     const existing = await central.getProjectByPath(cwd);
     if (existing) {
+      // Repair Git readiness even when the project was already registered.
+      await central.ensureProjectForPath({
+        path: cwd,
+        identity: readProjectIdentity(fusionDir) ?? undefined,
+        name: existing.name,
+      });
       try {
         writeProjectIdentity(join(cwd, ".fusion"), {
           id: existing.id,
@@ -112,13 +117,12 @@ export async function runInit(options: InitOptions = {}): Promise<void> {
     console.log(`  ✓ Created .fusion/ directory`);
   }
 
-  if (options.git && !(await isGitRepo(cwd))) {
-    await initializeGitRepo(cwd);
-    console.log(`  ✓ Initialized git repository`);
-  }
-
-  // Add local Fusion/Pi storage directories to .gitignore
-  await addLocalStorageToGitignore(cwd);
+  /*
+  FNXC:ProjectSetup 2026-08-19-12:44:
+  `--git` remains accepted for scripts that already pass it, but the shared CentralCore
+  readiness seam now always creates the baseline and managed ignore rules. Keeping one
+  path prevents default onboarding and explicit `--git` from producing different task state.
+  */
   await warnIfQmdMissing();
 
   const bundledSkillInstall = installBundledShippedSkills();
@@ -132,6 +136,12 @@ export async function runInit(options: InitOptions = {}): Promise<void> {
     // Check if already registered
     const existing = await central.getProjectByPath(cwd);
     if (existing) {
+      // Repair Git readiness before reporting an already-registered project as ready.
+      await central.ensureProjectForPath({
+        path: cwd,
+        identity: readProjectIdentity(fusionDir) ?? undefined,
+        name: existing.name,
+      });
       /*
       FNXC:ProjectIdentityMarker 2026-07-14-22:25:
       A project already registered in PostgreSQL can still reach this branch when its local `.fusion/project.json` marker is missing. Repair the marker before returning so subsequent startup and init checks use the same durable identity as a newly registered project.
@@ -235,91 +245,6 @@ async function detectProjectName(dir: string): Promise<string> {
 
   // Fallback to directory name
   return basename(dir) || "my-project";
-}
-
-/**
- * Add local Fusion/Pi storage directories to .gitignore if not already present.
- * Idempotent: only adds missing entries.
- */
-async function addLocalStorageToGitignore(cwd: string): Promise<void> {
-  const gitignorePath = join(cwd, ".gitignore");
-
-  let content = "";
-  if (existsSync(gitignorePath)) {
-    try {
-      content = readFileSync(gitignorePath, "utf-8");
-    } catch {
-      // Best-effort: if we can't read, treat as empty
-    }
-  }
-
-  const lines = content.split(/\r?\n/);
-  const existingEntries = new Set(lines.map((line) => line.trim()));
-  const missingEntries = [".fusion", ".pi", "fusion.db", "fusion.db-wal", "fusion.db-shm"]
-    .filter((entry) => !existingEntries.has(entry));
-
-  if (missingEntries.length === 0) {
-    return;
-  }
-
-  const prefix = content.length === 0 || content.endsWith("\n") ? "" : "\n";
-  const newContent = `${content}${prefix}${missingEntries.join("\n")}\n`;
-  try {
-    writeFileSync(gitignorePath, newContent);
-    console.log(`  ✓ Updated .gitignore (added: ${missingEntries.join(", ")})`);
-  } catch {
-    // Best-effort: don't fail init if we can't write to .gitignore
-    console.log(`  ⚠ Could not update .gitignore (best-effort)`);
-  }
-}
-
-async function initializeGitRepo(cwd: string): Promise<void> {
-  await execAsync("git init", { cwd, timeout: 10_000 });
-
-  try {
-    const { stdout } = await execAsync("git symbolic-ref --quiet --short HEAD", {
-      cwd,
-      timeout: 10_000,
-    });
-    if (stdout.trim() !== "main") {
-      await execAsync("git checkout -b main", { cwd, timeout: 10_000 });
-    }
-  } catch {
-    // Older git versions or detached/unborn states may fail symbolic-ref.
-    // Best-effort: create/switch to main.
-    try {
-      await execAsync("git checkout -b main", { cwd, timeout: 10_000 });
-    } catch {
-      await execAsync("git checkout main", { cwd, timeout: 10_000 });
-    }
-  }
-
-  await ensureGitConfig(cwd, "user.name", "Fusion");
-  await ensureGitConfig(cwd, "user.email", "noreply@runfusion.ai");
-
-  const gitkeepPath = join(cwd, ".gitkeep");
-  if (!existsSync(gitkeepPath)) {
-    writeFileSync(gitkeepPath, "\n");
-  }
-
-  await execAsync("git add .gitkeep", { cwd, timeout: 10_000 });
-  await execAsync('git commit --allow-empty -m "chore: initial commit"', {
-    cwd,
-    timeout: 10_000,
-  });
-}
-
-async function ensureGitConfig(cwd: string, key: string, value: string): Promise<void> {
-  try {
-    const { stdout } = await execAsync(`git config --get ${key}`, { cwd, timeout: 10_000 });
-    if (stdout.trim().length > 0) {
-      return;
-    }
-  } catch {
-    // Missing config; set a local default.
-  }
-
-  await execAsync(`git config ${key} "${value}"`, { cwd, timeout: 10_000 });
 }
 
 async function warnIfQmdMissing(): Promise<void> {

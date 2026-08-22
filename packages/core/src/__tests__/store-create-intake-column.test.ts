@@ -2,6 +2,7 @@ import { it, expect, beforeEach, afterEach, beforeAll, afterAll } from "vitest";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Task } from "../types.js";
+import { setTaskCreatedHook } from "../tasks/task-creation-hooks.js";
 import {
   pgDescribe,
   createSharedPgTaskStoreTestHarness,
@@ -10,6 +11,23 @@ import {
 import { buildBootstrapPrompt } from "../mesh/mesh-task-replication.js";
 
 const pgTest = pgDescribe;
+
+/*
+FNXC:TitleSummarization 2026-08-19-14:10:
+The PostgreSQL create path owns the automatic title policy and deferred lifecycle fence. Keep these
+helpers on the real TaskStore so enabled/disabled settings, late writes, duplicate claims, and hook
+ordering cannot be proven only through gateway mocks.
+*/
+function observeTaskCreatedHook(): Promise<Task> {
+  return new Promise((resolve) => {
+    setTaskCreatedHook((task) => resolve(task));
+  });
+}
+
+async function settleTaskCreatedHook(hook: Promise<Task>): Promise<Task> {
+  // The hook is invoked after the deferred title write, so it fences the persisted result.
+  return hook;
+}
 
 /*
 FNXC:CodingIdeasWorkflow 2026-07-04-11:30:
@@ -26,7 +44,175 @@ pgTest("createTask intake-column wiring (Coding (Ideas))", () => {
     await h.beforeEach();
   });
   afterEach(async () => {
+    setTaskCreatedHook(undefined);
     await h.afterEach();
+  });
+
+  /*
+  FNXC:TitleSummarization 2026-08-19-14:10:
+  Automatic title generation is project-controlled but independent of description length. These
+  cases use a controlled callback at the PostgreSQL TaskStore boundary, proving the setting snapshot
+  and late lifecycle behavior without making a real model call or adding timing sleeps.
+  */
+  it.each([1, 200, 201, 4001])("summarizes a titleless description of length %i when enabled", async (length) => {
+    const store = h.store();
+    await store.updateSettings({ autoSummarizeTitles: true });
+    let summarizeCalls = 0;
+    const hook = observeTaskCreatedHook();
+    const created = await store.createTask(
+      { description: "x".repeat(length) },
+      {
+        onSummarize: async () => {
+          summarizeCalls += 1;
+          return `Generated title ${length}`;
+        },
+      },
+    );
+
+    await settleTaskCreatedHook(hook);
+    const persisted = await store.getTask(created.id);
+    expect(summarizeCalls).toBe(1);
+    expect(persisted?.title).toBe(`Generated title ${length}`);
+  });
+
+  it.each([1, 200, 201, 4001])("does not summarize a titleless description of length %i when disabled", async (length) => {
+    const store = h.store();
+    await store.updateSettings({ autoSummarizeTitles: false });
+    let summarizeCalls = 0;
+    const hook = observeTaskCreatedHook();
+    const created = await store.createTask(
+      { description: "x".repeat(length) },
+      {
+        onSummarize: async () => {
+          summarizeCalls += 1;
+          return "Should not be used";
+        },
+      },
+    );
+
+    await settleTaskCreatedHook(hook);
+    const persisted = await store.getTask(created.id);
+    expect(summarizeCalls).toBe(0);
+    expect(persisted?.title).toBeUndefined();
+  });
+
+  it("preserves an explicit title and allows summarize:true to force generation", async () => {
+    const store = h.store();
+    await store.updateSettings({ autoSummarizeTitles: false });
+    let summarizeCalls = 0;
+    const hook = observeTaskCreatedHook();
+    const explicit = await store.createTask(
+      { title: "Operator title", description: "short description" },
+      { onSummarize: async () => { summarizeCalls += 1; return "Unexpected title"; } },
+    );
+    await settleTaskCreatedHook(hook);
+    expect(summarizeCalls).toBe(0);
+    expect((await store.getTask(explicit.id))?.title).toBe("Operator title");
+
+    const forcedHook = observeTaskCreatedHook();
+    const forced = await store.createTask(
+      { description: "short forced description", summarize: true },
+      { onSummarize: async () => { summarizeCalls += 1; return "Forced title"; } },
+    );
+    await settleTaskCreatedHook(forcedHook);
+    expect(summarizeCalls).toBe(1);
+    expect((await store.getTask(forced.id))?.title).toBe("Forced title");
+  });
+
+  it("does not invoke a second summarizer for a proposal-claim replay", async () => {
+    const store = h.store();
+    await store.updateSettings({ autoSummarizeTitles: true });
+    let summarizeCalls = 0;
+    const hook = observeTaskCreatedHook();
+    const first = await store.createTask(
+      { description: "replayed description", proposalClaimId: "title-summary-replay" },
+      { onSummarize: async () => { summarizeCalls += 1; return "Replay-safe title"; } },
+    );
+    const replay = await store.createTask(
+      { description: "replayed description", proposalClaimId: "title-summary-replay" },
+      { onSummarize: async () => { summarizeCalls += 1; return "Wrong second title"; } },
+    );
+
+    await settleTaskCreatedHook(hook);
+    expect(replay.id).toBe(first.id);
+    expect(summarizeCalls).toBe(1);
+    expect((await store.getTask(first.id))?.title).toBe("Replay-safe title");
+  });
+
+  it("does not overwrite a title supplied while summarization is pending", async () => {
+    const store = h.store();
+    await store.updateSettings({ autoSummarizeTitles: true });
+    let releaseSummary!: (title: string | null) => void;
+    let markStarted!: () => void;
+    const summaryStarted = new Promise<void>((resolve) => { markStarted = resolve; });
+    const summary = new Promise<string | null>((resolve) => { releaseSummary = resolve; });
+    const hook = observeTaskCreatedHook();
+    const created = await store.createTask(
+      { description: "concurrent title description" },
+      {
+        onSummarize: async () => {
+          markStarted();
+          return summary;
+        },
+      },
+    );
+
+    await summaryStarted;
+    await store.updateTask(created.id, { title: "Concurrent operator title" });
+    releaseSummary("Late AI title");
+    await settleTaskCreatedHook(hook);
+
+    expect((await store.getTask(created.id))?.title).toBe("Concurrent operator title");
+  });
+
+  it("does not overwrite a title written after the deferred preflight read", async () => {
+    const store = h.store();
+    await store.updateSettings({ autoSummarizeTitles: true });
+    const hook = observeTaskCreatedHook();
+    let created!: Task;
+    const originalGetTask = store.getTask.bind(store);
+    let injected = false;
+    store.getTask = async (id: string) => {
+      const current = await originalGetTask(id);
+      if (!injected && id === created.id && !current?.title) {
+        injected = true;
+        await store.updateTask(id, { title: "Concurrent operator title" });
+      }
+      return current;
+    };
+
+    created = await store.createTask(
+      { description: "preflight race description" },
+      { onSummarize: async () => "Late AI title" },
+    );
+
+    await settleTaskCreatedHook(hook);
+    expect(injected).toBe(true);
+    expect((await originalGetTask(created.id))?.title).toBe("Concurrent operator title");
+  });
+
+  it.each([
+    { label: "null", result: null },
+    { label: "throw", result: "throw" },
+  ])("settles the task-created hook after a $label summary result", async ({ result }) => {
+    const store = h.store();
+    await store.updateSettings({ autoSummarizeTitles: true });
+    let summarizeCalls = 0;
+    const hook = observeTaskCreatedHook();
+    const created = await store.createTask(
+      { description: `summary ${result}` },
+      {
+        onSummarize: async () => {
+          summarizeCalls += 1;
+          if (result === "throw") throw new Error("controlled summarizer failure");
+          return null;
+        },
+      },
+    );
+
+    await settleTaskCreatedHook(hook);
+    expect(summarizeCalls).toBe(1);
+    expect((await store.getTask(created.id))?.title).toBeUndefined();
   });
 
   /*

@@ -24,6 +24,36 @@ describe("normalizeStreamingDelta", () => {
     expect(normalizeStreamingDelta("obj", ".prop")).toBe(".prop");
   });
 
+  /*
+  FNXC:ChatStreaming 2026-08-19-13:52:
+  Reconstruct the reported source response through the production normalizer seam. A digit-period-digit split is a token continuation in both labels and URL paths, while a sentence followed by a numeric list still receives its missing space.
+  */
+  it("preserves numeric dotted versions and URL paths across reported source chunks", () => {
+    const chunks = [
+      "Sources officielles :\\n\\n[GPT‑5.",
+      "6 Luna](https://developers.openai.com/api/docs/models/gpt-5.",
+      "6-luna)\\n[GPT‑5.",
+      "6 Sol](https://developers.openai.com/api/docs/models/gpt-5.",
+      "6-sol)\\n[GPT‑5.",
+      "6 Terra](https://developers.openai.com/api/docs/models/gpt-5.",
+      "6-terra)",
+    ];
+    let accumulated = "";
+    for (const chunk of chunks) {
+      const delta = normalizeStreamingDelta(accumulated, chunk);
+      accumulated += delta;
+    }
+
+    expect(accumulated).toContain("GPT‑5.6 Luna");
+    expect(accumulated).not.toContain("5. 6");
+    expect(accumulated).toContain("/gpt-5.6-luna");
+    expect(accumulated).toContain("/gpt-5.6-sol");
+    expect(accumulated).toContain("/gpt-5.6-terra");
+    expect(normalizeStreamingDelta("Done.", "2 more items")).toBe(" 2 more items");
+    expect(normalizeStreamingDelta("Version 1.", "2.3 and 192.")).toBe("2.3 and 192.");
+    expect(normalizeStreamingDelta("192.", "168.0.1")).toBe("168.0.1");
+  });
+
   it("is idempotent when whitespace already exists", () => {
     expect(normalizeStreamingDelta("...task.", " Foundation")).toBe(" Foundation");
   });
@@ -152,6 +182,12 @@ describe("createStreamingDeltaNormalizer", () => {
   it("starts fresh per instance", () => {
     const normalizer = createStreamingDeltaNormalizer();
     expect(normalizer.normalize(undefined, 0, "Foundation", "text")).toBe("Foundation");
+  });
+
+  it("preserves numeric dotted tokens through the partial-free fallback tail", () => {
+    const normalizer = createStreamingDeltaNormalizer();
+    expect(normalizer.normalize(undefined, 0, "GPT-5.", "text")).toBe("GPT-5.");
+    expect(normalizer.normalize(undefined, 0, "6", "text")).toBe("6");
   });
 
   it("is defensive for invalid partial/content index and wrong block type", () => {

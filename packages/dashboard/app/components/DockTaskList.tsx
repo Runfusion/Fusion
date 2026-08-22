@@ -1,4 +1,5 @@
 import { useCallback, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { isArchivedColumnRole, isCompleteColumnRole } from "../utils/columnRoles";
 import { partitionRevertedTasks } from "../utils/taskRevert";
 import type { GithubIssueAction, Task, TaskDetail } from "@fusion/core";
@@ -48,6 +49,7 @@ export function DockTaskList({ columnFlagsByTaskId,
   prAuthAvailable = false,
   autoMergeEnabled = false,
 }: DockTaskListProps) {
+  const { t } = useTranslation("app");
   const [showDone, setShowDone] = useState(false);
 
   const handleOpenTask = useCallback((task: Task | TaskDetail) => {
@@ -86,13 +88,13 @@ export function DockTaskList({ columnFlagsByTaskId,
   }), [showDone, tasks, isTerminal, revertedTasks]);
   const hasDoneTasks = doneTasks.length > 0;
   const isEmpty = visibleTasks.length === 0;
-  const emptyTitle = tasks.length === 0 ? "No tasks yet" : "No active tasks";
+  const emptyTitle = tasks.length === 0 ? t("rightDock.noTasksYet", "No tasks yet") : t("rightDock.noActiveTasks", "No active tasks");
   const emptyCopy = tasks.length === 0
-    ? "Tasks you create or import will appear here for quick right-sidebar review."
+    ? t("rightDock.emptyCopy", "Tasks you create or import will appear here for quick right-sidebar review.")
     : hasDoneTasks
-      ? "Completed tasks are hidden until you choose Show Done. Archived tasks stay out of this compact sidebar."
-      : "Archived tasks stay out of this compact sidebar. Active tasks will appear here when work is available.";
-  const toggleLabel = showDone ? "Hide Done" : "Show Done";
+      ? t("rightDock.doneHiddenCopy", "Completed tasks are hidden until you choose Show Done. Archived tasks stay out of this compact sidebar.")
+      : t("rightDock.archivedCopy", "Archived tasks stay out of this compact sidebar. Active tasks will appear here when work is available.");
+  const toggleLabel = showDone ? t("rightDock.hideDone", "Hide Done") : t("rightDock.showDone", "Show Done");
 
   return (
     <div className={`dock-task-list${isEmpty ? " dock-task-list--empty" : ""}`} data-testid="dock-task-list">
@@ -109,9 +111,9 @@ export function DockTaskList({ columnFlagsByTaskId,
         </div>
       ) : null}
       {revertedTasks.length > 0 && (
-        <section className="dock-task-list__reverted" aria-label="Reverted Tasks" data-testid="dock-reverted-tasks">
-          <h3>Reverted Tasks</h3>
-          {revertedTasks.map((task) => <TaskCard key={`reverted-${task.id}`} task={task} taskColumnFlags={columnFlagsByTaskId?.get(task.id)} projectId={projectId} onOpenDetail={handleOpenTask} onDeleteTask={onDeleteTask} onReviseTask={onReviseTask} addToast={addToast} disableDrag />)}
+        <section className="dock-task-list__reverted" aria-label={t("tasks.revertedTasks", "Reverted Tasks")} data-testid="dock-reverted-tasks">
+          <h3>{t("tasks.revertedTasks", "Reverted Tasks")}</h3>
+          {revertedTasks.map((task) => <TaskCard key={`reverted-${task.id}`} task={task} taskColumnFlags={columnFlagsByTaskId?.get(task.id)} projectId={projectId} onOpenDetail={handleOpenTask} onDeleteTask={onDeleteTask} onReviseTask={onReviseTask} addToast={addToast} />)}
         </section>
       )}
       {isEmpty ? (
@@ -137,7 +139,6 @@ export function DockTaskList({ columnFlagsByTaskId,
             */
             onDeleteTask={onDeleteTask}
             addToast={addToast}
-            disableDrag={true}
             prAuthAvailable={prAuthAvailable}
             autoMergeEnabled={autoMergeEnabled}
           />

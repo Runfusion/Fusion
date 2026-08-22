@@ -215,6 +215,7 @@ export const DEFAULT_GLOBAL_SETTINGS = {
   openrouterAppAttribution: undefined,
   openrouterModelFilters: undefined,
   openrouterProviderPreferences: undefined,
+  orcarouterModelSync: true,
   opencodeGoModelSync: true,
   updateCheckEnabled: true,
   fnBinaryCheckEnabled: true,
@@ -228,6 +229,15 @@ export const DEFAULT_GLOBAL_SETTINGS = {
   opt in before Fusion replaces its own binary and bounces the process under them.
   */
   autoUpdateAndRestart: false,
+  /*
+  FNXC:UpdateAutomation 2026-08-21-02:17:
+  Fresh installations require separate opt-ins for unattended installation and
+  restart. The legacy combined switch remains false and is only a fallback for
+  older persisted settings.
+  */
+  /* FNXC:UpdateAutomation 2026-08-21-02:48: Keep these schema keys unset because defaults merge into effective settings and `undefined` is distinct from explicit false. */
+  autoUpdateEnabled: undefined,
+  autoRestartAfterUpdate: undefined,
   autoReloadOnVersionChange: true,
   githubTrackingDefaultRepo: undefined,
   reportRoadmapDedupeEnabled: undefined,
@@ -238,6 +248,13 @@ export const DEFAULT_GLOBAL_SETTINGS = {
   gitlabApiBaseUrl: undefined,
   gitlabAuthToken: undefined,
   gitlabAuthTokenType: undefined,
+  jiraEnabled: undefined,
+  jiraBaseUrl: undefined,
+  jiraApiBaseUrl: undefined,
+  jiraAuthEmail: undefined,
+  jiraAuthTokenSecretKey: undefined,
+  jiraAuthTokenSecretScope: undefined,
+  jiraBranchNameTemplate: undefined,
   modelOnboardingComplete: undefined,
   useClaudeCli: undefined,
   useDroidCli: undefined,
@@ -425,6 +442,8 @@ export const DEFAULT_GLOBAL_SETTINGS = {
 export const DEFAULT_PROJECT_SETTINGS = {
   // FNXC:TaskRecommendations 2026-08-08-05:02: completion follows-ups stay bounded by default; 0 disables writing them.
   maxRecommendationsPerTask: 3,
+  // FNXC:TaskRecommendations 2026-08-19-13:05: explicit recommendation evaluation is opt-in and only applies while the positive cap enables capture; relevance always outranks count.
+  requireTaskRecommendations: false,
   // FNXC:TaskRecommendations 2026-08-13-03:56: surface completed-task proposals by default; operators can suppress the notice without suppressing capture.
   recommendationMailboxNoticeEnabled: true,
   globalPause: false,
@@ -535,6 +554,11 @@ export const DEFAULT_PROJECT_SETTINGS = {
   Default off preserves existing board-card density. When true, the dashboard may render a read-time derived cost badge only for tasks with positive token usage; unavailable pricing remains the guess-free “—” sentinel.
   */
   showCostBadgeOnCards: false,
+  /*
+  FNXC:ChatMessageLayout 2026-08-18-20:27:
+  The project preference applies one reversible layout choice to every standard and task chat surface. Explicitly seed the historical bubbles presentation so upgraded projects preserve their existing UI.
+  */
+  chatMessageLayout: "bubbles",
   /*
   FNXC:TaskDetailActivityFirst 2026-06-30-23:59:
   Project task-detail defaults are Activity-first unless this opt-in is true. Keeping the default false preserves explicit deep-link ids while making omitted non-done task opens land on Activity → Live.
@@ -723,6 +747,13 @@ export const DEFAULT_PROJECT_SETTINGS = {
   gitlabApiBaseUrl: undefined,
   gitlabAuthToken: undefined,
   gitlabAuthTokenType: undefined,
+  jiraEnabled: undefined,
+  jiraBaseUrl: undefined,
+  jiraApiBaseUrl: undefined,
+  jiraAuthEmail: undefined,
+  jiraAuthTokenSecretKey: undefined,
+  jiraAuthTokenSecretScope: undefined,
+  jiraBranchNameTemplate: undefined,
   gitlabCommentOnDone: false,
   gitlabCommentTemplate: undefined,
   gitlabCloseSourceIssueOnDone: false,
@@ -744,6 +775,8 @@ export const DEFAULT_PROJECT_SETTINGS = {
   not variant-detected and unsupported input, including Japanese, remains English.
   */
   taskDefinitionInInputLanguage: false,
+  /* FNXC:TaskOutputLanguage 2026-08-19-14:56: Undefined preserves legacy true compatibility; the resolver supplies English for fresh projects. */
+  taskOutputLanguage: undefined,
   useAiMergeCommitSummary: true,
   // Title-summarizer model lanes stay project-scoped (not moved in U4).
   titleSummarizerProvider: undefined,

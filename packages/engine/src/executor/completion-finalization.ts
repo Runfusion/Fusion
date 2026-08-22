@@ -8,6 +8,7 @@ import { evaluateSkipBypassTaint } from "@fusion/core";
 import { COMPLETED_BLOCKED_PAUSE_REASON } from "../self-healing.js";
 import { executorLog } from "../logger.js";
 import { generateSyntheticRunId, type EngineRunContext } from "../util/run-audit.js";
+import { emitBoundedRunAudit } from "./emit-bounded-run-audit.js";
 import { isTaskWorkComplete } from "./task-predicates.js";
 import {
   resolveReboundColumnFor,
@@ -89,7 +90,7 @@ export async function parkCompletedBlockedTask(
   }, deps.getRunContextFor(task.id));
   executorLog.log(`${task.id}: ${message}`);
   await deps.store.logEntry(task.id, message, undefined, deps.getRunContextFor(task.id));
-  await deps.store.recordRunAuditEvent?.({
+  await emitBoundedRunAudit(deps.store, {
     taskId: task.id,
     agentId: "executor",
     runId: generateSyntheticRunId("completed-blocked-park", task.id),

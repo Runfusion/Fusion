@@ -103,18 +103,15 @@ import {
   MESSAGE_ARCHIVE_SCHEMA_VERSION,
   TASK_SOURCE_AGENT_INDEX_VERSION,
   WORKSPACE_COORDINATION_LEASES_SCHEMA_VERSION,
+  ACTIVITY_LOG_TASK_ID_INDEX_VERSION,
 } from "../../postgres/schema-applier.js";
 import { ProjectPartitionRekeyError, rekeyFallbackProjectPartition } from "../../postgres/migration-stamping.js";
 import type { PluginSchemaInitHook } from "../../postgres/plugin-schema-hook.js";
-
-const PG_ADMIN_URL =
-  process.env.FUSION_PG_TEST_ADMIN_URL ?? "postgresql://localhost:5432/postgres";
-const PG_TEST_URL_BASE =
-  process.env.FUSION_PG_TEST_URL_BASE ?? "postgresql://localhost:5432";
-const PG_AVAILABLE =
-  process.env.FUSION_PG_TEST_SKIP !== "1" && Boolean(PG_TEST_URL_BASE);
-
-const pgDescribe = PG_AVAILABLE ? describe : describe.skip;
+import {
+  createBaselinedPgTestDatabase,
+  createEmptyPgTestDatabase,
+  pgDescribe,
+} from "../../__test-utils__/pg-test-harness.js";
 
 describe("schema-applier: immutable migration identities", () => {
   it("registers the task lifecycle outbox after credential selection", () => {
@@ -141,7 +138,8 @@ describe("schema-applier: immutable migration identities", () => {
        0060 (FN-9059 workspace coordination leases/intents) advance the baseline to 0060. */
     expect(TASK_SOURCE_AGENT_INDEX_VERSION).toBe("0059");
     expect(WORKSPACE_COORDINATION_LEASES_SCHEMA_VERSION).toBe("0060");
-    expect(SCHEMA_BASELINE_VERSION).toBe("0060");
+    expect(ACTIVITY_LOG_TASK_ID_INDEX_VERSION).toBe("0061");
+    expect(SCHEMA_BASELINE_VERSION).toBe("0063");
   });
 
   it("keeps monitor and approval isolation assigned to version 0003", () => {
@@ -308,100 +306,46 @@ describe("schema-applier: migration wiring integrity", () => {
   });
 });
 
-/**
- * FNXC:PostgresSchema 2026-06-24-04:00:
- * Create a uniquely-named fresh database for each test so tests are hermetic
- * and never touch existing data. Uses the admin connection to CREATE/DROP.
- */
-function uniqueDbName(): string {
-  return `fusion_schema_test_${process.pid}_${Math.random().toString(36).slice(2, 8)}`;
-}
-
-/*
-FNXC:PgTestAuthFix 2026-07-14-00:00:
-The inline adminExec used process.env.USER for the psql -U flag, which is 'runner' on GitHub Actions (not 'postgres'). Use the PG_TEST_URL_BASE connection string instead so credentials are always correct.
-
-FNXC:PgSchemaApplierSlowTest 2026-07-23-17:30:
-Slow-test fix: adminExec previously spawned a fresh `psql` subprocess per call via
-execSync. setupFreshDb made two such spawns (a redundant DROP + the CREATE) and
-teardownDb a third, so ~55 tests paid ~165 process starts — dominating this file's
-~90s wall-time. Route admin CREATE/DROP DATABASE through a short-lived postgres.js
-maintenance connection instead (postgres.js sends each statement as a simple query,
-so CREATE/DROP DATABASE runs fine outside any transaction — empirically verified).
-This mirrors the shared pg-test-harness `adminExecAsync` rationale: no shell
-children to orphan past the test timeout, and the call is timeout-bounded with a
-forced socket close so a stuck catalog lock cannot hang the vitest worker.
-*/
-async function adminExec(statement: string, timeoutMs = 15_000): Promise<void> {
-  let timedOut = false;
-  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
-  let client: ReturnType<typeof postgres> | undefined;
-  try {
-    await Promise.race([
-      (async () => {
-        client = postgres(`${PG_TEST_URL_BASE}/postgres`, {
-          max: 1,
-          prepare: false,
-          onnotice: () => {},
-        });
-        // Server-side cancel slightly before the JS race so PG stops the statement.
-        const serverTimeoutMs = Math.max(1_000, timeoutMs - 500);
-        await client.unsafe(`SET statement_timeout = ${serverTimeoutMs}`);
-        await client.unsafe(statement);
-      })(),
-      new Promise<never>((_, reject) => {
-        timeoutHandle = setTimeout(() => {
-          timedOut = true;
-          // Force-close the socket so a late DROP/CREATE cannot outlive this call.
-          void client?.end({ timeout: 0 }).catch(() => {});
-          reject(new Error(`adminExec timed out after ${timeoutMs}ms: ${statement}`));
-        }, timeoutMs);
-      }),
-    ]);
-  } catch (error) {
-    if (timedOut) throw error;
-    throw new Error(
-      `adminExec failed: ${error instanceof Error ? error.message : String(error)}\nstatement: ${statement}`,
-    );
-  } finally {
-    if (timeoutHandle) clearTimeout(timeoutHandle);
-    if (client) {
-      await client.end({ timeout: 5 }).catch(() => {});
-    }
-  }
-}
-
 interface TestContext {
-  dbName: string;
   testUrl: string;
   sqlConn: ReturnType<typeof postgres>;
   db: ReturnType<typeof drizzle>;
+  drop(): Promise<void>;
+}
+
+/*
+FNXC:PgSchemaApplierIsolation 2026-08-16-19:08:
+The loaded core lane runs this file beside other PostgreSQL forks. The private
+CREATE/DROP helper bypassed the shared harness lifecycle and repeated baseline
+DDL in schema-present parity and rekey tests. Keep empty targets for first-apply
+and upgrade contracts, but clone the serialized golden baseline for schema-present
+contracts so their idempotent apply remains a marker check rather than fresh DDL.
+*/
+async function setupTestDb(
+  createDatabase: typeof createEmptyPgTestDatabase,
+): Promise<TestContext> {
+  const fixture = await createDatabase("fusion_schema_test");
+  const sqlConn = postgres(fixture.testUrl, { max: 2, prepare: false, onnotice: () => {} });
+  return {
+    testUrl: fixture.testUrl,
+    sqlConn,
+    db: drizzle(sqlConn),
+    drop: fixture.drop,
+  };
 }
 
 async function setupFreshDb(): Promise<TestContext> {
-  const dbName = uniqueDbName();
-  // FNXC:PgSchemaApplierSlowTest 2026-07-23-17:30: uniqueDbName is pid+random, so
-  // the database can never pre-exist — the former DROP-before-CREATE was a pure
-  // wasted admin round-trip per test and is removed.
-  await adminExec(`CREATE DATABASE "${dbName}"`);
-  const testUrl = `${PG_TEST_URL_BASE}/${dbName}`;
-  const sqlConn = postgres(testUrl, { max: 2, prepare: false, onnotice: () => {} });
-  const db = drizzle(sqlConn);
-  return { dbName, testUrl, sqlConn, db };
+  return setupTestDb(createEmptyPgTestDatabase);
+}
+
+async function setupBaselinedDb(): Promise<TestContext> {
+  return setupTestDb(createBaselinedPgTestDatabase);
 }
 
 async function teardownDb(ctx: TestContext | null): Promise<void> {
   if (!ctx) return;
-  try {
-    await ctx.sqlConn.end({ timeout: 5 });
-  } catch {
-    // best-effort
-  }
-  try {
-    await adminExec(`DROP DATABASE IF EXISTS "${ctx.dbName}"`);
-  } catch {
-    // best-effort
-  }
+  await ctx.sqlConn.end({ timeout: 5 }).catch(() => {});
+  await ctx.drop().catch(() => {});
 }
 
 /*
@@ -1239,7 +1183,7 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 final-schema parity (table counts)", 
   });
 
   it("promotes a fallback project partition without stranding task satellites", async () => {
-    ctx = await setupFreshDb();
+    ctx = await setupBaselinedDb();
     await applySchemaBaseline(ctx.db);
     await ctx.db.execute(sql`
       CREATE TABLE public.fusion_sqlite_migrations (
@@ -1282,7 +1226,7 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 final-schema parity (table counts)", 
   });
 
   it("merges dual partitions fallback-wins with NULL-correct catalog unique rules", async () => {
-    ctx = await setupFreshDb();
+    ctx = await setupBaselinedDb();
     await applySchemaBaseline(ctx.db);
     await ctx.db.execute(sql`
       CREATE TABLE project.fn8419_null_unique_probe (project_id text NOT NULL, tag text, payload text NOT NULL);
@@ -1309,7 +1253,7 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 final-schema parity (table counts)", 
   });
 
   it("retains an inbound non-project dependent for each separate FK constraint", async () => {
-    ctx = await setupFreshDb();
+    ctx = await setupBaselinedDb();
     await applySchemaBaseline(ctx.db);
     await ctx.db.execute(sql`
       CREATE TABLE public.fn8419_external_dependents (
@@ -1341,7 +1285,7 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 final-schema parity (table counts)", 
 
   it("refuses deferred UPDATE SET NULL and SET DEFAULT partition mutations", async () => {
     for (const [name, action] of [["set_null", "SET NULL"], ["set_default", "SET DEFAULT"]] as const) {
-      ctx = await setupFreshDb();
+      ctx = await setupBaselinedDb();
       await applySchemaBaseline(ctx.db);
       await ctx.db.execute(sql.raw(`
         CREATE TABLE public.fn8419_${name}_dependent (
@@ -1366,7 +1310,7 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 final-schema parity (table counts)", 
   });
 
   it("allows a conflict-deletable registered child to be replaced before its parent", async () => {
-    ctx = await setupFreshDb();
+    ctx = await setupBaselinedDb();
     await applySchemaBaseline(ctx.db);
     await ctx.db.execute(sql.raw(`
       CREATE TABLE project.fn8419_replace_parent (project_id text PRIMARY KEY, payload text NOT NULL);
@@ -1395,7 +1339,7 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 final-schema parity (table counts)", 
       ["set_null", "SET NULL", "parent_id text"],
       ["set_default", "SET DEFAULT", "parent_id text NOT NULL DEFAULT 'registered-project'"],
     ] as const) {
-      ctx = await setupFreshDb();
+      ctx = await setupBaselinedDb();
       await applySchemaBaseline(ctx.db);
       await ctx.db.execute(sql.raw(`
         CREATE TABLE project.fn8419_delete_${name}_parent (project_id text PRIMARY KEY, payload text NOT NULL);
@@ -1428,7 +1372,7 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 final-schema parity (table counts)", 
       ["deferred", "ON UPDATE NO ACTION DEFERRABLE INITIALLY DEFERRED", undefined],
       ["cascade", "ON UPDATE CASCADE", undefined],
     ] as const) {
-      ctx = await setupFreshDb();
+      ctx = await setupBaselinedDb();
       await applySchemaBaseline(ctx.db);
       await ctx.db.execute(sql.raw(`
         CREATE TABLE project.fn8419_update_${name}_parent (
@@ -1458,7 +1402,7 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 final-schema parity (table counts)", 
   });
 
   it("quarantines ownerless rows when complete and failed migrations name different projects", async () => {
-    ctx = await setupFreshDb();
+    ctx = await setupBaselinedDb();
     await applySchemaBaseline(ctx.db);
     await ctx.db.execute(sql.raw(`
       DELETE FROM public.fusion_schema_migrations WHERE version IN ('0006', '0007', '0008');
@@ -1488,7 +1432,7 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 final-schema parity (table counts)", 
   The ownership migration must repair a stale child partition through the legacy global foreign key before installing composite project-local relationships, so an operator can retry after the former non-transactional cutover failed between parent and child copies.
   */
   it("reconciles stale child ownership before rebuilding project-local foreign keys", async () => {
-    ctx = await setupFreshDb();
+    ctx = await setupBaselinedDb();
     await applySchemaBaseline(ctx.db);
     await ctx.db.execute(sql.raw(`
       CREATE TABLE public.fusion_sqlite_migrations (
@@ -1552,7 +1496,7 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 index parity (every SQLite index has 
   });
 
   it("every index from the SQLite final schema exists in PostgreSQL", async () => {
-    ctx = await setupFreshDb();
+    ctx = await setupBaselinedDb();
     await applySchemaBaseline(ctx.db);
     // Query every index name across all three application schemas.
     const pgIndexRows = (await ctx.db.execute(sql`
@@ -1592,7 +1536,7 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 index parity (every SQLite index has 
   });
 
   it("the critical idx_tasks_deletedAt index exists (soft-delete filtering)", async () => {
-    ctx = await setupFreshDb();
+    ctx = await setupBaselinedDb();
     await applySchemaBaseline(ctx.db);
     const rows = (await ctx.db.execute(sql`
       SELECT indexname FROM pg_indexes
@@ -1602,7 +1546,7 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 index parity (every SQLite index has 
   });
 
   it("all 8 tasks-table lookup indexes exist", async () => {
-    ctx = await setupFreshDb();
+    ctx = await setupBaselinedDb();
     await applySchemaBaseline(ctx.db);
     const rows = (await ctx.db.execute(sql`
       SELECT indexname FROM pg_indexes
@@ -2511,7 +2455,7 @@ pgDescribe("schema-applier: VAL-SCHEMA-002 foreign-key cascade rules preserved",
   });
 
   it("ON DELETE CASCADE removes child rows (tasks → merge_queue)", async () => {
-    ctx = await setupFreshDb();
+    ctx = await setupBaselinedDb();
     await applySchemaBaseline(ctx.db);
     // Insert a task then a merge_queue row referencing it.
     await ctx.db.execute(sql`
@@ -2531,7 +2475,7 @@ pgDescribe("schema-applier: VAL-SCHEMA-002 foreign-key cascade rules preserved",
   });
 
   it("ON DELETE SET NULL nulls the referencing column (tasks ← mission_features)", async () => {
-    ctx = await setupFreshDb();
+    ctx = await setupBaselinedDb();
     await applySchemaBaseline(ctx.db);
     await ctx.db.execute(sql`
       INSERT INTO project.tasks (id, description, "column", created_at, updated_at)
@@ -2562,7 +2506,7 @@ pgDescribe("schema-applier: VAL-SCHEMA-002 foreign-key cascade rules preserved",
   });
 
   it("every FK cascade rule from SQLite is present (cascade rule coverage)", async () => {
-    ctx = await setupFreshDb();
+    ctx = await setupBaselinedDb();
     await applySchemaBaseline(ctx.db);
     // At minimum, the cascade FKs must exist. Count cascade ('c') FKs.
     const rows = (await ctx.db.execute(sql`
@@ -2585,7 +2529,7 @@ pgDescribe("schema-applier: VAL-SCHEMA-003 unique indexes preserved", () => {
   });
 
   it("enforces uniqueness on task_documents(task_id, key)", async () => {
-    ctx = await setupFreshDb();
+    ctx = await setupBaselinedDb();
     await applySchemaBaseline(ctx.db);
     await ctx.db.execute(sql`
       INSERT INTO project.tasks (id, description, "column", created_at, updated_at)
@@ -2605,7 +2549,7 @@ pgDescribe("schema-applier: VAL-SCHEMA-003 unique indexes preserved", () => {
   });
 
   it("enforces uniqueness on secrets(key)", async () => {
-    ctx = await setupFreshDb();
+    ctx = await setupBaselinedDb();
     await applySchemaBaseline(ctx.db);
     await ctx.db.execute(sql`
       INSERT INTO project.secrets (id, key, value_ciphertext, nonce, created_at, updated_at)
@@ -2630,7 +2574,7 @@ pgDescribe("schema-applier: VAL-SCHEMA-004 JSON columns round-trip as jsonb", ()
   });
 
   it("tasks.dependencies is jsonb and round-trips nested arrays/objects", async () => {
-    ctx = await setupFreshDb();
+    ctx = await setupBaselinedDb();
     await applySchemaBaseline(ctx.db);
     const colRow = (await ctx.db.execute(sql`
       SELECT data_type FROM information_schema.columns

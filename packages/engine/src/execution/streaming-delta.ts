@@ -20,11 +20,18 @@ export function normalizeStreamingDelta(previousText: string, nextDelta: string)
     return nextDelta;
   }
 
+  /*
+   FNXC:ChatStreaming 2026-08-19-13:52:
+   Sentence-boundary repair must leave digit-period-digit continuations intact. Stream chunks can split model versions, decimals, IP addresses, and URL path segments at the period, so inserting a space here corrupts persisted Chat Markdown and its destination.
+   */
+  const isNumericTokenContinuation =
+    previousChar === "." && /\d/.test(previousText.slice(-2, -1)) && /\d/.test(nextChar);
+
   // Claude sometimes splits adjacent sentences across separate deltas or text
   // blocks without preserving the separating space. Only repair the specific
   // "sentence punctuation + uppercase/quoted sentence start" case so code,
-  // domains, and lowercase continuations remain untouched.
-  if (/[.!?]/.test(previousChar) && /[A-Z0-9"'([]/.test(nextChar)) {
+  // domains, lowercase continuations, and numeric tokens remain untouched.
+  if (!isNumericTokenContinuation && /[.!?]/.test(previousChar) && /[A-Z0-9"'([]/.test(nextChar)) {
     return ` ${nextDelta}`;
   }
 
@@ -108,7 +115,11 @@ export function createStreamingDeltaNormalizer(): {
       const result = normalizeStreamingDelta(previousText, delta);
 
       if (result) {
-        const tail = result.slice(-1);
+        /*
+        FNXC:ChatStreaming 2026-08-19-14:34:
+        Fallback normalization has no partial message to inspect. Retain two characters per stream so its numeric-boundary classifier can still see the digit before a trailing period.
+        */
+        const tail = result.slice(-2);
         if (kind === "text") {
           lastTextTail = tail;
         } else {

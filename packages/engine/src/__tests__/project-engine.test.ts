@@ -17,6 +17,7 @@ import {
 } from "../merge/merger-ai.js";
 import { runtimeLog } from "../logger.js";
 import { TunnelProcessManager } from "../remote-access/tunnel-process-manager.js";
+import { setLocalDashboardPort, resetLocalDashboardPortForTests } from "../local-dashboard-port.js";
 import { NtfyNotifier } from "../util/notifier.js";
 import { NotificationService, OAuthAlertStateStore, OAuthExpiryMonitor, OAuthValidityLogger } from "../notification/index.js";
 
@@ -135,12 +136,33 @@ vi.mock("../merge/merger-ai.js", () => {
       this.name = "WorkspaceFinalizeBlockedError";
     }
   }
+  /*
+  FNXC:WorkspaceMerge 2026-08-19-04:00:
+  Production imports this error from merger-ai, so a factory that omits it makes the merge-queue
+  drain throw "No <export> is defined on the mock" BEFORE reaching the behaviour under test — the
+  four Phase C hardening cases then saw a resolved promise and no updateTask call, failing for a
+  reason unrelated to what they assert. Keep this list in step with merger-ai's exported errors.
+  */
+  class WorkspaceMergeDispatchSupersededError extends Error {
+    constructor(public readonly taskId: string) {
+      super(`Workspace merge dispatch lease was superseded before finalization for ${taskId}`);
+      this.name = "WorkspaceMergeDispatchSupersededError";
+    }
+  }
+  class WorkspaceMergeTechnicalError extends Error {
+    constructor(public readonly kind: string, message: string) {
+      super(message);
+      this.name = "WorkspaceMergeTechnicalError";
+    }
+  }
   return {
     runAiMerge: mocks.runAiMerge,
     landWorkspaceTask: mocks.landWorkspaceTask,
     WorkspaceRepoLandBusyError,
     WorkspacePartialLandError,
     WorkspaceFinalizeBlockedError,
+    WorkspaceMergeDispatchSupersededError,
+    WorkspaceMergeTechnicalError,
   };
 });
 
@@ -1233,12 +1255,62 @@ describe("ProjectEngine remote lifecycle quick tunnel mode", () => {
         provider: "cloudflare",
         quickTunnel: true,
         executablePath: "cloudflared",
+        // Nothing reported a port, so the historical default stands.
         args: ["tunnel", "--url", "http://localhost:4040"],
       }),
     );
 
     await engine.stop();
     startSpy.mockRestore();
+  });
+
+  /*
+  FNXC:RemoteAccess 2026-08-19-04:00:
+  The target was hardcoded to 4040, so a dashboard on any other port — an explicit --port, a PORT
+  override, or runDashboard's EADDRINUSE rebind to an ephemeral port — published a public tunnel to
+  whatever ELSE owned 4040 (another Fusion, another app, or nothing). The dashboard reports its
+  bound port and the tunnel must follow it.
+  */
+  it("targets the port the dashboard actually bound", async () => {
+    const quickTunnelSettings = {
+      ...baseSettings,
+      remoteAccess: {
+        ...baseRemoteAccess,
+        providers: {
+          ...baseRemoteAccess.providers,
+          cloudflare: {
+            ...baseRemoteAccess.providers.cloudflare,
+            quickTunnel: true,
+            tunnelName: "",
+            tunnelToken: null,
+            ingressUrl: "",
+          },
+        },
+      },
+    };
+    const mockStore = createMockStore(quickTunnelSettings);
+    mocks.currentStore = mockStore.store;
+
+    const startSpy = vi.spyOn(TunnelProcessManager.prototype, "start").mockResolvedValue(undefined);
+    setLocalDashboardPort(51234);
+
+    try {
+      const engine = createEngine();
+      await engine.start();
+      await engine.startRemoteTunnel();
+
+      expect(startSpy).toHaveBeenCalledWith(
+        "cloudflare",
+        expect.objectContaining({
+          args: ["tunnel", "--url", "http://localhost:51234"],
+        }),
+      );
+
+      await engine.stop();
+    } finally {
+      resetLocalDashboardPortForTests();
+      startSpy.mockRestore();
+    }
   });
 
   it("surfaces runtime prerequisite missing when cloudflared is unavailable in quick tunnel mode", async () => {
@@ -1984,7 +2056,12 @@ describe("ProjectEngine workspace merge dispatch hardening (Phase C review)", ()
     vi.useFakeTimers();
     try {
       const mockStore = createMockStore({ ...baseSettings, autoMerge: true });
-      mockStore.store.getTask.mockResolvedValue(workspaceTask() as any);
+      let liveTask = workspaceTask() as Record<string, unknown>;
+      mockStore.store.getTask.mockImplementation(async () => liveTask as any);
+      mockStore.store.updateTask.mockImplementation(async (_id: string, patch: Record<string, unknown>) => {
+        liveTask = { ...liveTask, ...patch };
+        return liveTask as any;
+      });
       mocks.currentStore = mockStore.store;
       mocks.landWorkspaceTask.mockRejectedValue(
         new WorkspaceRepoLandBusyError("repo-a", "FN-OTHER", "FN-WSH"),

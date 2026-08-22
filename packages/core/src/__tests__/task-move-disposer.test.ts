@@ -3,6 +3,7 @@ import "@fusion/core"; // registers the built-in column traits
 import {
   __setTaskMoveDisposalTimeoutForTesting,
   disposeTaskBeforeMove,
+  disposeTaskBeforeReset,
   registerTaskMoveDisposer,
 } from "../tasks/task-move-disposer.js";
 
@@ -133,6 +134,57 @@ describe("task move disposer", () => {
     });
     expect(first).toHaveBeenCalledOnce();
     expect(second).toHaveBeenCalledTimes(2);
+  });
+
+  it("waits for every registered runtime owner before reset regardless of column", async () => {
+    const store = {} as never;
+    let releaseFirst: (() => void) | undefined;
+    let releaseSecond: (() => void) | undefined;
+    const first = vi.fn(() => new Promise<void>((resolve) => { releaseFirst = resolve; }));
+    const second = vi.fn(() => new Promise<void>((resolve) => { releaseSecond = resolve; }));
+    registerTaskMoveDisposer(store, first);
+    registerTaskMoveDisposer(store, second);
+
+    let resetReady = false;
+    const reset = disposeTaskBeforeReset(store, { id: "FN-RESET-FENCE", column: "done" } as never).then(() => {
+      resetReady = true;
+    });
+    await Promise.resolve();
+    expect(first).toHaveBeenCalledOnce();
+    expect(second).toHaveBeenCalledOnce();
+    expect(resetReady).toBe(false);
+
+    releaseFirst?.();
+    await Promise.resolve();
+    expect(resetReady).toBe(false);
+    releaseSecond?.();
+    await reset;
+    expect(resetReady).toBe(true);
+  });
+
+  it("is a no-op when reset has no registered runtime owners", async () => {
+    await expect(disposeTaskBeforeReset({} as never, { id: "FN-RESET-NO-OWNER" } as never)).resolves.toBeUndefined();
+  });
+
+  it("propagates reset disposer rejection without allowing cleanup to continue", async () => {
+    const store = {} as never;
+    registerTaskMoveDisposer(store, vi.fn().mockRejectedValue(new Error("runtime still active")));
+    await expect(disposeTaskBeforeReset(store, { id: "FN-RESET-REJECTED" } as never)).rejects.toThrow("runtime still active");
+  });
+
+  it("fails closed and releases reset when cancellation does not settle", async () => {
+    __setTaskMoveDisposalTimeoutForTesting(1);
+    try {
+      const store = {} as never;
+      registerTaskMoveDisposer(store, () => new Promise<void>(() => {}));
+
+      const preparation = disposeTaskBeforeReset(store, { id: "FN-RESET-WEDGED" } as never);
+      await expect(preparation).rejects.toThrow(
+        "Timed out stopping active work for FN-RESET-WEDGED before resetting the task",
+      );
+    } finally {
+      __setTaskMoveDisposalTimeoutForTesting();
+    }
   });
 
   it("fails closed and releases the move when cancellation does not settle", async () => {

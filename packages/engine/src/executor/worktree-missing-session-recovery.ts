@@ -9,7 +9,7 @@
  * Existing session-start callers treat any truthy outcome as handled, unchanged.
  */
 import { resolve as resolvePath } from "node:path";
-import type { Task, TaskStore } from "@fusion/core";
+import { isWorkspaceTask, loadWorkspaceConfig, type Task, type TaskStore } from "@fusion/core";
 import {
   classifyMissingWorktreeSessionStartFailure,
   extractMissingWorktreePathFromSessionStartFailure,
@@ -67,7 +67,27 @@ export async function recoverMissingWorktreeSessionStartFailure(
     metadata: { classification, reason: errorText, source: "session-start", taskId: task.id },
   });
 
-  if (isInsideWorktreesDir(deps.rootDir, staleWorktreePath)) {
+  let workspaceTask = isWorkspaceTask(task);
+  if (!workspaceTask) {
+    try {
+      workspaceTask = ((await loadWorkspaceConfig(deps.rootDir))?.repos.length ?? 0) > 0;
+    } catch { /* an unreadable config cannot authorize workspace cleanup */ }
+  }
+  let recoveryTask = task;
+  if (workspaceTask) {
+    /*
+    FNXC:WorkspaceRootRouting 2026-08-19-12:15:
+    A session-start failure naming a workspace-root path is stale routing metadata, not evidence
+    that any declared repository checkout was lost. Normalize singular fields and preserve the
+    durable sub-repository set before recovery; never remove or recreate the root checkout.
+    */
+    const normalize = (deps.store as TaskStore & {
+      normalizeWorkspaceTaskWorktreeMetadata?: (id: string) => Promise<Task>;
+    }).normalizeWorkspaceTaskWorktreeMetadata;
+    if (typeof normalize === "function") recoveryTask = await normalize.call(deps.store, task.id);
+  }
+
+  if (!workspaceTask && isInsideWorktreesDir(deps.rootDir, staleWorktreePath)) {
     try {
       await removeWorktree({
         rootDir: deps.rootDir,
@@ -84,7 +104,7 @@ export async function recoverMissingWorktreeSessionStartFailure(
     }
   }
 
-  const recovery = await autoRecoverWorktreeSessionStartFailure(deps.store, task, {
+  const recovery = await autoRecoverWorktreeSessionStartFailure(deps.store, recoveryTask, {
     failure: error,
     source: "executor-session-start",
     auditor: audit,

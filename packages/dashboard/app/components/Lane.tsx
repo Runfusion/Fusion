@@ -33,9 +33,6 @@ export interface LaneProps {
   showWorktreeGrouping?: boolean;
   onMoveTask: (id: string, column: ColumnId, optionsOrPosition?: { preserveProgress?: boolean } | number) => Promise<Task>;
   onPromote: (taskId: string) => Promise<void>;
-  /** Drag pre-check: null = allowed, else an i18n messageKey (R17). */
-  canDropTask: (taskId: string, targetColumnId: string, workflowId: string) => string | null;
-  getDraggingTaskId: () => string | null;
   onPauseTask?: (id: string) => Promise<Task>;
   onOpenDetail: (task: Task | TaskDetail) => void;
   onOpenGroupModal?: (groupId: string) => void;
@@ -58,14 +55,12 @@ export interface LaneProps {
   }) => Promise<Task>;
   availableModels?: ModelInfo[];
   onPlanningMode?: (initialPlan: string, workflowId?: string | null) => void;
-  onSubtaskBreakdown?: (description: string, workflowId?: string | null) => void;
   onOpenDetailWithTab?: (task: Task | TaskDetail, initialTab: "changes" | "retries" | "workflow") => void;
   favoriteProviders?: string[];
   favoriteModels?: string[];
   onToggleFavorite?: (provider: string) => void;
   onToggleModelFavorite?: (modelId: string) => void;
   isSearchActive?: boolean;
-  taskStuckTimeoutMs?: number;
   onOpenMission?: (missionId: string) => void;
   lastFetchTimeMs?: number;
   /** Per-task card-placed custom field definitions (U13/KTD-14). */
@@ -149,10 +144,6 @@ function LaneComponent(props: LaneProps) {
     handleToggle();
   }, [handleToggle]);
 
-  const makeCanDrop = useCallback(
-    (targetColumnId: string) => (taskId: string) => props.canDropTask(taskId, targetColumnId, workflow.id),
-    [props, workflow.id],
-  );
 
   return (
     <section className="lane" data-lane={workflow.id} aria-label={workflow.name}>
@@ -191,8 +182,6 @@ function LaneComponent(props: LaneProps) {
               showWorktreeGrouping={props.showWorktreeGrouping === true}
               onMoveTask={props.onMoveTask}
               onPromote={props.onPromote}
-              canDropTask={makeCanDrop(col.id)}
-              getDraggingTaskId={props.getDraggingTaskId}
               onPauseTask={props.onPauseTask}
               onOpenDetail={props.onOpenDetail}
               onOpenGroupModal={props.onOpenGroupModal}
@@ -211,14 +200,13 @@ function LaneComponent(props: LaneProps) {
               onToggleFavorite={props.onToggleFavorite}
               onToggleModelFavorite={props.onToggleModelFavorite}
               isSearchActive={props.isSearchActive}
-              taskStuckTimeoutMs={props.taskStuckTimeoutMs}
               onOpenMission={props.onOpenMission}
               lastFetchTimeMs={props.lastFetchTimeMs}
               taskCardFieldDefs={props.taskCardFieldDefs}
               blockerFanoutMap={props.blockerFanoutMap}
               prAuthAvailable={props.prAuthAvailable}
               autoMerge={props.autoMerge}
-              {...(isCreateColumn ? { onQuickCreate: props.onQuickCreate, onNewTask: props.onNewTask, onPlanningMode: props.onPlanningMode, onSubtaskBreakdown: props.onSubtaskBreakdown } : {})}
+              {...(isCreateColumn ? { onQuickCreate: props.onQuickCreate, onNewTask: props.onNewTask, onPlanningMode: props.onPlanningMode } : {})}
               {...((col.flags.mergeBlocker || col.flags.humanReview) && props.onToggleAutoMerge ? { onToggleAutoMerge: props.onToggleAutoMerge } : {})}
             />
             );

@@ -336,6 +336,14 @@ export default defineConfig({
             // / `test:all` invoked from the root `test:full` script.
             "src/**/*.slow.test.ts",
             /*
+            FNXC:PluginRunnerFlake 2026-08-17-12:11:
+            FN-9141 rescued the PluginRunner suite before the 2026-08-30 deletion
+            ratchet. A completed shuffled worker-reuse campaign reproduced a test-fixture
+            defect: cross-file `vi.clearAllMocks()` erased the logger mock-result history
+            used by the lifecycle warning assertion. The suite now keeps a stable hoisted
+            logger reference and directly proves that cleanup cannot erase that contract.
+            */
+            /*
             FNXC:FullSuiteBookkeeping 2026-08-09-03:49:
             All 11 engine-default entries from the 2026-08-05 full-suite quarantine wave (run 30982276306) were deleted under the deletion ratchet after operator directive. These tested pre-refactor APIs (getBuiltinWorkflow removed post-U10b), stale mock shapes, census/allowlist drift, and mock-hoist errors that no longer have a production path to exercise.
             */

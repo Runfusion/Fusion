@@ -1166,21 +1166,44 @@ describe("built-in workflows", () => {
       expect(await store.getWorkflowDefinition("builtin:coding")).toBeDefined();
     });
 
-    it("filters disabled built-ins from normal listings but keeps direct resolution", async () => {
-      await store.updateSettings({ enabledBuiltinWorkflowIds: ["builtin:coding"] });
+    it("filters disabled built-ins, resolves an enabled effective default, and keeps direct resolution", async () => {
+      await store.updateSettings({
+        defaultWorkflowId: "builtin:coding",
+        enabledBuiltinWorkflowIds: ["builtin:quick-fix"],
+      });
 
       const list = await store.listWorkflowDefinitions();
       expect(list.filter((workflow) => workflow.id.startsWith("builtin:")).map((workflow) => workflow.id)).toEqual([
-        "builtin:coding",
+        "builtin:quick-fix",
       ]);
-      expect(await store.getWorkflowDefinition("builtin:review-heavy")).toBeDefined();
+      expect(await store.getDefaultWorkflowId()).toBe("builtin:quick-fix");
+      expect(await store.getWorkflowDefinition("builtin:coding")).toBeDefined();
+      const task = await store.createTask({ description: "inherit the enabled workflow" });
+      expect(await store.getTaskWorkflowSelectionAsync(task.id)).toMatchObject({ workflowId: "builtin:quick-fix" });
+    });
+
+    it("requires one valid enabled built-in and rejects malformed sets atomically", async () => {
+      await store.updateSettings({ enabledBuiltinWorkflowIds: ["builtin:quick-fix"] });
+      const invalidSets = [
+        [],
+        ["builtin:not-a-workflow"],
+        ["builtin:pr-workflow"],
+        ["builtin:brainstorming"],
+        ["builtin:compound-engineering"],
+        ["builtin:quick-fix", "builtin:quick-fix"],
+      ];
+
+      for (const enabledBuiltinWorkflowIds of invalidSets) {
+        await expect(store.updateSettings({ enabledBuiltinWorkflowIds })).rejects.toThrow(/enabledBuiltinWorkflowIds/);
+        expect((await store.getSettings()).enabledBuiltinWorkflowIds).toEqual(["builtin:quick-fix"]);
+      }
     });
 
     it("can include disabled built-ins for workflow management surfaces", async () => {
-      await store.updateSettings({ enabledBuiltinWorkflowIds: [] });
+      await store.updateSettings({ enabledBuiltinWorkflowIds: ["builtin:quick-fix"] });
 
       const normalList = await store.listWorkflowDefinitions();
-      expect(normalList.some((workflow) => workflow.id.startsWith("builtin:"))).toBe(false);
+      expect(normalList.some((workflow) => workflow.id === "builtin:coding")).toBe(false);
 
       const managementList = await store.listWorkflowDefinitions({ includeDisabledBuiltins: true });
       expect(managementList.some((workflow) => workflow.id === "builtin:coding")).toBe(true);

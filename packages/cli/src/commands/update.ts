@@ -2,7 +2,12 @@ import { exec } from "node:child_process";
 import { readOwnCliVersion } from "../cli-version.js";
 import { result } from "../output.js";
 import { promisify } from "node:util";
-import { isVersionNewer, resolveUpdateTargetVersion } from "@fusion/core";
+import {
+  EXTERNALLY_MANAGED_UPDATE_MESSAGE,
+  isVersionNewer,
+  resolveUpdateTargetVersion,
+  resolveUpdatesExternallyManaged,
+} from "@fusion/core";
 import type { UpdateChannel } from "@fusion/core";
 import { getCachedUpdateStatus, getConfiguredUpdateChannel, persistUpdateChannel } from "../update-cache.js";
 
@@ -342,15 +347,30 @@ function getLatestVersionFallback(currentVersion: string, channel: UpdateChannel
   return cached.latestVersion;
 }
 
-export async function runUpdate(options: RunUpdateOptions = {}): Promise<void> {
+export type RunUpdateDependencies = {
+  externallyManaged?: () => boolean;
+  installVersion?: (globalInstall: boolean, version: string) => Promise<void>;
+  writeError?: (message: string) => void;
+  exit?: (code: number) => void;
+};
+
+export async function runUpdate(options: RunUpdateOptions = {}, dependencies: RunUpdateDependencies = {}): Promise<void> {
   const checkOnly = options.check === true;
   const globalInstall = options.global !== false;
   const jsonOutput = options.json === true;
   const force = options.force === true;
+  const writeError = dependencies.writeError ?? console.error;
+  const exit = dependencies.exit ?? process.exit;
+
+  if (!checkOnly && (dependencies.externallyManaged ?? resolveUpdatesExternallyManaged)()) {
+    writeError(EXTERNALLY_MANAGED_UPDATE_MESSAGE);
+    exit(1);
+    return;
+  }
 
   if (options.channel !== undefined && options.channel !== "stable" && options.channel !== "beta") {
-    console.error(`Error: invalid --channel '${options.channel}'. Valid channels: stable, beta.`);
-    process.exit(1);
+    writeError(`Error: invalid --channel '${options.channel}'. Valid channels: stable, beta.`);
+    exit(1);
     return;
   }
 
@@ -375,8 +395,8 @@ export async function runUpdate(options: RunUpdateOptions = {}): Promise<void> {
 
   const currentVersion = readOwnCliVersion(import.meta.url);
   if (!currentVersion) {
-    console.error("Error: Could not determine current Fusion CLI version.");
-    process.exit(1);
+    writeError("Error: Could not determine current Fusion CLI version.");
+    exit(1);
     return;
   }
 
@@ -392,8 +412,8 @@ export async function runUpdate(options: RunUpdateOptions = {}): Promise<void> {
     const fallbackVersion = getLatestVersionFallback(currentVersion, channel);
     if (!fallbackVersion) {
       const message = error instanceof Error ? error.message : String(error);
-      console.error(`Error checking for updates: ${message}`);
-      process.exit(1);
+      writeError(`Error checking for updates: ${message}`);
+      exit(1);
       return;
     }
 
@@ -449,11 +469,11 @@ export async function runUpdate(options: RunUpdateOptions = {}): Promise<void> {
   }
 
   try {
-    await installVersion(globalInstall, latestVersion);
+    await (dependencies.installVersion ?? installVersion)(globalInstall, latestVersion);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    console.error(`Error installing update: ${message}`);
-    process.exit(1);
+    writeError(`Error installing update: ${message}`);
+    exit(1);
     return;
   }
 

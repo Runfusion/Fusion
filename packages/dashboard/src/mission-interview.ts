@@ -29,15 +29,28 @@ import {
 } from "./ai-session-diagnostics.js";
 import { createAbortError, GenerationGuard, isAbortError } from "./ai-session-timeout.js";
 
-import { buildSessionSkillContextSync, createFnAgent as engineCreateFnAgent, resolveMcpServersForStore } from "@fusion/engine";
+import { buildSessionSkillContextSync, createResolvedAgentSession, promptWithFallback as enginePromptWithFallback, resolveMcpServersForStore } from "@fusion/engine";
 import { createPlanningBoardTools } from "./planning-board-tools.js";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AgentResult = any;
 type SkillPluginRunner = Parameters<typeof buildSessionSkillContextSync>[3];
 const MISSION_INTERVIEW_BUILTIN_WEB_TOOLS = ["WebSearch", "WebFetch"] as const;
+/*
+FNXC:MissionInterviewRuntimeResolution 2026-08-16-14:37:
+Mission interview sessions must go through the shared `createResolvedAgentSession` seam — the same one chat, Planning Mode (createPlanningRuntimeSession), executor, and reviewer use — NOT a bare `createFnAgent` call. Bare `createFnAgent` pins the session to the default pi runtime, so a CLI-runtime model selection (cursor-cli, claude-cli, hermes, omp-cli, no-key grok-cli) could never route to its runtime plugin and died with "Configured model cursor-cli/auto ... was not found in the pi model registry" while chat on the same model worked. The seam derives the CLI runtime hint from the selected provider and emits `session:runtime-resolved` run-audit visibility.
+*/
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const createFnAgent: any = engineCreateFnAgent;
+const createFnAgent: any = async (options: any): Promise<AgentResult> => {
+  const { pluginRunner, runtimeHint, settings, ...runtimeOptions } = options ?? {};
+  return createResolvedAgentSession({
+    sessionPurpose: "executor",
+    ...(runtimeHint ? { runtimeHint } : {}),
+    ...(pluginRunner ? { pluginRunner } : {}),
+    ...(settings ? { settings } : {}),
+    ...runtimeOptions,
+  });
+};
 
 /**
  * Shared diagnostics helper for the mission-interview module.
@@ -942,6 +955,8 @@ export async function createMissionInterviewAgent(
     tools: "readonly",
     mcpServers,
     allowMcpToolsInReadonly: true,
+    // FNXC:MissionInterviewRuntimeResolution 2026-08-16-14:37: forward the plugin runner so the shared seam can route CLI-runtime model selections (cursor/claude/grok/omp/hermes) to their runtime plugins.
+    ...(pluginRunner ? { pluginRunner } : {}),
     ...(skillContext.skillSelectionContext ? { skillSelection: skillContext.skillSelectionContext } : {}),
     builtinToolsAllowlist: [...MISSION_INTERVIEW_BUILTIN_WEB_TOOLS],
     customTools: [...createPlanningBoardTools(store)],
@@ -1094,7 +1109,9 @@ async function ensureMissionInterviewAgent(
       if (abortSignal.aborted) {
         throw createAbortError();
       }
-      await session.agent!.session.prompt(
+      // FNXC:MissionInterviewRuntimeResolution 2026-08-16-14:37: prompt through the engine dispatcher — plugin CLI runtime sessions (cursor/grok/droid) have no session.prompt(); the shared seam bound the runtime's promptWithFallback onto the session and this delegates to it.
+      await enginePromptWithFallback(
+        session.agent!.session,
         [
           "Previous conversation summary:",
           historySummary,
@@ -1167,7 +1184,7 @@ async function continueAgentConversation(session: MissionInterviewSession, messa
         if (abortSignal.aborted) {
           throw createAbortError();
         }
-        await agent.session.prompt(message, { signal: abortSignal });
+        await enginePromptWithFallback(agent.session, message, { signal: abortSignal });
         if (abortSignal.aborted) {
           throw createAbortError();
         }
@@ -1214,7 +1231,8 @@ async function continueAgentConversation(session: MissionInterviewSession, messa
                 if (abortSignal.aborted) {
                   throw createAbortError();
                 }
-                await agent.session.prompt(
+                await enginePromptWithFallback(
+                  agent.session,
                   "Your previous response could not be parsed as JSON. " +
                   'Please respond with ONLY a valid JSON object: either {"type":"question","data":{...}} ' +
                   'or {"type":"complete","data":{"missionTitle":"...","missionDescription":"...","milestones":[...]}}. ' +

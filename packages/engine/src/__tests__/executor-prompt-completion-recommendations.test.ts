@@ -28,6 +28,37 @@ describe("executor prompt: completion recommendations", () => {
     expect(prompt()).toContain("at most 3");
   });
 
+  it("requires explicit quality-first evaluation when enabled", () => {
+    const text = prompt({ maxRecommendationsPerTask: 3, requireTaskRecommendations: true });
+    expect(text).toContain("MUST explicitly evaluate");
+    expect(text).toContain("Aim toward 3 distinct");
+    expect(text).toContain("shorter list or `recommendations: []` is correct");
+    expect(text).toContain("scope drift");
+    expect(text).not.toContain("optionally evaluate");
+  });
+
+  it("keeps cap zero authoritative over required mode", () => {
+    const text = prompt({ maxRecommendationsPerTask: 0, requireTaskRecommendations: true });
+    expect(text).toContain("Recommendation capture is disabled for this project");
+    expect(text).not.toContain("MUST explicitly evaluate");
+  });
+
+  it("appends required guidance consistently to custom and withheld-tool prompts", () => {
+    const text = getExecutorSystemPrompt({
+      maxRecommendationsPerTask: 2,
+      requireTaskRecommendations: true,
+      agentPrompts: {
+        templates: [{ id: "custom-executor", name: "Custom", role: "executor", prompt: "Custom executor instructions.", builtIn: false }],
+        roleAssignments: { executor: "custom-executor" },
+      },
+    } as never, { taskCreateWithheld: true, delegateWithheld: true });
+
+    expect(text).toContain("Custom executor instructions.");
+    expect(text).toContain("MUST explicitly evaluate");
+    expect(text).toContain("required completion evaluation");
+    expect(text).not.toContain("Recommendation capture is disabled");
+  });
+
   it("tells the executor to send nothing when capture is disabled", () => {
     const text = prompt({ maxRecommendationsPerTask: 0 });
     expect(text).toContain("Recommendation capture is disabled for this project");

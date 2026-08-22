@@ -109,6 +109,11 @@ export const COLOR_THEMES = [
   "brutalist",
   "neon-city",
   "parchment",
+  /*
+  FNXC:DashboardTheming 2026-08-19-19:23:
+  Medieval is a persisted selectable theme. Keep this ID and order synchronized with selector metadata and both web/Electron first-paint validators so a saved medieval preference survives startup before React hydration.
+  */
+  "medieval",
   "terminal",
   "glass",
   // FNXC:DashboardTheming 2026-07-01-00:00: Glass Silver is the silver/gray frosted sibling of Glass; keep this id in lockstep with dashboard/desktop validators and selector metadata so persisted explicit choices survive startup.
@@ -149,6 +154,8 @@ export const COLOR_THEMES = [
   Midnight is a persisted selectable dashboard theme. Keep its id and order synchronized with selector metadata and both web/Electron first-paint validators so saved choices survive before hydration, while shadcn-ember remains the unset default.
   */
   "midnight",
+  // FNXC:DashboardTheming 2026-08-18-05:45: Velvet is persisted immediately after Midnight; keep this ID and order synchronized across core, selector metadata, and both first-paint validators so saved selections survive pre-hydration validation.
+  "velvet",
   // FNXC:DashboardTheming 2026-07-31-20:39: Factory Dark must stay order-synchronized across core, selector metadata, and both first-paint validators so saved preferences survive pre-hydration validation.
   "factory-dark",
   // FNXC:DashboardTheming 2026-07-31-23:51: Factory Light must stay order-synchronized across core, selector metadata, and both first-paint validators so saved preferences survive pre-hydration validation.

@@ -3016,7 +3016,22 @@ export function createMissionRouter(
         throw badRequest("Feature is not linked to a task");
       }
 
-      const feature = await missionStore.unlinkFeatureFromTask(featureId);
+      let feature;
+      try {
+        feature = await missionStore.unlinkFeatureFromTask(featureId);
+      } catch (error) {
+        /*
+        FNXC:MissionFeatureUnlinkRoute 2026-08-19-21:24 (RUFU-134 / PR #3491 CodeRabbit):
+        The pre-check above handles the normal case; the store still throws its not-linked
+        error if a concurrent unlink wins between the check and the write. That is a
+        client-visible precondition (4xx), not a server fault — an uncaught generic Error
+        would surface as a 500 via catchHandler.
+        */
+        if (error instanceof Error && /is not linked to any task/.test(error.message)) {
+          throw badRequest(error.message);
+        }
+        throw error;
+      }
       res.json(feature);
     })
   );

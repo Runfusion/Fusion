@@ -64,6 +64,7 @@ const { mockSessionManagerCreate, mockSessionManagerOpen } = vi.hoisted(() => {
     branch: () => {},
     resetLeaf: () => {},
     appendMessage: () => "entry-fake",
+    buildSessionContext: () => ({ messages: [] }),
     createBranchedSession: () => "/tmp/test/.pi-fake/session-branched.jsonl",
   };
   return {
@@ -115,10 +116,10 @@ function createChatManagerWithSettings(settings: {
   fallbackModelId?: string;
   defaultProvider?: string;
   defaultModelId?: string;
-  defaultThinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
-  defaultThinkingLevelOverride?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
-  executionThinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
-  executionGlobalThinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+  defaultThinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+  defaultThinkingLevelOverride?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+  executionThinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+  executionGlobalThinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 }): ChatManager {
   return new ChatManager(
     mockChatStore as any,
@@ -2116,10 +2117,17 @@ describe("ChatManager.sendMessage", () => {
   it("adds rich task context and steering tools for synthetic task planner chat sessions", async () => {
     mockChatStore.getSession.mockReturnValue({
       id: "chat-001",
-      agentId: "task-planner:FN-7310",
+      agentId: "task-planner:TEST-002",
       status: "active",
-      modelProvider: "anthropic",
-      modelId: "claude-plan",
+      /*
+      FNXC:TaskChatProjectContext 2026-08-19-17:27:
+      The persisted synthetic task session carries the Direct Chat target into ChatManager. This
+      production send path must read TEST-002 only from its selected project store, never a
+      same-ID decoy held by the dashboard default store.
+      */
+      modelProvider: "openai",
+      modelId: "gpt-direct",
+      thinkingLevel: "high",
     });
 
     const createResolvedSession = vi.fn(async () => ({
@@ -2134,19 +2142,24 @@ describe("ChatManager.sendMessage", () => {
     __setCreateResolvedAgentSession(createResolvedSession as any);
 
     const taskStore = {
-      getTask: vi.fn().mockResolvedValue({
-        id: "FN-7310",
-        title: "Add planner chat",
-        description: "Short list description should not replace the task prompt",
-        prompt: "# PROMPT.md\n\nImplement the planner-model Chat tab from the detailed task plan.",
-        column: "todo",
-        status: "planning",
-        currentStep: 0,
-        dependencies: ["FN-7309"],
-        steps: [{ title: "Polish", status: "in-progress" }],
-        comments: [{ text: "User wants planner chat", author: "user" }],
-        steeringComments: [{ text: "Keep Activity intact", author: "user" }],
-        log: [{ level: "info", message: "Activity transcript loaded" }],
+      getTask: vi.fn(async (id: string) => {
+        if (id === "TEST-002") {
+          return {
+            id,
+            title: "Secondary project task",
+            description: "Selected-project description",
+            prompt: "# PROMPT.md\n\nUse the secondary project's authoritative task context.",
+            column: "todo",
+            status: "planning",
+            currentStep: 0,
+            dependencies: ["FN-7309"],
+            steps: [{ title: "Polish", status: "in-progress" }],
+            comments: [{ text: "User wants planner chat", author: "user" }],
+            steeringComments: [{ text: "Keep Activity intact", author: "user" }],
+            log: [{ level: "info", message: "Activity transcript loaded" }],
+          };
+        }
+        return { id, title: "Selected-project dependency", column: "done" };
       }),
       getSettings: vi.fn().mockResolvedValue({}),
     };
@@ -2163,13 +2176,16 @@ describe("ChatManager.sendMessage", () => {
     await chatManager.sendMessage("chat-001", "How should I plan this?");
 
     const createOptions = createResolvedSession.mock.calls[0]?.[0];
-    expect(createOptions.defaultProvider).toBe("anthropic");
-    expect(createOptions.defaultModelId).toBe("claude-plan");
+    expect(createOptions.defaultProvider).toBe("openai");
+    expect(createOptions.defaultModelId).toBe("gpt-direct");
+    expect(createOptions.defaultThinkingLevel).toBe("high");
     expect(createOptions.systemPrompt).toContain("## Task Planner Chat Context");
-    expect(createOptions.systemPrompt).toContain("Task ID: FN-7310");
-    expect(createOptions.systemPrompt).toContain("Title: Add planner chat");
+    expect(createOptions.systemPrompt).toContain("Task ID: TEST-002");
+    expect(createOptions.systemPrompt).toContain("Title: Secondary project task");
     expect(createOptions.systemPrompt).toContain("Prompt:\n# PROMPT.md");
-    expect(createOptions.systemPrompt).toContain("Implement the planner-model Chat tab from the detailed task plan.");
+    expect(createOptions.systemPrompt).toContain("Use the secondary project's authoritative task context.");
+    expect(createOptions.systemPrompt).not.toContain("Task context could not be loaded");
+    expect(createOptions.systemPrompt).not.toContain("Default-project decoy content");
     expect(createOptions.systemPrompt).toContain("Dependencies:\n- FN-7309:");
     expect(createOptions.systemPrompt).toContain("Progress: step 1 of 1");
     expect(createOptions.systemPrompt).toContain("Current step: Polish: in-progress");
@@ -2198,7 +2214,7 @@ describe("ChatManager.sendMessage", () => {
       role: "user",
       content: expect.stringContaining("Task Planner Chat Context"),
     }));
-    expect(taskStore.getTask).toHaveBeenNthCalledWith(1, "FN-7310", { activityLogLimit: 20 });
+    expect(taskStore.getTask).toHaveBeenNthCalledWith(1, "TEST-002", { activityLogLimit: 20 });
     expect(taskStore.getTask).toHaveBeenCalledWith("FN-7309");
   });
 
@@ -3349,13 +3365,20 @@ describe("ChatManager.sendMessage", () => {
     }
   });
 
-  it("cancelGeneration returns false when no active generation exists", () => {
+  it("treats an idle cancellation as a successful no-op without durable side effects", async () => {
     const chatManager = createChatManager();
+    const events: Array<{ type: string; data: unknown }> = [];
+    const unsubscribe = chatStreamManager.subscribe("chat-001", (event) => events.push(event));
 
-    expect(chatManager.cancelGeneration("chat-001")).toBe(false);
+    await expect(chatManager.cancelGeneration("chat-001")).resolves.toEqual({ success: true, interrupted: false });
+
+    expect(mockChatStore.addMessage).not.toHaveBeenCalled();
+    expect(mockChatStore.setInFlightGeneration).not.toHaveBeenCalled();
+    expect(events).toEqual([]);
+    unsubscribe();
   });
 
-  it("cancelGeneration returns true and aborts an active generation", () => {
+  it("cancelGeneration returns true and aborts an active generation", async () => {
     const chatManager = createChatManager();
     const abortController = new AbortController();
     const dispose = vi.fn();
@@ -3363,20 +3386,15 @@ describe("ChatManager.sendMessage", () => {
     (chatManager as any).activeGenerations.set("chat-001", {
       abortController,
       agentResult: { session: { dispose } },
+      generationId: 1,
+      cancellationRequested: false,
     });
 
-    const events: Array<{ type: string; data: unknown }> = [];
-    const unsubscribe = chatStreamManager.subscribe("chat-001", (event) => {
-      events.push(event);
-    });
+    const result = await chatManager.cancelGeneration("chat-001");
 
-    const result = chatManager.cancelGeneration("chat-001");
-    unsubscribe();
-
-    expect(result).toBe(true);
+    expect(result).toEqual({ success: true, interrupted: false });
     expect(abortController.signal.aborted).toBe(true);
     expect(dispose).toHaveBeenCalledTimes(1);
-    expect(events).toContainEqual({ type: "error", data: "Generation cancelled" });
   });
 
   it("cancelled generation does not persist assistant message", async () => {
@@ -3405,11 +3423,66 @@ describe("ChatManager.sendMessage", () => {
 
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    expect(chatManager.cancelGeneration("chat-001")).toBe(true);
+    await expect(chatManager.cancelGeneration("chat-001")).resolves.toEqual({ success: true, interrupted: false });
     await sendPromise;
 
     const assistantCalls = mockChatStore.addMessage.mock.calls.filter((call) => call[1].role === "assistant");
     expect(assistantCalls).toHaveLength(0);
+  });
+
+  it("persists one interrupted assistant message before clearing the checkpoint", async () => {
+    let rejectPrompt: ((reason?: unknown) => void) | undefined;
+    const addMessageCalls: Array<{ role: string; content: string }> = [];
+    mockChatStore.addMessage.mockImplementation(async (_sessionId: string, input: { role: string; content: string; thinkingOutput?: string; metadata?: Record<string, unknown> }) => {
+      addMessageCalls.push({ role: input.role, content: input.content });
+      return {
+        id: input.role === "user" ? "user-1" : "assistant-interrupted-1",
+        sessionId: "chat-001",
+        role: input.role,
+        content: input.content,
+        thinkingOutput: input.thinkingOutput ?? null,
+        metadata: input.metadata ?? null,
+        createdAt: "2026-08-18T21:55:00.000Z",
+      };
+    });
+    __setCreateFnAgent(async (options: any) => ({
+      session: {
+        prompt: vi.fn().mockImplementation(() => {
+          options.onThinking("thinking prefix");
+          options.onText("Distinct interrupted prefix");
+          options.onToolStart("bash", { command: "echo partial" });
+          return new Promise<void>((_resolve, reject) => {
+            rejectPrompt = reject;
+          });
+        }),
+        dispose: vi.fn().mockImplementation(() => rejectPrompt?.(new Error("Disposed"))),
+        state: { messages: [] },
+      },
+    }));
+
+    const events: Array<{ type: string; data: unknown }> = [];
+    const unsubscribe = chatStreamManager.subscribe("chat-001", (event) => events.push(event));
+    const chatManager = createChatManager();
+    const sendPromise = chatManager.sendMessage("chat-001", "Hello");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const cancellation = await chatManager.cancelGeneration("chat-001");
+    await sendPromise;
+    unsubscribe();
+
+    expect(cancellation).toEqual(expect.objectContaining({ success: true, interrupted: true }));
+    expect(addMessageCalls.filter((call) => call.role === "assistant")).toEqual([
+      { role: "assistant", content: "Distinct interrupted prefix" },
+    ]);
+    expect(mockChatStore.setInFlightGeneration.mock.invocationCallOrder.at(-1)).toBeGreaterThan(
+      mockChatStore.addMessage.mock.invocationCallOrder.at(-1)!,
+    );
+    expect(mockChatStore.setInFlightGeneration).toHaveBeenLastCalledWith("chat-001", null);
+    expect(events.filter((event) => event.type === "done")).toHaveLength(1);
+    expect(events.find((event) => event.type === "done")?.data).toEqual(expect.objectContaining({
+      interrupted: true,
+      messageId: "assistant-interrupted-1",
+    }));
   });
 
   it("cancelled generation broadcasts error event with cancellation message", async () => {
@@ -3440,11 +3513,11 @@ describe("ChatManager.sendMessage", () => {
     const sendPromise = chatManager.sendMessage("chat-001", "Hello");
 
     await new Promise((resolve) => setTimeout(resolve, 0));
-    chatManager.cancelGeneration("chat-001");
+    await chatManager.cancelGeneration("chat-001");
     await sendPromise;
     unsubscribe();
 
-    expect(events.some((event) => event.type === "error" && event.data === "Generation cancelled")).toBe(true);
+    expect(events.some((event) => event.type === "done" && (event.data as { interrupted?: boolean }).interrupted === true)).toBe(true);
   });
 
   it("cleans active generation state even when dispose fails", async () => {

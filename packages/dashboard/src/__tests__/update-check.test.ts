@@ -628,6 +628,62 @@ describe("update-check", () => {
     });
   });
 
+  it("classifies all npm-not-found shell and spawn forms without raw stderr", async () => {
+    const missingShapes = [
+      Object.assign(new Error("Command failed"), { code: 127, stderr: "/bin/sh: 1: npm: not found" }),
+      Object.assign(new Error("sh: npm: command not found"), { stderr: "sh: npm: command not found" }),
+      Object.assign(new Error("'npm' is not recognized as an internal or external command"), { stderr: "'npm' is not recognized as an internal or external command" }),
+      Object.assign(new Error("spawn npm ENOENT"), { code: "ENOENT" }),
+    ];
+
+    for (const error of missingShapes) {
+      const result = await performUpdateInstall("1.0.0", "2.0.0", {
+        exec: vi.fn().mockRejectedValue(error),
+        fusionDir,
+      });
+      expect(result.outcome).toBe("unsupported-install-method");
+      expect(result.message).toContain("npm");
+      expect(result.message).toContain("way it was installed");
+      expect(result.message).not.toContain("/bin/sh: 1: npm: not found");
+      expect(result.error).not.toContain("/bin/sh: 1: npm: not found");
+    }
+  });
+
+  it("classifies a missing npm during the forced bin-collision retry", async () => {
+    const collision = Object.assign(new Error("EEXIST /usr/local/bin/fn"), { code: "ENOENT" });
+    const missing = Object.assign(new Error("Command failed"), { code: 127, stderr: "/bin/sh: 1: npm: not found" });
+    const execFake = vi.fn().mockRejectedValueOnce(collision).mockRejectedValueOnce(missing);
+
+    const result = await performUpdateInstall("1.0.0", "2.0.0", { exec: execFake, fusionDir });
+
+    expect(execFake).toHaveBeenCalledTimes(2);
+    expect(result.outcome).toBe("unsupported-install-method");
+    expect(result.message).not.toContain("/bin/sh:");
+  });
+
+  it("keeps a non-npm ENOENT bin collision on the force retry path", async () => {
+    const collision = Object.assign(new Error("ENOENT /usr/local/bin/fn"), { code: "ENOENT" });
+    const execFake = vi.fn().mockRejectedValueOnce(collision).mockResolvedValueOnce({ stdout: "", stderr: "" });
+
+    const result = await performUpdateInstall("1.0.0", "2.0.0", { exec: execFake, fusionDir });
+
+    expect(execFake).toHaveBeenCalledTimes(2);
+    expect(result.outcome).toBe("installed");
+  });
+
+  it("refuses externally managed installs before invoking npm", async () => {
+    const execFake = vi.fn();
+    const result = await performUpdateInstall("1.0.0", "2.0.0", {
+      exec: execFake,
+      fusionDir,
+      installMethod: { externallyManaged: true },
+    });
+
+    expect(execFake).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ outcome: "unsupported-install-method", updated: false });
+    expect(result.message).toContain("externally managed");
+  });
+
   it("refuses source checkouts and missing npm before meaningful install work", async () => {
     const execFake = vi.fn();
     const source = await performUpdateInstall("1.0.0", "2.0.0", { exec: execFake, fusionDir, installMethod: { sourceWorkspaceRoot: "/repo/fusion" } });

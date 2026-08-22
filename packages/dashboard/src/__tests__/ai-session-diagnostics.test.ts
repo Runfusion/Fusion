@@ -674,16 +674,13 @@ describe("ai-session-diagnostics", () => {
     it("handles multiple scopes in same test", () => {
       const planning = createSessionDiagnostics("planning");
       const mission = createSessionDiagnostics("mission-interview");
-      const subtask = createSessionDiagnostics("subtask-breakdown");
 
       planning.info("Planning event", { sessionId: "p1" });
       mission.info("Mission event", { sessionId: "m1" });
-      subtask.info("Subtask event", { sessionId: "s1" });
 
-      expect(logged).toHaveLength(3);
+      expect(logged).toHaveLength(2);
       expect(logged[0].scope).toBe("planning");
       expect(logged[1].scope).toBe("mission-interview");
-      expect(logged[2].scope).toBe("subtask-breakdown");
     });
 
     it("isolates diagnostics between test hooks", () => {

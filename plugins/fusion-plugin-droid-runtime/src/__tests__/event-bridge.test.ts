@@ -57,6 +57,34 @@ describe("droid event bridge streaming delta normalization", () => {
     expect(stream.events[2]).toEqual(expect.objectContaining({ type: "text_delta", delta: " Good overview." }));
   });
 
+  /*
+  FNXC:ChatStreaming 2026-08-19-13:52:
+  Classify numeric period boundaries before the Droid bridge appends or emits deltas so source labels and URL paths stay valid in Chat.
+  */
+  it("preserves the reported dotted model links across text deltas", () => {
+    const bridge = createBridgeWithStart();
+    bridge.handleEvent({ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } } as any);
+    for (const text of [
+      "[GPT‑5.",
+      "6 Luna](https://developers.openai.com/api/docs/models/gpt-5.",
+      "6-luna) [GPT‑5.",
+      "6 Sol](https://developers.openai.com/api/docs/models/gpt-5.",
+      "6-sol) [GPT‑5.",
+      "6 Terra](https://developers.openai.com/api/docs/models/gpt-5.",
+      "6-terra)",
+    ]) {
+      bridge.handleEvent({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text } } as any);
+    }
+
+    const output = bridge.getOutput();
+    const text = (output.content[0] as any).text as string;
+    expect(text).toContain("GPT‑5.6 Luna");
+    expect(text).not.toContain("5. 6");
+    expect(text).toContain("/gpt-5.6-luna");
+    expect(text).toContain("/gpt-5.6-sol");
+    expect(text).toContain("/gpt-5.6-terra");
+  });
+
   it("repairs a missing sentence boundary between consecutive text blocks", () => {
     const bridge = createBridgeWithStart();
 

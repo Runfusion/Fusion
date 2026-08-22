@@ -101,7 +101,8 @@ See the [2026-07-14 PostgreSQL runtime cutover review](./postgres-migration-revi
 - Gate boundary: soft-deleted children and archived-column children do **not** block parent removal; only live non-archived children block.
 - `cleanupArchivedTasks` intentionally tolerates dangling lineage pointers in historical/archive cleanup flows; it does not run lineage rewrites.
 - For forensic reads, soft-deleted parents remain accessible through `readTaskFromDb(id, { includeDeleted: true })`.
-- Agent-facing tool layer (FN-7661): the `fn_task_archive` and `fn_task_delete` pi/CLI tools (`packages/cli/src/extension.ts`) both accept an optional `removeLineageReferences` boolean and forward it to `store.archiveTask` / `store.deleteTask`, so an agent that hits `TaskHasLineageChildrenError` can retry with `{ removeLineageReferences: true }` to clear the block — matching the recovery path the error message already advertises.
+- Agent-facing tool layer: the `fn_task_archive` and `fn_task_delete` pi/CLI tools (`packages/cli/src/extension.ts`) both accept optional `removeLineageReferences` and forward it to `store.archiveTask` / `store.deleteTask`. This clears incoming lineage-parent references (`sourceParentTaskId`) only after the normal `TaskHasLineageChildrenError` refusal.
+- `fn_task_delete` also accepts `removeDependencyReferences`. Normal deletion intentionally refuses live dependents; only an explicit retry with `{ removeDependencyReferences: true }` delegates to `store.deleteTask` to atomically remove incoming dependency edges, clear matching blockers, and return affected dependents to planning. It does not hard-delete the prerequisite or require direct PostgreSQL or `task.json` edits.
 
 ### Documents under soft-deleted tasks (FN-5140, FX-005)
 
@@ -322,18 +323,18 @@ High-level finding: the dashboard currently uses localStorage extensively for UX
 | `kb-dashboard-current-project` | `hooks/useCurrentProject.ts` | JSON `ProjectInfo` object (includes id/name/path/status/etc.) | project/identity | **Medium** |
 | `kb-terminal-tabs` | `hooks/useTerminalSessions.ts` | JSON array of tab objects (`id`, `sessionId`, `title`, active state, timestamp) | UI preference (operational session state) | **High** |
 | `fn-agent-tree-expanded` | `hooks/useAgentHierarchy.ts` | JSON string[] of expanded agent ids | UI preference | Low |
-| `kb-planning-last-description` | `hooks/modalPersistence.ts` (used by `PlanningModeModal`) | free-text draft | user draft | Medium |
-| `kb-subtask-last-description` | `hooks/modalPersistence.ts` (used by `SubtaskBreakdownModal`) | free-text draft | user draft | Medium |
-| `kb-mission-last-goal` | `hooks/modalPersistence.ts` (used by `MissionInterviewModal`) | free-text draft | user draft | Medium |
+| `kb-planning-last-description` | `hooks/modalPersistence.ts` (used by `PlanningModeModal`) | free-text draft (best-effort; 64,000-byte cap) | user draft | Medium |
+| `kb-subtask-last-description` | `hooks/modalPersistence.ts` (used by `SubtaskBreakdownModal`) | free-text draft (best-effort; 64,000-byte cap) | user draft | Medium |
+| `kb-mission-last-goal` | `hooks/modalPersistence.ts` (used by `MissionInterviewModal`) | free-text draft (best-effort; 64,000-byte cap) | user draft | Medium |
 | `kb-dashboard-view-mode` | `App.tsx` | enum string (`overview`/`project`) | UI preference | Low |
 | `kb-dashboard-task-view` | `App.tsx` | enum string (`board`/`list`/`agents`) | UI preference | Low |
 | `kb-dashboard-list-columns` | `components/ListView.tsx` | JSON array of visible list columns | UI preference | Low |
 | `kb-dashboard-hide-done` | `components/ListView.tsx` | boolean string (`"true"`/`"false"`) | UI preference | Low |
 | `kb-dashboard-list-collapsed` | `components/ListView.tsx` | JSON array of collapsed column ids | UI preference | Low |
 | `kb-dashboard-selected-tasks` | `components/ListView.tsx` | JSON array of selected task IDs | UI preference | **Medium** |
-| `kb-quick-entry-text` | `components/QuickEntryBox.tsx` | free-text task draft | user draft | Medium |
+| `kb-quick-entry-text` | `components/QuickEntryBox.tsx` | free-text task draft (best-effort; 64,000-byte cap) | user draft | Medium |
 | `kb-quick-entry-expanded` | `components/QuickEntryBox.tsx` (legacy cleanup via `removeItem`) | legacy bool key (no longer used) | UI preference | Low |
-| `kb-inline-create-text` | `components/InlineCreateCard.tsx` | free-text task draft | user draft | Medium |
+| `kb-inline-create-text` | `components/InlineCreateCard.tsx` | free-text task draft (best-effort; 64,000-byte cap) | user draft | Medium |
 | `fn-agent-view` | `components/AgentsView.tsx`, `components/AgentListModal.tsx` | enum string (`board`/`list`/`tree` in view; modal supports board/list) | UI preference | Medium |
 | `kb-usage-view-mode` | `components/UsageIndicator.tsx` | enum string (`used`/`remaining`) | UI preference | Low |
 | `kb-dashboard-recent-projects` | `components/ProjectOverview.tsx` | JSON array of recent project IDs | project/identity | Low |
@@ -377,6 +378,7 @@ API endpoints reviewed:
 | `favoriteProviders` | Global | `GET/PUT /api/settings/global` | Favorited providers |
 | `favoriteModels` | Global | `GET/PUT /api/settings/global` | Favorited models |
 | `openrouterModelSync` | Global | `GET/PUT /api/settings/global` | Startup model sync behavior |
+| `orcarouterModelSync` | Global | `GET/PUT /api/settings/global` | OrcaRouter startup model sync behavior |
 | `modelOnboardingComplete` | Global | `GET/PUT /api/settings/global` | Onboarding completion flag |
 | `executionGlobalProvider` | Global | `GET/PUT /api/settings/global` | Global baseline AI provider for task execution |
 | `executionGlobalModelId` | Global | `GET/PUT /api/settings/global` | Global baseline AI model ID for task execution |
@@ -447,7 +449,7 @@ API endpoints reviewed:
 | `autoBackupSchedule` | Project | `GET/PUT /api/settings` | Backup cron schedule |
 | `autoBackupRetention` | Project | `GET/PUT /api/settings` | Backup retention count |
 | `autoBackupDir` | Project | `GET/PUT /api/settings` | Backup directory |
-| `autoSummarizeTitles` | Project | `GET/PUT /api/settings` | Auto-title generation |
+| `autoSummarizeTitles` | Project | `GET/PUT /api/settings` | All-length automatic AI title policy for non-empty untitled task descriptions; default `false`. Explicit titles and manual/force requests are unaffected, and the value is snapshotted per create. |
 | `titleSummarizerProvider` | Project | `GET/PUT /api/settings` | Title model provider |
 | `titleSummarizerModelId` | Project | `GET/PUT /api/settings` | Title model id |
 | `titleSummarizerFallbackProvider` | Project | `GET/PUT /api/settings` | Title fallback provider |
@@ -511,7 +513,7 @@ The `tasks.cumulativeActiveMs` and `tasks.executionCompletedAt` columns are the 
 | `agents` | Agent registry/state/task assignment metadata. |
 | `agentHeartbeats` | Heartbeat run events linked to agents (`agentId` FK cascade). |
 | `approval_requests` | Durable approval request records: requester actor snapshot, target action payload (category/action/resource/context), lifecycle status (`pending`/`approved`/`denied`/`completed`), optional task/run context, and requested/decided/completed timestamps. |
-| `approval_request_audit_events` | Append-only audit trail for approval requests. PostgreSQL uses the physical `(project_id, id)` identity, while public `ApprovalRequestStore.getAuditHistory` scopes bound audit-history reads; Command Center analytics remains intentionally unbound-tolerant. The ownership trigger normalizes only NULL/exact `''`, so a whitespace-only binding is stored literally. Rows store event type (`created`/`approved`/`denied`/`completed`), immutable actor snapshot, optional note, and deterministic per-request ordering by `(createdAt, rowid)`. |
+| `approval_request_audit_events` | Append-only audit trail for approval requests. PostgreSQL uses the physical `(project_id, id)` identity, while public `ApprovalRequestStore.getAuditHistory` scopes bound audit-history reads; Command Center analytics remains intentionally unbound-tolerant. The ownership trigger normalizes only NULL/exact `''`, so a whitespace-only binding is stored literally. IDs are deterministic `aprevt-<eventType>-<requestId>-<createdAt>` values: request identity and lifecycle guards ensure one same-type event per request/timestamp within a partition, while different event types are distinct; history ties use lifecycle rank before ID. Rows store event type (`created`/`approved`/`denied`/`completed`), immutable actor snapshot, and optional note. |
 | `secrets` | Encrypted secret KV rows (`key` unique) with raw BLOB `value_ciphertext` + per-row random `nonce` (AES-256-GCM), per-secret `access_policy` CHECK (`auto`/`prompt`/`deny`), env-materialization metadata (`env_exportable`, `env_export_key`), and read-audit fields (`last_read_at`, `last_read_by`). Plaintext is never written to the database. |
 | `task_documents` | Task-scoped document metadata/content keyed by `(taskId, key)` with current revision pointer. |
 | `task_document_revisions` | Immutable revision history for task documents (content snapshots by revision). |
@@ -611,49 +613,54 @@ The PostgreSQL-era runtime writes `.fusion/project.json`. Startup reads this leg
    - **Problem:** Theme is persisted in both localStorage (`kb-dashboard-theme-mode`, `kb-dashboard-color-theme`) and backend global settings (`themeMode`, `colorTheme`), but app bootstrap uses localStorage-only theme hydration. If backend and browser cache diverge, cross-device consistency breaks.  
    - **Recommended fix:** Make backend global settings the source of truth (or explicitly define local cache precedence + bidirectional sync strategy and conflict resolution).
 
-2. **Project-unscoped localStorage keys in multi-project UX state**  
+2. **Draft persistence quota exhaustion (#3477) — resolved**
+   - **Severity:** Medium
+   - **Affected:** `kb-quick-entry-text`, `kb-inline-create-text`, `kb-planning-last-description`, `kb-subtask-last-description`, `kb-mission-last-goal`
+   - **Resolution:** Scoped writes are throw-safe and retry after exact-key eviction; repeated quota failures reclaim stale other-project volatile drafts and stale dashboard SWR envelopes. Free-text drafts are capped at 64,000 bytes and remain in memory when they cannot be restored, so **Clear local data** is no longer a workaround for draft-driven saturation.
+
+3. **Project-unscoped localStorage keys in multi-project UX state**
    - **Severity:** High  
    - **Affected:** `App.tsx`, `ListView.tsx`, `QuickEntryBox.tsx`, `InlineCreateCard.tsx`, `AgentsView.tsx`, `useTerminalSessions.ts`, `useAgentHierarchy.ts`, `UsageIndicator.tsx`  
    - **Problem:** Many keys are global (`kb-dashboard-task-view`, `kb-dashboard-list-*`, `kb-dashboard-selected-tasks`, `kb-quick-entry-text`, `kb-inline-create-text`, `kb-terminal-tabs`, etc.) and are reused across projects. This can leak preferences/drafts/selections between projects unexpectedly.  
    - **Recommended fix:** Namespace project-specific keys with `projectId` (e.g., `kb:{projectId}:dashboard-list-columns`). Keep only true global prefs unscoped.
 
-3. **`kb-dashboard-selected-tasks` can carry stale selections across projects**  
+4. **`kb-dashboard-selected-tasks` can carry stale selections across projects**
    - **Severity:** Medium  
    - **Affected:** `components/ListView.tsx`  
    - **Problem:** Selected task IDs persist globally. In multi-project setups with overlapping ID patterns, stale selections can reappear and affect bulk operations unexpectedly.  
    - **Recommended fix:** Project-scope this key, and/or treat selection as in-memory/session-only state.
 
-4. **Terminal session persistence stores operational identifiers in localStorage**  
+5. **Terminal session persistence stores operational identifiers in localStorage**
    - **Severity:** Medium  
    - **Affected:** `hooks/useTerminalSessions.ts` (`kb-terminal-tabs`)  
    - **Problem:** Session IDs and tab metadata persist client-side and are not project-scoped. This is operational state better owned by backend/session layer; stale tabs also survive cache until cleanup logic runs.  
    - **Recommended fix:** Move terminal tab/session state to server persistence (or at minimum sessionStorage + project scoping + TTL/versioning).
 
-5. **Current project persistence stores full `ProjectInfo` object (includes filesystem path)**  
+6. **Current project persistence stores full `ProjectInfo` object (includes filesystem path)**
    - **Severity:** Medium  
    - **Affected:** `hooks/useCurrentProject.ts` (`kb-dashboard-current-project`)  
    - **Problem:** Storing full project objects increases drift risk and stores more data than needed (including local path).  
    - **Recommended fix:** Persist only stable `projectId`; resolve current object from backend project list each load.
 
-6. **Draft persistence is local-only (device/browser-bound)**  
+7. **Draft persistence is local-only (device/browser-bound)**
    - **Severity:** Medium  
    - **Affected:** `modalPersistence.ts`, `QuickEntryBox.tsx`, `InlineCreateCard.tsx`  
    - **Problem:** Planning/subtask/mission/task-entry drafts are lost on storage clear or browser/device switch.  
    - **Recommended fix:** Keep local quick-draft behavior, but add optional server-backed drafts (short TTL) for continuity.
 
-7. **Settings scope key lists drift from interfaces**  
+8. **Settings scope key lists drift from interfaces**
    - **Severity:** Medium  
    - **Affected:** `packages/core/src/types.ts`, `store.ts`, `routes.ts`, `SettingsModal.tsx`  
    - **Problem:** `GLOBAL_SETTINGS_KEYS` (14) omits `setupComplete`, `favoriteProviders`, `favoriteModels`; `PROJECT_SETTINGS_KEYS` (52) omits 9 project interface keys (`strictScopeEnforcement`, `buildRetryCount`, `buildTimeoutMs`, `autoUnpause*`, `maintenanceIntervalMs`, `scripts`, `setupScript`). This creates scope-classification and patch-filter inconsistencies.  
    - **Recommended fix:** Generate key lists from schema/interface source (or enforce parity tests) to prevent drift.
 
-8. **`fn-agent-view` shared by two UIs with different supported modes**  
+9. **`fn-agent-view` shared by two UIs with different supported modes**
    - **Severity:** Low  
    - **Affected:** `AgentsView.tsx`, `AgentListModal.tsx`  
    - **Problem:** Both share the same key, but one surface supports `tree` and the modal supports only `board/list`; behavior remains valid but coupling is implicit.  
    - **Recommended fix:** Decide intentional shared behavior and document it; otherwise split keys by surface.
 
-9. **Workflow steps still persisted in config JSON compatibility path (known in-progress work)**  
+10. **Workflow steps still persisted in config JSON compatibility path (known in-progress work)**
    - **Severity:** Low  
    - **Affected:** `config.settings/workflowSteps`, `db.ts` config table  
    - **Problem (historical audit):** Workflow step storage was tied to config blob structure; **FN-1201** moved it to a dedicated table before the PostgreSQL cutover.
@@ -841,6 +848,10 @@ Revision listing defaults to 100 rows and clamps `limit` to 1–500. The API acc
 Project-scoped structured recall records for durable decisions, preferences, and solutions. The table uses the composite `(project_id, id)` key, row-level security, created-at indexes, and a named `(project_id, kind, content_hash)` exact-hash backstop. `graph_node_ids` stores graph cross-references; Memory Keeper merges new IDs under a per-record advisory transaction lock, so identifiers only grow and an unchanged union does not update the row.
 
 - Knowledge-graph artifact: `<rootDir>/.fusion-knowledge/graph/` (`nodes.json`, `edges.json`, and `manifest.json`). This is deliberately outside ignored `.fusion` and may be committed at the operator's discretion.
+
+### Embedded PostgreSQL on Windows — antivirus and the runtime-bin payload
+
+If Windows startup reports `unknown error 4551` while loading an embedded PostgreSQL DLL such as `dict_snowball.dll`, antivirus quarantined part of `%USERPROFILE%\\.fusion\\embedded-postgres`. Add that directory as a Windows Security exclusion, restore the file from Protection history, and restart Fusion. Fusion verifies and automatically re-copies the runtime payload; see [Windows antivirus blocks an embedded PostgreSQL DLL](solutions/database-issues/windows-antivirus-blocks-embedded-postgres-dll.md).
 
 ### Bounded task-intake lookups
 

@@ -10,13 +10,13 @@ import { readStoredRightDockView, RIGHT_DOCK_VIEW_STORAGE_KEY } from "../RightDo
 import type { ChatViewProps } from "../ChatView";
 
 vi.mock("../ChatView", () => ({
-  ChatView: ({ projectId, addToast, floating, compactLayout, onPopOut, onMaximize, onMinimize, onClose }: ChatViewProps) => (
+  ChatView: ({ projectId, addToast, floating, compactLayout, onPopOut, onMaximize, onClose }: ChatViewProps) => (
     <div
       data-testid="mock-chat-view"
       data-project-id={projectId}
       data-has-toast={String(typeof addToast === "function")}
       data-compact-layout={String(compactLayout === true)}
-      data-has-dock-chrome-props={String(Boolean(floating || onPopOut || onMaximize || onMinimize || onClose))}
+      data-has-dock-chrome-props={String(Boolean(floating || onPopOut || onMaximize || onClose))}
     >
       Chat dock view
     </div>

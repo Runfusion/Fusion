@@ -9,7 +9,7 @@
  * - Verdict + feedback is returned to the worker
  */
 
-import type { TaskStore, TaskComment, AgentPromptsConfig, Settings } from "@fusion/core";
+import type { TaskStore, TaskComment, AgentPromptsConfig, Settings, WorkflowRepositoryReviewOutcome, WorkflowReviewFinding } from "@fusion/core";
 import {
   buildReviewerMemoryInstructions,
   hasConfiguredFallbackLane,
@@ -88,6 +88,14 @@ export interface ReviewResult {
    * ReviewerProviderError rather than being converted into UNAVAILABLE.
    */
   retryable?: boolean;
+  /** Immutable Git-content fingerprints for workspace repositories approved in this review episode. */
+  repositoryDiffFingerprints?: Record<string, string>;
+  /** Structured findings when the review caller parsed a machine-readable response. */
+  findings?: WorkflowReviewFinding[];
+  /** Structured workspace outcomes preserve clean-peer non-review and blocking review attribution. */
+  repositoryReviewOutcomes?: WorkflowRepositoryReviewOutcome[];
+  /** Confirmed scope generation used to build those workspace outcomes. */
+  repositoryScopeRevision?: number;
 }
 
 export interface ReviewOptions {

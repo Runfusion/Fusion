@@ -25,6 +25,7 @@ import {
   getBuiltinWorkflow,
   resolveColumnAgentBinding,
   resolveMaxConsecutiveToolFailureRetries,
+  resolveTaskOutputLanguage,
   resolveWorkflowIrForTask,
   upsertWorkflowStepResult,
   applySupersededFindingIds,
@@ -42,6 +43,7 @@ import {
 import { getActiveNotificationService } from "../util/notifier.js";
 import { executorLog } from "../logger.js";
 import type { EngineRunContext } from "../util/run-audit.js";
+import { emitBoundedRunAudit } from "./emit-bounded-run-audit.js";
 import { takePreHeldExecutorSlot } from "../concurrency/concurrency.js";
 import { resolveCompleteColumnFor } from "./lifecycle-columns.js";
 import { nextPlanReviewAttemptCount, PLAN_REVIEW_FEEDBACK_HISTORY_LIMIT } from "../plan-review-feedback-history.js";
@@ -142,10 +144,14 @@ export async function persistWorkflowStepResult(
     & Partial<Pick<ExecuteWorkflowGraphDeps, "workflowGateActivityPrincipals" | "activeWorkflowPrincipals">>,
   taskId: string,
   result: CoreWorkflowStepResult,
-): Promise<void> {
-  if (typeof deps.store.updateTask !== "function") return;
+): Promise<boolean> {
+  if (typeof deps.store.updateTask !== "function") return true;
   try {
     const live = await deps.store.getTask(taskId);
+    const repositoryScopeRevision = typeof result.repositoryScopeRevision === "number"
+      ? result.repositoryScopeRevision
+      : undefined;
+    let scopeSuperseded = false;
     const isPlanReviewResult = result.workflowStepId === PLAN_REVIEW_GROUP_ID
       || result.workflowStepName === "Plan Review";
     const resultToPersist = isPlanReviewResult
@@ -193,6 +199,26 @@ export async function persistWorkflowStepResult(
         }, deps.getRunContextFor(taskId));
         await deps.store.reconcileSpecDriftWhilePlanningLocked(accepted);
       });
+    } else if (repositoryScopeRevision !== undefined && typeof deps.store.updateTaskAtomic === "function") {
+      /*
+      FNXC:RepositoryScope 2026-08-21-02:48:
+      Terminal Code Review state is the graph's edge-admission record. Persist it
+      under the callback's scope-generation CAS so a superseding scope mutation
+      cannot leave an old approval eligible to advance the graph.
+      */
+      await deps.store.updateTaskAtomic(taskId, (current) => {
+        if (current.repositoryScope?.revision !== repositoryScopeRevision) {
+          scopeSuperseded = true;
+          return null;
+        }
+        const currentUpserted = upsertWorkflowStepResult(current.workflowStepResults, resultToPersist);
+        const currentResults = applySupersededFindingIds(currentUpserted, resultToPersist.supersededFindingIds ?? [], {
+          excludeWorkflowStepId: resultToPersist.workflowStepId,
+          sourceWorkflowStepId: resultToPersist.supersededFindingSourceWorkflowStepId ?? "",
+        }) ?? currentUpserted;
+        return { workflowStepResults: currentResults };
+      }, deps.getRunContextFor(taskId));
+      if (scopeSuperseded) return false;
     } else {
       await deps.store.updateTask(taskId, { workflowStepResults: existing }, deps.getRunContextFor(taskId));
     }
@@ -259,6 +285,7 @@ export async function persistWorkflowStepResult(
         executorLog.warn(`[agent-activity] ${taskId}: failed to record workflow gate activity: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
+    return true;
   } catch (error) {
     /*
     FNXC:AgentActivityStream 2026-08-09-13:43:
@@ -266,6 +293,7 @@ export async function persistWorkflowStepResult(
     failed persistence attempt without converting an otherwise valid graph run into a failure.
     */
     executorLog.warn(`[agent-activity] ${taskId}: failed to persist workflow step result: ${error instanceof Error ? error.message : String(error)}`);
+    return true;
   }
 }
 
@@ -474,11 +502,23 @@ export async function executeWorkflowGraph(
       // the finally below clears it.
       deps.graphUnattendedRuns.delete(task.id);
 
+      /*
+      FNXC:TaskOutputLanguage 2026-08-19-16:25:
+      Capture both settings and original task input before the graph can yield. Review handoffs may
+      fetch a live task after an operator edit, but their deterministic missing-summary fallback must
+      remain bound to the language target selected when this graph invocation began.
+      */
+      const outputLanguage = resolveTaskOutputLanguage(settings, task.description ?? "");
       graphAbortController = new AbortController();
       deps.activeWorkflowGraphAbortControllers.set(task.id, graphAbortController);
       const customNodeExecution = new WorkflowCustomNodeExecutionService({
+        /*
+        FNXC:TaskOutputLanguage 2026-08-19-16:34:
+        Custom prompt and review nodes can yield before their session begins. Bind the graph-start
+        resolution here so a later task-description or settings edit cannot retarget their output.
+        */
         execute: (node, nodeTask, nodeSettings, columnBinding, context) =>
-          deps.runGraphCustomNode(node, nodeTask, nodeSettings, columnBinding, context),
+          deps.runGraphCustomNode(node, nodeTask, nodeSettings, columnBinding, context, outputLanguage),
         resolveColumnBinding: resolveBindingForNode,
       });
       /*
@@ -505,8 +545,8 @@ export async function executeWorkflowGraph(
         runId: resolvedRunId,
         isLiveSharedBranchMember: (nodeTask) =>
           deps.isLiveSharedBranchGroupMember(nodeTask),
-        primitives: deps.createAuthoritativeWorkflowPrimitives(settings),
-        seams: deps.createAuthoritativeWorkflowSeams(settings),
+        primitives: deps.createAuthoritativeWorkflowPrimitives(settings, outputLanguage),
+        seams: deps.createAuthoritativeWorkflowSeams(settings, outputLanguage),
         prepareNodeExecution: (node, nodeTask, requirement) =>
           deps.prepareGraphNodeExecution(node, nodeTask, settings, requirement),
         beforeNodeExecution: async (node, nodeTask, context) =>
@@ -608,6 +648,13 @@ export async function executeWorkflowGraph(
         },
         recordWorkflowStepResult: (taskId: string, result: CoreWorkflowStepResult) =>
           persistWorkflowStepResult(deps, taskId, result),
+        isRepositoryScopeReviewEdgeCurrent: async (taskId: string, workflowStepId: string, revision: number): Promise<boolean> => {
+          const current = await deps.store.getTask(taskId);
+          const result = current.workflowStepResults?.find((entry) => entry.workflowStepId === workflowStepId);
+          return current.repositoryScope?.revision === revision
+            && result?.repositoryScopeRevision === revision
+            && result?.status === "passed";
+        },
         requestPreMergeOptionalStepFix: (taskId, info) => deps.requestPreMergeOptionalStepFix(taskId, task, info),
         // U5c (U1 KTD-1/2/3/12): wire the production lifecycle-move hooks so the
         // graph interpreter owns the card's column moves (was reverted in U5a
@@ -779,7 +826,7 @@ export async function executeWorkflowGraph(
          * Record suspension so an invisible wait is greppable (ids/outcomes-only audit).
          */
         const suspension = result.suspension;
-        await deps.store.recordRunAuditEvent?.({
+        await emitBoundedRunAudit(deps.store, {
           taskId: task.id,
           agentId: "executor",
           runId: resolvedRunId ?? `workflow-run-suspended:${task.id}`,
@@ -796,7 +843,7 @@ export async function executeWorkflowGraph(
             continuationNodeId: continuation?.nodeId ?? null,
             continuationState: continuation?.state ?? null,
           },
-        }).catch(() => undefined);
+        });
         executorLog.log(
           `[workflow-graph] ${task.id} suspended at node '${suspension?.nodeId ?? "unknown"}' (${suspension?.reason ?? "unknown"})`,
         );

@@ -30,7 +30,9 @@
     "showMore": "显示更多",
     "update": "更新",
     "yes": "是",
-    "clear": ""
+    "clear": "",
+    "open": "",
+    "remove": ""
   },
   "activityFeed": {
     "emptyHint": "",
@@ -82,7 +84,10 @@
       "minutesAgo_other": ""
     },
     "title": "活动日志",
-    "typeFilterBadge": ""
+    "typeFilterBadge": "",
+    "taskId": "任务 ID",
+    "taskIdSearchPlaceholder": "搜索任务 ID（例如 FN-066）",
+    "taskIdFilterBadge": "任务：{{taskId}}"
   },
   "agentError": {
     "copied": "已复制",
@@ -1145,7 +1150,9 @@
     "disableHeartbeatsSummary": "",
     "enableHeartbeatsCountHint": "",
     "disableHeartbeatsCountHint": "",
-    "bulkFailures": ""
+    "bulkFailures": "",
+    "detailLabel": "",
+    "lastCompletedStep": ""
   },
   "app": {
     "backendError": {
@@ -1262,7 +1269,6 @@
     "deleteRoom": "删除频道 {{name}}",
     "deleteRoomBody": "此操作无法撤销。该频道及其所有消息将被永久删除。",
     "deleteRoomTitle": "删除频道？",
-    "dismissQueuedMessage": "关闭排队消息",
     "failedToArchiveConversation": "归档对话失败",
     "failedToClearConversation": "清除对话失败",
     "failedToClearRoomConversation": "清除房间对话失败",
@@ -1315,6 +1321,17 @@
     "questionSubmittedAnswerLabel": "",
     "questionTextPlaceholder": "",
     "queuedMessage": "已排队：{{preview}}",
+    "pendingLabel": "待发送消息",
+    "pendingHeading": "待发送消息",
+    "editPending": "编辑待发送消息",
+    "savePendingEdit": "保存待发送消息",
+    "cancelPendingEdit": "取消编辑待发送消息",
+    "movePendingEarlier": "将待发送消息上移",
+    "movePendingLater": "将待发送消息下移",
+    "deletePending": "删除待发送消息",
+    "forcePending": "强制发送待发送消息",
+    "forcePendingShort": "强制发送",
+    "pendingEditEmpty": "待发送消息不能为空",
     "quickChatTitle": "快速聊天",
     "relativeTimeDays_one": "",
     "relativeTimeDays_other": "",
@@ -1389,7 +1406,8 @@
     "currentAgentTarget": "Current agent: {{name}}",
     "currentModelTarget": "Current model: {{model}}",
     "currentDefaultTarget": "Using the default chat target",
-    "newNotAllowedForTaskChat": ""
+    "newNotAllowedForTaskChat": "",
+    "restore": ""
   },
   "chatRooms": {
     "error": {
@@ -1527,7 +1545,12 @@
     "stopAllTitle": "停止所有任务",
     "stopPartialFailure": "已停止 {{total}} 个任务中的 {{paused}} 个；{{failed}} 个失败",
     "stoppedTasks_one": "",
-    "stoppedTasks_other": ""
+    "stoppedTasks_other": "",
+    "sortControlLabel": "",
+    "sortArrivalDesc": "",
+    "sortArrivalDescHint": "",
+    "sortTaskIdDesc": "",
+    "sortTaskIdDescHint": ""
   },
   "commandCenter": {
     "activity": {
@@ -1928,7 +1951,9 @@
         "workflow:gate-failed": "Workflow gate failed",
         "approval:requested": "Approval requested"
       }
-    }
+    },
+    "taskVerification": "",
+    "verificationRequests": ""
   },
   "comments": {
     "addButton": "添加评论",
@@ -2006,7 +2031,20 @@
     "toLabel": "收件人:",
     "wakeAgentCheckbox": "立即唤醒代理",
     "wakeAlwaysImmediate": "(代理已设置为立即响应模式)",
-    "wakeOneOff": "(仅对此消息的一次性覆盖)"
+    "wakeOneOff": "(仅对此消息的一次性覆盖)",
+    "addSection": "",
+    "ariaLabel": "",
+    "attachStructure": "",
+    "mode": "",
+    "noStructures": "",
+    "quickMessage": "",
+    "removeSection": "",
+    "removeStructure": "",
+    "report": "",
+    "reportTitle": "",
+    "sectionBody": "",
+    "sectionHeading": "",
+    "selectStructure": ""
   },
   "confirm": {
     "cancel": "取消",
@@ -3482,7 +3520,36 @@
     "typeSystem": "系统",
     "typeUserToAgent": "你 → 代理",
     "user": "用户",
-    "you": "你"
+    "you": "你",
+    "all": "",
+    "approvalStatus": "",
+    "approvalUnavailable": "",
+    "approve": "",
+    "archive": "",
+    "archived": "",
+    "artifact": "",
+    "audioArtifactAria": "",
+    "createTask": "",
+    "createTaskError": "",
+    "creatingTask": "",
+    "deny": "",
+    "inboxFilter": "",
+    "loadingApproval": "",
+    "noArchivedMessages": "",
+    "openArtifact": "",
+    "openArtifactAria": "",
+    "optionalComment": "",
+    "recommendationsUnavailable": "",
+    "reportsApprovals": "",
+    "restore": "",
+    "retryCreatingTask": "",
+    "taskCreatedView": "",
+    "taskProposalDismissed": "",
+    "taskRecommendations": "",
+    "videoArtifactAria": "",
+    "viewTask": "",
+    "viewTaskAria": "",
+    "viewTaskLabel": ""
   },
   "memory": {
     "auditChecksTitle": "审计检查",
@@ -4062,6 +4129,7 @@
       "minimal": "最小",
       "off": "关闭",
       "xhigh": "极高",
+      "max": "最大",
       "defaultWithLevel": "Default ({{level}})"
     },
     "placeholders": {
@@ -5303,7 +5371,14 @@
     "resize": "",
     "viewExpanded": "",
     "views": "",
-    "resizeExpandedView": ""
+    "resizeExpandedView": "",
+    "archivedCopy": "",
+    "doneHiddenCopy": "",
+    "emptyCopy": "",
+    "hideDone": "",
+    "noActiveTasks": "",
+    "noTasksYet": "",
+    "showDone": ""
   },
   "routine": {
     "andMore_one": "",
@@ -5775,7 +5850,11 @@
       "taskPopupsBoardListOnlyHelp": "",
       "taskDetailChatFirstHelp": "",
       "showCostBadgeOnCards": "",
-      "showCostBadgeOnCardsHelp": ""
+      "showCostBadgeOnCardsHelp": "",
+      "chatMessageLayout": "",
+      "chatMessageLayoutBubbles": "",
+      "chatMessageLayoutFullWidth": "",
+      "chatMessageLayoutHelp": ""
     },
     "auth": {
       "apiKeyCleared": "API 密钥已清除",
@@ -5806,6 +5885,12 @@
       "openGitHub": "打开 GitHub",
       "pasteRedirectUrlFirst": "请先粘贴完整的重定向 URL 或授权码。",
       "reopenOnboarding": "重新打开引导向导",
+      "refreshModels": "刷新模型",
+      "refreshModelsPending": "正在刷新模型…",
+      "refreshModelsSuccess": "模型已刷新。",
+      "refreshModelsTimedOut": "刷新超时；正在显示最近可用的模型。请重试。",
+      "refreshModelsDeferred": "另一个刷新仍在进行；正在显示最近可用的模型。请稍后重试。",
+      "refreshModelsFailed": "刷新失败；正在显示最近可用的模型。请重试。",
       "reopenOnboardingHint": "重新运行设置向导以查看或更新您的 AI 提供商和模型配置。",
       "savingKey": "保存中…",
       "signInHint": "请登录至少一个提供商以开始使用 AI 模型。",
@@ -6007,6 +6092,7 @@
       "allowEphemeralAgentsToCreateTasksHint": "",
       "quickChatCloseOnOutsideClickHint": "",
       "disabledFusionWorkflowsAreHiddenFromWorkflow": "",
+      "builtinWorkflowAtLeastOneEnabled": "",
       "autoTranslateImportedIssues": "",
       "autoTranslateImportedIssuesHelp": "",
       "translationTargetLanguage": "",
@@ -6064,6 +6150,8 @@
       "refinementTaskWorkflowHelp": "",
       "maxRecommendationsPerTask": "",
       "maxRecommendationsPerTaskHelp": "",
+      "requireTaskRecommendations": "",
+      "requireTaskRecommendationsHelp": "",
       "recommendationMailboxNoticeEnabled": "",
       "recommendationMailboxNoticeEnabledHelp": ""
     },
@@ -6116,6 +6204,10 @@
       "releaseChannelHelp": "",
       "autoUpdateAndRestart": "",
       "autoUpdateAndRestartHelp": "",
+      "autoUpdateEnabled": "",
+      "autoUpdateEnabledHelp": "",
+      "autoRestartAfterUpdate": "",
+      "autoRestartAfterUpdateHelp": "",
       "channelStable": "",
       "channelBeta": "",
       "agentToolOutputLimit": "",
@@ -6126,6 +6218,7 @@
       "quickAddSubmitOnEnterHint": ""
     },
     "globalModels": {
+      "modelOverrides": "",
       "allow": "",
       "commaSeparatedValuesSentToOpenRouterModelSync": "",
       "controlsHowMuchReasoningEffortTheAIModel": "",
@@ -6175,7 +6268,8 @@
       "openRouterRoutingOnlyHint": "",
       "openRouterAllowFallbacksHint": "",
       "openRouterRoutingSortHint": "",
-      "requireParametersHint": ""
+      "requireParametersHint": "",
+      "modelOverrides": ""
     },
     "header": {
       "discord": "Discord",
@@ -6272,7 +6366,9 @@
       "turnsDailyNotesIntoDREAMSMdAndPromotes": "",
       "qmdInstalled": "",
       "qmdInstallFailed": "",
-      "qmdInstallUnavailable": ""
+      "qmdInstallUnavailable": "",
+      "saveBeforeCompacting": "",
+      "saveBeforeSwitching": ""
     },
     "merge": {
       "abort": "",
@@ -6550,6 +6646,10 @@
       "plugins": ""
     },
     "projectModels": {
+      "modelOverrides": "",
+      "projectLanesSubheading": "",
+      "summarizationPointer": "",
+      "workflowLanesSubheading": "",
       "addPreset": "",
       "advancedWorkflowPolicy": "",
       "aIMergeCommitSummaries": "",
@@ -6557,8 +6657,11 @@
       "automaticallyCompactContextWhenApproachingThisTokenCount": "",
       "autoSelectPresetBasedOnTaskSize": "",
       "autoSummarizeLongDescriptionsAsTitles": "",
-      "taskDefinitionInInputLanguage": "",
-      "taskDefinitionInInputLanguageHelp": "",
+      "taskOutputLanguage": "AI-authored task language",
+      "taskOutputLanguageHelp": "Choose the language for AI-authored task plans, titles, steps, summaries, and recommendations. No stored default — unset resolves English. Changes apply to new generation sessions only.",
+      "taskOutputLanguageEnglish": "English (default)",
+      "taskOutputLanguageInput": "User input language",
+      "taskOutputLanguageInterface": "Fusion interface language",
       "configuredPresets": "",
       "configuresTheModelUsedForTwoShortSummary": "",
       "defaultWorkflowModelLaneActions": "",
@@ -6616,7 +6719,11 @@
       "executorEscalationModel": "",
       "executorEscalationModelHelp": "",
       "selectExecutorEscalationModel": "",
-      "noExecutorEscalationModel": ""
+      "noExecutorEscalationModel": "",
+      "modelOverrides": "",
+      "projectLanesSubheading": "",
+      "workflowLanesSubheading": "",
+      "summarizationPointer": ""
     },
     "remote": {
       "acceptRoutes": "",
@@ -6687,7 +6794,9 @@
       "installationFailed": "",
       "acceptRoutesHint": "",
       "shortLivedEnabledHint": "",
-      "shortLivedTtlMsHint": ""
+      "shortLivedTtlMsHint": "",
+      "cloudflareTunnelURL": "",
+      "tunnelURL": ""
     },
     "researchGlobal": {
       "advancedExternalSearchProviders": "",
@@ -6929,7 +7038,11 @@
       "projectTitle": "Project MCP servers",
       "globalDescription": "Configure MCP servers shared by all projects. Project settings may override or disable these servers by name.",
       "projectDescription": "Configure project-specific MCP servers, overrides, and disabled inherited servers.",
-      "enabledHint": ""
+      "enabledHint": "",
+      "transport": "",
+      "transportHttp": "",
+      "transportSse": "",
+      "transportStdio": ""
     },
     "reset": {
       "button": "Reset Settings",
@@ -7863,7 +7976,8 @@
     "header": {
       "back": "返回",
       "backToList": "返回任务列表",
-      "editTask": "编辑任务"
+      "editTask": "编辑任务",
+      "popOut": ""
     },
     "inputTokens": "输入",
     "lastUsed": "最后使用",
@@ -7872,6 +7986,10 @@
       "activity": "活动",
       "activityHeading": "活动",
       "agentLog": "代理日志",
+      "copy": "",
+      "copyDisplayed": "",
+      "copyFailure": "",
+      "copySuccess": "",
       "loadingActivity": "",
       "noActivity": "（无活动）",
       "truncated_one": "",
@@ -8220,6 +8338,22 @@
       "retry": "",
       "create": "",
       "error": ""
+    },
+    "reverted": {
+      "deleteAria": ""
+    },
+    "revise": "",
+    "specLock": {
+      "accepted": "",
+      "alignment": "",
+      "alignmentLabel": "",
+      "captured": "",
+      "currentPlan": "",
+      "findings": "",
+      "latestLock": "",
+      "lockState": "",
+      "relockChanged": "",
+      "retainedHistory": ""
     }
   },
   "taskDocuments": {
@@ -9358,7 +9492,11 @@
     "toolNames": "",
     "toolResult": "",
     "you": "",
-    "youMessage": ""
+    "youMessage": "",
+    "missingOutput": "",
+    "missingOutputTimestamp": "",
+    "statusUpdate": "",
+    "statusUpdateTimestamp": ""
   },
   "engineBanner": {
     "body": "The engine for this project is not running, so task automation and live updates may be paused. Start it now to reconnect the dashboard.",
@@ -9381,6 +9519,146 @@
     "targetLabel": "提交目标",
     "targetInherit": "使用已配置的操作目标",
     "targetIssue": "GitHub 议题",
-    "targetDiscussion": "GitHub 讨论"
+    "targetDiscussion": "GitHub 讨论",
+    "activityTrace": "",
+    "capturingScreenshot": "",
+    "close": "",
+    "confirmDataPoint": "",
+    "confirmScreenshotRetention": "",
+    "duplicateReview": "",
+    "file": "",
+    "final": "",
+    "menu": "",
+    "returnToPrompt": "",
+    "review": "",
+    "storeScreenshot": "",
+    "structured": "",
+    "structuredDataPoint": "",
+    "suggestedHelp": "",
+    "summary": "",
+    "viewGitHub": ""
+  },
+  "composeChat": {
+    "ariaLabel": "",
+    "draft": "",
+    "draftNarrative": "",
+    "emptyDraft": "",
+    "useDraft": ""
+  },
+  "fixture": {
+    "floatingTaskDetail": "",
+    "floatingTaskDetailBody": "",
+    "genericFloatingWindow": "",
+    "genericFloatingWindowBody": "",
+    "genericWindowHeader": "",
+    "headerAction": "",
+    "headerlessTaskDetail": "",
+    "taskDetail": "",
+    "taskDetailBody": ""
+  },
+  "floatingWindow": {
+    "close": "",
+    "resize": ""
+  },
+  "githubImport": {
+    "github": "",
+    "gitlab": ""
+  },
+  "ideation": {
+    "addCandidate": "",
+    "converge": "",
+    "convergedToMission": "",
+    "description": "",
+    "divergentCandidate": "",
+    "noSessions": "",
+    "persisted": "",
+    "selectOrStart": "",
+    "sessionTitle": "",
+    "start": "",
+    "title": ""
+  },
+  "knowledgeGraph": {
+    "allFnxcAreas": "",
+    "allOwners": "",
+    "allSymbolKinds": "",
+    "bothDirections": "",
+    "depth": "",
+    "distance": "",
+    "edgeKinds": "",
+    "findPath": "",
+    "incoming": "",
+    "limitResults": "",
+    "neighbors": "",
+    "next": "",
+    "noNeighbors": "",
+    "noPath": "",
+    "nodeKinds": "",
+    "none": "",
+    "outgoing": "",
+    "ownerDerived": "",
+    "ownerFile": "",
+    "pathLimitReached": "",
+    "previous": "",
+    "provenance": "",
+    "raiseHopLimit": "",
+    "refreshNeighbors": "",
+    "searching": "",
+    "selectNodeHint": "",
+    "shortestPath": "",
+    "showingOf": "",
+    "useSelectedFrom": "",
+    "useSelectedTo": ""
+  },
+  "mermaid": {
+    "diagram": ""
+  },
+  "nativeStructure": {
+    "loadFailed": "",
+    "loading": "",
+    "openAria": "",
+    "previewUnavailable": "",
+    "unavailable": ""
+  },
+  "providerLogin": {
+    "approveInBrowser": "",
+    "authorizationReceived": "",
+    "cancel": "",
+    "connected": "",
+    "exchangingCode": "",
+    "finishInBrowser": "",
+    "handAuthorizationBack": "",
+    "openSignInAgain": "",
+    "pasteRedirectUrl": "",
+    "signingInTo": ""
+  },
+  "taskVerification": {
+    "failed": "",
+    "heading": "",
+    "passed": "",
+    "queued": "",
+    "requestRejected": "",
+    "running": ""
+  },
+  "whatsapp": {
+    "allowedSenders": "",
+    "choosePairingMethod": "",
+    "connectedAs": "",
+    "connectedSuccess": "",
+    "description": "",
+    "installPlugin": "",
+    "instructionsLabel": "",
+    "loggingOut": "",
+    "logoutRepair": "",
+    "pairing": "",
+    "pairingConfiguration": "",
+    "phoneNumber": "",
+    "qrCode": "",
+    "refreshStatus": "",
+    "repairInstructions": "",
+    "requestPairingCode": "",
+    "requestingCode": "",
+    "status": "",
+    "waitConnected": "",
+    "waitingQr": ""
   }
 }

@@ -50,6 +50,13 @@ vi.mock("../worktree/worktree-desktop-artifacts.js", () => ({
   removeDesktopBuildArtifacts: vi.fn().mockResolvedValue({ removed: [], skipped: [], failures: [] }),
 }));
 
+vi.mock("../worktree/worktree-paths.js", () => ({
+  isInsideConfiguredWorktreesDir: vi.fn(() => true),
+  isReclaimableWorktreeCandidate: vi.fn().mockResolvedValue(true),
+  isWorktreeContainerDir: vi.fn((name: string) => name === ".ai-merge" || name === ".fusion-recovery"),
+  resolveWorktreesDir: vi.fn((rootDir: string) => `${rootDir}/.worktrees`),
+}));
+
 vi.mock("node:fs", () => ({
   chmodSync: vi.fn(),
   cpSync: vi.fn(),
@@ -66,6 +73,7 @@ vi.mock("node:fs", () => ({
   unlinkSync: vi.fn(),
   writeFileSync: vi.fn(),
   constants: { COPYFILE_EXCL: 1 },
+  realpathSync: vi.fn((path: string) => path),
 }));
 
 vi.mock("../worktree/worktree-prune.js", () => ({
@@ -145,6 +153,10 @@ describe("WorktreePool", () => {
     vi.clearAllMocks();
     vi.mocked(desktopArtifacts.removeDesktopBuildArtifacts).mockResolvedValue({ removed: [], skipped: [], failures: [] });
     mockedExistsSync.mockReturnValue(true);
+    // Shared-root reaping must prove both paths use this repository's common gitdir.
+    mockedExecSync.mockImplementation((command: unknown) =>
+      String(command).includes("rev-parse --git-common-dir") ? Buffer.from("/root/.git\n") : Buffer.from(""),
+    );
     pool = new WorktreePool();
   });
 
@@ -288,6 +300,14 @@ describe("WorktreePool", () => {
       const detachCallOrder = mockedExecSync.mock.invocationCallOrder[mockedExecSync.mock.calls.findIndex((c) => c[0] === "git checkout --detach main")];
       expect(cleanCallOrder).toBeLessThan(cleanupOrder);
       expect(cleanupOrder).toBeLessThan(detachCallOrder);
+    });
+
+    it("attaches an existing operator branch without force-resetting it", async () => {
+      await pool.prepareForTask("/tmp/wt", "feature/PRD-1234-my-slug", undefined, { branchOrigin: "operator-supplied" });
+
+      const calls = mockedExecSync.mock.calls.map(([command]) => command);
+      expect(calls).toContain('git checkout "feature/PRD-1234-my-slug"');
+      expect(calls).not.toContain('git checkout -B "feature/PRD-1234-my-slug" main');
     });
 
     it("creates branch from main with force-reset", async () => {
@@ -860,6 +880,7 @@ function makeDirEntry(name: string) {
 
 function mockRegisteredWorktrees(rootDir: string, names: string[]) {
   mockedExecSync.mockImplementation((cmd: any) => {
+    if (String(cmd).includes("rev-parse --git-common-dir")) return Buffer.from(`${rootDir}/.git\n`);
     if (String(cmd) === "git worktree list --porcelain") {
       return [
         `worktree ${rootDir}`,
@@ -1350,6 +1371,14 @@ describe("reapOrphanWorktrees", () => {
     mockedLstatSync.mockReturnValue({ isDirectory: () => true, isSymbolicLink: () => false } as any);
   });
 
+  // FNXC:WorktreeMerge KB-001 2026-08-22-04:30:
+  // Dual-semantics test resolution: this branch's reaper uses rmdirSync (never
+  // recursive rmSync) and preserves dirty half-initialized dirs; main's variant
+  // asserted containers/unproven dirs are never recursively removed. The merged
+  // implementation keeps the branch removal path gated by main's
+  // isReclaimableWorktreeCandidate, so both sides' invariants are asserted here:
+  // container exclusion + no recursive rmSync (main) and dirty preservation via
+  // ENOTEMPTY without admin prune (branch).
   it("excludes internal containers while removing half-initialized task worktrees", async () => {
     mockedReaddirSync.mockImplementation((path: any) =>
       String(path) === "/root/.worktrees"
@@ -1362,6 +1391,8 @@ describe("reapOrphanWorktrees", () => {
     expect(mockedRmdirSync).toHaveBeenCalledWith("/root/.worktrees/half-built");
     expect(mockedRmdirSync).not.toHaveBeenCalledWith("/root/.worktrees/.ai-merge");
     expect(mockedRmdirSync).not.toHaveBeenCalledWith("/root/.worktrees/.fusion-recovery");
+    // Main-side invariant: the reaper never recursively force-removes candidates.
+    expect(mockedRmSync).not.toHaveBeenCalled();
   });
 
   it("preserves a dirty half-initialized worktree", async () => {

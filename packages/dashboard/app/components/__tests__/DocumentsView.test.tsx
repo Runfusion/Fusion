@@ -43,6 +43,9 @@ vi.mock("../../hooks/useArtifacts", () => ({
 vi.mock("../../hooks/useProjectMarkdownFiles", () => ({
   useProjectMarkdownFiles: vi.fn(),
 }));
+vi.mock("../../hooks/useArtifactImageBlob", () => ({
+  useArtifactImageBlob: vi.fn(() => ({ url: "blob:secure-preview", loading: false, error: null, reload: vi.fn() })),
+}));
 
 const mockUseDocuments = vi.mocked(useDocuments);
 const mockUseArtifacts = vi.mocked(useArtifacts);
@@ -699,7 +702,7 @@ describe("DocumentsView", () => {
     const imageEntry = screen.getByRole("button", { name: "Open KB-001 artifact Task screenshot" });
     fireEvent.click(imageEntry);
     expect(imageEntry).toHaveAttribute("aria-current", "true");
-    expect(screen.getByRole("img", { name: "Task screenshot" })).toHaveAttribute("src", "/api/artifacts/task-artifact-image/media?fn_token=daemon-token");
+    expect(screen.getByRole("img", { name: "Task screenshot" })).toHaveAttribute("src", "blob:secure-preview");
 
     fireEvent.click(screen.getByRole("button", { name: "Open KB-001 plan" }));
     expect(screen.getByText("Alpha document content")).toBeInTheDocument();
@@ -936,7 +939,7 @@ describe("DocumentsView", () => {
     fireEvent.click(artifactsTab);
 
     expect(screen.getByRole("tab", { name: /show artifacts/i })).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByRole("img", { name: "Image artifact" })).toHaveAttribute("src", "/api/artifacts/artifact-image/media?fn_token=daemon-token");
+    expect(screen.getByRole("img", { name: "Image artifact" })).toHaveAttribute("src", "blob:secure-preview");
     expect(screen.getByRole("button", { name: "Expand Image artifact" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Expand Video artifact" })).toBeInTheDocument();
     expect(screen.getByLabelText("Video artifact: Video artifact").tagName).toBe("VIDEO");
@@ -991,7 +994,7 @@ describe("DocumentsView", () => {
     */
     fireEvent.click(screen.getByRole("button", { name: "Expand Image artifact" }));
     let dialog = screen.getByRole("dialog", { name: "Artifact media preview" });
-    expect(within(dialog).getByRole("img", { name: "Image artifact" })).toHaveAttribute("src", "/api/artifacts/artifact-image/media?fn_token=daemon-token");
+    expect(within(dialog).getByRole("img", { name: "Image artifact" })).toHaveAttribute("src", "blob:secure-preview");
     expect(screen.getByTestId("floating-window-artifact-media-artifact-image")).toBeInTheDocument();
     expect(screen.getByTestId("floating-window-resize-se")).toBeInTheDocument();
 

@@ -1,4 +1,4 @@
-import type { Task, TaskStore } from "@fusion/core";
+import type { Task, TaskStore, WorkspaceConfig } from "@fusion/core";
 /**
  * FNXC:CodeOrganization 2026-08-03-17:30:
  * Free builders for TaskExecutor deps bags that wire peeled worktree/session helpers (U4).
@@ -215,6 +215,47 @@ function withWorkspaceResolver(host: any): () => Promise<unknown | null> {
   });
 }
 
+const workspaceRefreshes = new WeakMap<object, Promise<WorkspaceConfig | null>>();
+
+/*
+FNXC:Workspace 2026-08-20-02:03:
+Membership is disk-authoritative and can grow during an execution. A failed or empty refresh restores
+this host's last known-good multi-repo snapshot so shared consumers never fall back to single-repo mode.
+*/
+function withWorkspaceRefresher(host: any): () => Promise<WorkspaceConfig | null> {
+  return () => {
+    const active = workspaceRefreshes.get(host);
+    if (active) return active;
+    const refresh = (async (): Promise<WorkspaceConfig | null> => {
+      const previous = host.workspaceConfig as WorkspaceConfig | null | undefined;
+      try {
+        host.invalidateWorkspaceConfig();
+        const resolved = await withWorkspaceResolver(host)() as WorkspaceConfig | null;
+        if (resolved === null && previous && previous.repos.length > 0) {
+          host.workspaceConfig = previous;
+          return previous;
+        }
+        /*
+        FNXC:Workspace 2026-08-20-02:25:
+        A settings listener can invalidate during this awaited read. The resolver declines the stale
+        epoch write, so this refresh publishes its successful result to prevent shared consumers from
+        observing the cleared single-repo sentinel.
+        */
+        host.workspaceConfig = resolved;
+        return resolved;
+      } catch {
+        host.workspaceConfig = previous;
+        return previous ?? null;
+      }
+    })();
+    workspaceRefreshes.set(host, refresh);
+    void refresh.finally(() => {
+      if (workspaceRefreshes.get(host) === refresh) workspaceRefreshes.delete(host);
+    });
+    return refresh;
+  };
+}
+
 export function buildRunImplementationDeps(
   host: any,
   constants: { BRANCH_CONFLICT_TRIPWIRE_THRESHOLD: number; MAX_AUTO_RECOVERY_ATTEMPTS: number },
@@ -222,6 +263,7 @@ export function buildRunImplementationDeps(
   const bag = {
     ...facadeFields(host, ["store", "rootDir"]),
     ensureWorkspaceConfig: withWorkspaceResolver(host),
+    refreshWorkspaceConfig: withWorkspaceRefresher(host),
     options: host.options as any,
     BRANCH_CONFLICT_TRIPWIRE_THRESHOLD: constants.BRANCH_CONFLICT_TRIPWIRE_THRESHOLD,
     MAX_AUTO_RECOVERY_ATTEMPTS: constants.MAX_AUTO_RECOVERY_ATTEMPTS,

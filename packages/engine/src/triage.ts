@@ -59,8 +59,7 @@ import {
   resolveEffectiveAgentPermissionPolicy,
   MAX_TASK_LIST_TEXT_CHARS,
   deriveFallbackTaskTitle,
-  detectContentLanguage,
-  localeDisplayName,
+  resolveTaskOutputLanguage,
   parsePlanningPlanMd,
   type NearDuplicateCandidate,
 } from "@fusion/core";
@@ -2146,7 +2145,7 @@ export class TriageProcessor {
       same maxConcurrent live-agent claim as execute/review so a project cannot
       exceed its operator-facing top-level capacity in a different lane.
       */
-      const maxConcurrent = settings.maxConcurrent ?? 2;
+      const maxConcurrent = fusionCore.resolveMaxConcurrentSetting(settings);
       // processing entries that have not yet written status:"planning" still claim a future slot.
       let pendingSpecifyCount = 0;
       for (const id of this.processing) {
@@ -2180,15 +2179,8 @@ export class TriageProcessor {
       reuse/cleanup without consuming admission capacity. Every newly admitted planner becomes live
       and spends one slot below, even when it reuses an existing directory.
       */
-      const maxWorktrees = resolveWorktreeCapacityLimit({
-        maxWorktrees: settings.maxWorktrees ?? 4,
-        worktreeLimitEnabled: settings.worktreeLimitEnabled,
-      });
-      const activeTaskLimit = resolveActiveTaskCapacityLimit({
-        maxConcurrent,
-        maxWorktrees: settings.maxWorktrees ?? 4,
-        worktreeLimitEnabled: settings.worktreeLimitEnabled,
-      });
+      const maxWorktrees = resolveWorktreeCapacityLimit(settings);
+      const activeTaskLimit = resolveActiveTaskCapacityLimit(settings);
       const worktreeRoom = maxWorktrees === null
         ? Number.POSITIVE_INFINITY
         : Math.max(0, maxWorktrees - claimed);
@@ -2209,7 +2201,7 @@ export class TriageProcessor {
         const blockedBy = worktreeRoom <= 0 && projectRoom > 0 ? "worktree cap" : "running-agent cap";
         const capacityReason = formatAdmissionCapacityQueuedReason({
           maxConcurrent,
-          maxWorktrees: settings.maxWorktrees ?? 4,
+          maxWorktrees: settings.maxWorktrees,
           worktreeLimitEnabled: settings.worktreeLimitEnabled,
           claimed,
           holderTaskIds: await persistedTopLevelAgentTaskIdsFromStore(this.store, allTasks),
@@ -2605,10 +2597,6 @@ export class TriageProcessor {
         });
     { attachAgentUsageTelemetry(agentLogger, { store: this.store, agentId: task.assignedAgentId ?? "triage", taskId: task.id, nodeId: task.effectiveNodeId ?? task.nodeId ?? null, lane: "triage" }); }
 
-
-        // Track subtasks created during triage when breakIntoSubtasks was requested.
-        const createdSubtasksRef: { current: string[] } = { current: [] };
-
         let assignedAgent = task.assignedAgentId && this.options.agentStore
           ? await this.options.agentStore.getAgent(task.assignedAgentId).catch(() => null)
           : null;
@@ -2772,11 +2760,7 @@ export class TriageProcessor {
         Planning sessions keep readonly built-in tools so they cannot mutate repository files, while the narrow TaskStore-backed prompt writer remains available as the only durable PROMPT.md creation and repair path.
         */
         const customTools = [
-          ...this.createTriageTools({
-            parentTaskId: task.id,
-            allowTaskCreate: true,
-            createdSubtasksRef,
-          }),
+          ...this.createTriageTools({ parentTaskId: task.id }),
           createTaskDocumentWriteTool(this.store, task.id),
           createTaskDocumentReadTool(this.store, task.id),
           createTaskPromptWriteTool(this.store, task.id, triageRunContext),
@@ -2916,12 +2900,21 @@ export class TriageProcessor {
         // this a no-op there while still guaranteeing no dangling token leaks.
         const renderedBasePrompt = renderTriagePolicyPlaceholders(resolvedBasePrompt, triagePolicySettings);
         const duplicatePolicyInstruction = buildPlanningDuplicatePolicyInstruction();
+        /*
+        FNXC:RepositoryScope 2026-08-21-00:12:
+        Workspace plan persistence rejects a missing Repository Scope, so every planner that sees
+        repository intent must be explicitly instructed to emit the confirmed heading rather than
+        repeatedly producing a plan the authoritative writer cannot publish.
+        */
         const triageLayers = buildPromptLayers({
           basePrompt: renderedBasePrompt,
           goalContext: triageGoalResolution.goalContext,
           agentInstructions: [
             triageIdentitySection,
             duplicatePolicyInstruction,
+            task.repositoryScope
+              ? `## Workspace repository intent\nThis is a multi-repository workspace task. Your final PROMPT.md MUST include a non-empty \`## Repository Scope\` heading with a markdown bullet list of configured repository names. Confirm only repositories the task concerns; do not infer intent from acquired checkouts. File Scope entries must be qualified as \`repository/path\` when more than one repository is in scope.`
+              : "",
             triageInstructions,
             isResearchToolSurfaceEnabled(settings)
               ? getResearchGuidanceForSurface("triage")
@@ -3367,52 +3360,6 @@ export class TriageProcessor {
             return;
           }
 
-          if (createdSubtasksRef.current.length > 0) {
-            const childTaskIds = createdSubtasksRef.current.join(", ");
-            await this.store.logEntry(
-              task.id,
-              `Converted into subtasks: ${childTaskIds}`,
-            );
-            try {
-              // FN-5129 / FN-5131: split-close must unlink lineage children when deleting the parent.
-              /*
-              FNXC:GitHubSourceIssueSplitClose 2026-08-01-09:24:
-              The imported issue reporter needs to learn that this parent closed in favor of these
-              child tasks. Preserve the exact ids as typed delete context so the in-process GitHub
-              lifecycle owner can comment immediately before its close.
-              */
-              await this.store.deleteTask(task.id, {
-                removeLineageReferences: true,
-                closureContext: {
-                  kind: "split-into-subtasks",
-                  childTaskIds: [...createdSubtasksRef.current],
-                },
-                auditContext: {
-                  // FNXC:TaskDeleteAttribution 2026-07-26-14:30: labelling only — this
-                  // split-close delete is intended engine behavior and is unchanged.
-                  agentId: task.assignedAgentId ?? "triage",
-                  runId: generateSyntheticRunId("triage-delete", task.id),
-                  callerKind: "engine",
-                },
-              });
-              planLog.log(`✓ ${task.id} split into subtasks (${childTaskIds}) and closed`);
-            } catch (err: unknown) {
-              // deleteTask refuses when live tasks still depend on this id.
-              // If fn_task_create's validation worked correctly this branch is
-              // unreachable, but we keep it as defense-in-depth: leaving the
-              // parent alive is always safer than stranding dependents.
-              const msg = err instanceof Error ? err.message : String(err);
-              planLog.error(
-                `${task.id}: cannot close parent after split (${msg}). ` +
-                  `Parent kept alive to avoid orphaning dependents; subtasks were still created.`,
-              );
-              await this.store.logEntry(
-                task.id,
-                `Split-close aborted: ${msg}. Subtasks created but parent kept alive to avoid orphaning dependents.`,
-              );
-            }
-            return;
-          }
 
           /*
           FNXC:PlanReview 2026-06-29-01:52:
@@ -3976,11 +3923,7 @@ export class TriageProcessor {
     }
   }
 
-  private createTriageTools(options: {
-    parentTaskId: string;
-    allowTaskCreate: boolean;
-    createdSubtasksRef: { current: string[] };
-  }): ToolDefinition[] {
+  private createTriageTools(options: { parentTaskId: string }): ToolDefinition[] {
     const store = this.store;
 
     const taskGetParams = Type.Object({
@@ -4156,130 +4099,26 @@ export class TriageProcessor {
 
     const taskCreate: ToolDefinition = {
       name: "fn_task_create",
-      label: "Create Child Task",
-      description:
-        "Create a child task (subtask) while breaking a larger task into smaller pieces. " +
-        "Use this when the work can be split into 2-5 independently executable tasks, " +
-        "either because the user requested subtask breakdown or because the task is " +
-        "genuinely oversized (12+ steps OR multiple clearly independent deliverables that could ship separately). " +
-        "The created task will be a child of the current task being triaged. " +
-        "IMPORTANT: `dependencies` may ONLY reference other subtasks you have created " +
-        "in this same triage session. Never depend on the parent task — the parent is " +
-        "deleted after splitting, and stale dependency ids permanently block the dependent.",
+      label: "Create Independent Task",
+      description: "Create genuinely independent follow-up work. Do not use this tool to split or replace the task currently being planned.",
       parameters: taskCreateParams,
-      execute: async (
-        _callId: string,
-        params: Static<typeof taskCreateParams>,
-      ) => {
-        // fn_task_create is always available during triage to support both
-        // explicit breakIntoSubtasks and proactive splitting of oversized tasks.
+      execute: async (_callId: string, params: Static<typeof taskCreateParams>) => {
         try {
-          // Validate dependencies before creating the child:
-          //   1. Cannot depend on the parent (it's about to be deleted).
-          //   2. Each id must either (a) already exist in the store, or
-          //      (b) reference a sibling created earlier in this split.
-          // This is the load-bearing guard that prevents the AI from stranding
-          // children behind a never-to-exist parent id.
           const requestedDeps = params.dependencies || [];
-          const siblings = new Set(options.createdSubtasksRef.current);
-          const validDeps: string[] = [];
-          const rejected: Array<{ id: string; reason: string }> = [];
-
-          for (const depId of requestedDeps) {
-            if (depId === options.parentTaskId) {
-              rejected.push({
-                id: depId,
-                reason: "parent task is deleted after splitting; depend on a sibling child task instead",
-              });
-              continue;
-            }
-            if (siblings.has(depId)) {
-              validDeps.push(depId);
-              continue;
-            }
-            try {
-              await store.getTask(depId);
-              validDeps.push(depId);
-            } catch {
-              rejected.push({
-                id: depId,
-                reason: "task not found (only existing tasks or siblings created earlier in this split are allowed)",
-              });
-            }
-          }
-
-          if (rejected.length > 0) {
-            const summary = rejected
-              .map((r) => `  - ${r.id}: ${r.reason}`)
-              .join("\n");
-            return {
-              content: [
-                {
-                  type: "text" as const,
-                  text:
-                    `ERROR: fn_task_create rejected. Invalid dependencies:\n${summary}\n\n` +
-                    `Remove or replace these ids and call fn_task_create again.`,
-                },
-              ],
-              details: { rejectedDependencies: rejected },
-            };
-          }
-
-          // Fetch parent task to inherit model settings
-          let parentTask: Awaited<ReturnType<typeof store.getTask>> | undefined;
-          try {
-            parentTask = await store.getTask(options.parentTaskId);
-          } catch (err: unknown) {
-            const msg = err instanceof Error ? err.message : String(err);
-            planLog.warn(`${options.parentTaskId}: failed to load parent task for fn_task_create inheritance: ${msg}`);
-            // Parent task not found or error - proceed without inheritance
-            parentTask = undefined;
-          }
-
+          for (const dependencyId of requestedDeps) await store.getTask(dependencyId);
           const { task: newTask, wasDuplicate } = await createAgentTask(store, {
             title: params.title,
             description: params.description,
-            dependencies: validDeps,
-            /* FNXC:WorkflowLifecycleColumns 2026-07-29-20:15 (U11): no explicit column —
-               `createTaskImpl` resolves the WORKFLOW'S intake column, and `input.column` would
-               override it. Hard-coding `"triage"` created the card in a column the default
-               lineage no longer declares (#2515), i.e. straight into the stranded state. */
+            dependencies: requestedDeps,
             priority: params.priority,
             workflowId: params.workflow_id,
             noCommitsExpected: params.noCommitsExpected,
-            // Inherit parent's model settings if available
-            modelProvider: parentTask?.modelProvider,
-            modelId: parentTask?.modelId,
-            validatorModelProvider: parentTask?.validatorModelProvider,
-            validatorModelId: parentTask?.validatorModelId,
-            source: {
-              sourceType: "agent_heartbeat",
-              sourceParentTaskId: options.parentTaskId,
-            },
+            source: { sourceType: "agent_heartbeat", sourceParentTaskId: options.parentTaskId },
           }, { rootDir: this.rootDir });
-
-          // Track the created subtask
-          options.createdSubtasksRef.current.push(newTask.id);
-
-          return {
-            content: [
-              {
-                type: "text" as const,
-                text: `${wasDuplicate ? "Linked existing child task" : "Created child task"} ${newTask.id}: ${params.title || params.description.slice(0, 60)}`,
-              },
-            ],
-            details: { taskId: newTask.id },
-          };
-        } catch (err: unknown) { const errorMessage = err instanceof Error ? err.message : String(err);
-          return {
-            content: [
-              {
-                type: "text" as const,
-                text: `ERROR: Failed to create task: ${errorMessage}`,
-              },
-            ],
-            details: {},
-          };
+          return { content: [{ type: "text" as const, text: `${wasDuplicate ? "Linked existing task" : "Created independent task"} ${newTask.id}: ${params.title || params.description.slice(0, 60)}` }], details: { taskId: newTask.id } };
+        } catch (err: unknown) {
+          const errorMessage = err instanceof Error ? err.message : String(err);
+          return { content: [{ type: "text" as const, text: `ERROR: Failed to create task: ${errorMessage}` }], details: {} };
         }
       },
     };
@@ -5422,6 +5261,27 @@ function isMalformedTaskTitle(title: string): boolean {
   return /^created\s+(?:task\s+)?(?:fn-\d+\b|\*\*\s*fn-\d+\s*\*\*)/i.test(title.trim());
 }
 
+/**
+ * Resolve the title shown to the planner for a task that has not received a title yet.
+ *
+ * FNXC:TitleSummarization 2026-08-19-13:43:
+ * Planning must provide one deterministic title fallback whenever an untitled task has non-empty
+ * content, regardless of whether automatic project summarization was disabled or unavailable.
+ * Use the shared sanitized first-line helper rather than interpolating raw multiline Markdown,
+ * which could corrupt the prompt's `**Title:**` structure.
+ */
+function resolveSpecificationPromptTitle(task: Pick<TaskDetail, "title" | "description">): string {
+  const existingTitle = task.title?.trim();
+  if (existingTitle) return existingTitle;
+
+  const description = task.description ?? "";
+  if (description.trim()) {
+    return deriveFallbackTaskTitle(description);
+  }
+
+  return "(none)";
+}
+
 function shouldReplaceTaskTitleFromPrompt(task: Task, promptDeclaredTitle: string | null): boolean {
   if (!promptDeclaredTitle) return false;
 
@@ -5599,30 +5459,16 @@ When writing PROMPT.md, add this as an explicit requirement under completion doc
     memorySection = "\n\n" + buildTriageMemoryInstructions("", settings, undefined, memoryMode);
   }
 
-  let taskDefinitionLanguageSection = "";
-  if (settings?.taskDefinitionInInputLanguage === true) {
-    const detectedLanguage = detectContentLanguage(task.description);
-    const isSupportedNonEnglishLanguage = (
-      detectedLanguage.locale === "es"
-      || detectedLanguage.locale === "fr"
-      || detectedLanguage.locale === "ko"
-      || detectedLanguage.locale === "zh-CN"
-    ) && (detectedLanguage.confidence === "medium" || detectedLanguage.confidence === "high");
+  /*
+  FNXC:TaskOutputLanguage 2026-08-19-14:56:
+  Triage snapshots one core-resolved target for fresh, revision, and re-specification prompts.
+  Original Description and PROMPT.md grammar remain canonical while planner prose follows the mode.
+  */
+  const outputLanguage = resolveTaskOutputLanguage(settings, originalDescription ?? task.description);
+  const taskDefinitionLanguageSection = `\n\n## Task Definition Language
+${outputLanguage.instruction} This includes task title, Mission, Before → After bullets, review assessment, step prose, acceptance criteria, and recommendations.
 
-    /*
-    FNXC:TaskDefinitionInputLanguage 2026-07-16-05:00:
-    PROMPT.md gates parse canonical English headings and markers, so opt-in localization
-    applies only to planner-authored prose. Conservative core detection limits authoring to
-    confident es/fr/ko/zh-CN input; Chinese intentionally normalizes to zh-CN, while English,
-    Japanese/unknown, short, and low-confidence descriptions keep byte-faithful English output.
-    */
-    if (isSupportedNonEnglishLanguage) {
-      taskDefinitionLanguageSection = `\n\n## Task Definition Language
-Write all human-readable, planner-authored prose in the operator's detected input language: ${localeDisplayName(detectedLanguage.locale)} (${detectedLanguage.locale}). This includes Mission, Before → After bullets, Review Level assessments, step descriptions, and Do NOT items.
-
-Keep every \`##\`/\`###\` section heading, machine marker, the verbatim \`## Original Description\` block, fenced and inline code, file paths, \`fn_*\` tool names, and commit-message conventions in canonical English. Do not translate or alter them.`;
-    }
-  }
+Keep the verbatim \`## Original Description\` block and every \`##\`/\`###\` heading, machine marker, fenced and inline code, file path, \`fn_*\` tool name, and commit-message convention canonical and unchanged.`;
 
   let attachmentsSection = "";
   if (attachmentContents && attachmentContents.length > 0) {
@@ -5724,57 +5570,7 @@ ${feedback}
 Persist the complete fresh PROMPT.md with \`fn_task_prompt_write\`.`;
   }
 
-  let subtaskSection = "";
-  if (task.breakIntoSubtasks) {
-    subtaskSection = `
-
-## Subtask Breakdown Requested
-The user has requested that this task be broken into smaller subtasks if it is complex enough to warrant splitting.
-
-**When to split:**
-- Only split when the work is meaningfully decomposable into 2-5 independently executable child tasks
-- Each child task should be completable on its own with a clear scope and acceptance criteria
-- Child tasks should have logical dependencies between them if order matters
-
-**How to split:**
-1. First, analyze the task to determine if it should be split
-2. If splitting: use the \\\`fn_task_create\\\` tool to create child tasks in order, setting up dependencies as needed
-3. Include clear descriptions and acceptance criteria for each child task
-4. After creating all subtasks, stop — do NOT write a PROMPT.md for the parent task
-5. If NOT splitting: proceed with a normal PROMPT.md specification for this task
-
-**Subtask dependencies rule:** \`dependencies\` on a child may only reference **sibling subtasks created earlier in this same split** or **pre-existing tasks in the store**. They must NEVER reference the parent task being split — the parent is deleted after the split completes, and a dependency on a deleted task permanently blocks the dependent. If a child "needs the rest of the parent's work to finish first", create another sibling subtask for that remaining work and depend on the sibling. The \`fn_task_create\` tool rejects parent-id dependencies.
-
-**Important:** If you create subtasks, this parent task will be closed and replaced by the children. Make sure each child is a complete, executable task.`;
-  } else {
-    subtaskSection = `
-
-## Subtask Consideration
-The user did not explicitly request subtask breakdown. Default to keeping the task whole; only split when the work is genuinely large or has clearly independent deliverables.
-
-**Split into 2-5 child tasks when ANY of these apply:**
-- The task will require MORE THAN 7 implementation steps
-- The task affects MORE THAN 3 different packages/modules with distinct concerns (touching multiple packages as a coherent vertical change does NOT count — e.g. types + store + UI + tests for one feature is one task)
-- Any single step would take more than 1-2 hours to complete
-- The task has multiple clearly independent deliverables that could be developed and shipped in parallel by different people
-
-**GOOD TO SPLIT:**
-- A task that would require 12+ implementation steps spanning genuinely separate concerns
-- A multi-feature epic where each feature can be shipped independently
-- A refactor that has both a "rip out the old" phase and an "add the new" phase that can land separately
-
-**NOT NECESSARY TO SPLIT (and SHOULD NOT be split):**
-- A bug fix with clear scope, regardless of how many files it touches
-- A single-file refactor
-- A vertical feature that touches core + dashboard + tests as one coherent unit (this is the common case in this monorepo — keep it together)
-- Any task with 10 or fewer focused steps within a coherent scope
-
-**How to decide:**
-- If you choose to split: use the \\\`fn_task_create\\\` tool to create the child tasks, set dependencies where needed, and then stop without writing a PROMPT.md for the parent task.
-- **Subtask dependencies must only reference sibling subtasks created earlier in this same split, or pre-existing tasks. NEVER depend on the parent task being split — the parent is deleted after splitting, and the tool will reject parent-id dependencies.**
-- When in doubt, do NOT split. Coordination overhead (worktrees, dependency wiring, merge sequencing) is real — splitting must clearly pay for itself.
-- If size is uncertain at first, make a quick assessment from the available context before deciding.`;
-  }
+  const subtaskSection = "\n\n## One-task planning\nKeep this task intact regardless of complexity. Write a complete, detailed plan with focused implementation steps, realistic scope, risks, and quality gates; do not create tasks to decompose or replace it.";
 
   /*
   FNXC:OriginalDescriptionInPrompt 2026-07-14-23:35:
@@ -5788,14 +5584,13 @@ The authoritative artifact will be stored at \`${promptPath}\`. Do not use the g
 
 ## Task
 - **ID:** ${task.id}
-- **Title:** ${task.title || "(none)"}
+- **Title:** ${resolveSpecificationPromptTitle(task)}
 - **Description (current user context):** ${task.description}
 ${planInput ? `\n## Planning Mode plan.md\n\nTreat this validated lean plan as the primary specification input. Expand it into the full executor-ready PROMPT.md; plan.md is not PROMPT.md.\n\n\`\`\`markdown\n${planInput}\n\`\`\`\n` : ""}
 ## Original Request
 \`\`\`text
 ${originalDescription}
 \`\`\`
-${task.breakIntoSubtasks ? "- **Break into subtasks:** Yes (user requested)" : ""}
 ${task.dependencies.length > 0 ? `- **Dependencies:** ${task.dependencies.join(", ")}` : ""}${revisionSection}${subtaskSection}
 
 ## Instructions

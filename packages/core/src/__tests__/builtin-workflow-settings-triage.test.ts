@@ -15,16 +15,9 @@ import {
 } from "../workflows/workflow-settings.js";
 
 const expectedDefaults: Record<string, { type: string; default: unknown }> = {
-  triageProactiveSubtaskSplittingEnabled: { type: "boolean", default: true },
   triageSizeSmallMaxHours: { type: "number", default: 2 },
   triageSizeMediumMaxHours: { type: "number", default: 4 },
   triageSizeLargeMaxHours: { type: "number", default: 8 },
-  triageSubtaskStepThreshold: { type: "number", default: 7 },
-  triageSubtaskLargeStepSignal: { type: "number", default: 9 },
-  triageSubtaskAdditiveStepSignal: { type: "number", default: 12 },
-  triageSubtaskPackageThreshold: { type: "number", default: 3 },
-  triageSubtaskFileScopeThreshold: { type: "number", default: 20 },
-  triageSubtaskRemediationBatchThreshold: { type: "number", default: 30 },
   triageNoCommitsDecisionVerbs: {
     type: "multi-enum",
     default: ["Decide", "Evaluate", "Verify", "Confirm", "Audit", "Review whether", "Investigate and report"],
@@ -286,18 +279,15 @@ describe("workflow-native built-in workflow settings", () => {
   it("renders placeholders from resolved settings and rejects dangling tokens", () => {
     const prompt = [
       "Size S (<{{triageSizeSmallMaxHours}}h)",
-      "MORE THAN {{triageSubtaskStepThreshold}} implementation steps",
       "verbs: {{triageNoCommitsDecisionVerbs}}",
     ].join("\n");
 
     const rendered = renderTriagePolicyPlaceholders(prompt, {
       triageSizeSmallMaxHours: 1,
-      triageSubtaskStepThreshold: 5,
       triageNoCommitsDecisionVerbs: ["Audit", "Confirm"],
     } as never);
 
     expect(rendered).toContain("Size S (<1h)");
-    expect(rendered).toContain("MORE THAN 5 implementation steps");
     expect(rendered).toContain("verbs: Audit, Confirm");
     expect(rendered).not.toContain("{{");
     expect(() => renderTriagePolicyPlaceholders("{{unknownTriageToken}}", {})).toThrow(/Unresolved triage policy placeholder/);
@@ -321,25 +311,7 @@ describe("workflow-native built-in workflow settings", () => {
     expect(fallback).not.toContain("{{");
   });
 
-  it("renders proactive splitting policy as enabled by default", () => {
-    const rendered = renderTriagePolicyPlaceholders("{{triageProactiveSubtaskSplittingEnabled}}", {});
-
-    expect(rendered).toContain("For tasks you assess as Size M or L, consider whether splitting");
-    expect(rendered).toContain("Even when `breakIntoSubtasks` is not set to `true`, apply these thresholds proactively");
-    expect(rendered).toContain("MORE THAN 7 implementation steps");
-    expect(rendered).not.toContain("Proactive oversized-task splitting is DISABLED");
-    expect(rendered).not.toContain("{{");
-  });
-
-  it("renders disabled proactive policy without weakening explicit subtask requests", () => {
-    const rendered = renderTriagePolicyPlaceholders("{{triageProactiveSubtaskSplittingEnabled}}", {
-      triageProactiveSubtaskSplittingEnabled: false,
-    } as never);
-
-    expect(rendered).toContain("Proactive oversized-task splitting is DISABLED");
-    expect(rendered).toContain("Do NOT split solely because the task is Size M/L");
-    expect(rendered).toContain("Only create child tasks when `breakIntoSubtasks: true` is explicitly present");
-    expect(rendered).not.toContain("Even when `breakIntoSubtasks` is not set to `true`, apply these thresholds proactively");
-    expect(rendered).not.toContain("{{");
+  it("rejects removed split-policy placeholders", () => {
+    expect(() => renderTriagePolicyPlaceholders("{{triageProactiveSubtaskSplittingEnabled}}", {})).toThrow(/Unresolved triage policy placeholder/);
   });
 });

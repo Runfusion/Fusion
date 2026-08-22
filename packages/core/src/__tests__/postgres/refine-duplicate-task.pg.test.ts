@@ -8,6 +8,9 @@
  * async layer, so both surfaces must persist against PostgreSQL.
  */
 import { describe, it, expect } from "vitest";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+import { buildRefinementSeedPrompt } from "../../mesh/mesh-task-replication.js";
 import {
   pgDescribe,
   createTaskStoreForTest,
@@ -63,6 +66,133 @@ pgDescribe("refineTask / duplicateTask backend mode (PostgreSQL)", () => {
    * FN-8188 requires refinements to use the same project-default optional-group
    * seed and persisted selection as createTask, including empty and absent defaults.
    */
+  it("refineTask keeps automatic default Coding in its planning lane", async () => {
+    const h = await makeHarness();
+    try {
+      await h.store.setDefaultWorkflowId("builtin:coding");
+      const source = await h.store.createTask({
+        title: "Automatic workflow source",
+        description: "Completed automatic workflow work",
+        column: "done",
+      });
+
+      const refined = await h.store.refineTask(source.id, "Keep automatic planning actionable");
+
+      expect(refined.column).toBe("todo");
+      expect(refined.column).not.toBe("triage");
+      expect((await h.store.getTask(refined.id)).column).toBe("todo");
+    } finally {
+      await teardown();
+    }
+  });
+
+  it("routes Coding (Ideas) refinements to Planning and preserves selection and seed", async () => {
+    const h = await makeHarness();
+    try {
+      const source = await h.store.createTask({
+        title: "Ideas source",
+        description: "Completed work selected in Coding (Ideas)",
+        workflowId: "builtin:coding-ideas",
+        column: "done",
+      } as never);
+
+      const refined = await h.store.refineTask(source.id, "Make the empty state actionable");
+      const fetched = await h.store.getTask(refined.id);
+      const prompt = await readFile(join(h.store.taskDir(refined.id), "PROMPT.md"), "utf8");
+
+      expect(refined.column).toBe("todo");
+      expect(refined.column).not.toBe("ideas");
+      expect(fetched.column).toBe("todo");
+      expect(fetched.sourceParentTaskId).toBe(source.id);
+      expect(fetched.dependencies).toEqual([source.id]);
+      expect(await h.store.getTaskWorkflowSelectionAsync(refined.id)).toMatchObject({
+        workflowId: "builtin:coding-ideas",
+      });
+      expect(prompt).toBe(buildRefinementSeedPrompt(refined.title ?? refined.id, refined.description));
+    } finally {
+      await teardown();
+    }
+  });
+
+  it("routes multiple refinements in a renamed manual workflow to its hold lane", async () => {
+    const h = await makeHarness();
+    try {
+      const definition = await h.store.createWorkflowDefinition({
+        name: "Renamed manual refinement workflow",
+        kind: "workflow",
+        ir: {
+          version: "v2",
+          name: "Renamed manual refinement workflow",
+          columns: [
+            { id: "capture", name: "Capture", traits: [{ trait: "intake", config: { autoTriage: false } }] },
+            { id: "ready", name: "Ready to plan", traits: [{ trait: "hold", config: { release: "capacity" } }] },
+            { id: "shipped", name: "Shipped", traits: [{ trait: "complete" }] },
+            { id: "filed", name: "Filed", traits: [{ trait: "archived" }] },
+          ],
+          nodes: [
+            { id: "start", kind: "start", column: "capture" },
+            { id: "end", kind: "end", column: "shipped" },
+          ],
+          edges: [{ from: "start", to: "end" }],
+        },
+      } as never);
+      const source = await h.store.createTask({
+        title: "Renamed workflow source",
+        description: "Completed work in the renamed workflow",
+        workflowId: definition.id,
+        column: "shipped",
+      } as never);
+
+      const first = await h.store.refineTask(source.id, "Add the first follow-up");
+      const second = await h.store.refineTask(source.id, "Add the second follow-up");
+
+      for (const child of [first, second]) {
+        const fetched = await h.store.getTask(child.id);
+        expect(fetched.column).toBe("ready");
+        expect(fetched.column).not.toBe("capture");
+        expect(fetched.sourceParentTaskId).toBe(source.id);
+        expect(fetched.dependencies).toEqual([source.id]);
+        expect(await h.store.getTaskWorkflowSelectionAsync(fetched.id)).toMatchObject({ workflowId: definition.id });
+      }
+    } finally {
+      await teardown();
+    }
+  });
+
+  it("keeps the legacy fallback when a manual workflow has no Planning hold", async () => {
+    const h = await makeHarness();
+    try {
+      const definition = await h.store.createWorkflowDefinition({
+        name: "Manual workflow without hold",
+        kind: "workflow",
+        ir: {
+          version: "v2",
+          name: "Manual workflow without hold",
+          columns: [
+            { id: "capture", name: "Capture", traits: [{ trait: "intake", config: { autoTriage: false } }] },
+            { id: "shipped", name: "Shipped", traits: [{ trait: "complete" }] },
+          ],
+          nodes: [
+            { id: "start", kind: "start", column: "capture" },
+            { id: "end", kind: "end", column: "shipped" },
+          ],
+          edges: [{ from: "start", to: "end" }],
+        },
+      } as never);
+      const source = await h.store.createTask({
+        description: "Completed source without a Planning hold",
+        workflowId: definition.id,
+        column: "shipped",
+      } as never);
+
+      const refined = await h.store.refineTask(source.id, "Keep the fallback behavior");
+
+      expect(refined.column).toBe("triage");
+    } finally {
+      await teardown();
+    }
+  });
+
   it("refineTask inherits default-on workflow groups and selection like createTask", async () => {
     const h = await makeHarness();
     try {

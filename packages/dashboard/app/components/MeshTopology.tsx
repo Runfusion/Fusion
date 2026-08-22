@@ -7,10 +7,10 @@ import type { NodeMeshState } from "@fusion/core";
  * MeshTopology was repurposed for the shared-PostgreSQL mesh. Previously it
  * visualized peer SYNC state (which snapshots were exchanged between nodes);
  * now it visualizes active engine CONNECTIONS — which engines are connected to
- * the shared PG database, what tasks they're executing, and their heartbeat
+ * the shared PG database, what work items they're executing, and their heartbeat
  * status. The node/peer topology data still comes from NodeMeshState (mDNS
  * discovery + central registry, both PG-backed). The optional `engines` prop
- * surfaces per-engine runtime status (in-flight tasks, active agents, last
+ * surfaces per-engine runtime status (in-flight work items, active agents, last
  * activity) read directly from shared PG via GET /api/mesh/engines.
  */
 
@@ -143,7 +143,7 @@ function MeshTopologyInner({ nodes, engines, className }: MeshTopologyProps): Re
               <li key={engine.projectId} className="mesh-topology__engine-item">
                 <span className="mesh-topology__engine-name">{engine.projectName ?? engine.projectId}</span>
                 <span className="mesh-topology__engine-status" data-runtime-status={engine.runtimeStatus}>{engine.runtimeStatus}</span>
-                <span className="mesh-topology__engine-tasks">{engine.inFlightTasks} tasks</span>
+                <span className="mesh-topology__engine-tasks">{t("mesh.taskCount", "{{count}} tasks", { count: engine.inFlightTasks })}</span>
               </li>
             ))}
           </ul>

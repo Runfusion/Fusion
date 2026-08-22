@@ -106,15 +106,14 @@ describe("MissionManager mobile styles", () => {
     expect(section).toContain("display: block;");
   });
 
-  it("keeps the mobile bottom mission CTA full-width and primary-styled", () => {
+  it("keeps the mobile top mission CTA full-width, primary-styled, and tokenized", () => {
     const css = loadAllAppCss();
+    const ctaRule = css.match(/\.mission-list__primary-cta\s*\{[^}]*\}/)?.[0];
 
-    expect(css).not.toContain(".mission-list__top-action");
-
-    const topCtaRule = css.match(/\.mission-list__primary-cta\s*\{[^}]*\}/)?.[0];
-    expect(topCtaRule).toContain("width: 100%;");
-    expect(topCtaRule).toContain("justify-content: center;");
-    expect(topCtaRule).toContain("gap: var(--space-sm);");
+    expect(ctaRule).toContain("width: 100%;");
+    expect(ctaRule).toContain("min-height: calc(var(--space-lg) * 2 + var(--space-sm));");
+    expect(ctaRule).toContain("justify-content: center;");
+    expect(ctaRule).toContain("gap: var(--space-sm);");
   });
 
   it("hides back button on desktop and restores it on mobile", () => {
@@ -177,16 +176,24 @@ describe("desktop two-panel split CSS", () => {
     expect(css).toContain("overflow-y: auto;");
   });
 
-  it("anchors desktop Plan New Mission CTA in a sidebar footer with tokenized height", () => {
+  it("anchors desktop Plan New Mission CTA above the list with the shared tokenized height", () => {
+    const css = loadAllAppCss();
+    const barRule = css.match(/\.mission-manager__sidebar-cta-bar\s*\{[^}]*\}/)?.[0];
+    const ctaRule = css.match(/\.mission-manager__sidebar-cta\s*\{[^}]*\}/)?.[0];
+
+    expect(barRule).toContain("border-bottom: var(--btn-border-width) solid var(--border);");
+    expect(ctaRule).toContain("width: 100%;");
+    expect(ctaRule).toContain("min-height: calc(var(--space-lg) * 2 + var(--space-sm));");
+    expect(ctaRule).toContain("justify-content: center;");
+  });
+
+  it("removes obsolete mission CTA wrappers and empty-state styling", () => {
     const css = loadAllAppCss();
 
-    const footerRule = css.match(/\.mission-manager__sidebar-footer\s*\{[^}]*\}/)?.[0];
-    expect(footerRule).toContain("border-top: var(--btn-border-width) solid var(--border);");
-
-    const ctaRule = css.match(/\.mission-manager__sidebar-cta\s*\{[^}]*\}/)?.[0];
-    expect(ctaRule).toContain("width: 100%;");
-    expect(ctaRule).toContain("min-height: calc(var(--space-lg) * 2 + var(--space-xs));");
-    expect(ctaRule).toContain("justify-content: center;");
+    expect(css).not.toContain(".mission-manager__sidebar-footer");
+    expect(css).not.toContain(".mission-list__footer");
+    expect(css).not.toContain(".mission-list__footer-actions");
+    expect(css).not.toContain(".mission-manager__empty-cta");
   });
 
   it("defines split container as flex row", () => {

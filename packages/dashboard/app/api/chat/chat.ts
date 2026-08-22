@@ -2,6 +2,7 @@
  * FNXC:CodeOrganization 2026-07-19-12:00:
  * Chat sessions / rooms / streaming client API peeled from legacy.ts.
  */
+import { THINKING_LEVELS } from "@fusion/core";
 import type {
   ChatAttachment,
   ChatMessage,
@@ -38,6 +39,7 @@ export interface ChatMessageListResponse {
 export interface TaskPlannerChatSessionInput {
   modelProvider?: string;
   modelId?: string;
+  thinkingLevel?: string;
 }
 
 export interface ChatRoomListResponse {
@@ -167,7 +169,11 @@ function normalizeTaskPlannerChatInput(taskId: string, input: TaskPlannerChatSes
   if ((normalizedProvider && !normalizedModelId) || (!normalizedProvider && normalizedModelId)) {
     throw new Error("Both modelProvider and modelId must be provided together, or neither should be provided");
   }
-  return { normalizedTaskId, normalizedProvider, normalizedModelId };
+  const normalizedThinkingLevel = input.thinkingLevel?.trim();
+  if (normalizedThinkingLevel && !THINKING_LEVELS.includes(normalizedThinkingLevel as (typeof THINKING_LEVELS)[number])) {
+    throw new Error(`thinkingLevel must be one of ${THINKING_LEVELS.join(", ")}`);
+  }
+  return { normalizedTaskId, normalizedProvider, normalizedModelId, normalizedThinkingLevel };
 }
 
 export function fetchTaskPlannerChatSession(
@@ -175,16 +181,13 @@ export function fetchTaskPlannerChatSession(
   input: TaskPlannerChatSessionInput = {},
   projectId?: string,
 ): Promise<{ session: EnrichedChatSession | null }> {
-  const { normalizedTaskId, normalizedProvider, normalizedModelId } = normalizeTaskPlannerChatInput(taskId, input);
+  const { normalizedTaskId } = normalizeTaskPlannerChatInput(taskId, input);
 
   /*
-  FNXC:TaskDetailPlannerChat 2026-06-30-18:20:
-  Task-detail planner chats are task-local but no longer pre-created by opening the Chat tab. Use lookup-only resume here so global Chat history only receives planner sessions after an explicit user message creates one.
+  FNXC:TaskChatDefaultModel 2026-08-19-12:12:
+  Task-detail Chat history is keyed only by the synthetic task target and project scope. A Direct Chat default change must not hide the existing transcript; model changes are applied only by the explicit-send ensure path.
   */
-  return fetchResumeChatSession({
-    agentId: `task-planner:${normalizedTaskId}`,
-    ...(normalizedProvider && normalizedModelId ? { modelProvider: normalizedProvider, modelId: normalizedModelId } : {}),
-  }, projectId);
+  return fetchResumeChatSession({ agentId: `task-planner:${normalizedTaskId}` }, projectId);
 }
 
 export function ensureTaskPlannerChatSession(
@@ -192,11 +195,11 @@ export function ensureTaskPlannerChatSession(
   input: TaskPlannerChatSessionInput = {},
   projectId?: string,
 ): Promise<ChatSessionResponse> {
-  const { normalizedTaskId, normalizedProvider, normalizedModelId } = normalizeTaskPlannerChatInput(taskId, input);
+  const { normalizedTaskId, normalizedProvider, normalizedModelId, normalizedThinkingLevel } = normalizeTaskPlannerChatInput(taskId, input);
 
   /*
-  FNXC:TaskDetailPlannerChat 2026-06-30-22:30:
-  Task planner chat uses a task-scoped session seam instead of the generic agent-chat creator so it can bind the conversation to the task and planning model without requiring a real executor/reviewer agent or turning the message into steering.
+  FNXC:TaskChatDefaultModel 2026-08-19-12:12:
+  The task Chat session remains synthetic and task-scoped, but an explicit send applies the current Direct Chat model and thinking target to that one persisted session before streaming.
 
   FNXC:TaskDetailPlannerChat 2026-06-30-18:20:
   This mutating helper is reserved for explicit user sends (composer, starter prompts, and planner-question answers). Tab activation must call fetchTaskPlannerChatSession instead so empty task-detail visits do not create chat history.
@@ -207,6 +210,7 @@ export function ensureTaskPlannerChatSession(
       method: "POST",
       body: JSON.stringify({
         ...(normalizedProvider && normalizedModelId ? { modelProvider: normalizedProvider, modelId: normalizedModelId } : {}),
+        ...(normalizedThinkingLevel ? { thinkingLevel: normalizedThinkingLevel } : {}),
       }),
     },
   );
@@ -267,28 +271,6 @@ export function deleteChatMessage(
     withProjectId(`/chat/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}`, projectId),
     {
       method: "DELETE",
-    },
-  );
-}
-
-/**
- * FNXC:ChatMessageEdit 2026-07-07-09:00:
- * Edit an earlier user message in a direct (model-loop) chat session. Truncates the persisted
- * transcript from (and including) the target message onward AND rewinds the pi session context
- * server-side, so the returned `retained` list is the surviving pre-edit history. Does NOT
- * trigger regeneration — the caller resends the edited content via the existing streaming send.
- */
-export function editChatMessage(
-  sessionId: string,
-  messageId: string,
-  content: string,
-  projectId?: string,
-): Promise<{ retained: ChatMessage[] }> {
-  return api<{ retained: ChatMessage[] }>(
-    withProjectId(`/chat/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}`, projectId),
-    {
-      method: "PATCH",
-      body: JSON.stringify({ content }),
     },
   );
 }
@@ -433,12 +415,18 @@ export function clearChatRoomMessages(
  * Do not add streamChatRoomResponse until FN-3810 introduces AI invocation/streaming.
  */
 
-/** Cancel an in-flight chat generation. */
+/**
+ * Cancel an in-flight chat generation and await its durable interrupted-message result.
+ * FNXC:ChatCancellation 2026-08-21-01:36:
+ * Stop callers need the persisted assistant prefix before they reconcile the thread or
+ * release a queued follow-up; `/new` and `/clear` also use this barrier while idle, where a
+ * successful no-op confirms there was no interrupted response to persist.
+ */
 export function cancelChatResponse(
   sessionId: string,
   projectId?: string,
-): Promise<{ success: boolean }> {
-  return api<{ success: boolean }>(
+): Promise<{ success: boolean; interrupted: boolean; message?: ChatMessage }> {
+  return api<{ success: boolean; interrupted: boolean; message?: ChatMessage }>(
     withProjectId(`/chat/sessions/${encodeURIComponent(sessionId)}/cancel`, projectId),
     {
       method: "POST",
@@ -539,6 +527,10 @@ export interface ChatStreamErrorMeta {
   receivedStreamEvent: boolean;
 }
 
+export interface ChatReplacementIdentity {
+  messageId: string;
+}
+
 export interface ChatStreamHandlers {
   /** Fires once when the server accepts this new turn after multipart upload and before stream events. */
   onAccepted?: () => void;
@@ -547,7 +539,7 @@ export interface ChatStreamHandlers {
   onToolStart?: (data: { toolName: string; args?: Record<string, unknown> }) => void;
   onToolEnd?: (data: { toolName: string; isError: boolean; result?: unknown }) => void;
   onFallback?: (data: { primaryModel: string; fallbackModel: string; triggerPoint: "session-creation" | "prompt-time" }) => void;
-  onDone?: (data: { messageId: string; message?: ChatMessage }) => void;
+  onDone?: (data: { messageId: string; message?: ChatMessage; interrupted?: boolean }) => void;
   onError?: (data: string | ChatFailureInfo, meta?: ChatStreamErrorMeta) => void;
   onConnectionStateChange?: (state: StreamConnectionState) => void;
 }
@@ -558,9 +550,16 @@ export function streamChatResponse(
   handlers: ChatStreamHandlers,
   attachments?: File[],
   projectId?: string,
-  options?: { maxReconnectAttempts?: number; firstEventTimeoutMs?: number; taskId?: string },
+  options?: {
+    maxReconnectAttempts?: number;
+    firstEventTimeoutMs?: number;
+    taskId?: string;
+    replacementMessageId?: string;
+    replacement?: ChatReplacementIdentity;
+  },
 ): { close: () => void; isConnected: () => boolean } {
   const url = buildApiUrl(withProjectId(`/chat/sessions/${encodeURIComponent(sessionId)}/messages`, projectId));
+  const replacementMessageId = options?.replacement?.messageId ?? options?.replacementMessageId;
 
   const abortController = new AbortController();
   let closedByUser = false;
@@ -656,10 +655,15 @@ export function streamChatResponse(
             const formData = new FormData();
             formData.append("content", content);
             if (options?.taskId) formData.append("taskId", options.taskId);
+            if (replacementMessageId) formData.append("replacementMessageId", replacementMessageId);
             attachments.forEach((file) => formData.append("attachments", file));
             return formData;
           })()
-        : JSON.stringify({ content, ...(options?.taskId ? { taskId: options.taskId } : {}) });
+        : JSON.stringify({
+            content,
+            ...(options?.taskId ? { taskId: options.taskId } : {}),
+            ...(replacementMessageId ? { replacementMessageId } : {}),
+          });
 
       const res = await fetch(url, {
         method: "POST",

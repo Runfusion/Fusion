@@ -1,5 +1,463 @@
 # @runfusion/fusion
 
+## 0.77.0-beta.6
+
+### Patch Changes
+
+- 2bdc444: summary: Allow larger chat logs and supported file-editor saves without payload errors.
+  category: fix
+  dev: Adds finite route-scoped 2 MiB chat and escaped-file JSON parsers while retaining default limits.
+- b2125ae: summary: Preserve installed update restart state when Settings reopens.
+  category: fix
+  dev: The old dashboard process exposes its pending install until replacement.
+- c91e5ce: summary: Prevent workspace merge retries from looping after repositories already land.
+  category: fix
+  dev: Preserves durable landing obligations and reports workspace merge failures truthfully.
+- 3717fc5: summary: Restore single-repository worktree acquisition and stop destructive validation retries.
+  category: fix
+  dev: Enforces branch-write provenance across production callers and terminalizes deterministic acquisition validation failures.
+
+## 0.77.0-beta.5
+
+### Minor Changes
+
+- dfa2533: summary: Add exact task-ID search to the Activity Log.
+  category: feature
+  dev: Durable project and central activity feeds compose task-ID, project, and event-type filters.
+- 0b71e9f: summary: Make mobile task creation and Board/List navigation available from every project view.
+  category: feature
+  dev: Moves the mobile full-task trigger to Header while preserving Planning quick entry.
+- eb3eeb8: summary: Keep complex requests as one planned task without task splitting.
+  category: breaking
+  dev: Removes split-driven parent deletion and the dashboard subtask and planning fan-out routes.
+- 3903d3c: summary: Start a new chat directly from an active conversation header.
+  category: feature
+  dev: Keeps the existing project New Chat default and prompt behavior across Chat hosts.
+- c21f628: summary: Add independent update install and restart automation controls.
+  category: feature
+  dev: Dashboard update restarts now wait for the installed version before reloading.
+- e40bceb: summary: Workspace tasks can use one custom branch name across every sub-repository and reuse existing branches.
+  category: feature
+  dev: Adds provenance-based task branch ownership, guarded cleanup, task-aware PR heads, collision attach, and identity guards.
+- a426e28: summary: Derive workspace branch names from configured JIRA issues.
+  category: feature
+  dev: Adds JIRA configuration keys and a read-only branch-name derivation endpoint.
+
+### Patch Changes
+
+- a96f0dd: summary: The Docker image now ships git-lfs, so LFS-tracked files check out as real content instead of stubs.
+  category: fix
+  dev: The repository stores binary assets (screenshots) as Git LFS objects, but the runner stage installed plain `git`. Without git-lfs, `git checkout`/`clone` writes ~130-byte pointer files in place of the real content AND reports a clean tree — an agent reading one gets a text stub where an image should be, and any `git lfs` subcommand fails outright. Verified in the running container: `screenshots/fn-061-medieval-desktop.png` was a `version https://git-lfs.github.com/spec/v1` stub across 129 tracked files, and became a valid 753KB PNG after installing git-lfs and running `git lfs pull`. Added to the runner apt install alongside git, with the Dockerfile manifest guard extended so it cannot be dropped again.
+- d9a4d36: summary: Restore desktop Board dragging from safe empty-column surfaces.
+  category: fix
+  dev: Keeps mobile Board scrolling and column snapping unchanged while retaining no edge auto-scroll.
+- 0fce621: summary: Clear a Task Detail description to delete the task through configured confirmation.
+  category: fix
+  dev: Reuses the existing task deletion lifecycle and confirmation preference.
+- a2856ba: summary: Let operators explicitly remove incoming dependency references when soft-deleting a task.
+  category: fix
+  dev: `fn_task_delete` forwards `removeDependencyReferences` to the existing PostgreSQL store transaction.
+- 89427da: summary: Keep dashboard chat textareas automatic through five lines without mouse resizing.
+  category: fix
+  dev: Chat composers now use the shared automatic-only five-line autosize controller and shrink after content is removed or cleared.
+- 926dda6: summary: Keep multi-repository merges live during long AI land operations.
+  category: fix
+  dev: Renews repository land leases and unifies workspace File Scope resolution across merge and completion guards.
+- f714e45: summary: Prevent approved AI merge reviews from entering corrective merge loops.
+  category: fix
+  dev: Stores review findings with the task and confirms the same candidate before landing.
+- bbca7a1: summary: Keep multi-repository tasks from reviewing or recovering clean unrelated repositories.
+  category: fix
+  dev: Adds explicit task repository scope and lifecycle parity fencing.
+- b5e366d: summary: Keep task Chat model names readable by widening its selector menu to match Direct Chat.
+  category: fix
+  dev: Reuses the shared readable, viewport-clamped CustomModelDropdown width mode.
+- 3066123: summary: Prevent false interrupted-response save warnings when starting a new idle chat.
+  category: fix
+  dev: Idle ChatManager cancellation now returns a successful no-op while active durability failures remain recoverable.
+- 07be287: summary: Prevent non-executor audit telemetry failures from interrupting engine recovery and merge work.
+  category: fix
+  dev: Moves bounded audit isolation to a shared engine seam; createRunAuditor no longer propagates sink rejections.
+- 6d51ae8: summary: Keep remaining engine audit telemetry from blocking workflow progress.
+  category: internal
+  dev: Routes hold-release, goals, overseer, mesh lease, runtime rotation, and column boundaries through packages/engine/src/util/emit-bounded-run-audit.ts while preserving the goal retrieval log anchor.
+- f5192a5: summary: Prevent optional core audit sinks from delaying task lifecycle operations.
+  category: fix
+  dev: Core best-effort run-audit emitters now use a bounded, non-rejecting seam.
+- fdebfba: summary: Keep deleted-task outbox delivery resilient when audit telemetry fails.
+  category: fix
+  dev: Routes catch-up, reconciliation-fallback, lease-fenced, and retention-pruned through the core bounded audit seam.
+- 5c008ba: summary: Prevent stalled recall telemetry from retaining detached memory captures.
+  category: fix
+  dev: Routes packages/core/src/memory/recall-capture.ts through emitBoundedRunAudit.
+- c8f6afe: summary: Keep workflow recovery and reservation cleanup responsive when audit logging stalls.
+  category: fix
+  dev: Adds emitBoundedRunAuditWithOutcome for workflow-switch-torn and phantom-reservation reconciliation.
+
+## 0.77.0-beta.4
+
+### Minor Changes
+
+- 338dc17: summary: Add `pnpm dev --isolated` to run the dev server against its own database and project directory.
+  category: feature
+  dev: Inside a machine already running Fusion, a plain `pnpm dev` shares the live database: everything durable hangs off `$HOME/.fusion` and `embedded-lifecycle` attaches to an existing postmaster when the data dir already has one. `--isolated` (also `--isolated=<dir>`, `FUSION_DEV_ISOLATED=1`) spawns the dev child with `HOME` pointed at a sandbox, giving it its own settings, credentials, central DB and Postgres cluster on its own port. It also sets the child's `cwd`, because `fn dashboard` derives its project from the working directory and has no project flag — without that, both instances share `<repo>/.fusion/tasks/`, which the orphaned-task-dir sweep re-imports, so a fresh dev database adopts the real instance's tasks. The sandbox defaults to `~/.fusion-dev/<checkout-name>/{home,project}` — outside the work tree and keyed by checkout — and the project dir is `git init`-ed on first use. Safe because `PRELOAD`/`LOADER`/`ENTRY` are already absolute paths.
+- 643a409: summary: Add the Velvet color theme (plum/burgundy dark, blush-white light).
+  category: feature
+- c30d650: summary: Add a localized action to copy displayed task Activity Feed logs.
+  category: feature
+  dev: Uses the shared clipboard fallback and preserves the bounded Feed order.
+- e0ffd31: summary: Add desktop click-drag panning across Board workflow columns.
+  category: feature
+  dev: Safe Board surfaces pan horizontally with the native scroll position; task-card drag-and-drop and mobile touch paging remain unchanged.
+- 3ae22c2: summary: Add a project Appearance preference for bubble or full-width chat messages.
+  category: feature
+  dev: Applies the project-scoped `chatMessageLayout` choice to normal, Quick, dock, Activity, and Planner Chat surfaces.
+- 6a28811: summary: Add arrival and task-ID sorting to every Board column and paged Archive.
+  category: feature
+  dev: Board lanes keep local sort choices; Archive applies its mode before bounded PostgreSQL paging.
+- 4d7e7db: summary: Expose model-supported thinking levels, including max, in dashboard selectors.
+  category: feature
+  dev: Model metadata from pi filters model-bound controls while unknown metadata keeps the canonical fallback.
+- aad4b73: summary: Use the Direct Chat default model in task-detail Chat with task-aware context.
+  category: feature
+  dev: Task Chat retains its synthetic task session and adds model/thinking controls without impersonating Direct Chat agents.
+- bcc77c9: summary: Require quality-first task recommendation evaluation at completion.
+  category: feature
+  dev: Adds the project setting `requireTaskRecommendations`; positive caps require an explicit recommendation array while relevance permits fewer or none.
+- 7563fcf: summary: Choose English, input, or interface language for AI-authored task text.
+  category: feature
+  dev: Project mode preserves legacy taskDefinitionInInputLanguage compatibility until explicitly changed.
+- b1893a6: summary: Custom-provider models now offer all thinking levels (Off → Max) and actually send the selected effort.
+  category: feature
+  dev: buildCustomProviderModels registers reasoning: true with an identity thinkingLevelMap for xhigh/max.
+- 2c16a7e: summary: Add a Medieval dashboard theme with parchment surfaces and wood-framed modals.
+  category: feature
+  dev: Bundles a local pixel font without a CDN request.
+- 3b0a6b7: summary: Group workspace worktrees beneath configurable workspace roots.
+  category: feature
+  dev: Native workspace worktrees use deterministic workspace and repository path segments.
+- 2a31505: summary: Add workspace repositories after project registration.
+  category: feature
+  dev: Adds addWorkspaceRepo and POST /api/git/workspace-repos; fn_acquire_repo_worktree refreshes membership monotonically.
+- ef35fb8: summary: Let workspace tasks choose and display a verified base branch per repository.
+  category: feature
+  dev: Per-repo verification falls back safely, pins durable base fields for landing/revert, and records an ids-only audit decision.
+- 3d35546: summary: Mission features: done-credit via reverse lineage, re-point/unlink tools, and live unlink SSE updates.
+  category: feature
+  dev: New `fn_feature_repoint_task` / `fn_feature_unlink_task` agent tools (engine + CLI) backed by an atomic `repointFeatureToTask` store primitive preserving single-valued `feature.taskId` and one-feature-one-task invariants; unlink of an unlinked feature errors clearly. Classified as mutation tools like `fn_feature_link_task`.
+
+### Patch Changes
+
+- cc6f389: summary: Organize project and workflow model overrides in one Settings group.
+  category: feature
+  dev: Moves the Project Models JSX into Model Overrides subgroups and adds matching i18n/search metadata.
+- 200b310: summary: Make freshly generated Remote Access links authenticate immediately.
+  category: fix
+  dev: Synchronizes global settings cache reads used by remote-login handoff.
+- 6f91764: summary: Fix duplicate "Move to Planning" entry in the task card menu for review-lane tasks.
+  category: fix
+  dev: TaskCard's supplemental in-review move targets are now filtered against the workflow's declared columns, so the legacy `triage` id is not offered on workflows that no longer declare it.
+- d45c80d: summary: Remote Access now labels a Cloudflare tunnel URL correctly instead of calling it a Tailnet URL.
+  category: fix
+  dev: RemoteSection derives the share-block label from remoteStatus.provider; adds settings.remote.cloudflareTunnelURL and settings.remote.tunnelURL.
+- c0966fb: summary: Make mobile Board column releases settle smoothly into the valid column.
+  category: fix
+  dev: Keeps the existing target, edge-clamping, reduced-motion, and compositor-fencing behavior.
+- d295202: summary: Restore the production i18n catalog lint guardrail.
+  category: fix
+  dev: Adds a runLinter regression test and keeps all supported app catalogs structurally synchronized.
+- c380e68: summary: Keep Files Changed scoped to task-owned files after rebases.
+  category: fix
+  dev: Rebase-backed dashboard diffs now prefer attributed commits or execution-scoped files and omit unproven remote changes.
+- 561e0f4: summary: Remove retired Board compatibility styling without changing live scrolling behavior.
+  category: internal
+  dev: Removes the legacy `.lane-columns` CSS after verifying current selected-workflow and All-workflows Board paths and known/bundled plugin surfaces do not consume it; live desktop containment and phone proximity snapping remain covered by CSS-fixture regression tests.
+- 0899d49: summary: Preserve partially generated chat replies when an operator stops generation.
+  category: fix
+  dev: Direct Chat and task Planner Chat persist interrupted assistant prefixes before cancellation completes.
+- b17c6de: summary: Recognize saved custom providers and refresh built-in model catalogs live.
+  category: fix
+  dev: Adds the POST /api/models/refresh catalog action and shared readiness signal without persisting new settings.
+- 612195f: summary: Preserve New Task workflow choices and add a guarded Start action for manual-intake workflows.
+  category: fix
+  dev: Start uses server-derived manual-intake metadata and validated workflow move targets.
+- b88bb1d: summary: Keep disabled built-in workflows out of dashboard workflow selectors.
+  category: fix
+  dev: Project Settings now requires at least one enabled built-in workflow.
+- df5c580: summary: Cap primary chat composers at five lines while preserving manual desktop resizing.
+  category: fix
+  dev: Direct Chat, Rooms, Activity, and Planner Chat now scroll long drafts internally; native vertical expansion remains an unsaved current-draft override on desktop/tablet, while mobile stays compact.
+- 519180b: summary: Replace chat message edits with one atomic rewind-and-resend operation.
+  category: fix
+  dev: Retires the destructive PATCH edit transport in favor of replacement-aware SSE with trimmed content and acceptance-gated reconciliation.
+- 9cff3d2: summary: Preserve streamed Direct, Quick, and Planner Chat prefixes after Stop.
+  category: fix
+  dev: Explicit cancellation now records one interrupted assistant turn and keeps its text in the reopened model session context.
+- c3ff663: summary: Route refinement follow-ups directly into workflow planning lanes.
+  category: fix
+  dev: Manual intake workflows use their trait-derived hold lane; automatic workflows retain intake routing.
+- a7afb02: summary: Give short untitled tasks a deterministic title during planning.
+  category: fix
+  dev: Triage derives the title from the first meaningful description line; long-description AI summarization remains unchanged.
+- 3f85c4c: summary: Prevent multi-repository tasks from using a workspace-root worktree.
+  category: fix
+  dev: Workspace sessions and reviews now use only declared repository worktrees; stale root routing metadata is repaired without losing sub-repository progress.
+- a81c9b8: summary: Make automatic task-title summarization project-controlled for every non-empty description.
+  category: fix
+  dev: Reuses the project `autoSummarizeTitles` setting while preserving explicit titles and manual `summarize:true` requests.
+- 29f4de3: summary: Make project onboarding produce task-ready Git repositories or fail closed.
+  category: fix
+  dev: Shared registration now creates a baseline HEAD, reconciles managed Fusion ignore rules, preserves existing repositories, and prepares workspace members before activation.
+- e80fef3: summary: Keep Chat source links complete, readable, and safely opened in a new tab.
+  category: fix
+  dev: Numeric dotted tokens now survive streaming bridge normalization; shared Chat Markdown links use tokenized contrast and noopener noreferrer.
+- 06649a0: summary: Make the conversation layout setting discoverable in dashboard Settings search.
+  category: fix
+  dev: Adds the missing Appearance search entry and focused cross-surface regression coverage.
+- ef22fa4: summary: Keep task Chat context bound to the selected project when its engine is unavailable.
+  category: fix
+  dev: Request-scoped ChatManager resolution now retains the canonical TaskStore and ChatStore pair.
+- c3aeff5: summary: Resize primary chat composers from the top edge and restore their height after clearing drafts.
+  category: fix
+  dev: Shared composer autosizing now owns desktop/tablet pointer resizing and clears stale manual heights.
+- da3c280: summary: Apply mounted Appearance settings immediately from either Settings view.
+  category: fix
+  dev: Mirrors chat layout, task routing, popup, cost badge, and task-detail ordering drafts into the App shell while SettingsModal remains the sole persistence writer.
+- 67becd9: summary: Keep direct and room chat transcripts visible during background refresh.
+  category: fix
+  dev: Preserves populated transcript rows and reader anchors through same-thread revalidation.
+- 3fd4bdb: summary: Move Board and List tasks from their contextual Move to menu.
+  category: fix
+  dev: Native task drag-and-drop is removed; multiple legal destinations are grouped in one accessible submenu.
+- b533220: summary: Remove accidental Board mouse-drag panning while preserving mobile column snapping.
+  category: fix
+  dev: Desktop Board scrolling remains native; touch-only magnetic settling is unchanged.
+- 4d74560: summary: Simplify Chat navigation to a conversation list and full-pane detail.
+  category: fix
+  dev: Removes the split history pane, resize handle, and in-detail conversation selector.
+- 47a8b53: summary: Prevent duplicate Task Failed entries after subsequent task updates.
+  category: fix
+  dev: Records failure activity only on a non-failed-to-failed task transition.
+- 0712588: summary: Refine Medieval with readable pixel text and textured paper-and-wood surfaces.
+  category: fix
+  dev: Replaces the bundled UI font and confines CSS wood grain to generic modal frames.
+- 14befb7: summary: Prevent blocked AI merge reviews from retrying as git conflicts.
+  category: fix
+  dev: Reconciles and bounds durable squash-review findings across corrective passes.
+- 29010e0: summary: Restore safe desktop Board background drag navigation.
+  category: fix
+  dev: Direct-root mouse drags pan only while moving; text, cards, controls, and edge proximity remain native.
+- 7b55a02: summary: Prevent completed foreach workflow tasks from stalling indefinitely in merge review.
+  category: fix
+  dev: Adds evaluateForeachMergeProof.liveStepSatisfiedInstanceIds, the merge-boundary-unproven terminal value, and classifyMergePrimitiveResult passthrough.
+- 179f08c: summary: Recover automatically when Windows antivirus blocks a bundled PostgreSQL library.
+  category: fix
+  dev: Marker v3 verifies cached payload inventory, failed verification leaves no marker, and reports EmbeddedPostgresPayloadBlockedError.
+- 7dfce1c: summary: Prevent oversized task drafts from exhausting browser storage.
+  category: fix
+  dev: Scoped draft writes return a persistence result, cap free text at 64,000 bytes, and reclaim stale entries after quota failures.
+- d280fa6: summary: Preserve incomplete implementation failures through workflow merge handling.
+  category: fix
+  dev: Keeps the implementation-incomplete merge-node value intact for graph recovery.
+- 7ded57e: summary: Clear interrupted manual merge status so cards do not remain stuck as merging.
+  category: fix
+  dev: Adds clearOwnedMergeStamp, reconcileUnownedStaleMergeStamp, fenced runAiMerge cleanup, and SIGINT/SIGTERM/SIGHUP CLI handlers.
+- 5ba0b0c: summary: Record merge-boundary proof parks in the run-audit history.
+  category: feature
+  dev: Adds `task:merge-boundary-unproven-parked` at both terminal park sites with closed reason codes and a bounded, failure-isolated emit seam.
+- 84d9a59: summary: Reliably reclaim Windows-locked AI merge clean-room worktrees.
+  category: fix
+  dev: Uses shared worktree-removal-retry across AI cleanup, self-healing, and native fallback.
+- 416c6a0: summary: Preserve unavailable merge diagnostics across workflow merge dispatch paths.
+  category: fix
+  dev: Adds merge-unavailable to PRESERVED_MERGE_FAILURE_REASONS while deliberately keeping it non-terminal.
+- 3dea1bb: summary: Audit telemetry failures can no longer stall or abort task execution.
+  category: fix
+  dev: Routes executor telemetry through emitBoundedRunAudit with bounded sink isolation.
+
+## 0.77.0-beta.3
+
+### Minor Changes
+
+- 7423555: summary: New `pnpm dev --tunnel` publishes a dev server through a Cloudflare quick tunnel and prints the URL.
+  category: feature
+  dev: Adds `--tunnel` / `--tunnel=PORT` (and `FUSION_DEV_TUNNEL`/`FUSION_DEV_TUNNEL_PORT`) to the dev wrapper, plus `scripts/lib/dev-tunnel.mjs`. Port defaults to `PORT` or 4040 via `resolveDevTunnelPort`. Quick tunnels are viable here because a dev server is HTTP — TCP endpoints would need a card (ngrok) or a domain plus Zero Trust (Cloudflare). Tunnel failure is non-fatal, watch-mode restarts reuse the existing tunnel so a shared link stays valid, and `--tunnel` consumes a following token only when numeric so `--tunnel dashboard` still forwards its argument. Documented in docs/contributing.md.
+- f195ff5: summary: Add a Prometheus-format /metrics observability endpoint to the dashboard.
+  category: feature
+  dev: New GET /metrics route on the dashboard server exposes runtime (process CPU user/system time, heap/RSS memory, request count and latency histogram, child-process and git-spawn counters) and domain (projects active/idle, board tasks, running agents, PostgreSQL queries per second) metric families in Prometheus text exposition format. Sampling is interval-based with an in-flight tick guard and a generation fence so a pre-close sample can never overwrite post-restart state; the process and git arms share one in-flight guard key so their coinciding default-cadence ticks skip the duplicate `ps` probe. The PostgreSQL sampler tracks counters per database: a failed-probe gap OR a dashboard stop marks the retained baseline stale (the first success after the gap/restart re-baselines and keeps the last-known rate, so a stats reset inside the gap can never produce a cross-epoch rate), and a per-database backward delta is treated as a stats reset even when the cross-database sum stays positive. Sampler start/stop are try/catch-guarded so a sampler fault can never break server startup or skip close handlers. The unauthenticated body is numeric values plus low-cardinality string labels (project identifiers and board column names are reachable to any client that can reach the port — bind to a trusted network when that is not acceptable); documented in docs/diagnostics.md. Bound to the existing dashboard port; no new network surface.
+- 9f10767: summary: Terminal sessions are now shared across browsers, with close-here vs end-session and a Reopen control.
+  category: feature
+  dev: PTYs already lived in a server-side registry that accepts multiple attached viewers, but the tab list is per-browser localStorage and a browser with no stored tabs skipped the session listing entirely (FN-7686's cold-open optimization) and spawned its own PTY — so a second browser never saw existing terminals. A zero-tab client now adopts the server's sessions (oldest first, identical ordering everywhere); clients with stored tabs still only validate, so closed tabs are not resurrected. FN-7686's guarantee weakens from "never waits" to "waits at most ADOPT_LIST_TIMEOUT_MS (1.5s), then behaves as before", because auto-create fires on a 0ms timer and a background list could never win that race. `closeTab` takes `{ killSession }` and both the desktop and mobile close controls route through a three-way confirm (`alwaysAsk`, so skip-confirmations cannot silently pick). New `detachedSessions`/`refreshDetachedSessions`/`reopenSession` back a footer control that reattaches to running sessions. Also fixes a multi-viewer data bug: the WebSocket attach called `getScrollbackAndClearPending()`, discarding queued output and deleting a slice of every already-attached viewer's live stream; it now calls the new `flushPendingOutput()` then `getScrollback()`.
+
+### Patch Changes
+
+- ee57f8a: summary: `pnpm dev --tunnel` now prints the dashboard token and a ready-to-open link for the tunnel URL.
+  category: fix
+  dev: The tunnel banner previously printed a bare URL labelled "public, unauthenticated", which was wrong for its own default target: `--tunnel` with no port aims at the dashboard, which is bearer-token gated, so the recipient hit a 401 with no token to supply. `resolveDevTunnelAuth` now classifies the target as `token` (dashboard with auth on — prints the token plus a `?token=` link, resolved from `FUSION_DASHBOARD_TOKEN`/`FUSION_DAEMON_TOKEN`/`~/.fusion/settings.json`), `token-pending` (first run, token not minted yet — defers to the dashboard's own banner), `no-auth`, or `foreign` (a non-dashboard port, the only case that is genuinely ungated). Auth is resolved at banner time, after the dev child has started, so a freshly minted token is already readable.
+- 0289d26: summary: `pnpm dev --tunnel` now tunnels the dev server's real port instead of another instance on 4040.
+  category: fix
+  dev: The tunnel target came from `PORT`/4040, resolved before anything bound. When that port was occupied the dashboard silently rebound to an ephemeral port (`server.listen(0)` on EADDRINUSE), so with a normal Fusion already on 4040 the tunnel published that instance under a dev-looking URL. The dashboard now reports its bound port to the dev supervisor over IPC (`DEV_SERVER_LISTENING_MESSAGE`, a no-op without an IPC channel), the wrapper enables IPC whenever `--tunnel` is set rather than only in watch mode, and the tunnel waits for that report (60s cap, falling back to the configured port with a warning) before starting — which also stops it coming up against a port nothing serves yet. A reported port is treated as the dashboard whatever its number, so the banner still prints the bearer token; an explicit `--tunnel=PORT` never waits and is still compared against the configured dashboard port.
+- 6f461a4: summary: `pnpm dev --tunnel` now prints the dev server's real token instead of reporting none.
+  category: fix
+  dev: The tunnel banner re-derived the token by reading `~/.fusion/settings.json`, which is not a reliable source — on a real run that file held no `daemonToken` while the dashboard printed a working token two lines above, so the banner fell back to its `token-pending` wording. The dashboard now includes its resolved `dashboardAuthToken` in the `DEV_SERVER_LISTENING_MESSAGE` IPC report alongside the bound port, and `resolveDevTunnelAuth` prefers that `reportedToken` over the env/file lookup, which remains only for targets that report nothing (an explicit `--tunnel=PORT`). The token crosses the existing parent/child IPC channel only; it is never logged or forwarded.
+- 204772b: summary: The dev tunnel URL is now visible in the dashboard TUI instead of being painted over.
+  category: fix
+  dev: `pnpm dev --tunnel` prints its banner to stdout, but a TTY run hands the screen to `DashboardTUI`, which repaints over it — so the public URL, the entire output of the flag, could not be read. The wrapper now forwards the URL to the dev child over the existing IPC channel (`DEV_TUNNEL_READY_MESSAGE`) and the dashboard renders it as a `Tunnel` row in the system panel beside URL and Token. Capture is order-independent: the URL is stored on arrival at run scope and applied whenever the TUI exists, because cloudflared can publish before or after the TUI is constructed and an IPC message with no listener attached is lost. Watch-mode restarts re-announce the existing tunnel to the new child, which would otherwise show no tunnel row after the first reload.
+- f12b9f8: summary: `pnpm dev --tunnel` waits for the dev server instead of publishing a tunnel to whatever holds the configured port.
+  category: fix
+  dev: When the dev child had not reported a bound port within 60s the wrapper fell back to `resolveDevTunnelPort(undefined)` (PORT, else 4040) and published that. In a container whose own Fusion owns 4040 — the case the port fix was written for — this handed out a dev-looking URL serving a different instance, and the only signal was a passing "which may not be it" warning. Observed with a dev server stopped on the interactive `Run central db now? (Y/n)` prompt, which never listens and so never reports. The wait is now unbounded (a tunnel is worthless before the server is up) with a once-a-minute notice naming the interactive-prompt case; an explicit `--tunnel=PORT` still publishes immediately, since that names a target the dev child knows nothing about.
+- 16e6346: summary: Stopping `pnpm dev` now also stops its dev server and tunnel instead of orphaning them.
+  category: fix
+  dev: `scripts/dev-with-memory.mjs` installed no signal handlers; teardown lived only in the child's `close` handler. Signalling the wrapper directly (`kill <pid>`, or any supervisor-style stop) killed it and left the dev server and its `cloudflared` running — observed twice while debugging, four surviving processes each time, including a live public trycloudflare URL still serving the dev server after it was believed down. Interactive Ctrl-C masked this because the terminal signals the whole process group. SIGINT/SIGTERM/SIGHUP now stop the tunnel, forward the signal to the child, and exit on its close with a 10s cap so a wedged child cannot pin the terminal.
+- 4c54567: summary: A persistent remote link no longer expires after 15 minutes.
+  category: fix
+  dev: The remote-login session fix capped every session at `shortLived.ttlMs`, so opening a PERSISTENT link yielded a 15-minute session — wrong for the link type operators use for their own devices. `resolveRemoteSessionTtlMs` now follows the token type: short-lived sessions still cannot outlive the token that authorised them (falling back to the configured TTL when there is no usable expiry), while persistent tokens mint a long session (30 days, and in-memory so a restart ends it regardless). Moved out of server.ts into remote-session.ts so the rule is unit-tested.
+- 0e7c353: summary: Remote login links no longer hand over the dashboard token, and a tunnel that cannot start says so.
+  category: security
+  dev: `/remote-login?rt=…` redirected to `/?token=<daemonToken>`, giving every recipient of a shared remote link the dashboard's real non-expiring credential in their URL and history — and making the separate remote token pointless, since revoking it left the recipient authenticated. It now mints an opaque, expiring, revocable session (`createRemoteSessionStore`) delivered as an HttpOnly/SameSite=Lax/Secure cookie, and redirects clean; the auth middleware accepts that cookie as a third credential source after header and `fn_token` query. Session TTL is capped by a short-lived remote token's remaining life, else the configured `shortLived.ttlMs` (default 15m). Separately, `POST /api/remote/tunnel/start` without an engine reported `state:"starting"` when nothing could start; it stays 200 and idempotent (a dashboard can run `--no-engine`) but now reports `stopped` with `REMOTE_TUNNEL_ENGINE_UNAVAILABLE`.
+- b67e3aa: summary: Starting Fusion no longer interrupts you with onboarding questions on a working install.
+  category: fix
+  dev: Two defects. (1) `maybeAutoLaunchOnboarding` probed `~/.fusion/fusion-central.db` to decide whether the install was initialized, but SQLite central was removed — a Postgres install never creates that file, so `centralDbExists` was permanently false and onboarding auto-launched on every interactive start until something stamped the completion marker. The probe now also accepts the embedded Postgres data directory. (2) Auto-launched onboarding ran the full interactive flow, so a dashboard or `pnpm dev --tunnel` start could stop dead on "Run ai provider setup now?" and never reach listening. `runOnboard` takes `interactive` (default true); auto-launch passes `false`, which creates the central database, stamps the marker, and points at the dashboard without asking anything. Explicit `fn onboard` keeps every step.
+- ce69558: summary: Onboarding no longer asks whether to create the central database — it always creates it.
+  category: fix
+  dev: `runOnboard` gated central-DB creation behind `runSkippableStep(prompts, "Central DB", ...)`. Declining produced an install Fusion cannot run on, acknowledged only by a "database was not created or initialized" line, so the negative answer had no useful outcome. It also blocked non-interactive startups: a `pnpm dev --tunnel` stopped on `Run central db now? (Y/n)` never reached listening, so nothing was served. The step now runs unconditionally when the database is absent; the "already exists" path is unchanged. Scripted prompt sequences in `onboard.test.ts` lost their leading central-DB answer accordingly, and the skip-everything case now asserts the database is still created.
+- 16e6346: summary: Remote tunnels now target the port the dashboard is really on, instead of assuming 4040.
+  category: fix
+  dev: An audit for repeats of the `pnpm dev --tunnel` port bug found the same mistake shipped in remote access: `ProjectEngine`'s Cloudflare quick tunnel hardcoded `http://localhost:4040`, so a dashboard started with `--port`, with a `PORT` override, or rebound to an ephemeral port by `runDashboard`'s EADDRINUSE path published a public tunnel to whatever else owned 4040 — another app, another Fusion, or nothing. `setLocalDashboardPort()` records the bound port (from both `runDashboard` and headless `serve`) and `getLocalDashboardPort()` supplies the tunnel target, defaulting to 4040 only while nothing has reported. `register-discovery-routes` already derived its port from `req.socket.localPort` and is unchanged.
+- 72877c8: summary: Back off idle task-lifecycle outbox consumers to a 60s cadence so paused/idle projects stop the 98% CPU poll storm.
+  category: performance
+  dev: TaskDeletedOutboxConsumer now self-reschedules with a tri-state poll outcome (active/idle/waiting) and ±20% jitter: only a genuinely idle poll (empty outbox) grows the next delay by 10s per idle poll toward a 60s cap; a poll that delivers events ("active") or a non-idle wait ("waiting" — retry-backoff window, lease contention, fencing, poll errors, shutdown races) resets to the fast 5s base, so transient failures recover at 5s cadence instead of an error streak masquerading as an idle streak. This targets a drop in task_lifecycle_consumer_cursors idx_scan from ~26/s toward <5/s and CPU from ~98% toward <50% when projects are paused/idle (the ~44 per-project dashboard+engine consumers no longer thunder on a fixed 5s interval), while cursor fencing, lease advance, per-event ordering, and at-least-once delivery are unchanged — backoff only changes when poll() runs, never the poll/dispatch/ack logic. A new event mid-backoff resets the cadence to 5s, bounding delivery latency.
+- 16e6346: summary: The agent session terminal clears before replaying scrollback, as its protocol intended.
+  category: internal
+  dev: `cli-session-ws.ts` sends scrollback as its own frame explicitly "so the client can clear before replay", but `SessionTerminal` handled `scrollback` identically to `data` and appended. Latent rather than live — every reattach path there rebuilds a fresh xterm via `reattachEpoch` — but it becomes the duplicated-history bug just fixed in the PTY terminal the moment an in-place reconnect is added. Also drops dead `centralDbPath` plumbing in `BackupManager`/`createBackupManager`: it was written, never read (PgBackupManager takes only `includeCentral`), and a leftover of the removed SQLite file-copy backup — the same kind of stale artifact whose presence was being used as evidence about a Postgres install in onboarding.
+- e4a53b6: summary: Fix duplicated terminal history on reconnect and a wrong terminal size when two browsers share a session.
+  category: fix
+  dev: Two defects found by driving a shared PTY with two real WebSocket viewers. (1) The server replayed the whole scrollback on every attach and the client appended it into an xterm that still displayed that history, so any reconnect — backgrounded tab, sleep, heartbeat timeout — added a second copy (visible as a duplicated prompt). `TerminalService` now tracks cumulative output (`scrollbackSeq`) and `getScrollbackSince(sessionId, sinceSeq)` returns only the delta when the offset is inside the retained window, or the full buffer with `reset: true`; the client reports `sinceSeq` on connect and resets the terminal before writing a full replay. (2) Resize was last-writer-wins across viewers: A at 80x24 had its shell report 200x50 as soon as B attached at that size, while A still rendered 80 columns. `TerminalViewportRegistry` sizes the PTY to the per-dimension minimum across attached viewers (the tmux rule) and restores room when a viewer disconnects; viewers that have not reported a size do not constrain it.
+- ad24d9a: summary: Fix a TUI crash when pressing Enter on the System panel, and always show a running tunnel's URL there.
+  category: fix
+  dev: Three fixes in the dashboard TUI's System panel. (1) Enter opens the dashboard URL with a detached `spawn`; a missing opener (`xdg-open` on slim Linux containers) is reported asynchronously as an `error` event, not a synchronous throw, so the surrounding try/catch never saw it and Node re-threw it as an unhandled `error`, killing the TUI. An `error` listener is now attached. (2) `SystemInfo.devTunnelUrl` becomes `tunnelUrl` and is fed by both sources — the dev wrapper's IPC hand-off and the engine's `TunnelProcessManager` status subscription — so an operator-started remote tunnel, whose URL previously existed only in the Settings UI and `/remote/status`, is readable from a headless terminal. A dev tunnel wins when both are present; a stopped tunnel clears the row. (3) `estimateSystemContentRows` now measures the tunnel row like URL and Token, since an unmeasured row let a wrapping trycloudflare hostname squeeze itself out of the panel.
+- 2556083: summary: Repair four red workspace-merge tests caused by a stale module mock.
+  category: internal
+  dev: `project-engine.test.ts` mocks `../merge/merger-ai.js` with a hand-written factory that had not kept up with the module's exports: `WorkspaceMergeDispatchSupersededError` was missing. Production imports it, so the merge-queue drain threw "No <export> is defined on the mock" before reaching the behaviour under test, and the four Phase C hardening cases failed on a resolved promise and a missing `updateTask` call rather than on what they assert. No product change; the factory now provides the class and carries a note to keep it in step with merger-ai's exported errors.
+
+## 0.77.0-beta.2
+
+### Minor Changes
+
+- 5e95a93: summary: Add Grok 4.6 to the built-in Grok model catalog across every model picker.
+  category: feature
+  dev: Registers Grok 4.6 in `GROK_PROVIDER_REGISTRATION` in `packages/core/src/ai/grok-provider.ts`, which fans out through `seedDashboardProviders` and `pi.ts`.
+- 5e95a93: summary: Add archive and restore views for mailbox messages and chat conversations.
+  category: feature
+  dev: Adds project.messages.archived via migration 0058 and POST /messages/:id/archive|unarchive routes.
+- 5e95a93: summary: Let managers review and coach evaluation results for agents in their reporting tree.
+  category: feature
+  dev: Adds `fn_agent_read_evaluations` and `fn_agent_evaluation_followup`, reusing the management-subtree boundary and action-gate classification.
+- 725b0a3: summary: ACP runtimes can now expose Fusion custom tools (fn\_\*) to external agents such as Hermes ACP and Prime.
+  category: feature
+  dev: AcpRuntimeAdapter starts a per-session loopback tool bridge and registers it as a stdio MCP server in session/new.mcpServers when the engine passes customTools; the bridge authenticates requests with a per-session bearer token, threads the real MCP request id as the toolCallId, and is disposed on session/new failure and session teardown. Build copies mcp-schema-server.cjs beside dist (tsc does not copy .cjs assets).
+- 2eae0b2: summary: Remove stuck-task tagging from the dashboard — no more Stuck badges, card styling, or footer stuck count.
+  category: feature
+  dev: "Deletes utils/taskStuck.ts, the stuck ExecutorStats field, and taskStuckTimeoutMs prop plumbing; the setting remains and engine recovery sweeps still consume it. Also repoints the FN-6756 liveness ratchet at the extracted executor session facades."
+
+### Patch Changes
+
+- 189087a: summary: The Docker image now ships gh, tailscale, and cloudflared alongside git and ripgrep.
+  category: feature
+  dev: Runner stage adds the GitHub CLI (backs `githubAuthMode: "gh-cli"`, which the auth route tells operators to set up with `gh auth login`), cloudflared (backs dashboard remote access, whose in-app installer cannot bootstrap itself reliably in a slim container), and tailscale, each from its vendor's signed apt repository rather than a curl-to-shell installer. Installing tailscale does not make `tailscaled` runnable on its own — that still needs `--cap-add NET_ADMIN --device /dev/net/tun` at `docker run`. Package names and repo URLs are asserted in scripts/**tests**/dockerfile-workspace-manifests.test.mjs.
+- aedee4b: summary: The Docker image now ships ripgrep, so coding agents can search at full speed in a container.
+  category: fix
+  dev: Adds `ripgrep` to the runner stage apt install alongside git and ca-certificates, and extends the runner-stage assertion in scripts/**tests**/dockerfile-workspace-manifests.test.mjs to cover it. Agents reach for `rg` first and silently degrade to slower or partial fallbacks when it is absent, which only shows up in the container because developer machines have it installed.
+- bb11e49: summary: Fix OpenAI Codex login never opening a browser window, and document OAuth callback ports for Docker.
+  category: fix
+  dev: pi's `AuthPrompt` is a discriminated union (text/secret/select/manual_code); `FusionAuthStorage.login`'s interaction shim flattened all four into `onPrompt`, so Codex's opening `select` ("Browser" vs "Device code") was answered with the pasted-code wait and hung until the route's 30s kickoff timeout. The shim now dispatches by type, reviving the route's existing `onSelect`/`onManualCodeInput` handlers. Separately, FN-8766's outboard east/NE/SE resize targets are promoted from Task Detail to every desktop FloatingWindow now that FN-8015's body gutter is gone, with body-level `border-radius: inherit` replacing host clipping and phones re-asserting `overflow: hidden`.
+- 37bd6ee: summary: Fix Docker image build failing on memory and first-run container startup failing on volume permissions.
+  category: fix
+  dev: Builder runs `pnpm build` with `NODE_OPTIONS=--max-old-space-size=6144` (dashboard vite build OOMed at V8's default old-space on a stock 8GB Docker Desktop VM, exit 134). Runner pre-creates `/home/node/.fusion` owned by `node` so a fresh named volume inherits ownership and embedded Postgres `initdb` succeeds; bind mounts still require a host-side `chown -R 1000:1000`. Also drops the dependency-graph plugin's stale `taskStuck` tsconfig path mapping.
+- 3105b06: summary: Fix HTTPS git clones failing in Docker with "server certificate verification failed".
+  category: fix
+  dev: The runner stage installed `git` but not `ca-certificates`, and the slim base ships zero CA certificates. git verifies TLS against the SYSTEM trust store, so every HTTPS clone failed and project setup was impossible in a container. It stayed hidden because Node carries its own bundled CA store — the dashboard, model APIs, and OAuth token exchanges all worked. Guarded by a new assertion in scripts/**tests**/dockerfile-workspace-manifests.test.mjs.
+- 9eae6b9: summary: Fix a provider's first-ever login silently failing with "Login did not complete" on a fresh install.
+  category: fix
+  dev: `FusionAuthStorage.modify()` resolved its write target with `creating: false` and returned before invoking the callback whenever the provider had no credential row yet. That is the seam pi persists a completed login through (`Models.login` -> `credentials.modify(provider.id, ...)`), so a first login finished its OAuth, exchanged the code, took and released the lock file, wrote nothing, and resolved as success — leaving the dashboard poll to report the generic failure. Only reproduces on a store with no existing row, so long-lived installs (where the path is a refresh) were unaffected while every new container/machine/wiped `~/.fusion` could never complete a first login for any provider. Also surfaces the server's own `loginError` through `describeLoginFailure` instead of the generic sentence, so an `OAuth state mismatch` reads as a stale-tab instruction.
+- 9db2565: summary: Fix uneven right/bottom space around floating windows and drop the remote-server prompt from browser onboarding.
+  category: fix
+  dev: Deletes FN-8015's shared `margin-inline-end` gutter on `.floating-window__body` plus its five piecemeal zeroing overrides and GitHub Import's borrowed-inset compensation; a scrollbar/resize-target collision is now fixed per-caller with FN-8766's outboard east handles. The hosted Set Up AI modal re-asserts `width/height: 100%` under `.floating-window--model-onboarding` (its standalone `85vh` rule tied on specificity and won on source order). The "Connect remote Fusion server" card now also requires `shellState.host !== "web"` — `desktopMode` is undefined in a browser, so web first-run showed a native-shell hand-off form.
+- 1da6375: summary: Fusion now sets its own git identity for commits, attributing them to the agent that did the work.
+  category: fix
+  dev: Merge commits, the merger's `--amend`, and experiment git-ops all relied on ambient `user.name`/`user.email`; only workspace-fence-ref.ts passed an explicit identity. On a host with no git identity — container, CI, fresh machine — git refuses with "Author identity unknown" and an auto-merge stalls at `status:merging` with nothing surfaced. New `resolveCommitIdentity` in packages/engine/src/git-identity.ts resolves operator `commitAuthor*` settings > acting agent (`Name (Fusion) <slug@agents.fusion.local>`) > `Fusion <noreply@runfusion.ai>`, applied via `mergerCommitEnv` (author AND committer) and via `-c` args for the two paths that build their own argv. `commitAuthorEnabled: false` opts out and restores ambient config.
+- 0159ef8: summary: Prevent repeated gridlock alerts when detection briefly clears.
+  category: fix
+  dev: Preserves the wall-clock ntfy cooldown across transient gridlock detector clears.
+- 889728b: summary: Onboarding now offers a default model as soon as a provider connects, instead of staying empty.
+  category: fix
+  dev: `availableModels` was fetched at mount and re-fetched only for custom providers, so on a fresh install the Default Model section stayed on "No models available yet. Connect a provider above to see model options." after an OAuth login or API-key save, and no default was ever offered. Both connect paths now refresh the catalogue; once a provider is connected with nothing chosen, the section retitles to "Choose your default model" and scrolls into view once (guarded — JSDOM and non-DOM hosts have no scrollIntoView). Completion is also marked in a `finally` so a failed settings write cannot strand onboarding as unfinished.
+- 83a33be: summary: Show a persistent sign-in dialog during provider logins, with the paste field and status always visible.
+  category: fix
+  dev: New `ProviderLoginDialog` replaces the vanishing pre-flight confirm plus card-inline paste field for `requiresManualCode` OAuth flows. It is rendered as a SIBLING of the onboarding FloatingWindow (a portal moves the DOM node but not the React tree, so events bubbled to the window's raise-to-front handler and lifted it above the dialog), claims `nextFloatingZ()` once on open, and stops pointer propagation — now ratcheted for every portaled `.modal-overlay` in FloatingWindow.test.tsx. Spacing uses the shared `.modal-header`/`.modal-actions` primitives with `var(--modal-padding)` on every row; the paste field sinks to `var(--bg)` because `.form-input` and `.modal` both resolve to `var(--surface)`; the paste region is pinned outside the scroll area so Submit cannot scroll out of reach. Dialog anatomy rules documented in docs/dashboard-guide.md.
+- 5e95a93: summary: Fix the Quick Add model dropdown filter box so typing narrows the model list.
+  category: fix
+  dev: The quick-entry model menu's blanket onMouseDown preventDefault crossed the React portal boundary and suppressed focus on CustomModelDropdown's search input.
+- 7c1d062: summary: Settings authentication now uses the same persistent sign-in dialog as first-run onboarding.
+  category: fix
+  dev: Wires `ProviderLoginDialog` into SettingsModal/AuthenticationSection for `requiresManualCode` OAuth flows. Settings keys every flow by `stateKey` (`providerId`, or `providerId[instance]` for a named credential instance), so `loginDialog` carries `{ stateKey, providerId, instanceId, providerName }` and the row suppresses its own instructions/paste field only for the key the dialog owns — a sibling account keeps its inline field. Rendered outside `renderModalShell` because the modal presentation is a FloatingWindow and a portaled dialog inside its React subtree lifts the window above itself on first click.
+- 5e95a93: summary: Upgrade the bundled Pi runtime to 0.84.1 for updated provider and model support.
+  category: internal
+  dev: Advance the exact Pi closure from 0.82.1 to 0.84.1 and guard pi-client, pi-protocol, and pi-telemetry.
+- 5e95a93: summary: Quick Add model menu now labels the merger row “Merger” with spacing matching other roles.
+  category: fix
+  dev: Adds the tasks.modelMerger translation key for the top-level Quick Add menu row.
+- 5e95a93: summary: Fix the collapse/expand toggle in model selection dropdowns.
+  category: fix
+  dev: Stop portal-bound pointer and mouse events before document-level outside-close handlers can unmount CustomModelDropdown.
+- 5e95a93: summary: Show the task Recommendations tab only when a completed task has recommendations.
+  category: fix
+  dev: TaskDetailModal gates hasRecommendations on task-owned recommendations (fullDetail?.id === task.id, else the live prop); tab reconciliation waits for that same proof, not detailLoading.
+- 5e95a93: summary: Fix mission reconciliation failing every cycle with an internal scheduler error.
+  category: fix
+  dev: Preserves the listFeatures receiver and contains per-slice failures in Scheduler.reconcileActiveMissionAutomation.
+- 2160f75: summary: Keep approval audit timelines in lifecycle order when events share a timestamp.
+  category: fix
+  dev: `getApprovalAuditHistory` now applies an event lifecycle-rank tiebreak before audit ID.
+- 0a50e21: summary: New Task now inherits the workflow selected in Board or List.
+  category: fix
+  dev: Routes New Task opens through the useModalManager.openNewTask inheritance seam.
+- 5f29935: summary: Progress-preserving recovery rebounds now keep the task's checkout instead of leaving it to the idle sweep.
+  category: fix
+  dev: "Ten self-healing rebounds gained `preserveWorktree: true`; deliberate discards carry a `worktree-discard-intended` marker enforced by a new ratchet test."
+- 95466b7: summary: Remove stale taskStuck package exports and build/test aliases after deleting the dashboard helper.
+  category: fix
+  dev: "Cleans dashboard and dependency-graph configuration so no published export, Vite/Vitest alias, or TypeScript path points at the removed app/utils/taskStuck module."
+- 0540686: summary: Cut scheduler CPU and health-API latency by reading each task's workflow selection once per poll tick.
+  category: performance
+  dev: Adds a strictly per-tick/per-pass selection cache threaded through `resolveTaskParkedColumns` and the escalation/hydration sweeps in the scheduler; each task's `task_workflow_selection` is read at most once per tick instead of ~6x, eliminating the Drizzle SQL-query storm without any schema or resolver-behavior change.
+- c84924b: summary: Stop periodic self-healing git churn on paused projects and bound repair sweeps so health/UI stay fast.
+  category: performance
+  dev: SelfHealingManager no longer arms its periodic-maintenance setInterval when the project is paused (globalPause/enginePaused), and clears it on a pause transition, re-arming on unpause — so `git worktree prune` / `git worktree list --porcelain` / `git branch --list 'fusion/*'` no longer fire every maintenance cycle on paused projects (the production git storm behind 61-70% engine CPU). Batch-1 git-churn steps are demoted to at-most-hourly on active projects via a coarse-cadence gate, and `recoverDoneTaskMergeMetadata` is capped at 25 candidates/cycle (was O(done_tasks) x git per cycle). Pure-DB/FS housekeeping (task-lifecycle retention, GitHub check-state retention, symbol-lock reconcile, WAL checkpoint, operational/agent-log prune) still runs on the fast cadence under pause.
+- 3e6eea5: summary: Keep a task's live worktree through in-review branch rebinds instead of losing it to the idle sweep.
+  category: fix
+  dev: "`task:auto-rebind-applied` now records `preservedWorktree`; adds the reliability-lane worktree lifecycle certification suite."
+
+## 0.77.0-beta.1
+
+### Patch Changes
+
+- 7527d26: summary: Keep Planning Mode on the current session after a stale response refresh.
+  category: fix
+  dev: Fence duplicate-response, accepted stream-error, and loading-poll recovery by session, load, and turn ownership.
+- 111c6c9: summary: Preserve typed Planning Mode answers during late session hydration.
+  category: fix
+  dev: Binds visible question submission to the live planning turn and preserves dirty answers during same-session refresh.
+- 3272aff: summary: Keep Create Room member picker states accurate while agent data loads.
+  category: fix
+  dev: Fence superseded agent roster requests and distinguish loading, empty, and failed picker states.
+- 385059f: summary: Plan New Mission now sits at the top of the mission list and is slightly taller.
+  category: fix
+  dev: Replaced footer CTA wrappers with top mission-manager**sidebar-cta-bar and mission-list**header-actions containers using calc(var(--space-lg) \* 2 + var(--space-sm)); removed the duplicate empty-state CTA.
+- 821e036: summary: Route every AI lane through runtime resolution so CLI-runtime models (e.g. Cursor CLI) work everywhere chat does.
+  category: fix
+  dev: `createFnAgent` now delegates to `createResolvedAgentSession` (CLI runtime hint derivation, mock forcing, runtime-resolved visibility) with a host-registered default PluginRunner per project root; `DefaultPiRuntime` re-enters via a `__rawPiSession` marker into `createPiAgentSessionRaw`. Mission and milestone/slice interviews also pass their request-scoped pluginRunner and prompt via the engine `promptWithFallback` dispatcher, fixing "cursor-cli/auto ... not found in the pi model registry" in mission planning.
+
 ## 0.77.0-beta.0
 
 ### Minor Changes
@@ -147,7 +605,7 @@
   dev: Adds workspace-main-checkout-guard, main_checkout_edit precedence, retry-stable anchoring, warn-vs-block evidence handling, bounded HEAD commit scanning, and audit telemetry.
 - 9fa8b38: summary: Prevent multi-node workspace operations from overlapping or double-landing shared repositories.
   category: fix
-  dev: Adds migration 0060 lease and land-intent tables, FUSION_NODE_ID plus process incarnation ownership, resource fence tokens and one-publish-per-tenancy refs under refs/fusion/workspace-lease/_ and refs/fusion/merge-dispatch/_. Merge-dispatch tenancy pins publish on every target sub-repository remote before any workspace land begins; merge and land commit points use fence-validated target/fence CAS operations. `isMergePending` consults durable dispatch leases after local state, while startup and periodic sweeps conservatively retire only expired leases. Pending land intents recover project-wide from remote reachability through holder or no-live-lease recovery authority.
+  dev: Adds migration 0060 lease and land-intent tables, FUSION*NODE_ID plus process incarnation ownership, resource fence tokens and one-publish-per-tenancy refs under refs/fusion/workspace-lease/* and refs/fusion/merge-dispatch/\_. Merge-dispatch tenancy pins publish on every target sub-repository remote before any workspace land begins; merge and land commit points use fence-validated target/fence CAS operations. `isMergePending` consults durable dispatch leases after local state, while startup and periodic sweeps conservatively retire only expired leases. Pending land intents recover project-wide from remote reachability through holder or no-live-lease recovery authority.
 - ebd345d: summary: Workspace tasks with no acquired sub-repo now complete or fail review consistently.
   category: fix
   dev: Uses classifyWorkspaceZeroAcquire and the retryable review seam flag to avoid deterministic retry exhaustion.

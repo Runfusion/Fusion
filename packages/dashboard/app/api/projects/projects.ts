@@ -74,7 +74,7 @@ export type ExecutorState = "idle" | "running" | "paused" | "stopped";
 
 /** Aggregated executor statistics for the status bar.
  * 
- * Counts (runningTaskCount, blockedTaskCount, queuedTaskCount, inReviewCount, stuckTaskCount)
+ * Counts (runningTaskCount, blockedTaskCount, queuedTaskCount, inReviewCount)
  * are derived client-side from the same tasks array shared with the board, ensuring
  * the footer counts always match the active work states displayed on screen. Queued covers
  * todo plus planning/triage work; Done is intentionally not exposed unless a footer Done
@@ -97,16 +97,23 @@ export interface ExecutorStats {
   runningTaskCount: number;
   /** Number of tasks with blockedBy field set (waiting on file overlap) */
   blockedTaskCount: number;
-  /** Number of "in-progress" tasks with no activity for > 10 minutes */
-  stuckTaskCount: number;
+  /*
+  FNXC:StuckTagRemoval 2026-08-17-22:30:
+  Operator removed stuck-task tagging from the dashboard (stuckTaskCount deleted here);
+  engine recovery sweeps still consume taskStuckTimeoutMs server-side.
+  */
   /** Number of tasks in "todo" plus planning/triage work states */
   queuedTaskCount: number;
   /** Number of tasks in "in-review" column */
   inReviewCount: number;
   /** Derived executor state: "idle", "running", "paused", or "stopped" */
   executorState: ExecutorState;
-  /** Maximum concurrent tasks allowed from settings */
+  /** Configured maximum concurrent tasks. */
   maxConcurrent: number;
+  /** Engine-enforced ceiling after the worktree limit is applied. */
+  effectiveMaxConcurrent: number;
+  /** Setting that currently binds the effective ceiling. */
+  concurrencyBindingKnob: "maxConcurrent" | "maxWorktrees";
   /** ISO timestamp of most recent task event from activity log */
   lastActivityAt?: string;
 }
@@ -134,8 +141,6 @@ export interface ProjectCreateInput {
   cloneUrl?: string;
   workspaceMode?: boolean;
   taskPrefix?: string;
-  /** Confirmed "create anyway without a git repo" when git is missing on the host (never valid for clone mode). */
-  skipGitInit?: boolean;
 }
 
 export type DockerNodeConfigInfo = DockerNodeConfig;
@@ -293,6 +298,7 @@ export interface FeedOptions {
   since?: string;
   projectId?: string;
   type?: ActivityFeedEntry["type"];
+  taskId?: string;
 }
 
 /** Global concurrency state across all projects */
@@ -706,6 +712,8 @@ export function fetchExecutorStats(projectId?: string): Promise<{
   globalPause: boolean;
   enginePaused: boolean;
   maxConcurrent: number;
+  effectiveMaxConcurrent: number;
+  concurrencyBindingKnob: "maxConcurrent" | "maxWorktrees";
   lastActivityAt?: string;
 }> {
   const path = withProjectId("/executor/stats", projectId);
@@ -713,6 +721,8 @@ export function fetchExecutorStats(projectId?: string): Promise<{
     globalPause: boolean;
     enginePaused: boolean;
     maxConcurrent: number;
+    effectiveMaxConcurrent: number;
+    concurrencyBindingKnob: "maxConcurrent" | "maxWorktrees";
     lastActivityAt?: string;
   }>(path));
 }
@@ -810,7 +820,8 @@ export function fetchActivityFeed(options?: FeedOptions): Promise<ActivityFeedEn
   if (options?.limit !== undefined) params.set("limit", String(options.limit));
   if (options?.since) params.set("since", options.since);
   if (options?.projectId) params.set("projectId", options.projectId);
-  if (options?.type) params.set("type", options.type);
+  if (options?.type) params.set("types", options.type);
+  if (options?.taskId) params.set("taskId", options.taskId);
   
   const query = params.size > 0 ? `?${params.toString()}` : "";
   return api<ActivityFeedEntry[]>(`/activity-feed${query}`);

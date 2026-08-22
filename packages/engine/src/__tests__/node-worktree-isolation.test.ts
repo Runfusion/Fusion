@@ -108,7 +108,7 @@ describe("every workflow node runs in the task worktree, never the shared checko
     expect(acquireSpy).not.toHaveBeenCalled();
   });
 
-  it("leaves workspace projects on the shared browse-root (per-repo isolation is the sub-repo lease)", async () => {
+  it("uses a member worktree for workspace projects instead of the shared browse-root", async () => {
     const store = createMockStore();
     const executor = new TaskExecutor(store, ROOT);
     (executor as any).workspaceConfig = { repos: ["apps/web"] };
@@ -125,7 +125,8 @@ describe("every workflow node runs in the task worktree, never the shared checko
     store.getTask.mockResolvedValue(live as any);
     await (executor as any).runGraphCustomNode(PLAN_REVIEW_NODE, live, {}, undefined);
 
-    expect(captured.worktreePath).toBe(ROOT);
-    expect(acquireSpy).not.toHaveBeenCalled();
+    expect(captured.worktreePath).toContain(`${ROOT}/apps/web/.worktrees/`);
+    expect(captured.worktreePath).not.toBe(ROOT);
+    expect(acquireSpy).toHaveBeenCalled();
   });
 });

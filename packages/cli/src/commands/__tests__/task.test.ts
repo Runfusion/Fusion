@@ -130,6 +130,8 @@ vi.mock("@fusion/engine", () => ({
   aiMergeTask: vi.fn(),
   runAiMerge: vi.fn(),
   landWorkspaceTask: vi.fn(),
+  clearOwnedMergeStamp: vi.fn().mockResolvedValue(false),
+  reconcileUnownedStaleMergeStamp: vi.fn().mockResolvedValue(false),
   // FNXC:CliTests 2026-07-12-07:10: task.ts imports isInReviewMissingWorktreeSessionStartFailure from @fusion/engine (FN-7798 in-review stale worktree guard); the hand-written engine mock must surface it.
   isInReviewMissingWorktreeSessionStartFailure: vi.fn(() => false),
 }));
@@ -268,7 +270,7 @@ import {
 import { GitHubClient, generatePrMetadata, isGitHubIssueAlreadyImported } from "@fusion/dashboard";
 import { createSession, submitResponse } from "@fusion/dashboard/planning";
 import { resolveProject, createLocalStore } from "../../project-context.js";
-import { aiMergeTask, runAiMerge, landWorkspaceTask } from "@fusion/engine";
+import { aiMergeTask, runAiMerge, landWorkspaceTask, reconcileUnownedStaleMergeStamp, clearOwnedMergeStamp } from "@fusion/engine";
 
 const mockedExec = vi.mocked(exec);
 
@@ -1499,20 +1501,186 @@ describe("project-aware task command behavior", () => {
     expect(logEntry).toHaveBeenCalled();
     // FNXC:GrokCliRouting 2026-07-15-10:17: bare `fn task merge` has no ProjectEngine and does not invent a PluginRunner.
     expect(runAiMerge).toHaveBeenCalledWith(
-      resolvedStore,
+      expect.any(Object),
       "/test",
       "FN-123",
       expect.objectContaining({
         onAgentText: expect.any(Function),
+        signal: expect.any(AbortSignal),
       }),
     );
     const mergeOpts = vi.mocked(runAiMerge).mock.calls.at(-1)?.[3] as { pluginRunner?: unknown } | undefined;
     expect(mergeOpts?.pluginRunner).toBeUndefined();
     expect(landWorkspaceTask).not.toHaveBeenCalled();
     expect(aiMergeTask).not.toHaveBeenCalled();
+    expect(reconcileUnownedStaleMergeStamp).toHaveBeenCalledWith(resolvedStore, "FN-123");
+    expect(process.listenerCount("SIGINT")).toBe(0);
+    expect(process.listenerCount("SIGTERM")).toBe(0);
+    expect(process.listenerCount("SIGHUP")).toBe(0);
     expect(exitSpy).not.toHaveBeenCalled();
     expect(duplicateTask).toHaveBeenCalledWith("FN-123");
     expect(refineTask).toHaveBeenCalledWith("FN-123", "more tests");
+  });
+
+  it.each([
+    ["SIGINT", 130],
+    ["SIGTERM", 143],
+    ["SIGHUP", 129],
+  ] as const)("%s aborts the body, clears its owned stamp, and keeps the signal exit", async (signal, exitCode) => {
+    const task = makeTask({ id: `FN-${signal}`, column: "in-review", status: "merging" });
+    const getTask = vi.fn().mockImplementation(async () => task);
+    const updateTask = vi.fn().mockImplementation(async (_id: string, patch: { status?: string | null }) => {
+      if (patch.status !== undefined) task.status = patch.status;
+    });
+    const close = vi.fn().mockResolvedValue(undefined);
+    const resolvedStore = { getTask, updateTask, close } as unknown as TaskStore;
+    vi.mocked(resolveProject).mockResolvedValue({
+      projectId: "proj_test", projectPath: "/test", projectName: "demo-project", isRegistered: true, store: resolvedStore,
+    });
+    // Model the helper's independently tested authorization-B mutation so this door test
+    // proves the command wires its abort, cleanup, close, and exit paths together.
+    vi.mocked(clearOwnedMergeStamp).mockImplementation(async () => {
+      task.status = null;
+      return true;
+    });
+    let bodySignal: AbortSignal | undefined;
+    vi.mocked(runAiMerge).mockImplementation((async (_store, _path, taskId, options) => {
+      // A completed local transient write is the authorization-B proof required before cleanup.
+      await _store.updateTask(taskId, { status: "merging" });
+      return await new Promise((_resolve, reject) => {
+        bodySignal = options.signal;
+        options.signal?.addEventListener("abort", () => reject(new Error("merge aborted")), { once: true });
+      });
+    }) as never);
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
+
+    const pending = runTaskMerge(task.id, "demo-project");
+    await vi.waitFor(() => expect(process.listenerCount(signal)).toBeGreaterThan(0));
+    process.emit(signal, signal);
+    // A terminal close arriving after Ctrl-C (or vice versa) must share the same cleanup.
+    process.emit("SIGHUP", "SIGHUP");
+    await pending;
+
+    expect(bodySignal?.aborted).toBe(true);
+    expect(task.status).toBeNull();
+    expect(clearOwnedMergeStamp).toHaveBeenCalledTimes(1);
+    expect(close).toHaveBeenCalled();
+    expect(exitSpy).toHaveBeenCalledWith(exitCode);
+    expect(process.listenerCount(signal)).toBe(0);
+    exitSpy.mockRestore();
+  });
+
+  it("does not clear a stamp it never wrote when a merge body rejects before claiming", async () => {
+    const task = makeTask({ id: "FN-MERGE-ERROR", column: "in-review", status: "merging" });
+    const getTask = vi.fn().mockImplementation(async () => task);
+    const close = vi.fn().mockResolvedValue(undefined);
+    const resolvedStore = { getTask, close } as unknown as TaskStore;
+    vi.mocked(resolveProject).mockResolvedValue({
+      projectId: "proj_test", projectPath: "/test", projectName: "demo-project", isRegistered: true, store: resolvedStore,
+    });
+    vi.mocked(runAiMerge).mockRejectedValue(new Error("merge failed"));
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation((((code?: number) => {
+      throw new Error(`process.exit:${code}`);
+    }) as unknown) as (code?: string | number | null | undefined) => never);
+
+    await expect(runTaskMerge(task.id, "demo-project")).rejects.toThrow("process.exit:1");
+
+    expect(task.status).toBe("merging");
+    expect(clearOwnedMergeStamp).not.toHaveBeenCalled();
+    expect(close).toHaveBeenCalled();
+    exitSpy.mockRestore();
+  });
+
+  it("waits for the owned clear before signal exit", async () => {
+    const task = makeTask({ id: "FN-CLEAR-ORDER", column: "in-review", status: "merging" });
+    const getTask = vi.fn().mockResolvedValue(task);
+    const updateTask = vi.fn().mockResolvedValue(undefined);
+    const close = vi.fn().mockResolvedValue(undefined);
+    const resolvedStore = { getTask, updateTask, close } as unknown as TaskStore;
+    vi.mocked(resolveProject).mockResolvedValue({
+      projectId: "proj_test", projectPath: "/test", projectName: "demo-project", isRegistered: true, store: resolvedStore,
+    });
+    vi.mocked(reconcileUnownedStaleMergeStamp).mockResolvedValue(false);
+    let resolveClear!: () => void;
+    vi.mocked(clearOwnedMergeStamp).mockImplementation(() => new Promise<boolean>((resolve) => {
+      resolveClear = () => resolve(true);
+    }));
+    vi.mocked(runAiMerge).mockImplementation((async (candidateStore, _path, taskId, options) => {
+      await candidateStore.updateTask(taskId, { status: "merging" });
+      return await new Promise((_resolve, reject) => {
+        options.signal?.addEventListener("abort", () => reject(new Error("merge aborted")), { once: true });
+      });
+    }) as never);
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
+
+    const pending = runTaskMerge(task.id, "demo-project");
+    await vi.waitFor(() => expect(process.listenerCount("SIGINT")).toBeGreaterThan(0));
+    process.emit("SIGINT", "SIGINT");
+    await vi.waitFor(() => expect(clearOwnedMergeStamp).toHaveBeenCalledOnce());
+    expect(exitSpy).not.toHaveBeenCalled();
+    resolveClear();
+    await pending;
+
+    expect(exitSpy).toHaveBeenCalledWith(130);
+    exitSpy.mockRestore();
+  });
+
+  it.each([
+    ["clears aged residue", "merging", 6 * 60_000, true],
+    ["preserves fresh residue", "merging", 60_000, false],
+    ["does nothing for a clean row", null, 0, false],
+  ])("%s through the manual-door pre-claim reconcile", async (_label, status, ageMs, shouldClear) => {
+    const task = makeTask({
+      id: `FN-PRECLAIM-${String(status ?? "clean")}`,
+      column: "in-review",
+      status,
+      updatedAt: new Date(Date.now() - ageMs).toISOString(),
+    });
+    const getTask = vi.fn().mockResolvedValue(task);
+    const resolvedStore = { getTask } as unknown as TaskStore;
+    vi.mocked(resolveProject).mockResolvedValue({
+      projectId: "proj_test", projectPath: "/test", projectName: "demo-project", isRegistered: true, store: resolvedStore,
+    });
+    vi.mocked(reconcileUnownedStaleMergeStamp).mockImplementation(async (candidateStore) => {
+      expect(candidateStore).toBe(resolvedStore);
+      if (shouldClear) task.status = null;
+      return shouldClear;
+    });
+    vi.mocked(runAiMerge).mockResolvedValue({
+      merged: true, task, branch: "fusion/preclaim", worktreeRemoved: true, branchDeleted: true,
+    } as never);
+
+    await runTaskMerge(task.id, "demo-project");
+
+    expect(reconcileUnownedStaleMergeStamp).toHaveBeenCalledWith(resolvedStore, task.id);
+    expect(task.status).toBe(shouldClear ? null : status);
+    vi.mocked(reconcileUnownedStaleMergeStamp).mockResolvedValue(false);
+  });
+
+  it("does not clear a pre-existing stamp when interrupted before the body claims it", async () => {
+    const task = makeTask({ id: "FN-NO-LOCAL-CLAIM", column: "in-review", status: "merging" });
+    const getTask = vi.fn().mockResolvedValue(task);
+    const close = vi.fn().mockResolvedValue(undefined);
+    const resolvedStore = { getTask, close } as unknown as TaskStore;
+    vi.mocked(resolveProject).mockResolvedValue({
+      projectId: "proj_test", projectPath: "/test", projectName: "demo-project", isRegistered: true, store: resolvedStore,
+    });
+    vi.mocked(reconcileUnownedStaleMergeStamp).mockResolvedValue(false);
+    vi.mocked(runAiMerge).mockImplementation(((_store, _path, _id, options) => new Promise((_resolve, reject) => {
+      options.signal?.addEventListener("abort", () => reject(new Error("merge aborted before claim")), { once: true });
+    })) as never);
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
+
+    const pending = runTaskMerge(task.id, "demo-project");
+    await vi.waitFor(() => expect(process.listenerCount("SIGINT")).toBeGreaterThan(0));
+    process.emit("SIGINT", "SIGINT");
+    await pending;
+
+    expect(clearOwnedMergeStamp).not.toHaveBeenCalled();
+    expect(task.status).toBe("merging");
+    expect(close).toHaveBeenCalledOnce();
+    expect(exitSpy).toHaveBeenCalledWith(130);
+    exitSpy.mockRestore();
   });
 
   it("exits non-zero when a workspace finalize is blocked after all repos landed", async () => {
@@ -1529,6 +1697,7 @@ describe("project-aware task command behavior", () => {
       isRegistered: true,
       store: resolvedStore,
     });
+    vi.mocked(reconcileUnownedStaleMergeStamp).mockResolvedValue(false);
     vi.mocked(landWorkspaceTask).mockResolvedValue({
       allLanded: true,
       finalized: false,
@@ -1551,6 +1720,12 @@ describe("project-aware task command behavior", () => {
 
     expect(output).toContain("Merge blocked — operator review required");
     expect(output).not.toContain("task finalized to done");
+    expect(landWorkspaceTask).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.any(Object),
+      "/test",
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
   });
 
   it("routes GitHub import commands through the resolved project store", async () => {
@@ -2506,7 +2681,7 @@ describe("runTaskRefine", () => {
     mockRefineTask = vi.fn().mockResolvedValue({
       id: "FN-002",
       description: "Refinement of FN-001",
-      column: "triage",
+      column: "todo",
       dependencies: ["FN-001"],
       steps: [],
       currentStep: 0,
@@ -2541,6 +2716,13 @@ describe("runTaskRefine", () => {
     expect(successLine).toBeDefined();
     expect(successLine![0]).toContain("FN-002");
     expect(successLine![0]).toContain("FN-001");
+
+    const columnLine = logSpy.mock.calls.find(
+      (call) => typeof call[0] === "string" && call[0].includes("Column:"),
+    );
+    expect(columnLine).toBeDefined();
+    expect(columnLine![0]).toContain("Column: todo");
+    expect(columnLine![0]).not.toContain("triage");
 
     // Check that dependency is printed
     const depLine = logSpy.mock.calls.find(
@@ -2867,6 +3049,7 @@ describe("runTaskRetry", () => {
       error: null,
       worktree: null,
       branch: null,
+      branchWriteOrigin: "engine",
       baseBranch: null,
       baseCommitSha: null,
       nextRecoveryAt: null,
@@ -2956,6 +3139,7 @@ describe("runTaskRetry", () => {
       error: null,
       worktree: null,
       branch: null,
+      branchWriteOrigin: "engine",
       baseBranch: null,
       baseCommitSha: null,
       nextRecoveryAt: null,

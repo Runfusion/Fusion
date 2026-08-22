@@ -1,7 +1,7 @@
 import { exec } from "node:child_process";
 import { existsSync } from "node:fs";
 import { promisify } from "node:util";
-import type { Task, TaskStore } from "@fusion/core";
+import { isFusionDeletableBranch, type Task, type TaskStore } from "@fusion/core";
 import { activeSessionRegistry } from "../agents/active-session-registry.js";
 import { resolveReboundTargetForTask } from "@fusion/core";
 import {
@@ -109,7 +109,9 @@ export async function recoverForeignOnlyContamination(
   }
 
   await execAsync("git worktree prune", { cwd: deps.repoDir, timeout: GIT_TIMEOUT_MS, maxBuffer: GIT_MAX_BUFFER }).catch(() => undefined);
-  await execAsync(`git branch -D ${quote(task.branch)}`, { cwd: deps.repoDir, timeout: GIT_TIMEOUT_MS, maxBuffer: GIT_MAX_BUFFER }).catch(() => undefined);
+  if (isFusionDeletableBranch(task, task.branch)) {
+    await execAsync(`git branch -D ${quote(task.branch)}`, { cwd: deps.repoDir, timeout: GIT_TIMEOUT_MS, maxBuffer: GIT_MAX_BUFFER }).catch(() => undefined);
+  }
 
   /* FNXC:WorkflowResolvedColumns 2026-07-30-19:55 (#2808 review — coderabbit): census-invisible moveTask
        DESTINATION — a call argument, not a comparison, so the census never scored it. This requeue is not a
@@ -129,7 +131,7 @@ export async function recoverForeignOnlyContamination(
     paused: false,
     pausedReason: null,
     worktree: null,
-    branch: null,
+    branch: null, branchWriteOrigin: "engine" as const,
     baseCommitSha: null,
     modifiedFiles: [],
   });

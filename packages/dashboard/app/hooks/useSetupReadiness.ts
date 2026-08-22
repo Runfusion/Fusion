@@ -50,8 +50,10 @@ function getFreshSnapshot(cacheKey: string): SetupReadinessSnapshot | null {
 function evaluateProviders(
   providers: AuthProvider[],
   ghCli?: GhCliStatus,
+  customProvidersConfigured = false,
 ): Pick<SetupReadinessSnapshot, "hasAiProvider" | "hasGithub"> {
-  const hasAiProvider = providers.some((provider) => provider.id !== "github" && provider.authenticated);
+  const hasAiProvider = customProvidersConfigured
+    || providers.some((provider) => provider.id !== "github" && provider.authenticated);
   const hasGithub =
     providers.some((provider) => provider.id === "github" && provider.authenticated) ||
     (ghCli?.authenticated ?? false);
@@ -69,8 +71,8 @@ async function fetchAndCacheSetupReadiness(cacheKey: string): Promise<SetupReadi
   }
 
   const request = fetchAuthStatus()
-    .then(({ providers, ghCli }) => {
-      const computed = evaluateProviders(providers, ghCli);
+    .then(({ providers, customProvidersConfigured, ghCli }) => {
+      const computed = evaluateProviders(providers, ghCli, customProvidersConfigured === true);
       const snapshot: SetupReadinessSnapshot = {
         ...computed,
         ghCli,

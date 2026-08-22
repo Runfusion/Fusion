@@ -5,7 +5,7 @@
  * FNXC:StuckRequeue 2026-06-27-23:55:
  * Stuck-requeue cleanup is about to delete the checkout. If git cannot prove the branch has durable commits, treat completed steps as lost uncommitted work and reset them.
  */
-import type { Task } from "@fusion/core";
+import { isWorkspaceTask, loadWorkspaceConfig, type Task } from "@fusion/core";
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
 import { resolveTaskWorkingBranch } from "../worktree/worktree-names.js";
@@ -26,6 +26,16 @@ export async function resetStepsIfWorkLost(
     (s) => s.status === "done" || s.status === "in-progress",
   );
   if (completedSteps.length === 0) return;
+  /*
+  FNXC:WorkspaceRootRouting 2026-08-19-12:15:
+  The stuck-requeue caller supplies one root cwd and one singular branch. That is never proof for a
+  multi-repository task: a stale root failure must not reset steps whose work belongs to registered
+  sub-repository worktrees. Per-repository loss proof remains owned by workspace-aware recovery.
+  */
+  if (isWorkspaceTask(task)) return;
+  try {
+    if ((await loadWorkspaceConfig(deps.rootDir))?.repos.length) return;
+  } catch { /* an unreadable config cannot establish workspace mode */ }
 
   const branchName = resolveTaskWorkingBranch(task);
 

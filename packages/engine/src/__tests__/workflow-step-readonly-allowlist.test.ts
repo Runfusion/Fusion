@@ -54,6 +54,8 @@ describe("workflow-step readonly allowlist policy", () => {
       "fn_milestone_delete",
       "fn_slice_activate",
       "fn_feature_link_task",
+      "fn_feature_unlink_task",
+      "fn_feature_repoint_task",
       "fn_feature_update",
       "fn_feature_repair_validation",
       "fn_feature_set_status",

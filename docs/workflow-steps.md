@@ -26,10 +26,14 @@ FNXC:WorkflowRuntime 2026-06-28-08:10:
 Selectable built-in workflows must share the canonical dispatch traits: their held work enters through a capacity-released `todo`/backlog column and moves to the first WIP execution column via the hold/release sweep, so non-default built-ins do not need a separate dispatcher.
 -->
 
-Fusion workflows define the task lifecycle policy that moves work from an idea to delivery. The default coding path is **Plan/Triage → Execute → graph-native optional gates → Review → Merge**, but that path is now represented as a workflow selection rather than only as fixed engine behavior. A task with no explicit workflow resolves to `builtin:coding`; an explicit missing/corrupt custom workflow fails closed instead of silently falling back.
+Fusion workflows define the task lifecycle policy that moves work from an idea to delivery. The default coding path is **Plan/Triage → Execute → graph-native optional gates → Review → Merge**, but that path is now represented as a workflow selection rather than only as fixed engine behavior. `builtin:coding` remains the catalog default; when project enablement excludes it, unselected/new work and dashboard defaults use the first enabled normal built-in in catalog order. An explicitly selected existing built-in remains resolvable even when it is disabled for new selection, while an explicit missing/corrupt custom workflow fails closed instead of silently falling back.
 
 ### Selecting workflows
 
+<!--
+FNXC:DisabledBuiltinWorkflows 2026-08-19-00:18:
+Project Settings treats an unset `enabledBuiltinWorkflowIds` as all normal built-ins enabled and requires every explicit list to retain at least one valid, available built-in. Disabled built-ins stay in management/direct-resolution paths only; they are omitted from new-task and board/header/list/Planning/Missions/Graph pickers.
+-->
 Operators can select workflows in the dashboard wherever the task or board workflow selector is shown. Agents and automation can discover, author, tune, and assign them with the workflow tools:
 
 - `fn_workflow_list` / `fn_workflow_get` — list built-in and custom workflow definitions and inspect a definition's IR before editing.
@@ -82,7 +86,7 @@ Use this inventory as the documentation map for current workflow behavior:
 | Agent workflow tools | Agents can list/get/validate/create/update/delete workflows, inspect traits, read/write workflow settings, select workflows for explicit task contexts, and pass `workflow_id` when creating/delegating tasks. `fn_workflow_validate` is read-only and uses the same validator as create/update without persistence. Prompt-injectable lanes strip approval-bypass flags on workflow writes. | [Agents](./agents.md#interactive-cli-chat) and [CLI Reference](./cli-reference.md#published-agent-extension-workflow-tools). |
 | Routing boundary | Agents may select/change a workflow only for explicit user requests or tasks they created; no-commit markers do not imply Quick fix or any other workflow. | This page, [Selecting workflows](#selecting-workflows); [Agents](./agents.md#interactive-cli-chat). |
 | Dashboard board/list/graph selection | Board/List/Header/Graph share durable per-project workflow selection; stale saved ids fall back to a valid workflow. Board adds a dashboard-only **All workflows** aggregate and task workflow-name badges; Graph uses **All workflows** for the full active graph. | [Dashboard Guide → Board View](./dashboard-guide.md#board-view), [Graph View](./dashboard-guide.md#graph-view), and [Workflow Selection and Editor](./dashboard-guide.md#workflow-selection-and-editor). |
-| Create/planning forwarding | Quick-create task creation, Planning Mode, Subtask Breakdown, and the New Task dialog forward the active real workflow id when creating tasks; **All workflows** quick-create chooses a real workflow intake/default column instead of saving a synthetic aggregate id. | [Dashboard Guide → Planning Mode](./dashboard-guide.md#planning-mode). |
+| Create/planning forwarding | Quick-create task creation, Planning Mode, and the New Task dialog forward the active real workflow id when creating tasks; **All workflows** quick-create chooses a real workflow intake/default column instead of saving a synthetic aggregate id. | [Dashboard Guide → Planning Mode](./dashboard-guide.md#planning-mode). |
 | Manual-intake column parking | Dashboard create surfaces never send an explicit `column`; the store resolves the landing column from the (selected or project-default) workflow's intake column. A workflow whose intake column sets `autoTriage: false` parks new cards there instead of auto-planning them, until an operator promotes the card. Built-in Coding (Ideas)'s `ideas` composition is deprecated and hidden from new selection; copy that composition into a custom workflow when needed. Existing Coding (Ideas) selections remain resolvable. The full lifecycle — create → parked → operator "Start" promotion → poll-time todo-discovery of the still-unplanned (bootstrap-stub) card — is regression-tested at the engine (triage poll ordering/discovery), UI (`TaskCard` Start affordance), and store (create → `moveTask` promotion) layers (FN-7596). | [Dashboard Guide → Create/Planning Forwarding](./dashboard-guide.md#planning-mode). |
 
 ### Skill-backed workflow steps
@@ -572,17 +576,17 @@ Plugin palette templates (above) can be dropped in as a starting point instead o
 ## Model Overrides for Workflow Nodes
 
 <!--
-FNXC:WorkflowModelBinding 2026-07-10-00:00:
-FN-7771 lets workflow authors bind reasoning effort per session-running node, independently from provider/model. FN-7772 adds workflow-declared primary lane thinking companions, but node-level thinking remains strongest so a custom workflow can pin a high-effort review or low-effort execution seam without changing task-wide or lane defaults.
+FNXC:WorkflowModelBinding 2026-08-18-23:38:
+FN-7771 lets workflow authors bind reasoning effort per session-running node, independently from provider/model. The canonical vocabulary now includes both opt-in `xhigh` and `max`; node-level thinking remains strongest so a custom workflow can pin a high-effort review or low-effort execution seam without changing task-wide or lane defaults. Model-bound dashboard controls narrow only when `/api/models` carries pi capability metadata; unknown metadata keeps the canonical fallback.
 -->
 
 A prompt-mode gate node can set its own model with:
 
 - `modelProvider`
 - `modelId`
-- `thinkingLevel` (`"off" | "minimal" | "low" | "medium" | "high" | "xhigh"`)
+- `thinkingLevel` (`"off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"`)
 
-If a node also sets `config.credentialInstanceId`, execution resolves that configured instance for the node's provider/model pair; clearing it uses the provider default credential. If both model fields are set, node execution uses that provider/model pair; otherwise it falls back to default model selection. `thinkingLevel` is stored as `config.thinkingLevel` and can be set or cleared independently from the model pair. Runtime reasoning-effort precedence is **node/step `thinkingLevel` → task `thinkingLevel` → workflow lane thinking override (`executionThinkingLevel`, `planningThinkingLevel`, or `validatorThinkingLevel`) → global lane thinking override → project default thinking override → global `defaultThinkingLevel`**. The lane settings accept `off`, `minimal`, `low`, `medium`, `high`, or `xhigh`; unset means inherit. This applies to prompt/gate custom nodes, the `execute` and `step-execute` seams, triage/planning, and `step-review` reviewer sessions. Dashboard node summaries show unpinned provider/model state as **Default model**; the inspector's inline thinking selector shows the resolved project default (e.g. "Default (off)") when no node-level thinking value is pinned.
+If a node also sets `config.credentialInstanceId`, execution resolves that configured instance for the node's provider/model pair; clearing it uses the provider default credential. If both model fields are set, node execution uses that provider/model pair; otherwise it falls back to default model selection. `thinkingLevel` is stored as `config.thinkingLevel` and can be set or cleared independently from the model pair. Runtime reasoning-effort precedence is **node/step `thinkingLevel` → task `thinkingLevel` → workflow lane thinking override (`executionThinkingLevel`, `planningThinkingLevel`, or `validatorThinkingLevel`) → global lane thinking override → project default thinking override → global `defaultThinkingLevel`**. The lane settings accept `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`; unset means inherit. Model-bound controls offer only the selected model's documented levels (`null` excludes a level and `xhigh`/`max` require a mapped string); without metadata they offer the canonical list. This applies to prompt/gate custom nodes, the `execute` and `step-execute` seams, triage/planning, and `step-review` reviewer sessions. Dashboard node summaries show unpinned provider/model state as **Default model**; the inspector's inline thinking selector shows the resolved project default (e.g. "Default (off)") when no node-level thinking value is pinned.
 
 ## Default-On Behavior for New Tasks
 
@@ -948,12 +952,8 @@ declaration (drop-on-orphan) and falling back to the default.
 
 The **step-execution**, **review/approval**, **per-phase model-lane**,
 **triage/spec policy**, and **planner oversight** knobs are workflow settings
-declared by `builtin:coding`. Triage policy includes
-`triageProactiveSubtaskSplittingEnabled` (default `true`), which controls
-automatic large-task splitting guidance for oversized M/L work. Set it to `false`
-in a workflow's Values tab when triage should keep large tasks whole unless the
-task explicitly has `breakIntoSubtasks: true`; explicit subtask requests still
-follow the mandatory split flow. Planner oversight uses `plannerOversightLevel`
+declared by `builtin:coding`. Large tasks remain one task with a complete plan;
+triage does not fan them out. Planner oversight uses `plannerOversightLevel`
 (default `autonomous`) with `off`, `observe`, `steer`, and `autonomous` values —
 full steering/control is ON for every workflow unless explicitly changed. Tasks
 may set a nullable `Task.plannerOversightLevel` override that wins over the
@@ -1014,3 +1014,13 @@ Task creation resolves ownership once at the shared pre-insert boundary used by 
 ### Board visibility of pre-release Plan Review
 
 Board hold-lane payloads can expose a transient `releaseGate` verdict. It makes the resolved pre-release Plan Review node, its column/default-on state, and a capacity-boundary continuation observable to Promote controls without duplicating workflow-gate rules in the browser.
+
+## Foreach merge admission
+
+A workflow whose `foreach` template contains `step-execute` may use terminal live task-step coverage as merge implementation proof when it expects at least one instance. Every expected instance must map to a `done` or `skipped` live step. This supports Review Level 0, which intentionally disables optional node-result groups. Zero expected instances still require a relevant `source:"node"` pre-merge result, and pending or failed node results remain blocking.
+
+When the merge boundary cannot be proven, Fusion emits the terminal graph value `merge-boundary-unproven` and parks the task as failed with an actionable error. It does not silently retain the task in the review lane or repeat the same boundary check through bounded auto-merge retry.
+
+### Workspace Code Review remediation
+
+Workspace Code Review carries repository-specific outcomes. A failed review is remediated from the failing repository's acquired worktree without persisting a singular workspace-root worktree. Repeated unchanged negative review input parks for operator approval; landing requires current approval evidence for every modified scoped repository. Scope changes clear both approval evidence and the remediation target atomically, while a current-scope APPROVE clears its matching target before graph completion.

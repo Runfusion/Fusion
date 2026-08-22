@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { useState } from "react";
 import { AuthenticationSection, type AuthenticationSectionData } from "../settings/sections/AuthenticationSection";
 import type { AuthProvider } from "../../api";
@@ -16,9 +16,14 @@ single-flight/notify semantics are covered in useModelsCache.test.ts.
 
 const loadAuthStatus = vi.fn();
 const refreshModelsCache = vi.fn().mockResolvedValue(undefined);
+const refreshBuiltInModels = vi.hoisted(() => vi.fn());
 
 vi.mock("../../hooks/useModelsCache", () => ({
   refreshModelsCache: (...args: unknown[]) => refreshModelsCache(...args),
+}));
+vi.mock("../../api", async () => ({
+  ...(await vi.importActual("../../api")),
+  refreshBuiltInModels,
 }));
 
 vi.mock("../ProviderIcon", () => ({
@@ -28,7 +33,7 @@ vi.mock("../PluginSlot", () => ({
   PluginSlot: () => null,
 }));
 vi.mock("../CustomProvidersSection", () => ({
-  CustomProvidersSection: () => null,
+  CustomProvidersSection: () => <div data-testid="custom-providers-section" />,
 }));
 
 function mockCliCard(testId: string) {
@@ -87,6 +92,43 @@ function renderAuthSection(providers: AuthProvider[]) {
 describe("AuthenticationSection CLI toggle -> shared models cache refresh (FN-7710)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    refreshBuiltInModels.mockResolvedValue({ outcome: "completed" });
+  });
+
+  it("refreshes the shared models cache after a completed built-in catalog refresh", async () => {
+    renderAuthSection([{ id: "openai", name: "OpenAI", authenticated: false, type: "api_key" }]);
+
+    fireEvent.click(screen.getByRole("button", { name: "Refresh Models" }));
+
+    await waitFor(() => expect(refreshModelsCache).toHaveBeenCalledTimes(1));
+    expect(refreshBuiltInModels).toHaveBeenCalledTimes(1);
+  });
+
+  it("disables only the built-in action while its request is pending", async () => {
+    let resolveRefresh!: (value: { outcome: "completed" }) => void;
+    refreshBuiltInModels.mockReturnValue(new Promise((resolve) => {
+      resolveRefresh = resolve;
+    }));
+    renderAuthSection([{ id: "openai", name: "OpenAI", authenticated: false, type: "api_key" }]);
+
+    const refreshButton = screen.getByRole("button", { name: "Refresh Models" });
+    fireEvent.click(refreshButton);
+    expect(refreshButton).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Refreshing models…" })).toBeDisabled();
+
+    resolveRefresh({ outcome: "completed" });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Refresh Models" })).toBeEnabled());
+  });
+
+  it("keeps the existing catalog and shows truthful feedback for deferred refreshes", async () => {
+    refreshBuiltInModels.mockResolvedValue({ outcome: "stale_in_flight" });
+    renderAuthSection([{ id: "openai", name: "OpenAI", authenticated: false, type: "api_key" }]);
+
+    fireEvent.click(screen.getByRole("button", { name: "Refresh Models" }));
+
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Another refresh is still running"));
+    expect(refreshModelsCache).not.toHaveBeenCalled();
+    expect(screen.getByTestId("custom-providers-section")).toBeInTheDocument();
   });
 
   it("refreshes the shared models cache when grok-cli is toggled", async () => {

@@ -11,6 +11,7 @@ import type { NodeHealthMonitor } from "./node-health-monitor.js";
 import { decideOwningNodeHandoff } from "./node-routing-policy.js";
 import { createLogger } from "../logger.js";
 import { createRunAuditor, generateSyntheticRunId } from "../util/run-audit.js";
+import { emitBoundedRunAudit } from "../util/emit-bounded-run-audit.js";
 
 const meshLeaseManagerLog = createLogger("mesh-lease-manager");
 
@@ -443,8 +444,7 @@ export class MeshLeaseManager {
           handoffReason: handoffDecision.reason,
         });
         meshLeaseManagerLog.log(`mesh-lease: handoff parked taskId=${task.id} reason=${handoffDecision.reason}`);
-        try {
-          await this.options.taskStore.recordRunAuditEvent?.({
+        await emitBoundedRunAudit(this.options.taskStore, {
             taskId: task.id,
             agentId: "mesh-lease-manager",
             runId: generateSyntheticRunId("mesh-lease", task.id),
@@ -466,10 +466,7 @@ export class MeshLeaseManager {
               source: "mesh-lease.recover",
               recoveryReason: reason,
             },
-          });
-        } catch (error) {
-          meshLeaseManagerLog.warn(`mesh-lease: failed to emit node:handoff:parked for taskId=${task.id}: ${error instanceof Error ? error.message : String(error)}`);
-        }
+          }, { log: meshLeaseManagerLog });
         return false;
       }
     }
@@ -521,8 +518,7 @@ export class MeshLeaseManager {
       });
     }
 
-    try {
-      await this.options.taskStore.recordRunAuditEvent?.({
+    await emitBoundedRunAudit(this.options.taskStore, {
         taskId: task.id,
         agentId: "mesh-lease-manager",
         runId: generateSyntheticRunId("mesh-lease", task.id),
@@ -540,10 +536,7 @@ export class MeshLeaseManager {
           epoch: nextEpoch,
           recoveryReason: `${reason} (${stale.reason ?? "stale"})`,
         },
-      });
-    } catch (error) {
-      meshLeaseManagerLog.warn(`mesh-lease: failed to emit node:lease:recovered for taskId=${task.id}: ${error instanceof Error ? error.message : String(error)}`);
-    }
+      }, { log: meshLeaseManagerLog });
 
     if (isUnreachableOwnerReason) {
       await emitNodeUnreachableRecovery({

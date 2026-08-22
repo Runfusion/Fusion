@@ -3,7 +3,7 @@
  * Workflow graph / merge-boundary / graph-failure routing facades peeled from TaskExecutor (U4).
  * isBackwardMoveOutOfPlanning stays on TaskExecutor for inert-sync-lane (2 guards).
  */
-import type { Task, TaskDetail, Settings, Agent, WorkflowIr, WorkflowColumnAgent } from "@fusion/core";
+import type { Task, TaskDetail, Settings, Agent, ResolvedTaskOutputLanguage, WorkflowIr, WorkflowColumnAgent } from "@fusion/core";
 import * as impl from "./impl-bindings.js";
 import * as bags from "./deps-bags.js";
 import { type FacadeRestArgs, type FacadeAfterFirst } from "./facade-methods.js";
@@ -27,15 +27,15 @@ export abstract class TaskExecutorGraphFacades extends TaskExecutorSessionFacade
   protected async runGraphTaskStep(...args: FacadeRestArgs<typeof impl.runGraphTaskStepImpl>): ReturnType<typeof impl.runGraphTaskStepImpl> { return impl.runGraphTaskStepImpl(bags.buildRunGraphTaskStepDeps(this), ...args); }
   protected foreachActiveForTask(taskId: string, instanceId?: string): ReturnType<typeof impl.foreachActiveForTaskImpl> { return impl.foreachActiveForTaskImpl({ graphStepActiveContext: this.graphStepActiveContext }, taskId, instanceId); }
   protected async runProjectedGraphTaskStep(...args: FacadeRestArgs<typeof impl.runProjectedGraphTaskStepImpl>): ReturnType<typeof impl.runProjectedGraphTaskStepImpl> { return impl.runProjectedGraphTaskStepImpl(bags.buildRunProjectedGraphTaskStepDeps(this), ...args); }
-  public createAuthoritativeWorkflowPrimitives(settings: Settings) { return createWorkflowRuntimePrimitiveProvider((providerSettings) => this.createAuthoritativeWorkflowPrimitivesFromExecutor(providerSettings)).create(settings); }
-  protected createAuthoritativeWorkflowPrimitivesFromExecutor(settings: Settings): ReturnType<typeof impl.createAuthoritativeWorkflowPrimitivesFromExecutorImpl> { return impl.createAuthoritativeWorkflowPrimitivesFromExecutorImpl(bags.buildCreateAuthoritativeWorkflowPrimitivesFromExecutorDeps(this), settings); }
+  public createAuthoritativeWorkflowPrimitives(settings: Settings, outputLanguage?: ResolvedTaskOutputLanguage) { return createWorkflowRuntimePrimitiveProvider((providerSettings) => this.createAuthoritativeWorkflowPrimitivesFromExecutor(providerSettings, outputLanguage)).create(settings); }
+  protected createAuthoritativeWorkflowPrimitivesFromExecutor(settings: Settings, outputLanguage?: ResolvedTaskOutputLanguage): ReturnType<typeof impl.createAuthoritativeWorkflowPrimitivesFromExecutorImpl> { return impl.createAuthoritativeWorkflowPrimitivesFromExecutorImpl(bags.buildCreateAuthoritativeWorkflowPrimitivesFromExecutorDeps(this), settings, outputLanguage); }
   protected async resolveMergeBoundaryColumn(taskId: string, nodeId: string): ReturnType<typeof impl.resolveMergeBoundaryColumnImpl> { return impl.resolveMergeBoundaryColumnImpl({ store: this.store }, taskId, nodeId); }
   protected async ensureWorkflowMergeBoundaryTask(...args: FacadeRestArgs<typeof impl.ensureWorkflowMergeBoundaryTaskImpl>): ReturnType<typeof impl.ensureWorkflowMergeBoundaryTaskImpl> { return impl.ensureWorkflowMergeBoundaryTaskImpl(bags.buildEnsureWorkflowMergeBoundaryTaskDeps(this), ...args); }
   protected async evaluateWorkflowMergeBoundary(...args: FacadeRestArgs<typeof impl.evaluateWorkflowMergeBoundaryImpl>): ReturnType<typeof impl.evaluateWorkflowMergeBoundaryImpl> { return impl.evaluateWorkflowMergeBoundaryImpl(bags.buildEvaluateWorkflowMergeBoundaryDeps(this), ...args); }
   protected async loadMergeBoundaryInstances(...args: FacadeRestArgs<typeof impl.loadMergeBoundaryInstancesImpl>): ReturnType<typeof impl.loadMergeBoundaryInstancesImpl> { return impl.loadMergeBoundaryInstancesImpl({ store: this.store }, ...args); }
   protected async getWorkflowMergeImplementationProofFailure(...args: FacadeRestArgs<typeof impl.getWorkflowMergeImplementationProofFailureImpl>): ReturnType<typeof impl.getWorkflowMergeImplementationProofFailureImpl> { return impl.getWorkflowMergeImplementationProofFailureImpl(bags.buildWorkflowMergeImplementationProofFailureDeps(this), ...args); }
   protected shouldCompleteChecklistAtWorkflowMerge(task: TaskDetail, proof?: { complete: boolean }): ReturnType<typeof impl.shouldCompleteChecklistAtWorkflowMergeImpl> { return impl.shouldCompleteChecklistAtWorkflowMergeImpl(task, proof); }
-  public createAuthoritativeWorkflowSeams(_settings: Settings) { return impl.createAuthoritativeWorkflowSeamsImpl(bags.buildCreateAuthoritativeWorkflowSeamsDeps(this), _settings); }
+  public createAuthoritativeWorkflowSeams(_settings: Settings, outputLanguage?: ResolvedTaskOutputLanguage) { return impl.createAuthoritativeWorkflowSeamsImpl(bags.buildCreateAuthoritativeWorkflowSeamsDeps(this), _settings, outputLanguage); }
   protected async updateStepGraph(...args: FacadeRestArgs<typeof impl.updateStepGraphImpl>): ReturnType<typeof impl.updateStepGraphImpl> { return impl.updateStepGraphImpl({ store: this.store }, ...args); }
   protected async runAwaitInputNode(node: Parameters<typeof impl.runAwaitInputNodeImpl>[1], live: TaskDetail): ReturnType<typeof impl.runAwaitInputNodeImpl> { return impl.runAwaitInputNodeImpl(bags.buildStoreRunContextDeps(this), node, live); }
   protected async pauseForCliApproval(node: Parameters<typeof impl.pauseForCliApprovalImpl>[1], live: TaskDetail, command: string): ReturnType<typeof impl.pauseForCliApprovalImpl> { return impl.pauseForCliApprovalImpl(bags.buildStoreRunContextDeps(this), node, live, command); }

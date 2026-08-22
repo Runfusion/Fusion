@@ -1,3 +1,5 @@
+import { emitBoundedRunAudit } from "../run-audit/emit-bounded-run-audit.js";
+/* FNXC:RunAudit 2026-08-20-05:49: FN-9177 bounds optional audit telemetry so a hostile sink cannot alter this lifecycle path. */
 /**
  * lifecycle-ops operations.
  *
@@ -318,9 +320,14 @@ export function setupActivityLogListenersImpl(store: TaskStore): void {
       );
     });
 
-    // Task updated (check for failures)
-    store.on("task:updated", (task) => {
-      if (task.status === "failed") {
+    /*
+    FNXC:ActivityLogFailureDedup 2026-08-19-19:33:
+    A failed-state bookkeeping update is not a new durable failure episode. Only the serialized
+    non-failed → failed transition from updateTask may append task:failed activity, so listeners
+    cannot turn subsequent task mutations into an unbounded project.activity_log write path.
+    */
+    store.on("task:updated", (task, meta) => {
+      if (meta?.failedTransition) {
         store.recordActivityFromListener(
           {
             type: "task:failed",
@@ -992,7 +999,7 @@ export async function recoverStaleTransitionPendingImpl(store: TaskStore): Promi
           // best-effort; a later sweep retries.
         }
 
-        void store.recordRunAuditEvent({
+        void emitBoundedRunAudit(store, {
           taskId: id,
           agentId: "system",
           runId: `transition-pending-recovery-${id}-${Date.now()}`,

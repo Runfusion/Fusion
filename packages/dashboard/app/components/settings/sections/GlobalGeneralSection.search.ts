@@ -105,13 +105,21 @@ export const globalGeneralSearchEntries: SettingsSearchEntry[] = [
   },
   {
     sectionId: "global-general",
-    key: "autoUpdateAndRestart",
-    labelKey: "settings.globalGeneral.autoUpdateAndRestart",
-    labelFallback: " Auto-update and restart ",
-    helpKey: "settings.globalGeneral.autoUpdateAndRestartHelp",
-    helpFallback:
-      " When enabled, Fusion installs available updates on the selected release channel by itself and then restarts to apply them — the same install + restart the \"Update now\" button performs, without asking. Requires a supervising parent (the default for `fn dashboard`); hosts started with --no-supervise skip the install. Default: disabled. ",
-    keywords: ["auto update", "automatic update", "self update", "unattended", "restart"],
+    key: "autoUpdateEnabled",
+    labelKey: "settings.globalGeneral.autoUpdateEnabled",
+    labelFallback: " Automatically install updates ",
+    helpKey: "settings.globalGeneral.autoUpdateEnabledHelp",
+    helpFallback: " Installs updates from the selected release channel during the background update check. Unset: disabled. ",
+    keywords: ["auto update", "automatic update", "install", "unattended"],
+  },
+  {
+    sectionId: "global-general",
+    key: "autoRestartAfterUpdate",
+    labelKey: "settings.globalGeneral.autoRestartAfterUpdate",
+    labelFallback: " Automatically restart after an update ",
+    helpKey: "settings.globalGeneral.autoRestartAfterUpdateHelp",
+    helpFallback: " After a dashboard update installs, requests a supervised restart. Unset: disabled. ",
+    keywords: ["auto update", "automatic restart", "restart", "supervisor"],
   },
   {
     sectionId: "global-general",

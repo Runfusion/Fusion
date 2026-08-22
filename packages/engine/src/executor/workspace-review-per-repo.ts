@@ -8,8 +8,9 @@
  * `reviewStep` single-cwd; the CALLERS loop. This helper is the shared loop+aggregate so both review entry points
  * (historically the deleted in-session review tool, now only the step-inversion `stepReview` seam) iterate
  * identically: it invokes the caller's
- * own `invokeForCwd(cwd)` once per acquired worktree (cwd = repo.worktreePath) and aggregates the repo-tagged
- * verdicts as a CONJUNCTION — the task is "reviewed" only if EVERY repo passes; the FIRST non-APPROVE repo's
+ * own `invokeForCwd(cwd)` only for an explicitly scoped repository with diff evidence. Acquired
+ * worktrees are never task intent: clean scoped repositories are recorded as not-reviewed and
+ * out-of-scope worktrees are not opened. Modified in-scope verdicts aggregate as a conjunction.
  * verdict becomes the aggregate verdict (mirroring verifyWorktreeInvariants' first-failing-repo return), and its
  * findings are repo-tagged. A zero-acquire workspace task is classified with the completion invariant: proven
  * commit-free work approves honestly, while unproven work returns non-retryable UNAVAILABLE.
@@ -19,9 +20,24 @@
  * verdict so the caller's existing verdict→edge mapping (APPROVE done-marking, REVISE block, RETHINK reset,
  * UNAVAILABLE retry) is unchanged.
  */
-import type { Task } from "@fusion/core";
+import { createHash } from "node:crypto";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { existsSync } from "node:fs";
+import { resolve, sep } from "node:path";
+import type { Task, WorkflowRepositoryReviewOutcome } from "@fusion/core";
 import type { ReviewResult } from "../execution/reviewer.js";
 import { classifyWorkspaceZeroAcquire, type WorkspaceZeroAcquireOptions } from "./workspace-zero-acquire.js";
+import { captureModifiedFiles } from "./worktree-capture-modified-files.js";
+
+const execFileAsync = promisify(execFile);
+
+/** FNXC:RepositoryScope 2026-08-21-01:18: path membership is insufficient after review; hash the exact Git diff that the reviewer approved. */
+async function captureReviewFingerprint(worktreePath: string, baseCommitSha: string | undefined): Promise<string> {
+  if (!baseCommitSha) throw new Error("workspace review cannot fingerprint a repository without its base commit");
+  const { stdout } = await execFileAsync("git", ["diff", "--binary", `${baseCommitSha}..HEAD`], { cwd: worktreePath, encoding: "utf8" });
+  return createHash("sha256").update(stdout).digest("hex");
+}
 
 export async function reviewWorkspacePerRepo(
   // FNXC:Workspace 2026-06-21-15:00: F7 — drop the dead `repoRel` callback param.
@@ -30,13 +46,90 @@ export async function reviewWorkspacePerRepo(
   // (Phase C). The loop below still tags findings with `repoRel` from its own iteration key.
   task: Task,
   invokeForCwd: (cwd: string) => Promise<ReviewResult>,
-  options: Omit<WorkspaceZeroAcquireOptions, "workspaceMode"> & { workspaceMode?: boolean } = {},
+  options: Omit<WorkspaceZeroAcquireOptions, "workspaceMode"> & {
+    workspaceMode?: boolean;
+    workspaceRepos?: readonly string[];
+    workspaceRootDir?: string;
+    captureModifiedFiles?: (repoRel: string, worktreePath: string, baseCommitSha?: string) => Promise<string[]>;
+  } = {},
 ): Promise<ReviewResult> {
   const workspaceWorktrees = task.workspaceWorktrees ?? {};
-  // FNXC:Workspace 2026-06-21-15:00: F6 — sort repo keys so the reported FIRST failing repo is
-  // deterministic across runs/rehydrate.
-  const repoKeys = Object.keys(workspaceWorktrees).sort();
+  const declaredRepos = options.workspaceRepos ? new Set(options.workspaceRepos) : undefined;
+  /*
+  FNXC:RepositoryScope 2026-08-21-01:53:
+  A proposed creation default is not review authority. Code review fails closed until the planner
+  confirms repository intent, so no approval can be persisted for a scope that may be replaced.
+  */
+  if (task.repositoryScope?.state !== "confirmed") {
+    return {
+      verdict: "UNAVAILABLE",
+      retryable: false,
+      review: "Workspace Code Review requires a confirmed repository scope.",
+      summary: "Unavailable: repository scope is not confirmed",
+    };
+  }
+  const repositoryScope = new Set(task.repositoryScope.repositories);
+  const repositoryScopeRevision = task.repositoryScope.revision;
+  /*
+  FNXC:RepositoryScope 2026-08-21-00:29:
+  Persisted modifiedFiles is a historical task snapshot, not review authority. Re-read each
+  acquired repository at the review boundary so a commit made after the last executor capture
+  cannot be mislabeled clean and bypass its required approval. Diff capture is deliberately
+  per-repository because workspace roots are not Git worktrees.
+  */
+  const freshModifiedFiles: string[] = [];
+  const repositoryDiffFingerprints: Record<string, string> = {};
+  for (const repoRel of Object.keys(workspaceWorktrees).sort()) {
+    const repo = workspaceWorktrees[repoRel];
+    const files = options.captureModifiedFiles
+      ? await options.captureModifiedFiles(repoRel, repo.worktreePath, repo.baseCommitSha ?? undefined)
+      : await captureModifiedFiles(repo.worktreePath, repo.baseCommitSha ?? undefined, task.id, undefined, "workspace-review-boundary");
+    freshModifiedFiles.push(...files.map((file) => `${repoRel}/${file}`));
+    if (files.length > 0 && repositoryScope.has(repoRel) && !options.captureModifiedFiles && existsSync(repo.worktreePath)) {
+      repositoryDiffFingerprints[repoRel] = await captureReviewFingerprint(repo.worktreePath, repo.baseCommitSha ?? undefined);
+    }
+  }
+  const modifiedFiles = freshModifiedFiles;
+  const hasDiffEvidence = (repoRel: string) => modifiedFiles.some((file) => file === repoRel || file.startsWith(`${repoRel}/`));
+  const seenPaths = new Set<string>();
+  // FNXC:WorkspaceRootRouting 2026-08-19-12:15: Only declared repository entries are reviewable;
+  // stale root-keyed metadata and duplicate paths cannot become reviewer cwd values.
+  const repoKeys = Object.keys(workspaceWorktrees)
+    .filter((repoRel) => {
+      if (declaredRepos && !declaredRepos.has(repoRel)) return false;
+      // FNXC:RepositoryScope 2026-08-20-23:07: acquisition grants a checkout, never review authority.
+      if (!repositoryScope.has(repoRel) || !hasDiffEvidence(repoRel)) return false;
+      const worktreePath = workspaceWorktrees[repoRel]?.worktreePath;
+      if (typeof worktreePath !== "string" || worktreePath.length === 0) return false;
+      const canonical = resolve(worktreePath);
+      if (options.workspaceRootDir) {
+        const root = resolve(options.workspaceRootDir);
+        if (canonical === root || canonical.startsWith(`${root}${sep}.worktrees${sep}`)) return false;
+      }
+      if (seenPaths.has(canonical)) return false;
+      seenPaths.add(canonical);
+      return true;
+    })
+    .sort();
   if (repoKeys.length === 0) {
+    const cleanScopedRepos = [...repositoryScope].filter((repoRel) => declaredRepos?.has(repoRel) !== false);
+    if (cleanScopedRepos.length > 0 && Object.keys(workspaceWorktrees).length > 0) {
+      return {
+        verdict: "UNAVAILABLE",
+        retryable: false,
+        review: `No changes — not reviewed: ${cleanScopedRepos.map((repo) => `\`${repo}\``).join(", ")}. No scoped repository has diff evidence; this is not a blocking reviewer verdict.`,
+        summary: `Not reviewed: no changes in ${cleanScopedRepos.join(", ")}`,
+        repositoryReviewOutcomes: cleanScopedRepos.map((repository) => ({
+          repository,
+          status: "NOT_REVIEWED" as const,
+          output: "No changes — not reviewed.",
+          episodeId: new Date().toISOString(),
+          scopeRevision: task.repositoryScope?.revision,
+          reviewedAt: new Date().toISOString(),
+        })),
+        repositoryScopeRevision: task.repositoryScope?.revision,
+      };
+    }
     /*
     FNXC:Workspace 2026-08-15-04:21:
     This is the review-side consumer of classifyWorkspaceZeroAcquire. A proven
@@ -64,12 +157,36 @@ export async function reviewWorkspacePerRepo(
     };
   }
 
-  const reviewSections: string[] = [];
-  const summarySections: string[] = [];
+  // FNXC:RepositoryScope 2026-08-20-23:07: clean scoped repositories remain visible as informational non-verdicts.
+  const notReviewedRepos = [...repositoryScope]
+    .filter((repoRel) => declaredRepos?.has(repoRel) !== false && !hasDiffEvidence(repoRel))
+    .sort();
+  const reviewedAt = new Date().toISOString();
+  const repositoryReviewOutcomes: WorkflowRepositoryReviewOutcome[] = notReviewedRepos.map((repository) => ({
+    repository,
+    status: "NOT_REVIEWED",
+    output: "No changes — not reviewed.",
+    episodeId: reviewedAt,
+    scopeRevision: repositoryScopeRevision,
+    reviewedAt,
+  }));
+  const reviewSections: string[] = notReviewedRepos.map((repoRel) => `### [${repoRel}] NOT_REVIEWED\nNo changes — not reviewed.`);
+  const summarySections: string[] = notReviewedRepos.map((repoRel) => `[${repoRel}] NOT_REVIEWED: no changes`);
   let firstFailing: { repo: string; result: ReviewResult } | undefined;
   for (const repoRel of repoKeys) {
     const repo = workspaceWorktrees[repoRel];
     const result = await invokeForCwd(repo.worktreePath);
+    repositoryReviewOutcomes.push({
+      repository: repoRel,
+      status: "REVIEWED",
+      verdict: result.verdict,
+      output: result.review,
+      findings: result.findings,
+      fingerprint: repositoryDiffFingerprints[repoRel],
+      episodeId: reviewedAt,
+      scopeRevision: repositoryScopeRevision,
+      reviewedAt,
+    });
     // Tag every per-repo finding with its sub-repo so downstream readers attribute it correctly.
     reviewSections.push(`### [${repoRel}] ${result.verdict}\n${result.review}`);
     summarySections.push(`[${repoRel}] ${result.verdict}: ${result.summary}`);
@@ -91,15 +208,21 @@ export async function reviewWorkspacePerRepo(
       // FNXC:Workspace 2026-06-22-00:00: the conjunction BREAKS on the first non-APPROVE repo,
       // so reviewSections holds only the repos evaluated up to (and including) the failure — not
       // every sub-repo. Label it honestly so operators don't read a partial list as exhaustive.
-      review: `Workspace review failed in sub-repo \`${firstFailing.repo}\` (verdict ${firstFailing.result.verdict}). Per-repo verdicts (evaluation stopped at first failure; later repos not reviewed):\n\n${reviewSections.join("\n\n")}`,
+      review: `Workspace review failed in sub-repo \`${firstFailing.repo}\` (verdict ${firstFailing.result.verdict}). Per-repo verdicts (evaluation stopped at first failure; later modified repos not reviewed):\n\n${reviewSections.join("\n\n")}`,
       summary: `${firstFailing.repo}: ${firstFailing.result.verdict} — ${summarySections.join(" | ")}`,
+      repositoryDiffFingerprints,
+      repositoryReviewOutcomes,
+      repositoryScopeRevision: repositoryScopeRevision,
     };
   }
 
   // Every sub-repo approved → the task is reviewed (conjunction satisfied).
   return {
     verdict: "APPROVE",
-    review: `All ${repoKeys.length} sub-repo(s) approved. Per-repo verdicts:\n\n${reviewSections.join("\n\n")}`,
-    summary: `APPROVE across ${repoKeys.length} sub-repo(s): ${summarySections.join(" | ")}`,
+    review: `All ${repoKeys.length} modified in-scope sub-repo(s) approved. Per-repo outcomes:\n\n${reviewSections.join("\n\n")}`,
+    summary: `APPROVE across ${repoKeys.length} modified in-scope sub-repo(s): ${summarySections.join(" | ")}`,
+    repositoryDiffFingerprints,
+    repositoryReviewOutcomes,
+    repositoryScopeRevision: repositoryScopeRevision,
   };
 }

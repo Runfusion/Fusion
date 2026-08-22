@@ -7,6 +7,7 @@ import type { Task, TaskStore } from "@fusion/core";
 import { computeRecoveryDecision, formatDelay, MAX_RECOVERY_RETRIES } from "../healing/recovery-policy.js";
 import { moveTaskToReplanColumn, resolveReplanTargetColumn } from "../execution/replan-target.js";
 import { generateSyntheticRunId, type EngineRunContext } from "../util/run-audit.js";
+import { emitBoundedRunAudit } from "./emit-bounded-run-audit.js";
 import { resolveTerminalColumnsFor } from "./lifecycle-columns.js";
 
 export type RequiredArtifactRecoveryDeps = {
@@ -63,7 +64,7 @@ export async function recoverMissingRequiredArtifacts(
   const context = deps.getRunContextFor(task.id);
   const action = decision.shouldRetry ? "replan" : "park-failed";
 
-  await deps.store.recordRunAuditEvent?.({
+  await emitBoundedRunAudit(deps.store, {
     taskId: task.id,
     agentId: "executor",
     runId: context?.runId ?? generateSyntheticRunId("required-artifact-missing", task.id),

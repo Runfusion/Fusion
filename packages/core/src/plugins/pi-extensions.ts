@@ -50,7 +50,7 @@ export function getFusionAgentSettingsPath(home?: string): string {
 
 export function getProjectRootFromWorktree(
   cwd: string,
-  opts?: { worktreesDirCandidates?: string[] },
+  opts?: { worktreesDirCandidates?: Array<string | { dir: string; projectRoot: string }> },
 ): string | null {
   const knownWorktreePatterns = [
     /^(.+?)[\\/]\.worktrees[\\/][^\\/]+(?:[\\/]|$)/,
@@ -64,16 +64,18 @@ export function getProjectRootFromWorktree(
   }
 
   for (const candidate of opts?.worktreesDirCandidates ?? []) {
-    const normalizedCandidate = resolve(candidate);
+    const candidateDir = typeof candidate === "string" ? candidate : candidate.dir;
+    const objectCandidate = typeof candidate === "string" ? undefined : candidate;
+    const normalizedCandidate = resolve(candidateDir);
     const normalizedCwd = resolve(cwd);
     const rel = relative(normalizedCandidate, normalizedCwd);
     if (rel !== "" && !rel.startsWith("..") && !isAbsolute(rel)) {
       const firstSegment = rel.split(/[\\/]/).filter(Boolean)[0];
       if (firstSegment) {
+        // Grouped workspace paths are one-way; callers that know the project root provide it explicitly.
+        if (objectCandidate) return objectCandidate.projectRoot;
         const parent = normalizedCandidate.split(/[\\/]/).slice(0, -1).join("/");
-        if (parent) {
-          return parent;
-        }
+        if (parent && parent !== "." && parent !== normalizedCandidate) return parent;
       }
     }
   }

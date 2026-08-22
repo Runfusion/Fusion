@@ -1085,6 +1085,7 @@ export type ChatStreamEvent =
           createdAt: string;
         };
         attachments?: ChatAttachment[];
+        interrupted?: boolean;
       };
     }
   | { type: "error"; data: string | ChatFailureInfo };
@@ -1414,15 +1415,45 @@ export class RoomReplyGenerationError extends Error {
   }
 }
 
+interface ChatCancellationResult {
+  success: boolean;
+  interrupted: boolean;
+  message?: ChatMessage;
+}
+
+interface ActiveChatGeneration {
+  abortController: AbortController;
+  agentResult?: AgentResult;
+  generationId: number;
+  cancellationRequested: boolean;
+  cancellationResult?: ChatCancellationResult;
+  settled: Promise<void>;
+  resolveSettled: () => void;
+}
+
+interface ChatReplacementPreparation {
+  promise: Promise<{ generationId: number; retained: ChatMessage[] }>;
+  generationId?: number;
+}
+
+/** A replacement request was rejected before the SSE response was accepted. */
+export class ChatReplacementError extends Error {
+  constructor(
+    message: string,
+    readonly statusCode: 400 | 404 | 409 = 400,
+  ) {
+    super(message);
+    this.name = "ChatReplacementError";
+  }
+}
+
 export class ChatManager {
   private agentStoreReady?: Promise<void>;
   private generationCounter = 0;
   private inFlightPersistTimers = new Map<string, ReturnType<typeof setTimeout>>();
-  private activeGenerations = new Map<string, {
-    abortController: AbortController;
-    agentResult?: AgentResult;
-    generationId: number;
-  }>();
+  private inFlightPersistChains = new Map<string, Promise<void>>();
+  private activeGenerations = new Map<string, ActiveChatGeneration>();
+  private replacementPreparations = new Map<string, ChatReplacementPreparation>();
 
   constructor(
     private chatStore: ChatStore,
@@ -1511,17 +1542,40 @@ export class ChatManager {
   its rejection observed so one failed jsonb write cannot become a process-wide
   unhandled rejection or interrupt the streaming turn.
   */
-  private persistInFlightGeneration(sessionId: string, snapshot: ChatInFlightGenerationState | null): void {
-    try {
-      void this.chatStore.setInFlightGeneration(sessionId, snapshot).catch(() => {
+  private persistInFlightGeneration(
+    sessionId: string,
+    snapshot: ChatInFlightGenerationState | null,
+    generationId?: number,
+  ): Promise<void> {
+    const previous = this.inFlightPersistChains.get(sessionId) ?? Promise.resolve();
+    const write = previous.then(async () => {
+      // FNXC:ChatCancellation 2026-08-18-21:52:
+      // Generation-scoped checkpoint writes are serialized so delayed work from an
+      // interrupted turn cannot clear or overwrite a newer turn's recovery slot.
+      if (generationId !== undefined && this.activeGenerations.get(sessionId)?.generationId !== generationId) {
+        return;
+      }
+      try {
+        await this.chatStore.setInFlightGeneration(sessionId, snapshot);
+      } catch {
         diagnostics.warn(`Failed to persist in-flight chat checkpoint for session ${sessionId}`);
-      });
-    } catch {
-      diagnostics.warn(`Failed to persist in-flight chat checkpoint for session ${sessionId}`);
-    }
+      }
+    });
+    const tracked = write.finally(() => {
+      if (this.inFlightPersistChains.get(sessionId) === tracked) {
+        this.inFlightPersistChains.delete(sessionId);
+      }
+    });
+    this.inFlightPersistChains.set(sessionId, tracked);
+    void tracked.catch(() => undefined);
+    return tracked;
   }
 
-  private queueInFlightGenerationPersist(sessionId: string, snapshot: ChatInFlightGenerationState | null): void {
+  private queueInFlightGenerationPersist(
+    sessionId: string,
+    snapshot: ChatInFlightGenerationState | null,
+    generationId: number,
+  ): void {
     const existingTimer = this.inFlightPersistTimers.get(sessionId);
     if (existingTimer) {
       clearTimeout(existingTimer);
@@ -1529,18 +1583,70 @@ export class ChatManager {
 
     const timer = setTimeout(() => {
       this.inFlightPersistTimers.delete(sessionId);
-      this.persistInFlightGeneration(sessionId, snapshot);
+      void this.persistInFlightGeneration(sessionId, snapshot, generationId);
     }, IN_FLIGHT_PERSIST_DEBOUNCE_MS);
     this.inFlightPersistTimers.set(sessionId, timer);
   }
 
-  private flushInFlightGenerationPersist(sessionId: string, snapshot: ChatInFlightGenerationState | null): void {
+  private flushInFlightGenerationPersist(
+    sessionId: string,
+    snapshot: ChatInFlightGenerationState | null,
+    generationId?: number,
+  ): Promise<void> {
     const existingTimer = this.inFlightPersistTimers.get(sessionId);
     if (existingTimer) {
       clearTimeout(existingTimer);
       this.inFlightPersistTimers.delete(sessionId);
     }
-    this.persistInFlightGeneration(sessionId, snapshot);
+    return this.persistInFlightGeneration(sessionId, snapshot, generationId);
+  }
+
+  /*
+   * FNXC:ChatCancellation 2026-08-19-05:20:
+   * An explicit Stop must write the streamed textual prefix to the same file-backed pi session that the next turn reopens. PostgreSQL history alone cannot restore model context, while appending a second assistant entry would make the model see the prefix twice when pi already recorded it during cancellation.
+   */
+  private persistInterruptedSessionContext(
+    sessionManager: SessionManager | undefined,
+    session: ChatSession | null | undefined,
+    text: string,
+  ): void {
+    if (!text) {
+      return;
+    }
+    if (!sessionManager || !session) {
+      throw new Error("Interrupted chat context has no file-backed session");
+    }
+
+    const context = sessionManager.buildSessionContext();
+    const lastAssistant = [...context.messages].reverse().find((message) => message.role === "assistant");
+    const lastAssistantText = lastAssistant && Array.isArray(lastAssistant.content)
+      ? lastAssistant.content
+        .filter((part): part is { type: "text"; text: string } => part?.type === "text" && typeof part.text === "string")
+        .map((part) => part.text)
+        .join("")
+      : typeof lastAssistant?.content === "string" ? lastAssistant.content : "";
+
+    if (lastAssistantText === text) {
+      return;
+    }
+
+    sessionManager.appendMessage({
+      role: "assistant",
+      content: [{ type: "text", text }],
+      api: "chat",
+      provider: session.modelProvider ?? "unknown",
+      model: session.modelId ?? "unknown",
+      usage: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 0,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+      stopReason: "stop",
+      timestamp: Date.now(),
+    });
   }
 
   private async getChatModelSettings(): Promise<{
@@ -1654,7 +1760,14 @@ export class ChatManager {
    * Routes that subscribe to SSE before invoking `sendMessage` should call this
    * first so subscription and broadcast generationIds are tied together.
    */
-  beginGeneration(sessionId: string): { generationId: number; abortController: AbortController } {
+  beginGeneration(
+    sessionId: string,
+    options?: { allowReplacementPreparation?: boolean },
+  ): { generationId: number; abortController: AbortController } {
+    if (this.replacementPreparations.has(sessionId) && !options?.allowReplacementPreparation) {
+      throw new ChatReplacementError(`A message replacement is already being prepared for session ${sessionId}`, 409);
+    }
+
     // If a previous generation is still tracked (e.g. its browser disconnected
     // mid-stream and its agent loop hasn't reached `finally` yet), abort its
     // controller so it stops issuing further prompts/tool calls that would
@@ -1671,7 +1784,17 @@ export class ChatManager {
     this.generationCounter += 1;
     const generationId = this.generationCounter;
     const abortController = new AbortController();
-    this.activeGenerations.set(sessionId, { abortController, generationId });
+    let resolveSettled!: () => void;
+    const settled = new Promise<void>((resolve) => {
+      resolveSettled = resolve;
+    });
+    this.activeGenerations.set(sessionId, {
+      abortController,
+      generationId,
+      cancellationRequested: false,
+      settled,
+      resolveSettled,
+    });
     return { generationId, abortController };
   }
 
@@ -2305,7 +2428,14 @@ export class ChatManager {
       generationId = allocated.generationId;
       abortController = allocated.abortController;
     }
+    const replacementPreparation = this.replacementPreparations.get(sessionId);
+    if (replacementPreparation?.generationId === generationId) {
+      // The matching send now owns this generation. Consuming the reservation here
+      // lets its normal generation-finally cleanup own the active slot.
+      this.replacementPreparations.delete(sessionId);
+    }
     const broadcastOptions = { generationId };
+    const generationState = this.activeGenerations.get(sessionId);
 
     const session = await this.chatStore.getSession(sessionId);
 
@@ -2348,6 +2478,7 @@ export class ChatManager {
         if (current?.generationId === generationId) {
           this.activeGenerations.delete(sessionId);
         }
+        generationState?.resolveSettled?.();
       }
       return;
     }
@@ -2364,6 +2495,7 @@ export class ChatManager {
     };
     const toolCallsAccum: ToolCallRecord[] = [];
     const pendingToolStarts = new Map<string, Array<{ toolName: string; args?: Record<string, unknown> }>>();
+    let sessionManager: SessionManager | undefined;
     let fallbackInfo:
       | { primaryModel: string; fallbackModel: string; triggerPoint: "session-creation" | "prompt-time" }
       | undefined;
@@ -2397,7 +2529,7 @@ export class ChatManager {
         ],
         replayFromEventId: lastStreamEventId,
         updatedAt: new Date().toISOString(),
-      });
+      }, generationId);
     };
 
     try {
@@ -2417,7 +2549,7 @@ export class ChatManager {
         toolCalls: [],
         replayFromEventId: 0,
         updatedAt: new Date().toISOString(),
-      });
+      }, generationId);
 
       const parsedSkillCommands = parseSkillCommands(content);
 
@@ -2453,7 +2585,7 @@ export class ChatManager {
           void Promise.resolve(emitted).catch(() => undefined);
         } catch { /* telemetry must not enter the message-save failure path */ }
       } catch (err) {
-        this.flushInFlightGenerationPersist(sessionId, null);
+        await this.flushInFlightGenerationPersist(sessionId, null, generationId);
         chatStreamManager.broadcast(sessionId, {
           type: "error",
           data: `Failed to save message: ${err instanceof Error ? err.message : "Unknown error"}`,
@@ -2625,7 +2757,7 @@ export class ChatManager {
       // the Claude CLI --resume session it owns) is keyed off the chat. On the
       // first user message we create a fresh, file-backed session and persist
       // its path; subsequent messages reopen the same file.
-      const sessionManager = await this.resolveCliSessionManager(session);
+      sessionManager = await this.resolveCliSessionManager(session);
 
       /*
        * FNXC:ChatMessageEdit 2026-07-07-09:00:
@@ -2881,11 +3013,15 @@ export class ChatManager {
         ...(this.taskStore ? { mcpServers: (await resolveMcpServersForStore(this.taskStore, { agentId: agent?.id })).servers } : {}),
         ...sessionOptions,
       });
-      this.activeGenerations.set(sessionId, { abortController, agentResult, generationId });
-
-      if (abortController.signal.aborted) {
+      const generationEntry = this.activeGenerations.get(sessionId);
+      if (!generationEntry || generationEntry.generationId !== generationId) {
         agentResult.session.dispose?.();
         return;
+      }
+      generationEntry.agentResult = agentResult;
+
+      if (abortController.signal.aborted) {
+        throw new Error("Generation cancelled");
       }
 
       // Send user message and get response
@@ -2896,7 +3032,7 @@ export class ChatManager {
       );
 
       if (abortController.signal.aborted) {
-        return;
+        throw new Error("Generation cancelled");
       }
 
       interface AgentMessage {
@@ -2917,7 +3053,7 @@ export class ChatManager {
           effectiveModelId,
         );
         await persistFailureMessage(this.chatStore, sessionId, failureInfo);
-        this.flushInFlightGenerationPersist(sessionId, null);
+        await this.flushInFlightGenerationPersist(sessionId, null, generationId);
         chatStreamManager.broadcast(sessionId, {
           type: "error",
           data: failureInfo,
@@ -2985,7 +3121,7 @@ export class ChatManager {
         });
       }
 
-      this.flushInFlightGenerationPersist(sessionId, null);
+      await this.flushInFlightGenerationPersist(sessionId, null, generationId);
 
       // Broadcast done event with persisted assistant snapshot so clients can
       // render completion even when incremental text deltas were absent.
@@ -3007,12 +3143,76 @@ export class ChatManager {
         },
       }, broadcastOptions);
     } catch (err) {
+      const generationEntry = this.activeGenerations.get(sessionId);
+      const isExplicitCancellation = abortController.signal.aborted
+        && generationEntry?.generationId === generationId
+        && generationEntry.cancellationRequested;
+      if (isExplicitCancellation) {
+        let interruptedMessage: ChatMessage | undefined;
+        let interruptionDurable = true;
+        // FNXC:ChatCancellation 2026-08-19-05:20:
+        // Stop is a durable conversation transition: save the visible prefix to both the PostgreSQL transcript and the reopened pi session before clearing its checkpoint. A failed durable write keeps the checkpoint available for recovery and reports failure so clients retain their local prefix.
+        if (accumulatedText || accumulatedThinking || toolCallsAccum.length > 0) {
+          if (accumulatedText) {
+            try {
+              this.persistInterruptedSessionContext(sessionManager, session, accumulatedText);
+            } catch (persistErr) {
+              interruptionDurable = false;
+              diagnostics.error(`Failed to persist interrupted pi context for session ${sessionId}:`, persistErr);
+            }
+          }
+          try {
+            interruptedMessage = await this.chatStore.addMessage(sessionId, {
+              role: "assistant",
+              content: accumulatedText,
+              thinkingOutput: accumulatedThinking || undefined,
+              metadata: {
+                interrupted: true,
+                ...(fallbackInfo ? { fallback: fallbackInfo } : {}),
+                ...(toolCallsAccum.length > 0 ? { toolCalls: toolCallsAccum } : {}),
+              },
+            });
+          } catch (persistErr) {
+            interruptionDurable = false;
+            diagnostics.error(`Failed to persist interrupted response for session ${sessionId}:`, persistErr);
+          }
+        }
+
+        if (interruptionDurable) {
+          await this.flushInFlightGenerationPersist(sessionId, null, generationId);
+        }
+        const current = this.activeGenerations.get(sessionId);
+        if (current?.generationId === generationId) {
+          current.cancellationResult = {
+            success: interruptionDurable,
+            interrupted: Boolean(interruptedMessage),
+            ...(interruptedMessage ? { message: interruptedMessage } : {}),
+          };
+          chatStreamManager.broadcast(sessionId, {
+            type: "done",
+            data: {
+              messageId: interruptedMessage?.id ?? "",
+              ...(interruptedMessage ? {
+                message: {
+                  id: interruptedMessage.id,
+                  sessionId: interruptedMessage.sessionId,
+                  role: "assistant" as const,
+                  content: interruptedMessage.content,
+                  thinkingOutput: interruptedMessage.thinkingOutput,
+                  metadata: interruptedMessage.metadata,
+                  attachments: interruptedMessage.attachments,
+                  createdAt: interruptedMessage.createdAt,
+                },
+              } : {}),
+              interrupted: true,
+            },
+          }, broadcastOptions);
+        }
+        return;
+      }
+
       if (abortController.signal.aborted) {
-        this.flushInFlightGenerationPersist(sessionId, null);
-        chatStreamManager.broadcast(sessionId, {
-          type: "error",
-          data: "Generation cancelled",
-        }, broadcastOptions);
+        await this.flushInFlightGenerationPersist(sessionId, null, generationId);
         return;
       }
 
@@ -3045,7 +3245,7 @@ export class ChatManager {
         diagnostics.error(`Failed to persist failure message for session ${sessionId}:`, persistErr);
       }
 
-      this.flushInFlightGenerationPersist(sessionId, null);
+      await this.flushInFlightGenerationPersist(sessionId, null, generationId);
 
       chatStreamManager.broadcast(sessionId, {
         type: "error",
@@ -3060,6 +3260,7 @@ export class ChatManager {
       if (stillOwnsSlot) {
         this.activeGenerations.delete(sessionId);
       }
+      generationState?.resolveSettled?.();
 
       // Dispose the agent session — but ONLY when we still own the slot.
       //
@@ -3084,30 +3285,111 @@ export class ChatManager {
     }
   }
 
-  cancelGeneration(sessionId: string): boolean {
-    const entry = this.activeGenerations.get(sessionId);
-    if (!entry) {
-      return false;
+  /*
+   * FNXC:ChatMessageEdit 2026-08-19-03:34:
+   * A saved edit is a single fenced operation: validate the persisted user target,
+   * rewind PostgreSQL and reachable pi history before SSE acceptance, then allocate
+   * the generation that the replacement POST will subscribe to. The reservation
+   * prevents an ordinary send from aborting the rewind window or a second edit from
+   * deleting a different transcript range.
+   */
+  async prepareReplacement(
+    sessionId: string,
+    fromMessageId: string,
+  ): Promise<{ generationId: number; retained: ChatMessage[] }> {
+    if (this.replacementPreparations.has(sessionId)) {
+      throw new ChatReplacementError(`A message replacement is already being prepared for session ${sessionId}`, 409);
     }
 
-    entry.abortController.abort();
+    const preparation: ChatReplacementPreparation = { promise: Promise.resolve({ generationId: 0, retained: [] }) };
+    preparation.promise = (async () => {
+      const session = await this.chatStore.getSession(sessionId);
+      if (!session) {
+        throw new ChatReplacementError(`Chat session ${sessionId} not found`, 404);
+      }
+      if (session.cliExecutorAdapterId) {
+        throw new ChatReplacementError("Message replacement is not supported for CLI-backed chat sessions");
+      }
 
-    if (entry.agentResult) {
-      try {
-        entry.agentResult.session.dispose?.();
-      } catch (err) {
-        diagnostics.error(`Error disposing agent session during cancellation:`, err);
+      const target = await this.chatStore.getMessage(fromMessageId);
+      if (!target || target.sessionId !== sessionId) {
+        throw new ChatReplacementError(`Message ${fromMessageId} not found in session ${sessionId}`, 404);
+      }
+      if (target.role !== "user") {
+        throw new ChatReplacementError(`Message ${fromMessageId} is not a user message and cannot be edited`);
+      }
+      if (this.activeGenerations.has(sessionId)) {
+        throw new ChatReplacementError(`Cannot edit message ${fromMessageId}: a generation is currently in progress for session ${sessionId}`);
+      }
+
+      const { retained } = await this.rewindSessionForEdit(sessionId, fromMessageId);
+      const allocated = this.beginGeneration(sessionId, { allowReplacementPreparation: true });
+      preparation.generationId = allocated.generationId;
+      return { generationId: allocated.generationId, retained };
+    })();
+    this.replacementPreparations.set(sessionId, preparation);
+
+    try {
+      return await preparation.promise;
+    } catch (error) {
+      const current = this.replacementPreparations.get(sessionId);
+      if (current === preparation) {
+        this.replacementPreparations.delete(sessionId);
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Release a prepared replacement when the route cannot wire its SSE response.
+   * This is intentionally narrow: a send that reached the accepted response owns
+   * cleanup through its normal generation-finally path.
+   */
+  releasePreparedReplacement(sessionId: string, generationId: number): void {
+    const preparation = this.replacementPreparations.get(sessionId);
+    if (preparation?.generationId !== generationId) {
+      return;
+    }
+    this.replacementPreparations.delete(sessionId);
+    const active = this.activeGenerations.get(sessionId);
+    if (active?.generationId === generationId) {
+      active.abortController.abort();
+      this.activeGenerations.delete(sessionId);
+      active.resolveSettled();
+    }
+  }
+
+  /**
+   * FNXC:ChatCancellation 2026-08-21-01:36:
+   * `/new` and `/clear` always cross this server-authoritative barrier because local streaming
+   * state can be stale. An idle session has no interrupted state to persist, so absence is a
+   * successful no-op; only an active generation that cannot become durable reports failure.
+   */
+  async cancelGeneration(sessionId: string): Promise<ChatCancellationResult> {
+    const entry = this.activeGenerations.get(sessionId);
+    if (!entry) {
+      return { success: true, interrupted: false };
+    }
+
+    if (!entry.cancellationRequested) {
+      entry.cancellationRequested = true;
+      entry.abortController.abort();
+
+      if (entry.agentResult) {
+        try {
+          entry.agentResult.session.dispose?.();
+        } catch (err) {
+          diagnostics.error(`Error disposing agent session during cancellation:`, err);
+        }
       }
     }
 
-    this.flushInFlightGenerationPersist(sessionId, null);
-
-    chatStreamManager.broadcast(sessionId, {
-      type: "error",
-      data: "Generation cancelled",
-    }, { generationId: entry.generationId });
-
-    return true;
+    // The send loop owns persistence and its terminal SSE event. Waiting here
+    // makes the HTTP cancel response a durable reconciliation barrier for clients.
+    if (entry.settled) {
+      await entry.settled;
+    }
+    return entry.cancellationResult ?? { success: true, interrupted: false };
   }
 
   /**

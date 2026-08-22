@@ -259,58 +259,7 @@ describe("WorkflowSettingsPanel — Values tab", () => {
     expect(optionValues).toEqual(expect.arrayContaining(["off", "observe", "steer", "autonomous"]));
   });
 
-  it("renders and saves the automatic large-task splitting workflow toggle once", async () => {
-    const triageToggle: WorkflowSettingDefinition[] = [
-      {
-        id: "triageProactiveSubtaskSplittingEnabled",
-        name: "Triage proactive subtask splitting",
-        type: "boolean",
-        default: true,
-      },
-    ];
-    mockFetchValues.mockResolvedValueOnce(
-      payload({ effective: { triageProactiveSubtaskSplittingEnabled: true } }),
-    );
-    mockUpdateValues
-      .mockResolvedValueOnce(
-        payload({
-          stored: { triageProactiveSubtaskSplittingEnabled: false },
-          effective: { triageProactiveSubtaskSplittingEnabled: false },
-        }),
-      )
-      .mockResolvedValueOnce(
-        payload({ effective: { triageProactiveSubtaskSplittingEnabled: true } }),
-      );
 
-    render(<Host initial={triageToggle} readOnly />);
-
-    const controls = await screen.findAllByLabelText("Automatic large-task splitting");
-    expect(controls).toHaveLength(1);
-    const toggle = controls[0] as HTMLInputElement;
-    expect(toggle.checked).toBe(true);
-    expect(screen.getByText(/Default enabled/i)).toBeInTheDocument();
-    expect(screen.getByText(/breakIntoSubtasks: true/i)).toBeInTheDocument();
-    expect(screen.queryByTestId("wf-settings-customized-triageProactiveSubtaskSplittingEnabled")).not.toBeInTheDocument();
-
-    fireEvent.click(toggle);
-    fireEvent.click(screen.getByTestId("wf-settings-save-values"));
-    await waitFor(() => expect(mockUpdateValues).toHaveBeenCalledWith(
-      "wf-1",
-      { triageProactiveSubtaskSplittingEnabled: false },
-      "proj-1",
-    ));
-    expect(screen.getByTestId("wf-settings-customized-triageProactiveSubtaskSplittingEnabled")).toBeInTheDocument();
-
-    const row = screen.getByTestId("wf-settings-value-triageProactiveSubtaskSplittingEnabled");
-    const clearButton = within(row).getByRole("button", { name: "Reset to default" });
-    fireEvent.click(clearButton);
-    fireEvent.click(screen.getByTestId("wf-settings-save-values"));
-    await waitFor(() => expect(mockUpdateValues).toHaveBeenLastCalledWith(
-      "wf-1",
-      { triageProactiveSubtaskSplittingEnabled: null },
-      "proj-1",
-    ));
-  });
 
   it("batches three field edits into exactly ONE patch on Save values", async () => {
     mockFetchValues.mockResolvedValue(payload({ effective: { "timeout-ms": 1000, "new-sessions": false } }));

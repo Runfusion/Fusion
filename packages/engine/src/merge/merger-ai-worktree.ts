@@ -17,6 +17,7 @@ import { activeSessionRegistry } from "../agents/active-session-registry.js";
 import type { RunAuditor } from "../util/run-audit.js";
 import { MIN_TEMP_WORKTREE_REAP_AGE_MS } from "../self-healing.js";
 import { resolveAiMergeRootPath, resolveLegacyAiMergeRootPath } from "../worktree/worktree-paths.js";
+import { isBenignAbsentRemovalError, removeDirectoryWithRetry } from "../worktree/worktree-removal-retry.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -47,10 +48,7 @@ function describeCleanupError(err: unknown): string {
 }
 
 export function isBenignAbsentWorktreeError(err: unknown): boolean {
-  const code = getErrorStringProperty(err, "code");
-  if (code === "ENOENT") return true;
-  const description = describeCleanupError(err);
-  return /is not a working tree|No such file or directory|spawn\s+.*\bENOENT\b/i.test(description);
+  return isBenignAbsentRemovalError(err);
 }
 
 function ensureAiMergeRootIgnored(projectRootDir: string, settings?: Settings): void {
@@ -173,22 +171,24 @@ export async function pruneExistingAiMergeWorktrees(
         }
       }
 
-      try {
-        cleanupAttempted = true;
-        rmSync(canonicalPath, { recursive: true, force: true });
-        await audit.git({ type: "merge:ai-worktree-cleanup", target: canonicalPath, metadata: { taskId, mergeRoot: canonicalPath, phase: "pre-merge-prune", success: true, ...(alreadyAbsent ? { alreadyAbsent: true, idempotent: true } : {}) } });
+      /*
+      FNXC:AiMerge 2026-08-20-02:04:
+      This cleanup has already passed active-session and age guards. Retry only the filesystem operation: a residual directory stays registered because plain git prune can reclaim an admin entry only after its path is gone.
+      */
+      cleanupAttempted = true;
+      const removal = await removeDirectoryWithRetry({
+        path: canonicalPath,
+        rm: (path, options) => rmSync(path, options),
+        log: (message) => void log(`AI merge pre-merge prune: ${message}`),
+      });
+      if (removal.removed) {
+        const idempotent = alreadyAbsent || removal.benignAbsent;
+        if (removal.benignAbsent) await log(`AI merge pre-merge prune: worktree ${canonicalPath} was already absent during filesystem cleanup; treating cleanup as idempotent`);
+        await audit.git({ type: "merge:ai-worktree-cleanup", target: canonicalPath, metadata: { taskId, mergeRoot: canonicalPath, phase: "pre-merge-prune", success: true, ...(idempotent ? { alreadyAbsent: true, idempotent: true } : {}) } });
         pruned++;
-      } catch (err: unknown) {
-        if (isBenignAbsentWorktreeError(err)) {
-          await log(`AI merge pre-merge prune: worktree ${canonicalPath} was already absent during filesystem cleanup; treating cleanup as idempotent`);
-          await audit.git({ type: "merge:ai-worktree-cleanup", target: canonicalPath, metadata: { taskId, mergeRoot: canonicalPath, phase: "pre-merge-prune", success: true, alreadyAbsent: true, idempotent: true } });
-          pruned++;
-          continue;
-        }
-        const error = getErrorMessage(err);
-        const code = getErrorStringProperty(err, "code");
-        await log(`AI merge pre-merge prune: filesystem rm failed for ${canonicalPath}${code ? ` (${code})` : ""}: ${error}`);
-        await audit.git({ type: "merge:ai-worktree-cleanup", target: canonicalPath, metadata: { taskId, mergeRoot: canonicalPath, phase: "pre-merge-prune", success: false, error, ...(code ? { code } : {}) } });
+      } else {
+        await log(`AI merge pre-merge prune: filesystem rm failed for ${canonicalPath}${removal.lastCode ? ` (${removal.lastCode})` : ""}: ${removal.lastError ?? "unknown error"}`);
+        await audit.git({ type: "merge:ai-worktree-cleanup", target: canonicalPath, metadata: { taskId, mergeRoot: canonicalPath, phase: "pre-merge-prune", success: false, error: removal.lastError ?? "unknown error", attempts: removal.attempts, residual: true, registrationRetained: true, ...(removal.lastCode ? { code: removal.lastCode } : {}) } });
       }
     }
   }
@@ -226,48 +226,47 @@ export async function cleanupAiMergeWorktree(input: {
   let alreadyAbsent = false;
 
   if (worktreeAdded) {
-    if (!existsSync(canonicalRoot) && !existsSync(mergeRoot)) {
-      alreadyAbsent = true;
-      await log(`AI merge cleanup: worktree ${canonicalRoot} was already absent before git removal; treating cleanup as idempotent`);
-      await audit.git({ type: "merge:ai-worktree-cleanup", target: canonicalRoot, metadata: { ...cleanupMetadata, phase: "git-remove", success: true, alreadyAbsent: true, idempotent: true, code: "ENOENT" } });
-    } else {
-      try {
-        await gitRunner(["worktree", "remove", "--force", canonicalRoot], projectRootDir);
-        await audit.git({ type: "merge:ai-worktree-cleanup", target: canonicalRoot, metadata: { ...cleanupMetadata, phase: "git-remove", success: true } });
-      } catch (err: unknown) {
-        const error = describeCleanupError(err);
-        const code = getErrorStringProperty(err, "code");
-        if (isBenignAbsentWorktreeError(err)) {
-          alreadyAbsent = true;
-          await log(`AI merge cleanup: worktree ${canonicalRoot} was already absent/de-registered during git removal; treating cleanup as idempotent`);
-          await audit.git({ type: "merge:ai-worktree-cleanup", target: canonicalRoot, metadata: { ...cleanupMetadata, phase: "git-remove", success: true, alreadyAbsent: true, idempotent: true, error, ...(code ? { code } : {}) } });
-        } else {
-          await log(`AI merge cleanup: git worktree remove failed for ${canonicalRoot}${code ? ` (${code})` : ""}: ${error}`);
-          await audit.git({ type: "merge:ai-worktree-cleanup", target: canonicalRoot, metadata: { ...cleanupMetadata, phase: "git-remove", success: false, error, ...(code ? { code } : {}) } });
-        }
+    /*
+    FNXC:AiMerge 2026-08-20-03:08:
+    A missing clean room can still have a Git registration, so invoke Git even when the path is absent. Its authoritative "is not a working tree" response must reach the shared benign classifier before the one-attempt ENOENT filesystem confirmation and unconditional prune reclaim the stale registration.
+    */
+    try {
+      await gitRunner(["worktree", "remove", "--force", canonicalRoot], projectRootDir);
+      await audit.git({ type: "merge:ai-worktree-cleanup", target: canonicalRoot, metadata: { ...cleanupMetadata, phase: "git-remove", success: true } });
+    } catch (err: unknown) {
+      const error = describeCleanupError(err);
+      const code = getErrorStringProperty(err, "code");
+      if (isBenignAbsentWorktreeError(err)) {
+        alreadyAbsent = true;
+        await log(`AI merge cleanup: worktree ${canonicalRoot} was already absent/de-registered during git removal; treating cleanup as idempotent`);
+        await audit.git({ type: "merge:ai-worktree-cleanup", target: canonicalRoot, metadata: { ...cleanupMetadata, phase: "git-remove", success: true, alreadyAbsent: true, idempotent: true, error, ...(code ? { code } : {}) } });
+      } else {
+        await log(`AI merge cleanup: git worktree remove failed for ${canonicalRoot}${code ? ` (${code})` : ""}: ${error}`);
+        await audit.git({ type: "merge:ai-worktree-cleanup", target: canonicalRoot, metadata: { ...cleanupMetadata, phase: "git-remove", success: false, error, ...(code ? { code } : {}) } });
       }
     }
   }
 
   let removedFromFilesystem = false;
   for (const target of removalTargets) {
-    try {
-      await rmRunner(target, { recursive: true, force: true });
-      await audit.git({ type: "merge:ai-worktree-cleanup", target, metadata: { ...cleanupMetadata, phase: "fs-rm", path: target, success: true, ...(alreadyAbsent ? { alreadyAbsent: true, idempotent: true } : {}) } });
+    /*
+    FNXC:AiMerge 2026-08-20-02:04:
+    The inline owner may retry a just-used clean room, but it must preserve its target-order and audit phases. A stale Git registration is benign only for this idempotent cleanup path, never a reason to bypass filesystem liveness policy elsewhere.
+    */
+    const removal = await removeDirectoryWithRetry({
+      path: target,
+      rm: rmRunner,
+      log: (message) => void log(`AI merge cleanup: ${message}`),
+    });
+    if (removal.removed) {
+      const idempotent = alreadyAbsent || removal.benignAbsent;
+      if (removal.benignAbsent) await log(`AI merge cleanup: worktree ${target} was already absent during filesystem cleanup; treating cleanup as idempotent`);
+      await audit.git({ type: "merge:ai-worktree-cleanup", target, metadata: { ...cleanupMetadata, phase: "fs-rm", path: target, success: true, ...(idempotent ? { alreadyAbsent: true, idempotent: true } : {}) } });
       removedFromFilesystem = true;
       break;
-    } catch (err: unknown) {
-      const error = getErrorMessage(err);
-      const code = getErrorStringProperty(err, "code");
-      if (isBenignAbsentWorktreeError(err)) {
-        await log(`AI merge cleanup: worktree ${target} was already absent during filesystem cleanup; treating cleanup as idempotent`);
-        await audit.git({ type: "merge:ai-worktree-cleanup", target, metadata: { ...cleanupMetadata, phase: "fs-rm", path: target, success: true, alreadyAbsent: true, idempotent: true, error, ...(code ? { code } : {}) } });
-        removedFromFilesystem = true;
-        break;
-      }
-      await log(`AI merge cleanup: filesystem rm failed for ${target}${code ? ` (${code})` : ""}: ${error}`);
-      await audit.git({ type: "merge:ai-worktree-cleanup", target, metadata: { ...cleanupMetadata, phase: "fs-rm", path: target, success: false, error, ...(code ? { code } : {}) } });
     }
+    await log(`AI merge cleanup: filesystem rm failed for ${target}${removal.lastCode ? ` (${removal.lastCode})` : ""}: ${removal.lastError ?? "unknown error"}`);
+    await audit.git({ type: "merge:ai-worktree-cleanup", target, metadata: { ...cleanupMetadata, phase: "fs-rm", path: target, success: false, error: removal.lastError ?? "unknown error", attempts: removal.attempts, residual: true, registrationRetained: true, ...(removal.lastCode ? { code: removal.lastCode } : {}) } });
   }
 
   if (!removedFromFilesystem) {

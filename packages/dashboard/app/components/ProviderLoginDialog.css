@@ -1,0 +1,219 @@
+/*
+FNXC:ProviderAuth 2026-08-18-04:20:
+Styling for the persistent paste-back login dialog.
+
+SPACING COMES FROM THE SHARED PRIMITIVES. The header and action rows use `.modal-header` /
+`.modal-actions`, which already carry `var(--modal-padding)`; nothing here re-pads them. The body is
+the only region without a primitive, so it defines ONE inset from the same token and every child
+inherits it — the first version padded the header, the steps, the instructions, the paste form and
+the error line separately, which is how they drifted out of alignment with each other and with the
+rest of the app's dialogs.
+*/
+.provider-login-dialog {
+  width: min(calc(var(--space-xl) * 22), calc(100vw - var(--space-2xl)));
+  display: flex;
+  flex-direction: column;
+  /*
+  The dialog grows with the provider's instructions text, and `.modal`'s 80vh cap alone let the action
+  row fall off the bottom of a short window — the Cancel control was unreachable. Bound the panel and
+  scroll the body instead, keeping the header and actions pinned inside the viewport.
+  */
+  max-height: min(80vh, calc(100dvh - var(--space-2xl)));
+  overflow: hidden;
+}
+
+.provider-login-dialog__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  padding: var(--modal-padding);
+  padding-top: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  min-height: 0;
+}
+
+.provider-login-dialog__steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.provider-login-dialog__step {
+  display: flex;
+  gap: var(--space-sm);
+  align-items: flex-start;
+  color: var(--text-muted);
+}
+
+.provider-login-dialog__step-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: var(--border);
+}
+
+/* The active step is the one the operator has to act on, so it carries the accent. */
+.provider-login-dialog__step--active .provider-login-dialog__step-icon {
+  color: var(--color-primary, var(--in-progress));
+}
+
+.provider-login-dialog__step--done .provider-login-dialog__step-icon {
+  color: var(--done, var(--color-success));
+}
+
+.provider-login-dialog__step--active .provider-login-dialog__step-body strong,
+.provider-login-dialog__step--done .provider-login-dialog__step-body strong {
+  color: var(--text);
+}
+
+.provider-login-dialog__step-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  min-width: 0;
+}
+
+.provider-login-dialog__step-body strong {
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.provider-login-dialog__step-body small {
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
+.provider-login-dialog__reopen {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  margin-top: var(--space-xs);
+}
+
+.provider-login-dialog__spinner {
+  animation: provider-login-dialog-spin var(--duration-slow, 1s) linear infinite;
+}
+
+@keyframes provider-login-dialog-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Nested surfaces span the body inset rather than adding one of their own. */
+.provider-login-dialog__body > .oauth-manual-code,
+.provider-login-dialog__body > .login-instructions,
+.provider-login-dialog__error {
+  margin: 0;
+}
+
+/*
+FNXC:ProviderAuth 2026-08-18-05:05:
+The pinned paste region sits between the scrolling body and the action row, so the field and its
+Submit stay on screen no matter how long the provider's instructions are or how short the viewport
+is. It carries the same inset as the body and a top divider to separate it from the scroll area.
+*/
+.provider-login-dialog__paste {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  /*
+  FNXC:ProviderAuth 2026-08-18-06:45:
+  Horizontal inset comes from `--modal-padding` so this region always lines up with .modal-header and
+  .modal-actions under any theme. Vertical is deliberately LARGER than that token: themes set
+  `--modal-padding: var(--space-md) var(--space-lg)` (10px at runtime), which is a header-row density
+  and left this cluster — prompt, textarea, Submit, help text — crowded against its own divider and
+  the action row. Order matters: `padding` sets both axes from the token, then `padding-block`
+  replaces only the vertical half.
+  */
+  padding: var(--modal-padding);
+  padding-block: var(--space-lg);
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+}
+
+/*
+FNXC:ProviderAuth 2026-08-18-06:45:
+The shared form is built for row density inside a provider card: ~6px between its prompt, field and
+Submit. As this dialog's primary task it needs breathing room between those three, so open the gaps
+here only — the card usages keep their compact rhythm.
+*/
+.provider-login-dialog__paste .oauth-manual-code {
+  margin-top: 0;
+  gap: var(--space-md);
+}
+
+.provider-login-dialog__paste .oauth-manual-code__actions {
+  margin-top: var(--space-xs);
+}
+
+/*
+FNXC:ProviderAuth 2026-08-18-05:05:
+THE PASTE FIELD MUST READ AS A FIELD. `.form-input` fills with `var(--surface)` and outlines with
+`var(--border)` — and a `.modal` panel is ALSO `var(--surface)`, so inside a dialog the input's fill
+matches its background exactly and the only thing separating them is a near-black hairline
+(measured #0c0c0e on #0c0c0e with a #27272a border). It read as having no border at all, which
+matters more here than elsewhere because pasting into this box is the whole point of the dialog.
+Sink the field against the panel and strengthen its edge, both from existing tokens.
+*/
+.provider-login-dialog .oauth-manual-code__input {
+  background: var(--bg);
+  border-color: var(--border-strong);
+}
+
+/*
+FNXC:ProviderAuth 2026-08-18-05:05:
+`btn-sm` (4px 10px, ~25px tall) is a row-density control; as this dialog's primary commit action it
+was too small to read as the thing to press. Give it the standard control padding and make it the
+accented action, without touching the shared OAuthManualCodeForm used at row density in the cards.
+*/
+.provider-login-dialog .oauth-manual-code__actions {
+  gap: var(--space-sm);
+  margin-top: var(--space-xs);
+}
+
+.provider-login-dialog .oauth-manual-code__actions .btn {
+  padding: var(--space-sm) var(--space-lg);
+  font-size: 13px;
+}
+
+.provider-login-dialog__error {
+  line-height: 1.45;
+}
+
+/*
+FNXC:ProviderAuth 2026-08-18-04:20:
+The overlay dims the page. `.modal-overlay` is deliberately transparent for inline modals, but this
+dialog is a hard interruption of an OAuth flow — without a scrim it read as floating debris over the
+onboarding modal rather than the thing to act on.
+*/
+.provider-login-dialog-overlay {
+  background: color-mix(in srgb, var(--text) 35%, transparent);
+}
+
+@media (max-width: 768px), (max-height: 480px) {
+  .provider-login-dialog-overlay {
+    align-items: center;
+    padding: max(var(--space-md), env(safe-area-inset-top, 0px)) var(--space-sm)
+      max(var(--space-md), env(safe-area-inset-bottom, 0px));
+  }
+
+  .provider-login-dialog {
+    width: 100%;
+    max-height: calc(100dvh - var(--space-2xl));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .provider-login-dialog__spinner {
+    animation: none;
+  }
+}

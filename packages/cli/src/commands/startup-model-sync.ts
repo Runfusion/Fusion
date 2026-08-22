@@ -4,6 +4,8 @@ const OPENROUTER_PUBLIC_MODELS_URL = "https://openrouter.ai/api/v1/models";
 const OPENROUTER_USER_MODELS_URL = "https://openrouter.ai/api/v1/models/user";
 const OPENROUTER_DEFAULT_REFERER = "https://runfusion.ai";
 const OPENROUTER_DEFAULT_TITLE = "Fusion";
+const ORCAROUTER_MODELS_URL = "https://api.orcarouter.ai/v1/models";
+const ORCAROUTER_DEFAULT_BASE_URL = "https://api.orcarouter.ai/v1";
 const OPENCODE_MODELS_TIMEOUT_MS = 15_000;
 
 type ModelConfig = {
@@ -52,6 +54,7 @@ interface OpenRouterProviderPreferences {
 
 interface SettingsLike {
   openrouterModelSync?: boolean;
+  orcarouterModelSync?: boolean;
   opencodeGoModelSync?: boolean;
   openrouterAppAttribution?: { referer?: string; title?: string };
   openrouterModelFilters?: OpenRouterModelFilters;
@@ -203,6 +206,55 @@ async function syncOpenRouterModels(options: StartupSyncOptions, settings: Setti
   log("openrouter", `Synced ${models.length} models from OpenRouter API`);
 }
 
+/*
+FNXC:OrcaRouterProvider 2026-08-21-14:00:
+Fusion ships OrcaRouter as a named OpenAI-compatible gateway provider, mirroring
+the OpenRouter catalog-sync pattern. OrcaRouter exposes a public `/v1/models`
+catalog (same OpenAI shape as OpenRouter), so the same `toOpenRouterModels`
+mapping is reused — the catalog returns prefixed model IDs
+(`anthropic/claude-sonnet-5`, `deepseek/deepseek-v4-flash-0731`) that OrcaRouter
+accepts verbatim on `POST /v1/chat/completions`. Registration uses
+`api: "openai-completions"` and resolves its key from the `ORCAROUTER_API_KEY`
+environment variable so operators can store a key without touching the
+dashboard. Sync is gated by `orcarouterModelSync` (default true), and requests
+carry the key only when present.
+*/
+async function syncOrcaRouterModels(options: StartupSyncOptions): Promise<void> {
+  const { authStorage, modelRegistry, log } = options;
+  const apiKey = await authStorage.getApiKey("orcarouter");
+  const headers: Record<string, string> = {};
+  if (apiKey) {
+    headers.Authorization = `Bearer ${apiKey}`;
+  }
+
+  const response = await fetch(ORCAROUTER_MODELS_URL, { headers });
+
+  if (!response.ok) {
+    log("orcarouter", `Failed to sync models: HTTP ${response.status}`);
+    return;
+  }
+
+  const json = await response.json() as {
+    data?: Array<{
+      id: string;
+      name: string;
+      context_length?: number;
+      top_provider?: { max_completion_tokens?: number };
+      pricing?: Record<string, string>;
+      architecture?: { modality?: string; input_modalities?: string[] };
+    }>;
+  };
+
+  const models = toOpenRouterModels(json);
+  modelRegistry.registerProvider("orcarouter", {
+    baseUrl: ORCAROUTER_DEFAULT_BASE_URL,
+    apiKey: "ORCAROUTER_API_KEY",
+    api: "openai-completions",
+    models,
+  });
+  log("orcarouter", `Synced ${models.length} models from OrcaRouter API`);
+}
+
 export function normalizeOpencodeGoModel(modelId: string): ModelConfig {
   const trimmed = modelId.trim();
   // Strip the provider prefix (opencode/ or opencode-go/) — the Pi SDK
@@ -327,6 +379,15 @@ export async function syncStartupModels(options: StartupSyncOptions): Promise<vo
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       options.log("openrouter", `Failed to sync models: ${message}`);
+    }
+  }
+
+  if (settings.orcarouterModelSync !== false) {
+    try {
+      await syncOrcaRouterModels(options);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      options.log("orcarouter", `Failed to sync models: ${message}`);
     }
   }
 

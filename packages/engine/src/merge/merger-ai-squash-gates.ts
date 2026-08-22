@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { Task, TaskStore } from "@fusion/core";
-import { deriveRepoForPath, deriveRepoScopeSubset, UNSCOPED_REPO } from "../worktree/workspace-paths.js";
+import { resolveRepoDeclaredScope } from "../worktree/workspace-paths.js";
 import { createCommitRangeFilesReader, enforceSquashFileScopeInvariant, FileScopeViolationError } from "./merger-file-scope.js";
 import type { RunAuditor } from "../util/run-audit.js";
 
@@ -10,13 +10,10 @@ const execFileAsync = promisify(execFile);
 export function resolveRepoDeclaredScopeTransform({ repoRel, repoKeys }: { repoRel: string; repoKeys: readonly string[] }) {
   return {
     transform(scope: string[]): string[] {
-      const subset = deriveRepoScopeSubset(scope, repoRel);
-      if (subset.length) return subset;
-      return scope.some((entry) => deriveRepoForPath(entry, repoKeys) !== UNSCOPED_REPO) ? [] : scope;
+      return resolveRepoDeclaredScope(scope, repoRel, repoKeys).scope;
     },
     describe(scope: string[]): "repo-subset" | "unprefixed-fallback" | "foreign-repo-only" {
-      if (deriveRepoScopeSubset(scope, repoRel).length) return "repo-subset";
-      return scope.some((entry) => deriveRepoForPath(entry, repoKeys) !== UNSCOPED_REPO) ? "foreign-repo-only" : "unprefixed-fallback";
+      return resolveRepoDeclaredScope(scope, repoRel, repoKeys).source;
     },
   };
 }

@@ -43,6 +43,11 @@ export interface ChatMessageInfo {
   toolCalls?: ToolCallInfo[];
   fallbackInfo?: FallbackInfo;
   failureInfo?: FailureInfo;
+  /**
+   * FNXC:ChatCancellation 2026-08-19-05:20:
+   * Retain server metadata so interrupted-stop reconciliation can distinguish a durable row from an older identical reply.
+   */
+  metadata?: Record<string, unknown> | null;
   attachments?: Array<{
     id: string;
     filename: string;

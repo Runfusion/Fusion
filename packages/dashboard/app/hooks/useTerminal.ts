@@ -17,7 +17,7 @@ export interface UseTerminalReturn {
   /** Register a callback for connection events */
   onConnect: (callback: (info: { shell: string; cwd: string }) => void) => () => void;
   /** Register a callback for scrollback data */
-  onScrollback: (callback: (data: string) => void) => () => void;
+  onScrollback: (callback: (data: string, reset: boolean) => void) => () => void;
   /** Manually reconnect */
   reconnect: () => void;
   /**
@@ -37,11 +37,15 @@ interface WebSocketMessage {
   cwd?: string;
   cols?: number;
   rows?: number;
+  /** Cumulative output offset this scrollback frame brings the client up to. */
+  seq?: number;
+  /** True when the client must clear its terminal before writing this scrollback. */
+  reset?: boolean;
 }
 
 /** Buffered initial message types that must survive late subscriber registration */
 interface BufferedMessages {
-  scrollback: string | null;
+  scrollback: { data: string; reset: boolean } | null;
   connected: { shell: string; cwd: string } | null;
   /** Accumulated data messages received before any subscriber registered */
   data: string[];
@@ -122,7 +126,16 @@ export function useTerminal(sessionId: string | null, projectId?: string): UseTe
   const onDataCallbacksRef = useRef<Set<(data: string) => void>>(new Set());
   const onExitCallbacksRef = useRef<Set<(exitCode: number) => void>>(new Set());
   const onConnectCallbacksRef = useRef<Set<(info: { shell: string; cwd: string }) => void>>(new Set());
-  const onScrollbackCallbacksRef = useRef<Set<(data: string) => void>>(new Set());
+  const onScrollbackCallbacksRef = useRef<Set<(data: string, reset: boolean) => void>>(new Set());
+  /*
+  FNXC:TerminalSharing 2026-08-19-02:45:
+  How much of this session's output the terminal has already rendered. Sent as `sinceSeq` on
+  reconnect so the server replays only the gap: without it every reattach (backgrounded tab, sleep,
+  heartbeat timeout) appended a second copy of the scrollback to a terminal that still displayed it,
+  which is the duplicated-prompt-on-return symptom. Reset when the session changes, because the
+  offset is meaningless against a different PTY.
+  */
+  const renderedSeqRef = useRef<Map<string, number>>(new Map());
   const onSessionInvalidCallbacksRef = useRef<Set<() => void>>(new Set());
 
   // Buffer for initial messages received before subscribers are registered.
@@ -161,12 +174,12 @@ export function useTerminal(sessionId: string | null, projectId?: string): UseTe
     return () => onConnectCallbacksRef.current.delete(callback);
   }, []);
 
-  const onScrollback = useCallback((callback: (data: string) => void) => {
+  const onScrollback = useCallback((callback: (data: string, reset: boolean) => void) => {
     onScrollbackCallbacksRef.current.add(callback);
     // Replay buffered scrollback
     const buffer = initialBufferRef.current;
     if (buffer.scrollback) {
-      callback(buffer.scrollback);
+      callback(buffer.scrollback.data, buffer.scrollback.reset);
       // Clear after replay to prevent stale re-delivery to subsequent subscribers
       buffer.scrollback = null;
     }
@@ -301,6 +314,15 @@ export function useTerminal(sessionId: string | null, projectId?: string): UseTe
     if (projectId) {
       wsUrl += `&projectId=${encodeURIComponent(projectId)}`;
     }
+    /*
+    FNXC:TerminalSharing 2026-08-19-02:45:
+    Tell the server what this terminal has already rendered so a reconnect replays only the gap. On a
+    first connect there is no offset and the server sends the retained buffer with reset:true.
+    */
+    const renderedSeq = renderedSeqRef.current.get(sessionId);
+    if (typeof renderedSeq === "number") {
+      wsUrl += `&sinceSeq=${renderedSeq}`;
+    }
 
     // Carry the bearer token on the URL — WebSocket `new WebSocket` can't set
     // an Authorization header. `appendTokenQuery` adds `fn_token=<token>`
@@ -352,6 +374,8 @@ export function useTerminal(sessionId: string | null, projectId?: string): UseTe
         switch (msg.type) {
           case "data":
             if (msg.data) {
+              // Live output counts toward the rendered offset, same as replayed scrollback.
+              renderedSeqRef.current.set(sessionId, (renderedSeqRef.current.get(sessionId) ?? 0) + msg.data.length);
               // Buffer data when no subscribers are registered yet
               if (onDataCallbacksRef.current.size === 0) {
                 buffer.data.push(msg.data!);
@@ -359,17 +383,22 @@ export function useTerminal(sessionId: string | null, projectId?: string): UseTe
               onDataCallbacksRef.current.forEach((cb) => cb(msg.data!));
             }
             break;
-          case "scrollback":
-            if (msg.data) {
-              // Buffer scrollback only when no subscribers are registered yet
+          case "scrollback": {
+            // FNXC:TerminalSharing 2026-08-19-02:45: record how far this session has been rendered so
+            // a later reconnect can ask for the gap instead of the whole buffer.
+            if (typeof msg.seq === "number") renderedSeqRef.current.set(sessionId, msg.seq);
+            const reset = msg.reset === true;
+            const data = msg.data ?? "";
+            if (data || reset) {
               if (onScrollbackCallbacksRef.current.size === 0) {
-                buffer.scrollback = msg.data;
+                buffer.scrollback = { data, reset };
               } else {
-                onScrollbackCallbacksRef.current.forEach((cb) => cb(msg.data!));
+                onScrollbackCallbacksRef.current.forEach((cb) => cb(data, reset));
                 buffer.scrollback = null;
               }
             }
             break;
+          }
           case "connected":
             if (msg.shell && msg.cwd) {
               const connectedInfo = { shell: msg.shell!, cwd: msg.cwd! };

@@ -53,7 +53,13 @@ COPY plugins/fusion-plugin-reports/package.json ./plugins/fusion-plugin-reports/
 RUN pnpm install --frozen-lockfile
 
 COPY . .
-RUN pnpm build
+# FNXC:DockerBuild 2026-08-17-23:18: The dashboard's `vite build` transforms ~5.7k modules and
+# exceeded V8's default old-space on a stock Docker Desktop VM (8GB), aborting the whole image
+# build with "FATAL ERROR: Ineffective mark-compacts near heap limit" (exit 134). The ceiling is
+# a cap, not a reservation — V8 only grows to what the build needs — so raising it here costs
+# nothing on larger hosts and is the difference between a working and a failing `docker build`
+# on a default install. Scoped to this RUN so it never leaks into the runner stage's env.
+RUN NODE_OPTIONS=--max-old-space-size=6144 pnpm build
 
 FROM node:22-slim AS runner
 LABEL org.opencontainers.image.source="https://github.com/gsxdsm/fusion"
@@ -62,8 +68,56 @@ LABEL org.opencontainers.image.description="AI-orchestrated task board"
 ENV NODE_ENV=production
 ENV PORT=4040
 
+# FNXC:DockerRun 2026-08-18-05:35: ca-certificates is REQUIRED, not optional hardening. The slim
+# base ships zero CA certificates, and git verifies TLS against the SYSTEM store — so every HTTPS
+# clone failed with "server certificate verification failed. CAfile: none CRLfile: none", which
+# breaks project setup outright (operator report). It hid behind Node, which carries its own bundled
+# CA store: the dashboard, model APIs, and OAuth token exchanges all worked, so the image looked
+# healthy right up until the first clone.
+# FNXC:DockerRun 2026-08-18-06:05: ripgrep ships by default because the coding agents Fusion drives
+# reach for `rg` as their primary search tool; without it they silently degrade to slower/partial
+# fallbacks inside the container while working fine on a developer machine that has it installed.
+# FNXC:DockerRun 2026-08-20-04:30: git-lfs ships by default because this repository stores binary
+# assets (screenshots) as LFS objects. Without it, git silently checks out 130-byte POINTER FILES
+# instead of the real content and reports a clean tree — so an agent reads a text stub where an image
+# should be, and `git lfs` subcommands in any workflow fail outright. It is a git dependency, not an
+# optional extra: the failure is silent corruption of a working checkout, not a missing feature.
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends git \
+  && apt-get install -y --no-install-recommends git git-lfs ca-certificates ripgrep curl gnupg \
+  && rm -rf /var/lib/apt/lists/*
+
+# FNXC:DockerRun 2026-08-18-06:40: gh, tailscale, and cloudflared ship in the image.
+# Rationale per tool: `gh` backs Fusion's GitHub integration (githubAuthMode "gh-cli" is a documented
+# option and the auth route tells operators to run `gh auth login`, which is impossible if the binary
+# is absent); `cloudflared` backs the dashboard's remote-access feature, whose installer cannot
+# bootstrap itself reliably inside a slim container; `tailscale` gives the same box a private-network
+# option. All three come from their vendors' own apt repositories with signed keyrings rather than
+# curl-to-shell installers, so upgrades and signature checks follow the normal apt path.
+#
+# NOTE: installing tailscale does NOT make `tailscaled` runnable by itself — the daemon additionally
+# needs `--cap-add NET_ADMIN --device /dev/net/tun` on `docker run`. Shipping the binary is the part
+# the image can own; granting kernel capabilities stays an explicit operator decision.
+#
+# External integration evidence:
+#   gh          — repo https://github.com/cli/cli, docs https://cli.github.com/,
+#                 apt https://cli.github.com/packages, binary `gh`, key
+#                 githubcli-archive-keyring.gpg (vendor-signed; upstream-pending-verification)
+#   tailscale   — repo https://github.com/tailscale/tailscale, docs https://tailscale.com/download/linux,
+#                 apt https://pkgs.tailscale.com/stable/debian, binaries `tailscale`/`tailscaled`,
+#                 key bookworm.noarmor.gpg (vendor-signed; upstream-pending-verification)
+#   cloudflared — repo https://github.com/cloudflare/cloudflared, docs https://pkg.cloudflare.com/,
+#                 apt https://pkg.cloudflare.com/cloudflared, binary `cloudflared`,
+#                 key cloudflare-main.gpg (vendor-signed; upstream-pending-verification)
+RUN install -m 0755 -d /etc/apt/keyrings \
+  && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /etc/apt/keyrings/githubcli-archive-keyring.gpg \
+  && chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg \
+  && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list \
+  && curl -fsSL https://pkgs.tailscale.com/stable/debian/bookworm.noarmor.gpg -o /usr/share/keyrings/tailscale-archive-keyring.gpg \
+  && curl -fsSL https://pkgs.tailscale.com/stable/debian/bookworm.tailscale-keyring.list -o /etc/apt/sources.list.d/tailscale.list \
+  && curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg -o /usr/share/keyrings/cloudflare-main.gpg \
+  && echo "deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared bookworm main" > /etc/apt/sources.list.d/cloudflared.list \
+  && apt-get update \
+  && apt-get install -y --no-install-recommends gh tailscale cloudflared \
   && rm -rf /var/lib/apt/lists/*
 
 RUN corepack enable && corepack prepare pnpm@10.33.0 --activate
@@ -96,11 +150,35 @@ COPY --from=builder /app/node_modules/.pnpm/typebox@*/node_modules/typebox /app/
 # the user's project and the container working directory, so `fn dashboard` operates
 # on the mounted project. It must stay empty in the image so a bind mount never
 # shadows application code.
+# FNXC:DockerRun 2026-08-17-23:18: /home/node/.fusion must exist node-owned IN THE IMAGE, because
+# Docker seeds a fresh NAMED volume from the image's content and ownership at the mount path. The
+# documented `-v fusion-home:/home/node/.fusion` invocation previously mounted a root-owned empty
+# volume over a path that did not exist, so embedded Postgres `initdb` failed with "could not create
+# directory ... Permission denied", the dashboard supervisor burned its 4 restarts, and the container
+# went unhealthy on first run. Pre-creating it makes the documented command work with no host-side
+# chown. NOTE: this fixes named volumes only — a BIND mount keeps the host directory's ownership, so
+# a host path bound here must already be writable by uid 1000 (node).
 RUN chown node:node /app \
-  && mkdir -p /workspace \
-  && chown node:node /workspace
+  && mkdir -p /workspace /home/node/.fusion \
+  && chown node:node /workspace /home/node/.fusion
 
 USER node
+
+# FNXC:DockerRun 2026-08-18-06:55: A DEFAULT GIT IDENTITY, because a container has none and Fusion
+# mostly commits with whatever git finds in ambient config. Only `workspace-fence-ref.ts` passes
+# `-c user.name/-c user.email` explicitly; the merge commits, the `--amend` in merger-ai, and the
+# experiment git-ops all rely on the environment. With no identity every one of them dies on
+# "Author identity unknown ... Please tell me who you are", so an auto-merge reached `status:merging`
+# and stopped there with nothing in the UI to explain why (operator report).
+#
+# The values match the identity Fusion already uses for its own fence commits, so authorship stays
+# consistent; an operator who wants real authorship overrides it with `git config --global` in a
+# mounted home or a derived image. This is a FALLBACK for the container, not a substitute for
+# passing an explicit identity at the commit sites — those should still be fixed upstream so a bare
+# machine with no git config behaves the same way.
+RUN git config --global user.name "Fusion" \
+  && git config --global user.email "fusion@localhost" \
+  && git config --global init.defaultBranch main
 
 WORKDIR /workspace
 

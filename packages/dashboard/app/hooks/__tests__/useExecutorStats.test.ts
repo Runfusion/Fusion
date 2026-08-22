@@ -55,7 +55,6 @@ describe("useExecutorStats", () => {
 
       expect(result.current.stats.runningTaskCount).toBe(0);
       expect(result.current.stats.blockedTaskCount).toBe(0);
-      expect(result.current.stats.stuckTaskCount).toBe(0);
       expect(result.current.stats.queuedTaskCount).toBe(0);
       expect(result.current.stats.inReviewCount).toBe(0);
     });
@@ -177,105 +176,7 @@ describe("useExecutorStats", () => {
     });
   });
 
-  describe("stuck task detection", () => {
-    it("detects tasks in in-progress with no activity beyond threshold as stuck", async () => {
-      // Set updatedAt to 11 minutes ago
-      const elevenMinutesAgo = new Date(Date.now() - 11 * 60 * 1000).toISOString();
-      const tasks: Task[] = [
-        { ...createMockTask("FN-001", "in-progress"), updatedAt: elevenMinutesAgo },
-        { ...createMockTask("FN-002", "in-progress") }, // just updated
-      ];
-
-      // Pass 10-minute (600000ms) threshold
-      const { result } = renderHook(() => useExecutorStats(tasks, undefined, 600000));
-
-      await act(async () => {
-        await vi.advanceTimersByTimeAsync(100);
-      });
-
-      expect(result.current.stats.stuckTaskCount).toBe(1);
-    });
-
-    it("returns 0 stuck tasks when taskStuckTimeoutMs is undefined (disabled)", async () => {
-      const elevenMinutesAgo = new Date(Date.now() - 11 * 60 * 1000).toISOString();
-      const tasks: Task[] = [
-        { ...createMockTask("FN-001", "in-progress"), updatedAt: elevenMinutesAgo },
-      ];
-
-      // No threshold = stuck detection disabled
-      const { result } = renderHook(() => useExecutorStats(tasks));
-
-      await act(async () => {
-        await vi.advanceTimersByTimeAsync(100);
-      });
-
-      expect(result.current.stats.stuckTaskCount).toBe(0);
-    });
-
-    it("does not count non-in-progress tasks as stuck even if old", async () => {
-      // Set updatedAt to 11 minutes ago for a todo task
-      const elevenMinutesAgo = new Date(Date.now() - 11 * 60 * 1000).toISOString();
-      const tasks: Task[] = [
-        { ...createMockTask("FN-001", "todo"), updatedAt: elevenMinutesAgo },
-      ];
-
-      const { result } = renderHook(() => useExecutorStats(tasks, undefined, 600000));
-
-      await act(async () => {
-        await vi.advanceTimersByTimeAsync(100);
-      });
-
-      expect(result.current.stats.stuckTaskCount).toBe(0);
-    });
-
-    it("does not count recent in-progress tasks as stuck", async () => {
-      // Set updatedAt to 5 minutes ago — below the 10-minute threshold
-      const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
-      const tasks: Task[] = [
-        { ...createMockTask("FN-001", "in-progress"), updatedAt: fiveMinutesAgo },
-      ];
-
-      const { result } = renderHook(() => useExecutorStats(tasks, undefined, 600000));
-
-      await act(async () => {
-        await vi.advanceTimersByTimeAsync(100);
-      });
-
-      expect(result.current.stats.stuckTaskCount).toBe(0);
-    });
-
-    it("respects custom threshold values", async () => {
-      // Set updatedAt to 3 minutes ago
-      const threeMinutesAgo = new Date(Date.now() - 3 * 60 * 1000).toISOString();
-      const tasks: Task[] = [
-        { ...createMockTask("FN-001", "in-progress"), updatedAt: threeMinutesAgo },
-      ];
-
-      // With a 2-minute threshold, it should be stuck
-      const { result } = renderHook(() => useExecutorStats(tasks, undefined, 120000));
-
-      await act(async () => {
-        await vi.advanceTimersByTimeAsync(100);
-      });
-
-      expect(result.current.stats.stuckTaskCount).toBe(1);
-    });
-
-    it("returns 0 when taskStuckTimeoutMs is 0", async () => {
-      const elevenMinutesAgo = new Date(Date.now() - 11 * 60 * 1000).toISOString();
-      const tasks: Task[] = [
-        { ...createMockTask("FN-001", "in-progress"), updatedAt: elevenMinutesAgo },
-      ];
-
-      const { result } = renderHook(() => useExecutorStats(tasks, undefined, 0));
-
-      await act(async () => {
-        await vi.advanceTimersByTimeAsync(100);
-      });
-
-      expect(result.current.stats.stuckTaskCount).toBe(0);
-    });
-  });
+  // FNXC:StuckTagRemoval 2026-08-17-22:30: stuck-task tagging removed from the dashboard; stuck coverage deleted with it.
 
   describe("executor state derivation", () => {
     it("returns 'stopped' when globalPause is true", async () => {
@@ -780,7 +681,7 @@ describe("useExecutorStats", () => {
         { ...createMockTask("FN-016", "custom-planning" as Task["column"]), status: "planning" } as Task,
       ];
 
-      const { result } = renderHook(() => useExecutorStats(tasks, undefined, 10 * 60 * 1000, now));
+      const { result } = renderHook(() => useExecutorStats(tasks));
 
       await act(async () => {
         await vi.advanceTimersByTimeAsync(100);
@@ -788,7 +689,6 @@ describe("useExecutorStats", () => {
 
       expect(result.current.stats.queuedTaskCount).toBe(8); // waiting intake/hold only; live planners are Running
       expect(result.current.stats.runningTaskCount).toBe(4); // live execute plus planning in any lane
-      expect(result.current.stats.stuckTaskCount).toBe(1); // stuck is an in-progress subset
       expect(result.current.stats.blockedTaskCount).toBe(2); // actionable string/array blockedBy only
       expect(result.current.stats.inReviewCount).toBe(1); // in-review only
       expect("doneTaskCount" in result.current.stats).toBe(false);
@@ -815,7 +715,6 @@ describe("useExecutorStats", () => {
       expect(result.current.stats.queuedTaskCount).toBe(1);
       expect(result.current.stats.inReviewCount).toBe(0);
       expect(result.current.stats.blockedTaskCount).toBe(0);
-      expect(result.current.stats.stuckTaskCount).toBe(0);
     });
 
     it("updates counts immediately when tasks array reference changes", async () => {

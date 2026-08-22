@@ -1,17 +1,15 @@
 /**
  * AI Session Store
  *
- * Persists long-running AI session state (planning, subtask breakdown,
- * mission interview) to PostgreSQL so users can dismiss modals and return
+ * Persists long-running AI session state (planning, mission interview) to PostgreSQL so users can dismiss modals and return
  * later — even from a different browser.
  *
- * The in-memory session Maps in planning.ts / subtask-breakdown.ts /
- * mission-interview.ts remain the source of truth for live agent state.
+ * The in-memory session Maps in planning.ts / mission-interview.ts remain the source of truth for live agent state.
  * This store is the persistence shadow, updated at each state transition.
  */
 
 import { EventEmitter } from "node:events";
-import { THINKING_LEVELS, type AsyncDataLayer, type ThinkingLevel } from "@fusion/core";
+import { THINKING_LEVELS, isTaskOutputLanguage, type AsyncDataLayer, type ResolvedTaskOutputLanguage, type ThinkingLevel } from "@fusion/core";
 import {
   upsertAiSession,
   getAiSession,
@@ -279,11 +277,12 @@ export class AiSessionStore extends EventEmitter<AiSessionStoreEvents> {
    */
   async updateDraft(
     id: string,
-    draft: { initialPlan: string; modelProvider?: string; modelId?: string; thinkingLevel?: ThinkingLevel },
+    draft: { initialPlan: string; modelProvider?: string; modelId?: string; thinkingLevel?: ThinkingLevel; taskOutputLanguage?: ResolvedTaskOutputLanguage },
   ): Promise<boolean> {
     const existing = await this.get(id);
     let preservedSummarizedFor: string | undefined;
     let preservedThinkingLevel: ThinkingLevel | undefined;
+    let preservedTaskOutputLanguage: ResolvedTaskOutputLanguage | undefined;
     if (existing?.inputPayload) {
       try {
         const prev = JSON.parse(existing.inputPayload) as {
@@ -291,7 +290,15 @@ export class AiSessionStore extends EventEmitter<AiSessionStoreEvents> {
           modelProvider?: unknown;
           modelId?: unknown;
           thinkingLevel?: unknown;
+          taskOutputLanguage?: unknown;
         };
+        if (
+          prev.taskOutputLanguage && typeof prev.taskOutputLanguage === "object"
+          && isTaskOutputLanguage((prev.taskOutputLanguage as { mode?: unknown }).mode)
+          && typeof (prev.taskOutputLanguage as { instruction?: unknown }).instruction === "string"
+        ) {
+          preservedTaskOutputLanguage = prev.taskOutputLanguage as ResolvedTaskOutputLanguage;
+        }
         if (THINKING_LEVELS.includes(prev.thinkingLevel as ThinkingLevel)) {
           preservedThinkingLevel = prev.thinkingLevel as ThinkingLevel;
         }
@@ -311,6 +318,8 @@ export class AiSessionStore extends EventEmitter<AiSessionStoreEvents> {
       initialPlan: draft.initialPlan.trim(),
       ...(draft.modelProvider && draft.modelId ? { modelProvider: draft.modelProvider, modelId: draft.modelId } : {}),
       ...(preservedSummarizedFor ? { summarizedFor: preservedSummarizedFor } : {}),
+      /* FNXC:TaskOutputLanguage 2026-08-19-16:01: Draft patches preserve the initial language snapshot; only initial session creation or a legacy-session repair may supply it. */
+      ...((draft.taskOutputLanguage ?? preservedTaskOutputLanguage) ? { taskOutputLanguage: draft.taskOutputLanguage ?? preservedTaskOutputLanguage } : {}),
       ...((draft.thinkingLevel ?? preservedThinkingLevel) ? { thinkingLevel: draft.thinkingLevel ?? preservedThinkingLevel } : {}),
     });
     const changed = await updateDraftAsync(this.dbAsync, id, inputPayload);

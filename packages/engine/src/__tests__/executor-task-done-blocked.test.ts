@@ -3,7 +3,7 @@ import "./executor-test-helpers.js";
 import { TaskExecutor } from "../executor.js";
 import * as worktreePool from "../worktree/worktree-pool.js";
 import { SelfHealingManager } from "../self-healing.js";
-import { evaluateNoCommitsNoOpFinalize } from "@fusion/core";
+import { evaluateNoCommitsNoOpFinalize, TaskNotFoundError } from "@fusion/core";
 import {
   captureNamedTool,
   createMockStore,
@@ -50,10 +50,16 @@ async function setup(overrides: Record<string, unknown> = {}) {
   const store = createMockStore();
   store.recordRunAuditEvent = vi.fn().mockResolvedValue(undefined);
   store.getAgentLogCount = vi.fn().mockResolvedValue(0);
+  const blockerTargets = (overrides.blockerTargets ?? {}) as Record<string, { deletedAt?: string } | null>;
   let task: any = baseTask(overrides);
   let tool: any;
 
-  store.getTask.mockImplementation(async () => ({ ...task, steps: task.steps.map((s: any) => ({ ...s })) }));
+  store.getTask.mockImplementation(async (id: string) => {
+    if (id === task.id) return { ...task, steps: task.steps.map((s: any) => ({ ...s })) };
+    const target = blockerTargets[id];
+    if (target === null) throw new TaskNotFoundError(id);
+    return { id, ...target };
+  });
   store.updateTask.mockImplementation(async (_id: string, updates: any) => {
     task = { ...task, ...updates };
     return task;
@@ -130,6 +136,61 @@ describe("FN-8141 fn_task_done honest blocked exit", () => {
     const depCall = store.updateTask.mock.calls.find((c: any[]) => Array.isArray(c[1]?.dependencies));
     expect(depCall).toBeTruthy();
     expect(depCall![1].dependencies).toEqual(["FN-0001", "FN-8145", "FN-8146"]);
+  });
+
+  it("replans instead of durably blocking on an exact missing task ID", async () => {
+    const { store, tool } = await setup({ blockerTargets: { "FN-9999": null } });
+
+    await tool.execute("id", {
+      outcome: "blocked",
+      reason: "FN-9999 is missing from Fusion",
+      blockedBy: ["FN-9999"],
+    });
+
+    const patch = store.updateTask.mock.calls.find(([, candidate]: [string, Record<string, unknown>]) => "status" in candidate)?.[1] as Record<string, unknown>;
+    expect(patch).toMatchObject({ status: "needs-replan", error: null });
+    expect(patch.dependencies).toBeUndefined();
+    expect(store.updateStep).not.toHaveBeenCalled();
+    expect(store.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
+      mutationType: "task:execution-blocked-parked",
+      metadata: expect.objectContaining({ blockedBy: [], parkedAs: "auto-replan" }),
+    }));
+  });
+
+  it("replans instead of retaining a soft-deleted task blocker", async () => {
+    const { store, tool } = await setup({
+      blockerTargets: { "FN-9999": { deletedAt: "2026-08-20T00:00:00.000Z" } },
+    });
+
+    await tool.execute("id", {
+      outcome: "blocked",
+      reason: "the prerequisite was deleted",
+      blockedBy: ["FN-9999"],
+    });
+
+    const patch = store.updateTask.mock.calls.find(([, candidate]: [string, Record<string, unknown>]) => "status" in candidate)?.[1] as Record<string, unknown>;
+    expect(patch).toMatchObject({ status: "needs-replan", error: null });
+    expect(patch.dependencies).toBeUndefined();
+    expect(store.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
+      metadata: expect.objectContaining({ blockedBy: [], parkedAs: "auto-replan" }),
+    }));
+  });
+
+  it("replans mixed duplicate and whitespace blocker input when any requested task is stale", async () => {
+    const { store, tool } = await setup({ blockerTargets: { "FN-9999": null } });
+
+    await tool.execute("id", {
+      outcome: "blocked",
+      reason: "one preflight dependency no longer exists",
+      blockedBy: [" FN-8145 ", "FN-8145", "FN-9999"],
+    });
+
+    const patch = store.updateTask.mock.calls.find(([, candidate]: [string, Record<string, unknown>]) => "status" in candidate)?.[1] as Record<string, unknown>;
+    expect(patch).toMatchObject({ status: "needs-replan", error: null });
+    expect(patch.dependencies).toBeUndefined();
+    expect(store.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
+      metadata: expect.objectContaining({ blockedBy: [], parkedAs: "auto-replan" }),
+    }));
   });
 
   it("emits task:execution-blocked-parked with ids/outcomes-only metadata (no reason prose)", async () => {

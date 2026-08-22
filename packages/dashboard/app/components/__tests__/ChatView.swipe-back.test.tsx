@@ -184,9 +184,27 @@ describe("ChatView mobile swipe-back", () => {
     });
 
     await waitFor(() => {
-      expect(selectSessionSpy).toHaveBeenCalledWith("");
-      expect(screen.getByText("Start a new conversation")).toBeInTheDocument();
+      expect(screen.getByTestId("chat-session-session-001")).toBeInTheDocument();
     });
+    expect(screen.queryByTestId("chat-back-btn")).not.toBeInTheDocument();
+  });
+
+  it("consumes the drill-in history entry when visible Back returns to the list", async () => {
+    mockViewport("mobile");
+    const historyBackSpy = vi.spyOn(window.history, "back").mockImplementation(() => {});
+
+    render(
+      <HistoryHarness>
+        <StatefulChatView />
+      </HistoryHarness>,
+    );
+
+    fireEvent.click(screen.getByTestId("chat-session-session-001"));
+    await waitFor(() => expect(screen.getByTestId("chat-back-btn")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByTestId("chat-back-btn"));
+
+    expect(historyBackSpy).toHaveBeenCalledOnce();
     expect(screen.queryByTestId("chat-back-btn")).not.toBeInTheDocument();
   });
 
@@ -204,7 +222,7 @@ describe("ChatView mobile swipe-back", () => {
     expect(window.history.pushState).not.toHaveBeenCalled();
   });
 
-  it("does not push a nav entry on desktop selection", async () => {
+  it("uses the same Back history entry for desktop selection", async () => {
     mockViewport("desktop");
 
     render(
@@ -218,7 +236,8 @@ describe("ChatView mobile swipe-back", () => {
     await waitFor(() => {
       expect(screen.getByTestId("chat-thread-header-identity")).toBeInTheDocument();
     });
-    expect(window.history.pushState).not.toHaveBeenCalled();
+    expect(window.history.pushState).toHaveBeenCalled();
+    expect(screen.getByTestId("chat-back-btn")).toBeInTheDocument();
   });
 
   afterEach(() => {

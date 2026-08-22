@@ -30,7 +30,9 @@
     "showMore": "Afficher plus",
     "update": "Mettre à jour",
     "yes": "Oui",
-    "clear": ""
+    "clear": "",
+    "open": "",
+    "remove": ""
   },
   "activityFeed": {
     "emptyHint": "",
@@ -82,7 +84,10 @@
       "minutesAgo_other": ""
     },
     "title": "Journal d'activité",
-    "typeFilterBadge": ""
+    "typeFilterBadge": "",
+    "taskId": "ID de tâche",
+    "taskIdSearchPlaceholder": "Rechercher un ID de tâche (par ex. FN-066)",
+    "taskIdFilterBadge": "Tâche : {{taskId}}"
   },
   "agentError": {
     "copied": "Copié",
@@ -1145,7 +1150,9 @@
     "disableHeartbeatsSummary": "{{count}} battements désactivés ; {{skipped}} ignorés",
     "enableHeartbeatsCountHint": "Activer {{count}} battements désactivés",
     "disableHeartbeatsCountHint": "Désactiver {{count}} battements activés",
-    "bulkFailures": "{{count}} échecs"
+    "bulkFailures": "{{count}} échecs",
+    "detailLabel": "",
+    "lastCompletedStep": ""
   },
   "app": {
     "backendError": {
@@ -1262,7 +1269,6 @@
     "deleteRoom": "Supprimer le salon {{name}}",
     "deleteRoomBody": "Cette action est irréversible. Ce salon et tous ses messages seront définitivement supprimés.",
     "deleteRoomTitle": "Supprimer le salon ?",
-    "dismissQueuedMessage": "Ignorer le message en file d'attente",
     "failedToArchiveConversation": "Impossible d'archiver la conversation",
     "failedToClearConversation": "Impossible d'effacer la conversation",
     "failedToClearRoomConversation": "Impossible d'effacer la conversation du salon",
@@ -1315,6 +1321,17 @@
     "questionSubmittedAnswerLabel": "",
     "questionTextPlaceholder": "",
     "queuedMessage": "En file d'attente : {{preview}}",
+    "pendingLabel": "Messages en attente",
+    "pendingHeading": "Messages en attente",
+    "editPending": "Modifier le message en attente",
+    "savePendingEdit": "Enregistrer le message en attente",
+    "cancelPendingEdit": "Annuler la modification du message en attente",
+    "movePendingEarlier": "Avancer le message en attente",
+    "movePendingLater": "Reculer le message en attente",
+    "deletePending": "Supprimer le message en attente",
+    "forcePending": "Forcer l’envoi du message en attente",
+    "forcePendingShort": "Forcer l’envoi",
+    "pendingEditEmpty": "Les messages en attente ne peuvent pas être vides",
     "quickChatTitle": "Chat rapide",
     "relativeTimeDays_one": "",
     "relativeTimeDays_other": "",
@@ -1389,7 +1406,8 @@
     "currentAgentTarget": "Current agent: {{name}}",
     "currentModelTarget": "Current model: {{model}}",
     "currentDefaultTarget": "Using the default chat target",
-    "newNotAllowedForTaskChat": ""
+    "newNotAllowedForTaskChat": "",
+    "restore": ""
   },
   "chatRooms": {
     "error": {
@@ -1527,7 +1545,12 @@
     "stopAllTitle": "Arrêter toutes les tâches",
     "stopPartialFailure": "{{paused}} tâche(s) sur {{total}} arrêtée(s) ; {{failed}} échouée(s)",
     "stoppedTasks_one": "",
-    "stoppedTasks_other": ""
+    "stoppedTasks_other": "",
+    "sortControlLabel": "",
+    "sortArrivalDesc": "",
+    "sortArrivalDescHint": "",
+    "sortTaskIdDesc": "",
+    "sortTaskIdDescHint": ""
   },
   "commandCenter": {
     "activity": {
@@ -1928,7 +1951,9 @@
         "workflow:gate-failed": "Workflow gate failed",
         "approval:requested": "Approval requested"
       }
-    }
+    },
+    "taskVerification": "",
+    "verificationRequests": ""
   },
   "comments": {
     "addButton": "Ajouter un commentaire",
@@ -2006,7 +2031,20 @@
     "toLabel": "À :",
     "wakeAgentCheckbox": "Réveiller l'agent immédiatement",
     "wakeAlwaysImmediate": "(l'agent est déjà en mode de réponse immédiate)",
-    "wakeOneOff": "(remplacement ponctuel pour ce message uniquement)"
+    "wakeOneOff": "(remplacement ponctuel pour ce message uniquement)",
+    "addSection": "",
+    "ariaLabel": "",
+    "attachStructure": "",
+    "mode": "",
+    "noStructures": "",
+    "quickMessage": "",
+    "removeSection": "",
+    "removeStructure": "",
+    "report": "",
+    "reportTitle": "",
+    "sectionBody": "",
+    "sectionHeading": "",
+    "selectStructure": ""
   },
   "confirm": {
     "cancel": "Annuler",
@@ -3482,7 +3520,36 @@
     "typeSystem": "Système",
     "typeUserToAgent": "Vous → Agent",
     "user": "Utilisateur",
-    "you": "Vous"
+    "you": "Vous",
+    "all": "",
+    "approvalStatus": "",
+    "approvalUnavailable": "",
+    "approve": "",
+    "archive": "",
+    "archived": "",
+    "artifact": "",
+    "audioArtifactAria": "",
+    "createTask": "",
+    "createTaskError": "",
+    "creatingTask": "",
+    "deny": "",
+    "inboxFilter": "",
+    "loadingApproval": "",
+    "noArchivedMessages": "",
+    "openArtifact": "",
+    "openArtifactAria": "",
+    "optionalComment": "",
+    "recommendationsUnavailable": "",
+    "reportsApprovals": "",
+    "restore": "",
+    "retryCreatingTask": "",
+    "taskCreatedView": "",
+    "taskProposalDismissed": "",
+    "taskRecommendations": "",
+    "videoArtifactAria": "",
+    "viewTask": "",
+    "viewTaskAria": "",
+    "viewTaskLabel": ""
   },
   "memory": {
     "auditChecksTitle": "Vérifications d'audit",
@@ -4062,6 +4129,7 @@
       "minimal": "Minimal",
       "off": "Désactivé",
       "xhigh": "Très élevé",
+      "max": "Maximum",
       "defaultWithLevel": "Default ({{level}})"
     },
     "placeholders": {
@@ -5303,7 +5371,14 @@
     "resize": "",
     "viewExpanded": "",
     "views": "",
-    "resizeExpandedView": ""
+    "resizeExpandedView": "",
+    "archivedCopy": "",
+    "doneHiddenCopy": "",
+    "emptyCopy": "",
+    "hideDone": "",
+    "noActiveTasks": "",
+    "noTasksYet": "",
+    "showDone": ""
   },
   "routine": {
     "andMore_one": "",
@@ -5775,7 +5850,11 @@
       "taskPopupsBoardListOnlyHelp": "",
       "taskDetailChatFirstHelp": "",
       "showCostBadgeOnCards": "",
-      "showCostBadgeOnCardsHelp": ""
+      "showCostBadgeOnCardsHelp": "",
+      "chatMessageLayout": "",
+      "chatMessageLayoutBubbles": "",
+      "chatMessageLayoutFullWidth": "",
+      "chatMessageLayoutHelp": ""
     },
     "auth": {
       "apiKeyCleared": "Clé API effacée",
@@ -5806,6 +5885,12 @@
       "openGitHub": "Ouvrir GitHub",
       "pasteRedirectUrlFirst": "Collez d'abord l'URL de redirection complète ou le code d'autorisation.",
       "reopenOnboarding": "Rouvrir le guide de démarrage",
+      "refreshModels": "Actualiser les modèles",
+      "refreshModelsPending": "Actualisation des modèles…",
+      "refreshModelsSuccess": "Modèles actualisés.",
+      "refreshModelsTimedOut": "L’actualisation a expiré ; les derniers modèles disponibles sont affichés. Réessayez.",
+      "refreshModelsDeferred": "Une autre actualisation est en cours ; les derniers modèles disponibles sont affichés. Réessayez bientôt.",
+      "refreshModelsFailed": "Échec de l’actualisation ; les derniers modèles disponibles sont affichés. Réessayez.",
       "reopenOnboardingHint": "Relancez l'assistant de configuration pour revoir ou mettre à jour votre configuration de fournisseur et de modèle IA.",
       "savingKey": "Enregistrement…",
       "signInHint": "Connectez-vous à au moins un fournisseur pour commencer à utiliser les modèles IA.",
@@ -6007,6 +6092,7 @@
       "allowEphemeralAgentsToCreateTasksHint": "",
       "quickChatCloseOnOutsideClickHint": "",
       "disabledFusionWorkflowsAreHiddenFromWorkflow": "",
+      "builtinWorkflowAtLeastOneEnabled": "",
       "autoTranslateImportedIssues": "",
       "autoTranslateImportedIssuesHelp": "",
       "translationTargetLanguage": "",
@@ -6064,6 +6150,8 @@
       "refinementTaskWorkflowHelp": "",
       "maxRecommendationsPerTask": "",
       "maxRecommendationsPerTaskHelp": "",
+      "requireTaskRecommendations": "",
+      "requireTaskRecommendationsHelp": "",
       "recommendationMailboxNoticeEnabled": "",
       "recommendationMailboxNoticeEnabledHelp": ""
     },
@@ -6116,6 +6204,10 @@
       "releaseChannelHelp": "",
       "autoUpdateAndRestart": "",
       "autoUpdateAndRestartHelp": "",
+      "autoUpdateEnabled": "",
+      "autoUpdateEnabledHelp": "",
+      "autoRestartAfterUpdate": "",
+      "autoRestartAfterUpdateHelp": "",
       "channelStable": "",
       "channelBeta": "",
       "agentToolOutputLimit": "",
@@ -6126,6 +6218,7 @@
       "quickAddSubmitOnEnterHint": ""
     },
     "globalModels": {
+      "modelOverrides": "",
       "allow": "",
       "commaSeparatedValuesSentToOpenRouterModelSync": "",
       "controlsHowMuchReasoningEffortTheAIModel": "",
@@ -6175,7 +6268,8 @@
       "openRouterRoutingOnlyHint": "",
       "openRouterAllowFallbacksHint": "",
       "openRouterRoutingSortHint": "",
-      "requireParametersHint": ""
+      "requireParametersHint": "",
+      "modelOverrides": ""
     },
     "header": {
       "discord": "Discord",
@@ -6272,7 +6366,9 @@
       "turnsDailyNotesIntoDREAMSMdAndPromotes": "",
       "qmdInstalled": "",
       "qmdInstallFailed": "",
-      "qmdInstallUnavailable": ""
+      "qmdInstallUnavailable": "",
+      "saveBeforeCompacting": "",
+      "saveBeforeSwitching": ""
     },
     "merge": {
       "abort": "",
@@ -6550,6 +6646,10 @@
       "plugins": ""
     },
     "projectModels": {
+      "modelOverrides": "",
+      "projectLanesSubheading": "",
+      "summarizationPointer": "",
+      "workflowLanesSubheading": "",
       "addPreset": "",
       "advancedWorkflowPolicy": "",
       "aIMergeCommitSummaries": "",
@@ -6557,8 +6657,11 @@
       "automaticallyCompactContextWhenApproachingThisTokenCount": "",
       "autoSelectPresetBasedOnTaskSize": "",
       "autoSummarizeLongDescriptionsAsTitles": "",
-      "taskDefinitionInInputLanguage": "",
-      "taskDefinitionInInputLanguageHelp": "",
+      "taskOutputLanguage": "AI-authored task language",
+      "taskOutputLanguageHelp": "Choose the language for AI-authored task plans, titles, steps, summaries, and recommendations. No stored default — unset resolves English. Changes apply to new generation sessions only.",
+      "taskOutputLanguageEnglish": "English (default)",
+      "taskOutputLanguageInput": "User input language",
+      "taskOutputLanguageInterface": "Fusion interface language",
       "configuredPresets": "",
       "configuresTheModelUsedForTwoShortSummary": "",
       "defaultWorkflowModelLaneActions": "",
@@ -6616,7 +6719,11 @@
       "executorEscalationModel": "",
       "executorEscalationModelHelp": "",
       "selectExecutorEscalationModel": "",
-      "noExecutorEscalationModel": ""
+      "noExecutorEscalationModel": "",
+      "modelOverrides": "",
+      "projectLanesSubheading": "",
+      "workflowLanesSubheading": "",
+      "summarizationPointer": ""
     },
     "remote": {
       "acceptRoutes": "",
@@ -6687,7 +6794,9 @@
       "installationFailed": "",
       "acceptRoutesHint": "",
       "shortLivedEnabledHint": "",
-      "shortLivedTtlMsHint": ""
+      "shortLivedTtlMsHint": "",
+      "cloudflareTunnelURL": "",
+      "tunnelURL": ""
     },
     "researchGlobal": {
       "advancedExternalSearchProviders": "",
@@ -6929,7 +7038,11 @@
       "projectTitle": "Project MCP servers",
       "globalDescription": "Configure MCP servers shared by all projects. Project settings may override or disable these servers by name.",
       "projectDescription": "Configure project-specific MCP servers, overrides, and disabled inherited servers.",
-      "enabledHint": ""
+      "enabledHint": "",
+      "transport": "",
+      "transportHttp": "",
+      "transportSse": "",
+      "transportStdio": ""
     },
     "search": {
       "allSections": "",
@@ -7863,7 +7976,8 @@
     "header": {
       "back": "Retour",
       "backToList": "Retour à la liste des tâches",
-      "editTask": "Modifier la tâche"
+      "editTask": "Modifier la tâche",
+      "popOut": ""
     },
     "inputTokens": "Entrée",
     "lastUsed": "Dernière utilisation",
@@ -7872,6 +7986,10 @@
       "activity": "Activité",
       "activityHeading": "Activité",
       "agentLog": "Journal de l'agent",
+      "copy": "",
+      "copyDisplayed": "",
+      "copyFailure": "",
+      "copySuccess": "",
       "loadingActivity": "",
       "noActivity": "(aucune activité)",
       "truncated_one": "",
@@ -8220,6 +8338,22 @@
       "retry": "",
       "create": "",
       "error": ""
+    },
+    "reverted": {
+      "deleteAria": ""
+    },
+    "revise": "",
+    "specLock": {
+      "accepted": "",
+      "alignment": "",
+      "alignmentLabel": "",
+      "captured": "",
+      "currentPlan": "",
+      "findings": "",
+      "latestLock": "",
+      "lockState": "",
+      "relockChanged": "",
+      "retainedHistory": ""
     }
   },
   "taskDocuments": {
@@ -9358,7 +9492,11 @@
     "toolNames": "",
     "toolResult": "",
     "you": "",
-    "youMessage": ""
+    "youMessage": "",
+    "missingOutput": "",
+    "missingOutputTimestamp": "",
+    "statusUpdate": "",
+    "statusUpdateTimestamp": ""
   },
   "engineBanner": {
     "body": "The engine for this project is not running, so task automation and live updates may be paused. Start it now to reconnect the dashboard.",
@@ -9381,6 +9519,146 @@
     "targetLabel": "Cible de dépôt",
     "targetInherit": "Utiliser la cible configurée pour l’action",
     "targetIssue": "Issue GitHub",
-    "targetDiscussion": "Discussion GitHub"
+    "targetDiscussion": "Discussion GitHub",
+    "activityTrace": "",
+    "capturingScreenshot": "",
+    "close": "",
+    "confirmDataPoint": "",
+    "confirmScreenshotRetention": "",
+    "duplicateReview": "",
+    "file": "",
+    "final": "",
+    "menu": "",
+    "returnToPrompt": "",
+    "review": "",
+    "storeScreenshot": "",
+    "structured": "",
+    "structuredDataPoint": "",
+    "suggestedHelp": "",
+    "summary": "",
+    "viewGitHub": ""
+  },
+  "composeChat": {
+    "ariaLabel": "",
+    "draft": "",
+    "draftNarrative": "",
+    "emptyDraft": "",
+    "useDraft": ""
+  },
+  "fixture": {
+    "floatingTaskDetail": "",
+    "floatingTaskDetailBody": "",
+    "genericFloatingWindow": "",
+    "genericFloatingWindowBody": "",
+    "genericWindowHeader": "",
+    "headerAction": "",
+    "headerlessTaskDetail": "",
+    "taskDetail": "",
+    "taskDetailBody": ""
+  },
+  "floatingWindow": {
+    "close": "",
+    "resize": ""
+  },
+  "githubImport": {
+    "github": "",
+    "gitlab": ""
+  },
+  "ideation": {
+    "addCandidate": "",
+    "converge": "",
+    "convergedToMission": "",
+    "description": "",
+    "divergentCandidate": "",
+    "noSessions": "",
+    "persisted": "",
+    "selectOrStart": "",
+    "sessionTitle": "",
+    "start": "",
+    "title": ""
+  },
+  "knowledgeGraph": {
+    "allFnxcAreas": "",
+    "allOwners": "",
+    "allSymbolKinds": "",
+    "bothDirections": "",
+    "depth": "",
+    "distance": "",
+    "edgeKinds": "",
+    "findPath": "",
+    "incoming": "",
+    "limitResults": "",
+    "neighbors": "",
+    "next": "",
+    "noNeighbors": "",
+    "noPath": "",
+    "nodeKinds": "",
+    "none": "",
+    "outgoing": "",
+    "ownerDerived": "",
+    "ownerFile": "",
+    "pathLimitReached": "",
+    "previous": "",
+    "provenance": "",
+    "raiseHopLimit": "",
+    "refreshNeighbors": "",
+    "searching": "",
+    "selectNodeHint": "",
+    "shortestPath": "",
+    "showingOf": "",
+    "useSelectedFrom": "",
+    "useSelectedTo": ""
+  },
+  "mermaid": {
+    "diagram": ""
+  },
+  "nativeStructure": {
+    "loadFailed": "",
+    "loading": "",
+    "openAria": "",
+    "previewUnavailable": "",
+    "unavailable": ""
+  },
+  "providerLogin": {
+    "approveInBrowser": "",
+    "authorizationReceived": "",
+    "cancel": "",
+    "connected": "",
+    "exchangingCode": "",
+    "finishInBrowser": "",
+    "handAuthorizationBack": "",
+    "openSignInAgain": "",
+    "pasteRedirectUrl": "",
+    "signingInTo": ""
+  },
+  "taskVerification": {
+    "failed": "",
+    "heading": "",
+    "passed": "",
+    "queued": "",
+    "requestRejected": "",
+    "running": ""
+  },
+  "whatsapp": {
+    "allowedSenders": "",
+    "choosePairingMethod": "",
+    "connectedAs": "",
+    "connectedSuccess": "",
+    "description": "",
+    "installPlugin": "",
+    "instructionsLabel": "",
+    "loggingOut": "",
+    "logoutRepair": "",
+    "pairing": "",
+    "pairingConfiguration": "",
+    "phoneNumber": "",
+    "qrCode": "",
+    "refreshStatus": "",
+    "repairInstructions": "",
+    "requestPairingCode": "",
+    "requestingCode": "",
+    "status": "",
+    "waitConnected": "",
+    "waitingQr": ""
   }
 }

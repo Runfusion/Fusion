@@ -28,7 +28,6 @@ vi.mock("../../api", () => ({
   fetchAiSessions: vi.fn().mockResolvedValue([]),
   deleteAiSession: vi.fn(),
   cancelPlanning: vi.fn(),
-  cancelSubtaskBreakdown: vi.fn(),
   cancelMissionInterview: vi.fn(),
 }));
 

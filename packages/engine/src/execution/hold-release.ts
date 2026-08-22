@@ -66,6 +66,7 @@ import {
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { schedulerLog } from "../logger.js";
+import { emitBoundedRunAudit } from "../util/emit-bounded-run-audit.js";
 import { getPromptPath } from "./spec-staleness.js";
 import { activeSessionRegistry, executingTaskLock } from "../agents/active-session-registry.js";
 import { evaluateStrandedHoldContinuation } from "../plan-review-continuation.js";
@@ -410,8 +411,12 @@ async function dependencySatisfied(ctx: SweepCtx, dep: Task): Promise<Dependency
   const legacy = legacyDependencySatisfied(dep) || markerAccepted === true;
 
   if (completeFlag !== legacy) {
-    try {
-      void ctx.store.recordRunAuditEvent?.({
+    /*
+    FNXC:RunAudit 2026-08-20-05:39:
+    Hold-release telemetry is best-effort: a hostile audit sink must never gate a sweep,
+    force-promote, or event release.
+    */
+    void emitBoundedRunAudit(ctx.store, {
         taskId: dep.id,
         agentId: "scheduler",
         runId: `hold-release:${dep.id}`,
@@ -424,10 +429,7 @@ async function dependencySatisfied(ctx: SweepCtx, dep: Task): Promise<Dependency
           legacyResult: legacy,
           source: "hold-release.dependency",
         },
-      });
-    } catch {
-      // Audit is best-effort.
-    }
+      }, { log: schedulerLog });
   }
   // Dual-accept: satisfied if EITHER signal says so (the dual-accept window
   // closes at graduation per U12; until then both are accepted).
@@ -987,9 +989,7 @@ export async function promoteHeldTask(
       }
     }
     // ids/outcomes-only audit of the override (no prompt or reason prose).
-    if (typeof store.recordRunAuditEvent === "function") {
-      try {
-        await store.recordRunAuditEvent({
+    await emitBoundedRunAudit(store, {
           domain: "database",
           mutationType: "task:promote-forced-unplanned",
           target: task.id,
@@ -997,11 +997,7 @@ export async function promoteHeldTask(
           agentId: "system",
           runId: `promote-force-${task.id}`,
           metadata: { fromColumn: task.column, toColumn: target, priorStatus: task.status ?? null },
-        });
-      } catch {
-        // Audit is best-effort — never block the operator's override on it.
-      }
-    }
+        }, { log: schedulerLog });
     schedulerLog.log(`Force-promote for ${task.id} bypassing unplanned gate into ${target} (operator override)`);
   }
 
@@ -1040,8 +1036,7 @@ export async function releaseHeldTaskByEvent(
   if (!column || !holdConfig || holdConfig.release !== "external-event") {
     return { released: false, rejection: "not-external-event-hold" };
   }
-  try {
-    void store.recordRunAuditEvent?.({
+  void emitBoundedRunAudit(store, {
       taskId,
       agentId: "scheduler",
       runId: `hold-release:event:${taskId}`,
@@ -1049,10 +1044,7 @@ export async function releaseHeldTaskByEvent(
       mutationType: "task:hold-release-event",
       target: taskId,
       metadata: { eventTag, fromColumn: task.column },
-    });
-  } catch {
-    // best-effort
-  }
+    }, { log: schedulerLog });
   const target = resolveReleaseTarget(ir, task.column, true);
   if (!target) return { released: false, rejection: "no-release-target" };
 

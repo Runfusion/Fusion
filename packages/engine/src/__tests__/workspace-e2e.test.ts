@@ -28,6 +28,7 @@ Surfaces (FN-5893):
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { EventEmitter } from "node:events";
 import { execSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import path from "node:path";
 import type { Settings, Task, TaskStore } from "@fusion/core";
@@ -82,6 +83,15 @@ function createStore(rows: Task[], settings: Partial<Settings> = {}): TaskStore 
       if (cur) tasks.set(id, { ...cur, ...patch } as Task);
       return tasks.get(id) as Task;
     }),
+    // FNXC:AiMergeReconciliation 2026-08-20-23:40: merge review persists durable
+    // reconciliation through the atomic seam; this fixture must mutate the same row getTask reads.
+    updateTaskAtomic: vi.fn(async (id: string, mutate: (task: Task) => Partial<Task> | undefined) => {
+      const current = tasks.get(id);
+      if (!current) throw new Error(`Missing task ${id}`);
+      const patch = mutate(current);
+      if (patch) tasks.set(id, { ...current, ...patch } as Task);
+      return tasks.get(id) as Task;
+    }),
     moveTask: vi.fn(async (id: string, column: string) => {
       moveTaskCalls.push({ id, column });
       const cur = tasks.get(id);
@@ -105,7 +115,15 @@ function createStore(rows: Task[], settings: Partial<Settings> = {}): TaskStore 
 }
 
 function makeTask(workspaceWorktrees: Task["workspaceWorktrees"], extra: Partial<Task> = {}): Task {
-  return {
+  const scopedRepositories = extra.repositoryScope?.repositories ?? Object.keys(workspaceWorktrees ?? {});
+  const reviewEvidence = Object.fromEntries(Object.entries(workspaceWorktrees ?? {})
+    .filter(([repo]) => scopedRepositories.includes(repo))
+    .map(([repo, entry]) => {
+      const mergeBase = execSync(`git merge-base HEAD ${entry.branch}`, { cwd: entry.worktreePath, encoding: "utf8" }).trim();
+      const diff = execSync(`git diff --binary ${entry.baseCommitSha ?? mergeBase}..HEAD`, { cwd: entry.worktreePath, encoding: "utf8" });
+      return [repo, { fingerprint: createHash("sha256").update(diff).digest("hex"), approvedAt: new Date().toISOString() }];
+    }));
+  const task = {
     id: TASK_ID,
     title: "Workspace merge task",
     description: "",
@@ -118,10 +136,16 @@ function makeTask(workspaceWorktrees: Task["workspaceWorktrees"], extra: Partial
     log: [],
     paused: false,
     workspaceWorktrees,
+    // FNXC:RepositoryScope 2026-08-21-01:36: workspace e2e fixtures model the
+    // exact fingerprint that the production Code Review episode must approve before land.
+    repositoryScope: { repositories: Object.keys(workspaceWorktrees ?? {}).sort(), state: "confirmed" as const, revision: 1, reviewEvidence },
+    modifiedFiles: Object.keys(workspaceWorktrees ?? {}).sort().map((repo) => `${repo}/feature.txt`),
     createdAt: new Date().toISOString(),
     updatedAt: new Date(Date.now() - 30 * 60_000).toISOString(),
     ...extra,
   } as unknown as Task;
+  if (task.repositoryScope) task.repositoryScope.reviewEvidence ??= reviewEvidence;
+  return task;
 }
 
 /** A merge agent that performs the real squash in the clean room (no AI). */
@@ -277,6 +301,51 @@ describeIfGit("workspace e2e — merge (no-push) + partial-land recovery (Phase 
     expect(fx.git("repo-b", "git for-each-ref refs/remotes")).toBe(remotesBBefore);
   });
 
+  /*
+  FNXC:RepositoryScope 2026-08-20-23:40:
+  MRG-041's landing half: acquisition retained both repositories, but only the scoped repository
+  with qualified diff evidence may create a review/merge obligation or advance its integration ref.
+  */
+  it("MRG-041: one scoped modified repository lands while its clean acquired peer is untouched", async () => {
+    fx = await createWorkspaceFixture(["repo-a", "repo-b"]);
+    addRepoBranchWithEdit(fx, "repo-a", "a feature\n");
+    /*
+    FNXC:RepositoryScope 2026-08-21-02:35:
+    Acquisition creates a task branch in every checkout before planning, including a clean peer.
+    Keep that branch in the MRG-041 fixture so merge-boundary evidence validates the production
+    acquisition shape instead of treating an impossible missing branch as a clean repository.
+    */
+    fx.git("repo-b", `git branch ${BRANCH}`);
+    const tipABefore = fx.git("repo-a", "git rev-parse refs/heads/main");
+    const tipBBefore = fx.git("repo-b", "git rev-parse refs/heads/main");
+    const reviewAgent = vi.fn(approveReviewAgent);
+    const store = createStore([
+      makeTask({
+        "repo-a": { worktreePath: fx.repoPath("repo-a"), branch: BRANCH },
+        "repo-b": { worktreePath: fx.repoPath("repo-b"), branch: BRANCH },
+      }, {
+        repositoryScope: { repositories: ["repo-a"], state: "confirmed", revision: 2 },
+        modifiedFiles: ["repo-a/feature.txt"],
+      }),
+    ]);
+
+    const result = await landWorkspaceTask(store, store.tasks.get(TASK_ID)!, fx.rootDir, {}, {
+      mergeAgent: squashMergeAgent(BRANCH),
+      reviewAgent,
+    });
+
+    expect(result.allLanded).toBe(true);
+    expect(result.finalized).toBe(true);
+    expect(result.repos).toEqual([expect.objectContaining({ repo: "repo-a", status: "landed" })]);
+    // FNXC:RepositoryScope 2026-08-20-23:40: existing merge reconciliation requires two clean
+    // confirmations for the one land target; the clean peer creates no independent review episode.
+    expect(reviewAgent).toHaveBeenCalledTimes(2);
+    expect(fx.git("repo-a", "git rev-parse refs/heads/main")).not.toBe(tipABefore);
+    expect(fx.git("repo-b", "git rev-parse refs/heads/main")).toBe(tipBBefore);
+    expect(store.tasks.get(TASK_ID)!.workspaceWorktrees?.["repo-a"].landedSha).toBeTruthy();
+    expect(store.tasks.get(TASK_ID)!.workspaceWorktrees?.["repo-b"].landedSha).toBeUndefined();
+  });
+
   it("e2e partial-land recovery: A lands, task not done → U1 reconciler lands B, no double-land of A", async () => {
     fx = await createWorkspaceFixture(["repo-a", "repo-b"]);
     addRepoBranchWithEdit(fx, "repo-a", "a feature\n");
@@ -284,12 +353,14 @@ describeIfGit("workspace e2e — merge (no-push) + partial-land recovery (Phase 
 
     const tipABefore = fx.git("repo-a", "git rev-parse refs/heads/main");
 
-    const store = createStore([
-      makeTask({
-        "repo-a": { worktreePath: fx.repoPath("repo-a"), branch: BRANCH },
-        "repo-b": { worktreePath: fx.repoPath("repo-b"), branch: BRANCH },
-      }),
-    ]);
+    const partialTask = makeTask({
+      "repo-a": { worktreePath: fx.repoPath("repo-a"), branch: BRANCH },
+      "repo-b": { worktreePath: fx.repoPath("repo-b"), branch: BRANCH },
+    });
+    // FNXC:RepositoryScope 2026-08-21-00:58: the fixture's reviewed snapshot must
+    // describe the conflict branch's README change before the merge boundary admits it.
+    partialTask.modifiedFiles = ["repo-a/feature.txt", "repo-b/README.md"];
+    const store = createStore([partialTask]);
 
     // First pass: repo B conflicts → repo A lands, task NOT finalized.
     const first = await landWorkspaceTask(store, store.tasks.get(TASK_ID)!, fx.rootDir, {}, {
@@ -309,6 +380,16 @@ describeIfGit("workspace e2e — merge (no-push) + partial-land recovery (Phase 
 
     // Resolve repo B's conflict so a retry can land it.
     resolveConflictingRepo(fx, "repo-b");
+    // FNXC:RepositoryScope 2026-08-21-00:58: resolution adds feature.txt, so model
+    // the intervening Code Review that records the new merge boundary before recovery.
+    const recoveringTask = store.tasks.get(TASK_ID)!;
+    recoveringTask.modifiedFiles = ["repo-a/feature.txt", "repo-b/README.md", "repo-b/feature.txt"];
+    const repoB = recoveringTask.workspaceWorktrees!["repo-b"];
+    const repoBMergeBase = execSync(`git merge-base HEAD ${repoB.branch}`, { cwd: repoB.worktreePath, encoding: "utf8" }).trim();
+    recoveringTask.repositoryScope!.reviewEvidence!["repo-b"] = {
+      fingerprint: createHash("sha256").update(execSync(`git diff --binary ${repoB.baseCommitSha ?? repoBMergeBase}..HEAD`, { cwd: repoB.worktreePath, encoding: "utf8" })).digest("hex"),
+      approvedAt: new Date().toISOString(),
+    };
 
     // Wire enqueueMerge to the REAL in-process route: re-run landWorkspaceTask (idempotent — A is
     // skipped via isRepoLanded). Capture the routed promise so the test can await completion.

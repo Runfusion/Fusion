@@ -253,6 +253,7 @@ describe("createDelegateTaskTool", () => {
       source: expect.objectContaining({ sourceType: "api" }),
     }), expect.objectContaining({ settings: { autoSummarizeTitles: false } }));
     expect(vi.mocked(taskStore.createTask).mock.calls[0]?.[0]).toMatchObject({ column: "todo" });
+    expect(vi.mocked(taskStore.createTask).mock.calls[0]?.[0]).not.toHaveProperty("summarize");
 
     const text = (result.content[0] as { text: string }).text;
     expect(text).toContain("Delegated to Bob (agent-001)");

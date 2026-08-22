@@ -198,7 +198,6 @@ vi.mock("../../components/GitManagerModal", () => ({ GitManagerModal: () => null
 vi.mock("../../components/SchedulesModal", () => ({ SchedulesModal: () => null }));
 vi.mock("../../components/WorkflowEditorModal", () => ({ WorkflowEditorModal: () => null }));
 vi.mock("../../components/AgentsModal", () => ({ AgentsModal: () => null }));
-vi.mock("../../components/SubtaskBreakdownModal", () => ({ SubtaskBreakdownModal: () => null }));
 vi.mock("../../components/UsageModal", () => ({ UsageModal: () => null }));
 vi.mock("../../components/ModelOnboardingModal", () => ({ ModelOnboardingModal: () => null }));
 vi.mock("../../components/SetupWizardModal", () => ({ SetupWizardModal: () => null }));

@@ -663,30 +663,28 @@ describe("NtfyNotifier", () => {
       expect(fetchMock).toHaveBeenCalledTimes(1);
     });
 
-    it("allows a new gridlock notification immediately after resolution reset", async () => {
+    // FNXC:Notifications 2026-08-16-16:03: A transient clear must not re-arm the
+    // same gridlock notification while the wall-clock cooldown is still active.
+    it("suppresses the same gridlock after a transient resolution during cooldown", async () => {
       store.setSettings({ ntfyEnabled: true, ntfyTopic: "test-topic", ntfyEvents: ["gridlock"] });
       fetchMock.mockResolvedValue({ ok: true });
       notifier = new NtfyNotifier(store);
       await notifier.start();
 
-      notifier.notifyGridlock({
+      const event = {
         blockedTaskCount: 1,
-        reasons: { "FN-001": "dependency" },
+        reasons: { "FN-001": "dependency" as const },
         blockedTaskIds: ["FN-001"],
         blockingTaskIds: ["FN-002"],
-      });
+      };
+      notifier.notifyGridlock(event);
 
       vi.advanceTimersByTime(60_000);
       notifier.notifyGridlock(null);
-      notifier.notifyGridlock({
-        blockedTaskCount: 1,
-        reasons: { "FN-009": "overlap" },
-        blockedTaskIds: ["FN-009"],
-        blockingTaskIds: ["FN-010"],
-      });
+      notifier.notifyGridlock(event);
 
       await flushAsyncWork();
-      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
     });
   });
 

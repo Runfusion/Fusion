@@ -8,6 +8,7 @@ import {
   parseRuntimeModelMarker,
   resolveEffectiveExecutor,
   resolveEffectivePlanning,
+  resolveEffectiveTaskChat,
   resolveEffectiveValidator,
 } from "../effective-model-resolution";
 
@@ -148,5 +149,36 @@ describe("effective model resolution", () => {
     expect(resolveEffectivePlanning(task, [log("triage", "Planning using model: log-planning/log-planning-model")], settings)).toEqual({ provider: "task-planning", modelId: "task-planning-model" });
     expect(resolveEffectivePlanning({ ...baseTask, planningModelProvider: null, planningModelId: null } as Task, [log("triage", "Planning using model: log-planning/log-planning-model")], settings)).toEqual({ provider: "log-planning", modelId: "log-planning-model" });
     expect(resolveEffectivePlanning({ ...baseTask, planningModelProvider: null, planningModelId: null } as Task, [], settings)).toEqual({ provider: "settings-planning", modelId: "settings-planning-model" });
+  });
+
+  it("resolves task Chat from the complete Direct Chat model and thinking target", () => {
+    expect(resolveEffectiveTaskChat({
+      ...settings,
+      chatDefaultKind: "model",
+      chatDefaultModelProvider: "openai",
+      chatDefaultModelId: "gpt-direct",
+      chatDefaultThinkingLevel: "high",
+      planningProvider: "anthropic",
+      planningModelId: "claude-planner",
+    } as Settings)).toEqual({ provider: "openai", modelId: "gpt-direct", thinkingLevel: "high" });
+  });
+
+  it("falls back from incomplete or agent Direct Chat defaults to the effective project model", () => {
+    expect(resolveEffectiveTaskChat({
+      ...settings,
+      chatDefaultKind: "model",
+      chatDefaultModelProvider: "openai",
+      chatDefaultModelId: undefined,
+      defaultProviderOverride: "google",
+      defaultModelIdOverride: "gemini-direct",
+      chatDefaultThinkingLevel: "medium",
+    } as Settings)).toEqual({ provider: "google", modelId: "gemini-direct", thinkingLevel: "medium" });
+    expect(resolveEffectiveTaskChat({
+      ...settings,
+      chatDefaultKind: "agent",
+      chatDefaultAgentId: "agent-direct",
+      defaultProvider: "mock",
+      defaultModelId: "ignored",
+    } as Settings)).toEqual({ provider: "mock", modelId: "scripted" });
   });
 });

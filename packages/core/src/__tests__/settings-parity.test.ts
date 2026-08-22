@@ -63,6 +63,13 @@ describe("settings key parity", () => {
     expect(isProjectSettingsKey("maxConcurrent")).toBe(true);
     expect(isProjectSettingsKey("maxRecommendationsPerTask")).toBe(true);
     expect(isGlobalSettingsKey("maxRecommendationsPerTask")).toBe(false);
+    expect(isProjectSettingsKey("requireTaskRecommendations")).toBe(true);
+    expect(isGlobalSettingsKey("requireTaskRecommendations")).toBe(false);
+    expect(DEFAULT_PROJECT_SETTINGS.requireTaskRecommendations).toBe(false);
+    expect(isProjectSettingsKey("chatMessageLayout")).toBe(true);
+    expect(isGlobalSettingsKey("chatMessageLayout")).toBe(false);
+    expect(PROJECT_SETTINGS_KEYS).toContain("chatMessageLayout");
+    expect(GLOBAL_SETTINGS_KEYS).not.toContain("chatMessageLayout");
     expect(isProjectSettingsKey("recommendationMailboxNoticeEnabled")).toBe(true);
     expect(isGlobalSettingsKey("recommendationMailboxNoticeEnabled")).toBe(false);
     expect(isProjectSettingsKey("heartbeatMultiplier")).toBe(true);
@@ -430,6 +437,12 @@ describe("settings key parity", () => {
     expect(isProjectSettingsKey("openrouterProviderPreferences")).toBe(false);
   });
 
+  it("keeps OrcaRouter model sync global with an enabled default", () => {
+    expect(DEFAULT_GLOBAL_SETTINGS.orcarouterModelSync).toBe(true);
+    expect(isGlobalSettingsKey("orcarouterModelSync")).toBe(true);
+    expect(isProjectSettingsKey("orcarouterModelSync")).toBe(false);
+  });
+
   it("defaults stale high fan-out blocker escalation age threshold", () => {
     expect(DEFAULT_PROJECT_SETTINGS.staleHighFanoutBlockerAgeThresholdMs).toBe(2 * 60 * 60 * 1000);
     expect(isProjectSettingsKey("staleHighFanoutBlockerAgeThresholdMs")).toBe(true);
@@ -546,6 +559,18 @@ describe("settings key parity", () => {
       "gitlabApiBaseUrl",
       "gitlabAuthToken",
       "gitlabAuthTokenType",
+      /*
+      FNXC:JiraBranchNaming 2026-08-20-05:18:
+      JIRA configuration is intentionally dual-scoped: global values are organization defaults
+      and project values override them without storing a plaintext token.
+      */
+      "jiraEnabled",
+      "jiraBaseUrl",
+      "jiraApiBaseUrl",
+      "jiraAuthEmail",
+      "jiraAuthTokenSecretKey",
+      "jiraAuthTokenSecretScope",
+      "jiraBranchNameTemplate",
       /*
       FNXC:ToolOutputBudget 2026-07-30-03:40:
       Shared ON PURPOSE. settings-schema.ts:462 states it outright: "Project settings participate in

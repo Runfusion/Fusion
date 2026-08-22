@@ -126,6 +126,16 @@ export function parseDevWrapperArgs(rawArgs, env = process.env) {
   let requestedPrebuild = env.FUSION_DEV_PREBUILD ?? "auto";
   let watchSource = env.FUSION_DEV_WATCH === "1";
   let watchSourceFromFlag = false;
+  /*
+  FNXC:DevTunnel 2026-08-18-23:40:
+  `--tunnel` exposes the dev server through a Cloudflare quick tunnel, for working inside a remote
+  Fusion (container or shared box) and needing to view the dev server from your own browser.
+  `--tunnel=PORT` targets a port other than the dashboard's (e.g. a Vite server on 5173).
+  */
+  let tunnel = env.FUSION_DEV_TUNNEL === "1";
+  let isolated = env.FUSION_DEV_ISOLATED === "1";
+  let isolatedDir = env.FUSION_DEV_ISOLATED_DIR || undefined;
+  let tunnelPort = env.FUSION_DEV_TUNNEL_PORT ? Number(env.FUSION_DEV_TUNNEL_PORT) : undefined;
 
   for (let i = 0; i < rawArgs.length; i += 1) {
     const arg = rawArgs[i];
@@ -160,6 +170,57 @@ export function parseDevWrapperArgs(rawArgs, env = process.env) {
       continue;
     }
 
+    /*
+    FNXC:DevIsolation 2026-08-20-04:10:
+    `--isolated` runs the dev server against its OWN database and its OWN project directory, for
+    working on Fusion from inside a machine that is already running one. Everything durable hangs
+    off $HOME/.fusion — global settings, credentials, the central DB, the embedded Postgres data dir
+    — and a second process pointed at a data dir whose postmaster is already running simply ATTACHES
+    to it, so a plain `pnpm dev` inside a Fusion container silently shares the live database.
+
+    Isolating HOME alone is not enough: `fn dashboard` derives its project from the working
+    directory, so both instances would still share `<repo>/.fusion`, including `.fusion/tasks/<id>/`
+    — and self-healing's orphaned-task-dir sweep re-imports task directories that have no row,
+    meaning a fresh dev database would adopt the real instance's tasks. The flag therefore moves the
+    working directory too.
+
+    `--isolated=<dir>` puts the sandbox somewhere specific; otherwise it is a stable per-repo path so
+    the dev database survives restarts.
+    */
+    if (arg === "--isolated") {
+      isolated = true;
+      continue;
+    }
+
+    if (arg.startsWith("--isolated=")) {
+      isolated = true;
+      isolatedDir = arg.slice("--isolated=".length);
+      if (!isolatedDir) throw new Error("Missing directory for --isolated=<dir>.");
+      continue;
+    }
+
+    if (arg === "--tunnel") {
+      tunnel = true;
+      const next = rawArgs[i + 1];
+      // Accept `--tunnel 5173` only when the next token is a port, so `--tunnel dashboard` still
+      // forwards `dashboard` to the dev command instead of swallowing it.
+      if (next && /^\d+$/.test(next)) {
+        tunnelPort = Number(next);
+        i += 1;
+      }
+      continue;
+    }
+
+    if (arg.startsWith("--tunnel=")) {
+      tunnel = true;
+      const value = arg.slice("--tunnel=".length);
+      if (!/^\d+$/.test(value)) {
+        throw new Error(`Invalid value for --tunnel: ${value}. Expected a port number.`);
+      }
+      tunnelPort = Number(value);
+      continue;
+    }
+
     args.push(arg);
   }
 
@@ -169,7 +230,79 @@ export function parseDevWrapperArgs(rawArgs, env = process.env) {
     requestedPrebuild: normalizePrebuildMode(requestedPrebuild),
     watchSource,
     watchSourceFromFlag,
+    tunnel,
+    tunnelPort,
+    isolated,
+    isolatedDir,
   };
+}
+
+/**
+ * Where an isolated dev instance keeps its state.
+ *
+ * FNXC:DevIsolation 2026-08-20-04:10:
+ * `home` becomes the child's HOME, giving it its own `.fusion` — settings, credentials, central DB,
+ * and an embedded Postgres cluster on its own port (a fresh data dir binds a free port; an existing
+ * one would have been attached to instead). `project` becomes the child's working directory, so the
+ * dev instance cannot reach the real instance's `.fusion/tasks/` and adopt its tasks.
+ *
+ * The default lives under the REAL home rather than inside the repo: a project directory inside a
+ * git work tree shows up in status and risks being committed, and the dev database should not be
+ * wiped by a clean checkout. It is keyed by repo directory name so several checkouts do not collide.
+ */
+export function resolveIsolatedDevPaths({ repoRoot, home, explicitDir } = {}) {
+  if (!repoRoot) throw new Error("resolveIsolatedDevPaths requires repoRoot");
+  if (!home && !explicitDir) throw new Error("resolveIsolatedDevPaths requires home or explicitDir");
+
+  const repoName = repoRoot.split(/[\\/]+/).filter(Boolean).pop() || "fusion";
+  const base = explicitDir ?? `${home}/.fusion-dev/${repoName}`;
+  return { base, home: `${base}/home`, project: `${base}/project` };
+}
+
+/*
+FNXC:DevTunnel 2026-08-19-02:05:
+Mirrors DEV_SERVER_LISTENING_MESSAGE in packages/cli/src/commands/dev-source-restart.ts. The literal
+is duplicated rather than imported because this wrapper is plain JS that must not load the TS build.
+*/
+export const DEV_SERVER_LISTENING_MESSAGE = "fusion:dev-server-listening";
+
+/** Port from a dev child's listening report, or null for any other message. */
+export function readDevServerListeningPort(message) {
+  return readDevServerListening(message)?.port ?? null;
+}
+
+/**
+ * The dev child's listening report: the port it actually bound and the auth token it installed.
+ *
+ * FNXC:DevTunnel 2026-08-19-03:00: the token comes from the child because the supervisor cannot
+ * derive it — reading ~/.fusion/settings.json found nothing on a real run while the dashboard had a
+ * perfectly good token in memory, so `--tunnel` printed "no token yet" next to a working banner.
+ */
+export function readDevServerListening(message) {
+  if (!message || typeof message !== "object") return null;
+  if (message.type !== DEV_SERVER_LISTENING_MESSAGE) return null;
+  const port = Number(message.port);
+  if (!Number.isInteger(port) || port <= 0) return null;
+  const token = typeof message.token === "string" && message.token.length > 0 ? message.token : null;
+  return { port, token };
+}
+
+/**
+ * Port the tunnel should point at.
+ *
+ * FNXC:DevTunnel 2026-08-18-23:40: defaults to the dashboard's port, because `pnpm dev` with no
+ * target starts the dashboard. An explicit `--tunnel=PORT` wins so a Vite dev server (or anything
+ * else the operator started) can be exposed instead.
+ *
+ * FNXC:DevTunnel 2026-08-19-02:05: this is the port the dev server is ASKED for, which is only a
+ * guess — an occupied port makes it rebind to an ephemeral one. Without an explicit --tunnel=PORT
+ * the caller must prefer the port the child reports over this value; see
+ * readDevServerListeningPort.
+ */
+export function resolveDevTunnelPort(tunnelPort, env = process.env) {
+  if (tunnelPort) return tunnelPort;
+  const fromEnv = Number(env.PORT);
+  return Number.isFinite(fromEnv) && fromEnv > 0 ? fromEnv : 4040;
 }
 
 export function resolvePrebuildMode(requestedPrebuild, forwardedArgs) {

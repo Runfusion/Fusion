@@ -45,11 +45,13 @@ export function CreateRoomModal({ isOpen, onClose, onCreate, projectId, existing
   const [agents, setAgents] = useState<Agent[]>([]);
   const [search, setSearch] = useState("");
   const [selectedAgentIds, setSelectedAgentIds] = useState<string[]>([]);
-  const [loadingAgents, setLoadingAgents] = useState(false);
+  const [agentLoadPhase, setAgentLoadPhase] = useState<"idle" | "loading" | "loaded" | "failed">("idle");
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const nameInputRef = useRef<HTMLInputElement>(null);
+  const modalRef = useRef<HTMLDivElement>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
+  const agentLoadEpochRef = useRef(0);
   /*
   FNXC:ModalTouchGeometry 2026-07-26-19:25:
   Create Room is a blocking child of Quick Chat. The shared utility layer now claims its fresh
@@ -57,17 +59,39 @@ export function CreateRoomModal({ isOpen, onClose, onCreate, projectId, existing
   */
 
   useEffect(() => {
+    const requestEpoch = ++agentLoadEpochRef.current;
     if (!isOpen) return;
+
     previousFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    setLoadingAgents(true);
+    setAgents([]);
+    setAgentLoadPhase("loading");
     setSubmitError(null);
-    fetchAgents(undefined, projectId)
-      .then((result) => setAgents(result))
-      .catch(() => {
-        setAgents([]);
-        setSubmitError(t("createRoom.failedLoadAgents", "Failed to load agents."));
+    let cancelled = false;
+    const isCurrentRequest = () => !cancelled && agentLoadEpochRef.current === requestEpoch;
+
+    /*
+    FNXC:CreateRoomModal 2026-08-16-08:11:
+    The modal stays mounted while Chat toggles it and can switch projects mid-request. Only the
+    latest open request may publish its roster, error, or phase; cleanup fences close, unmount,
+    and project-change completions before they can overwrite the current picker.
+    */
+    void fetchAgents(undefined, projectId)
+      .then((result) => {
+        if (!isCurrentRequest()) return;
+        setAgents(result);
+        setSelectedAgentIds((selected) => selected.filter((id) => result.some((agent) => agent.id === id)));
+        setAgentLoadPhase("loaded");
       })
-      .finally(() => setLoadingAgents(false));
+      .catch(() => {
+        if (!isCurrentRequest()) return;
+        setAgents([]);
+        setAgentLoadPhase("failed");
+      });
+
+    return () => {
+      cancelled = true;
+      ++agentLoadEpochRef.current;
+    };
   }, [isOpen, projectId]);
 
   useEffect(() => {
@@ -75,11 +99,22 @@ export function CreateRoomModal({ isOpen, onClose, onCreate, projectId, existing
       setRawName("");
       setSearch("");
       setSelectedAgentIds([]);
+      setAgents([]);
+      setAgentLoadPhase("idle");
       setSubmitError(null);
       setIsSubmitting(false);
       return;
     }
-    const frame = window.requestAnimationFrame(() => nameInputRef.current?.focus());
+    /*
+    FNXC:CreateRoomModal 2026-08-16-09:20:
+    A late open-time animation frame must not yank focus from a field the user already selected
+    inside this dialog. Otherwise member-search keystrokes can be swallowed by the room-name field.
+    */
+    const frame = window.requestAnimationFrame(() => {
+      const activeElement = document.activeElement;
+      if (activeElement instanceof HTMLElement && modalRef.current?.contains(activeElement)) return;
+      nameInputRef.current?.focus();
+    });
     return () => window.cancelAnimationFrame(frame);
   }, [isOpen]);
 
@@ -115,7 +150,7 @@ export function CreateRoomModal({ isOpen, onClose, onCreate, projectId, existing
     [agents, selectedAgentIds],
   );
 
-  const canSubmit = validation.ok && selectedAgentIds.length > 0 && !isSubmitting && !loadingAgents;
+  const canSubmit = validation.ok && selectedAgentIds.length > 0 && !isSubmitting && agentLoadPhase === "loaded";
 
   if (!isOpen) return null;
 
@@ -173,7 +208,7 @@ export function CreateRoomModal({ isOpen, onClose, onCreate, projectId, existing
       closeOnOutsidePointerDown
       layer="utility"
     >
-      <div className="modal create-room-modal">
+      <div ref={modalRef} className="modal create-room-modal">
         <div className="modal-header">
           <h3>{t("createRoom.title", "Create room")}</h3>
           <button type="button" className="modal-close" aria-label={t("actions.close", "Close")} onClick={onClose}>×</button>
@@ -232,8 +267,15 @@ export function CreateRoomModal({ isOpen, onClose, onCreate, projectId, existing
         lists preserve their independent scroll behavior inside the movable dialog.
         */}
         <div className="create-room-modal-member-list" data-testid="create-room-member-list">
-          {loadingAgents ? (
+          {/*
+          FNXC:CreateRoomModal 2026-08-16-08:11:
+          Empty copy is meaningful only after the current request has settled. Until then show the
+          loading status, and distinguish a failed request from an actually empty project roster.
+          */}
+          {agentLoadPhase === "idle" || agentLoadPhase === "loading" ? (
             <div className="create-room-modal-empty"><LoadingSpinner label={t("createRoom.loadingAgents", "Loading agents...")} /></div>
+          ) : agentLoadPhase === "failed" ? (
+            <div className="create-room-modal-empty">{t("createRoom.failedLoadAgents", "Failed to load agents.")}</div>
           ) : filteredAgents.length === 0 ? (
             <div className="create-room-modal-empty">
               {agents.length === 0 ? t("createRoom.noAgents", "No agents in this project yet.") : t("createRoom.noMatch", "No agents match your search.")}

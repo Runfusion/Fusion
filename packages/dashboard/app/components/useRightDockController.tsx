@@ -186,7 +186,6 @@ export function useRightDockController(input: RightDockControllerInput): RightDo
       onOpenDetail={(value: Task | TaskDetail) => input.openDetailTask(value)}
       onDeleteTask={input.onDeleteTask}
       addToast={input.addToast}
-      disableDrag={true}
       prAuthAvailable={input.prAuthAvailable}
       autoMergeEnabled={input.autoMerge}
       nearDuplicateCanonicalInactive={typeof task.sourceMetadata?.nearDuplicateOf === "string"
@@ -280,6 +279,7 @@ export function useRightDockController(input: RightDockControllerInput): RightDo
       onResetTask={input.onResetTask}
       onDuplicateTask={input.onDuplicateTask}
       onTaskUpdated={input.onTaskUpdated}
+      onRefinementCreated={input.onTaskCreated}
       addToast={input.addToast}
       prAuthAvailable={input.prAuthAvailable}
       autoMergeEnabled={input.autoMerge}

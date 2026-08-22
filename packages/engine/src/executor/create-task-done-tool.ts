@@ -14,6 +14,7 @@
 import { Type } from "@earendil-works/pi-ai";
 import type { Settings, Task, TaskDetail, TaskRecommendation, TaskStore } from "@fusion/core";
 import {
+  isTaskNotFoundError,
   parseNoOpCompletionMarker,
   resolveWipTargetForTask,
 } from "@fusion/core";
@@ -29,6 +30,7 @@ import {
 import { moveTaskToReplanColumn, resolveReplanTargetColumn } from "../execution/replan-target.js";
 import { mergeEffectiveSettings } from "../project/effective-settings.js";
 import { generateSyntheticRunId, type EngineRunContext, type RunAuditor } from "../util/run-audit.js";
+import { emitBoundedRunAudit } from "./emit-bounded-run-audit.js";
 import { executorLog } from "../logger.js";
 import { resolveReboundColumnFor } from "./lifecycle-columns.js";
 import { evaluateTaskDoneRefusal } from "./task-done-refusal.js";
@@ -96,7 +98,7 @@ export function createTaskDoneTool(
         "documentation is updated — call as the final action after finishing all work; automatically marks all " +
         "remaining steps as done. At this accepted final checkpoint, when recommendation capture is enabled, submit up to " +
         "the project cap of genuine, task-ready out-of-scope recommendations with stable unique ids, or explicitly send " +
-        "recommendations: [] when none qualify; at cap 0, omit recommendations (an empty list is accepted for compatibility). " +
+        "recommendations: [] when none qualify; when required by project policy, an explicit array is mandatory, but a shorter list or [] is valid when relevance does not support more; at cap 0, omit recommendations. " +
         "Do not use recommendations for required fixes, blockers, secrets, commands, or reasoning. " +
         "With outcome=\"blocked\": honestly park the task when the work genuinely cannot proceed (upstream API break, " +
         "missing dependency task, unresolvable external blocker). Blocked is NOT a completion claim — it does not " +
@@ -116,7 +118,7 @@ export function createTaskDoneTool(
           title: Type.String(),
           description: Type.String(),
           category: Type.Union([Type.Literal("improvement"), Type.Literal("feature"), Type.Literal("bug"), Type.Literal("other")]),
-        }), { description: "For accepted completed outcomes when capture is enabled: submit at most the project cap of task-ready out-of-scope suggestions with unique stable ids, or [] when none qualify. At cap 0, omit this field; an empty list is accepted for compatibility but populated input is rejected. Never send for blocked/refused outcomes or include mandatory fixes, secrets, executable commands, or reasoning." })),
+        }), { description: "For accepted completed outcomes when capture is enabled: submit at most the project cap of task-ready out-of-scope suggestions with unique stable ids, or [] when none qualify. When requireTaskRecommendations is enabled and the cap is positive, this field is mandatory, but a shorter list or [] is valid when relevance does not support more. At cap 0, omit this field; populated input is rejected. Never send for blocked/refused outcomes or include mandatory fixes, secrets, executable commands, or reasoning." })),
         /*
         FNXC:Lifecycle 2026-07-16-10:20:
         FN-8141 laundered a genuinely-impossible task into `done`: fn_task_done only expressed success, the bulk-completion
@@ -165,8 +167,28 @@ export function createTaskDoneTool(
           and reason prose never makes a block durable. Task deps → durable failed park (requeues
           when deps complete); no deps → plan defect → needs-replan (FN-8634).
           */
-          const classification = classifyBlockedExit(reason, rawBlockedBy);
-          const { taskIds: blockedByIds } = partitionBlockedByRefs(rawBlockedBy);
+          const { taskIds: requestedBlockedByIds } = partitionBlockedByRefs(rawBlockedBy);
+          /*
+          FNXC:DependencyIntegrity 2026-08-20-17:27:
+          A task-like blocker must resolve before it becomes a durable dependency edge. Missing or
+          soft-deleted IDs are stale preflight evidence, not external work that can unblock itself;
+          parking on one would retain an unshowable `FN-*` reference and create a retry loop.
+          */
+          let hasMissingTaskBlocker = false;
+          for (const blockerId of requestedBlockedByIds) {
+            try {
+              const blocker = await store.getTask(blockerId, { includeDeleted: true });
+              if (blocker.deletedAt) hasMissingTaskBlocker = true;
+            } catch (error) {
+              if (isTaskNotFoundError(error)) {
+                hasMissingTaskBlocker = true;
+                continue;
+              }
+              throw error;
+            }
+          }
+          const blockedByIds = hasMissingTaskBlocker ? [] : requestedBlockedByIds;
+          const classification = classifyBlockedExit(reason, blockedByIds);
           const thrashCount = countBlockedThrashHits(
             blockedTask.log,
             classification.thrashSignature,
@@ -228,7 +250,7 @@ export function createTaskDoneTool(
               deps.getRunContextFor(taskId),
             );
           }
-          await deps.store.recordRunAuditEvent?.({
+          await emitBoundedRunAudit(deps.store, {
             taskId,
             agentId: "executor",
             runId: generateSyntheticRunId("execution-blocked", taskId),
@@ -308,6 +330,21 @@ export function createTaskDoneTool(
           await store.logEntry(taskId, refusalMessage, undefined, deps.getRunContextFor(task.id));
           executorLog.error(`${taskId}: fn_task_done refused (${invariantCheck.reason}) — observed=${invariantCheck.observed}, expected=${invariantCheck.expected}`);
 
+          /*
+          FNXC:WorkspaceFinalization 2026-08-21-08:46:
+          A main-checkout edit belongs to the shared checkout owner, not the executor. Parking it on
+          the first refusal preserves acquired workspace evidence and the retry budget; requeueing an
+          agent cannot rewrite a shared checkout safely and previously created an identical loop.
+          */
+          if (invariantCheck.reason === "main_checkout_edit") {
+            await store.updateTask(taskId, { status: "failed", error: refusalMessage });
+            await store.logEntry(taskId, `${refusalMessage} — operator cleanup and Retry are required; executor retry budget preserved`, undefined, deps.getRunContextFor(task.id));
+            return {
+              content: [{ type: "text" as const, text: refusalMessage }],
+              details: { error: refusalMessage },
+            };
+          }
+
           const priorRequeues = task.taskDoneRetryCount ?? 0;
           const nextRequeueCount = priorRequeues + 1;
           if (priorRequeues < MAX_TASK_DONE_REQUEUE_RETRIES) {
@@ -318,7 +355,7 @@ export function createTaskDoneTool(
               paused: false,
               pausedByAgentId: null,
               worktree: null,
-              branch: null,
+              branch: null, branchWriteOrigin: "engine" as const,
               sessionFile: null,
             });
             await store.logEntry(
@@ -336,7 +373,7 @@ export function createTaskDoneTool(
               paused: false,
               pausedByAgentId: null,
               worktree: null,
-              branch: null,
+              branch: null, branchWriteOrigin: "engine" as const,
               sessionFile: null,
             });
             await store.logEntry(taskId, `${refusalMessage} — invariant-check retry budget exhausted`, undefined, deps.getRunContextFor(task.id));
@@ -372,7 +409,7 @@ export function createTaskDoneTool(
               paused: false,
               pausedByAgentId: null,
               worktree: null,
-              branch: null,
+              branch: null, branchWriteOrigin: "engine" as const,
               sessionFile: null,
             });
             await store.logEntry(
@@ -391,7 +428,7 @@ export function createTaskDoneTool(
               paused: false,
               pausedByAgentId: null,
               worktree: null,
-              branch: null,
+              branch: null, branchWriteOrigin: "engine" as const,
               sessionFile: null,
             });
             await store.logEntry(taskId, `${refusalMessage} — fn_task_done refusal retry budget exhausted`, undefined, deps.getRunContextFor(task.id));
@@ -428,9 +465,21 @@ export function createTaskDoneTool(
           };
         }
 
+        const maximumRecommendations = settings.maxRecommendationsPerTask ?? 3;
+        /*
+        FNXC:TaskRecommendations 2026-08-19-13:05:
+        Required mode is an explicit evaluation contract, not a quota. Refuse only an omitted array at the live accepted-completion boundary; valid empty, short, and at-cap arrays remain quality-first outcomes.
+        */
+        if (settings.requireTaskRecommendations === true && maximumRecommendations > 0 && params.recommendations === undefined) {
+          const message = `Cannot mark task done yet — project policy requires an explicit recommendations array when maxRecommendationsPerTask is ${maximumRecommendations}. Send relevant recommendations or recommendations: [] and call fn_task_done() again.`;
+          return {
+            content: [{ type: "text" as const, text: message }],
+            details: { error: message },
+          };
+        }
         const completionRecommendations = params.recommendations === undefined
           ? undefined
-          : validateCompletionRecommendations(params.recommendations, settings.maxRecommendationsPerTask ?? 3);
+          : validateCompletionRecommendations(params.recommendations, maximumRecommendations);
         if (typeof completionRecommendations === "string") {
           return {
             content: [{ type: "text" as const, text: `Cannot mark task done yet — ${completionRecommendations}.` }],

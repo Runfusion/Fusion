@@ -22,7 +22,7 @@ tags:
   - css-regression-test
   - kanban
 applies_when:
-  - "A horizontally scrollable board or lane strip uses `overflow-x: auto` with mobile momentum scrolling"
+  - "A horizontally scrollable Board surface uses `overflow-x: auto` with mobile momentum scrolling"
   - "Edge dragging should keep native inner scrolling but must not chain or park content off screen"
 ---
 
@@ -30,35 +30,39 @@ applies_when:
 
 ## Problem
 
-The mobile kanban board intentionally scrolls horizontally between columns using `overflow-x: auto`, `-webkit-overflow-scrolling: touch`, and `scroll-snap-type: x proximity`. On iOS Safari/PWA, that same momentum scroller can rubber-band past its first or last column if the scroller does not contain horizontal overscroll. The visible result is that the columns slide away from the viewport edge, exposing empty space and sometimes chaining the drag to the document.
+The mobile kanban Board intentionally scrolls horizontally between columns using `overflow-x: auto`, `-webkit-overflow-scrolling: touch`, and `scroll-snap-type: x proximity`. On iOS Safari/PWA, that same momentum scroller can rubber-band past its first or last column if the scroller does not contain horizontal overscroll. The visible result is that the columns slide away from the viewport edge, exposing empty space and sometimes chaining the drag to the document.
 
 ## Root cause
 
-The board had page-level mobile overscroll protection on `html, body`, but the board itself is the horizontal scroll container. The base `.board` and the mobile `@media (max-width: 768px) .board` rules declared the intended scroll and snap properties without `overscroll-behavior-x`, so iOS edge overscroll was not contained at the board boundary. Workflow and multi-lane board variants in `Lane.css` had the same independent horizontal scrollers.
+The board had page-level mobile overscroll protection on `html, body`, but the Board itself is the horizontal scroll container. The base `.board` and the live workflow-column `.board.board-workflow-columns` rules declare the intended scroll and snap properties with `overscroll-behavior-x: contain`, so iOS edge overscroll stops at the Board boundary. Both selected-workflow and All-workflows render paths use the workflow-column selector.
 
 ## Solution
 
-Add axis-specific containment to each horizontal board strip:
+Keep axis-specific containment on the current horizontal Board surfaces:
 
 ```css
 .board,
-.board.board-workflow-columns,
-.lane-columns {
+.board.board-workflow-columns {
   overflow-x: auto;
   overscroll-behavior-x: contain;
-  scroll-snap-type: x proximity;
+}
+
+@media (max-width: 768px), (max-height: 480px) {
+  .board.board-workflow-columns {
+    scroll-snap-type: x proximity;
+  }
 }
 ```
 
-Keep `contain` rather than `none`: the board can retain its native inner scroll feel while edge overscroll stops at the board/lane container instead of chaining outward. Do not replace this with `overflow: hidden`/`clip`, and do not switch snap back to `x mandatory`; both would regress intentional mobile column navigation.
+Keep `contain` rather than `none`: the Board retains its native inner scroll feel while edge overscroll stops at the Board container instead of chaining outward. Desktop and tablet workflow columns explicitly use `scroll-snap-type: none`; phone and short-landscape workflow columns use proximity snapping. Do not replace this with `overflow: hidden`/`clip`, and do not switch snap to `x mandatory`; both would regress intentional mobile column navigation.
 
 ## Regression coverage
 
-Use a CSS-fixture test that loads the combined dashboard CSS and asserts:
+Use CSS-fixture tests that load the combined dashboard CSS and assert:
 
-- the mobile `.board` rule still has `overflow-x: auto` and `scroll-snap-type: x proximity`;
-- the mobile `.board` rule declares `overscroll-behavior-x: contain`;
-- the base `.board`, `.board.board-workflow-columns`, and `.lane-columns` horizontal scrollers also declare containment;
-- no checked board path uses `scroll-snap-type: x mandatory`.
+- the base `.board` and `.board.board-workflow-columns` rules have `overflow-x: auto`, `overscroll-behavior-x: contain`, and `scroll-snap-type: none`;
+- the phone and short-landscape `.board` and `.board.board-workflow-columns` rules retain `scroll-snap-type: x proximity`;
+- neither Board workflow render path permits `scroll-snap-type: x mandatory`;
+- the retired lane compatibility selector is absent from both the base and phone CSS slices.
 
-For FN-6378 this lives in `packages/dashboard/app/__tests__/board-mobile-overscroll-containment.test.ts`.
+For FN-6378 this lives in `packages/dashboard/app/__tests__/board-mobile-overscroll-containment.test.ts` and the companion column-swipe fixture.

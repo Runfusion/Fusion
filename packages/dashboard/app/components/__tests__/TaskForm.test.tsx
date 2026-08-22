@@ -550,31 +550,6 @@ describe("TaskForm", () => {
     expect(screen.queryByText("Browser Verification")).toBeNull();
   });
 
-  it("in create mode: shows Plan and Subtask buttons", () => {
-    renderTaskForm({
-      mode: "create",
-      onPlanningMode: vi.fn(),
-      onSubtaskBreakdown: vi.fn(),
-    });
-
-    expect(screen.getByRole("button", { name: "Plan" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Subtask" })).toBeTruthy();
-  });
-
-  it("in edit mode: hides Plan/Subtask buttons, shows title field", () => {
-    renderTaskForm({
-      mode: "edit",
-      title: "My task",
-      onTitleChange: vi.fn(),
-      onPlanningMode: vi.fn(),
-      onSubtaskBreakdown: vi.fn(),
-    });
-
-    expect(screen.queryByRole("button", { name: "Plan" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Subtask" })).toBeNull();
-    expect(screen.getByLabelText(/Title/i)).toBeTruthy();
-  });
-
   it("renders description expand button in edit mode and toggles fullscreen", () => {
     const { container } = renderTaskForm({
       mode: "edit",
@@ -903,22 +878,6 @@ describe("TaskForm", () => {
 });
 
 describe("TaskForm description-adjacent actions layout (FN-781)", () => {
-  it("renders Plan and Subtask in description-actions area in create mode", () => {
-    renderTaskForm({
-      mode: "create",
-      description: "Some task",
-      onPlanningMode: vi.fn(),
-      onSubtaskBreakdown: vi.fn(),
-    });
-
-    // The description-actions container should exist
-    expect(screen.getByTestId("task-form-description-actions")).toBeTruthy();
-
-    // Plan and Subtask buttons should be inside it
-    const actionsContainer = screen.getByTestId("task-form-description-actions");
-    expect(actionsContainer.contains(screen.getByTestId("task-form-plan-button"))).toBe(true);
-    expect(actionsContainer.contains(screen.getByTestId("task-form-subtask-button"))).toBe(true);
-  });
 
   it("does not render description-actions in edit mode", () => {
     renderTaskForm({
@@ -927,35 +886,10 @@ describe("TaskForm description-adjacent actions layout (FN-781)", () => {
       onTitleChange: vi.fn(),
       description: "Some task",
       onPlanningMode: vi.fn(),
-      onSubtaskBreakdown: vi.fn(),
     });
 
     expect(screen.queryByTestId("task-form-description-actions")).toBeNull();
     expect(screen.queryByTestId("task-form-inline-optional-steps")).toBeNull();
-  });
-
-  it("Plan and Subtask buttons are disabled when description is empty", () => {
-    renderTaskForm({
-      mode: "create",
-      description: "",
-      onPlanningMode: vi.fn(),
-      onSubtaskBreakdown: vi.fn(),
-    });
-
-    expect((screen.getByTestId("task-form-plan-button") as HTMLButtonElement).disabled).toBe(true);
-    expect((screen.getByTestId("task-form-subtask-button") as HTMLButtonElement).disabled).toBe(true);
-  });
-
-  it("Plan and Subtask buttons are enabled when description has content", () => {
-    renderTaskForm({
-      mode: "create",
-      description: "A real task",
-      onPlanningMode: vi.fn(),
-      onSubtaskBreakdown: vi.fn(),
-    });
-
-    expect((screen.getByTestId("task-form-plan-button") as HTMLButtonElement).disabled).toBe(false);
-    expect((screen.getByTestId("task-form-subtask-button") as HTMLButtonElement).disabled).toBe(false);
   });
 
   it("Refine button remains near the description textarea", () => {
@@ -963,7 +897,6 @@ describe("TaskForm description-adjacent actions layout (FN-781)", () => {
       mode: "create",
       description: "Some text",
       onPlanningMode: vi.fn(),
-      onSubtaskBreakdown: vi.fn(),
     });
 
     // Refine button should be rendered (it's inside the description-with-refine wrapper)
@@ -1605,5 +1538,36 @@ describe("TaskForm focus behavior (FN-1459)", () => {
 
       expect(screen.getByText("Repository must be in owner/repo format.")).toBeInTheDocument();
     });
+  });
+});
+
+describe("JIRA branch derivation", () => {
+  beforeEach(async () => {
+    const { fetchSettings } = await import("../../api");
+    vi.mocked(fetchSettings).mockResolvedValue({ modelPresets: [], autoSelectModelPreset: false, defaultPresetBySize: {}, jiraEnabled: true } as never);
+    vi.stubGlobal("fetch", vi.fn());
+  });
+
+  it("fills the editable branch field only after an explicit successful derive", async () => {
+    const onBranchChange = vi.fn();
+    vi.mocked(globalThis.fetch).mockResolvedValue(new Response(JSON.stringify({ ok: true, branchName: "feature/PRD-1234-my-slug" }), { status: 200 }));
+    renderTaskForm({ branch: "feature/manual", onBranchChange });
+    fireEvent.click(screen.getByTestId("task-form-more-options-toggle"));
+    await screen.findByTestId("jira-derive-branch");
+    fireEvent.change(screen.getByLabelText("JIRA issue key"), { target: { value: "PRD-1234" } });
+    fireEvent.click(screen.getByTestId("jira-derive-branch").querySelector("button")!);
+    await waitFor(() => expect(onBranchChange).toHaveBeenCalledWith("feature/PRD-1234-my-slug"));
+  });
+
+  it("keeps a manual branch and renders a recoverable derivation error", async () => {
+    const onBranchChange = vi.fn();
+    vi.mocked(globalThis.fetch).mockResolvedValue(new Response(JSON.stringify({ ok: false, message: "JIRA issue was not found." }), { status: 200 }));
+    renderTaskForm({ branch: "feature/manual", onBranchChange });
+    fireEvent.click(screen.getByTestId("task-form-more-options-toggle"));
+    await screen.findByTestId("jira-derive-branch");
+    fireEvent.change(screen.getByLabelText("JIRA issue key"), { target: { value: "PRD-404" } });
+    fireEvent.click(screen.getByTestId("jira-derive-branch").querySelector("button")!);
+    expect(await screen.findByText("JIRA issue was not found.")).toBeInTheDocument();
+    expect(onBranchChange).not.toHaveBeenCalled();
   });
 });

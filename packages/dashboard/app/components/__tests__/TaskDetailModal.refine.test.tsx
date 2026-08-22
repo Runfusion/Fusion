@@ -21,6 +21,7 @@ const renderDoneTaskDetail = (options: {
   initialAction?: { action: "refine"; requestId: number };
   addToast?: (message: string, type?: any) => void;
   onClose?: () => void;
+  onRefinementCreated?: (task: any) => void;
   dismissPreferenceEnabled?: boolean;
 } = {}) => {
   const modal = (
@@ -29,6 +30,7 @@ const renderDoneTaskDetail = (options: {
       initialTab="definition"
       initialAction={options.initialAction}
       onClose={options.onClose ?? noop}
+      onRefinementCreated={options.onRefinementCreated}
       onMoveTask={noopMove}
       onDeleteTask={noopDelete}
       onMergeTask={noopMerge}
@@ -159,7 +161,10 @@ describe("TaskDetailModal refine modal dismissal invariant", () => {
     const user = userEvent.setup();
     const addToast = vi.fn();
     const onClose = vi.fn();
-    renderDoneTaskDetail({ addToast, onClose });
+    const onRefinementCreated = vi.fn();
+    const returnedChild = { id: "FN-002", column: "todo" };
+    vi.mocked(refineTask).mockResolvedValue(returnedChild as any);
+    renderDoneTaskDetail({ addToast, onClose, onRefinementCreated });
     openRefineFromActionsMenu();
 
     expect(screen.getByRole("button", { name: "Create Refinement Task" })).toBeDisabled();
@@ -176,6 +181,8 @@ describe("TaskDetailModal refine modal dismissal invariant", () => {
     await waitFor(() => {
       expect(refineTask).toHaveBeenCalledWith("FN-001", "Please add the missing regression coverage", undefined);
       expect(addToast).toHaveBeenCalledWith("Refinement task created: FN-002", "success");
+      expect(onRefinementCreated).toHaveBeenCalledTimes(1);
+      expect(onRefinementCreated).toHaveBeenCalledWith(returnedChild);
       expect(onClose).toHaveBeenCalledTimes(1);
     });
   });

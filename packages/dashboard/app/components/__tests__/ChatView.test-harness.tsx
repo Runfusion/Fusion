@@ -132,7 +132,10 @@ export function createMockSkill(overrides: Partial<DiscoveredSkill>): Discovered
 }
 
 export function setupMockChat(overrides: Partial<UseChatReturn> = {}) {
-  const state: UseChatReturn = { ...defaultChatState, ...overrides };
+  const activeSession = overrides.activeSession ?? defaultChatState.activeSession;
+  const sessions = overrides.sessions ?? (activeSession ? [activeSession] : defaultChatState.sessions);
+  const filteredSessions = overrides.filteredSessions ?? (activeSession ? [activeSession] : defaultChatState.filteredSessions);
+  const state: UseChatReturn = { ...defaultChatState, ...overrides, sessions, filteredSessions };
   mockUseChat.mockReturnValue(state);
 }
 

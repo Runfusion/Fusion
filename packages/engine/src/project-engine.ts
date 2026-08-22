@@ -84,9 +84,11 @@ import type { RoutineRunner } from "./scheduling/routine-runner.js";
 import { sweepStaleAutostashes, VerificationError } from "./merger.js";
 import {
   runAiMerge,
+  AiMergeBlockedError,
   landWorkspaceTask,
   WorkspaceFinalizeBlockedError,
   WorkspaceMergeDispatchSupersededError,
+  WorkspaceMergeTechnicalError,
   WorkspacePartialLandError,
   WorkspaceRepoLandBusyError,
 } from "./merge/merger-ai.js";
@@ -98,12 +100,13 @@ import {
   resolveActiveTaskCapacityLimit,
 } from "./concurrency/concurrency.js";
 import { canStartNextMergeBody } from "./merge/merge-reclaim-policy.js";
-import { shouldClearOrphanedMergeStamp } from "./merge/merge-active-status.js";
+import { clearOwnedMergeStamp } from "./merge/clear-orphaned-merge-stamp.js";
 import {
   registerProjectVerificationLimit,
   unregisterProjectVerificationLimit,
 } from "./concurrency/verification-concurrency.js";
 import { runtimeLog } from "./logger.js";
+import { emitBoundedRunAudit, type RunAuditSinkHost } from "./util/emit-bounded-run-audit.js";
 
 class WorkspaceMergeDispatchBusyError extends Error {
   readonly retryable = true;
@@ -126,6 +129,7 @@ import { finalizeProvenAutoMergeTask } from "./merge/auto-merge-finalization.js"
 import { isTransientError } from "./errors/transient-error-detector.js";
 import { classifyTransientMergeError, MAX_AUTO_MERGE_TRANSIENT_RETRIES } from "./errors/transient-merge-error-classifier.js";
 import { TunnelProcessManager } from "./remote-access/tunnel-process-manager.js";
+import { getLocalDashboardPort } from "./local-dashboard-port.js";
 import {
   deliverPostgresMigrationCompleteNoticeIfNeeded,
   deliverPostgresMigrationNoticeIfNeeded,
@@ -138,6 +142,28 @@ import type {
   TunnelRestoreReasonCode,
   TunnelStatusSnapshot,
 } from "./remote-access/types.js";
+
+/**
+ * FNXC:RunAudit 2026-08-20-05:22:
+ * FN-9175 keeps shadow-dequeue telemetry synchronous and isolated from queue ownership. Exporting
+ * this production helper lets its no-throw contract be exercised without fabricating a class host.
+ */
+export function emitMergeRequestShadowDequeueParityAudit(
+  store: RunAuditSinkHost,
+  legacyTaskId: string,
+  shadowTaskId: string | null,
+): void {
+  const agree = shadowTaskId === legacyTaskId;
+  void emitBoundedRunAudit(store, {
+    taskId: legacyTaskId,
+    agentId: "merger",
+    runId: generateSyntheticRunId("merger-shadow-dequeue", legacyTaskId),
+    domain: "database",
+    mutationType: "merge:request-dequeued-shadow",
+    target: legacyTaskId,
+    metadata: { legacyTaskId, shadowTaskId, agree },
+  }, { log: runtimeLog });
+}
 
 /**
  * Callback for processing pull-request merge strategy.
@@ -734,14 +760,7 @@ export class ProjectEngine {
   successor attempt.
   */
   private async clearAbortedMergeStamp(taskId: string): Promise<void> {
-    const store = this.runtime.getTaskStore();
-    const task = await store.getTask(taskId).catch(() => null);
-    if (!task || !shouldClearOrphanedMergeStamp(task)) return;
-    const clearedStatus = task.status;
-    await store.updateTask(taskId, { status: null }).catch(() => undefined);
-    await store
-      .logEntry(taskId, `Auto-recovered: cleared stale '${clearedStatus}' status`, "MergeAborted")
-      .catch(() => undefined);
+    await clearOwnedMergeStamp(this.runtime.getTaskStore(), taskId, "MergeAborted");
   }
 
   /*
@@ -753,14 +772,7 @@ export class ProjectEngine {
   and synchronous internalEnqueueMerge callers; pre-enqueue blockers remain self-healing's job.
   */
   private async reconcileClaimedMergeStamp(taskId: string): Promise<void> {
-    const store = this.runtime.getTaskStore();
-    const task = await store.getTask(taskId).catch(() => null);
-    if (!task || !shouldClearOrphanedMergeStamp(task)) return;
-    const clearedStatus = task.status;
-    await store.updateTask(taskId, { status: null }).catch(() => undefined);
-    await store
-      .logEntry(taskId, `Auto-recovered: reconciled orphaned '${clearedStatus}' merge status`, "MergeQueue")
-      .catch(() => undefined);
+    await clearOwnedMergeStamp(this.runtime.getTaskStore(), taskId, "MergeQueue");
   }
 
   /** FN-5697/FN-5674: cap transient provider/network abort retries in auto-merge.
@@ -2058,11 +2070,11 @@ export class ProjectEngine {
    * handler already follows).
    */
   private async emitOverseerInterventionSafe(fn: () => unknown | Promise<unknown>): Promise<void> {
-    try {
-      await fn();
-    } catch (err) {
-      runtimeLog.warn(`Failed to emit overseer intervention: ${err instanceof Error ? err.message : String(err)}`);
-    }
+    await emitBoundedRunAudit(
+      { recordRunAuditEvent: () => fn() },
+      { mutationType: "overseer:intervention" },
+      { log: runtimeLog },
+    );
   }
 
   /**
@@ -2571,12 +2583,12 @@ export class ProjectEngine {
       settings: promotionSettings,
       createGroupPr: this.options.createGroupPr,
       recordAudit: async (event) => {
-        await store.recordRunAuditEvent({
+        await emitBoundedRunAudit(store, {
           domain: event.domain as any,
           mutationType: event.mutationType,
           target: event.target,
           metadata: event.metadata,
-        } as any);
+        } as any, { log: runtimeLog });
       },
     });
   }
@@ -2908,7 +2920,9 @@ export class ProjectEngine {
           provider: "cloudflare",
           quickTunnel: true,
           executablePath: "cloudflared",
-          args: ["tunnel", "--url", "http://localhost:4040"],
+          // FNXC:RemoteAccess 2026-08-19-04:00: target the port the dashboard actually bound, not a
+          // hardcoded 4040 that publishes whatever else happens to own it. See local-dashboard-port.
+          args: ["tunnel", "--url", `http://localhost:${getLocalDashboardPort()}`],
         },
       };
     }
@@ -3139,21 +3153,7 @@ export class ProjectEngine {
   }
 
   private emitMergeRequestShadowDequeueParity(legacyTaskId: string, shadowTaskId: string | null): void {
-    const agree = shadowTaskId === legacyTaskId;
-    const store = this.runtime.getTaskStore();
-    void store.recordRunAuditEvent?.({
-      taskId: legacyTaskId,
-      agentId: "merger",
-      runId: generateSyntheticRunId("merger-shadow-dequeue", legacyTaskId),
-      domain: "database",
-      mutationType: "merge:request-dequeued-shadow",
-      target: legacyTaskId,
-      metadata: {
-        legacyTaskId,
-        shadowTaskId,
-        agree,
-      },
-    });
+    emitMergeRequestShadowDequeueParityAudit(this.runtime.getTaskStore(), legacyTaskId, shadowTaskId);
   }
 
   /*
@@ -3290,7 +3290,7 @@ export class ProjectEngine {
       runtimeLog.warn(
         `Global auto-merge was turned off, but ${taskIds.length} legacy in-review task(s) still have task.autoMerge=true without user provenance and may continue to auto-merge: ${taskIds.join(", ")}. Run reconcileLegacyAutoMergeStamps({ apply: true }) to clear these legacy stamps after review.`,
       );
-      void store.recordRunAuditEvent({
+      void emitBoundedRunAudit(store, {
         agentId: "system",
         runId: `legacy-auto-merge-stamp-advisory-${Date.now()}`,
         domain: "database",
@@ -3302,7 +3302,7 @@ export class ProjectEngine {
           recommendation: "Run reconcileLegacyAutoMergeStamps({ apply: true }) to clear legacy stamps after operator review.",
           changedTaskState: false,
         },
-      });
+      }, { log: runtimeLog });
     } catch (err: unknown) {
       runtimeLog.warn(
         `Legacy auto-merge stamp advisory failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -4206,12 +4206,12 @@ export class ProjectEngine {
                 createGroupPr: this.options.createGroupPr,
                 signal,
                 recordAudit: async (event) => {
-                  await store.recordRunAuditEvent({
+                  await emitBoundedRunAudit(store, {
                     domain: event.domain as any,
                     mutationType: event.mutationType,
                     target: event.target,
                     metadata: event.metadata,
-                  } as any);
+                  } as any, { log: runtimeLog });
                 },
               });
             } catch (promotionError) {
@@ -4226,7 +4226,7 @@ export class ProjectEngine {
               // explicit re-promote. Record an audit event so the failure is
               // observable and operators/the dashboard can drive recovery.
               try {
-                await store.recordRunAuditEvent({
+                await emitBoundedRunAudit(store, {
                   taskId,
                   agentId: "merger",
                   runId: `merge-${taskId}`,
@@ -4238,7 +4238,7 @@ export class ProjectEngine {
                     taskId,
                     error: message,
                   },
-                });
+                }, { log: runtimeLog });
               } catch {
                 // best-effort audit
               }
@@ -4326,8 +4326,8 @@ export class ProjectEngine {
             await projectAdmissionCoordinator.admitNext({
               projectId: cwd,
               maxConcurrent: resolveActiveTaskCapacityLimit({
-                maxConcurrent: admissionSettings.maxConcurrent ?? 2,
-                maxWorktrees: admissionSettings.maxWorktrees ?? 4,
+                maxConcurrent: admissionSettings.maxConcurrent,
+                maxWorktrees: admissionSettings.maxWorktrees,
                 worktreeLimitEnabled: admissionSettings.worktreeLimitEnabled,
               }),
               claimed: async () => (await getMergeClaimSnapshot()).count,
@@ -4346,8 +4346,8 @@ export class ProjectEngine {
             if (!selected) {
               const snapshot = await getMergeClaimSnapshot();
               const limit = resolveActiveTaskCapacityLimit({
-                maxConcurrent: admissionSettings.maxConcurrent ?? 2,
-                maxWorktrees: admissionSettings.maxWorktrees ?? 4,
+                maxConcurrent: admissionSettings.maxConcurrent,
+                maxWorktrees: admissionSettings.maxWorktrees,
                 worktreeLimitEnabled: admissionSettings.worktreeLimitEnabled,
               });
               if (snapshot.count >= limit) {
@@ -4358,8 +4358,8 @@ export class ProjectEngine {
                 snapshot proves exhaustion rather than a higher-priority candidate winning.
                 */
                 const reason = formatAdmissionCapacityQueuedReason({
-                  maxConcurrent: admissionSettings.maxConcurrent ?? 2,
-                  maxWorktrees: admissionSettings.maxWorktrees ?? 4,
+                  maxConcurrent: admissionSettings.maxConcurrent,
+                  maxWorktrees: admissionSettings.maxWorktrees,
                   worktreeLimitEnabled: admissionSettings.worktreeLimitEnabled,
                   claimed: snapshot.count,
                   holderTaskIds: snapshot.ids,
@@ -4727,6 +4727,22 @@ export class ProjectEngine {
           land attempt. Reject the resolver so the busy error surfaces to the user (they can retry),
           WITHOUT consuming a mergeRetry. No re-enqueue: manual merges are user-driven, not engine-timed.
           */
+          /*
+          FNXC:WorkspaceFinalization 2026-08-21-08:46:
+          Technical fence/lease failures retain their real category and consume the durable transient
+          retry budget. They must never enter the contention branch, which is reserved for a concrete
+          repository lease conflict naming a real holder task.
+          */
+          if (err instanceof WorkspaceMergeTechnicalError) {
+            await store.logEntry(taskId, `Workspace merge technical failure (${err.kind}): ${err.message}`, "WorkspaceMergeTechnicalFailure").catch(() => undefined);
+            if (hasManualResolver) {
+              this.rejectMergeResolvers(taskId, err);
+            } else if (!(await this.maybeRetryTransientMerge(store, taskId, await store.getTask(taskId).catch(() => null), err.message, true))) {
+              await store.updateTask(taskId, { status: "failed", error: err.message }).catch(() => undefined);
+            }
+            continue;
+          }
+
           const isWorkspaceBusyError = err instanceof WorkspaceRepoLandBusyError
             || err instanceof WorkspaceMergeDispatchBusyError
             // FNXC:WorkspaceMergeDispatch 2026-08-15-09:37: a stale generation that pushed
@@ -4741,23 +4757,27 @@ export class ProjectEngine {
           }
 
           if (isWorkspaceBusyError && !hasManualResolver) {
-            const busyCount = this.workspaceBusyReenqueues.get(taskId) ?? 0;
+            /*
+            FNXC:WorkspaceFinalization 2026-08-21-09:09:
+            Lease contention is restart-safe only when its ceiling is task state. The local timer
+            map may coalesce callbacks but must never decide the retry count; persist before
+            scheduling so a recreated engine cannot restart the same livelock episode. Legacy rows
+            with no counter begin their first durable contention episode at zero.
+            */
+            const liveTask = await store.getTask(taskId).catch(() => null);
+            const busyCount = liveTask?.mergeTransientRetryCount ?? 0;
             await store
               .logEntry(taskId, `Workspace sub-repo land busy (contention): ${errorMsg}`, "WorkspaceRepoLandBusy")
               .catch(() => undefined);
             if (busyCount < ProjectEngine.WORKSPACE_BUSY_MAX_REENQUEUES) {
-              this.workspaceBusyReenqueues.set(taskId, busyCount + 1);
-              // Capped exponential backoff (B5): never exceed 60s even at the busy ceiling.
+              const nextCount = busyCount + 1;
               const delayMs = Math.min(5000 * Math.pow(2, busyCount), 60_000);
-              await store.updateTask(taskId, { status: null }).catch(() => undefined);
+              await store.updateTask(taskId, { status: null, mergeTransientRetryCount: nextCount }).catch(() => undefined);
               runtimeLog.log(
-                `Workspace land busy re-enqueue ${busyCount + 1}/${ProjectEngine.WORKSPACE_BUSY_MAX_REENQUEUES} for ${taskId} in ${delayMs / 1000}s (no mergeRetry consumed — pure lease contention)`,
+                `Workspace land busy re-enqueue ${nextCount}/${ProjectEngine.WORKSPACE_BUSY_MAX_REENQUEUES} for ${taskId} in ${delayMs / 1000}s (durable transient retry)`,
               );
               this.scheduleWorkspaceBusyReenqueue(taskId, delayMs);
             } else {
-              // Pathological sustained contention — surface but do NOT burn mergeRetries; park as
-              // failed so the cooldown sweep stops re-attempting and an operator can intervene.
-              this.workspaceBusyReenqueues.delete(taskId);
               await store
                 .updateTask(taskId, { status: "failed", error: errorMsg })
                 .catch(() => undefined);
@@ -5152,6 +5172,32 @@ export class ProjectEngine {
           }
 
           if (mergeStrategyOnErr === "direct") {
+            /*
+            FNXC:AIMergeReviewRecovery 2026-08-20-02:02:
+            An exhausted AI review is terminal operator work, not a git conflict.
+            Its message includes reviewer prose, so classify the typed error before
+            any text sniffing can turn a natural-language "conflicts" finding into
+            a retry/bounce/cooldown livelock.
+            */
+            if (err instanceof AiMergeBlockedError) {
+              try {
+                await store.updateTask(taskId, {
+                  status: "failed",
+                  mergeRetries: maxAutoMergeRetriesOnErr,
+                  error: `AI merge review blocked landing at ${taskOnErr?.aiMergeReviewReconciliation?.candidateSha ?? "the reviewed candidate"}: ${err.reasons.join("; ")}. Rebase/re-push, dismiss a finding with a reason, or land manually.`,
+                });
+                await store.logEntry(
+                  taskId,
+                  `AI merge review exhausted its corrective budget at ${taskOnErr?.aiMergeReviewReconciliation?.candidateSha ?? "the reviewed candidate"}; rebase/re-push, dismiss a finding with justification, or land manually (${Math.min(err.reasons.length, 8)} current blocking finding(s))`,
+                  "AiMergeReviewBlocked",
+                );
+              } catch (recoveryErr) {
+                runtimeLog.error(
+                  `Auto-merge: failed to park ${taskId} after AI review block: ${recoveryErr instanceof Error ? recoveryErr.message : String(recoveryErr)}`,
+                );
+              }
+              continue;
+            }
             const isConflictError =
               errorMsg.includes("conflict") || errorMsg.includes("Conflict");
 

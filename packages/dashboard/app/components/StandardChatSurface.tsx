@@ -1,5 +1,5 @@
 import type { Agent } from "@fusion/core";
-import React, { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import type { Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -16,6 +16,10 @@ import { nativeStructureChatRefMatcher, parseNativeStructureChatRef, splitNative
 import { MicButton } from "./MicButton";
 import { useComposerDictation } from "../hooks/useComposerDictation";
 import { ToolCallDetails, formatToolArgsPreview, formatToolPreview, hasToolCallDetails } from "./ToolCallDetails";
+import {
+  createChatInputAutosizeController,
+  type ChatInputAutosizeController,
+} from "../utils/chatInputAutosize";
 
 export interface StandardRoomContext {
   roomName: string;
@@ -154,6 +158,31 @@ function formatToolResultSummary(result: unknown): string | null {
   return formatToolPreview(result, 200);
 }
 
+function isInteractiveDisclosureTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof Element)) return false;
+  return Boolean(target.closest("a,button,input,textarea,select,summary,[role=\"button\"],[contenteditable=\"true\"]"));
+}
+
+/*
+FNXC:ChatDisclosure 2026-08-19-02:42:
+Streaming status is presentation-only: disclosure state belongs to the user and must not be taken over by a running tool or thinking delta. Keep the native summary interaction while allowing a click on non-interactive thinking content to dismiss an expanded block.
+*/
+function StandardThinkingDisclosure({ thinking }: { thinking: string }) {
+  const { t } = useTranslation("app");
+  const handleBodyClick = useCallback((event: React.MouseEvent<HTMLPreElement>) => {
+    if (isInteractiveDisclosureTarget(event.target)) return;
+    const details = event.currentTarget.closest("details");
+    if (details?.open) details.open = false;
+  }, []);
+
+  return (
+    <details className="chat-message-thinking">
+      <summary>{t("chat.thinking", "Thinking")}</summary>
+      <pre className="chat-message-thinking-content" onClick={handleBodyClick}>{linkifyFilePaths(thinking)}</pre>
+    </details>
+  );
+}
+
 function buildFailureReferenceHref(reference: FailureInfo["reference"]): string | null {
   if (!reference) return null;
   if (reference.kind === "mailbox" || reference.kind === "mailbox-message") {
@@ -242,7 +271,7 @@ export function renderStandardToolCalls(
       return <div key={`${toolCall.toolName}-${index}`} className={className}><div className="chat-tool-call-summary">{summary}</div></div>;
     }
     return (
-      <details key={`${toolCall.toolName}-${index}`} className={className} open={isRunning}>
+      <details key={`${toolCall.toolName}-${index}`} className={className}>
         <summary>{summary}</summary>
         <ToolCallDetails
           className="chat-tool-call-content"
@@ -284,7 +313,7 @@ export function renderStandardToolCalls(
     const statusSummary = hasRunning ? `(${runningCount} ${t("chat.toolCallStatusRunning", "running")})` : errorCount > 0 ? `(${errorCount} ${errorCount === 1 ? t("chat.toolCallStatusError", "error") : t("chat.toolCallStatusErrors", "errors")})` : null;
     return (
       <div className="chat-tool-calls" data-testid="chat-tool-calls">
-        <details className="chat-tool-calls-group" data-testid="chat-tool-calls-group" open={hasRunning}>
+        <details className="chat-tool-calls-group" data-testid="chat-tool-calls-group">
           <summary className="chat-tool-calls-group-summary">
             <span className="chat-tool-calls-header-icon" aria-hidden="true">•</span>
             <span className="chat-tool-calls-count">{t("chat.toolCallsCount", "{{count}} tool calls", { count: nonQuestionToolCalls.length })}</span>
@@ -426,10 +455,16 @@ function renderMarkdownBlockWithNativeStructurePreviews(
   return blocks.length === 1 ? blocks[0] : <>{blocks}</>;
 }
 
+/*
+FNXC:ChatStreaming 2026-08-19-13:52:
+Ordinary Chat Markdown links must preserve ReactMarkdown's sanitized href while opening in a separate tab with an explicit reverse-tabnabbing policy. Native structure references remain previews instead of becoming ordinary anchors.
+*/
 function NativeStructureMarkdownAnchor({ children, href, ...props }: React.ComponentProps<"a">) {
   const structureRef = href ? parseNativeStructureChatRef(href) : null;
   if (structureRef) return <NativeStructurePreview ref={structureRef} onOpen={openNativeStructure} />;
-  return <a href={href} {...props}>{children}</a>;
+  /* FNXC:ChatStreaming 2026-08-19-13:52: ReactMarkdown clears unsafe hrefs; do not leave an empty interactive shell. */
+  if (!href) return <span>{children}</span>;
+  return <a {...props} href={href} target="_blank" rel="noopener noreferrer">{children}</a>;
 }
 
 function NativeStructureMarkdownCode({ children, ...props }: React.ComponentProps<"code">) {
@@ -526,9 +561,21 @@ function StandardChatMessageEditComposer({
 }) {
   const { t } = useTranslation("app");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const autosizeRef = useRef<ChatInputAutosizeController | null>(null);
   // FNXC:VoiceInput 2026-07-25-12:15: Message correction dictation must resolve availability
   // within the owning project; falling back to another project's settings can expose the mic incorrectly.
   const dictation = useComposerDictation({ textareaRef, value, onChange, projectId });
+
+  const handleTextareaRef = useCallback((textarea: HTMLTextAreaElement | null) => {
+    autosizeRef.current?.destroy();
+    autosizeRef.current = null;
+    textareaRef.current = textarea;
+    if (textarea) autosizeRef.current = createChatInputAutosizeController(textarea);
+  }, []);
+
+  useLayoutEffect(() => {
+    autosizeRef.current?.resize();
+  }, [value]);
 
   useEffect(() => {
     textareaRef.current?.focus();
@@ -538,7 +585,7 @@ function StandardChatMessageEditComposer({
   return (
     <div className="chat-message-edit-editor" data-testid={`chat-message-edit-editor-${messageId}`}>
       <textarea
-        ref={textareaRef}
+        ref={handleTextareaRef}
         className="input chat-message-edit-textarea"
         value={value}
         disabled={disabled}
@@ -731,7 +778,7 @@ export const StandardChatMessageItem = memo(function StandardChatMessageItem({
       )}
       {hasAssistantFooterRow && (
         <div className={`chat-message-thinking-row${hasVisibleAssistantFooterContent ? "" : " chat-message-thinking-row--collapsed"}`}>
-          {message.thinkingOutput && <details className="chat-message-thinking"><summary>{t("chat.thinking", "Thinking")}</summary><pre className="chat-message-thinking-content">{linkifyFilePaths(message.thinkingOutput)}</pre></details>}
+          {message.thinkingOutput && <StandardThinkingDisclosure thinking={message.thinkingOutput} />}
           {(copyAction || onScrollToTop) && (
             <div className="chat-message-actions">
               {copyAction}
@@ -760,7 +807,7 @@ export function StandardStreamingMessage({ streamingText, streamingThinking = ""
       {streamingText ? renderStandardAssistantContent(streamingText, forcePlain) : <div className="chat-message-content chat-message-content--waiting">{streamingThinking ? t("chat.thinkingStatus", "Thinking…") : t("chat.workingStatus", "Working…")}</div>}
       {copyAction}
       {renderStandardToolCalls(streamingToolCalls, t, { isAwaitingAnswer: true, onQuestionSubmit, toolCallRenderer })}
-      {streamingThinking && <details className="chat-message-thinking"><summary>{t("chat.thinking", "Thinking")}</summary><pre className="chat-message-thinking-content">{linkifyFilePaths(streamingThinking)}</pre></details>}
+      {streamingThinking && <StandardThinkingDisclosure thinking={streamingThinking} />}
       <div className="chat-typing-indicator"><span /><span /><span /></div>
     </div>
   );

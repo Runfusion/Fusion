@@ -4,8 +4,7 @@ import { createLogger } from "@fusion/core";
  *
  * Provides a reusable diagnostics contract for planning-like AI session flows.
  * Modules such as `planning.ts`, `mission-interview.ts`, `milestone-slice-interview.ts`,
- * and `subtask-breakdown.ts` can use this helper to converge on one consistent
- * diagnostics pattern.
+ * can use this helper to converge on one consistent diagnostics pattern.
  *
  * ## Design Goals
  *

@@ -11,19 +11,16 @@ import {
   type PromptOverrideMap,
 } from "@fusion/core";
 import { createSessionDiagnostics } from "./ai-session-diagnostics.js";
-import { decomposeForTriage, type SubtaskItem } from "./subtask-breakdown.js";
 
 /**
- * U12 — Triage stage (auto-classify + decompose, for issues AND pull requests).
+ * U12 — Triage stage (auto-classify and route issues and pull requests).
  *
  * Triage is expressed as a Trait with an `onEnter` hook (KTD7 / R8 / R14), NOT a
  * hardcoded executor branch. A column carrying the `triage` trait runs a
- * classify + decompose pass when a card enters it:
+ * classification pass when a card enters it:
  *
- *   - Signals / issues:  classified (priority / area / labels), then decomposed
- *     into N `todo` child tasks linked back to the originating signal task. A
- *     signal too small to decompose passes through as a single task (routed to
- *     `todo`), never zero.
+ *   - Signals / issues: classified (priority / area / labels) and routed as the
+ *     original task to `todo`; triage never decomposes or replaces a task.
  *
  *   - Inbound pull requests (external contributors, dependabot, …): classified
  *     (dependency-bump vs feature) and either routed for review (labeled, moved
@@ -40,9 +37,9 @@ import { decomposeForTriage, type SubtaskItem } from "./subtask-breakdown.js";
  *
  * The trait DEFINITION lives in core's vocabulary-free registry slot (registered
  * here as a `builtin: true` def so plugins cannot override it). The IMPLEMENTATION
- * lives in dashboard because it reuses `subtask-breakdown` (engine agents) — wired
- * through the core→engine DI seam (`registerTraitHookImpl`), exactly like the
- * default-workflow hooks. Core stays engine-free.
+ * lives in dashboard and is wired through the core→engine DI seam
+ * (`registerTraitHookImpl`), exactly like the default-workflow hooks. Core stays
+ * engine-free.
  */
 
 const diagnostics = createSessionDiagnostics("triage-trait");
@@ -71,7 +68,7 @@ export const TRIAGE_TRAIT_DEFINITION: TraitDefinition = {
   id: TRIAGE_TRAIT_ID,
   name: "Triage",
   description:
-    "Auto-classify and decompose incoming signals/issues and inbound pull requests, then route to the board.",
+    "Auto-classify incoming signals/issues and inbound pull requests, then route the original task to the board.",
   builtin: true,
   flags: { intake: true },
   hooks: { onEnter: true },
@@ -79,7 +76,6 @@ export const TRIAGE_TRAIT_DEFINITION: TraitDefinition = {
     fields: [
       { key: "routeColumn", type: "string", description: "Column to route triaged items to (default 'todo')" },
       { key: "reviewColumn", type: "string", description: "Column inbound PRs routed for review land in" },
-      { key: "maxSubtasks", type: "number", description: "Cap on decomposed child tasks" },
     ],
   },
 };
@@ -234,12 +230,9 @@ export interface TriageDeps {
   /** Working directory for the decomposition agent. */
   rootDir?: string;
   promptOverrides?: PromptOverrideMap;
-  /** Override the decomposer (tests). Resolves to subtask items or throws. */
-  decompose?: (description: string) => Promise<SubtaskItem[]>;
 }
 
 export type TriageOutcome =
-  | { kind: "decomposed"; childTaskIds: string[]; routedColumn: string }
   | { kind: "passthrough"; taskId: string; routedColumn: string }
   | { kind: "pr-review"; taskId: string; routedColumn: string }
   | { kind: "pr-follow-up"; followUpTaskId: string; routedColumn: string }
@@ -273,7 +266,7 @@ async function stampTriaged(
 
 /**
  * Run the triage onEnter pass for a task. Idempotent: an already-triaged task is
- * a no-op skip. Routing/decomposition/PR handling per the plan's scenarios.
+ * a no-op skip. Routing and PR handling preserve the original task.
  */
 export async function runTriageOnEnter(task: Task, deps: TriageDeps): Promise<TriageOutcome> {
   const { store } = deps;
@@ -347,71 +340,15 @@ export async function runTriageOnEnter(task: Task, deps: TriageDeps): Promise<Tr
     return parkInTriage(store, task, err, "classify");
   }
 
-  let subtasks: SubtaskItem[];
-  try {
-    const decompose = deps.decompose ?? ((d: string) => decomposeForTriage(d, deps.rootDir, deps.promptOverrides, deps.store));
-    subtasks = await decompose(task.description);
-  } catch (err) {
-    return parkInTriage(store, task, err, "decompose");
-  }
-
+  // FNXC:TaskSplittingRemoval 2026-08-20-18:40: Issue and signal triage classifies and routes the original task; complexity never creates children or replaces its identity.
   const routeColumn = TRIAGE_DEFAULT_ROUTE_COLUMN;
-
-  // Too small to decompose → pass through as a single task (NOT zero).
-  if (subtasks.length <= 1) {
-    try {
-      await stampTriaged(store, task, classification, { triageDecomposed: false });
-      await store.moveTask(task.id, routeColumn);
-    } catch (err) {
-      return parkInTriage(store, task, err, "passthrough");
-    }
-    return { kind: "passthrough", taskId: task.id, routedColumn: routeColumn };
-  }
-
-  // Decompose into N child todo tasks linked back to the signal.
   try {
-    const childIds: string[] = [];
-    for (const sub of subtasks) {
-      const child = await store.createTask(
-        buildChildTaskInput(task, sub, classification, routeColumn),
-      );
-      childIds.push(child.id);
-    }
-    await stampTriaged(store, task, classification, {
-      triageDecomposed: true,
-      triageChildTaskIds: childIds,
-    });
-    return { kind: "decomposed", childTaskIds: childIds, routedColumn: routeColumn };
+    await stampTriaged(store, task, classification, { triageClassified: true });
+    await store.moveTask(task.id, routeColumn);
   } catch (err) {
-    return parkInTriage(store, task, err, "create-children");
+    return parkInTriage(store, task, err, "passthrough");
   }
-}
-
-function buildChildTaskInput(
-  parent: Task,
-  sub: SubtaskItem,
-  classification: TriageClassification,
-  routeColumn: string,
-): TaskCreateInput {
-  const title = sub.title?.trim() || "Triaged subtask";
-  const description = sub.description?.trim()
-    ? `${title}\n\n${sub.description.trim()}`
-    : `${title}\n\nDerived from triage of: ${parent.title ?? parent.id}`;
-  return {
-    title,
-    description,
-    column: routeColumn as TaskCreateInput["column"],
-    priority: sub.priority ?? classification.priority,
-    source: {
-      sourceType: "automation",
-      sourceParentTaskId: parent.id,
-      sourceMetadata: {
-        [TRIAGE_PARENT_META_KEY]: parent.id,
-        triageArea: classification.area,
-        triageLabels: classification.labels,
-      },
-    },
-  };
+  return { kind: "passthrough", taskId: task.id, routedColumn: routeColumn };
 }
 
 function buildFollowUpTaskInput(
@@ -439,7 +376,7 @@ function buildFollowUpTaskInput(
 }
 
 /**
- * Classifier/decompose failure → PARK the item in triage with a diagnostic. The
+ * Classification failure → PARK the item in triage with a diagnostic. The
  * task stays in `triage` (not dropped, not routed); a marker records the failure
  * so the surface can show it and a retry can re-run.
  */

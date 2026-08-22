@@ -1,10 +1,27 @@
 import { execFile } from "node:child_process";
-import { resolve } from "node:path";
+import { constants as fsConstants } from "node:fs";
+import { mkdtemp, open, readFile, rm, writeFile, lstat } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { invalidateGitBinaryCache, isSpawnGitEnoent, resolveGitBinary } from "../cli/git-binary.js";
 
 const execFileAsync = promisify(execFile);
 const DEFAULT_GIT_TIMEOUT_MS = 10_000;
+const FUSION_GIT_IDENTITY = {
+  GIT_AUTHOR_NAME: "Fusion",
+  GIT_AUTHOR_EMAIL: "noreply@runfusion.ai",
+  GIT_COMMITTER_NAME: "Fusion",
+  GIT_COMMITTER_EMAIL: "noreply@runfusion.ai",
+} as const;
+const MANAGED_GITIGNORE_ENTRIES = [
+  ".fusion/",
+  ".pi/",
+  ".worktrees/",
+  "fusion.db",
+  "fusion.db-wal",
+  "fusion.db-shm",
+] as const;
 
 export type GitRepositoryEnsureOutcome = "existing" | "initialized";
 
@@ -16,7 +33,7 @@ export interface GitRepositoryCommandResult {
 export type GitRepositoryCommandRunner = (
   command: string,
   args: string[],
-  options: { cwd?: string; timeout: number },
+  options: { cwd?: string; timeout: number; env?: NodeJS.ProcessEnv },
 ) => Promise<GitRepositoryCommandResult>;
 
 export interface EnsureGitRepositoryOptions {
@@ -29,13 +46,23 @@ export class GitRepositoryInitializationError extends Error {
   readonly causeMessage: string;
 
   constructor(path: string, causeMessage: string) {
-    super(`Could not initialize Git repository at ${path}: ${causeMessage}`);
+    super(`Could not prepare Git repository at ${path}: ${causeMessage}`);
     this.name = "GitRepositoryInitializationError";
     this.path = path;
     this.causeMessage = causeMessage;
   }
 }
 
+/**
+ * Ensures that a project has a usable Git baseline before any registry row is written.
+ *
+ * FNXC:ProjectSetup 2026-08-19-12:44:
+ * Registration must be fail-closed: non-Git directories and unborn repositories receive
+ * a real baseline containing only Fusion's managed `.gitignore` file, while committed
+ * repositories keep their history, branch, remotes, config, index, and user changes.
+ * Workspace roots remain browse-only; their members are prepared inside one canonical-root
+ * lock so dashboard, CLI, reattachment, and workspace registration cannot drift.
+ */
 export async function ensureGitRepositoryForProjectPath(
   projectPath: string,
   options: EnsureGitRepositoryOptions = {},
@@ -43,57 +70,199 @@ export async function ensureGitRepositoryForProjectPath(
   const runner = options.runner ?? runGitCommand;
   const timeout = options.timeoutMs ?? DEFAULT_GIT_TIMEOUT_MS;
 
-  /*
-  FNXC:Workspace 2026-06-24-10:00:
-  A workspace-mode project root is intentionally NOT a git repository — it is a parent
-  directory containing multiple git sub-repos (detected at init time and recorded in
-  .fusion/workspace.json). Running `git init` here would create a stray empty repo at the
-  workspace root, poisoning every downstream git command: the executor sets the session cwd
-  to this root (browse-only), and `git rev-parse --abbrev-ref HEAD` fails on the unborn HEAD
-  with "ambiguous argument 'HEAD'". Detect workspace mode via the config file and skip the
-  git-init so the root stays non-git, matching the workspace execution contract (KTD1).
-  */
-  if (await loadWorkspaceConfig(projectPath)) {
-    return "existing";
+  return withWorkspaceModeLock(projectPath, async () => {
+    try {
+      return await ensureGitRepositoryForProjectPathLocked(projectPath, runner, timeout);
+    } catch (error) {
+      if (error instanceof GitRepositoryInitializationError) throw error;
+      throw new GitRepositoryInitializationError(projectPath, extractCommandErrorMessage(error));
+    }
+  });
+}
+
+async function ensureGitRepositoryForProjectPathLocked(
+  projectPath: string,
+  runner: GitRepositoryCommandRunner,
+  timeout: number,
+): Promise<GitRepositoryEnsureOutcome> {
+  const workspace = await loadWorkspaceConfig(projectPath);
+  if (workspace) {
+    return prepareWorkspaceRepositories(projectPath, workspace.repos, runner, timeout);
   }
 
   if (await isInsideGitWorkTree(projectPath, runner, timeout)) {
-    return "existing";
+    return prepareSingleRepository(projectPath, runner, timeout, false);
   }
 
   /*
-  FNXC:Workspace 2026-06-24-14:30:
-  Fallback workspace detection: when workspace.json is missing (e.g. project added via
-  dashboard or `fn project add`, which don't run the interactive workspace detection flow),
-  probe for git sub-repos. If found, persist workspace.json AND set workspaceMode: true in
-  config.json so the dashboard toggle reflects the actual state. This covers all registration
-  surfaces: the CLI interactive setup writes workspace.json explicitly, but dashboard POST
-  /api/projects and `fn project add` do not — without this fallback they would create a stray
-  .git at the workspace root because loadWorkspaceConfig returned null.
-
-  FNXC:Workspace 2026-06-24-17:00:
-  If the user has explicitly disabled workspace mode (workspaceMode: false in config.json),
-  skip auto-detection and proceed to git init. Without this guard, toggling workspace mode off
-  via the dashboard would have no lasting effect — the fallback would re-detect sub-repos and
-  re-create workspace.json on the next registration call.
+  FNXC:Workspace 2026-08-19-12:44:
+  Dashboard and `fn project add` can discover workspace members without an existing
+  workspace.json. Decide workspace mode before touching the root, prepare every member,
+  then persist the decision. No root `.git` is ever created for this path.
   */
   if (!(await isWorkspaceModeExplicitlyDisabled(projectPath))) {
     const detectedRepos = await detectWorkspaceRepos(projectPath, runner, timeout);
     if (detectedRepos.length > 0) {
-      // Write config.json first so a failure here doesn't leave a stale workspace.json
-      // that would short-circuit loadWorkspaceConfig on the next call without the
-      // workspaceMode setting being persisted.
+      const outcome = await prepareWorkspaceRepositories(projectPath, detectedRepos, runner, timeout);
       await setWorkspaceModeInConfig(projectPath, true);
       await saveWorkspaceConfig(projectPath, { repos: detectedRepos });
-      return "existing";
+      return outcome;
     }
   }
 
-  try {
+  return prepareSingleRepository(projectPath, runner, timeout, true);
+}
+
+async function prepareWorkspaceRepositories(
+  rootDir: string,
+  repos: string[],
+  runner: GitRepositoryCommandRunner,
+  timeout: number,
+): Promise<GitRepositoryEnsureOutcome> {
+  let initialized = false;
+  for (const relativeRepo of repos) {
+    const repoPath = join(rootDir, relativeRepo);
+    const outcome = await prepareSingleRepository(repoPath, runner, timeout, true);
+    initialized ||= outcome === "initialized";
+  }
+  return initialized ? "initialized" : "existing";
+}
+
+async function prepareSingleRepository(
+  projectPath: string,
+  runner: GitRepositoryCommandRunner,
+  timeout: number,
+  initializeIfMissing: boolean,
+): Promise<GitRepositoryEnsureOutcome> {
+  let repositoryExists = await isInsideGitWorkTree(projectPath, runner, timeout);
+  if (!repositoryExists && !initializeIfMissing) {
+    throw new Error("workspace member is not a usable Git repository");
+  }
+
+  let initialized = false;
+  let indexWasEmpty = false;
+  if (!repositoryExists) {
     await runner("git", ["-C", projectPath, "init"], { timeout });
-    return "initialized";
+    repositoryExists = true;
+    initialized = true;
+    indexWasEmpty = (await runner("git", ["-C", projectPath, "ls-files", "--stage"], { timeout })).stdout.trim() === "";
+  } else {
+    indexWasEmpty = false;
+  }
+
+  const gitignore = await reconcileManagedGitignore(projectPath);
+  const hasHead = await hasVerifiableHead(projectPath, runner, timeout);
+  if (!hasHead) {
+    await createBaselineCommit(projectPath, gitignore.newline, runner, timeout);
+    /*
+    FNXC:ProjectSetup 2026-08-19-13:25:
+    The plumbing commit intentionally leaves Git's live index untouched. For a repository
+    Fusion just initialized, populate its previously empty index from the baseline so Git
+    does not report a staged deletion. Do not `git add .gitignore`: a pre-existing custom
+    ignore file must remain an unstaged operator-visible edit, not become Fusion-staged.
+    */
+    if (initialized && indexWasEmpty) {
+      await runner("git", ["-C", projectPath, "read-tree", "HEAD"], { timeout });
+    }
+  }
+
+  return initialized || !hasHead ? "initialized" : "existing";
+}
+
+async function hasVerifiableHead(
+  projectPath: string,
+  runner: GitRepositoryCommandRunner,
+  timeout: number,
+): Promise<boolean> {
+  try {
+    await runner("git", ["-C", projectPath, "rev-parse", "--verify", "HEAD^{commit}"], { timeout });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function managedIgnoreKey(line: string): string | null {
+  const trimmed = line.trim();
+  if (!trimmed || trimmed.startsWith("#") || trimmed.startsWith("!")) return null;
+  return trimmed.replaceAll("\\", "/").replace(/^\/+/, "").replace(/\/+$/, "");
+}
+
+function managedGitignoreContent(newline: string): string {
+  return `${MANAGED_GITIGNORE_ENTRIES.join(newline)}${newline}`;
+}
+
+async function reconcileManagedGitignore(projectPath: string): Promise<{ newline: string }> {
+  const gitignorePath = join(projectPath, ".gitignore");
+  let content = "";
+  let fileExists = false;
+  try {
+    const stats = await lstat(gitignorePath);
+    fileExists = true;
+    if (stats.isSymbolicLink()) {
+      throw new Error(".gitignore is a symbolic link; refusing to follow an unsafe target");
+    }
+    if (!stats.isFile()) throw new Error(".gitignore is not a regular file");
+    content = await readFile(gitignorePath, "utf8");
   } catch (error) {
-    throw new GitRepositoryInitializationError(projectPath, extractCommandErrorMessage(error));
+    if ((error as NodeJS.ErrnoException)?.code !== "ENOENT") throw error;
+  }
+
+  const newline = content.includes("\r\n") ? "\r\n" : "\n";
+  const existing = new Set(content.split(/\r?\n/).map(managedIgnoreKey).filter((entry): entry is string => entry !== null));
+  const missing = MANAGED_GITIGNORE_ENTRIES.filter((entry) => {
+    const key = managedIgnoreKey(entry);
+    return key !== null && !existing.has(key);
+  });
+  if (missing.length === 0) return { newline };
+
+  const prefix = content.length === 0 || content.endsWith("\n") ? "" : newline;
+  const updated = `${content}${prefix}${missing.join(newline)}${newline}`;
+  await writeGitignoreSafely(gitignorePath, updated, fileExists);
+  return { newline };
+}
+
+async function writeGitignoreSafely(path: string, content: string, existing: boolean): Promise<void> {
+  const noFollow = (fsConstants as typeof fsConstants & { O_NOFOLLOW?: number }).O_NOFOLLOW ?? 0;
+  const flags = existing
+    ? fsConstants.O_RDWR | noFollow
+    : fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | noFollow;
+  const handle = await open(path, flags, 0o644);
+  try {
+    await handle.truncate(0);
+    await handle.writeFile(content, "utf8");
+  } finally {
+    await handle.close();
+  }
+}
+
+async function createBaselineCommit(
+  projectPath: string,
+  newline: string,
+  runner: GitRepositoryCommandRunner,
+  timeout: number,
+): Promise<void> {
+  const branch = (await runner("git", ["-C", projectPath, "symbolic-ref", "HEAD"], { timeout })).stdout.trim();
+  if (!branch.startsWith("refs/heads/") || branch.length <= "refs/heads/".length) {
+    throw new Error("cannot create a baseline commit without an operator-selected branch");
+  }
+
+  const tempDir = await mkdtemp(join(tmpdir(), "fusion-git-baseline-"));
+  const tempIndex = join(tempDir, "index");
+  const tempGitignore = join(tempDir, "gitignore");
+  const env = { ...process.env, GIT_INDEX_FILE: tempIndex };
+  const identityEnv = { ...env, ...FUSION_GIT_IDENTITY };
+  try {
+    await writeFile(tempGitignore, managedGitignoreContent(newline), "utf8");
+    const blob = (await runner("git", ["-C", projectPath, "hash-object", "-w", "--", tempGitignore], { timeout })).stdout.trim();
+    await runner("git", ["-C", projectPath, "read-tree", "--empty"], { timeout, env });
+    await runner("git", ["-C", projectPath, "update-index", "--add", `--cacheinfo`, `100644,${blob},.gitignore`], { timeout, env });
+    const tree = (await runner("git", ["-C", projectPath, "write-tree"], { timeout, env })).stdout.trim();
+    const commit = (await runner("git", ["-C", projectPath, "commit-tree", tree, "-m", "chore: initialize Fusion project"], { timeout, env: identityEnv })).stdout.trim();
+    if (!commit) throw new Error("Git returned an empty baseline commit");
+    await runner("git", ["-C", projectPath, "update-ref", branch, commit], { timeout });
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
   }
 }
 
@@ -113,7 +282,7 @@ async function isInsideGitWorkTree(
 async function runGitCommand(
   command: string,
   args: string[],
-  options: { cwd?: string; timeout: number },
+  options: { cwd?: string; timeout: number; env?: NodeJS.ProcessEnv },
 ): Promise<GitRepositoryCommandResult> {
   /*
   FNXC:Onboarding 2026-07-18-03:20:
@@ -127,6 +296,7 @@ async function runGitCommand(
     const result = await execFileAsync(binary, args, {
       cwd: options.cwd,
       timeout: options.timeout,
+      env: options.env,
       encoding: "utf-8",
     });
     return {
@@ -141,6 +311,7 @@ async function runGitCommand(
     const result = await execFileAsync(retryBinary, args, {
       cwd: options.cwd,
       timeout: options.timeout,
+      env: options.env,
       encoding: "utf-8",
     });
     return {
@@ -202,9 +373,8 @@ export async function detectWorkspaceRepos(
   do not produce false-positive workspace members. A workspace root is a plain directory whose
   immediate children are the intended sub-repos, not transitive dependency artifacts.
   */
-  const EXCLUDED_ENTRIES = new Set(["node_modules", ".fusion", ".git", ".pi"]);
   for (const entry of entries) {
-    if (EXCLUDED_ENTRIES.has(entry)) continue;
+    if (EXCLUDED_WORKSPACE_ENTRIES.has(entry)) continue;
 
     const childDir = join(dir, entry);
     // Cheap pre-filter: skip children with no `.git` marker at all before spawning git.
@@ -225,7 +395,23 @@ export interface WorkspaceConfig {
   repos: string[];
 }
 
+export type WorkspaceRepoValidationReason =
+  | "not-a-workspace"
+  | "invalid-path"
+  | "not-direct-child"
+  | "excluded-name"
+  | "missing"
+  | "not-a-git-work-tree";
+
+export class WorkspaceRepoValidationError extends Error {
+  constructor(readonly reason: WorkspaceRepoValidationReason) {
+    super(`Workspace repository validation failed: ${reason}`);
+    this.name = "WorkspaceRepoValidationError";
+  }
+}
+
 const WORKSPACE_CONFIG_FILENAME = "workspace.json";
+const EXCLUDED_WORKSPACE_ENTRIES = new Set(["node_modules", ".fusion", ".git", ".pi", ".worktrees"]);
 
 /**
  * Reads .fusion/config.json and returns true when `workspaceMode` is explicitly
@@ -315,6 +501,55 @@ export async function loadWorkspaceConfig(rootDir: string): Promise<WorkspaceCon
   } catch {
     return null;
   }
+}
+
+/*
+FNXC:Workspace 2026-08-20-02:03:
+Issue 3480 item 6 requires workspace membership to be editable after registration. New members are
+in-root direct-child Git work trees, additions are idempotent, and the write shares the workspace-mode
+lock so a concurrent mode toggle cannot lose a member.
+*/
+export async function addWorkspaceRepo(
+  rootDir: string,
+  repoRelPath: string,
+  options: { runner?: GitRepositoryCommandRunner; timeout?: number } = {},
+): Promise<{ outcome: "added" | "already-member"; repos: string[] }> {
+  const pathMod = await import("node:path");
+  const { stat } = await import("node:fs/promises");
+  const repo = typeof repoRelPath === "string" ? repoRelPath.trim() : "";
+  if (!repo || !isInRootRelativePath(repo, pathMod)) {
+    throw new WorkspaceRepoValidationError("invalid-path");
+  }
+  const normalized = pathMod.normalize(repo);
+  // A workspace member must name a child, not the workspace root (including child/..).
+  if (normalized === ".") {
+    throw new WorkspaceRepoValidationError("not-direct-child");
+  }
+  if (normalized.includes(pathMod.sep) || normalized.includes("/")) {
+    throw new WorkspaceRepoValidationError("not-direct-child");
+  }
+  if (EXCLUDED_WORKSPACE_ENTRIES.has(normalized)) {
+    throw new WorkspaceRepoValidationError("excluded-name");
+  }
+  const childPath = pathMod.join(rootDir, normalized);
+  try {
+    if (!(await stat(childPath)).isDirectory()) throw new WorkspaceRepoValidationError("missing");
+  } catch (error) {
+    if (error instanceof WorkspaceRepoValidationError) throw error;
+    throw new WorkspaceRepoValidationError("missing");
+  }
+  const runner = options.runner ?? runGitCommand;
+  if (!(await isInsideGitWorkTree(childPath, runner, options.timeout ?? DEFAULT_GIT_TIMEOUT_MS))) {
+    throw new WorkspaceRepoValidationError("not-a-git-work-tree");
+  }
+  return withWorkspaceModeLock(rootDir, async () => {
+    const config = await loadWorkspaceConfig(rootDir);
+    if (!config) throw new WorkspaceRepoValidationError("not-a-workspace");
+    if (config.repos.includes(normalized)) return { outcome: "already-member", repos: config.repos };
+    const repos = [...config.repos, normalized].sort();
+    await saveWorkspaceConfig(rootDir, { ...config, repos });
+    return { outcome: "added", repos };
+  });
 }
 
 export async function saveWorkspaceConfig(rootDir: string, config: WorkspaceConfig): Promise<void> {

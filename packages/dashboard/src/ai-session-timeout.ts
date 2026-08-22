@@ -4,8 +4,7 @@
  * stalled model stream or hung tool call cannot leave a session pinned in
  * `generating` forever.
  *
- * The guard is module-scoped: planning, subtask-breakdown, mission-interview,
- * and milestone-slice-interview each instantiate their own. The session ID is
+ * The guard is module-scoped: planning, mission-interview, and milestone-slice-interview each instantiate their own. The session ID is
  * the key, so concurrent generations across modules don't collide.
  */
 

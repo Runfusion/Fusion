@@ -3,7 +3,6 @@ import type { TraitFlags } from "@fusion/core";
 import type { GraphPosition } from "./types.js";
 import { useNodeDrag } from "./hooks/useNodeDrag.js";
 import { TaskCard } from "@fusion/dashboard/app/components/TaskCard";
-import { isTaskStuck } from "@fusion/dashboard/app/utils/taskStuck";
 import "./GraphTaskNode.css";
 import "./GraphHighlight.css";
 import "./styles/drag.css";
@@ -23,7 +22,6 @@ type TaskCardBridgeProps = Pick<
   | "onDeleteTask"
   | "onRetryTask"
   | "onOpenDetailWithTab"
-  | "taskStuckTimeoutMs"
   | "onOpenMission"
   | "onMoveTask"
   | "lastFetchTimeMs"
@@ -34,10 +32,8 @@ export interface GraphTaskNodeProps extends TaskCardBridgeProps, Pick<HTMLAttrib
   FNXC:WorkflowLifecycleColumns 2026-07-31-15:30:
   This card's OWN resolved column traits, threaded from the host's plugin view context.
 
-  Two defects close here, both from this component having no access to the board's vocabulary:
-    - `isTaskStuck` was called without its `columnFlags` argument, so `isWipColumnRole` fell back to
-      the literal and NO card in the graph was ever shown stuck on a renamed board — while the same
-      card showed stuck correctly on the main board. That asymmetry was the tell.
+  Defect closed here, from this component having no access to the board's vocabulary
+  (a second consumer, isTaskStuck, was deleted with the stuck-tag removal):
     - The `TaskCard` rendered below is a THIRD producer of unflagged cards, after the two #3025 fixed.
       It bypasses `renderTaskCard` entirely by importing the component directly, so a host-side fix
       could not reach it; every role helper inside it read the legacy ids.
@@ -83,10 +79,10 @@ export function GraphTaskNode({
   onNodeDragEnd,
   ...taskCardProps
 }: GraphTaskNodeProps) {
-  const { task, globalPaused, taskStuckTimeoutMs, lastFetchTimeMs, onOpenDetail } = taskCardProps;
+  const { task, globalPaused, onOpenDetail } = taskCardProps;
   const isFailed = task.status === "failed";
   const isPaused = task.paused === true;
-  const isStuck = isTaskStuck(task, taskStuckTimeoutMs, lastFetchTimeMs, taskColumnFlags);
+  // FNXC:StuckTagRemoval 2026-08-17-22:30: stuck-task tagging was removed from the dashboard; graph nodes no longer derive or suppress on a stuck state.
   /*
   FNXC:PluginLifecycleColumns 2026-07-30-03:40 (U11 #2515 audit):
   Keyed on `column === "triage"`, this went permanently FALSE for default-lineage
@@ -122,7 +118,6 @@ export function GraphTaskNode({
     !globalPaused &&
     !isFailed &&
     !isPaused &&
-    !isStuck &&
     !isAwaitingApproval &&
     hasExecutionSignal;
 
@@ -171,7 +166,7 @@ export function GraphTaskNode({
           <span className="graph-task-active-indicator-text">{getStatusLabel(task.status)}</span>
         </div>
       ) : null}
-      <TaskCard {...taskCardProps} taskColumnFlags={taskColumnFlags} onOpenDetail={() => {}} disableDrag={true} />
+      <TaskCard {...taskCardProps} taskColumnFlags={taskColumnFlags} onOpenDetail={() => {}} />
     </div>
   );
 }

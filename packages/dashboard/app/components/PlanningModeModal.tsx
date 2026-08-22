@@ -27,8 +27,6 @@ import {
   archiveAiSession,
   unarchiveAiSession,
   parseConversationHistory,
-  startPlanningBreakdown,
-  createTasksFromPlanning,
   fetchModels,
   cancelPlanning,
   stopPlanningGeneration,
@@ -37,8 +35,6 @@ import {
   updatePlanningSessionTitle,
   updateGlobalSettings,
   type PlanningSession,
-  type SubtaskItem,
-  type PlanningSubtaskDraft,
   type ModelInfo,
   type ConversationHistoryEntry,
   type AiSessionSummary,
@@ -57,7 +53,7 @@ import {
   clearPlanningActiveSession,
 } from "../hooks/modalPersistence";
 import { getRelativeTimeBucket } from "../utils/relativeTimeAgo";
-import { Lightbulb, X, Loader2, CheckCircle, ArrowLeft, ArrowRight, Sparkles, ListTree, GripVertical, ArrowUp, ArrowDown, Plus, Trash2, RefreshCw, ChevronLeft, MessageSquarePlus, AlertCircle, Clock, HelpCircle, StopCircle, Archive, ArchiveRestore, Pencil, History } from "lucide-react";
+import { Lightbulb, X, Loader2, CheckCircle, ArrowLeft, ArrowRight, Sparkles, Trash2, RefreshCw, ChevronLeft, MessageSquarePlus, AlertCircle, Clock, HelpCircle, StopCircle, Archive, ArchiveRestore, Pencil, History } from "lucide-react";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import { ConversationHistory } from "./ConversationHistory";
 import { MailboxMessageContent } from "./MailboxMessageContent";
@@ -74,7 +70,7 @@ import { MicButton } from "./MicButton";
 const WARNING_ICON = "⚠️";
 
 /*
-FNXC:Planning 2026-06-23-02:00:
+FNXC:Planning 2026-08-16-14:48:
 The embedded Planning sidebar is resizable exactly like Missions (MissionManager's MISSION_SIDEBAR_* constants). Default 300px matches Missions' default (calc(--space-lg 16px * 18.75)); min/max/storage mirror Missions so the two views resize identically and persist independently.
 */
 const PLANNING_SIDEBAR_DEFAULT_WIDTH = 300;
@@ -196,7 +192,6 @@ type ViewState =
   | { type: "create_retry"; session: PlanningSession; summary: PlanningSummary; errorMessage: string }
   | { type: "task_created"; taskId: string; task?: Task; sessionId?: string }
   | { type: "error"; session: PlanningSession; errorMessage: string }
-  | { type: "breakdown"; sessionId: string; originalSubtasks: SubtaskItem[]; subtasks: SubtaskItem[]; dirty: boolean }
   | { type: "loading" }
   /*
   FNXC:PlanningMode 2026-07-23-00:00:
@@ -387,21 +382,6 @@ function normalizeQuestionOptions(question: PlanningQuestion): PlanningQuestion 
   return { ...question, options };
 }
 
-function normalizeSubtaskItem(subtask: SubtaskItem): SubtaskItem {
-  const raw = subtask as SubtaskItem & Record<string, unknown>;
-  return {
-    ...subtask,
-    title: typeof raw.title === "string" ? raw.title : "",
-    description: typeof raw.description === "string" ? raw.description : "",
-    suggestedSize: raw.suggestedSize === "S" || raw.suggestedSize === "M" || raw.suggestedSize === "L" ? raw.suggestedSize : "M",
-    priority: normalizeTaskPriority(subtask.priority),
-    dependsOn: normalizeStringArray(raw.dependsOn),
-  };
-}
-
-function areStringArraysEqual(left: string[], right: string[]): boolean {
-  return left.length === right.length && left.every((value, index) => value === right[index]);
-}
 
 function parseSessionUpdatedAt(updatedAt: string): number {
   const parsed = Date.parse(updatedAt);
@@ -433,36 +413,6 @@ export function dedupeSessionsById(sessions: AiSessionSummary[]): AiSessionSumma
     .map(({ session }) => session);
 }
 
-function buildCompactPlanningSubtaskDrafts(
-  originalSubtasks: SubtaskItem[],
-  editedSubtasks: SubtaskItem[],
-): PlanningSubtaskDraft[] {
-  const originalById = new Map(originalSubtasks.map((subtask) => [subtask.id, subtask]));
-
-  return editedSubtasks.map((subtask) => {
-    const original = originalById.get(subtask.id);
-    const normalizedPriority = normalizeTaskPriority(subtask.priority);
-    const draft: PlanningSubtaskDraft = { id: subtask.id };
-
-    if (!original || subtask.title !== original.title) {
-      draft.title = subtask.title;
-    }
-    if (!original || subtask.description !== original.description) {
-      draft.description = subtask.description;
-    }
-    if (!original || subtask.suggestedSize !== original.suggestedSize) {
-      draft.suggestedSize = subtask.suggestedSize;
-    }
-    if (!original || normalizedPriority !== normalizeTaskPriority(original.priority)) {
-      draft.priority = normalizedPriority;
-    }
-    if (!original || !areStringArraysEqual(subtask.dependsOn, original.dependsOn)) {
-      draft.dependsOn = subtask.dependsOn;
-    }
-
-    return draft;
-  });
-}
 
 function getModelSelectionValue(provider?: string, modelId?: string): string {
   return provider && modelId ? `${provider}/${modelId}` : "";
@@ -484,7 +434,7 @@ function parseModelSelection(value: string): { provider?: string; modelId?: stri
   };
 }
 
-export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreated, onViewTask, tasks, initialPlan: initialPlanProp, sourceIssue, onInitialPlanConsumed, projectId, workflowId, resumeSessionId, initialSessions, presentation = "modal", active = true }: PlanningModeModalProps) {
+export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreated: _onTasksCreated, onViewTask, tasks, initialPlan: initialPlanProp, sourceIssue, onInitialPlanConsumed, projectId, workflowId, resumeSessionId, initialSessions, presentation = "modal", active = true }: PlanningModeModalProps) {
   const { t } = useTranslation("app");
   // FNXC:EmbeddedPresentation 2026-06-22-12:00: shared hook supplies isEmbedded (DOM branching) plus the modal-only gates.
   // Note: the Escape handler intentionally does NOT gate on embedded here — embedded planning preserves its historical
@@ -530,8 +480,6 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   const [isAutoRetrying, setIsAutoRetrying] = useState(false);
   const [autoRetryAttempt, setAutoRetryAttempt] = useState(0);
   const [isCreatingTask, setIsCreatingTask] = useState(false);
-  const [isStartingBreakdown, setIsStartingBreakdown] = useState(false);
-  const [isCreatingFromBreakdown, setIsCreatingFromBreakdown] = useState(false);
   /*
   FNXC:PlanningMode 2026-07-19-12:00:
   Interview navigation is selected from answered-question history rather than a linear Back action.
@@ -957,7 +905,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   }, [isRefineMenuOpen]);
 
   /*
-  FNXC:Planning 2026-06-23-02:00:
+  FNXC:Planning 2026-08-16-14:48:
   Resizable Planning sidebar — pointer-drag + arrow-key resize with localStorage persistence, mirroring MissionManager.handleSidebarResizeStart/handleSidebarResizeKeyDown. Width is clamped to PLANNING_SIDEBAR_MIN/MAX and applied as an inline width on the sidebar <aside>. Disabled on mobile where the sidebar stacks full-width.
   */
   const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
@@ -2047,6 +1995,15 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   const loadSession = useCallback(
     async (sessionId: string) => {
       const loadEpoch = ++planningSessionLoadEpochRef.current;
+      /*
+      FNXC:PlanningMode 2026-08-16-08:54:
+      An idle-session SSE refresh rehydrates the same server session while its question remains
+      actionable. Do not transiently clear that workspace: unmounting QuestionForm discards a
+      typed or selected local answer before its enabled Next action can submit it. A different
+      session still takes the neutral loader so its prior turn never remains visible.
+      */
+      const preservesActiveWorkspace = currentSessionIdRef.current === sessionId
+        && (viewRef.current.type === "question" || viewRef.current.type === "plan_review");
       streamConnectionRef.current?.close();
       streamConnectionRef.current = null;
       currentSessionIdRef.current = sessionId;
@@ -2060,23 +2017,25 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
       review with a working View task button. Clear it at load start; the complete branch
       restores it for the session actually being loaded.
       */
-      setLinkedTaskId(null);
-      setLinkedTask(null);
-      setStreamingOutput("");
-      setResponseHistory([]);
-      setConversationHistory([]);
-      setEditedSummary(null);
-      setRunningSummary(null);
-      setWorkspaceQuestion(null);
-      setLoadedSessionTitle(null);
-      setIsRetrying(false);
-      setIsRefiningSummary(false);
-      refineSummaryInFlightRef.current = false;
-      setGenerationStartTime(null);
-      // FNXC:PlanningMode 2026-07-23-00:00: hydrate-from-DB shows the neutral session loader,
-      // not the generation pane — only a fetched status of "generating" enters `loading` below.
-      viewRef.current = { type: "session_loading" };
-      setView({ type: "session_loading" });
+      if (!preservesActiveWorkspace) {
+        setLinkedTaskId(null);
+        setLinkedTask(null);
+        setStreamingOutput("");
+        setResponseHistory([]);
+        setConversationHistory([]);
+        setEditedSummary(null);
+        setRunningSummary(null);
+        setWorkspaceQuestion(null);
+        setLoadedSessionTitle(null);
+        setIsRetrying(false);
+        setIsRefiningSummary(false);
+        refineSummaryInFlightRef.current = false;
+        setGenerationStartTime(null);
+        // FNXC:PlanningMode 2026-07-23-00:00: hydrate-from-DB shows the neutral session loader,
+        // not the generation pane — only a fetched status of "generating" enters `loading` below.
+        viewRef.current = { type: "session_loading" };
+        setView({ type: "session_loading" });
+      }
 
       try {
         const session = await fetchAiSession(sessionId);
@@ -2827,44 +2786,20 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
 
   const handleSubmitResponse = useCallback(
     async (responses: QuestionResponse) => {
-      if (view.type !== "question") return;
-
-      const { session } = view;
-      const sessionId = session.sessionId;
-      const activeQuestion = session.currentQuestion;
-      if (!activeQuestion) {
-        /*
-        FNXC:PlanningQuestionRegeneration 2026-07-23-21:40:
-        Submitting with no active question is no longer a dead-end "No active question in
-        session" error. The server regenerates a fresh interview question from the accumulated
-        context, so forward the input and enter the loading state; the SSE question event (or
-        the HTTP payload for restored sessions without a live stream) restores the view. No
-        optimistic history entry is recorded because there is no question to pair it with.
-        */
-        setError(null);
-        resetPlanningAutoRetryBudget();
-        setGenerationActivity("question");
-        setGenerationStartTime(Date.now());
-        setView({ type: "loading" });
-        setStreamingOutput("");
-        currentSessionIdRef.current = sessionId;
-        if (!streamConnectionRef.current?.isConnected()) {
-          connectToPlanningStream(sessionId);
-        }
-        try {
-          const response = await respondToPlanning(sessionId, responses, projectId);
-          const responseQuestion = "type" in response ? response.data : response.currentQuestion;
-          if (responseQuestion) {
-            const nextQuestion = normalizeQuestionOptions(responseQuestion);
-            setWorkspaceQuestion(nextQuestion);
-            setView({ type: "question", session: { sessionId, currentQuestion: nextQuestion, summary: runningSummaryRef.current } });
-          }
-        } catch (err) {
-          setError(getErrorMessage(err) || t("planning.failedSubmitResponse", "Failed to submit response"));
-          setView({ type: "question", session: { sessionId, currentQuestion: null, summary: runningSummaryRef.current } });
-        }
+      const sessionId = currentSessionIdRef.current;
+      const activeQuestion = workspaceQuestion;
+      if (!sessionId || !activeQuestion) {
+        setError(t("planning.noActiveQuestion", "No active question is available. Wait for the interview to resume."));
         return;
       }
+      /*
+      FNXC:PlanningMode 2026-08-16-06:28:
+      The form is rendered from workspaceQuestion and remains visible beneath the loading overlay.
+      Submit must use that live question and session ref, not a render-time view snapshot: a late
+      hydration may change view between an enabled Next render and its user event, and must never
+      silently discard that answer.
+      */
+      const session = { sessionId, currentQuestion: activeQuestion, summary: runningSummaryRef.current };
 
       setError(null);
       const responseTurnEpoch = ++planningTurnEpochRef.current;
@@ -3000,7 +2935,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
         setView({ type: "question", session: { ...session, summary: runningSummaryRef.current } });
       }
     },
-    [connectToPlanningStream, conversationHistory, editingQuestionId, projectId, resetPlanningAutoRetryBudget, t, view]
+    [connectToPlanningStream, conversationHistory, editingQuestionId, projectId, resetPlanningAutoRetryBudget, t, workspaceQuestion]
   );
 
   const handleStopGeneration = useCallback(async () => {
@@ -3377,86 +3312,6 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
       setIsCreatingTask(false);
     }
   }, [baseBranch, branchMode, branchName, editedSummary, view, projectId, workflowId, linkedTaskId, onTaskCreated, handleClose]);
-
-  const handleStartBreakdown = useCallback(async () => {
-    if (view.type !== "summary") return;
-
-    setError(null);
-    setIsStartingBreakdown(true);
-
-    try {
-      const normalizedSummary = editedSummary ? normalizePlanningSummary(editedSummary) : undefined;
-      await validatePlanningSession(view.session.sessionId, projectId);
-      const result = await startPlanningBreakdown(view.session.sessionId, normalizedSummary, projectId);
-      const normalizedSubtasks = (Array.isArray(result.subtasks) ? result.subtasks : []).map(normalizeSubtaskItem);
-      setView({
-        type: "breakdown",
-        sessionId: result.sessionId,
-        originalSubtasks: normalizedSubtasks.map((subtask) => ({ ...subtask, dependsOn: [...subtask.dependsOn] })),
-        subtasks: normalizedSubtasks.map((subtask) => ({ ...subtask, dependsOn: [...subtask.dependsOn] })),
-        dirty: false,
-      });
-    } catch (err) {
-      setError(getErrorMessage(err) || t("planning.failedStartBreakdown", "Failed to start breakdown"));
-    } finally {
-      setIsStartingBreakdown(false);
-    }
-  }, [editedSummary, view, projectId]);
-
-  const handleCreateTasksFromBreakdown = useCallback(async () => {
-    if (view.type !== "breakdown") return;
-
-    setError(null);
-    setIsCreatingFromBreakdown(true);
-
-    try {
-      const completedSessionId = view.sessionId;
-      await validatePlanningSession(completedSessionId, projectId);
-      const result = await createTasksFromPlanning(
-        completedSessionId,
-        buildCompactPlanningSubtaskDrafts(
-          view.originalSubtasks.map(normalizeSubtaskItem),
-          view.subtasks.map(normalizeSubtaskItem),
-        ),
-        projectId,
-        {
-          branchSelection: {
-            mode: branchMode,
-            ...(branchMode === "existing" || branchMode === "custom-new" ? { branchName: branchName.trim() } : {}),
-            ...(baseBranch.trim() ? { baseBranch: baseBranch.trim() } : {}),
-          },
-          /*
-          FNXC:WorkflowSelection 2026-06-20-16:48:
-          Planning breakdown saves create several tasks, and every child must inherit the modal's workflow lane selection.
-          */
-          ...(workflowId !== undefined ? { workflowId } : {}),
-        },
-      );
-      onTasksCreated(result.tasks);
-      // Server cleans up the planning session after task creation; mirror that
-      // locally so reopen doesn't try to load a 404 and the footer count drops.
-      setPlanningSessions((prev) => dedupeSessionsById(prev.filter((s) => s.id !== completedSessionId)));
-      // Reset and close
-      setInitialPlan("");
-      setView({ type: "initial" });
-      setError(null);
-      setResponseHistory([]);
-      setConversationHistory([]);
-      setEditedSummary(null);
-      setStreamingOutput("");
-      setPlanningModelProvider(undefined);
-      setPlanningModelId(undefined);
-      setPlanningThinkingLevel("");
-      currentSessionIdRef.current = null;
-      clearPlanningActiveSession(projectId);
-      setSelectedSessionId(null);
-      handleClose();
-    } catch (err) {
-      setError(getErrorMessage(err) || t("planning.failedCreateTasks", "Failed to create tasks"));
-    } finally {
-      setIsCreatingFromBreakdown(false);
-    }
-  }, [baseBranch, branchMode, branchName, handleClose, view, onTasksCreated, projectId, workflowId]);
 
   const _handleSelectAnsweredQuestion = useCallback(async (entry: ConversationHistoryEntry) => {
     const questionId = entry.question?.id;
@@ -4374,35 +4229,11 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
               onBranchNameChange={setBranchName}
               onBaseBranchChange={setBaseBranch}
               onCreateTask={handleCreateTask}
-              onBreakIntoTasks={handleStartBreakdown}
               isCreatingTask={isCreatingTask}
-              isStartingBreakdown={isStartingBreakdown}
               isRefiningSummary={isRefiningSummary}
             />
           )}
 
-          {view.type === "breakdown" && (
-            <BreakdownView
-              subtasks={view.subtasks}
-              isLoading={isCreatingFromBreakdown}
-              onUpdateSubtasks={(newSubtasks) =>
-                setView({ ...view, subtasks: newSubtasks.map(normalizeSubtaskItem), dirty: true })
-              }
-              onCreateTasks={handleCreateTasksFromBreakdown}
-              onBack={() => {
-                // Return to summary view — re-fetch the session
-                const sessionId = view.sessionId;
-                const session: PlanningSession = {
-                  sessionId,
-                  currentQuestion: null,
-                  summary: editedSummary ?? null,
-                };
-                if (editedSummary) {
-                  setView({ type: "summary", session, summary: editedSummary });
-                }
-              }}
-            />
-          )}
           </div>
 
         </div>
@@ -4433,6 +4264,11 @@ export function QuestionForm({ question: rawQuestion, initialResponse, onSubmit,
   const [commentValue, setCommentValue] = useState("");
   const [otherValue, setOtherValue] = useState("");
   const [isOtherSelected, setIsOtherSelected] = useState(false);
+  const dirtyResponseRef = useRef(false);
+  const restoredQuestionIdRef = useRef<string | null>(null);
+  const markResponseDirty = useCallback(() => {
+    dirtyResponseRef.current = true;
+  }, []);
   const { ref: textAnswerAutosizeRef } = useAutosizeTextarea({
     value: textValue,
     minHeight: 120,
@@ -4507,9 +4343,18 @@ export function QuestionForm({ question: rawQuestion, initialResponse, onSubmit,
 
   // Restore a selected history answer so editing is a direct, non-destructive operation.
   useEffect(() => {
+    if (restoredQuestionIdRef.current === question.id && dirtyResponseRef.current) return;
     const prior = initialResponse ?? {};
     const other = typeof prior[PLANNING_OTHER_RESPONSE_KEY] === "string" ? prior[PLANNING_OTHER_RESPONSE_KEY] : "";
     const text = prior[question.id];
+    /*
+    FNXC:PlanningMode 2026-08-16-06:28:
+    Hydration can replace the parent response object after a user starts answering the same
+    question. Restore durable data only until that local turn is dirty; object identity churn
+    must not erase an enabled form's unsubmitted answer or disable Next question.
+    */
+    dirtyResponseRef.current = false;
+    restoredQuestionIdRef.current = question.id;
     setResponse(prior);
     setTextValue(typeof text === "string" ? text : "");
     setCommentValue(typeof prior._comment === "string" ? prior._comment : "");
@@ -4571,7 +4416,10 @@ export function QuestionForm({ question: rawQuestion, initialResponse, onSubmit,
                     className="planning-textarea"
                     placeholder={t("planning.typeAnswerPlaceholder", "Type your answer here...")}
                     value={textValue}
-                    onChange={(e) => setTextValue(e.target.value)}
+                    onChange={(e) => {
+                      markResponseDirty();
+                      setTextValue(e.target.value);
+                    }}
                     onKeyDown={(e) => {
                       if (e.key === "Enter" && !e.shiftKey && textValue.trim()) {
                         e.preventDefault();
@@ -4593,6 +4441,7 @@ export function QuestionForm({ question: rawQuestion, initialResponse, onSubmit,
                         value={option.id}
                         checked={response[question.id] === option.id && !isOtherSelected}
                         onChange={() => {
+                          markResponseDirty();
                           setIsOtherSelected(false);
                           setOtherValue("");
                           setResponse({ [question.id]: option.id });
@@ -4614,6 +4463,7 @@ export function QuestionForm({ question: rawQuestion, initialResponse, onSubmit,
                       value={PLANNING_OTHER_OPTION_ID}
                       checked={isOtherSelected}
                       onChange={() => {
+                        markResponseDirty();
                         setIsOtherSelected(true);
                         setResponse({});
                       }}
@@ -4630,7 +4480,10 @@ export function QuestionForm({ question: rawQuestion, initialResponse, onSubmit,
                         data-testid="planning-other-input"
                         placeholder={t("planning.otherOptionPlaceholder", "Write your own answer...")}
                         value={otherValue}
-                        onChange={(e) => setOtherValue(e.target.value)}
+                        onChange={(e) => {
+                          markResponseDirty();
+                          setOtherValue(e.target.value);
+                        }}
                       />
                     </div>
                   )}
@@ -4648,6 +4501,7 @@ export function QuestionForm({ question: rawQuestion, initialResponse, onSubmit,
                           value={option.id}
                           checked={selected.includes(option.id)}
                           onChange={(e) => {
+                            markResponseDirty();
                             const newSelected = e.target.checked
                               ? [...selected, option.id]
                               : selected.filter((id) => id !== option.id);
@@ -4670,6 +4524,7 @@ export function QuestionForm({ question: rawQuestion, initialResponse, onSubmit,
                       value={PLANNING_OTHER_OPTION_ID}
                       checked={isOtherSelected}
                       onChange={(e) => {
+                        markResponseDirty();
                         setIsOtherSelected(e.target.checked);
                         if (!e.target.checked) {
                           setOtherValue("");
@@ -4688,7 +4543,10 @@ export function QuestionForm({ question: rawQuestion, initialResponse, onSubmit,
                         data-testid="planning-other-input"
                         placeholder={t("planning.otherOptionPlaceholder", "Write your own answer...")}
                         value={otherValue}
-                        onChange={(e) => setOtherValue(e.target.value)}
+                        onChange={(e) => {
+                          markResponseDirty();
+                          setOtherValue(e.target.value);
+                        }}
                       />
                     </div>
                   )}
@@ -4701,6 +4559,7 @@ export function QuestionForm({ question: rawQuestion, initialResponse, onSubmit,
                     <button
                       className={`planning-confirm-btn ${response[question.id] === true && !isOtherSelected ? "selected" : ""}`}
                       onClick={() => {
+                        markResponseDirty();
                         setIsOtherSelected(false);
                         setOtherValue("");
                         setResponse({ [question.id]: true });
@@ -4712,6 +4571,7 @@ export function QuestionForm({ question: rawQuestion, initialResponse, onSubmit,
                     <button
                       className={`planning-confirm-btn ${response[question.id] === false && !isOtherSelected ? "selected" : ""}`}
                       onClick={() => {
+                        markResponseDirty();
                         setIsOtherSelected(false);
                         setOtherValue("");
                         setResponse({ [question.id]: false });
@@ -4724,6 +4584,7 @@ export function QuestionForm({ question: rawQuestion, initialResponse, onSubmit,
                       className={`planning-confirm-btn ${isOtherSelected ? "selected" : ""}`}
                       data-testid="planning-option-other"
                       onClick={() => {
+                        markResponseDirty();
                         setIsOtherSelected(true);
                         setResponse({});
                       }}
@@ -4740,7 +4601,10 @@ export function QuestionForm({ question: rawQuestion, initialResponse, onSubmit,
                         data-testid="planning-other-input"
                         placeholder={t("planning.otherOptionPlaceholder", "Write your own answer...")}
                         value={otherValue}
-                        onChange={(e) => setOtherValue(e.target.value)}
+                        onChange={(e) => {
+                          markResponseDirty();
+                          setOtherValue(e.target.value);
+                        }}
                       />
                     </div>
                   )}
@@ -4759,7 +4623,10 @@ export function QuestionForm({ question: rawQuestion, initialResponse, onSubmit,
                   className="planning-textarea"
                   placeholder={t("planning.additionalCommentsPlaceholder", "Add any extra context or direction...")}
                   value={commentValue}
-                  onChange={(e) => setCommentValue(e.target.value)}
+                  onChange={(e) => {
+                    markResponseDirty();
+                    setCommentValue(e.target.value);
+                  }}
                 />
               </div>
             )}
@@ -4801,10 +4668,8 @@ interface SummaryViewProps {
   onBranchNameChange: (name: string) => void;
   onBaseBranchChange: (branch: string) => void;
   onCreateTask: () => void;
-  onBreakIntoTasks: () => void;
   onRefine?: () => void;
   isCreatingTask: boolean;
-  isStartingBreakdown: boolean;
   isRefiningSummary: boolean;
 }
 
@@ -4823,10 +4688,8 @@ export function SummaryView({
   onBranchNameChange,
   onBaseBranchChange,
   onCreateTask,
-  onBreakIntoTasks,
   onRefine,
   isCreatingTask,
-  isStartingBreakdown,
   isRefiningSummary,
 }: SummaryViewProps) {
   const { t } = useTranslation("app");
@@ -4860,7 +4723,7 @@ export function SummaryView({
   const selectedPriority = normalizeTaskPriority(summary.priority);
   const isBranchNameRequired = branchMode === "existing" || branchMode === "custom-new";
   const hasInvalidBranchSelection = isBranchNameRequired && !branchName.trim();
-  const isLoading = isCreatingTask || isStartingBreakdown || isRefiningSummary;
+  const isLoading = isCreatingTask || isRefiningSummary;
 
   const handleDependencyToggle = (taskId: string) => {
     const newDeps = selectedDependencies.includes(taskId)
@@ -5085,407 +4948,7 @@ export function SummaryView({
               </>
             )}
           </button>
-          <button
-            className="btn btn-primary"
-            onClick={onBreakIntoTasks}
-            disabled={isLoading}
-            title={t("planning.breakIntoTasksTitle", "Break the plan into multiple tasks with dependencies")}
-          >
-            {isStartingBreakdown ? (
-              <>
-                <Loader2 size={16} className="spin icon-mr-8" />
-                {t("planning.breakingDown", "Breaking down...")}
-              </>
-            ) : (
-              <>
-                <ListTree size={16} className="icon-mr-8" />
-                {t("planning.breakIntoTasks", "Break into Tasks")}
-              </>
-            )}
-          </button>
         </div>
-      </div>
-    </div>
-  );
-}
-
-// ── BreakdownView (subtask editing in planning modal) ──────────────────────
-
-function hasDependencyCycle(subtasks: SubtaskItem[]): boolean {
-  const graph = new Map(subtasks.map((item) => [item.id, item.dependsOn]));
-  const visiting = new Set<string>();
-  const visited = new Set<string>();
-
-  const visit = (id: string): boolean => {
-    if (visiting.has(id)) return true;
-    if (visited.has(id)) return false;
-    visiting.add(id);
-    for (const dep of graph.get(id) ?? []) {
-      if (graph.has(dep) && visit(dep)) return true;
-    }
-    visiting.delete(id);
-    visited.add(id);
-    return false;
-  };
-
-  return subtasks.some((item) => visit(item.id));
-}
-
-function createEmptySubtask(index: number): SubtaskItem {
-  return {
-    id: `subtask-${index}`,
-    title: "",
-    description: "",
-    suggestedSize: "M",
-    priority: DEFAULT_TASK_PRIORITY,
-    dependsOn: [],
-  };
-}
-
-interface BreakdownViewProps {
-  subtasks: SubtaskItem[];
-  isLoading: boolean;
-  onUpdateSubtasks: (subtasks: SubtaskItem[]) => void;
-  onCreateTasks: () => void;
-  onBack: () => void;
-}
-
-function BreakdownView({
-  subtasks,
-  isLoading,
-  onUpdateSubtasks,
-  onCreateTasks,
-  onBack,
-}: BreakdownViewProps) {
-  const { t } = useTranslation("app");
-  const [draggingId, setDraggingId] = useState<string | null>(null);
-  const [dragOverId, setDragOverId] = useState<string | null>(null);
-  const [dragOverPosition, setDragOverPosition] = useState<"before" | "after" | null>(null);
-  const titleRefs = useRef<Array<HTMLInputElement | null>>([]);
-
-  const isInvalid = useMemo(() => {
-    if (subtasks.length === 0) return true;
-    if (subtasks.some((s) => !s.title.trim())) return true;
-    return hasDependencyCycle(subtasks);
-  }, [subtasks]);
-
-  const updateSubtask = useCallback(
-    (id: string, patch: Partial<SubtaskItem>) => {
-      onUpdateSubtasks(subtasks.map((item) => (item.id === id ? { ...item, ...patch } : item)));
-    },
-    [subtasks, onUpdateSubtasks],
-  );
-
-  const addSubtask = useCallback(() => {
-    onUpdateSubtasks([...subtasks, createEmptySubtask(subtasks.length + 1)]);
-  }, [subtasks, onUpdateSubtasks]);
-
-  const removeSubtask = useCallback(
-    (id: string) => {
-      onUpdateSubtasks(
-        subtasks
-          .filter((item) => item.id !== id)
-          .map((item) => ({ ...item, dependsOn: item.dependsOn.filter((dep) => dep !== id) })),
-      );
-    },
-    [subtasks, onUpdateSubtasks],
-  );
-
-  const moveSubtask = useCallback(
-    (fromIndex: number, toIndex: number) => {
-      if (toIndex < 0 || toIndex >= subtasks.length) return;
-      const newSubtasks = [...subtasks];
-      const [moved] = newSubtasks.splice(fromIndex, 1);
-      newSubtasks.splice(toIndex, 0, moved);
-      onUpdateSubtasks(newSubtasks);
-    },
-    [subtasks, onUpdateSubtasks],
-  );
-
-  // Drag-and-drop handlers
-  const handleDragStart = useCallback((subtaskId: string) => (e: React.DragEvent) => {
-    setDraggingId(subtaskId);
-    e.dataTransfer.setData("text/plain", subtaskId);
-    e.dataTransfer.effectAllowed = "move";
-  }, []);
-
-  const handleDragEnd = useCallback(() => {
-    setDraggingId(null);
-    setDragOverId(null);
-    setDragOverPosition(null);
-  }, []);
-
-  const handleDragOver = useCallback((targetId: string) => (e: React.DragEvent) => {
-    e.preventDefault();
-    if (targetId === draggingId) return;
-    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    const midY = rect.top + rect.height / 2;
-    const position: "before" | "after" = e.clientY < midY ? "before" : "after";
-    setDragOverId(targetId);
-    setDragOverPosition(position);
-  }, [draggingId]);
-
-  const handleDrop = useCallback((targetId: string) => (e: React.DragEvent) => {
-    e.preventDefault();
-    const draggedId = e.dataTransfer.getData("text/plain");
-    if (!draggedId || draggedId === targetId) {
-      handleDragEnd();
-      return;
-    }
-    const fromIndex = subtasks.findIndex((s) => s.id === draggedId);
-    const toIndex = subtasks.findIndex((s) => s.id === targetId);
-    if (fromIndex === -1 || toIndex === -1) {
-      handleDragEnd();
-      return;
-    }
-    const newSubtasks = [...subtasks];
-    const [moved] = newSubtasks.splice(fromIndex, 1);
-    let insertIndex = toIndex;
-    if (dragOverPosition === "after" && fromIndex < toIndex) insertIndex--;
-    if (dragOverPosition === "after") insertIndex++;
-    newSubtasks.splice(insertIndex, 0, moved);
-    onUpdateSubtasks(newSubtasks);
-    handleDragEnd();
-  }, [subtasks, dragOverPosition, onUpdateSubtasks, handleDragEnd]);
-
-  const handleDragLeave = useCallback((e: React.DragEvent) => {
-    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    const x = e.clientX;
-    const y = e.clientY;
-    if (x < rect.left || x > rect.right || y < rect.top || y > rect.bottom) {
-      setDragOverId(null);
-      setDragOverPosition(null);
-    }
-  }, []);
-
-  return (
-    <div className="planning-summary">
-      <div className="planning-view-scroll planning-summary-scroll">
-        <div className="planning-summary-header">
-          <ListTree size={24} className="icon-triage" />
-          <h4>{t("planning.breakIntoTasks", "Break into Tasks")}</h4>
-          <p className="text-muted">
-            {t("planning.breakdownSubheading", "Review and edit the subtasks generated from your plan. Adjust titles, descriptions, sizes, priorities, and dependencies before creating.")}
-          </p>
-        </div>
-
-        <div className="planning-summary-form">
-          {subtasks.map((subtask, index) => {
-            const isDragging = draggingId === subtask.id;
-            const isDragOver = dragOverId === subtask.id;
-            const dragClasses = [
-              "task-detail-section",
-              "subtask-item",
-              isDragging ? "subtask-item-dragging" : "",
-              isDragOver ? "subtask-item-drop-target" : "",
-              isDragOver && dragOverPosition === "before" ? "subtask-item-drop-before" : "",
-              isDragOver && dragOverPosition === "after" ? "subtask-item-drop-after" : "",
-            ]
-              .filter(Boolean)
-              .join(" ");
-
-            return (
-              <div
-                key={subtask.id}
-                className={dragClasses}
-                data-testid={`subtask-item-${index}`}
-                draggable={!isLoading}
-                onDragStart={handleDragStart(subtask.id)}
-                onDragEnd={handleDragEnd}
-                onDragOver={handleDragOver(subtask.id)}
-                onDrop={handleDrop(subtask.id)}
-                onDragLeave={handleDragLeave}
-              >
-                <div
-                  className="detail-title-row subtask-item-header subtask-item-header--between"
-                >
-                  <div className="subtask-drag-handle" title={t("planning.dragToReorder", "Drag to reorder")}>
-                    <GripVertical size={16} />
-                    <strong>{subtask.id}</strong>
-                  </div>
-                  <div className="subtask-item-actions">
-                    <button
-                      type="button"
-                      className="btn btn-icon btn-sm"
-                      onClick={() => moveSubtask(index, index - 1)}
-                      disabled={isLoading || index === 0}
-                      title={t("planning.moveUp", "Move up")}
-                      aria-label={t("planning.moveSubtaskUp", "Move subtask up")}
-                    >
-                      <ArrowUp size={14} />
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn-icon btn-sm"
-                      onClick={() => moveSubtask(index, index + 1)}
-                      disabled={isLoading || index === subtasks.length - 1}
-                      title={t("planning.moveDown", "Move down")}
-                      aria-label={t("planning.moveSubtaskDown", "Move subtask down")}
-                    >
-                      <ArrowDown size={14} />
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn-sm"
-                      onClick={() => removeSubtask(subtask.id)}
-                      disabled={isLoading}
-                    >
-                      <Trash2 size={14} /> {t("planning.remove", "Remove")}
-                    </button>
-                  </div>
-                </div>
-
-                <div className="form-group">
-                  <label>{t("planning.subtaskTitle", "Title")}</label>
-                  <input
-                    ref={(element) => {
-                      titleRefs.current[index] = element;
-                    }}
-                    value={subtask.title}
-                    onChange={(event) => updateSubtask(subtask.id, { title: event.target.value })}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter") {
-                        event.preventDefault();
-                        if (index < subtasks.length - 1) {
-                          titleRefs.current[index + 1]?.focus();
-                        }
-                      }
-                    }}
-                    disabled={isLoading}
-                  />
-                </div>
-
-                <div className="form-group">
-                  <label>{t("planning.subtaskDescription", "Description")}</label>
-                  <textarea
-                    rows={3}
-                    value={subtask.description}
-                    onChange={(event) =>
-                      updateSubtask(subtask.id, { description: event.target.value })
-                    }
-                    disabled={isLoading}
-                  />
-                </div>
-
-                <div className="planning-summary-meta-row">
-                  <div className="form-group">
-                    <label htmlFor={`${subtask.id}-size`}>{t("planning.subtaskSize", "Size")}</label>
-                    <select
-                      id={`${subtask.id}-size`}
-                      className="planning-size-select"
-                      value={subtask.suggestedSize}
-                      onChange={(event) =>
-                        updateSubtask(subtask.id, {
-                          suggestedSize: event.target.value as "S" | "M" | "L",
-                        })
-                      }
-                      disabled={isLoading}
-                    >
-                      <option value="S">S</option>
-                      <option value="M">M</option>
-                      <option value="L">L</option>
-                    </select>
-                  </div>
-
-                  <div className="form-group">
-                    <label htmlFor={`${subtask.id}-priority`}>{t("planning.subtaskPriority", "Priority")}</label>
-                    <select
-                      id={`${subtask.id}-priority`}
-                      className="planning-size-select"
-                      value={normalizeTaskPriority(subtask.priority)}
-                      onChange={(event) =>
-                        updateSubtask(subtask.id, {
-                          priority: event.target.value as TaskPriority,
-                        })
-                      }
-                      disabled={isLoading}
-                    >
-                      {TASK_PRIORITIES.map((priorityOption) => (
-                        <option key={priorityOption} value={priorityOption}>
-                          {priorityOption[0].toUpperCase() + priorityOption.slice(1)}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-
-                <div className="form-group">
-                  <label>{t("planning.dependencies", "Dependencies")}</label>
-                  <div className="planning-deps-list">
-                    {subtasks
-                      .slice(0, index)
-                      .filter((item) => item.id !== subtask.id)
-                      .map((candidate) => {
-                        const selected = subtask.dependsOn.includes(candidate.id);
-                        return (
-                          <label
-                            key={candidate.id}
-                            className={`planning-dep-chip ${selected ? "selected" : ""}`}
-                          >
-                            <input
-                              type="checkbox"
-                              checked={selected}
-                              onChange={() => {
-                                const nextDeps = selected
-                                  ? subtask.dependsOn.filter((dep) => dep !== candidate.id)
-                                  : [...subtask.dependsOn, candidate.id];
-                                updateSubtask(subtask.id, { dependsOn: nextDeps });
-                              }}
-                              disabled={isLoading}
-                            />
-                            <span className="planning-dep-id">{candidate.id}</span>
-                            <span className="planning-dep-title">
-                              {candidate.title || t("planning.untitled", "Untitled")}
-                            </span>
-                          </label>
-                        );
-                      })}
-                    {index === 0 && (
-                      <div className="text-muted">{t("planning.firstSubtaskNoDeps", "First subtask cannot have dependencies.")}</div>
-                    )}
-                    {index > 0 &&
-                      subtasks
-                        .slice(0, index)
-                        .filter((item) => item.id !== subtask.id).length === 0 && (
-                        <div className="text-muted">{t("planning.noPreviousSubtasks", "No previous subtasks available.")}</div>
-                      )}
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-
-          <button type="button" className="btn" onClick={addSubtask} disabled={isLoading}>
-            <Plus size={16} className="icon-mr-6" /> {t("planning.addSubtask", "Add subtask")}
-          </button>
-
-          {hasDependencyCycle(subtasks) && (
-            <div className="form-error planning-error">
-              {t("planning.dependencyCycle", "Dependencies contain a cycle. Remove circular references before creating tasks.")}
-            </div>
-          )}
-        </div>
-      </div>
-
-      <div className="planning-actions planning-summary-actions">
-        <button className="btn" onClick={onBack} disabled={isLoading}>
-          <ArrowLeft size={16} className="icon-mr-4" />
-          {t("planning.backToSummary", "Back to Summary")}
-        </button>
-        <button
-          className="btn btn-primary"
-          onClick={onCreateTasks}
-          disabled={isLoading || isInvalid}
-        >
-          {isLoading ? (
-            <>
-              <Loader2 size={16} className="spin icon-mr-6" />
-              {t("planning.creating", "Creating...")}
-            </>
-          ) : (
-            <>{t("planning.createTasks", "Create Tasks")}</>
-          )}
-        </button>
       </div>
     </div>
   );
@@ -5533,8 +4996,8 @@ function PlanningSessionList({
       style={sidebarWidth === undefined ? undefined : { width: `${sidebarWidth}px` }}
     >
       {/*
-      FNXC:Planning 2026-06-23-01:15:
-      The embedded Planning view reads as a real two-pane layout matching Missions: the left sidebar is a full-height flex column whose session list scrolls and whose primary action ("New session") is pinned to a bottom footer (parity with MissionManager's mission-manager__sidebar-footer + sidebar-cta). The header that previously held the New session button is removed so the list owns the top of the sidebar like the Missions list.
+      FNXC:Planning 2026-08-16-14:48:
+      Planning intentionally keeps its primary "New session" action pinned to a bottom footer while its session list scrolls. Missions now anchors its slightly taller CTA at the top of its sidebar, so the two surfaces do not require footer-placement parity.
       */}
       <div className="planning-sidebar-list">
         {/*
@@ -5656,8 +5119,8 @@ function PlanningSessionList({
       </div>
       <div className="planning-sidebar-footer">
         {/*
-        FNXC:Planning 2026-06-23-01:15:
-        The New session CTA mirrors Missions' primary sidebar action: it reuses the shared "btn btn-primary" look (same base button class MissionManager pairs with mission-manager__sidebar-cta) so size and color match the Missions create button exactly, full-width and bottom-anchored. The "active" state (no session selected) keeps a subtle accent so the user can tell they're on the new-session view.
+        FNXC:Planning 2026-08-16-14:48:
+        Planning keeps its bottom-anchored New session CTA at its current metrics. It shares the "btn btn-primary" treatment with Missions, whose slightly taller CTA now lives at the top of the mission sidebar; exact placement and height parity are intentionally not required.
         */}
         <button
           className={`btn btn-primary planning-sidebar-new ${selectedSessionId === null ? "active" : ""}`}

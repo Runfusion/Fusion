@@ -19,7 +19,7 @@ import { existsSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import type { AgentHeartbeatRun, AgentStore, MessageStore, PermanentAgentGatingContext, ProviderInstanceRef, ResolvedMcpServerDefinition, TaskDetail, Settings, SteeringComment, TaskStore } from "@fusion/core";
-import { isValidProviderInstanceId, resolvePersistAgentThinkingLog, resolveExecutorFallbackModel } from "@fusion/core";
+import { isFusionDeletableBranch, isValidProviderInstanceId, resolvePersistAgentThinkingLog, resolveExecutorFallbackModel } from "@fusion/core";
 
 import {
   createResolvedAgentSession,
@@ -1096,6 +1096,7 @@ export class StepSessionExecutor {
     // Delete branches created for parallel worktrees
     for (const [stepIdx, branchName] of this.parallelBranches) {
       try {
+        if (!isFusionDeletableBranch(this.options.taskDetail, branchName)) continue;
         await execAsync(`git branch -D "${branchName}"`, {
           cwd: this.options.rootDir,
         });
@@ -1844,7 +1845,7 @@ Follow instructions precisely and avoid unrelated changes.`,
             });
           }
           const branch = this.parallelBranches.get(stepIdx);
-          if (branch) {
+          if (branch && isFusionDeletableBranch(this.options.taskDetail, branch)) {
             await execAsync(`git branch -D "${branch}"`, {
               cwd: this.options.rootDir,
             });
@@ -1903,6 +1904,7 @@ Follow instructions precisely and avoid unrelated changes.`,
       await installTaskWorktreeIdentityGuard({
         worktreePath,
         taskId: this.options.taskDetail.id,
+        expectedBranch: branchName,
         commitMsgHookEnabled: settings.commitMsgHookEnabled,
         taskPrefix: settings.taskPrefix,
         taskAttributionTrailerName: settings.taskAttributionTrailerNames?.[0],

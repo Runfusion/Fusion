@@ -1,3 +1,5 @@
+import { emitBoundedRunAudit } from "../run-audit/emit-bounded-run-audit.js";
+/* FNXC:RunAudit 2026-08-20-05:49: FN-9177 bounds optional audit telemetry so a hostile sink cannot alter this lifecycle path. */
 /**
  * merge-queue-ops-2 operations.
  *
@@ -205,7 +207,7 @@ export async function applyPrMergedTransitionImpl(store: TaskStore, taskId: stri
     } satisfies MergeResult);
 
     if (ctx?.agentId && ctx?.runId) {
-      void store.recordRunAuditEvent({
+      void emitBoundedRunAudit(store, {
         taskId,
         agentId: ctx.agentId,
         runId: ctx.runId,

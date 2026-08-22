@@ -22,7 +22,7 @@ import type {
   Settings,
   TaskStore,
 } from "@fusion/core";
-import { resolveExecutorFallbackModel, resolveProjectColumnsForRoles } from "@fusion/core";
+import { resolveEffectiveConcurrency, resolveExecutorFallbackModel, resolveProjectColumnsForRoles } from "@fusion/core";
 import type { ToolDefinition, AgentSession } from "@earendil-works/pi-coding-agent";
 import {
   createResolvedAgentSession,
@@ -141,7 +141,7 @@ export function createSpawnAgentTool(
           store: deps.store,
           tasks: await deps.store.listTasks({ slim: true, includeArchived: false }),
         });
-        const spawnCap = settings.maxConcurrent ?? 2;
+        const spawnCap = resolveEffectiveConcurrency(settings).effectiveLimit;
         const liveChildren = deps.getTotalSpawnedCount();
         if (spawnClaimed + liveChildren >= spawnCap) {
           return {
@@ -187,8 +187,8 @@ export function createSpawnAgentTool(
         to the agent gate alone, matching every other lane.
         */
         {
-          const spawnMaxWorktrees = (settings as { maxWorktrees?: number | null }).maxWorktrees ?? 4;
-          if (typeof spawnMaxWorktrees === "number" && Number.isFinite(spawnMaxWorktrees)) {
+          const spawnMaxWorktrees = resolveEffectiveConcurrency(settings).worktreeLimit;
+          if (spawnMaxWorktrees !== null) {
             const spawnTasks = await deps.store.listTasks({ slim: true, includeArchived: false });
             /*
             FNXC:WorkflowResolvedColumns 2026-08-01-03:05:

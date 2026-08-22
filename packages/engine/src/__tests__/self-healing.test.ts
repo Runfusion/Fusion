@@ -141,7 +141,7 @@ vi.mock("../merger.js", () => ({
   classifyOwnedLandedEvidence: vi.fn(),
 }));
 
-import { SelfHealingManager, isBranchAheadOfBase, MAX_AUTO_MERGE_RETRIES } from "../self-healing.js";
+import { SelfHealingManager, isBranchAheadOfBase, MAX_AUTO_MERGE_RETRIES, MAX_TASK_DONE_RETRIES } from "../self-healing.js";
 import { HEARTBEAT_ERROR_RECOVERY_METADATA_KEY, HEARTBEAT_ERROR_RETRY_EXHAUSTED_PAUSE_REASON, HEARTBEAT_ERROR_UNRECOVERABLE_PAUSE_REASON, readHeartbeatErrorRetryCount } from "../agent-heartbeat.js";
 import { PlanningLifecycleLockTransportError, TaskDeletedError, TaskNotFoundError, type TaskStore, type Settings, type Task, type AgentStore, type Agent, type NotificationProvider } from "@fusion/core";
 import { EventEmitter } from "node:events";
@@ -526,6 +526,7 @@ describe("SelfHealingManager", () => {
       }));
       expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo", {
         preserveProgress: true,
+        preserveWorktree: true,
         preserveStatus: true,
         moveSource: "engine",
         recoveryRehome: true,
@@ -594,6 +595,7 @@ describe("SelfHealingManager", () => {
       }));
       expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo", {
         preserveProgress: true,
+        preserveWorktree: true,
         preserveStatus: true,
         moveSource: "engine",
         recoveryRehome: true,
@@ -695,6 +697,7 @@ describe("SelfHealingManager", () => {
       expect(result).toBe(false);
       expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo", {
         preserveProgress: true,
+        preserveWorktree: true,
         preserveStatus: true,
         moveSource: "engine",
         recoveryRehome: true,
@@ -2276,32 +2279,53 @@ describe("SelfHealingManager", () => {
       });
       vi.spyOn(managerWithRecovery as any, "hasRecoverableGitWork").mockReturnValue(false);
 
-      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
-        {
-          id: "FN-1473",
-          column: "in-progress",
-          status: "failed",
-          error: "Agent finished without calling fn_task_done (after retry)",
-          paused: false,
-          steps: [],
-        },
-      ]);
+      const candidate = {
+        id: "FN-1473",
+        column: "in-progress",
+        status: "failed",
+        error: "Agent finished without calling fn_task_done (after retry)",
+        paused: false,
+        steps: [],
+      };
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([candidate]);
+      store.updateTaskAtomic = vi.fn(async (_id, updater) => ({ ...candidate, ...(await updater(candidate as Task)) })) as any;
 
       const result = await managerWithRecovery.recoverNoProgressNoTaskDoneFailures();
 
       expect(result).toBe(1);
       expect(store.listTasks).toHaveBeenCalledWith({ column: "in-progress", slim: true });
-      expect(store.updateTask).toHaveBeenCalledWith("FN-1473", {
-        status: "stuck-killed",
-        worktree: null,
-        branch: null,
-      });
+      expect(store.updateTaskAtomic).toHaveBeenCalledWith("FN-1473", expect.any(Function));
       expect(store.logEntry).toHaveBeenCalledWith(
         "FN-1473",
         expect.stringContaining("no-progress no-task_done failure"),
       );
       expect(store.moveTask).toHaveBeenCalledWith("FN-1473", "todo", { moveSource: "engine", recoveryRehome: true });
 
+      managerWithRecovery.stop();
+    });
+
+    it("parks an exhausted no-progress budget once without moving the task", async () => {
+      const managerWithRecovery = new SelfHealingManager(store, {
+        rootDir: "/tmp/test-project",
+        getExecutingTaskIds: () => new Set<string>(),
+      });
+      vi.spyOn(managerWithRecovery as any, "hasRecoverableGitWork").mockReturnValue(false);
+      const candidate = {
+        id: "FN-9186", column: "in-progress", status: "failed",
+        error: "Agent finished without calling fn_task_done", taskDoneRetryCount: MAX_TASK_DONE_RETRIES,
+        paused: false, steps: [],
+      };
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([candidate]);
+      store.updateTaskAtomic = vi.fn(async (_id, updater) => ({ ...candidate, ...(await updater(candidate as Task)) })) as any;
+
+      expect(await managerWithRecovery.recoverNoProgressNoTaskDoneFailures()).toBe(0);
+      const exhaustedPatch = await (store.updateTaskAtomic as any).mock.calls[0][1](candidate);
+      expect(exhaustedPatch).toEqual(expect.objectContaining({
+        error: expect.stringMatching(/^NO_PROGRESS_REQUEUE_BUDGET_EXHAUSTED:/),
+        recoveryRetryCount: null,
+        nextRecoveryAt: null,
+      }));
+      expect(store.moveTask).not.toHaveBeenCalled();
       managerWithRecovery.stop();
     });
 
@@ -2647,6 +2671,135 @@ describe("SelfHealingManager", () => {
       expect(result).toBe(1);
       expect(store.archiveTaskAndCleanup).toHaveBeenCalledWith("FN-101");
       expect(store.archiveTaskAndCleanup).not.toHaveBeenCalledWith("FN-100");
+    });
+
+    /*
+    FNXC:SelfHealing 2026-08-21-08:44:
+    Archive retry tests must drive past the prior failure budget on one manager instance. Separate
+    task IDs make same-reason exhaustion and failure-class reset independently observable.
+    */
+    it("bounds same-reason archive failures and resets the budget when the failure class changes", async () => {
+      vi.setSystemTime(new Date("2026-01-04T00:00:00.000Z"));
+      (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+        autoArchiveDoneTasksEnabled: true,
+        autoArchiveDoneAfterMs: 24 * 60 * 60 * 1000,
+        doneAutoArchiveDays: 0,
+      } as unknown as Settings);
+      const stale = [
+        { id: "FN-BOUNDED", column: "done", columnMovedAt: "2026-01-02T00:00:00.000Z", updatedAt: "2026-01-02T00:00:00.000Z" },
+        { id: "FN-CHANGING", column: "done", columnMovedAt: "2026-01-02T00:00:00.000Z", updatedAt: "2026-01-02T00:00:00.000Z" },
+      ];
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue(stale);
+      const changingFailures = [
+        new Error("disk busy"),
+        new Error("disk busy"),
+        Object.assign(new Error("live"), { name: "TaskIsLiveError" }),
+        new Error("disk busy"),
+        new Error("disk busy"),
+        new Error("disk busy"),
+      ];
+      (store.archiveTaskAndCleanup as ReturnType<typeof vi.fn>).mockImplementation(async (id: string) => {
+        if (id === "FN-BOUNDED") throw new Error("disk busy");
+        throw changingFailures.shift() ?? new Error("disk busy");
+      });
+
+      for (let index = 0; index < 10; index++) await manager.archiveStaleDoneTasks();
+
+      const calls = (store.archiveTaskAndCleanup as ReturnType<typeof vi.fn>).mock.calls;
+      expect(calls.filter(([id]) => id === "FN-BOUNDED")).toHaveLength(3);
+      expect(calls.filter(([id]) => id === "FN-CHANGING")).toHaveLength(6);
+    });
+
+    it("escalates an exhausted archive budget once without letting log or audit failures stop other archives", async () => {
+      vi.setSystemTime(new Date("2026-01-04T00:00:00.000Z"));
+      (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+        autoArchiveDoneTasksEnabled: true,
+        autoArchiveDoneAfterMs: 24 * 60 * 60 * 1000,
+        doneAutoArchiveDays: 0,
+      } as unknown as Settings);
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        { id: "FN-EXHAUSTED", column: "done", columnMovedAt: "2026-01-02T00:00:00.000Z", updatedAt: "2026-01-02T00:00:00.000Z" },
+        { id: "FN-OTHER", column: "done", columnMovedAt: "2026-01-02T00:00:00.000Z", updatedAt: "2026-01-02T00:00:00.000Z" },
+      ]);
+      (store.archiveTaskAndCleanup as ReturnType<typeof vi.fn>).mockImplementation(async (id: string) => {
+        if (id === "FN-EXHAUSTED") throw new Error("disk busy");
+        return {};
+      });
+      (store.logEntry as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("log unavailable"));
+      (store.recordRunAuditEvent as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("audit unavailable"));
+      const priorErrorCalls = (getSelfHealingLogger().error as ReturnType<typeof vi.fn>).mock.calls.length;
+
+      for (let index = 0; index < 10; index++) await manager.archiveStaleDoneTasks();
+
+      expect((store.archiveTaskAndCleanup as ReturnType<typeof vi.fn>).mock.calls.filter(([id]) => id === "FN-EXHAUSTED")).toHaveLength(3);
+      expect(store.logEntry).toHaveBeenCalledTimes(1);
+      const exhaustedEvents = (store.recordRunAuditEvent as ReturnType<typeof vi.fn>).mock.calls.filter(
+        ([event]) => (event as { mutationType?: string }).mutationType === "task:auto-archive-failure-budget-exhausted",
+      );
+      expect(exhaustedEvents).toHaveLength(1);
+      expect((getSelfHealingLogger().error as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(priorErrorCalls + 1);
+      expect(store.archiveTaskAndCleanup).toHaveBeenCalledWith("FN-OTHER");
+    });
+
+    it("clears an archive failure budget after success and when a task leaves the candidate set", async () => {
+      vi.setSystemTime(new Date("2026-01-04T00:00:00.000Z"));
+      (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+        autoArchiveDoneTasksEnabled: true,
+        autoArchiveDoneAfterMs: 24 * 60 * 60 * 1000,
+        doneAutoArchiveDays: 0,
+      } as unknown as Settings);
+      const successTask = { id: "FN-RESET-SUCCESS", column: "done", columnMovedAt: "2026-01-02T00:00:00.000Z", updatedAt: "2026-01-02T00:00:00.000Z" };
+      const candidateTask = { id: "FN-RESET-CANDIDATE", column: "done", columnMovedAt: "2026-01-02T00:00:00.000Z", updatedAt: "2026-01-02T00:00:00.000Z" };
+      (store.listTasks as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce([successTask, candidateTask])
+        .mockResolvedValueOnce([successTask, candidateTask])
+        .mockResolvedValueOnce([successTask])
+        .mockResolvedValueOnce([successTask, candidateTask])
+        .mockResolvedValueOnce([successTask, candidateTask])
+        .mockResolvedValueOnce([successTask, candidateTask]);
+      let successCalls = 0;
+      (store.archiveTaskAndCleanup as ReturnType<typeof vi.fn>).mockImplementation(async (id: string) => {
+        if (id === "FN-RESET-SUCCESS") {
+          successCalls++;
+          if (successCalls === 3) return {};
+        }
+        throw new Error("disk busy");
+      });
+
+      for (let index = 0; index < 6; index++) await manager.archiveStaleDoneTasks();
+
+      const calls = (store.archiveTaskAndCleanup as ReturnType<typeof vi.fn>).mock.calls;
+      expect(calls.filter(([id]) => id === "FN-RESET-SUCCESS")).toHaveLength(6);
+      expect(calls.filter(([id]) => id === "FN-RESET-CANDIDATE")).toHaveLength(5);
+    });
+
+    it("skips stale done lineage parents, including complete children, without blocking unrelated archives", async () => {
+      vi.setSystemTime(new Date("2026-01-04T00:00:00.000Z"));
+      (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+        autoArchiveDoneTasksEnabled: true,
+        autoArchiveDoneAfterMs: 24 * 60 * 60 * 1000,
+        doneAutoArchiveDays: 0,
+      } as unknown as Settings);
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        { id: "FN-PARENT-TODO", column: "done", columnMovedAt: "2026-01-02T00:00:00.000Z", updatedAt: "2026-01-02T00:00:00.000Z" },
+        { id: "FN-PARENT-DONE", column: "done", columnMovedAt: "2026-01-02T00:00:00.000Z", updatedAt: "2026-01-02T00:00:00.000Z" },
+        { id: "FN-PARENT-MULTI", column: "done", columnMovedAt: "2026-01-02T00:00:00.000Z", updatedAt: "2026-01-02T00:00:00.000Z" },
+        { id: "FN-UNRELATED", column: "done", columnMovedAt: "2026-01-02T00:00:00.000Z", updatedAt: "2026-01-02T00:00:00.000Z" },
+        { id: "FN-CHILD-TODO", column: "todo", sourceParentTaskId: "FN-PARENT-TODO" },
+        { id: "FN-CHILD-DONE", column: "done", sourceParentTaskId: "FN-PARENT-DONE", columnMovedAt: "2026-01-03T23:00:00.000Z", updatedAt: "2026-01-03T23:00:00.000Z" },
+        { id: "FN-CHILD-ONE", column: "todo", sourceParentTaskId: "FN-PARENT-MULTI" },
+        { id: "FN-CHILD-TWO", column: "in-progress", sourceParentTaskId: "FN-PARENT-MULTI" },
+      ]);
+
+      const priorErrorCalls = (getSelfHealingLogger().error as ReturnType<typeof vi.fn>).mock.calls.length;
+      for (let index = 0; index < 6; index++) await manager.archiveStaleDoneTasks();
+
+      expect(store.archiveTaskAndCleanup).toHaveBeenCalledTimes(6);
+      expect(store.archiveTaskAndCleanup).toHaveBeenCalledWith("FN-UNRELATED");
+      expect(store.archiveTaskAndCleanup).not.toHaveBeenCalledWith("FN-PARENT-TODO");
+      expect(store.archiveTaskAndCleanup).not.toHaveBeenCalledWith("FN-PARENT-DONE");
+      expect(store.archiveTaskAndCleanup).not.toHaveBeenCalledWith("FN-PARENT-MULTI");
+      expect((getSelfHealingLogger().error as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(priorErrorCalls);
     });
   });
 
@@ -3660,7 +3813,6 @@ describe("SelfHealingManager", () => {
         error: null,
         worktreeSessionRetryCount: 1,
         worktree: liveWorktree,
-        branch: "fusion/fn-3900",
         sessionFile: null,
       });
       /*
@@ -3779,7 +3931,7 @@ describe("SelfHealingManager", () => {
           error: null,
           worktreeSessionRetryCount: 1,
           worktree: null,
-          branch: expectedBranch,
+          ...(expectedBranch === branch ? {} : { branch: expectedBranch, branchWriteOrigin: "engine" }),
           sessionFile: null,
         });
         managerWithRecovery.stop();
@@ -3900,6 +4052,7 @@ describe("SelfHealingManager", () => {
         worktreeSessionRetryCount: 1,
         worktree: null,
         branch: null,
+        branchWriteOrigin: "engine",
         sessionFile: null,
       });
       expect(store.logEntry).toHaveBeenCalledWith(
@@ -4087,7 +4240,7 @@ describe("SelfHealingManager", () => {
       managerWithRecovery.stop();
     });
 
-    it("emits no-action for workspace tasks instead of single-repo missing-worktree recovery", async () => {
+    it("repairs stale root routing for workspace tasks without resetting progress", async () => {
       const managerWithRecovery = new SelfHealingManager(store, { rootDir: "/tmp/test-project" });
       (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
         {
@@ -4097,7 +4250,7 @@ describe("SelfHealingManager", () => {
           status: "merging",
           worktree: null,
           workspaceWorktrees: { app: { worktree: "/tmp/ws/app", branch: "fusion/FN-7802-WORKSPACE" } },
-          error: "Refusing to start coding agent in missing worktree: /tmp/ws/app",
+          error: "Refusing to start coding agent in unregistered git worktree: /tmp/ws/.worktrees/FN-7802-WORKSPACE",
           steps: [{ status: "done" }],
           log: [],
         },
@@ -4105,12 +4258,19 @@ describe("SelfHealingManager", () => {
 
       const result = await managerWithRecovery.recoverMissingWorktreeReviewFailures();
 
-      expect(result).toBe(0);
-      expect(store.updateTask).not.toHaveBeenCalled();
-      expect(store.moveTask).not.toHaveBeenCalled();
+      expect(result).toBe(1);
+      expect(store.updateTask).toHaveBeenCalledWith("FN-7802-WORKSPACE", expect.objectContaining({
+        worktree: null,
+        sessionFile: null,
+      }));
+      const workspacePatch = (store.updateTask as ReturnType<typeof vi.fn>).mock.calls
+        .find(([taskId]) => taskId === "FN-7802-WORKSPACE")?.[1];
+      // FNXC:WorkspaceRecovery 2026-08-21-08:44: Prove recovery emitted the workspace patch before asserting that it preserves repository routing.
+      expect(workspacePatch).toBeDefined();
+      expect(workspacePatch).not.toHaveProperty("branch");
+      expect(store.moveTask).toHaveBeenCalledWith("FN-7802-WORKSPACE", "todo", { preserveProgress: true, moveSource: "engine", recoveryRehome: true });
       expect(store.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
-        mutationType: "task:reconcile-missing-worktree-merge-active-no-action",
-        metadata: expect.objectContaining({ reason: "workspace-task" }),
+        mutationType: "task:reconcile-missing-worktree-merge-active",
       }));
       managerWithRecovery.stop();
     });
@@ -4227,7 +4387,7 @@ describe("SelfHealingManager", () => {
       const result = await managerWithRecovery.reconcileTaskWorktreeMetadata();
 
       expect(result).toBe(1);
-      expect(store.updateTask).toHaveBeenCalledWith("FN-7802-SCOPE", { worktree: null, branch: null, sessionFile: null });
+      expect(store.updateTask).toHaveBeenCalledWith("FN-7802-SCOPE", { worktree: null, branch: null, branchWriteOrigin: "engine", sessionFile: null });
       expect(store.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({ mutationType: "task:auto-recover-worktree-metadata-cleared" }));
       managerWithRecovery.stop();
     });
@@ -4564,7 +4724,7 @@ describe("SelfHealingManager", () => {
         "FN-2164",
         expect.stringContaining("Auto-retry 1/3"),
       );
-      expect(store.moveTask).toHaveBeenCalledWith("FN-2164", "todo", { preserveProgress: true, moveSource: "engine", recoveryRehome: true });
+      expect(store.moveTask).toHaveBeenCalledWith("FN-2164", "todo", { preserveProgress: true, preserveWorktree: true, moveSource: "engine", recoveryRehome: true });
 
       managerWithRecovery.stop();
     });
@@ -6600,7 +6760,7 @@ describe("SelfHealingManager", () => {
         "FN-1572",
         expect.stringContaining("in-review task still had incomplete steps"),
       );
-      expect(store.moveTask).toHaveBeenCalledWith("FN-1572", "todo", { preserveProgress: true, moveSource: "engine", recoveryRehome: true });
+      expect(store.moveTask).toHaveBeenCalledWith("FN-1572", "todo", { preserveProgress: true, preserveWorktree: true, moveSource: "engine", recoveryRehome: true });
 
       managerWithRecovery.stop();
     });
@@ -6659,7 +6819,7 @@ describe("SelfHealingManager", () => {
       const result = await managerWithRecovery.recoverStaleIncompleteReviewTasks();
 
       expect(result).toBe(1);
-      expect(store.moveTask).toHaveBeenCalledWith("FN-407-test-1", "todo", { preserveProgress: true, moveSource: "engine", recoveryRehome: true });
+      expect(store.moveTask).toHaveBeenCalledWith("FN-407-test-1", "todo", { preserveProgress: true, preserveWorktree: true, moveSource: "engine", recoveryRehome: true });
 
       managerWithRecovery.stop();
     });
@@ -6687,7 +6847,7 @@ describe("SelfHealingManager", () => {
       const result = await managerWithRecovery.recoverStaleIncompleteReviewTasks();
 
       expect(result).toBe(1);
-      expect(store.moveTask).toHaveBeenCalledWith("FN-407-test-2", "todo", { preserveProgress: true, moveSource: "engine", recoveryRehome: true });
+      expect(store.moveTask).toHaveBeenCalledWith("FN-407-test-2", "todo", { preserveProgress: true, preserveWorktree: true, moveSource: "engine", recoveryRehome: true });
 
       managerWithRecovery.stop();
     });
@@ -6938,6 +7098,7 @@ describe("SelfHealingManager", () => {
       expect(result).toBe(1);
       expect(store.moveTask).toHaveBeenCalledWith("FN-7229", "todo", {
         preserveProgress: true,
+        preserveWorktree: true,
         moveSource: "engine",
         recoveryRehome: true,
       });
@@ -9000,7 +9161,7 @@ describe("SelfHealingManager", () => {
 
       expect(result).toBe(1);
       expect(store.updateTask).not.toHaveBeenCalled();
-      expect(store.moveTask).toHaveBeenCalledWith("FN-9003", "todo", { preserveProgress: true, moveSource: "engine", recoveryRehome: true });
+      expect(store.moveTask).toHaveBeenCalledWith("FN-9003", "todo", { preserveProgress: true, preserveWorktree: true, moveSource: "engine", recoveryRehome: true });
 
       managerWithRecovery.stop();
     });
@@ -12162,7 +12323,7 @@ describe("SelfHealingManager reclaimStaleActiveBranches (FN-4546)", () => {
     expect(recovered).toBe(1);
     expect(mockedExecSync).toHaveBeenCalledWith(expect.stringContaining("git branch -D \"fusion/fn-1001\""), expect.anything());
     expect(mockedExecSync).toHaveBeenCalledWith(expect.stringContaining("git worktree prune"), expect.anything());
-    expect(store.updateTask).toHaveBeenCalledWith("FN-1001", { worktree: null, branch: null, baseCommitSha: null });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-1001", { worktree: null, branch: null, branchWriteOrigin: "engine", baseCommitSha: null });
     expect((store as any).recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
       domain: "git",
       mutationType: "branch:stale-active-reclaim",
@@ -12253,7 +12414,7 @@ describe("SelfHealingManager reclaimStaleActiveBranches (FN-4546)", () => {
     expect(recovered).toBe(1);
     expect(mockedExecSync).toHaveBeenCalledWith(expect.stringContaining("git branch -D \"fusion/fn-1001\""), expect.anything());
     expect(getSelfHealingLogger().warn).not.toHaveBeenCalledWith(expect.stringContaining("stale-active-branch-rescue-needed FN-1001"));
-    expect(store.updateTask).toHaveBeenCalledWith("FN-1001", { worktree: null, branch: null, baseCommitSha: null });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-1001", { worktree: null, branch: null, branchWriteOrigin: "engine", baseCommitSha: null });
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-1001",
       expect.stringContaining("reason=complete-column-unique-commits-force"),

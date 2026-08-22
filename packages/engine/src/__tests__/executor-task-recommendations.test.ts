@@ -31,7 +31,7 @@ function completionTask() {
   };
 }
 
-function createProductionTaskDoneTool(maximum: number | undefined = 3, recommendationMailboxNoticeEnabled?: boolean) {
+function createProductionTaskDoneTool(maximum: number | undefined = 3, recommendationMailboxNoticeEnabled?: boolean, requireTaskRecommendations = false) {
   const store = createMockStore();
   const task = completionTask();
   store._setRow(task.id, task);
@@ -44,16 +44,18 @@ function createProductionTaskDoneTool(maximum: number | undefined = 3, recommend
     worktreeInitCommand: undefined,
     ...(maximum === undefined ? {} : { maxRecommendationsPerTask: maximum }),
     ...(recommendationMailboxNoticeEnabled === undefined ? {} : { recommendationMailboxNoticeEnabled }),
+    ...(requireTaskRecommendations ? { requireTaskRecommendations: true } : {}),
   });
   const executor = new TaskExecutor(store as any, "/repo");
+  const onDone = vi.fn();
   const tool = (executor as any).createTaskDoneTool(
     task.id,
     task.worktree,
     "# Task\n## Steps\n### Step 0: Implement\n- [x] Complete",
     new Map(),
-    vi.fn(),
+    onDone,
   );
-  return { store, task, tool };
+  return { store, task, tool, onDone };
 }
 
 describe("fn_task_done recommendation validation", () => {
@@ -80,6 +82,57 @@ describe("fn_task_done recommendation validation", () => {
       title: "Add password reset support",
       description: "Add a password reset flow as a separate security follow-up.",
     }], 3)).not.toBeTypeOf("string");
+  });
+
+  it("requires an explicit quality-first evaluation without mutating refused completion", async () => {
+    const { store, task, tool, onDone } = createProductionTaskDoneTool(3, undefined, true);
+
+    const refused = await tool.execute("call-required-omitted", {});
+
+    expect(refused.content[0].text).toContain("requires an explicit recommendations array");
+    expect(refused.content[0].text).toContain("recommendations: []");
+    expect((await store.getTask(task.id)).recommendations).toBeUndefined();
+    expect(store.updateTask).not.toHaveBeenCalled();
+    expect(onDone).not.toHaveBeenCalled();
+  });
+
+  it("accepts shorter, at-cap, and empty explicit arrays when required", async () => {
+    const short = createProductionTaskDoneTool(3, undefined, true);
+    await short.tool.execute("call-required-short", { recommendations: [recommendation] });
+    expect((await short.store.getTask(short.task.id)).recommendations).toEqual([recommendation]);
+
+    const empty = createProductionTaskDoneTool(3, undefined, true);
+    await empty.tool.execute("call-required-empty", { recommendations: [] });
+    expect((await empty.store.getTask(empty.task.id)).recommendations).toEqual([]);
+
+    const atCap = createProductionTaskDoneTool(3, undefined, true);
+    await atCap.tool.execute("call-required-cap", {
+      recommendations: [recommendation, { ...recommendation, id: "rec-second" }, { ...recommendation, id: "rec-third" }],
+    });
+    expect((await atCap.store.getTask(atCap.task.id)).recommendations).toHaveLength(3);
+  });
+
+  it("keeps blocked exits outside required recommendation enforcement", async () => {
+    const { store, task, tool } = createProductionTaskDoneTool(3, undefined, true);
+    const blocked = await tool.execute("call-required-blocked", {
+      outcome: "blocked",
+      reason: "Waiting for the upstream API contract.",
+    });
+
+    expect(blocked.content[0].text).toContain("Task parked as blocked");
+    expect((await store.getTask(task.id)).recommendations).toBeUndefined();
+  });
+
+  it("requires an explicit result for no-op completion too", async () => {
+    const { store, task, tool, onDone } = createProductionTaskDoneTool(3, undefined, true);
+    const refused = await tool.execute("call-required-no-op", {
+      summary: "PREMISE STALE: the requested behavior is already present on HEAD",
+    });
+
+    expect(refused.content[0].text).toContain("requires an explicit recommendations array");
+    expect((await store.getTask(task.id)).recommendations).toBeUndefined();
+    expect(store.updateTask).not.toHaveBeenCalled();
+    expect(onDone).not.toHaveBeenCalled();
   });
 
   it("persists and deterministically replaces recommendations through the production completion tool", async () => {
@@ -155,7 +208,7 @@ describe("fn_task_done recommendation validation", () => {
   it("documents the prompted payload and persists its equivalent through the production tool", async () => {
     const { store, task, tool } = createProductionTaskDoneTool();
     expect(tool.description).toContain("recommendations: []");
-    expect(tool.description).toContain("empty list is accepted for compatibility");
+    expect(tool.description).toContain("a shorter list or [] is valid when relevance does not support more");
     expect(tool.parameters.properties.recommendations.description).toContain("unique stable ids");
     expect(tool.parameters.properties.recommendations.description).toContain("populated input is rejected");
 

@@ -1,3 +1,5 @@
+import { emitBoundedRunAudit } from "../run-audit/emit-bounded-run-audit.js";
+/* FNXC:RunAudit 2026-08-20-05:49: FN-9177 bounds optional audit telemetry so a hostile sink cannot alter this lifecycle path. */
 /**
  * FNXC:CodeOrganization 2026-07-20-14:00:
  * Domain rename from remaining-ops-7: merge-queue peeks, archive/done transitions,
@@ -62,7 +64,7 @@ export async function clearCompletionHandoffAcceptedMarkerImpl(store: TaskStore,
     const existing = await getCompletionHandoffMarkerAsync(layer.db, taskId);
     if (!existing) return;
     await clearCompletionHandoffMarkerAsync(layer.db, taskId);
-    void store.recordRunAuditEvent({
+    void emitBoundedRunAudit(store, {
       taskId,
       agentId: "system",
       runId: `completion-handoff-clear:${taskId}:${Date.now()}`,

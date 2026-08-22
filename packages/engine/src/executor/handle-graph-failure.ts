@@ -21,6 +21,7 @@ import {
   resolveWorkflowIrForTask,
 } from "@fusion/core";
 import {
+  BRANCH_WRITE_PROVENANCE_FAILURE_VALUE,
   PLAN_REVIEW_PROVIDER_FAILURE_HOLD_VALUE,
   WORKFLOW_DRIFT_PARK_CONTEXT_KEY,
 } from "../workflows/workflow-graph-executor.js";
@@ -30,8 +31,12 @@ import { getPromptPath } from "../execution/spec-staleness.js";
 import { moveTaskToReplanColumn, resolveReplanTargetColumn } from "../execution/replan-target.js";
 import { executorLog } from "../logger.js";
 import { generateSyntheticRunId, type EngineRunContext } from "../util/run-audit.js";
+import { emitBoundedRunAudit } from "./emit-bounded-run-audit.js";
+import { MERGE_BOUNDARY_UNPROVEN_VALUE } from "../workflows/workflow-merge-nodes.js";
+import { emitMergeBoundaryUnprovenParked } from "./emit-merge-boundary-unproven-audit.js";
 import { PAUSE_ABORT_PARK_ERROR_MARKER, PAUSE_ABORT_PARK_OPERATOR_MARKER } from "../self-healing.js";
 import {
+  graphFailureErrorTexts,
   graphFailureValue,
   graphRunReportedPendingReview,
   isMergeGraphFailure,
@@ -229,6 +234,20 @@ export async function handleGraphFailure(
       a terminal failure — it is a wait. Route it to the self-recovering backoff hold, which never parks
       the task and never consumes the provider/artifact retry budgets.
       */
+      /*
+       * FNXC:BranchNaming 2026-08-21-09:09:
+       * A rejected branch provenance is deterministic task mutation input, not a model/provider
+       * outage. Park it exactly once before every retry classifier so recovery cannot replay a
+       * freshly-created checkout or consume graph/provider retry budgets.
+       */
+      if (graphFailureValue(result) === BRANCH_WRITE_PROVENANCE_FAILURE_VALUE) {
+        const diagnostic = graphFailureErrorTexts(result).find((message) => message.includes("branchWriteOrigin is required when branch is provided"))
+          ?? "branchWriteOrigin is required when branch is provided";
+        await deps.store.logEntry(task.id, diagnostic, undefined, deps.getRunContextFor(task.id));
+        await deps.store.updateTask(task.id, { status: "failed", error: diagnostic }, deps.getRunContextFor(task.id));
+        await deps.persistTokenUsage(task.id);
+        return;
+      }
       if (isSessionContentionGraphFailure(result)) {
         await deps.holdForSessionContention(task, live, result);
         await deps.persistTokenUsage(task.id);
@@ -894,7 +913,12 @@ export async function handleGraphFailure(
             executeRequeueLoopCount: nextCount,
             executeRequeueLoopSignature: signature,
           }, deps.getRunContextFor(task.id));
-          await deps.store.recordRunAuditEvent?.({
+          /*
+           * FNXC:RunAudit 2026-08-20-03:02:
+           * FN-9172 keeps terminal-park telemetry bounded because updateTask has already landed;
+           * an audit failure must not skip persistTokenUsage or this branch's return.
+           */
+          await emitBoundedRunAudit(deps.store, {
             taskId: task.id,
             agentId: "executor",
             runId: generateSyntheticRunId("execution-dispatch-loop", task.id),
@@ -932,8 +956,27 @@ export async function handleGraphFailure(
         const message = `Workflow graph terminal merge failure at node '${failedNode ?? "unknown"}' (${failureValue}) — operator action required`;
         executorLog.warn(`${task.id}: ${message}`);
         await deps.store.logEntry(task.id, message, undefined, deps.getRunContextFor(task.id));
-        if (live.status == null && live.error == null) {
+        const outcome = live.status == null && live.error == null ? "parked" as const : "already-terminal" as const;
+        if (outcome === "parked") {
           await deps.store.updateTask(task.id, { error: message, status: "failed" }, deps.getRunContextFor(task.id));
+        }
+        if (failureValue === MERGE_BOUNDARY_UNPROVEN_VALUE) {
+          /*
+          FNXC:RunAudit 2026-08-20-02:00:
+          FN-9168 records this reachable graph-terminal merge-boundary-unproven park exactly once.
+          Other terminal merge failures remain unchanged. The bounded emitter contains audit failure
+          and hangs after the status write, so observability cannot alter or wedge the park.
+          */
+          await emitMergeBoundaryUnprovenParked(deps.store, {
+            taskId: task.id,
+            nodeId: failedNode ?? "unknown",
+            failureValue,
+            source: "graph-terminal-park",
+            priorColumn: live.column,
+            priorStatus: live.status,
+            outcome,
+            runId: deps.getRunContextFor(task.id)?.runId,
+          });
         }
         await deps.persistTokenUsage(task.id);
         return;
@@ -1069,7 +1112,7 @@ export async function handleGraphFailure(
           if (claim.outcome === "claimed") {
             await deps.store.updateTask(task.id, { status: null, error: null }, deps.getRunContextFor(task.id));
             await deps.store.logEntry(task.id, `Consecutive tool-call failures — auto-retrying same model (${claim.attempt}/${maxToolFailureRetries}) instead of parking`, undefined, deps.getRunContextFor(task.id));
-            await deps.store.recordRunAuditEvent?.({ taskId: task.id, agentId: "executor", runId: generateSyntheticRunId("tool-failure-retry", task.id), domain: "database", mutationType: "task:execution-tool-failure-retry", target: task.id, metadata: { taskId: task.id, nodeId: failedNode ?? "unknown", attempt: claim.attempt, maxAttempts: maxToolFailureRetries, consecutiveToolFailures: threshold, mode: "same-model" } });
+            await emitBoundedRunAudit(deps.store, { taskId: task.id, agentId: "executor", runId: generateSyntheticRunId("tool-failure-retry", task.id), domain: "database", mutationType: "task:execution-tool-failure-retry", target: task.id, metadata: { taskId: task.id, nodeId: failedNode ?? "unknown", attempt: claim.attempt, maxAttempts: maxToolFailureRetries, consecutiveToolFailures: threshold, mode: "same-model" } });
             const schedule = () => { void (async () => { const resume = await deps.store.getTask(task.id); if (resume && !resume.deletedAt && !resume.paused && !resume.userPaused && resume.column === wipColumn) await deps.execute(resume); })().catch((error) => executorLog.error(`${task.id}: tool-failure retry failed`, error)); };
             const delay = resolveConsecutiveToolFailureRetryBackoffMs(settings);
             setTimeout(schedule, delay).unref?.();
@@ -1126,7 +1169,7 @@ export async function handleGraphFailure(
           }, deps.getRunContextFor(task.id));
           if (claimedEscalation) {
             await deps.store.logEntry(task.id, "Same-model retries exhausted — escalating to alternate model/node (one attempt) instead of parking", undefined, deps.getRunContextFor(task.id));
-            await deps.store.recordRunAuditEvent?.({ taskId: task.id, agentId: "executor", runId: generateSyntheticRunId("escalation-retry", task.id), domain: "database", mutationType: "task:execution-escalation-retry", target: task.id, metadata: { taskId: task.id, nodeId: failedNode ?? "unknown", hasModelTarget, hasNodeTarget, priorConsecutiveToolFailureRetryCount: priorEscalationRetryCount } });
+            await emitBoundedRunAudit(deps.store, { taskId: task.id, agentId: "executor", runId: generateSyntheticRunId("escalation-retry", task.id), domain: "database", mutationType: "task:execution-escalation-retry", target: task.id, metadata: { taskId: task.id, nodeId: failedNode ?? "unknown", hasModelTarget, hasNodeTarget, priorConsecutiveToolFailureRetryCount: priorEscalationRetryCount } });
             if (!hasNodeTarget) {
               const scheduleEscalation = () => { void (async () => { const resumeTask = await deps.store.getTask(task.id); if (resumeTask && !resumeTask.deletedAt && !resumeTask.paused && !resumeTask.userPaused && resumeTask.column === wipColumn) await deps.execute(resumeTask); })().catch((error) => executorLog.error(`${task.id}: escalation retry failed`, error)); };
               const handle = setTimeout(scheduleEscalation, resolveConsecutiveToolFailureRetryBackoffMs(settings));
@@ -1166,10 +1209,10 @@ export async function handleGraphFailure(
           }, deps.getRunContextFor(task.id));
           if (!cursorOwnedTerminalPark) return;
           if (await deps.store.markToolFailureRetryExhaustedAudit(task.id)) {
-            await deps.store.recordRunAuditEvent?.({ taskId: task.id, agentId: "executor", runId: generateSyntheticRunId("tool-failure-retry-exhausted", task.id), domain: "database", mutationType: "task:execution-tool-failure-retry-exhausted", target: task.id, metadata: { taskId: task.id, nodeId: failedNode ?? "unknown", attempts: maxToolFailureRetries, limit: maxToolFailureRetries, outcome: "terminal-park" } });
+            await emitBoundedRunAudit(deps.store, { taskId: task.id, agentId: "executor", runId: generateSyntheticRunId("tool-failure-retry-exhausted", task.id), domain: "database", mutationType: "task:execution-tool-failure-retry-exhausted", target: task.id, metadata: { taskId: task.id, nodeId: failedNode ?? "unknown", attempts: maxToolFailureRetries, limit: maxToolFailureRetries, outcome: "terminal-park" } });
           }
           if (escalationAttemptFailed) {
-            await deps.store.recordRunAuditEvent?.({ taskId: task.id, agentId: "executor", runId: generateSyntheticRunId("escalation-exhausted", task.id), domain: "database", mutationType: "task:execution-escalation-exhausted", target: task.id, metadata: { taskId: task.id, nodeId: failedNode ?? "unknown", hadModelTarget: escalationHadModelTarget, hadNodeTarget: escalationHadNodeTarget } });
+            await emitBoundedRunAudit(deps.store, { taskId: task.id, agentId: "executor", runId: generateSyntheticRunId("escalation-exhausted", task.id), domain: "database", mutationType: "task:execution-escalation-exhausted", target: task.id, metadata: { taskId: task.id, nodeId: failedNode ?? "unknown", hadModelTarget: escalationHadModelTarget, hadNodeTarget: escalationHadNodeTarget } });
           }
           executorLog.warn(`${task.id}: ${message}`);
           await deps.store.logEntry(task.id, message, undefined, deps.getRunContextFor(task.id));
@@ -1204,7 +1247,7 @@ export async function handleGraphFailure(
           return { error: message, status: "failed" };
         }, deps.getRunContextFor(task.id));
         if (!escalationTerminalParked) return;
-        await deps.store.recordRunAuditEvent?.({ taskId: task.id, agentId: "executor", runId: generateSyntheticRunId("escalation-exhausted", task.id), domain: "database", mutationType: "task:execution-escalation-exhausted", target: task.id, metadata: { taskId: task.id, nodeId: failedNode ?? "unknown", hadModelTarget: escalationHadModelTarget, hadNodeTarget: escalationHadNodeTarget } });
+        await emitBoundedRunAudit(deps.store, { taskId: task.id, agentId: "executor", runId: generateSyntheticRunId("escalation-exhausted", task.id), domain: "database", mutationType: "task:execution-escalation-exhausted", target: task.id, metadata: { taskId: task.id, nodeId: failedNode ?? "unknown", hadModelTarget: escalationHadModelTarget, hadNodeTarget: escalationHadNodeTarget } });
       } else {
         // status "failed" doubles as the self-healing exemption: review-task
         // revival sweeps skip tasks carrying a non-null status, preventing the

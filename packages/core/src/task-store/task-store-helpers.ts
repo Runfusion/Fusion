@@ -11,7 +11,12 @@
  */
 
 import { TaskStore } from "../store.js";
-import { isBuiltinWorkflowId } from "../workflows/builtin-workflows.js";
+import {
+  isBuiltinWorkflowEnabled,
+  isBuiltinWorkflowId,
+  isBuiltinWorkflowToggleEligible,
+  resolveEffectiveDefaultWorkflowId,
+} from "../workflows/builtin-workflows.js";
 import { InsightStore } from "../insights/insight-store.js";
 import { ResearchStore } from "../research/research-store.js";
 import { parseWorkflowIr } from "../workflows/workflow-ir.js";
@@ -352,8 +357,14 @@ export async function applyBuiltInPromptOverridesAsyncImpl(store: TaskStore, wor
 
 export async function getDefaultWorkflowIdImpl(store: TaskStore): Promise<string | undefined> {
     const settings = await store.getSettingsFast();
-    const id = (settings as { defaultWorkflowId?: string }).defaultWorkflowId;
-    return id && id.trim() ? id : undefined;
+    const typedSettings = settings as { defaultWorkflowId?: string; enabledBuiltinWorkflowIds?: string[] };
+    /*
+    FNXC:DisabledBuiltinWorkflows 2026-08-19-00:18:
+    All no-selection callers share this effective resolver. A disabled built-in
+    configured as the project default falls through to the first enabled catalog
+    workflow, while custom defaults retain their explicit identity.
+    */
+    return resolveEffectiveDefaultWorkflowId(typedSettings.defaultWorkflowId, typedSettings.enabledBuiltinWorkflowIds);
 }
 
 /**
@@ -381,20 +392,36 @@ export async function resolveOriginWorkflowOverrideIdImpl(
   origin: TaskOriginWorkflowKind,
 ): Promise<string | undefined> {
   let candidate: string | undefined;
+  let enabledBuiltinWorkflowIds: string[] | undefined;
   try {
     const settings = (await store.getSettingsFast()) as {
       taskCreateWorkflowId?: string;
       refinementTaskWorkflowId?: string;
       boardSelectedWorkflowId?: string;
+      enabledBuiltinWorkflowIds?: string[];
     };
     const pinned = origin === "refinement"
       ? settings.refinementTaskWorkflowId
       : settings.taskCreateWorkflowId;
     candidate = pinned?.trim() || settings.boardSelectedWorkflowId?.trim() || undefined;
+    enabledBuiltinWorkflowIds = settings.enabledBuiltinWorkflowIds;
   } catch {
     return undefined;
   }
   if (!candidate) return undefined;
+
+  /*
+  FNXC:DisabledBuiltinWorkflows 2026-08-19-00:18:
+  Origin pins are new-selection settings, not compatibility assignments. A pinned
+  built-in that was disabled must inherit the effective project default; existing
+  tasks still resolve their stored workflow id through the direct definition path.
+  */
+  if (
+    isBuiltinWorkflowId(candidate)
+    && (!isBuiltinWorkflowToggleEligible(candidate) || !isBuiltinWorkflowEnabled(candidate, enabledBuiltinWorkflowIds))
+  ) {
+    return undefined;
+  }
 
   try {
     const def = await store.getWorkflowDefinition(candidate);

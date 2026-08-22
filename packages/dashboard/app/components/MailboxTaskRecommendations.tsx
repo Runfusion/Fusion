@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import type { MessageMetadata, TaskRecommendation } from "@fusion/core";
 import { createTaskFromRecommendation, fetchTaskDetail } from "../api";
 import "./MailboxTaskRecommendations.css";
@@ -26,6 +27,7 @@ export function MailboxTaskRecommendations({
   projectId?: string;
   onOpenTask?: (taskId: string) => void;
 }) {
+  const { t } = useTranslation("app");
   const target = getNoticeTarget(metadata);
   const [recommendations, setRecommendations] = useState<TaskRecommendation[] | null>(null);
   const [unavailable, setUnavailable] = useState(false);
@@ -97,10 +99,10 @@ export function MailboxTaskRecommendations({
     }
   };
 
-  if (unavailable) return <p className="mailbox-task-recommendations__unavailable" data-testid="mailbox-task-recommendations-unavailable">Recommendations are no longer available.</p>;
+  if (unavailable) return <p className="mailbox-task-recommendations__unavailable" data-testid="mailbox-task-recommendations-unavailable">{t("mailbox.recommendationsUnavailable", "Recommendations are no longer available.")}</p>;
   if (!recommendations) return null;
 
-  return <section className="mailbox-task-recommendations" data-testid="mailbox-task-recommendations" aria-label="Task recommendations">
+  return <section className="mailbox-task-recommendations" data-testid="mailbox-task-recommendations" aria-label={t("mailbox.taskRecommendations", "Task recommendations")}>
     {recommendations.map((recommendation) => {
       const actionKey = `${target.taskId}:${recommendation.id}`;
       const createdTaskId = recommendation.createdTaskId ?? createdIds[actionKey];
@@ -112,13 +114,13 @@ export function MailboxTaskRecommendations({
           <p>{recommendation.description}</p>
         </div>
         {createdTaskId ? (
-          <button type="button" className="btn btn-primary" onClick={() => onOpenTask?.(createdTaskId)}>View task {createdTaskId}</button>
+          <button type="button" className="btn btn-primary" onClick={() => onOpenTask?.(createdTaskId)}>{t("mailbox.viewTask", "View task {{id}}", { id: createdTaskId })}</button>
         ) : (
           <div className="mailbox-task-recommendations__action">
             <button type="button" className="btn btn-primary" disabled={creating} onClick={() => void createRecommendation(recommendation)}>
-              {creating ? "Creating…" : failed ? "Retry creating task" : "Create task"}
+              {creating ? t("mailbox.creatingTask", "Creating…") : failed ? t("mailbox.retryCreatingTask", "Retry creating task") : t("mailbox.createTask", "Create task")}
             </button>
-            {failed && <span className="mailbox-task-recommendations__error" role="status">Could not create task. Try again.</span>}
+            {failed && <span className="mailbox-task-recommendations__error" role="status">{t("mailbox.createTaskError", "Could not create task. Try again.")}</span>}
           </div>
         )}
       </article>;
