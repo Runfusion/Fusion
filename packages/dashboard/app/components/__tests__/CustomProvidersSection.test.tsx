@@ -1112,10 +1112,17 @@ describe("CustomProvidersSection", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Save Provider" }));
 
+    /*
+    FNXC:CustomProviderThinkingFormat 2026-08-22-12:40 (RUFU-143 + RUFU-145 review fix):
+    The row's display name is still blank, so the by-index merge write-back (the
+    RUFU-145 review fix that made probed values actually reach already-typed rows)
+    fills it from the probe — the expected name is the probed "Qwen 3", not the id
+    fallback. The RUFU-143 invariant under test is the preserved thinkingFormat.
+    */
     await waitFor(() => {
       expect(mockAddCustomProvider).toHaveBeenCalledWith(expect.objectContaining({
         models: expect.arrayContaining([
-          { id: "qwen3", name: "qwen3", thinkingFormat: "qwen-chat-template" },
+          { id: "qwen3", name: "Qwen 3", thinkingFormat: "qwen-chat-template" },
           { id: "qwen3-vl", name: "Qwen 3 VL" },
         ]),
       }));
