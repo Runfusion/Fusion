@@ -113,6 +113,8 @@ import {
   createFusionModelRegistry,
   refreshFusionModelRegistry,
   setLocalDashboardPort,
+  startCloudLinkPresence,
+  stopCloudLinkPresence,
   reconcileUnownedStaleMergeStamp,
 } from "@fusion/engine";
 import { setHostTaskStore, clearHostTaskStores } from "../extension.js";
@@ -2565,6 +2567,8 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
         });
       }
 
+      await timeShutdownStep("stopCloudLinkPresence", () => stopCloudLinkPresence());
+
       await timeShutdownStep("closeCentralCore", () =>
         closeCentralCoreBestEffort(centralCoreForEngine, `shutdown (${signal})`),
       );
@@ -3015,6 +3019,15 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
     or the EADDRINUSE rebind just above) tunnelled whatever else owned 4040.
     */
     setLocalDashboardPort(actualPort);
+    /*
+    FNXC:CloudLink 2026-08-22-00:40:
+    Linked instances start a Cloudflare Quick Tunnel to this bound port and
+    republish the URL to Cloud Link whenever cloudflared rotates it.
+    */
+    void startCloudLinkPresence(actualPort, (message) => logSink.log(message, "cloud-link")).catch((error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      logSink.warn(`Cloud Link presence failed: ${message}`, "cloud-link");
+    });
 
     /*
     FNXC:DevTunnel 2026-08-19-04:30:

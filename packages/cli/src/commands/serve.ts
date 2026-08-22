@@ -36,6 +36,8 @@ import {
   createFusionModelRegistry,
   refreshFusionModelRegistry,
   setLocalDashboardPort,
+  startCloudLinkPresence,
+  stopCloudLinkPresence,
 } from "@fusion/engine";
 import { setHostTaskStore, clearHostTaskStores } from "../extension.js";
 import { resolveServeDaemonToken } from "./serve-daemon-token.js";
@@ -1110,6 +1112,14 @@ export async function runServe(
   // tunnel started from it targets a hardcoded 4040. See local-dashboard-port.
   setLocalDashboardPort(actualPort);
   logPhase(`startup phase time-to-listen: ${Date.now() - serveStartedAt}ms`);
+  /*
+   * FNXC:CloudLink 2026-08-22-00:40:
+   * After listen, a linked instance provisions a Cloudflare Quick Tunnel to this
+   * bound port and heartbeats the live URL (including rotations) to Cloud Link.
+   */
+  void startCloudLinkPresence(actualPort, (message) => console.log(`[cloud-link] ${message}`)).catch((error) => {
+    console.warn(`[cloud-link] Presence failed: ${error instanceof Error ? error.message : String(error)}`);
+  });
 
   /*
   FNXC:CustomProviders 2026-06-30-00:00:
@@ -1283,6 +1293,12 @@ export async function runServe(
         // best-effort
       });
       centralCore = null;
+    }
+
+    try {
+      await stopCloudLinkPresence();
+    } catch {
+      // best-effort
     }
 
     try {

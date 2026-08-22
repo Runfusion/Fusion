@@ -9,6 +9,9 @@ import {
   cloudHeartbeat,
   cloudPairComplete,
   cloudPairStart,
+  CLOUD_LINK_HEARTBEAT_MS,
+  candidateFromUrl,
+  lanCandidate,
   loadCloudLinkPending,
   loadCloudLinkState,
   normalizeCloudControlPlaneUrl,
@@ -16,7 +19,7 @@ import {
   saveCloudLinkState,
   type CloudReachabilityCandidate,
 } from "@fusion/core";
-import { networkInterfaces } from "node:os";
+import { startCloudLinkPresence, stopCloudLinkPresence } from "@fusion/engine";
 
 function resolveHttpBase(explicit?: string): string {
   const fromEnv = process.env.FUSION_CLOUD_HTTP_URL?.trim();
@@ -27,22 +30,6 @@ function resolveHttpBase(explicit?: string): string {
     );
   }
   return normalizeCloudControlPlaneUrl(base);
-}
-
-function lanCandidate(port: number): CloudReachabilityCandidate | null {
-  const nets = networkInterfaces();
-  for (const entries of Object.values(nets)) {
-    for (const entry of entries ?? []) {
-      if (entry.internal || entry.family !== "IPv4") continue;
-      return {
-        kind: "lan",
-        url: `http://${entry.address}:${port}`,
-        priority: 10,
-        tls: false,
-      };
-    }
-  }
-  return null;
 }
 
 export async function runCloudPairStart(opts: {
@@ -96,40 +83,64 @@ export async function runCloudPairComplete(opts: {
   console.log(`Linked engineId: ${completed.engineId}`);
   console.log(`Name: ${completed.name}`);
   console.log("Credentials saved to ~/.fusion/cloud-link.json");
-  console.log("Next: fn cloud heartbeat --url <public-or-lan-url>");
+  console.log("Next: start Fusion (`fn serve` / `fn dashboard`). It will open a Cloudflare tunnel and keep Cloud Link updated if the URL changes.");
 }
 
 export async function runCloudHeartbeat(opts: {
   url?: string;
   port?: number;
+  loop?: boolean;
+  tunnel?: boolean;
 }): Promise<void> {
   const state = loadCloudLinkState();
   if (!state?.engineId || !state.deviceSecret) {
     throw new Error("Not linked. Run fn cloud pair-start / pair-complete first.");
   }
+  const port = opts.port ?? 4040;
+
+  if (!opts.url && opts.tunnel !== false) {
+    /*
+     * FNXC:CloudLink 2026-08-22-00:40:
+     * No --url means provision a Cloudflare Quick Tunnel and keep Cloud Link
+     * updated when the trycloudflare host rotates. Ctrl+C stops the tunnel.
+     * `fn serve` / `fn dashboard` do the same for the life of the process.
+     */
+    await startCloudLinkPresence(port, (message) => console.log(`[cloud-link] ${message}`));
+    console.log("Cloud Link Cloudflare tunnel is running. Ctrl+C to stop.");
+    await new Promise<void>((resolve) => {
+      const done = () => resolve();
+      process.once("SIGINT", done);
+      process.once("SIGTERM", done);
+    });
+    await stopCloudLinkPresence();
+    return;
+  }
+
   const candidates: CloudReachabilityCandidate[] = [];
   if (opts.url) {
-    const u = new URL(opts.url);
-    candidates.push({
-      kind: u.hostname.startsWith("100.") ? "tailscale" : u.protocol === "https:" ? "public" : "lan",
-      url: u.origin,
-      priority: 20,
-      tls: u.protocol === "https:",
-    });
+    candidates.push(candidateFromUrl(opts.url));
   }
-  const lan = lanCandidate(opts.port ?? 4040);
+  const lan = lanCandidate(port);
   if (lan) candidates.push(lan);
   if (candidates.length === 0) {
     throw new Error("Provide --url <engine-origin> or ensure a LAN IPv4 is available.");
   }
 
-  const result = await cloudHeartbeat(state.httpBaseUrl, {
-    engineId: state.engineId,
-    deviceSecret: state.deviceSecret,
-    candidates,
-    capabilities: { headless: true, dashboard: true },
-  });
-  console.log(new Date().toISOString(), "heartbeat", result.status);
+  const beat = async () => {
+    const result = await cloudHeartbeat(state.httpBaseUrl, {
+      engineId: state.engineId,
+      deviceSecret: state.deviceSecret,
+      candidates,
+      capabilities: { headless: true, dashboard: true },
+    });
+    console.log(new Date().toISOString(), "heartbeat", result.status);
+  };
+  await beat();
+  if (!opts.loop) return;
+  for (;;) {
+    await new Promise((r) => setTimeout(r, CLOUD_LINK_HEARTBEAT_MS));
+    await beat();
+  }
 }
 
 export async function runCloudStatus(opts: { json?: boolean } = {}): Promise<void> {

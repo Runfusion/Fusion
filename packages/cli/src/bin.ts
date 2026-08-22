@@ -429,8 +429,8 @@ PR:
                                       Start cloud-link pairing (prints code)
   fn cloud pair-complete [--http <url>] [--code <code>] [--pending-secret <secret>]
                                       Finish pairing after console claim (uses pending file if flags omitted)
-  fn cloud heartbeat [--url <origin>] [--port <n>]
-                                      Publish reachability candidates to cloud
+  fn cloud heartbeat [--url <origin>] [--port <n>] [--loop]
+                                      Publish reachability; without --url starts a Cloudflare tunnel and keeps Cloud Link updated
   fn cloud status [--json]             Show local cloud-link state
   fn cloud unlink                      Clear ~/.fusion/cloud-link.json
   fn settings                          Show current Fusion configuration
@@ -1204,6 +1204,8 @@ async function main() {
             await runCloudHeartbeat({
               url: getFlagValue(args, "--url"),
               port: getFlagValueNumber(args, "--port"),
+              loop: args.includes("--loop"),
+              tunnel: !args.includes("--no-tunnel"),
             });
             break;
           }
