@@ -140,6 +140,13 @@ async function loadCommandHandlers() {
   const { runGoalsList, runGoalsCreate, runGoalsArchive, runGoalsCitations } = await import("./commands/goals.js");
   const { runProjectList, runProjectAdd, runProjectRemove, runProjectShow, runProjectInfo, runProjectSetDefault, runProjectDetect } = await import("./commands/project.js");
   const { runNodeList, runNodeConnect, runNodeDisconnect, runNodeShow, runNodeHealth, runMeshStatus } = await import("./commands/node.js");
+  const {
+    runCloudPairStart,
+    runCloudPairComplete,
+    runCloudHeartbeat,
+    runCloudStatus,
+    runCloudUnlink,
+  } = await import("./commands/cloud.js");
   const { runInit } = await import("./commands/init.js");
   const { runOnboard } = await import("./commands/onboard.js");
   const { runAgentStop, runAgentStart } = await import("./commands/agent.js");
@@ -258,6 +265,11 @@ async function loadCommandHandlers() {
     runNodeShow,
     runNodeHealth,
     runMeshStatus,
+    runCloudPairStart,
+    runCloudPairComplete,
+    runCloudHeartbeat,
+    runCloudStatus,
+    runCloudUnlink,
     runInit,
     runOnboard,
     runAgentStop,
@@ -413,6 +425,14 @@ PR:
   fn node show | info [name] [--json] Show node details
   fn node health <name>               Health check a node
   fn mesh status [--json]              Show full mesh state
+  fn cloud pair-start [--http <url>] [--name <name>]
+                                      Start cloud-link pairing (prints code)
+  fn cloud pair-complete [--http <url>] [--code <code>] [--pending-secret <secret>]
+                                      Finish pairing after console claim (uses pending file if flags omitted)
+  fn cloud heartbeat [--url <origin>] [--port <n>] [--loop]
+                                      Publish reachability; without --url starts a Cloudflare tunnel and keeps Cloud Link updated
+  fn cloud status [--json]             Show local cloud-link state
+  fn cloud unlink                      Clear ~/.fusion/cloud-link.json
   fn settings                          Show current Fusion configuration
   fn settings set <key> <value>        Update a configuration setting
   fn settings set defaultNodeId <node-id>
@@ -788,6 +808,11 @@ async function main() {
     runNodeShow,
     runNodeHealth,
     runMeshStatus,
+    runCloudPairStart,
+    runCloudPairComplete,
+    runCloudHeartbeat,
+    runCloudStatus,
+    runCloudUnlink,
     runInit,
     runOnboard,
     runAgentStop,
@@ -1148,6 +1173,55 @@ async function main() {
           default:
             console.error(`Unknown subcommand: mesh ${subcommand || ""}`);
             console.log("Try: fn mesh status");
+            process.exit(1);
+        }
+        break;
+      }
+
+      case "cloud": {
+        /*
+        FNXC:CloudLink 2026-08-21-22:25:
+        Thin client for cloud-link Mode A pairing and presence.
+        */
+        const subcommand = args[1];
+        switch (subcommand) {
+          case "pair-start": {
+            await runCloudPairStart({
+              http: getFlagValue(args, "--http"),
+              name: getFlagValue(args, "--name"),
+            });
+            break;
+          }
+          case "pair-complete": {
+            await runCloudPairComplete({
+              http: getFlagValue(args, "--http"),
+              code: getFlagValue(args, "--code"),
+              pendingSecret: getFlagValue(args, "--pending-secret"),
+            });
+            break;
+          }
+          case "heartbeat": {
+            await runCloudHeartbeat({
+              url: getFlagValue(args, "--url"),
+              port: getFlagValueNumber(args, "--port"),
+              loop: args.includes("--loop"),
+              tunnel: !args.includes("--no-tunnel"),
+            });
+            break;
+          }
+          case "status": {
+            await runCloudStatus({ json: args.includes("--json") });
+            break;
+          }
+          case "unlink": {
+            await runCloudUnlink();
+            break;
+          }
+          default:
+            console.error(`Unknown subcommand: cloud ${subcommand || ""}`);
+            console.log(
+              "Try: fn cloud pair-start | pair-complete | heartbeat | status | unlink",
+            );
             process.exit(1);
         }
         break;

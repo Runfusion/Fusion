@@ -95,6 +95,11 @@ const commandMocks = vi.hoisted(() => ({
   runNodeShow: vi.fn(),
   runNodeHealth: vi.fn(),
   runMeshStatus: vi.fn(),
+  runCloudPairStart: vi.fn(),
+  runCloudPairComplete: vi.fn(),
+  runCloudHeartbeat: vi.fn(),
+  runCloudStatus: vi.fn(),
+  runCloudUnlink: vi.fn(),
   // Legacy aliases
   runNodeAdd: vi.fn(),
   runNodeRemove: vi.fn(),
@@ -269,6 +274,14 @@ vi.mock("../commands/node.js", () => ({
   // Legacy aliases
   runNodeAdd: commandMocks.runNodeAdd,
   runNodeRemove: commandMocks.runNodeRemove,
+}));
+
+vi.mock("../commands/cloud.js", () => ({
+  runCloudPairStart: commandMocks.runCloudPairStart,
+  runCloudPairComplete: commandMocks.runCloudPairComplete,
+  runCloudHeartbeat: commandMocks.runCloudHeartbeat,
+  runCloudStatus: commandMocks.runCloudStatus,
+  runCloudUnlink: commandMocks.runCloudUnlink,
 }));
 
 vi.mock("../commands/agent.js", () => ({

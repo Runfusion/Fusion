@@ -20,7 +20,16 @@ import type {
   AgentLogEntry,
   RunAuditEvent,
 } from "@fusion/core";
-import { AgentStore, ChatStore, queryRunAuditEvents, resolveGlobalDir, resolveReboundTargetForTask, setRunningAgentCountSource } from "@fusion/core";
+import {
+  AgentStore,
+  ChatStore,
+  cloudRedeemTicket,
+  loadCloudLinkState,
+  queryRunAuditEvents,
+  resolveGlobalDir,
+  resolveReboundTargetForTask,
+  setRunningAgentCountSource,
+} from "@fusion/core";
 import type { AuthStorageLike, ModelRegistryLike } from "./routes.js";
 import { createApiRoutes } from "./routes.js";
 import { createSSE, disconnectSSEClient, markSSEClientAlive } from "./sse.js";
@@ -2217,8 +2226,33 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
     }
   });
 
-  app.get("/remote-login", async (req, res) => {
+  /*
+  FNXC:CloudLink 2026-08-21-22:30:
+  Unauthenticated cloudTicket redemption is not behind /api rate limits. Cap it so a
+  caller cannot fan out unbounded outbound redeem requests.
+  */
+  const cloudTicketRateLimit = rateLimit({
+    windowMs: 60_000,
+    max: 30,
+    message: "Too many cloud-link login attempts, please try again later.",
+  });
+
+  app.get("/remote-login", (req, res, next) => {
+    if (typeof req.query.cloudTicket === "string") {
+      cloudTicketRateLimit(req, res, next);
+      return;
+    }
+    next();
+  }, async (req, res) => {
     const remoteToken = typeof req.query.rt === "string" ? req.query.rt : undefined;
+    /*
+    FNXC:CloudLink 2026-08-21-22:30:
+    Mode A handoff uses cloudTicket=jti.secret. Redeem against FUSION_CLOUD_HTTP_URL
+    (or linked ~/.fusion/cloud-link.json), then mint an HttpOnly remote session cookie.
+    Never put the daemon token in the redirect URL.
+    */
+    const cloudTicket =
+      typeof req.query.cloudTicket === "string" ? req.query.cloudTicket : undefined;
 
     let settings: Awaited<ReturnType<ReturnType<typeof store.getGlobalSettingsStore>["getSettings"]>>;
     try {
@@ -2238,6 +2272,42 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
     if (!remoteAccess) {
       res.status(401).json({ error: "Unauthorized", code: "remote_token_invalid" });
       return;
+    }
+
+    if (cloudTicket) {
+      try {
+        const linked = loadCloudLinkState();
+        const httpBase =
+          linked?.httpBaseUrl ||
+          process.env.FUSION_CLOUD_HTTP_URL?.trim() ||
+          "";
+        if (!httpBase) {
+          res.status(401).json({
+            error: "Unauthorized",
+            code: "cloud_ticket_cloud_url_missing",
+          });
+          return;
+        }
+        await cloudRedeemTicket(httpBase, {
+          ticket: cloudTicket,
+          engineId: linked?.engineId,
+        });
+        if (daemonToken) {
+          const ttlMs = resolveRemoteSessionTtlMs(remoteAccess, { tokenType: "short-lived" });
+          const session = remoteSessions.issue(ttlMs);
+          const secure = req.protocol === "https" || req.get("x-forwarded-proto") === "https";
+          res.setHeader("Set-Cookie", buildRemoteSessionCookie(session, { secure }));
+        }
+        res.redirect(302, "/");
+        return;
+      } catch (err) {
+        res.status(401).json({
+          error: "Unauthorized",
+          code: "cloud_ticket_invalid",
+          message: err instanceof Error ? err.message : "redeem failed",
+        });
+        return;
+      }
     }
 
     const result = validateRemoteAuthToken(remoteToken, remoteAccess);
