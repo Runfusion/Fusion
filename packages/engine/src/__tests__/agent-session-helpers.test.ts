@@ -693,6 +693,111 @@ describe("createResolvedAgentSession", () => {
     );
   });
 
+  /*
+  FNXC:RuntimeSubscribeCompat 2026-08-22-02:36:
+  Workflow steps subscribe unconditionally, so the shared runtime boundary must
+  adapt callback-only plugin sessions instead of requiring every bundled and
+  vendored runtime to duplicate the same event bridge.
+  */
+  it("adds isolated subscribe delivery to callback-only plugin sessions", async () => {
+    const callbackSession = { dispose: vi.fn() } as any;
+    const createSessionMock = vi.fn().mockResolvedValue({ session: callbackSession });
+    const runtimePrompt = vi.fn(async () => {
+      const runtimeOptions = createSessionMock.mock.calls[0][0];
+      runtimeOptions.onText?.("answer");
+      runtimeOptions.onThinking?.("reasoning");
+      runtimeOptions.onToolStart?.("read_file", { path: "README.md" });
+      runtimeOptions.onToolEnd?.("read_file", false, { text: "ok" });
+    });
+    resolveRuntimeMock.mockResolvedValue({
+      runtime: {
+        id: "hermes",
+        name: "Hermes Runtime",
+        createSession: createSessionMock,
+        promptWithFallback: runtimePrompt,
+        describeModel: vi.fn(() => "hermes/test"),
+      },
+      runtimeId: "hermes",
+      wasConfigured: true,
+    });
+    const onText = vi.fn();
+    const onThinking = vi.fn();
+    const onToolStart = vi.fn();
+    const onToolEnd = vi.fn();
+
+    const { session } = await createResolvedAgentSession({
+      sessionPurpose: "executor",
+      cwd: "/tmp/project",
+      systemPrompt: "system",
+      onText,
+      onThinking,
+      onToolStart,
+      onToolEnd,
+    });
+    const events: unknown[] = [];
+    const unsubscribeThrowing = session.subscribe(() => {
+      throw new Error("broken subscriber");
+    });
+    const unsubscribe = session.subscribe((event) => events.push(event));
+
+    await (session as any).promptWithFallback("review");
+
+    expect(onText).toHaveBeenCalledWith("answer");
+    expect(onThinking).toHaveBeenCalledWith("reasoning");
+    expect(onToolStart).toHaveBeenCalledWith("read_file", { path: "README.md" });
+    expect(onToolEnd).toHaveBeenCalledWith("read_file", false, { text: "ok" });
+    expect(events).toEqual([
+      {
+        type: "message_update",
+        assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "answer" },
+      },
+      {
+        type: "message_update",
+        assistantMessageEvent: { type: "thinking_delta", contentIndex: 1, delta: "reasoning" },
+      },
+      { type: "tool_execution_start", toolName: "read_file", args: { path: "README.md" } },
+      { type: "tool_execution_end", toolName: "read_file", isError: false, result: { text: "ok" } },
+    ]);
+
+    unsubscribeThrowing();
+    unsubscribe();
+    await (session as any).promptWithFallback("second review");
+    expect(events).toHaveLength(4);
+  });
+
+  it("preserves native subscription delivery on non-pi plugin sessions", async () => {
+    const nativeUnsubscribe = vi.fn();
+    const nativeSubscribe = vi.fn(() => nativeUnsubscribe);
+    const nativeSession = { subscribe: nativeSubscribe, dispose: vi.fn() } as any;
+    const createSessionMock = vi.fn().mockResolvedValue({ session: nativeSession });
+    resolveRuntimeMock.mockResolvedValue({
+      runtime: {
+        id: "acp",
+        name: "ACP Runtime",
+        createSession: createSessionMock,
+        promptWithFallback: vi.fn(),
+        describeModel: vi.fn(() => "acp/test"),
+      },
+      runtimeId: "acp",
+      wasConfigured: true,
+    });
+    const onText = vi.fn();
+
+    const { session } = await createResolvedAgentSession({
+      sessionPurpose: "executor",
+      cwd: "/tmp/project",
+      systemPrompt: "system",
+      onText,
+    });
+    const handler = vi.fn();
+
+    expect(session.subscribe).toBe(nativeSubscribe);
+    expect(session.subscribe(handler)).toBe(nativeUnsubscribe);
+    createSessionMock.mock.calls[0][0].onText?.("native answer");
+    expect(onText).toHaveBeenCalledWith("native answer");
+    expect(handler).not.toHaveBeenCalled();
+  });
+
   it("forwards plugin skill names and body paths to runtime session factory", async () => {
     const createSessionMock = vi.fn().mockResolvedValue({
       session: { prompt: vi.fn() },

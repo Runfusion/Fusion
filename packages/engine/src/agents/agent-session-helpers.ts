@@ -62,6 +62,7 @@ import {
   armDeferredCrossRuntimeFallback,
   deferCrossRuntimeCliFallback,
   type DeferredCrossRuntimeFallback,
+  withRuntimeEventCallbacks,
 } from "./cross-runtime-fallback.js";
 
 /** Logger for agent session helpers */
@@ -139,6 +140,49 @@ function wrapPluginRuntimeToolOptions(
 
 function shouldWrapCustomToolsForRuntime(runtimeId: string): boolean {
   return !RUNTIMES_WITH_INTERNAL_TOOL_GATING.has(runtimeId);
+}
+
+/*
+FNXC:RuntimeSubscribeCompat 2026-08-22-02:36:
+Workflow steps consume the pi AgentSession contract and subscribe unconditionally,
+while callback-only plugin runtimes use local structural session types. Normalize
+that mismatch once at the shared runtime boundary so bundled and vendored runtimes
+do not each need a duplicate event bridge.
+*/
+function createPluginSessionSubscribeCompatibility(options: AgentRuntimeOptions): {
+  options: AgentRuntimeOptions;
+  attach: (session: AgentSession) => void;
+} {
+  const subscribers = new Set<(event: unknown) => void>();
+  let enabled = false;
+  const emit = (event: Record<string, unknown>): void => {
+    if (!enabled) return;
+    for (const handler of subscribers) {
+      try {
+        handler(event);
+      } catch {
+        // FNXC:RuntimeSubscribeCompat 2026-08-22-02:36: one faulty consumer cannot break runtime streaming.
+      }
+    }
+  };
+
+  return {
+    options: withRuntimeEventCallbacks(options, emit),
+    attach: (session) => {
+      const compatible = session as unknown as {
+        subscribe?: (handler: (event: unknown) => void) => () => void;
+      };
+      if (typeof compatible.subscribe === "function") return;
+
+      enabled = true;
+      compatible.subscribe = (handler) => {
+        subscribers.add(handler);
+        return () => {
+          subscribers.delete(handler);
+        };
+      };
+    },
+  };
 }
 
 function extractSkillNamesFromSelection(skillSelection: SkillSelectionContext | undefined): string[] {
@@ -980,7 +1024,13 @@ export async function createResolvedAgentSession(
           ...baseSessionCreateOptions,
           sessionPurpose,
         };
-  const result = await resolved.runtime.createSession(sessionCreateOptions);
+  const subscribeCompatibility = resolved.runtimeId === "pi"
+    ? undefined
+    : createPluginSessionSubscribeCompatibility(sessionCreateOptions);
+  const result = await resolved.runtime.createSession(
+    subscribeCompatibility?.options ?? sessionCreateOptions,
+  );
+  subscribeCompatibility?.attach(result.session);
 
   const noModelResolved = !mockProviderActive && !testModeActive && (!runtimeOptions.defaultProvider || !runtimeOptions.defaultModelId);
   const runtimeBuiltInFallbackModel = noModelResolved ? resolved.runtime.describeModel(result.session) : undefined;
