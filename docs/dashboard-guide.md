@@ -608,6 +608,8 @@ The custom-provider form uses these fields:
 
 Use **Detect Models** to probe the provider's `/models` endpoint while adding or editing a provider and append the detected models as rows. Detection requires a **Base URL** and may require an **API key**, depending on the provider. When the endpoint reports window limits (Google and OpenAI-compatible endpoints do; Anthropic-compatible does not), the probed values fill the new rows; existing rows keep their manual values, and detected IDs already present in the form are skipped. Saved providers also have a row-level **Refresh Models** action that uses the stored endpoint and credential to merge probed models into the persisted list without exposing the raw key in the browser.
 
+For local Ollama, LM Studio, and vLLM providers, **Refresh Models** (the row action and the startup sweep) also auto-detects per-model context windows: vLLM from the OpenAI-compatible listing's `max_model_len` (LoRA adapters inherit from their `parent`), LM Studio from the listing's `max_context_size` (falling back to `max_context_length` from LM Studio's native `GET /api/v1/models` API when the listing omits it), and Ollama via its native `GET /api/tags` and per-model `POST /api/show` APIs. Detected windows populate the per-model row fields automatically, and manual entries always win when the probe finds no window for a model. Browser-side **Detect Models** keeps its SSRF restriction — it cannot probe loopback or LAN URLs — so local auto-detection happens through the server-side **Refresh Models** path, not the browser.
+
 ### Add a custom provider
 
 1. Open **Settings → Authentication → Custom Providers**.
