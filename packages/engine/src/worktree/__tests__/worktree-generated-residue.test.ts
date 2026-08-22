@@ -11,6 +11,13 @@ import { preserveCorruptRegisteredRoot, preserveGeneratedResidue } from "../work
 // than a merely generated-looking dir holding user content (Greptile: residue
 // provenance).
 function makeGeneratedNodeModules(worktree: string): void {
+  // A real install leaves a root package-lock.json listing installed packages;
+  // the residue classifier requires it to prove node_modules was installed
+  // (Greptile 4/5: a hand-assembled package.json + .js is not install proof).
+  writeFileSync(
+    join(worktree, "package-lock.json"),
+    JSON.stringify({ name: "fixture", lockfileVersion: 3, packages: { "node_modules/pkg": { version: "1.0.0" } } }),
+  );
   mkdirSync(join(worktree, "node_modules"));
   writeFileSync(join(worktree, "node_modules", ".package-lock.json"), "{}");
   mkdirSync(join(worktree, "node_modules", "pkg"));
@@ -99,6 +106,118 @@ describe("preserveGeneratedResidue", () => {
     expect(existsSync(join(worktree, "dist"))).toBe(true);
     expect(readFileSync(join(worktree, "node_modules", "user-notes.txt"), "utf8")).toBe("keep me");
     expect(readFileSync(join(worktree, "dist", "user-notes.txt"), "utf8")).toBe("keep me");
+    await restore();
+    await rm(root, { recursive: true, force: true });
+  });
+
+  // Greptile (4/5, nested residue): a PACKAGE-shaped child of node_modules is
+  // accepted on its package.json alone; a user-authored ignored file nested
+  // INSIDE that package (e.g. node_modules/pkg/user-notes.txt) would then be
+  // moved before the dirty probe and lost on successful reclaim. Deep-inspect
+  // the package and fail closed when any nested entry is not package output.
+  it("keeps node_modules in place when a nested package holds user content", async () => {
+    const root = await mkdtemp(join(tmpdir(), "fusion-residue-"));
+    const worktree = join(root, "worktree");
+    mkdirSync(worktree);
+    gitInit(worktree, "node_modules/\n");
+    // Package-shaped child with a real package.json (install provenance) PLUS a
+    // user-authored file nested inside the package directory.
+    mkdirSync(join(worktree, "node_modules"));
+    writeFileSync(join(worktree, "node_modules", ".package-lock.json"), "{}");
+    mkdirSync(join(worktree, "node_modules", "pkg"));
+    writeFileSync(join(worktree, "node_modules", "pkg", "package.json"), "{}");
+    writeFileSync(join(worktree, "node_modules", "pkg", "user-notes.txt"), "keep me");
+
+    const restore = await preserveGeneratedResidue(worktree, root);
+
+    expect(existsSync(join(worktree, "node_modules"))).toBe(true);
+    expect(readFileSync(join(worktree, "node_modules", "pkg", "user-notes.txt"), "utf8")).toBe("keep me");
+    await restore();
+    await rm(root, { recursive: true, force: true });
+  });
+
+  // Greptile (4/5, "generated-looking extensions"): a sourcemap beside an
+  // extension-allowed file is not proof. In dist, an executable without its own
+  // .map companion (e.g. a hand-authored `user-tool.js` next to `bundle.js.map`)
+  // fails the whole directory closed so it is never moved ahead of the probe.
+  it("keeps dist in place when an executable has no sourcemap companion", async () => {
+    const root = await mkdtemp(join(tmpdir(), "fusion-residue-"));
+    const worktree = join(root, "worktree");
+    mkdirSync(worktree);
+    gitInit(worktree, "dist/\n");
+    mkdirSync(join(worktree, "dist"));
+    writeFileSync(join(worktree, "dist", "bundle.js.map"), "{}");
+    writeFileSync(join(worktree, "dist", "user-tool.js"), "user authored");
+
+    const restore = await preserveGeneratedResidue(worktree, root);
+
+    expect(existsSync(join(worktree, "dist"))).toBe(true);
+    expect(readFileSync(join(worktree, "dist", "user-tool.js"), "utf8")).toBe("user authored");
+    await restore();
+    await rm(root, { recursive: true, force: true });
+  });
+
+  // Greptile (4/5): dist JSON that is not a build manifest (e.g. a hand-authored
+  // `data.json` beside one sourcemap) is not provably generated.
+  it("keeps dist in place when a bare json is not a build manifest", async () => {
+    const root = await mkdtemp(join(tmpdir(), "fusion-residue-"));
+    const worktree = join(root, "worktree");
+    mkdirSync(worktree);
+    gitInit(worktree, "dist/\n");
+    mkdirSync(join(worktree, "dist"));
+    writeFileSync(join(worktree, "dist", "bundle.js.map"), "{}");
+    writeFileSync(join(worktree, "dist", "data.json"), "{\"user\": true}");
+
+    const restore = await preserveGeneratedResidue(worktree, root);
+
+    expect(existsSync(join(worktree, "dist"))).toBe(true);
+    expect(readFileSync(join(worktree, "dist", "data.json"), "utf8")).toBe("{\"user\": true}");
+    await restore();
+    await rm(root, { recursive: true, force: true });
+  });
+
+  // Greptile (4/5): a package-shaped node_modules child with a package.json but
+  // no root lockfile, or not listed in it, is not provably installed — a user
+  // can hand-assemble it with .js/.json content. Stay in place, fail closed.
+  it("keeps node_modules in place when no root lockfile proves the install", async () => {
+    const root = await mkdtemp(join(tmpdir(), "fusion-residue-"));
+    const worktree = join(root, "worktree");
+    mkdirSync(worktree);
+    gitInit(worktree, "node_modules/\n");
+    mkdirSync(join(worktree, "node_modules"));
+    writeFileSync(join(worktree, "node_modules", ".package-lock.json"), "{}");
+    mkdirSync(join(worktree, "node_modules", "pkg"));
+    writeFileSync(join(worktree, "node_modules", "pkg", "package.json"), "{}");
+    writeFileSync(join(worktree, "node_modules", "pkg", "index.js"), "hand made");
+
+    const restore = await preserveGeneratedResidue(worktree, root);
+
+    expect(existsSync(join(worktree, "node_modules"))).toBe(true);
+    expect(readFileSync(join(worktree, "node_modules", "pkg", "index.js"), "utf8")).toBe("hand made");
+    await restore();
+    await rm(root, { recursive: true, force: true });
+  });
+
+  it("keeps node_modules in place when a package is not listed in the lockfile", async () => {
+    const root = await mkdtemp(join(tmpdir(), "fusion-residue-"));
+    const worktree = join(root, "worktree");
+    mkdirSync(worktree);
+    gitInit(worktree, "node_modules/\n");
+    // Lockfile lists a DIFFERENT package; `handmade` is not installed.
+    writeFileSync(
+      join(worktree, "package-lock.json"),
+      JSON.stringify({ name: "fixture", lockfileVersion: 3, packages: { "node_modules/other": { version: "1.0.0" } } }),
+    );
+    mkdirSync(join(worktree, "node_modules"));
+    writeFileSync(join(worktree, "node_modules", ".package-lock.json"), "{}");
+    mkdirSync(join(worktree, "node_modules", "handmade"));
+    writeFileSync(join(worktree, "node_modules", "handmade", "package.json"), "{}");
+    writeFileSync(join(worktree, "node_modules", "handmade", "index.js"), "hand made");
+
+    const restore = await preserveGeneratedResidue(worktree, root);
+
+    expect(existsSync(join(worktree, "node_modules"))).toBe(true);
+    expect(readFileSync(join(worktree, "node_modules", "handmade", "index.js"), "utf8")).toBe("hand made");
     await restore();
     await rm(root, { recursive: true, force: true });
   });

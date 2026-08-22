@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir, readdir, realpath, rename, stat } from "node:fs/promises";
+import { mkdir, readFile, readdir, realpath, rename, stat } from "node:fs/promises";
 import { exec } from "node:child_process";
 import { isAbsolute, join, relative } from "node:path";
 import { promisify } from "node:util";
@@ -11,32 +11,73 @@ const execAsync = promisify(exec);
 
 const PACKAGE_MANAGER_MARKERS = [".package-lock.json", ".yarn-integrity", ".modules.yaml", ".pnpm"] as const;
 
-// Recognized build-output shapes for dist/ top-level files. Deliberately
-// excludes user-content shapes (.txt, .md, extensionless) so a hand-authored
-// file beside one sourcemap fails the whole directory closed.
-const DIST_BUILD_ARTIFACT_EXTENSIONS = [
-  ".js",
-  ".mjs",
-  ".cjs",
-  ".css",
-  ".html",
-  ".json",
-  ".map",
-  ".svg",
-  ".png",
-  ".jpg",
-  ".jpeg",
-  ".gif",
-  ".webp",
-  ".ico",
-  ".woff",
-  ".woff2",
-  ".ttf",
-  ".eot",
-  ".d.ts",
-  ".tsbuildinfo",
-  ".xml",
+// Recognized names/extensions inside an installed package directory. Anything
+// else (notes.txt, custom.env, settings.config, an extensionless file that is
+// not a license/readme, a stray .yaml/.log) fails the whole directory closed,
+// because a user can drop a hand-authored ignored file inside node_modules.
+const GENERATED_PACKAGE_FILES = new Set([
+  "package.json",
+  "package-lock.json",
+  "README.md", "README.txt", "README",
+  "LICENSE", "LICENSE.md", "LICENSE.txt",
+  "CHANGELOG.md", "CHANGELOG",
+  "NOTICE",
+  "index.js", "index.mjs", "index.cjs", "index.d.ts",
+]);
+
+const GENERATED_PACKAGE_EXTENSIONS = [
+  ".js", ".mjs", ".cjs", ".d.ts", ".tsbuildinfo",
+  ".json", ".node", ".wasm", ".map",
+  ".css", ".html", ".svg", ".png", ".jpg", ".jpeg",
+  ".gif", ".webp", ".ico", ".woff", ".woff2", ".ttf", ".eot",
 ] as const;
+
+function isGeneratedPackageEntry(entry: string): boolean {
+  if (GENERATED_PACKAGE_FILES.has(entry)) return true;
+  return GENERATED_PACKAGE_EXTENSIONS.some((ext) => entry.endsWith(ext));
+}
+
+/**
+ * Walk an installed package directory (depth-limited) and return false as soon
+ * as any entry is not provably package-manager output. This is what makes the
+ * nested case fail closed: a `node_modules/pkg/user-notes.txt` (or any file
+ * that is not a build artifact, manifest, readme, or license) stops the whole
+ * node_modules directory from being moved ahead of the dirty probe.
+ */
+async function packageDirIsGenerated(packageDir: string, depth: number): Promise<boolean> {
+  let entries: string[];
+  try {
+    entries = await readdir(packageDir);
+  } catch {
+    return false;
+  }
+  for (const entry of entries) {
+    if (isGeneratedPackageEntry(entry)) continue;
+    let subEntries: string[];
+    try {
+      subEntries = await readdir(join(packageDir, entry));
+    } catch {
+      // A file that is not a recognized package artifact (e.g. user-notes.txt,
+      // custom.env, settings.config, extensionless): user content, fail closed.
+      return false;
+    }
+    if (depth <= 0 || !subEntries.length) {
+      // Dir we cannot prove generated at this depth is fail-closed, except the
+      // common package subdir shapes that are always generated.
+      if (GENERATED_PACKAGE_FILES.has(entry) || GENERATED_PACKAGE_EXTENSIONS.some((ext) => entry.endsWith(ext))) continue;
+      return false;
+    }
+    if (!(await packageDirIsGenerated(join(packageDir, entry), depth - 1))) return false;
+  }
+  return true;
+}
+
+// Recognized build-output shapes for dist/. A sourcemap alone does NOT prove
+// the whole directory is generated — every executable file must carry its own
+// .map companion (build tools emit bundle.js + bundle.js.map together), and a
+// lone .json/.svg/.xml may be hand-authored, so it only passes when emitted by
+// an accompanying sourcemap. Anything else fails the whole directory closed.
+const DIST_EXECUTABLE_EXTENSIONS = [".js", ".mjs", ".cjs", ".css", ".html"] as const;
 
 /**
  * A git-ignored sibling (node_modules, dist) only counts as generated residue
@@ -51,6 +92,19 @@ const DIST_BUILD_ARTIFACT_EXTENSIONS = [
  * (Greptile: "Mixed residue bypasses validation"). When a marker sits next to
  * user-authored ignored content, EVERY entry must still look generated, or the
  * directory is left in place so the dirty probe refuses the removal.
+ *
+ * Greptile (4/5, "generated-looking extensions"): filename extensions are not
+ * proof. A `dist` with one sourcemap plus arbitrary `.js`/`.json` files, or a
+ * `node_modules` package with a manifest plus hand-placed JS/JSON, would move
+ * user-authored content. Proof is therefore per-file:
+ *   - dist: every executable file MUST have its own `.map` companion in the
+ *     same directory (bundlers emit bundle.js + bundle.js.map together); the
+ *     only bare JSON allowed is a build manifest (package.json / manifest.json
+ *     / tsconfig.tsbuildinfo).
+ *   - node_modules: a package is only accepted when the worktree's root
+ *     package-lock.json actually lists it (`node_modules/<name>` under
+ *     "packages"), i.e. the package manager installed it. No lockfile or
+ *     unknown package -> fail closed, keep in place.
  */
 async function looksGeneratedResidue(worktreePath: string, name: string): Promise<boolean> {
   const dir = join(worktreePath, name);
@@ -64,7 +118,23 @@ async function looksGeneratedResidue(worktreePath: string, name: string): Promis
     // A real dependency install always carries a package-manager marker or at
     // least one installed package subdir with its own manifest. Require EVERY
     // top-level entry to be a known marker or a package dir; any stray plain
-    // file or unknown directory next to a marker fails closed.
+    // file or unknown directory next to a marker fails closed. Package dirs
+    // are also inspected recursively (depth-limited) so a nested user-authored
+    // file (e.g. `node_modules/pkg/user-notes.txt`) fails the whole directory.
+    // Installed packages must be listed in the root package-lock.json; a
+    // hand-assembled package.json + user .js/.json is not install proof.
+    let installedNames: Set<string> | null = null;
+    try {
+      const lock = JSON.parse(await readFile(join(worktreePath, "package-lock.json"), "utf8"));
+      const names = new Set<string>();
+      for (const key of Object.keys(lock.packages ?? {})) {
+        if (key.startsWith("node_modules/")) names.add(key.slice("node_modules/".length));
+      }
+      for (const dep of Object.keys(lock.dependencies ?? {})) names.add(dep);
+      installedNames = names;
+    } catch {
+      installedNames = null;
+    }
     let sawInstallEvidence = false;
     for (const entry of entries) {
       if ((PACKAGE_MANAGER_MARKERS as readonly string[]).includes(entry)) {
@@ -80,6 +150,14 @@ async function looksGeneratedResidue(worktreePath: string, name: string): Promis
       }
       if (sub.includes("package.json")) {
         sawInstallEvidence = true;
+        // Greptile (4/5): a package manifest plus .js/.json inside it is not
+        // proof of an install — the lockfile must list this package. Without
+        // the lockfile or without this entry, fail closed.
+        if (installedNames === null || !installedNames.has(entry)) return false;
+        // Inspect nested package contents: any user-authored file inside the
+        // package (notes.txt, custom.env, settings.config, extensionless)
+        // fails the whole node_modules directory closed.
+        if (!(await packageDirIsGenerated(join(dir, entry), 3))) return false;
         continue;
       }
       // Scoped package dirs (@scope/pkg) hold package.json one level deeper.
@@ -87,8 +165,11 @@ async function looksGeneratedResidue(worktreePath: string, name: string): Promis
         let scoped = false;
         for (const scopeEntry of sub) {
           try {
-            if ((await readdir(join(dir, entry, scopeEntry))).includes("package.json")) {
+            const scopeSub = await readdir(join(dir, entry, scopeEntry));
+            if (scopeSub.includes("package.json")) {
               scoped = true;
+              if (installedNames === null || !installedNames.has(`${entry}/${scopeEntry}`)) return false;
+              if (!(await packageDirIsGenerated(join(dir, entry, scopeEntry), 3))) return false;
               break;
             }
           } catch {
@@ -107,19 +188,32 @@ async function looksGeneratedResidue(worktreePath: string, name: string): Promis
     return sawInstallEvidence && entries.length > 0;
   }
   if (name === "dist") {
-    // Build output carries a sourcemap or a build manifest. Require EVERY entry
-    // to be a build artifact or a manifest; any other file fails closed.
-    const hasBuildEvidence =
-      entries.some((entry) => entry.endsWith(".map")) || entries.includes("package.json");
-    if (!hasBuildEvidence) return false;
+    // Build output requires proof per file: every executable entry must carry
+    // its own sourcemap companion (bundle.js + bundle.js.map). `.map`, `.d.ts`
+    // and `.tsbuildinfo` are build metadata. The only bare JSON accepted is a
+    // build manifest (package.json / manifest.json). A lonely `.js`/`.json`/
+    // asset without its own `.map` may be user-authored (Greptile 4/5) and
+    // fails the whole directory closed.
+    const isBuildMetadata = (e: string) =>
+      e.endsWith(".map") || e.endsWith(".d.ts") || e.endsWith(".tsbuildinfo") ||
+      e === "package.json" || e === "manifest.json";
+    const hasMapCompanion = (e: string) => entries.includes(`${e}.map`);
+    let sawSourcemap = false;
     for (const entry of entries) {
-      if (entry.endsWith(".map") || entry === "package.json") continue;
-      if (DIST_BUILD_ARTIFACT_EXTENSIONS.some((ext) => entry.endsWith(ext))) continue;
-      // A file that is not a recognized build artifact may be user-authored
-      // ignored content (e.g. `user-notes.txt` next to `bundle.js.map`).
+      if (isBuildMetadata(entry)) {
+        if (entry.endsWith(".map")) sawSourcemap = true;
+        continue;
+      }
+      if (DIST_EXECUTABLE_EXTENSIONS.some((ext) => entry.endsWith(ext))) {
+        if (!hasMapCompanion(entry)) return false;
+        sawSourcemap = true;
+        continue;
+      }
+      // A file that is neither metadata nor an executables-with-map pair is
+      // user-authored ignored content (e.g. `data.json`, `user.png`).
       return false;
     }
-    return entries.length > 0;
+    return sawSourcemap && entries.length > 0;
   }
   return false;
 }
