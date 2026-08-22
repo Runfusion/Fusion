@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, writeFileSync, existsSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -24,7 +24,10 @@ afterEach(async () => {
 
 describe("worktree-pool secrets cleanup hooks", () => {
   it("reapOrphanWorktrees invokes cleanup before removal", async () => {
-    cleanupSecretsEnvFile.mockResolvedValue({ outcome: "cleaned", reason: "fingerprint-match" });
+    cleanupSecretsEnvFile.mockImplementationOnce(async ({ worktreePath }) => {
+      rmSync(join(worktreePath, ".env"));
+      return { outcome: "cleaned", reason: "fingerprint-match" };
+    });
     const root = tmpRoot();
     const worktrees = join(root, ".worktrees");
     const orphan = join(worktrees, "orphan-1");

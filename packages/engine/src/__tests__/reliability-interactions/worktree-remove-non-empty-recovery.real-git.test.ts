@@ -1,9 +1,11 @@
-import { access, chmod, mkdtemp, mkdir, realpath, rm, writeFile } from "node:fs/promises";
+import { access, chmod, mkdtemp, mkdir, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { NativeWorktreeBackend, RemovalReason, removeWorktree } from "../../worktree/worktree-backend.js";
+import { cleanupOrphanedWorktrees } from "../../worktree/worktree-pool.js";
 import { git, hasGit } from "./_helpers.js";
 
 async function pathExists(path: string): Promise<boolean> {
@@ -102,6 +104,105 @@ describe.skipIf(!hasGit)("reliability interactions: worktree remove non-empty re
     expect(events).toContain("worktree:remove-fallback");
     expect(events).toContain("worktree:admin-entry-pruned");
     expect(events).toContain("worktree:remove");
+  });
+
+  it("preserves ignored content during an idle-sweep removal", async () => {
+    const root = await setupRepo();
+    await writeFile(join(root, ".gitignore"), ".env\n", "utf-8");
+    git(root, "git add .gitignore");
+    git(root, 'git commit -m "ignore env"');
+    const worktreePath = await createWorktree(root, "fn-ignored", "fusion/fn-ignored");
+    await writeFile(join(worktreePath, ".env"), "RECOVERABLE=1\n", "utf-8");
+
+    await expect(removeWorktree({
+      rootDir: root,
+      worktreePath,
+      settings: {},
+      reason: RemovalReason.SelfHealingIdleSweep,
+    })).rejects.toThrow(/dirty worktree/);
+
+    expect(await pathExists(join(worktreePath, ".env"))).toBe(true);
+  });
+
+  it("removes an idle worktree containing only generated ignored residue after ownership cleanup", async () => {
+    const root = await setupRepo();
+    await writeFile(join(root, ".gitignore"), ".env\nnode_modules/\ndist/\n", "utf-8");
+    git(root, "git add .gitignore");
+    git(root, 'git commit -m "ignore generated residue"');
+    const worktreePath = await createWorktree(root, "fn-generated-clean", "fusion/fn-generated-clean");
+    await mkdir(join(worktreePath, "node_modules", "pkg"), { recursive: true });
+    await writeFile(join(worktreePath, "node_modules", "pkg", "index.js"), "generated\n", "utf-8");
+    await mkdir(join(worktreePath, "dist"), { recursive: true });
+    await writeFile(join(worktreePath, "dist", "bundle.js"), "generated\n", "utf-8");
+    const env = "SECRET=1\n";
+    await writeFile(join(worktreePath, ".env"), env, "utf-8");
+    await writeFile(join(worktreePath, ".fusion-secrets-env.fingerprint"), `${createHash("sha256").update(env).digest("hex")}\n.env\n`, "utf-8");
+
+    await cleanupOrphanedWorktrees(root, { listTasks: async () => [] } as any);
+
+    await expectWorktreeRemoved(root, worktreePath);
+  });
+
+  it("preserves a registered worktree whose checkout root is no longer probeable", async () => {
+    const root = await setupRepo();
+    const worktreePath = await createWorktree(root, "fn-corrupt", "fusion/fn-corrupt");
+    // User-authored content that must survive the corrupt-root removal intact.
+    await writeFile(join(worktreePath, "draft.md"), "user note\n", "utf-8");
+    await rm(join(worktreePath, ".git"));
+
+    await removeWorktree({
+      rootDir: root,
+      worktreePath,
+      settings: {},
+      reason: RemovalReason.PoolPrune,
+    });
+
+    // The checkout root is no longer registered/removed from the worktree list...
+    await expectWorktreeRemoved(root, worktreePath);
+    // ...but its contents are preserved (renamed into the contained recovery area),
+    // never recursively deleted.
+    const recoveryWorktrees = join(root, ".fusion", "recovery", "worktrees");
+    const entries = await readdir(recoveryWorktrees);
+    const corrupt = entries.find((entry) => entry.startsWith("corrupt-"));
+    expect(corrupt).toBeDefined();
+    expect(await pathExists(join(recoveryWorktrees, corrupt as string, "draft.md"))).toBe(true);
+  });
+
+  it("rejects user-authored ignored artifacts under generated-looking paths during an idle-sweep removal", async () => {
+    const root = await setupRepo();
+    await writeFile(join(root, ".gitignore"), "dist/\n", "utf-8");
+    git(root, "git add .gitignore");
+    git(root, 'git commit -m "ignore generated directory"');
+    const worktreePath = await createWorktree(root, "fn-generated", "fusion/fn-generated");
+    const manualPath = join(worktreePath, "dist", "manual.txt");
+    await mkdir(dirname(manualPath), { recursive: true });
+    await writeFile(manualPath, "user-authored\n", "utf-8");
+
+    await expect(removeWorktree({
+      rootDir: root,
+      worktreePath,
+      settings: {},
+      reason: RemovalReason.SelfHealingIdleSweep,
+    })).rejects.toThrow(/dirty worktree/);
+
+    expect(await pathExists(manualPath)).toBe(true);
+    expect(await pathExists(worktreePath)).toBe(true);
+  });
+
+  it("prunes a missing worktree registration during defensive cleanup", async () => {
+    const root = await setupRepo();
+    const worktreePath = await createWorktree(root, "fn-missing-pool", "fusion/fn-missing-pool");
+    const resolvedWorktreePath = await realpath(worktreePath);
+    await rm(worktreePath, { recursive: true, force: true });
+
+    await removeWorktree({
+      rootDir: root,
+      worktreePath,
+      settings: {},
+      reason: RemovalReason.PoolPrune,
+    });
+
+    await expectWorktreeRemoved(root, resolvedWorktreePath);
   });
 
   it("removes and prunes a worktree with nested-git content when native removal falls back", async () => {

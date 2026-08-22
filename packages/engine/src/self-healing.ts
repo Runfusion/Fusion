@@ -58,6 +58,8 @@ import {
 } from "./duplicate-marker-clear.js";
 import { mergeEffectiveSettings } from "./project/effective-settings.js";
 import { RemovalReason, classifyTaskWorktree, getRegisteredWorktreeBranchMap, getRegisteredWorktreePaths, isUsableTaskWorktree, relocateReclaimableWorktreeIntoRoot, removeWorktree, resolveWorktreeBackend, scanIdleWorktrees, scanOrphanedBranches } from "./worktree/worktree-pool.js";
+import { cleanupSecretsEnvFile } from "./worktree/secrets-env-writer.js";
+import { preserveCorruptRegisteredRoot, preserveGeneratedResidue } from "./worktree/worktree-generated-residue.js";
 import {
   isMissingWorktreeSessionStartFailure,
   isMergeActiveMissingWorktreeSessionStartFailure,
@@ -16488,6 +16490,27 @@ const movedTask = await this.store.moveTask(task.id, completeLane);
           log.debug(`[self-healing] deferring idle-sweep for ${worktreePath}: resume-eligible CLI session present`);
           continue;
         }
+        // FNXC:WorktreeCleanup 2026-08-17: the removal probe includes --ignored, so
+        // fingerprint-owned .env and generated residue (node_modules/dist) must leave
+        // the path first — cleaned/preserved, never deleted, mirroring the pool path.
+        try {
+          await cleanupSecretsEnvFile({
+            worktreePath,
+            taskId: `orphan:${basename(worktreePath)}`,
+            expectedFingerprint: null,
+            filename: ".env",
+            audit: undefined,
+            logger: log,
+          });
+        } catch (error) {
+          log.warn(`[self-healing] secrets-env cleanup failed for idle worktree ${worktreePath}: ${error instanceof Error ? error.message : String(error)}`);
+        }
+        let restoreGeneratedResidue: ((removedSuccessfully?: boolean) => Promise<void>) | undefined;
+        try {
+          restoreGeneratedResidue = await preserveGeneratedResidue(worktreePath, this.options.rootDir, log);
+        } catch (error) {
+          log.warn(`[self-healing] generated-residue preservation failed for idle worktree ${worktreePath}: ${error instanceof Error ? error.message : String(error)}`);
+        }
         try {
           await removeWorktree({
             rootDir: this.options.rootDir,
@@ -16495,8 +16518,21 @@ const movedTask = await this.store.moveTask(task.id, completeLane);
             settings,
             reason: RemovalReason.SelfHealingIdleSweep,
           });
+          await restoreGeneratedResidue?.(true);
           cleaned++;
         } catch (err: unknown) {
+          try {
+            await restoreGeneratedResidue?.();
+          } catch (restoreError) {
+            // Greptile (restore fail-closed): a refused removal PLUS a residue restore
+            // failure leaves the SURVIVING checkout missing node_modules/dist. This must
+            // never be swallowed as a benign non-fatal skip — escalate so supervision
+            // records the worktree as broken (its residue stays recoverable in the
+            // contained recovery area) instead of pretending the checkout is valid.
+            log.error(`[self-healing] generated-residue restore failed for idle worktree ${worktreePath}; surviving checkout is missing preserved generated dirs: ${restoreError instanceof Error ? restoreError.message : String(restoreError)}`);
+            const errorMessage = err instanceof Error ? err.message : String(err);
+            throw new Error(`generated-residue restore failed for ${worktreePath}: ${errorMessage}; ${restoreError instanceof Error ? restoreError.message : String(restoreError)}`);
+          }
           const errorMessage = err instanceof Error ? err.message : String(err);
           log.warn(`Failed to remove orphaned worktree ${worktreePath}: ${errorMessage} — non-fatal`);
           // Individual failure is non-fatal
@@ -16573,11 +16609,12 @@ const movedTask = await this.store.moveTask(task.id, completeLane);
         continue;
       }
       try {
-        rmSync(path, { recursive: true, force: true });
-        log.log(`Cleaned unregistered worktree dir: ${path}`);
+        const preservedPath = await preserveCorruptRegisteredRoot(path, this.options.rootDir);
+        await execAsync("git worktree prune", { cwd: this.options.rootDir, timeout: 30_000 });
+        log.log(`Preserved unregistered worktree dir: ${path} -> ${preservedPath}`);
         cleaned++;
       } catch (err: unknown) {
-        log.warn(`Failed to remove unregistered worktree dir ${path}: ${err instanceof Error ? err.message : String(err)}`);
+        log.warn(`Failed to preserve unregistered worktree dir ${path}: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
 
@@ -16914,6 +16951,26 @@ const movedTask = await this.store.moveTask(task.id, completeLane);
           log.debug(`[self-healing] cap-enforcement skipping ${worktreePath}: resume-eligible CLI session present`);
           continue;
         }
+        // FNXC:WorktreeCleanup 2026-08-17: cap enforcement shares the idle-sweep
+        // preparation so owned secrets and generated residue do not veto reclaim.
+        try {
+          await cleanupSecretsEnvFile({
+            worktreePath,
+            taskId: `orphan:${basename(worktreePath)}`,
+            expectedFingerprint: null,
+            filename: ".env",
+            audit: undefined,
+            logger: log,
+          });
+        } catch (error) {
+          log.warn(`[self-healing] secrets-env cleanup failed for idle worktree ${worktreePath} during cap enforcement: ${error instanceof Error ? error.message : String(error)}`);
+        }
+        let restoreGeneratedResidue: ((removedSuccessfully?: boolean) => Promise<void>) | undefined;
+        try {
+          restoreGeneratedResidue = await preserveGeneratedResidue(worktreePath, this.options.rootDir, log);
+        } catch (error) {
+          log.warn(`[self-healing] generated-residue preservation failed for idle worktree ${worktreePath} during cap enforcement: ${error instanceof Error ? error.message : String(error)}`);
+        }
         try {
           await removeWorktree({
             rootDir: this.options.rootDir,
@@ -16921,8 +16978,18 @@ const movedTask = await this.store.moveTask(task.id, completeLane);
             settings,
             reason: RemovalReason.SelfHealingIdleSweep,
           });
+          await restoreGeneratedResidue?.(true);
           removed++;
         } catch (err: unknown) {
+          try {
+            await restoreGeneratedResidue?.();
+          } catch (restoreError) {
+            // Greptile (restore fail-closed): escalate rather than leave the surviving
+            // checkout missing its preserved generated dirs; residue stays recoverable.
+            log.error(`[self-healing] generated-residue restore failed for cap worktree ${worktreePath}; surviving checkout is missing preserved generated dirs: ${restoreError instanceof Error ? restoreError.message : String(restoreError)}`);
+            const errorMessage = err instanceof Error ? err.message : String(err);
+            throw new Error(`generated-residue restore failed for ${worktreePath}: ${errorMessage}; ${restoreError instanceof Error ? restoreError.message : String(restoreError)}`);
+          }
           const errorMessage = err instanceof Error ? err.message : String(err);
           log.warn(`Failed to remove idle worktree ${worktreePath} during cap enforcement: ${errorMessage} — non-fatal`);
           // Individual failure is non-fatal

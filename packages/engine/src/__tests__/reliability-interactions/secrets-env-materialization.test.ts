@@ -100,11 +100,42 @@ describe("reliability interactions: secrets env materialization", () => {
     const worktreesDir = join(root, ".worktrees");
     const orphan = join(worktreesDir, "ghost");
     mkdirSync(orphan, { recursive: true });
-    writeFileSync(join(orphan, ".env"), "A=1\n");
-    writeFileSync(join(orphan, ".fusion-secrets-env.fingerprint"), "abc\n.env\n");
+    const body = "A=1\n";
+    writeFileSync(join(orphan, ".env"), body);
+    writeFileSync(join(orphan, ".fusion-secrets-env.fingerprint"), `${createHash("sha256").update(body).digest("hex")}\n.env\n`);
 
     const removed = await reapOrphanWorktrees(root);
     expect(removed).toBe(1);
     expect(existsSync(orphan)).toBe(false);
+  });
+
+  it("reclaims a dangling worktree pointer after removing only its fingerprint-owned env", async () => {
+    const root = tmpRepo();
+    const orphan = join(root, ".worktrees", "dangling-generated-env");
+    mkdirSync(orphan, { recursive: true });
+    const body = "A=1\n";
+    writeFileSync(join(orphan, ".git"), "gitdir: /missing-worktree-admin\n");
+    writeFileSync(join(orphan, ".env"), body);
+    writeFileSync(join(orphan, ".fusion-secrets-env.fingerprint"), `${createHash("sha256").update(body).digest("hex")}\n.env\n`);
+
+    const removed = await reapOrphanWorktrees(root);
+
+    expect(removed).toBe(1);
+    expect(existsSync(orphan)).toBe(false);
+  });
+
+  it("preserves a dangling worktree pointer with an unowned env", async () => {
+    const root = tmpRepo();
+    const orphan = join(root, ".worktrees", "dangling-user-env");
+    mkdirSync(orphan, { recursive: true });
+    const body = "USER_AUTHORED=1\n";
+    writeFileSync(join(orphan, ".git"), "gitdir: /missing-worktree-admin\n");
+    writeFileSync(join(orphan, ".env"), body);
+
+    const removed = await reapOrphanWorktrees(root);
+
+    expect(removed).toBe(0);
+    expect(existsSync(orphan)).toBe(true);
+    expect(readFileSync(join(orphan, ".env"), "utf8")).toBe(body);
   });
 });

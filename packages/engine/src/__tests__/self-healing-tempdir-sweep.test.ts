@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -198,7 +198,10 @@ describe("SelfHealingManager worktrees-dir sweeps", () => {
     expect(existsSync(aiMergeContainer)).toBe(true);
     expect(existsSync(recoveryContainer)).toBe(true);
     expect(existsSync(orphan)).toBe(false);
-    expect(fsState.rmCalls).toContain(orphan);
+    const preserved = readdirSync(join(projectRoot, ".fusion", "recovery", "worktrees"));
+    expect(preserved).toHaveLength(1);
+    expect(existsSync(join(projectRoot, ".fusion", "recovery", "worktrees", preserved[0]))).toBe(true);
+    expect(fsState.rmCalls).not.toContain(orphan);
     expect(fsState.rmCalls).not.toContain(aiMergeContainer);
     expect(fsState.rmCalls).not.toContain(recoveryContainer);
   });
@@ -220,7 +223,38 @@ describe("SelfHealingManager worktrees-dir sweeps", () => {
     expect(existsSync(recoveryContainer)).toBe(true);
     expect(childState.execCalls.some((command) => command.includes(".ai-merge"))).toBe(false);
     expect(childState.execCalls.some((command) => command.includes(".fusion-recovery"))).toBe(false);
-    expect(childState.execCalls.some((command) => command.includes("idle-wt"))).toBe(true);
+  });
+
+  it("preserves unregistered orphan content in contained recovery", async () => {
+    const worktreesDir = join(projectRoot, ".worktrees");
+    const orphan = join(worktreesDir, "user-content");
+    mkdirSync(orphan, { recursive: true });
+    writeFileSync(join(orphan, "notes.txt"), "keep me\n");
+    const { manager } = makeManager({ recycleWorktrees: true });
+
+    await expect((manager as any).reapUnregisteredOrphans()).resolves.toBe(1);
+
+    expect(existsSync(join(orphan, "notes.txt"))).toBe(false);
+    const recovery = readdirSync(join(projectRoot, ".fusion", "recovery", "worktrees"));
+    expect(recovery).toHaveLength(1);
+    expect(readFileSync(join(projectRoot, ".fusion", "recovery", "worktrees", recovery[0], "notes.txt"), "utf8")).toBe("keep me\n");
+    expect(fsState.rmCalls).not.toContain(orphan);
+  });
+
+  it("prepares generated residue before cap enforcement and restores it when the worktree survives a refused removal", async () => {
+    const worktreesDir = join(projectRoot, ".worktrees");
+    const idle = join(worktreesDir, "idle-wt");
+    const nodeModules = join(idle, "node_modules");
+    mkdirSync(nodeModules, { recursive: true });
+    childState.execStdout = gitWorktreeList(["idle-wt"]);
+    const { manager } = makeManager({ maxWorktrees: 0 });
+
+    await expect((manager as any).enforceWorktreeCap()).resolves.toBeUndefined();
+
+    // The removal leaves the idle dir in place (no real git registration to prune), so the
+    // generated residue must be put back for the surviving worktree — never stranded in recovery.
+    expect(existsSync(nodeModules)).toBe(true);
+    expect(readdirSync(join(projectRoot, ".fusion", "recovery", "worktrees"))).toHaveLength(0);
   });
 });
 

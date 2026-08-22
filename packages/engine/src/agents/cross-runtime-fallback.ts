@@ -9,6 +9,42 @@ import { getCliProviderRouting, stripCliProviderPrefix } from "./cli-provider-ro
 
 const fallbackLog = createLogger("cross-runtime-fallback");
 
+/*
+FNXC:RuntimeSubscribeCompat 2026-08-22-03:07:
+Callback-only runtime events use one pi-shaped bridge whether the session is
+created initially or by a deferred cross-runtime fallback.
+*/
+export function withRuntimeEventCallbacks(
+  options: AgentRuntimeOptions,
+  emit: (event: Record<string, unknown>) => void,
+): AgentRuntimeOptions {
+  return {
+    ...options,
+    onText: (delta) => {
+      emit({
+        type: "message_update",
+        assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta },
+      });
+      options.onText?.(delta);
+    },
+    onThinking: (delta) => {
+      emit({
+        type: "message_update",
+        assistantMessageEvent: { type: "thinking_delta", contentIndex: 1, delta },
+      });
+      options.onThinking?.(delta);
+    },
+    onToolStart: (toolName, args) => {
+      emit({ type: "tool_execution_start", toolName, args });
+      options.onToolStart?.(toolName, args);
+    },
+    onToolEnd: (toolName, isError, result) => {
+      emit({ type: "tool_execution_end", toolName, isError, result });
+      options.onToolEnd?.(toolName, isError, result);
+    },
+  };
+}
+
 export interface DeferredCrossRuntimeFallback {
   providerId: string;
   runtimeId: string;
@@ -182,6 +218,30 @@ export function armDeferredCrossRuntimeFallback(args: {
 }): void {
   const { session, sessionPurpose, pluginRunner, runAuditor, deferred, createOptions, primaryProvider, primaryModelId, onFallbackModelUsed, taskId, taskTitle, auditEventType, preserveConversationContext } = args;
   const original = session.promptWithFallback as (prompt: string, options?: unknown) => Promise<unknown>;
+  const fallbackSubscribers = new Set<(event: unknown) => void>();
+  const subscribable = session as unknown as {
+    subscribe?: (handler: (event: unknown) => void) => () => void;
+  };
+  if (typeof subscribable.subscribe === "function") {
+    const subscribe = subscribable.subscribe.bind(session);
+    subscribable.subscribe = (handler) => {
+      fallbackSubscribers.add(handler);
+      const unsubscribe = subscribe(handler);
+      return () => {
+        fallbackSubscribers.delete(handler);
+        unsubscribe();
+      };
+    };
+  }
+  const fallbackCreateOptions = withRuntimeEventCallbacks(createOptions, (event) => {
+    for (const handler of fallbackSubscribers) {
+      try {
+        handler(event);
+      } catch {
+        // FNXC:RuntimeSubscribeCompat 2026-08-22-03:07: fallback observers are isolated like primary observers.
+      }
+    }
+  });
   const primaryDescription = `${primaryProvider ?? "unknown"}/${primaryModelId ?? "unknown"}`;
   const fallbackDescription = `${deferred.providerId}/${deferred.modelId ?? "unknown"}`;
   type Swap = {
@@ -214,7 +274,7 @@ export function armDeferredCrossRuntimeFallback(args: {
         const attempt = (async (): Promise<Swap> => {
           const resolved = await resolveRuntime(buildRuntimeResolutionContext(sessionPurpose, pluginRunner, deferred.runtimeId));
           if (resolved.runtimeId !== deferred.runtimeId) throw new Error(`${deferred.runtimeId} runtime unavailable at swap time`);
-          const fallbackSession = (await resolved.runtime.createSession(createOptions)).session;
+          const fallbackSession = (await resolved.runtime.createSession(fallbackCreateOptions)).session;
           const transferredContext = preserveConversationContext
             ? captureTransferableConversationContext(session)
             : undefined;

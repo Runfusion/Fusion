@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { execSync } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -489,6 +489,117 @@ describe("acquireTaskWorktree", () => {
     );
   });
 
+  it("preserves a dirty task-pinned worktree checked out on a foreign branch", async () => {
+    const rootDir = makeRepo();
+    const pinnedPath = join(rootDir, ".worktrees", "fn-1");
+    git(rootDir, `git worktree add -b fusion/fn-foreign ${JSON.stringify(pinnedPath)} main`);
+    writeFileSync(join(pinnedPath, "recoverable.txt"), "keep me\n", "utf-8");
+    const createWorktree = vi.fn().mockResolvedValue({ path: pinnedPath, branch: "fusion/fn-1" });
+
+    await expect(acquireTaskWorktree({
+      task: { ...task, worktree: pinnedPath, branch: "fusion/fn-1" },
+      rootDir,
+      store,
+      settings: { worktreeNaming: "task-id", recycleWorktrees: false },
+      createWorktree,
+    })).rejects.toThrow(/dirty worktree/);
+
+    expect(readFileSync(join(pinnedPath, "recoverable.txt"), "utf-8")).toBe("keep me\n");
+    expect(createWorktree).not.toHaveBeenCalled();
+  });
+
+  it("reclaims a task-pinned worktree holding only generated residue (node_modules, dist, fingerprint-owned .env)", async () => {
+    const rootDir = makeRepo();
+    writeFileSync(join(rootDir, ".gitignore"), "node_modules/\ndist/\n.env\n", "utf-8");
+    git(rootDir, "git add .gitignore");
+    git(rootDir, 'git commit -m "ignore generated residue"');
+    const pinnedPath = join(rootDir, ".worktrees", "fn-1");
+    git(rootDir, `git worktree add -b fusion/fn-foreign ${JSON.stringify(pinnedPath)} main`);
+    // Generated residue only: node_modules + dist + fingerprint-owned .env. No user content.
+    mkdirSync(join(pinnedPath, "node_modules", "pkg"), { recursive: true });
+    writeFileSync(join(pinnedPath, "node_modules", "pkg", "index.js"), "generated\n", "utf-8");
+    mkdirSync(join(pinnedPath, "dist"));
+    writeFileSync(join(pinnedPath, "dist", "bundle.js"), "generated\n", "utf-8");
+    const envBody = "SECRET=1\n";
+    const fingerprint = createHash("sha256").update(envBody).digest("hex");
+    writeFileSync(join(pinnedPath, ".env"), envBody, "utf-8");
+    writeFileSync(join(pinnedPath, ".fusion-secrets-env.fingerprint"), `${fingerprint}\n.env\n`, "utf-8");
+
+    const result = await acquireTaskWorktree({
+      task: { ...task, worktree: pinnedPath, branch: "fusion/fn-1" },
+      rootDir,
+      store,
+      settings: { worktreeNaming: "task-id", recycleWorktrees: false },
+    });
+
+    expect(result).toMatchObject({
+      worktreePath: pinnedPath,
+      branch: "fusion/fn-1",
+      source: "fresh",
+      isResume: false,
+    });
+    expect(existsSync(join(pinnedPath, ".git"))).toBe(true);
+    expect(git(rootDir, "git worktree list --porcelain")).toContain(pinnedPath);
+    expect(existsSync(join(pinnedPath, "node_modules"))).toBe(false);
+    expect(existsSync(join(pinnedPath, ".env"))).toBe(false);
+  });
+
+  it("preserves tracked user content committed inside an ignored generated dir during pinned reclaim", async () => {
+    const rootDir = makeRepo();
+    writeFileSync(join(rootDir, ".gitignore"), "node_modules/\ndist/\n.env\n", "utf-8");
+    git(rootDir, "git add .gitignore");
+    git(rootDir, 'git commit -m "ignore generated residue"');
+    const pinnedPath = join(rootDir, ".worktrees", "fn-1");
+    git(rootDir, `git worktree add -b fusion/fn-foreign ${JSON.stringify(pinnedPath)} main`);
+    // Some repos commit build output under dist/ despite the ignore rule; that is
+    // user content and must never be swept by reclaim residue cleanup.
+    mkdirSync(join(pinnedPath, "dist"), { recursive: true });
+    writeFileSync(join(pinnedPath, "dist", "shipped.txt"), "user content\n", "utf-8");
+    git(rootDir, `git -C ${JSON.stringify(pinnedPath)} add -f dist/shipped.txt`);
+    git(rootDir, `git -C ${JSON.stringify(pinnedPath)} commit -m "ship dist artifact"`);
+    // An untracked non-ignored file forces the removal probe to refuse; the
+    // tracked dist content must survive that refused reclaim.
+    writeFileSync(join(pinnedPath, "recoverable.txt"), "keep me\n", "utf-8");
+
+    await expect(acquireTaskWorktree({
+      task: { ...task, worktree: pinnedPath, branch: "fusion/fn-1" },
+      rootDir,
+      store,
+      settings: { worktreeNaming: "task-id", recycleWorktrees: false },
+    })).rejects.toThrow(/dirty worktree/);
+
+    expect(readFileSync(join(pinnedPath, "dist", "shipped.txt"), "utf-8")).toBe("user content\n");
+    expect(readFileSync(join(pinnedPath, "recoverable.txt"), "utf-8")).toBe("keep me\n");
+  });
+
+  it("preserves user-authored files under ignored generated dirs during pinned reclaim", async () => {
+    const rootDir = makeRepo();
+    writeFileSync(join(rootDir, ".gitignore"), "node_modules/\ndist/\n.env\n", "utf-8");
+    git(rootDir, "git add .gitignore");
+    git(rootDir, 'git commit -m "ignore generated residue"');
+    const pinnedPath = join(rootDir, ".worktrees", "fn-1");
+    git(rootDir, `git worktree add -b fusion/fn-foreign ${JSON.stringify(pinnedPath)} main`);
+    // User-authored file under an ignored dir: untracked and git-ignored, so the
+    // reclaim probe cannot see it once residue cleanup deletes the directory.
+    mkdirSync(join(pinnedPath, "dist"), { recursive: true });
+    writeFileSync(join(pinnedPath, "dist", "user-notes.txt"), "precious\n", "utf-8");
+
+    const result = await acquireTaskWorktree({
+      task: { ...task, worktree: pinnedPath, branch: "fusion/fn-1" },
+      rootDir,
+      store,
+      settings: { worktreeNaming: "task-id", recycleWorktrees: false },
+    });
+
+    // Reclaim proceeds (the path is freed) but the user file survives in the
+    // worktree recovery area instead of being silently deleted.
+    expect(result).toMatchObject({ worktreePath: pinnedPath, source: "fresh" });
+    const recoveryRoot = join(rootDir, ".fusion", "recovery", "worktrees");
+    const preserved = readdirSync(recoveryRoot).filter((name) => name.startsWith("residue-"));
+    expect(preserved).toHaveLength(1);
+    expect(readFileSync(join(recoveryRoot, preserved[0], "user-notes.txt"), "utf-8")).toBe("precious\n");
+  });
+
   it("preserves an orphan beside an external worktree root when project recovery is cross-device", async () => {
     const rootDir = makeRepo();
     const externalWorktrees = track(mkdtempSync(join(tmpdir(), "fn-external-worktrees-")));
@@ -520,7 +631,7 @@ describe("acquireTaskWorktree", () => {
     expect(renameWorktreeDirectory).toHaveBeenCalledTimes(2);
   });
 
-  it("retains only the newest ten generated orphan directories in the primary recovery root", async () => {
+  it("retains every preserved orphan directory in the primary recovery root (no pruning of older user content)", async () => {
     const rootDir = makeRepo();
     const pinnedPath = join(rootDir, ".worktrees", "fn-1");
     const recoveryRoot = join(rootDir, ".fusion", "recovery", "worktrees");
@@ -554,14 +665,15 @@ describe("acquireTaskWorktree", () => {
       .filter((entry) => entry.isDirectory() && /^fn-\d+-[0-9a-f-]{36}$/.test(entry.name))
       .map((entry) => entry.name);
     expect(result.worktreePath).toBe(pinnedPath);
-    expect(generatedDirectories).toHaveLength(11);
+    expect(generatedDirectories).toHaveLength(12);
     expect(generatedDirectories).toContain(seeded[0]);
-    expect(generatedDirectories).not.toContain(seeded[1]);
+    expect(generatedDirectories).toContain(seeded[1]);
+    expect(readFileSync(join(recoveryRoot, seeded[1], "artifact"), "utf-8")).toBe("1\n");
     expect(existsSync(unknownPath)).toBe(true);
     expect(existsSync(generatedSymlink)).toBe(true);
   });
 
-  it("retains only the newest ten generated orphan directories in the EXDEV fallback root", async () => {
+  it("retains every preserved orphan directory in the EXDEV fallback root (no pruning of older user content)", async () => {
     const rootDir = makeRepo();
     const externalWorktrees = track(mkdtempSync(join(tmpdir(), "fn-external-retention-worktrees-")));
     const pinnedPath = join(externalWorktrees, "fn-1");
@@ -598,9 +710,10 @@ describe("acquireTaskWorktree", () => {
       .filter((entry) => entry.isDirectory() && /^fn-\d+-[0-9a-f-]{36}$/.test(entry.name))
       .map((entry) => entry.name);
     expect(result.worktreePath).toBe(pinnedPath);
-    expect(generatedDirectories).toHaveLength(11);
+    expect(generatedDirectories).toHaveLength(12);
     expect(generatedDirectories).toContain(seeded[0]);
-    expect(generatedDirectories).not.toContain(seeded[1]);
+    expect(generatedDirectories).toContain(seeded[1]);
+    expect(readFileSync(join(recoveryRoot, seeded[1], "artifact"), "utf-8")).toBe("1\n");
     expect(existsSync(unknownPath)).toBe(true);
   });
 
