@@ -1814,30 +1814,27 @@ function isWorktreeAllowedPath(
   const projectRootCanonical = normalizeExistingPathForGitComparison(projectRootResolved);
   const requestedCanonical = normalizePathThroughExistingAncestor(requestedResolved);
 
+  /*
+  FNXC:WorktreeBoundary 2026-08-22-02:52:
+  Every worktree and project exception must use canonical containment only. A lexical path beneath an allowed root can cross a symlink to host files, including when the final glob/write target does not exist yet; normalize through the deepest existing ancestor before deciding.
+  */
   // Check if path is inside the worktree
-  if (
-    isSameOrInsidePath(worktreeResolved, requestedResolved) ||
-    isSameOrInsidePath(worktreeCanonical, requestedCanonical)
-  ) {
+  if (isSameOrInsidePath(worktreeCanonical, requestedCanonical)) {
     return true; // Path is inside the worktree
   }
 
   // Exception: project root `.fusion/memory/` files for durable project learnings
-  const relToProjectRoot = relative(projectRootResolved, requestedResolved).replace(/\\/g, "/");
   const relToCanonicalProjectRoot = relative(projectRootCanonical, requestedCanonical).replace(/\\/g, "/");
-  const projectRelativePaths = [relToProjectRoot, relToCanonicalProjectRoot];
   if (
-    projectRelativePaths.some((relPath) =>
-      relPath === ".fusion/memory" ||
-      relPath === ".fusion/memory/" ||
-      relPath.startsWith(".fusion/memory/")
-    )
+    relToCanonicalProjectRoot === ".fusion/memory" ||
+    relToCanonicalProjectRoot === ".fusion/memory/" ||
+    relToCanonicalProjectRoot.startsWith(".fusion/memory/")
   ) {
     return true;
   }
 
   // Exception: task attachments under `.fusion/tasks/*/attachments/*`
-  if (projectRelativePaths.some((relPath) => relPath.match(/^\.fusion\/tasks\/[^/]+\/attachments\//))) {
+  if (relToCanonicalProjectRoot.match(/^\.fusion\/tasks\/[^/]+\/attachments\//)) {
     return true;
   }
 
@@ -1847,7 +1844,7 @@ function isWorktreeAllowedPath(
   // the agent can discover them; writes and bash remain restricted.
   const readOnlyTools = new Set(["read", "glob", "grep", "find", "ls"]);
   if (toolName && readOnlyTools.has(toolName)) {
-    if (projectRelativePaths.some((relPath) => /^\.fusion\/tasks\/[^/]+\/(PROMPT\.md|task\.json)$/.test(relPath))) {
+    if (/^\.fusion\/tasks\/[^/]+\/(PROMPT\.md|task\.json)$/.test(relToCanonicalProjectRoot)) {
       return true;
     }
 

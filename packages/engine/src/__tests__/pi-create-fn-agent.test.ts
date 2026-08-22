@@ -420,6 +420,52 @@ describe("worktree path boundary helpers", () => {
       expect(mockBashTool.execute).toHaveBeenCalled();
     });
 
+    it("rejects symlink escapes through every allowed root across all path-taking tools", async () => {
+      const makeTool = (name: string) => ({
+        name,
+        label: name,
+        description: `${name} a boundary path`,
+        parameters: {},
+        execute: vi.fn().mockResolvedValue({ ok: true, content: [] }),
+      });
+      const toolNames = ["read", "glob", "grep", "write", "edit", "bash"];
+      const tools = toolNames.map(makeTool);
+      const worktreeRoot = "/project/.worktrees/fn-001";
+      const projectRoot = "/project";
+      const hostSkillRoot = "/host/skills";
+      const userSkillRoot = join(homedir(), ".agents", "skills");
+      const externalRoot = "/host/private";
+      const escapeCases = [
+        { symlink: `${worktreeRoot}/escape`, path: `${worktreeRoot}/escape/secret.txt` },
+        { symlink: `${projectRoot}/.fusion/memory/escape`, path: `${projectRoot}/.fusion/memory/escape/secret.txt` },
+        { symlink: `${projectRoot}/.fusion/tasks/FN-001/attachments/escape`, path: `${projectRoot}/.fusion/tasks/FN-001/attachments/escape/secret.txt` },
+        { symlink: `${projectRoot}/.fusion/tasks/FN-002`, path: `${projectRoot}/.fusion/tasks/FN-002/PROMPT.md` },
+        { symlink: `${userSkillRoot}/escape`, path: `${userSkillRoot}/escape/secret.txt` },
+        { symlink: `${hostSkillRoot}/escape`, path: `${hostSkillRoot}/escape/secret.txt` },
+      ];
+      const escapedPaths = new Set(escapeCases.map(({ path }) => path));
+      const symlinkTargets = new Map(escapeCases.map(({ symlink }) => [symlink, externalRoot]));
+      realpathSyncNativeMock.mockImplementation((path: PathLike) => {
+        const text = String(path);
+        if (escapedPaths.has(text)) throw new Error("ENOENT");
+        return symlinkTargets.get(text) ?? text;
+      });
+
+      const { wrapToolsWithBoundary } = await import("../pi.js");
+      const wrapped = wrapToolsWithBoundary(tools as any, worktreeRoot, projectRoot, [hostSkillRoot]);
+
+      for (const { symlink, path } of escapeCases) {
+        for (const tool of wrapped as any[]) {
+          const params = tool.name === "bash" ? { command: "pwd", cwd: symlink } : { path };
+          const result = await tool.execute(`call-${tool.name}-${symlink}`, params);
+          expect(result).toMatchObject({ ok: false, error: expect.stringContaining("outside the worktree boundary") });
+        }
+      }
+      for (const tool of tools) {
+        expect(tool.execute).not.toHaveBeenCalled();
+      }
+    });
+
     it("allows project root .fusion/memory/ files from worktree session", async () => {
       const mockReadTool = {
         name: "read",
