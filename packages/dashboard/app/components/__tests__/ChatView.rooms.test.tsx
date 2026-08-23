@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render as rtlRender, screen, waitFor, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
+import { useState } from "react";
 import { ChatView } from "../ChatView";
 import * as useChatModule from "../../hooks/useChat";
 import * as useChatRoomsModule from "../../hooks/useChatRooms";
@@ -123,8 +124,24 @@ function setup(chatOverrides: Partial<UseChatReturn> = {}, roomsOverrides: Parti
   mockUseChatRooms.mockReturnValue({ ...defaultRoomsState, ...roomsOverrides });
 }
 
+/*
+FNXC:DashboardTests 2026-08-23-20:25:
+Viewport mocks must restore the exact matchMedia and innerWidth own-property descriptors they replace, deleting test-created properties when the host originally omitted them so one responsive test cannot reshape the next test's browser contract.
+*/
+function restoreWindowProperty(
+  property: "matchMedia" | "innerWidth",
+  descriptor: PropertyDescriptor | undefined,
+) {
+  if (descriptor) {
+    Object.defineProperty(window, property, descriptor);
+  } else {
+    Reflect.deleteProperty(window, property);
+  }
+}
+
 function mockMobileViewport() {
-  const previousInnerWidth = window.innerWidth;
+  const matchMediaDescriptor = Object.getOwnPropertyDescriptor(window, "matchMedia");
+  const innerWidthDescriptor = Object.getOwnPropertyDescriptor(window, "innerWidth");
   if (!window.matchMedia) {
     Object.defineProperty(window, "matchMedia", { value: vi.fn(), configurable: true, writable: true });
   }
@@ -142,7 +159,8 @@ function mockMobileViewport() {
   return {
     mockRestore() {
       matchMediaSpy.mockRestore();
-      Object.defineProperty(window, "innerWidth", { value: previousInnerWidth, configurable: true });
+      restoreWindowProperty("matchMedia", matchMediaDescriptor);
+      restoreWindowProperty("innerWidth", innerWidthDescriptor);
     },
   };
 }
@@ -171,7 +189,8 @@ function mockMobileVisualViewport({ innerHeight, vvHeight }: { innerHeight: numb
 }
 
 function mockDesktopViewport() {
-  const previousInnerWidth = window.innerWidth;
+  const matchMediaDescriptor = Object.getOwnPropertyDescriptor(window, "matchMedia");
+  const innerWidthDescriptor = Object.getOwnPropertyDescriptor(window, "innerWidth");
   if (!window.matchMedia) {
     Object.defineProperty(window, "matchMedia", { value: vi.fn(), configurable: true, writable: true });
   }
@@ -189,7 +208,8 @@ function mockDesktopViewport() {
   return {
     mockRestore() {
       matchMediaSpy.mockRestore();
-      Object.defineProperty(window, "innerWidth", { value: previousInnerWidth, configurable: true });
+      restoreWindowProperty("matchMedia", matchMediaDescriptor);
+      restoreWindowProperty("innerWidth", innerWidthDescriptor);
     },
   };
 }
@@ -297,6 +317,31 @@ describe("ChatView — rooms (FN-3805..FN-3811 contract)", () => {
     }));
     localStorage.setItem("fusion:chat-scope", "rooms");
     setup();
+  });
+
+  it.each([
+    ["mobile", mockMobileViewport],
+    ["desktop", mockDesktopViewport],
+  ])("restores exact and originally absent window descriptors after the %s viewport mock", (_viewport, setViewport) => {
+    const matchMediaDescriptor = Object.getOwnPropertyDescriptor(window, "matchMedia");
+    const innerWidthDescriptor = Object.getOwnPropertyDescriptor(window, "innerWidth");
+
+    try {
+      const viewportMock = setViewport();
+      viewportMock.mockRestore();
+      expect(Object.getOwnPropertyDescriptor(window, "matchMedia")).toEqual(matchMediaDescriptor);
+      expect(Object.getOwnPropertyDescriptor(window, "innerWidth")).toEqual(innerWidthDescriptor);
+
+      Reflect.deleteProperty(window, "matchMedia");
+      Reflect.deleteProperty(window, "innerWidth");
+      const absentPropertyViewportMock = setViewport();
+      absentPropertyViewportMock.mockRestore();
+      expect(Object.getOwnPropertyDescriptor(window, "matchMedia")).toBeUndefined();
+      expect(Object.getOwnPropertyDescriptor(window, "innerWidth")).toBeUndefined();
+    } finally {
+      restoreWindowProperty("matchMedia", matchMediaDescriptor);
+      restoreWindowProperty("innerWidth", innerWidthDescriptor);
+    }
   });
 
   it.each([
@@ -1093,6 +1138,9 @@ describe("ChatView — rooms (FN-3805..FN-3811 contract)", () => {
     /*
     FNXC:DashboardTests 2026-08-23-17:55:
     Desktop list/detail assertions must pin and restore desktop geometry so they prove the docked-sidebar contract independently of earlier mobile tests.
+
+    FNXC:DashboardTests 2026-08-23-20:25:
+    The desktop room-selection regression must begin on a different active room and update the mocked hook state on selection, proving the clicked room replaces the prior detail instead of allowing an already-selected no-op to pass.
     */
     it("renders rooms in the conversation list before detail", async () => {
       const viewportSpy = mockDesktopViewport();
@@ -1109,11 +1157,34 @@ describe("ChatView — rooms (FN-3805..FN-3811 contract)", () => {
     it("enters the selected room detail from the list", async () => {
       const viewportSpy = mockDesktopViewport();
       try {
-        setup({}, { activeRoom: roomA, rooms: [roomA] });
+        const roomB = { ...roomA, id: "room-b", name: "Room B", slug: "room-b" };
+        const selectRoom = vi.fn();
+        function useStatefulRoomsMock(): UseChatRoomsResult {
+          const [activeRoom, setActiveRoom] = useState(roomB);
+          selectRoom.mockImplementation((roomId: string) => {
+            setActiveRoom(roomId === roomA.id ? roomA : roomB);
+          });
+          return {
+            ...defaultRoomsState,
+            rooms: [roomA, roomB],
+            activeRoom,
+            selectRoom,
+          };
+        }
+        mockUseChat.mockReturnValue(defaultChatState);
+        mockUseChatRooms.mockImplementation(useStatefulRoomsMock);
         await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} experimentalFeatures={{ chatRooms: true }} />);
+
+        expect(screen.getByTestId("chat-room-item-room-b")).toHaveClass("chat-room-item--active");
+        expect(screen.getByTestId("chat-room-item-room-a")).not.toHaveClass("chat-room-item--active");
         await userEvent.click(screen.getByTestId("chat-room-item-room-a"));
+
+        expect(selectRoom).toHaveBeenCalledWith("room-a");
         expect(screen.queryByTestId("chat-back-btn")).not.toBeInTheDocument();
         expect(screen.getByTestId("chat-input")).toBeInTheDocument();
+        expect(within(document.querySelector(".chat-room-thread-header") as HTMLElement).getByText("#Room A")).toBeInTheDocument();
+        expect(screen.getByTestId("chat-room-item-room-a")).toHaveClass("chat-room-item--active");
+        expect(screen.getByTestId("chat-room-item-room-b")).not.toHaveClass("chat-room-item--active");
       } finally {
         viewportSpy.mockRestore();
       }
