@@ -216,6 +216,7 @@ export const DEFAULT_GLOBAL_SETTINGS = {
   defaultProjectId: undefined,
   setupComplete: undefined,
   cliOnboardingCompletedAt: undefined,
+  githubStarPromptDismissedAt: undefined,
   favoriteProviders: undefined,
   favoriteModels: undefined,
   openrouterModelSync: true,

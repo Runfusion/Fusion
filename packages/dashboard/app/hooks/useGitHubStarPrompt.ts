@@ -1,4 +1,5 @@
-import { useSyncExternalStore } from "react";
+import { useEffect, useSyncExternalStore } from "react";
+import { fetchGlobalSettings, updateGlobalSettings } from "../api";
 
 const STORAGE_KEY = "fusion:github-star-prompt-shown";
 const EVENT_NAME = "fusion:github-star-prompt-changed";
@@ -31,6 +32,14 @@ function subscribe(onChange: () => void): () => void {
   };
 }
 
+/*
+FNXC:GithubStarAsk 2026-08-19-03:59:
+The ask is one per operator, not one per browser profile. localStorage stays the fast local record —
+it suppresses the prompt on this render without waiting on a request — while `githubStarPromptDismissedAt`
+in global settings is the durable, cross-surface one: the CLI's post-onboarding ask reads and writes
+the same field, so answering in either place retires the ask in both. The settings write is
+best-effort; losing it costs at most one repeat ask on another browser, never a broken dismissal here.
+*/
 export function markGitHubStarPromptShown(): void {
   if (typeof window === "undefined") return;
   try {
@@ -39,8 +48,43 @@ export function markGitHubStarPromptShown(): void {
   } catch {
     // ignore
   }
+  void updateGlobalSettings({ githubStarPromptDismissedAt: new Date().toISOString() }).catch(() => {
+    // Best-effort: the local record above already suppresses the prompt on this machine.
+  });
 }
 
 export function useGitHubStarPromptShown(): boolean {
-  return useSyncExternalStore(subscribe, read, () => false);
+  const shown = useSyncExternalStore(subscribe, read, () => false);
+
+  /*
+  FNXC:GithubStarAsk 2026-08-19-03:59:
+  Adopt a dismissal recorded elsewhere (the `fn onboard` ask, or another browser) into this profile's
+  local record, so a fresh dashboard on an already-answered install never re-asks. Runs only while the
+  local record is unset, so it is a single request on the machines that still might ask.
+  */
+  useEffect(() => {
+    if (shown || typeof window === "undefined") return;
+    let cancelled = false;
+    void fetchGlobalSettings()
+      .then((settings) => {
+        if (cancelled) return;
+        const dismissedAt = settings.githubStarPromptDismissedAt;
+        if (typeof dismissedAt === "string" && dismissedAt.trim().length > 0) {
+          try {
+            window.localStorage.setItem(STORAGE_KEY, "1");
+            window.dispatchEvent(new Event(EVENT_NAME));
+          } catch {
+            // ignore
+          }
+        }
+      })
+      .catch(() => {
+        // Unreachable settings mean we simply keep the local record as-is.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [shown]);
+
+  return shown;
 }

@@ -1113,6 +1113,8 @@ function AppInner() {
     closeSetupWizard: modalManager.closeSetupWizard,
     closeModelOnboarding: modalManager.closeModelOnboarding,
     closeProjectScopedModals: closeProjectScopedUi,
+    // FNXC:GithubStarAsk 2026-08-19-03:59: finishing onboarding is the first moment we ask for a GitHub star.
+    onOnboardingCompleted: handleStarPrompt,
   });
 
   const { handleDetailClose } = useDeepLink({
