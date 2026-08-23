@@ -26,7 +26,7 @@ REVERT PROOF, measured: restore the literal and the renamed-board case returns `
 routing to `onMerge`.
 */
 import { describe, expect, it, vi } from "vitest";
-import type { Settings, Task, TaskStore, WorkflowIr } from "@fusion/core";
+import { getTaskMergeBlocker, type Settings, type Task, type TaskStore, type WorkflowIr } from "@fusion/core";
 
 import { ProjectEngine } from "../project-engine.js";
 
@@ -190,5 +190,36 @@ describe("the other merge-lane surfaces on a renamed board", () => {
     await (self.taskUpdatedHandler as (t: Task) => Promise<void>)({ ...task, paused: true } as Task);
 
     expect([...self.pausedReviewTaskIds]).toEqual([]);
+  });
+
+  /*
+  FNXC:MergeReadiness 2026-08-23-18:49:
+  ProjectEngine's live admission callbacks must receive the same resolved merge lane used by their
+  surrounding column guard. Passing only the task makes the injected core blocker silently restore the
+  `in-review` literal and prevents a renamed-lane card from re-entering the production merge queue.
+  */
+  it("re-enqueues an unpaused renamed-lane card through the live merge blocker", async () => {
+    const { store, task } = storeFor("signoff", RENAMED_IR);
+    const self = {
+      options: { getTaskMergeBlocker },
+      pausedReviewTaskIds: new Set<string>([task.id]),
+      mergeQueue: [] as string[],
+      mergeActive: new Set<string>(),
+      activeMergeTaskId: null as string | null,
+      taskUpdatedHandler: undefined as unknown,
+      abortActiveMerge: vi.fn(),
+      allowInReviewMergeProcessing: vi.fn(async () => true),
+      classifyMergeSweepCandidate: vi.fn(async () => ({ admit: true })),
+      internalEnqueueMerge: vi.fn(),
+    };
+
+    (ProjectEngine.prototype as unknown as {
+      wireTaskPauseMergeInterruption: (this: unknown, s: TaskStore) => void;
+    }).wireTaskPauseMergeInterruption.call(self, store);
+
+    await (self.taskUpdatedHandler as (t: Task) => Promise<void>)({ ...task, paused: false } as Task);
+
+    expect(self.internalEnqueueMerge).toHaveBeenCalledWith(task.id);
+    expect(self.options.getTaskMergeBlocker(task, { reviewColumns: new Set(["signoff"]) })).toBeUndefined();
   });
 });

@@ -862,6 +862,27 @@ describe("isTaskReadyForMerge", () => {
     expect(isTaskReadyForMerge(baseTask)).toBe(true);
   });
 
+  it("uses the caller's resolved review lanes", () => {
+    expect(isTaskReadyForMerge(
+      { ...baseTask, column: "signoff" },
+      { reviewColumns: new Set(["signoff"]) },
+    )).toBe(true);
+  });
+
+  /*
+  FNXC:MergeReadiness 2026-08-23-18:49:
+  A resolved workflow can return an empty review-lane set when it has no usable trait answer. Empty is
+  therefore "unresolved", not an authoritative board with no review lane; keep the legacy `in-review`
+  identity fallback until the caller can supply at least one resolved lane.
+  */
+  it("preserves the legacy review lane fallback for an empty resolved set", () => {
+    expect(isTaskReadyForMerge(baseTask, { reviewColumns: new Set() })).toBe(true);
+    expect(isTaskReadyForMerge(
+      { ...baseTask, column: "signoff" },
+      { reviewColumns: new Set() },
+    )).toBe(false);
+  });
+
   it("returns false when pre-merge step failed", () => {
     expect(isTaskReadyForMerge({
       ...baseTask,

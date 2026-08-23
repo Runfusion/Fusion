@@ -447,7 +447,10 @@ export interface ProjectEngineOptions {
    * Returns the merge blocker reason for a task, or null/undefined if
    * the task is eligible for merge. Imported from @fusion/core.
    */
-  getTaskMergeBlocker?: (task: Task) => string | null | undefined;
+  getTaskMergeBlocker?: (
+    task: Task,
+    options?: { reviewColumns?: ReadonlySet<string> },
+  ) => string | null | undefined;
   /**
    * Callback for insight extraction run processing.
    * Invoked after CronRunner completes a memory insight extraction schedule.
@@ -3160,14 +3163,20 @@ export class ProjectEngine {
     log?: Array<{ action?: string }>;
     updatedAt?: string | null;
     mergeDetails?: { mergeConfirmed?: boolean } | null;
-  }, maxAutoMergeRetries: number, isReviewColumn?: boolean, enforcePrRetryBackoff = false): boolean {
+  }, maxAutoMergeRetries: number, reviewColumns?: ReadonlySet<string>, enforcePrRetryBackoff = false): boolean {
     // Merge-confirmed tasks use the fast-path finalizer, which applies blocker
     // checks after clearing transient status/error state. Once that path parks
     // a blocked task as failed, skip future auto-merge retries.
     if (task.mergeDetails?.mergeConfirmed) {
       return true;
     }
-    if (this.options.getTaskMergeBlocker?.(task as Task)) return false;
+    /*
+    FNXC:MergeReadiness 2026-08-23-18:49:
+    This shared admission predicate serves both the periodic sweep and the final queue dispatch. Forward
+    their resolved lane set into the injected core blocker so neither production path reverts to the
+    legacy `in-review` literal after its surrounding column check accepted a renamed merge lane.
+    */
+    if (this.options.getTaskMergeBlocker?.(task as Task, { reviewColumns })) return false;
     // Terminal failure: don't let the cooldown sweep re-attempt a merge that
     // already gave up (verification cap, conflict-bounce cap, or non-conflict
     // error). The task is parked for human/follow-up intervention.
@@ -3185,7 +3194,11 @@ export class ProjectEngine {
     }
     return (
       (task.mergeRetries ?? 0) < maxAutoMergeRetries ||
-      this.hasAutoHealableVerificationBufferFailure(task, maxAutoMergeRetries, isReviewColumn) ||
+      this.hasAutoHealableVerificationBufferFailure(
+        task,
+        maxAutoMergeRetries,
+        reviewColumns === undefined ? undefined : reviewColumns.has(task.column),
+      ) ||
       this.isRetryCooldownElapsed(task)
     );
   }
@@ -3459,7 +3472,7 @@ export class ProjectEngine {
       return this.canMergeTask(
         t as any,
         maxAutoMergeRetries,
-        reviewLane === undefined ? undefined : t.column === reviewLane,
+        reviewLane === undefined ? undefined : new Set([reviewLane]),
         enforcePrRetryBackoff,
       );
     }) as Task[];
@@ -4143,7 +4156,7 @@ export class ProjectEngine {
             if (!this.canMergeTask(
               task as any,
               maxAutoMergeRetries,
-              mergeLoopReviewLane === undefined ? undefined : task.column === mergeLoopReviewLane,
+              mergeLoopReviewLane === undefined ? undefined : new Set([mergeLoopReviewLane]),
               pullRequestMerge,
             )) {
               // A queued retry can be rejected after an engine restart or a racing
@@ -6106,7 +6119,7 @@ export class ProjectEngine {
       const handoffReviewColumn = (await resolveTaskLifecycleColumns(store, task.id))?.review ?? "in-review";
       if (to !== handoffReviewColumn) return;
       if (task.paused) return;
-      if (this.options.getTaskMergeBlocker?.(task)) return;
+      if (this.options.getTaskMergeBlocker?.(task, { reviewColumns: new Set([handoffReviewColumn]) })) return;
 
       // Grace period before handing off to the merger. The executor's finally
       // block (session disposal, child-agent termination, in-flight reviewer
@@ -6133,7 +6146,9 @@ export class ProjectEngine {
             runtimeLog.log(`Auto-merge handoff (${task.id}) skipped: task paused`);
             return;
           }
-          const blockerReason = this.options.getTaskMergeBlocker?.(latestTask);
+          const blockerReason = this.options.getTaskMergeBlocker?.(latestTask, {
+            reviewColumns: new Set([handoffReviewColumn]),
+          });
           if (blockerReason) {
             runtimeLog.log(`Auto-merge handoff (${task.id}) skipped: ${blockerReason}`);
             return;
@@ -6252,7 +6267,8 @@ export class ProjectEngine {
     this.taskUpdatedHandler = async (task: Task) => {
       /* FNXC:WorkflowLifecycleColumns 2026-08-01-19:25 (fleet): on a renamed board this dropped EVERY card
          from the paused-review set on its next update, so a merge paused mid-flight was never interrupted. */
-      if (task.column !== ((await resolveTaskLifecycleColumns(store, task.id))?.review ?? "in-review")) {
+      const taskReviewColumn = (await resolveTaskLifecycleColumns(store, task.id))?.review ?? "in-review";
+      if (task.column !== taskReviewColumn) {
         this.pausedReviewTaskIds.delete(task.id);
         return;
       }
@@ -6291,7 +6307,7 @@ export class ProjectEngine {
         if (settings.globalPause || settings.enginePaused || !(await this.allowInReviewMergeProcessing(task, settings, store))) {
           return;
         }
-        if (this.options.getTaskMergeBlocker?.(task)) {
+        if (this.options.getTaskMergeBlocker?.(task, { reviewColumns: new Set([taskReviewColumn]) })) {
           return;
         }
 

@@ -430,12 +430,19 @@ export function getTaskMergeBlocker(
   the resolved lanes when they are known, so it can never point at a column the board does not have.
   */
   if (!options.skipColumnIdentityCheck) {
-    const inReviewLane = options.reviewColumns
-      ? options.reviewColumns.has(task.column)
+    /*
+    FNXC:MergeReadiness 2026-08-23-18:49:
+    An empty resolved lane set means the workflow supplied no usable trait answer. Preserve the
+    documented legacy identity fallback until at least one resolved review lane is available; treating
+    an empty Set as authoritative would make every column fail while the error still names `in-review`.
+    */
+    const reviewColumns = options.reviewColumns?.size ? options.reviewColumns : undefined;
+    const inReviewLane = reviewColumns
+      ? reviewColumns.has(task.column)
       : task.column === "in-review";
     if (!inReviewLane) {
-      const expected = options.reviewColumns && options.reviewColumns.size > 0
-        ? [...options.reviewColumns].map((c) => `'${c}'`).join(" or ")
+      const expected = reviewColumns
+        ? [...reviewColumns].map((c) => `'${c}'`).join(" or ")
         : "'in-review'";
       return `task is in '${task.column}', must be in ${expected}`;
     }
@@ -657,9 +664,12 @@ export function getTaskDoneBypassBlocker(
 
 export function isTaskReadyForMerge(
   task: Pick<Task, "column" | "paused" | "status" | "error" | "steps" | "workflowStepResults">,
-  options: { requiredPreMergeStepIds?: ReadonlySet<string> } = {},
+  options: { reviewColumns?: ReadonlySet<string>; requiredPreMergeStepIds?: ReadonlySet<string> } = {},
 ): boolean {
-  return getTaskMergeBlocker(task, options) === undefined;
+  return getTaskMergeBlocker(task, {
+    reviewColumns: options.reviewColumns,
+    requiredPreMergeStepIds: options.requiredPreMergeStepIds,
+  }) === undefined;
 }
 
 export interface TaskCompletionBlockerOptions {
