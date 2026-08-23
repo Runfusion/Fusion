@@ -229,7 +229,14 @@ describe("resolveAgentPrompt", () => {
     for (const result of [defaultExecutor, seniorEngineer]) {
       expect(result).toContain("Do not call `fn_workflow_select` to change the workflow of the task you are executing");
       expect(result).toContain("The only exception is when the user explicitly requested a specific workflow for this task");
-      expect(result).toContain("You may still set the workflow on tasks you create via `fn_task_create` or `fn_delegate_task`");
+      /*
+      FNXC:AgentPrompts 2026-08-23-23:05:
+      The "you may still set the workflow on tasks you create" carve-out was DELETED by FN-125
+      (0b4dbd219b), which withheld `fn_task_create`/`fn_delegate_task` from workflow agents — an
+      executor can no longer create a task, so the carve-out describes an impossible action. The
+      remaining guarantee is the prohibition plus its single user-directed exception.
+      */
+      expect(result).not.toContain("You may still set the workflow on tasks you create");
     }
   });
 

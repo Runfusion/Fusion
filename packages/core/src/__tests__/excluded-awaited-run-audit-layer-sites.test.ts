@@ -120,13 +120,25 @@ describe("FN-9178 awaited data-layer audit characterization", () => {
     });
     if (_state.includes("settling")) vi.useFakeTimers();
     writer.capture({ origin: "insight", summary: "summary", insightId: "INS-1" });
-    if (_state === "never-settling") {
+    if (_state.includes("settling")) {
+      /*
+      FNXC:RunAudit 2026-08-23-23:25:
+      REWRITTEN for FN-9181 (5c008bab97), which bounded this seam and thereby changed exactly what
+      these two cases characterized. Before it, an injected audit that never (or late) settled kept
+      the detached capture promise pending forever and nothing was ever logged — that silence was
+      the old assertion. Now `emitBoundedRunAudit` gives up at CORE_RUN_AUDIT_EMIT_TIMEOUT_MS
+      (2_000ms), so the capture SETTLES and the stalled sink is reported once through the writer's
+      bounded diagnostic. Both properties are the point of the class-A decision, so assert them
+      rather than the silence the seam deliberately removed.
+      */
+      let settled = false;
+      const drained = writer.flushPendingCaptures().then(() => { settled = true; });
       await vi.advanceTimersByTimeAsync(2_100);
-      expect(logger.warn).not.toHaveBeenCalled();
-    } else if (_state === "late-settling") {
-      await vi.advanceTimersByTimeAsync(2_100);
-      await writer.flushPendingCaptures();
-      expect(logger.warn).not.toHaveBeenCalled();
+      await drained;
+      expect(settled).toBe(true);
+      expect(logger.warn).toHaveBeenCalledTimes(1);
+      // Origin-only diagnostic: recall content never reaches the log.
+      expect(logger.warn).toHaveBeenCalledWith("Automatic recall capture audit failed for insight");
     } else {
       await writer.flushPendingCaptures();
       expect(logger.warn).toHaveBeenCalledTimes(_state === "absent" ? 0 : 1);

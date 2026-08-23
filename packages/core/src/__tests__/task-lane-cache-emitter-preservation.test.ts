@@ -59,6 +59,14 @@ public move, task-update, dependency-update, and archive producer paths rather t
 describe("task:moved emitter lane-cache preservation", () => {
   it("keeps the completion emitter's warm cache for an undefined failure payload and overwrites it on success", async () => {
     const task = {
+      /*
+      FNXC:WorkflowEvents 2026-08-23-16:02:
+      `moveToDoneImpl` now refuses completion while an ENABLED pre-merge optional group has no terminal
+      result (the workflow graph became the only merge authority). This fixture is about lane-cache
+      preservation, not merge gating, so it declares an explicit empty enabled-step set — the honest way
+      to describe a card with no pre-merge gates — rather than relying on the default-on groups.
+      */
+      enabledWorkflowSteps: [],
       id: "FN-126", column: "in-review", title: "cache", description: "cache", steps: [], log: [],
       createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString(),
     } as unknown as Task;

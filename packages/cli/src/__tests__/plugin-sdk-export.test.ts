@@ -117,7 +117,14 @@ describe("plugin-sdk export surface", () => {
      * Bundled plugins must receive runtime values through the CLI source shim so clean package builds never leave private `@fusion/core` imports unresolved.
      */
     expect(shimRaw).toContain('from "../../core/src/agents/agent-store.js"');
-    expect(shimRaw).toContain("export { AgentStore, postgresSchema }");
+    /*
+    FNXC:BundledPlugins 2026-08-23-17:00:
+    PIN THE BINDINGS, NOT THE LIST. The shim's re-export list grows as bundled plugins need more core
+    values (`redactSecrets`, `getErrorMessage` joined it), and an exact-literal pin failed on an
+    ADDITION — the one change that cannot break the contract this test guards. Require the two
+    bindings to be exported and let the list grow.
+    */
+    expect(shimRaw).toMatch(/export\s*\{[^}]*\bAgentStore\b[^}]*\bpostgresSchema\b[^}]*\}/);
     expect(shimRaw).toContain("export function superviseSpawn");
     expect(shimRaw).not.toContain("../../core/dist/");
   });

@@ -17,8 +17,11 @@ type CompleteSettings<T> = { [K in keyof Required<T>]: Required<T>[K] | undefine
  * split documented in `moved-settings.ts`.
  *
  * This union is NOT compile-time-enforced against `MOVED_SETTINGS_KEYS`.
- * Enforcement lives in `src/__tests__/settings-consistency.test.ts` (every key
- * must belong to exactly one regime). A STALE entry here only loosens the `Omit`
+ * Enforcement note (corrected 2026-08-23): this block long claimed enforcement lives in
+ * `src/__tests__/settings-consistency.test.ts`, but NO SUCH FILE EXISTS — the "every key belongs to
+ * exactly one regime" union has no direct guard today. What does exist:
+ * `builtin-workflow-settings-triage.test.ts` (core) pins the workflow-native catalogs key by key, and
+ * `workflow-settings-fallback-alignment.test.ts` (engine) catches a key declared in both regimes. A STALE entry here only loosens the `Omit`
  * type — at worst it lets `DEFAULT_PROJECT_SETTINGS` drop a key it should keep;
  * it can never re-add a key to the schema object. A MISSING entry surfaces as a
  * type error on `DEFAULT_PROJECT_SETTINGS` if that key still has a default.
@@ -40,7 +43,21 @@ type MovedProjectSettingsKey =
   | "maxReviewerContextRetries"
   | "maxReviewerFallbackRetries"
   | "reflectionEnabled"
-  /* FNXC:ReviewConvergence 2026-08-23-21:15: FN-149 declared these six in BUILTIN_WORKFLOW_SETTINGS but never registered them as moved, so they stayed in ProjectSettingsSchema and DEFAULT_PROJECT_SETTINGS had to re-declare their defaults — the dual-regime drift `workflow-settings-fallback-alignment` guards. They are workflow-native, so they belong to the moved regime. */
+  /*
+  FNXC:ReviewConvergence 2026-08-23-23:20 (comment corrected after review):
+  FN-149 declared these six in `BUILTIN_REVIEW_REVISION_SETTINGS` but left them inside
+  `ProjectSettingsSchema`, so `DEFAULT_PROJECT_SETTINGS` had to re-declare their defaults — the
+  dual-regime drift `workflow-settings-fallback-alignment` guards. Listing them here removes them
+  from that schema `Omit`, which is the whole effect: the workflow declaration becomes the single
+  source of each default.
+
+  PRECISION, because the earlier wording of this note ("they belong to the moved regime") was read as
+  a stronger claim than the change makes: this type is consumed ONLY by the `ProjectSettingsSchema`
+  Omit. It does NOT add them to the runtime moved catalog (`BUILTIN_MOVED_WORKFLOW_SETTINGS`), so
+  `MOVED_SETTINGS_KEYS` does not contain them and they are not tombstoned on the project-settings
+  write path. That is deliberate and matches FN-149: they are workflow-native settings, not migrated
+  project settings, and `builtin-workflow-settings-triage.test.ts` asserts exactly that regime split.
+  */
   | "reviewConvergenceEscalationEnabled"
   | "reviewConvergenceEscalationProvider"
   | "reviewConvergenceEscalationModelId"

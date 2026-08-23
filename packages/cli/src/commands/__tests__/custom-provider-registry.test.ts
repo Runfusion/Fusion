@@ -7,12 +7,17 @@ import {
 } from "../custom-provider-registry.js";
 
 /*
-FNXC:CustomProviderModelWindows 2026-08-19-16:49:
-RUFU-123: these tests now await the async register/reregister calls. Since the
-bounded-refresh refactor (refreshFusionModelRegistry defers modelRegistry.refresh() to a
-microtask), the synchronous `expect(refresh).toHaveBeenCalledTimes(1)` assertions failed
-deterministically on main (observed pre-existing at ecb95a48e: 9/17 red); awaiting the
-call restores the original assertion intent without weakening it.
+FNXC:CustomProviders 2026-08-23-23:00:
+FN-7622 moved this implementation into @fusion/engine and the FN-8902 bounded
+model-registry refresh made both register/reregister entry points ASYNC. Their
+`refresh()` call now lands after an await, so every case here must await the
+call before asserting; a fire-and-forget call asserted synchronously sees zero
+refreshes.
+
+FNXC:CustomProviderModelWindows 2026-08-23-23:42:
+RUFU-123/RUFU-143 keep the same await-before-assert contract: per-model
+contextWindow/maxTokens and thinking-format flags ride the same async
+register/reregister path and would go silent if asserted synchronously.
 */
 describe("custom-provider-registry", () => {
   it.each([

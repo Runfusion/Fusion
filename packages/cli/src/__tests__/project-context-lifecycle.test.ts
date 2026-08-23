@@ -36,6 +36,13 @@ vi.mock("@fusion/core", () => ({
     backend: { mode: "embedded" },
     shutdown: lifecycle.backendShutdown,
   })),
+  /*
+  FNXC:PostgresCliLifecycle 2026-08-23-16:07:
+  `createLocalStore` stamps a durable consumer identity (`buildConsumerId("cli")`) on every store it
+  boots, so this factory-level mock of `@fusion/core` must export it or the store never boots here.
+  Mirrors the real helper's pure role/instance-key join rather than returning a fixed string.
+  */
+  buildConsumerId: vi.fn((role: string, instanceKey?: string) => instanceKey === undefined ? role : `${role}:${instanceKey}`),
   hasProjectIdentity: vi.fn(() => true),
   isValidSqliteDatabaseFile: vi.fn(() => false),
 }));

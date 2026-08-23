@@ -77,7 +77,14 @@ describe("workflow documentation current behavior", () => {
     const settings = doc("docs/settings-reference.md");
     // #2400: project model lanes now apply across workflows, so the docs
     // renamed "Default workflow model lanes" to "Project workflow model lanes".
-    expect(settings).toContain("Settings → Project Models → Project workflow model lanes");
+    /*
+    FNXC:DocsCurrency 2026-08-23-16:35:
+    FN-003 consolidated the model-override settings under one group and renamed the path again:
+    the lanes now live at **Settings → Models · Project → Model Overrides → Workflow lanes**
+    (`ProjectModelsSection`'s "Workflow lanes" subheading). This pin tracks the SHIPPED UI path, so
+    it moves with the settings reorganization instead of preserving the pre-FN-003 wording.
+    */
+    expect(settings).toContain("Settings → Models · Project → Model Overrides → Workflow lanes");
     expect(settings).toContain("workflow editor Values tab");
     expect(settings).toContain("Built-in prompt overrides");
     expect(settings).toContain("not writable through");

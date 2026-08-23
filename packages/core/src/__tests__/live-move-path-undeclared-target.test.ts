@@ -132,7 +132,14 @@ pgDescribe("live move path — which targets it accepts after the Planning merge
     ordinary lifecycle, which is far worse than the defect it fixes.
     */
     const store = h.store();
-    const task = await store.createTask({ description: "normal lifecycle" });
+    /*
+    FNXC:WorkflowColumns 2026-08-23-23:15:
+    This case is about COLUMN declaration, not merge gating. FN-9191 (`PRE_MERGE_STEPS_NOT_RUN_BLOCKER`,
+    task-merge.ts) made an enabled-but-unrun pre-merge gate refuse in-review -> done, and the default
+    workflow enables Code Review, so a bare `createTask` can no longer walk the lifecycle here. Declare
+    no pre-merge steps so the move path — the thing under test — is what decides.
+    */
+    const task = await store.createTask({ description: "normal lifecycle", enabledWorkflowSteps: [] });
 
     await store.moveTask(task.id, "in-progress" as never, { moveSource: "user" } as never);
     expect(await column(task.id)).toBe("in-progress");
@@ -178,7 +185,14 @@ pgDescribe("live move path — which targets it accepts after the Planning merge
     still succeed under `recoveryRehome`.
     */
     const store = h.store();
-    const task = await store.createTask({ description: "recovery rehome" });
+    /*
+    FNXC:WorkflowColumns 2026-08-23-23:15:
+    This case is about COLUMN declaration, not merge gating. FN-9191 (`PRE_MERGE_STEPS_NOT_RUN_BLOCKER`,
+    task-merge.ts) made an enabled-but-unrun pre-merge gate refuse in-review -> done, and the default
+    workflow enables Code Review, so a bare `createTask` can no longer walk the lifecycle here. Declare
+    no pre-merge steps so the move path — the thing under test — is what decides.
+    */
+    const task = await store.createTask({ description: "recovery rehome", enabledWorkflowSteps: [] });
 
     /* `archived -> todo` is the discriminating pair: the legacy table's `archived`
        row is `["done"]` only, so ordinary adjacency refuses it while recovery must

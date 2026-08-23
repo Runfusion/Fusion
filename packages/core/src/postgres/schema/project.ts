@@ -2622,4 +2622,19 @@ export const projectTableNames = [
   land report the previous test's successor as the busy holder), and health compaction skipped them.
   */
   "workspace_coordination_leases", "workspace_land_intents",
+  /*
+  FNXC:PgTableRegistry 2026-08-23-16:05:
+  Second occurrence of the FN-9059 omission above, found by a leaking `current_plan_evidence` row:
+  a task's plan-evidence version counter continued across tests (a fresh KB-002 started at v2), so
+  `task-dependency-mutation.pg` asserted version 2 and read 3 in a whole-file run while passing in
+  isolation. Every table declared with `projectSchema.table(...)` must be registered here — the
+  harness reset and health compaction both drive off this list, and an unregistered table is simply
+  never cleaned. `project-table-registry.test.ts` now fails when the two drift apart.
+  */
+  "chat_session_tags", "chat_tags", "configuration_revisions", "current_plan_evidence",
+  "mission_lineage_stops", "spec_drift_reports", "spec_locks", "symbol_locks",
+  "task_lifecycle_consumer_cursors", "task_lifecycle_consumer_dead_letters",
+  "task_lifecycle_consumer_receipts", "task_lifecycle_consumer_registrations",
+  "task_lifecycle_event_seq", "task_lifecycle_events", "task_verification_requests",
+  "unplanned_execution_blocks", "workflow_agent_capacity_leases",
 ] as const;
