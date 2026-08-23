@@ -1262,6 +1262,7 @@
   "chat": {
     "archive": "Archive",
     "attachFiles": "Attach files",
+    "backToConversations": "Back to conversations",
     "cancel": "Cancel",
     "cancelButton": "Cancel",
     "clearConversationFailed": "Failed to clear conversation",
