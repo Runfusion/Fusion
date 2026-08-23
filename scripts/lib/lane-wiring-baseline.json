@@ -1,13 +1,11 @@
 {
   "counts": {
-    "packages/core/src/merge/task-merge.ts": 1,
     "packages/core/src/store.ts": 1,
     "packages/core/src/task-store/branch-and-pr-entities.ts": 1,
     "packages/core/src/task-store/moves.ts": 1,
     "packages/core/src/task-store/task-update.ts": 1,
     "packages/engine/src/merge/auto-merge-finalization.ts": 1,
     "packages/engine/src/project-engine.ts": 1,
-    "packages/engine/src/self-healing.ts": 1,
     "packages/engine/src/runtimes/in-process-runtime.ts": 1,
     "packages/engine/src/self-healing.ts": 1,
     "packages/dashboard/src/routes/register-task-workflow-routes.ts": 1,
