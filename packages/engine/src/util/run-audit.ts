@@ -176,6 +176,8 @@ export type GitMutationType =
    * ```
    */
   | "worktree:admin-entry-pruned"
+  | "worktree:corrupt-registered-preserved"
+  | "worktree:corrupt-preserve-failed"
   | "worktree:removal-refused-active-session"
   | "worktree:removal-forced-over-active-session"
   | "worktree:active-session-reconciled"

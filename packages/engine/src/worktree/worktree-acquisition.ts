@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { lstat, mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, realpath, rename, writeFile } from "node:fs/promises";
 import { exec } from "node:child_process";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -40,8 +40,9 @@ import {
 } from "./worktrunk-failure-handler.js";
 import { resolveWorkspaceReviewRemediationRepository } from "../executor/workspace-review-remediation.js";
 import type { RunAuditor } from "../util/run-audit.js";
-import { reconcileSecretsEnvFingerprint, writeSecretsEnvFile } from "./secrets-env-writer.js";
+import { cleanupSecretsEnvFile, reconcileSecretsEnvFingerprint, writeSecretsEnvFile } from "./secrets-env-writer.js";
 import { removeDesktopBuildArtifacts } from "./worktree-desktop-artifacts.js";
+import { ensureContainedDirectory, preserveGeneratedResidue } from "./worktree-generated-residue.js";
 import { installTaskWorktreeIdentityGuard } from "./worktree-hooks.js";
 import { copyConfiguredWorktreeFiles, type WorktreeCopyFileResult } from "./worktree-copy-files.js";
 import { resolveCapturedBaseCommitSha } from "../execution/base-commit-capture.js";
@@ -53,8 +54,6 @@ import { normalizeWorkspaceTaskRouting } from "../executor/workspace-config-reso
 
 const execAsync = promisify(exec);
 const WORKTREE_BACKEND_MARKER = "fusion-worktree-backend-kind";
-const PRESERVED_ORPHAN_RETENTION_COUNT = 10;
-const PRESERVED_ORPHAN_NAME_PATTERN = /^[a-z0-9][a-z0-9-]*-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
 async function resolveWorktreeBackendMarkerPath(worktreePath: string): Promise<string> {
   const { stdout } = await execAsync(`git rev-parse --git-path ${JSON.stringify(WORKTREE_BACKEND_MARKER)}`, {
@@ -175,80 +174,6 @@ export class RepoRootWorktreeError extends Error {
 }
 
 const INIT_OUTCOME_MAX_CHARS = 2_000;
-
-async function ensureContainedDirectory(parentCanonicalPath: string, name: string): Promise<string> {
-  const candidate = join(parentCanonicalPath, name);
-  try {
-    await mkdir(candidate);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-  }
-  const canonicalCandidate = await realpath(candidate);
-  const candidateRelative = relative(parentCanonicalPath, canonicalCandidate);
-  if (candidateRelative === "" || candidateRelative.startsWith("..") || isAbsolute(candidateRelative)) {
-    throw new Error(`Refusing to use recovery directory outside ${parentCanonicalPath}: ${canonicalCandidate}`);
-  }
-  if (!(await stat(canonicalCandidate)).isDirectory()) {
-    throw new Error(`Refusing to use non-directory recovery path: ${canonicalCandidate}`);
-  }
-  return canonicalCandidate;
-}
-
-interface PreservedOrphanCandidate {
-  path: string;
-  canonicalPath: string;
-  mtimeMs: number;
-}
-
-async function inspectPreservedOrphanCandidate(
-  canonicalRecoveryRoot: string,
-  name: string,
-): Promise<PreservedOrphanCandidate | null> {
-  if (!PRESERVED_ORPHAN_NAME_PATTERN.test(name)) return null;
-  const path = join(canonicalRecoveryRoot, name);
-  try {
-    const pathStat = await lstat(path);
-    if (!pathStat.isDirectory() || pathStat.isSymbolicLink()) return null;
-    const canonicalPath = await realpath(path);
-    const candidateRelative = relative(canonicalRecoveryRoot, canonicalPath);
-    if (candidateRelative !== name || candidateRelative.includes("/") || candidateRelative.includes("\\") || isAbsolute(candidateRelative)) {
-      return null;
-    }
-    return { path, canonicalPath, mtimeMs: pathStat.mtimeMs };
-  } catch {
-    return null;
-  }
-}
-
-/**
- * FNXC:TaskPinnedWorktrees 2026-08-10-01:12:
- * Each actual orphan-recovery root retains its newest ten generated task-id-plus-UUID directories. Pruning is fail-soft and removes only direct canonical non-symlink directories after an immediate active-session check; unknown, unstatable, or active entries are preserved.
- */
-async function prunePreservedOrphanDirectories(
-  canonicalRecoveryRoot: string,
-  logger?: { warn: (message: string) => void },
-): Promise<void> {
-  try {
-    const entries = await readdir(canonicalRecoveryRoot, { withFileTypes: true });
-    const candidates = (await Promise.all(entries.map((entry) =>
-      inspectPreservedOrphanCandidate(canonicalRecoveryRoot, entry.name))))
-      .filter((candidate): candidate is PreservedOrphanCandidate => candidate !== null)
-      .sort((left, right) => right.mtimeMs - left.mtimeMs || right.path.localeCompare(left.path));
-
-    for (const candidate of candidates.slice(PRESERVED_ORPHAN_RETENTION_COUNT)) {
-      try {
-        const current = await inspectPreservedOrphanCandidate(canonicalRecoveryRoot, candidate.path.slice(canonicalRecoveryRoot.length + 1));
-        if (!current || current.canonicalPath !== candidate.canonicalPath) continue;
-        if (activeSessionRegistry.isPathActive(current.path) || activeSessionRegistry.isPathActive(current.canonicalPath)) continue;
-        await rm(current.path, { recursive: true, force: true });
-      } catch (error) {
-        logger?.warn(`Failed to prune preserved orphan directory ${candidate.path}: ${formatError(error).message}`);
-      }
-    }
-  } catch (error) {
-    logger?.warn(`Failed to inspect preserved orphan retention root ${canonicalRecoveryRoot}: ${formatError(error).message}`);
-  }
-}
 
 function configuredCommandErrorMessage(result: { spawnError?: string | Error; timedOut?: boolean; exitCode?: number | null }): string {
   if (result.spawnError) return `Failed to start command: ${result.spawnError}`;
@@ -1025,16 +950,36 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
             } catch (error) {
               logger?.warn(`${task.id}: failed to log preserved orphan ${preservedPath}: ${formatError(error).message}`);
             }
-            await prunePreservedOrphanDirectories(actualRecoveryRoot, logger);
           } else {
-            await removeWorktree({
+            const restoreGeneratedResidue = await preserveGeneratedResidue(pinnedPath, rootDir, logger);
+            const removeStalePinnedWorktree = () => removeWorktree({
               rootDir,
               worktreePath: pinnedPath,
               settings,
               reason: RemovalReason.PoolPrune,
               taskId: task.id,
               audit: undefined,
+            }).then(() => undefined);
+            const cleanupResult = await cleanupSecretsEnvFile({
+              worktreePath: pinnedPath,
+              taskId: task.id,
+              expectedFingerprint: null,
+              filename: ".env",
+              audit: undefined,
+              logger,
+              onVerifiedBeforeDelete: removeStalePinnedWorktree,
             });
+            if (cleanupResult.outcome === "cleaned") {
+              await restoreGeneratedResidue(true);
+            } else {
+              try {
+                await removeStalePinnedWorktree();
+              } catch (error) {
+                await restoreGeneratedResidue();
+                throw error;
+              }
+              await restoreGeneratedResidue(true);
+            }
           }
         } catch (removeErr) {
           /*
