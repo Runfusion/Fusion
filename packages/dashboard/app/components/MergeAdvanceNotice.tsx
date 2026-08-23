@@ -1,6 +1,7 @@
 import { X } from "lucide-react";
 import { useRef } from "react";
 import { useTranslation } from "react-i18next";
+import { Banner } from "./Banner";
 import StashConflictModal from "./StashConflictModal";
 import { useMergeAdvanceNotice } from "../hooks/useMergeAdvanceNotice";
 import "./MergeAdvanceNotice.css";
@@ -118,7 +119,23 @@ export default function MergeAdvanceNotice({ projectId, apiBase = "/api" }: Merg
 
   return (
     <>
-      <div ref={bannerRef} className="merge-advance-notice" role="status" aria-live="polite">
+      <Banner
+        ref={bannerRef}
+        className="merge-advance-notice"
+        tone="warning"
+        role="status"
+        aria-live="polite"
+        actions={<div className="merge-advance-notice__actions">
+          {conflictState ? null : (
+            <button type="button" className="btn btn-sm" disabled={pulling} onClick={() => { void pull(); }}>
+              {t("actions.pull", "Pull")}
+            </button>
+          )}
+          <button type="button" className="merge-advance-notice__dismiss touch-target" aria-label={t("merge.dismissNotice", "Dismiss merge advance notice")} onClick={dismissWithFocusGuard}>
+            <X aria-hidden="true" />
+          </button>
+        </div>}
+      >
         <div className="merge-advance-notice__content">
           <strong>{t("merge.advancedTo", "{{branch}} advanced to {{sha}}.", { branch: notice.integrationBranch, sha: shortSha(notice.toSha) })}</strong>{" "}
           {t("merge.checkedOutBehind", "Your checked-out copy at {{path}} is behind.", { path: checkout.worktreePath })}
@@ -127,22 +144,7 @@ export default function MergeAdvanceNotice({ projectId, apiBase = "/api" }: Merg
           {pulling ? <span className="merge-advance-notice__hint"> {t("merge.pulling", "Pulling…")}</span> : null}
           {renderPushSection()}
         </div>
-        <div className="merge-advance-notice__actions">
-          {conflictState ? null : (
-            <button type="button" className="btn btn-sm" disabled={pulling} onClick={() => { void pull(); }}>
-              {t("actions.pull", "Pull")}
-            </button>
-          )}
-          <button
-            type="button"
-            className="merge-advance-notice__dismiss touch-target"
-            aria-label={t("merge.dismissNotice", "Dismiss merge advance notice")}
-            onClick={dismissWithFocusGuard}
-          >
-            <X aria-hidden="true" />
-          </button>
-        </div>
-      </div>
+      </Banner>
       <StashConflictModal
         open={conflictState !== null}
         onClose={(stashDropped) => {
