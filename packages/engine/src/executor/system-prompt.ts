@@ -318,7 +318,10 @@ export function getExecutorSystemPrompt(
   settings: Settings,
   toolAvailability?: { taskCreateWithheld?: boolean; delegateWithheld?: boolean },
 ): string {
-  const customPrompt = resolveAgentPrompt("executor", settings.agentPrompts);
+  const customPrompt = resolveAgentPrompt("executor", settings.agentPrompts, {
+    taskCreateToolAvailable: toolAvailability?.taskCreateWithheld === false,
+    delegateTaskToolAvailable: toolAvailability?.delegateWithheld === false,
+  });
   const basePrompt = customPrompt || EXECUTOR_SYSTEM_PROMPT;
   /*
   FNXC:TaskRecommendations 2026-08-10-01:15:

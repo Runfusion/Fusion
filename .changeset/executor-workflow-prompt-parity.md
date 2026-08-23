@@ -1,7 +1,7 @@
 ---
-"@fusion/core": patch
+"@runfusion/fusion": patch
 ---
 
-summary: Restore executor guidance for assigning workflows to newly created tasks.
+summary: Match executor workflow guidance to the task-creation tools available in each session.
 category: fix
-dev: Executor prompt templates again state that agents may set workflows on tasks they create, matching the guarded prompt contract while preserving the ban on rerouting the task currently being executed.
+dev: Built-in executor variants render created-task workflow guidance only on creator-capable tool surfaces.
