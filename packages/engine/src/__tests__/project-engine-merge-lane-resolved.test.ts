@@ -222,4 +222,100 @@ describe("the other merge-lane surfaces on a renamed board", () => {
     expect(self.internalEnqueueMerge).toHaveBeenCalledWith(task.id);
     expect(self.options.getTaskMergeBlocker(task, { reviewColumns: new Set(["signoff"]) })).toBeUndefined();
   });
+
+  /*
+  FNXC:MergeReadiness 2026-08-23-20:25:
+  Lane forwarding is required at every live ProjectEngine merge-blocker door, not only unpause. The
+  periodic sweep, final dequeue, and both sides of the handoff grace window must give the blocker the
+  resolved `signoff` lane; otherwise any one of those callers can silently reject a renamed-lane card.
+  */
+  it("passes the resolved lane from the periodic sweep into the merge blocker", async () => {
+    const { store, task } = storeFor("signoff", RENAMED_IR);
+    const blocker = vi.fn(() => "blocked for assertion");
+    const self = {
+      options: { getTaskMergeBlocker: blocker, getMergeStrategy: vi.fn(() => "direct") },
+      runtime: { getTaskStore: () => store },
+      canMergeTask: (ProjectEngine.prototype as unknown as { canMergeTask: (...args: unknown[]) => boolean }).canMergeTask,
+      allowInReviewMergeProcessing: vi.fn(async () => true),
+      loadMergeSweepBatch: vi.fn(async () => ({})),
+      classifyMergeSweepCandidate: vi.fn(async () => ({ admit: true })),
+      mergeSweepHoldReasons: new Map<string, string>(),
+      internalEnqueueMerge: vi.fn(),
+    };
+
+    const admitted = await (ProjectEngine.prototype as unknown as {
+      enqueueEligibleInReviewTasks: (this: unknown, tasks: readonly Task[], settings: Pick<Settings, "autoMerge" | "maxAutoMergeRetries">) => Promise<number>;
+    }).enqueueEligibleInReviewTasks.call(self, [task], { autoMerge: true, maxAutoMergeRetries: 3 });
+
+    expect(admitted).toBe(0);
+    expect(blocker).toHaveBeenCalledWith(task, { reviewColumns: new Set(["signoff"]) });
+  });
+
+  it("passes the resolved lane from the final dequeue into the merge blocker", async () => {
+    const { store, task } = storeFor("signoff", RENAMED_IR);
+    const blocker = vi.fn(() => "blocked for assertion");
+    const mergeQueue = [task.id];
+    const self = {
+      options: { getTaskMergeBlocker: blocker, getMergeStrategy: vi.fn(() => "direct") },
+      runtime: { getTaskStore: () => store },
+      config: { workingDirectory: "/unused" },
+      mergeQueue,
+      coordinatorAdmittedMergeTaskIds: new Set<string>(),
+      mergeRunning: false,
+      mergeRunningSince: 0,
+      mergeAbortController: null,
+      shuttingDown: false,
+      reconcileStaleMergeActive: vi.fn(),
+      getShadowMergeRequestCandidateId: vi.fn(async () => null),
+      pickNextMergeTaskId: vi.fn(async () => mergeQueue.shift()),
+      hasMergeResolvers: vi.fn(() => false),
+      allowInReviewMergeProcessing: vi.fn(async () => true),
+      canMergeTask: (ProjectEngine.prototype as unknown as { canMergeTask: (...args: unknown[]) => boolean }).canMergeTask,
+      schedulePrMergeRetry: vi.fn(),
+      clearActiveMergeClaim: vi.fn(),
+      clearMergeActive: vi.fn(),
+    };
+
+    await (ProjectEngine.prototype as unknown as {
+      drainMergeQueue: (this: unknown) => Promise<void>;
+    }).drainMergeQueue.call(self);
+
+    expect(blocker).toHaveBeenCalledWith(task, { reviewColumns: new Set(["signoff"]) });
+  });
+
+  it("passes the resolved lane to both immediate and post-grace handoff blockers", async () => {
+    vi.useFakeTimers();
+    try {
+      const { store, task } = storeFor("signoff", RENAMED_IR);
+      const blocker = vi.fn(() => undefined);
+      const self = {
+        options: { getTaskMergeBlocker: blocker },
+        taskMovedHandler: undefined as unknown,
+        mergeActive: new Set<string>(),
+        mergeQueue: [] as string[],
+        activeMergeTaskId: null as string | null,
+        clearMergeActive: vi.fn(),
+        allowInReviewMergeProcessing: vi.fn(async () => true),
+        classifyMergeSweepCandidate: vi.fn(async () => ({ admit: true })),
+        internalEnqueueMerge: vi.fn(),
+      };
+
+      (ProjectEngine.prototype as unknown as {
+        wireAutoMerge: (this: unknown, s: TaskStore, cwd: string) => void;
+      }).wireAutoMerge.call(self, store, "/unused");
+
+      await (self.taskMovedHandler as (event: { task: Task; to: string }) => Promise<void>)({ task, to: "signoff" });
+
+      expect(blocker).toHaveBeenCalledTimes(1);
+      expect(blocker).toHaveBeenLastCalledWith(task, { reviewColumns: new Set(["signoff"]) });
+
+      await vi.runOnlyPendingTimersAsync();
+
+      expect(blocker).toHaveBeenCalledTimes(2);
+      expect(blocker).toHaveBeenLastCalledWith(task, { reviewColumns: new Set(["signoff"]) });
+      expect(self.internalEnqueueMerge).toHaveBeenCalledWith(task.id);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
