@@ -362,27 +362,29 @@ describe("ChatView — rooms (FN-3805..FN-3811 contract)", () => {
 
   it("shows Create room in the mobile footer and keeps New Chat in the active header", async () => {
     const viewportSpy = mockMobileViewport();
+    try {
+      const { container } = await renderRoomDetailWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} experimentalFeatures={{ chatRooms: true }} />);
 
-    const { container } = await renderRoomDetailWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} experimentalFeatures={{ chatRooms: true }} />);
-
-    const createRoomButton = screen.getByTestId("chat-create-room-btn");
-    expect(createRoomButton.closest(".chat-sidebar-footer")).toBeInTheDocument();
-    expect(screen.getByTestId("chat-new-btn").closest(".view-header")).toBeInTheDocument();
-    expect(container.querySelector(".chat-sidebar-rooms-header")).not.toBeInTheDocument();
-
-    viewportSpy.mockRestore();
+      const createRoomButton = screen.getByTestId("chat-create-room-btn");
+      expect(createRoomButton.closest(".chat-sidebar-footer")).toBeInTheDocument();
+      expect(screen.getByTestId("chat-new-btn").closest(".view-header")).toBeInTheDocument();
+      expect(container.querySelector(".chat-sidebar-rooms-header")).not.toBeInTheDocument();
+    } finally {
+      viewportSpy.mockRestore();
+    }
   });
 
   it("keeps Create room in rooms header on desktop and omits rooms footer", async () => {
     const viewportSpy = mockDesktopViewport();
+    try {
+      const { container } = await renderRoomDetailWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} experimentalFeatures={{ chatRooms: true }} />);
 
-    const { container } = await renderRoomDetailWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} experimentalFeatures={{ chatRooms: true }} />);
-
-    const createRoomButton = screen.getByTestId("chat-create-room-btn");
-    expect(createRoomButton.closest(".chat-sidebar-rooms-header")).toBeInTheDocument();
-    expect(container.querySelector(".chat-sidebar-footer")).not.toBeInTheDocument();
-
-    viewportSpy.mockRestore();
+      const createRoomButton = screen.getByTestId("chat-create-room-btn");
+      expect(createRoomButton.closest(".chat-sidebar-rooms-header")).toBeInTheDocument();
+      expect(container.querySelector(".chat-sidebar-footer")).not.toBeInTheDocument();
+    } finally {
+      viewportSpy.mockRestore();
+    }
   });
 
   it.each([
