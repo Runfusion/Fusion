@@ -183,7 +183,7 @@ describe("useGitHubStarPromptShown", () => {
   });
 
   /*
-  FNXC:GithubStarAsk 2026-08-23-23:47:
+  FNXC:GithubStarAsk 2026-08-23-23:43:
   Cross-surface regression: the mount-time lookup can be stale by the time a trigger fires. First-run
   setup routinely has a dashboard tab open while the operator answers `fn onboard` in a terminal, so
   the stamp lands AFTER this tab looked. Both show-triggers (a task reaching done, and onboarding

@@ -79,7 +79,7 @@ function adoptDismissalLocally(): void {
 }
 
 /*
-FNXC:GithubStarAsk 2026-08-23-23:47:
+FNXC:GithubStarAsk 2026-08-23-23:43:
 Re-reads the durable answer at the moment a trigger wants to SHOW the ask, and returns whether it is
 already answered. The mount-time lookup alone is not enough: first-run setup routinely has a dashboard
 tab already open while the operator answers `fn onboard` in a terminal, so a stamp can land after that

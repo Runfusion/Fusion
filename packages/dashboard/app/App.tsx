@@ -832,7 +832,7 @@ function AppInner() {
   const { dismissed: gitHubStarPromptDismissed, resolved: gitHubStarPromptResolved } = useGitHubStarPromptState();
   const gitHubStarPromptShown = gitHubStarPromptDismissed || !gitHubStarPromptResolved;
   /*
-  FNXC:GithubStarAsk 2026-08-23-23:47:
+  FNXC:GithubStarAsk 2026-08-23-23:43:
   Every trigger that would SHOW the ask re-reads the durable answer first — both of them route through
   here: a task first reaching done, and onboarding completing. The mount-time lookup can be stale by
   then (first-run setup routinely has this tab open while the operator answers `fn onboard` in a
