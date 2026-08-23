@@ -1,6 +1,7 @@
 import { useTranslation } from "react-i18next";
 import { Loader2 } from "lucide-react";
 import { useEngineStatus } from "../hooks/useEngineStatus";
+import { Banner } from "./Banner";
 import "./EngineStatusBanner.css";
 
 interface EngineStatusBannerProps {
@@ -24,39 +25,28 @@ export function EngineStatusBanner({ projectId }: EngineStatusBannerProps) {
     : t("engineBanner.dashboardOnly", "This dashboard cannot start engines from the current process. Run `fn serve` for this project to enable task execution and live automation.");
 
   return (
-    <section className="engine-status-banner" role="status" aria-live="polite" data-testid="engine-status-banner">
-      <div className="engine-status-banner__indicator" aria-hidden="true">
-        <span className={statusDotClass} />
-      </div>
-      <div className="engine-status-banner__content">
-        <div className="engine-status-banner__title">{t("engineBanner.title", "Project engine is not connected")}</div>
-        <p className="engine-status-banner__body">
+    <Banner
+      as="section"
+      className="engine-status-banner"
+      tone="warning"
+      icon={<div className="engine-status-banner__indicator" aria-hidden="true"><span className={statusDotClass} /></div>}
+      title={<div className="engine-status-banner__title">{t("engineBanner.title", "Project engine is not connected")}</div>}
+      role="status"
+      aria-live="polite"
+      data-testid="engine-status-banner"
+      actions={canStart ? <button type="button" className="btn btn-primary btn-sm engine-status-banner__start" onClick={() => void start()} disabled={starting} data-testid="engine-status-start-button">
+        {starting ? <Loader2 className="spinner" aria-hidden="true" /> : null}
+        {starting ? t("engineBanner.starting", "Starting…") : t("engineBanner.startCta", "Start engine")}
+      </button> : null}
+    >
+      <p className="engine-status-banner__body">
           {isDashboardOnly ? (
             <>
               {t("engineBanner.dashboardOnlyPrefix", "This dashboard cannot start engines from the current process. Run")} <code>fn serve</code> {t("engineBanner.dashboardOnlySuffix", "for this project to enable task execution and live automation.")}
             </>
           ) : body}
-        </p>
-        {error && (
-          <p className="engine-status-banner__error" role="alert">
-            {t("engineBanner.error", "Start failed: {{message}}", { message: error })}
-          </p>
-        )}
-      </div>
-      <div className="engine-status-banner__actions">
-        {canStart ? (
-          <button
-            type="button"
-            className="btn btn-primary btn-sm engine-status-banner__start"
-            onClick={() => void start()}
-            disabled={starting}
-            data-testid="engine-status-start-button"
-          >
-            {starting ? <Loader2 className="spinner" aria-hidden="true" /> : null}
-            {starting ? t("engineBanner.starting", "Starting…") : t("engineBanner.startCta", "Start engine")}
-          </button>
-        ) : null}
-      </div>
-    </section>
+      </p>
+      {error && <p className="engine-status-banner__error" role="alert">{t("engineBanner.error", "Start failed: {{message}}", { message: error })}</p>}
+    </Banner>
   );
 }

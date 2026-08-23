@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { X } from "lucide-react";
+import { Banner } from "./Banner";
 import {
   fetchFnBinaryStatus,
   installFnBinary,
@@ -175,7 +175,7 @@ export function CliBinaryInstallBanner({ onOpenSettings }: Props) {
   const busyLabel = isMismatch ? t("cli.updating", "Updating…") : t("cli.installing", "Installing…");
 
   return (
-    <div className="cli-binary-banner" role="status">
+    <Banner className="cli-binary-banner" tone="info" role="status" onDismiss={handleDismiss} dismissLabel={t("actions.dismiss", "Dismiss")}>
       <div className="cli-binary-banner__body">
         <div className="cli-binary-banner__title">{title}</div>
         <div className="cli-binary-banner__text">{body}</div>
@@ -200,14 +200,6 @@ export function CliBinaryInstallBanner({ onOpenSettings }: Props) {
           <div className="cli-binary-banner__error">{installError}</div>
         )}
       </div>
-      <button
-        type="button"
-        className="cli-binary-banner__dismiss"
-        aria-label={t("actions.dismiss", "Dismiss")}
-        onClick={handleDismiss}
-      >
-        <X size={16} />
-      </button>
-    </div>
+    </Banner>
   );
 }

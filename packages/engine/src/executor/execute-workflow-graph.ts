@@ -129,9 +129,51 @@ restart clearing it is CORRECT — a restart is exactly when agent configuration
 generous because an unroutable role clears on OPERATOR action (enable or add an agent), never on its own, so
 polling it every few seconds only burns CPU.
 */
-const PRINCIPAL_HOLD_BACKOFF_MS = process.env.VITEST || process.env.NODE_ENV === "test" ? 0 : 15_000;
+/*
+FNXC:WorkflowAgentRouting 2026-08-23-22:22:
+Read the test-mode zero at RECORD time rather than binding it at module load. The value is identical in
+production and in suites; late binding is what lets a regression test drive a real cooldown through the real
+writer and reader instead of asserting against a stubbed clock.
+*/
+function principalHoldBackoffBaseMs(): number {
+  return process.env.VITEST || process.env.NODE_ENV === "test" ? 0 : 15_000;
+}
 const PRINCIPAL_HOLD_MAX_BACKOFF_MS = 300_000;
 const principalHoldBackoff = new Map<string, { reason: string; attempt: number; until: number }>();
+
+export type PrincipalHoldCooldown = { reason: string; attempt: number; until: number };
+
+/*
+FNXC:WorkflowAgentRouting 2026-08-23-22:22:
+The ladder is a primitive with exactly ONE writer and ONE reader, both exported. It was previously an inline
+`.set()` plus an inline `.get()` comparison, and the U4 executor peel (#3317) moved the reader to a call site
+where its own guard condition could never be true — leaving the map written, cleared, and never honored, which
+is indistinguishable from a working cooldown at a glance. Keeping both ends named and exported means a lost
+reader is a lost REFERENCE, which the compiler and the census can see.
+*/
+export function recordPrincipalHoldBackoff(taskId: string, reason: string): { attempt: number; repeated: boolean } {
+  const priorHold = principalHoldBackoff.get(taskId);
+  const repeated = priorHold?.reason === reason;
+  const attempt = repeated ? priorHold!.attempt + 1 : 1;
+  principalHoldBackoff.set(taskId, {
+    reason,
+    attempt,
+    until: Date.now() + Math.min(PRINCIPAL_HOLD_MAX_BACKOFF_MS, principalHoldBackoffBaseMs() * 2 ** (attempt - 1)),
+  });
+  return { attempt, repeated };
+}
+
+/** The active cooldown for a task, or null when none is recorded or the window has elapsed. */
+export function getActivePrincipalHoldCooldown(taskId: string): PrincipalHoldCooldown | null {
+  const hold = principalHoldBackoff.get(taskId);
+  if (!hold || Date.now() >= hold.until) return null;
+  return hold;
+}
+
+/** True while a principal hold is still cooling down, so dispatch must not re-enter the graph. */
+export function isPrincipalHoldCoolingDown(taskId: string): boolean {
+  return getActivePrincipalHoldCooldown(taskId) !== null;
+}
 
 /** Clears the ladder for a task; exported so tests and recovery paths can reset it deterministically. */
 export function clearPrincipalHoldBackoff(taskId: string): void {
@@ -370,8 +412,16 @@ export async function executeWorkflowGraph(
     re-park is the hot loop itself, and it costs a graph run plus two work-item writes and two audit rows per
     pass for a condition that cannot change without operator action.
     */
-    const cooling = principalHoldBackoff.get(task.id);
-    if (cooling && Date.now() < cooling.until && !opts?.alreadyClaimed) {
+    /*
+    FNXC:WorkflowAgentRouting 2026-08-23-22:22:
+    Stays gated on `!alreadyClaimed`, and that gate is deliberate rather than an oversight: when executeCore has
+    already claimed graphRouting it sets `graphRunnerOwnsClaim` and stops deleting the claim in its finally, so
+    an early return HERE would strand the claim and wedge the task against every later dispatch. The claimed
+    path is therefore guarded upstream in executeCore, BEFORE the claim — which is where the check lived until
+    #3317 moved it here and left this the only copy. This one now covers direct, unclaimed graph entry only.
+    */
+    const cooling = getActivePrincipalHoldCooldown(task.id);
+    if (cooling && !opts?.alreadyClaimed) {
       executorLog.debug(`[workflow-graph] ${task.id} deferred — principal hold cooling down (${cooling.reason})`);
       return;
     }
@@ -845,14 +895,7 @@ export async function executeWorkflowGraph(
          * information); repeats extend it. The first occurrence of a reason still logs immediately so the
          * hold stays greppable, while repeats stay silent so neither the engine log nor the task log floods.
          */
-        const priorHold = principalHoldBackoff.get(task.id);
-        const repeated = priorHold?.reason === principalHoldReason;
-        const attempt = repeated ? priorHold!.attempt + 1 : 1;
-        principalHoldBackoff.set(task.id, {
-          reason: principalHoldReason,
-          attempt,
-          until: Date.now() + Math.min(PRINCIPAL_HOLD_MAX_BACKOFF_MS, PRINCIPAL_HOLD_BACKOFF_MS * 2 ** (attempt - 1)),
-        });
+        const { repeated } = recordPrincipalHoldBackoff(task.id, principalHoldReason);
         const holdMessage = `[workflow-graph] ${task.id} held at graph node — ${principalHoldReason}`;
         if (!repeated) {
           if (neverClears) {

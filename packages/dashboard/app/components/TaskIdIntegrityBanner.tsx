@@ -3,6 +3,7 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { TaskIdIntegrityReport } from "@fusion/core";
 import { refreshDashboardHealth, type DashboardHealthResponse } from "../api";
+import { Banner } from "./Banner";
 import "./TaskIdIntegrityBanner.css";
 
 /*
@@ -65,7 +66,7 @@ export function TaskIdIntegrityBanner({ report, recommendedAction, onRefresh }: 
   };
 
   return (
-    <section className="task-id-integrity-banner" role="alert" aria-live="assertive">
+    <Banner as="section" className="task-id-integrity-banner" tone="error" role="alert" aria-live="assertive">
       <div className="task-id-integrity-banner__header">
         <div className="task-id-integrity-banner__headline-wrap">
           <span className="status-dot status-dot--error" aria-hidden="true" />
@@ -104,6 +105,6 @@ export function TaskIdIntegrityBanner({ report, recommendedAction, onRefresh }: 
 
       <p className="task-id-integrity-banner__footer">{recommendedAction}</p>
       {refreshError ? <p className="task-id-integrity-banner__error">{refreshError}</p> : null}
-    </section>
+    </Banner>
   );
 }
