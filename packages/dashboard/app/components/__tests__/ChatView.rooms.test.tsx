@@ -171,11 +171,12 @@ function mockMobileVisualViewport({ innerHeight, vvHeight }: { innerHeight: numb
 }
 
 function mockDesktopViewport() {
+  const previousInnerWidth = window.innerWidth;
   if (!window.matchMedia) {
     Object.defineProperty(window, "matchMedia", { value: vi.fn(), configurable: true, writable: true });
   }
   Object.defineProperty(window, "innerWidth", { value: 1280, configurable: true });
-  return vi.spyOn(window, "matchMedia").mockImplementation((query: string) => ({
+  const matchMediaSpy = vi.spyOn(window, "matchMedia").mockImplementation((query: string) => ({
     matches: false,
     media: query,
     onchange: null,
@@ -185,6 +186,12 @@ function mockDesktopViewport() {
     removeEventListener: vi.fn(),
     dispatchEvent: vi.fn(),
   }));
+  return {
+    mockRestore() {
+      matchMediaSpy.mockRestore();
+      Object.defineProperty(window, "innerWidth", { value: previousInnerWidth, configurable: true });
+    },
+  };
 }
 
 function mockMessagesContainerMetrics({
@@ -1076,19 +1083,33 @@ describe("ChatView — rooms (FN-3805..FN-3811 contract)", () => {
   });
 
   describe("list-to-detail navigation", () => {
+    /*
+    FNXC:DashboardTests 2026-08-23-17:55:
+    Desktop list/detail assertions must pin and restore desktop geometry so they prove the docked-sidebar contract independently of earlier mobile tests.
+    */
     it("renders rooms in the conversation list before detail", async () => {
-      setup({}, { activeRoom: roomA, rooms: [roomA] });
-      await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} experimentalFeatures={{ chatRooms: true }} />);
-      expect(screen.getByTestId("chat-room-item-room-a")).toBeInTheDocument();
-      expect(screen.queryByTestId("chat-back-btn")).not.toBeInTheDocument();
+      const viewportSpy = mockDesktopViewport();
+      try {
+        setup({}, { activeRoom: roomA, rooms: [roomA] });
+        await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} experimentalFeatures={{ chatRooms: true }} />);
+        expect(screen.getByTestId("chat-room-item-room-a")).toBeInTheDocument();
+        expect(screen.queryByTestId("chat-back-btn")).not.toBeInTheDocument();
+      } finally {
+        viewportSpy.mockRestore();
+      }
     });
 
     it("enters the selected room detail from the list", async () => {
-      setup({}, { activeRoom: roomA, rooms: [roomA] });
-      await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} experimentalFeatures={{ chatRooms: true }} />);
-      await userEvent.click(screen.getByTestId("chat-room-item-room-a"));
-      expect(screen.queryByTestId("chat-back-btn")).not.toBeInTheDocument();
-      expect(screen.getByTestId("chat-input")).toBeInTheDocument();
+      const viewportSpy = mockDesktopViewport();
+      try {
+        setup({}, { activeRoom: roomA, rooms: [roomA] });
+        await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} experimentalFeatures={{ chatRooms: true }} />);
+        await userEvent.click(screen.getByTestId("chat-room-item-room-a"));
+        expect(screen.queryByTestId("chat-back-btn")).not.toBeInTheDocument();
+        expect(screen.getByTestId("chat-input")).toBeInTheDocument();
+      } finally {
+        viewportSpy.mockRestore();
+      }
     });
 
     it("returns from room detail to the conversation list", async () => {
