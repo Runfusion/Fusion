@@ -1,4 +1,4 @@
-import { useEffect, useSyncExternalStore } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { fetchGlobalSettings, updateGlobalSettings } from "../api";
 
 const STORAGE_KEY = "fusion:github-star-prompt-shown";
@@ -55,6 +55,16 @@ export function markGitHubStarPromptShown(): void {
 
 export function useGitHubStarPromptShown(): boolean {
   const shown = useSyncExternalStore(subscribe, read, () => false);
+  /*
+  FNXC:GithubStarAsk 2026-08-23-23:20:
+  "Not asked yet" and "we have not looked yet" are different answers, and only the first may show the
+  prompt. Until the durable lookup settles, this profile cannot know whether the operator already
+  answered in the CLI or another browser, so the hook reports shown=true and the ask stays hidden —
+  an unknown must never produce the duplicate ask the whole cross-surface record exists to prevent.
+  A FAILED lookup also settles: an unreachable server leaves the local record as the answer rather
+  than suppressing the ask forever.
+  */
+  const [hydrated, setHydrated] = useState(false);
 
   /*
   FNXC:GithubStarAsk 2026-08-19-03:59:
@@ -80,11 +90,14 @@ export function useGitHubStarPromptShown(): boolean {
       })
       .catch(() => {
         // Unreachable settings mean we simply keep the local record as-is.
+      })
+      .finally(() => {
+        if (!cancelled) setHydrated(true);
       });
     return () => {
       cancelled = true;
     };
   }, [shown]);
 
-  return shown;
+  return shown || !hydrated;
 }

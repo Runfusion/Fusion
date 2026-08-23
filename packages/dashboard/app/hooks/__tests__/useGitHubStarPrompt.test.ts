@@ -27,9 +27,24 @@ describe("useGitHubStarPromptShown", () => {
     mockUpdateGlobalSettings.mockResolvedValue({});
   });
 
-  it("returns false by default", () => {
+  /*
+  FNXC:GithubStarAsk 2026-08-23-23:20:
+  Reports "shown" until the durable lookup settles, so an unknown answer can never render a duplicate
+  ask; only after it settles does the real local record govern.
+  */
+  it("suppresses the ask until the durable lookup settles, then reports false", async () => {
     const { result } = renderHook(() => useGitHubStarPromptShown());
-    expect(result.current).toBe(false);
+    expect(result.current).toBe(true);
+
+    await waitFor(() => expect(result.current).toBe(false));
+  });
+
+  it("stops suppressing once the durable lookup fails, so an unreachable server still asks", async () => {
+    mockFetchGlobalSettings.mockRejectedValue(new Error("offline"));
+
+    const { result } = renderHook(() => useGitHubStarPromptShown());
+
+    await waitFor(() => expect(result.current).toBe(false));
   });
 
   it("marks the prompt shown and persists the flag", () => {
@@ -56,14 +71,14 @@ describe("useGitHubStarPromptShown", () => {
     expect(result.current).toBe(true);
   });
 
-  it("returns false when localStorage reads fail", () => {
+  it("returns false when localStorage reads fail", async () => {
     const getItemSpy = vi.spyOn(window.localStorage, "getItem").mockImplementation(() => {
       throw new Error("get failed");
     });
 
     const { result } = renderHook(() => useGitHubStarPromptShown());
 
-    expect(result.current).toBe(false);
+    await waitFor(() => expect(result.current).toBe(false));
     expect(getItemSpy).toHaveBeenCalled();
   });
 
@@ -98,17 +113,18 @@ describe("useGitHubStarPromptShown", () => {
     mockFetchGlobalSettings.mockResolvedValue({ githubStarPromptDismissedAt: "2026-08-19T00:00:00.000Z" });
 
     const { result } = renderHook(() => useGitHubStarPromptShown());
-    expect(result.current).toBe(false);
+    // Never reports "not yet asked" on the way there — that gap is what would render a duplicate ask.
+    expect(result.current).toBe(true);
 
-    await waitFor(() => expect(result.current).toBe(true));
-    expect(localStorage.getItem("fusion:github-star-prompt-shown")).toBe("1");
+    await waitFor(() => expect(localStorage.getItem("fusion:github-star-prompt-shown")).toBe("1"));
+    expect(result.current).toBe(true);
   });
 
   it("keeps asking when no surface has recorded a dismissal", async () => {
     const { result } = renderHook(() => useGitHubStarPromptShown());
 
     await waitFor(() => expect(mockFetchGlobalSettings).toHaveBeenCalled());
-    expect(result.current).toBe(false);
+    await waitFor(() => expect(result.current).toBe(false));
   });
 
   it("does not re-read global settings once the local record is set", async () => {
