@@ -42,12 +42,7 @@ best-effort; losing it costs at most one repeat ask on another browser, never a 
 */
 export function markGitHubStarPromptShown(): void {
   if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(STORAGE_KEY, "1");
-    window.dispatchEvent(new Event(EVENT_NAME));
-  } catch {
-    // ignore
-  }
+  adoptDismissalLocally();
   void updateGlobalSettings({ githubStarPromptDismissedAt: new Date().toISOString() }).catch(() => {
     // Best-effort: the local record above already suppresses the prompt on this machine.
   });
@@ -72,6 +67,41 @@ export interface GitHubStarPromptState {
   resolved: boolean;
 }
 
+/** Records the durable answer in this profile so the store and every mounted hook see it at once. */
+function adoptDismissalLocally(): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(STORAGE_KEY, "1");
+    window.dispatchEvent(new Event(EVENT_NAME));
+  } catch {
+    // ignore
+  }
+}
+
+/*
+FNXC:GithubStarAsk 2026-08-23-23:47:
+Re-reads the durable answer at the moment a trigger wants to SHOW the ask, and returns whether it is
+already answered. The mount-time lookup alone is not enough: first-run setup routinely has a dashboard
+tab already open while the operator answers `fn onboard` in a terminal, so a stamp can land after that
+lookup and this tab would otherwise ask a second time — exactly the duplicate the shared record exists
+to prevent. A stamp found here is adopted locally, so the banner gate closes even if a trigger races it.
+An unreachable server falls back to the local record and asks, rather than suppressing the ask forever.
+*/
+export async function refreshGitHubStarPromptDismissal(): Promise<boolean> {
+  if (read()) return true;
+  try {
+    const settings = await fetchGlobalSettings();
+    const dismissedAt = settings.githubStarPromptDismissedAt;
+    if (typeof dismissedAt === "string" && dismissedAt.trim().length > 0) {
+      adoptDismissalLocally();
+      return true;
+    }
+  } catch {
+    // Unreachable settings mean the local record stays the answer.
+  }
+  return false;
+}
+
 export function useGitHubStarPromptState(): GitHubStarPromptState {
   const dismissed = useSyncExternalStore(subscribe, read, () => false);
   const [resolved, setResolved] = useState(false);
@@ -90,12 +120,7 @@ export function useGitHubStarPromptState(): GitHubStarPromptState {
         if (cancelled) return;
         const dismissedAt = settings.githubStarPromptDismissedAt;
         if (typeof dismissedAt === "string" && dismissedAt.trim().length > 0) {
-          try {
-            window.localStorage.setItem(STORAGE_KEY, "1");
-            window.dispatchEvent(new Event(EVENT_NAME));
-          } catch {
-            // ignore
-          }
+          adoptDismissalLocally();
         }
       })
       .catch(() => {

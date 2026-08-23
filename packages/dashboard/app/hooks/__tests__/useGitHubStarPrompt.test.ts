@@ -15,7 +15,7 @@ vi.mock("../../api", () => ({
   updateGlobalSettings: (...args: unknown[]) => mockUpdateGlobalSettings(...(args as [])),
 }));
 
-const { markGitHubStarPromptShown, useGitHubStarPromptShown, useGitHubStarPromptState } = await import("../useGitHubStarPrompt");
+const { markGitHubStarPromptShown, useGitHubStarPromptShown, useGitHubStarPromptState, refreshGitHubStarPromptDismissal } = await import("../useGitHubStarPrompt");
 
 describe("useGitHubStarPromptShown", () => {
   beforeEach(() => {
@@ -180,5 +180,46 @@ describe("useGitHubStarPromptShown", () => {
 
     await waitFor(() => expect(result.current.resolved).toBe(true));
     expect(result.current.dismissed).toBe(false);
+  });
+
+  /*
+  FNXC:GithubStarAsk 2026-08-23-23:47:
+  Cross-surface regression: the mount-time lookup can be stale by the time a trigger fires. First-run
+  setup routinely has a dashboard tab open while the operator answers `fn onboard` in a terminal, so
+  the stamp lands AFTER this tab looked. Both show-triggers (a task reaching done, and onboarding
+  completing) revalidate through this one seam, so covering it covers both surfaces.
+  */
+  it("sees a dismissal recorded after the mount-time lookup, so a later trigger stays hidden", async () => {
+    const { result } = renderHook(() => useGitHubStarPromptState());
+    await waitFor(() => expect(result.current.resolved).toBe(true));
+    expect(result.current.dismissed).toBe(false);
+
+    // The CLI ask is answered in a terminal, after this tab already looked.
+    mockFetchGlobalSettings.mockResolvedValue({ githubStarPromptDismissedAt: "2026-08-23T23:00:00.000Z" });
+
+    await expect(refreshGitHubStarPromptDismissal()).resolves.toBe(true);
+    expect(localStorage.getItem("fusion:github-star-prompt-shown")).toBe("1");
+    await waitFor(() => expect(result.current.dismissed).toBe(true));
+  });
+
+  it("still asks when revalidation finds no dismissal", async () => {
+    await expect(refreshGitHubStarPromptDismissal()).resolves.toBe(false);
+    expect(localStorage.getItem("fusion:github-star-prompt-shown")).toBeNull();
+  });
+
+  it("falls back to the local record when revalidation cannot reach the server", async () => {
+    mockFetchGlobalSettings.mockRejectedValue(new Error("offline"));
+
+    await expect(refreshGitHubStarPromptDismissal()).resolves.toBe(false);
+
+    localStorage.setItem("fusion:github-star-prompt-shown", "1");
+    await expect(refreshGitHubStarPromptDismissal()).resolves.toBe(true);
+  });
+
+  it("answers from the local record without a request when already dismissed", async () => {
+    localStorage.setItem("fusion:github-star-prompt-shown", "1");
+
+    await expect(refreshGitHubStarPromptDismissal()).resolves.toBe(true);
+    expect(mockFetchGlobalSettings).not.toHaveBeenCalled();
   });
 });
