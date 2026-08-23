@@ -11,7 +11,7 @@ Core test exclusions must exactly mirror the dated quarantine ledger. The Postgr
 FNXC:FullSuiteBookkeeping 2026-08-09-03:49:
 All 14 core entries from the 2026-08-05 full-suite quarantine wave (run 30982276306) were deleted under the deletion ratchet after operator directive. These tested pre-refactor APIs/mock shapes (layer.db.select, peeled workflow IR resolvers, stale serialization literals) that no longer exist post-cutover. Array intentionally empty.
 */
-const quarantinedCoreTests: string[] = [];
+
 
 export default defineConfig({
   resolve: {
@@ -32,7 +32,19 @@ export default defineConfig({
   },
   test: {
     include: ["src/**/*.test.ts"],
-    exclude: quarantinedCoreTests,
+    /*
+    FNXC:QuarantineExcludes 2026-08-23-23:55:
+    Quarantine excludes are listed INLINE here, not behind a named const. `check-quarantine-ledger.mjs`
+    reads concrete `.test.ts` strings out of `exclude:` ARRAY LITERALS and does not resolve a variable
+    reference, so an indirected list reads as an empty exclude array and every ledger row reports
+    `missing-exclude` — the guard silently stops holding the ledger and the config in lockstep.
+    Each entry needs a matching row in scripts/lib/test-quarantine.json (same commit, deletion ratchet).
+    */
+    exclude: [
+      // Wall-clock lock-race assertion that fails under parallel load; rescue needs a real
+      // block-detection probe (pg_locks / lock-wait), not a longer sleep. Deadline 2026-09-06.
+      "src/__tests__/postgres/mission-store.pg.test.ts",
+    ],
     setupFiles: [
       "./src/__test-utils__/vitest-setup.ts",
     ],

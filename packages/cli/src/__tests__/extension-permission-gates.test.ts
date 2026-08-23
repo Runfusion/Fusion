@@ -607,7 +607,14 @@ pgDescribe("extension tool permission gates", () => {
     const secretsStore = injectSecretsStore();
     const app = createApprovalDecisionApp();
     const chatStore = {
-      getSession: vi.fn(() => ({ id: "chat-secret", agentId: "agent-1a009724", status: "active" })),
+      /*
+      FNXC:CliTests 2026-08-23-16:55:
+      TITLED ON PURPOSE. An untitled chat session makes `ChatManager.sendMessage` fire a
+      non-blocking title summarizer, which opens a SECOND pi session per send through the same
+      factory — the count this test pins would then measure summarizer timing, not the two chat
+      sessions under test.
+      */
+      getSession: vi.fn(() => ({ id: "chat-secret", agentId: "agent-1a009724", status: "active", title: "Secret access chat" })),
       addMessage: vi.fn((message) => ({ id: `message-${message.role}`, ...message })),
       getMessages: vi.fn(() => []),
       setInFlightGeneration: vi.fn(async () => undefined),

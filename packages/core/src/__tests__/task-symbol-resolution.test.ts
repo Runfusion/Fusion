@@ -85,6 +85,13 @@ describe("file-task constructor declared symbols", () => {
     const created: unknown[] = [];
     const store = {
       backendMode: false,
+      /*
+      FNXC:SymbolLock 2026-08-23-16:02:
+      Task creation now resolves an initial repository scope from the workspace config, which reads
+      `store.getRootDir()`. Point the seam at the temp root so the (config-less) workspace resolves to
+      no scope instead of throwing on a missing method.
+      */
+      getRootDir: () => root,
       taskDir: (id: string) => join(root, id),
       maybeResolveTombstonedTaskId: async () => undefined,
       assertTaskIdAvailable: async () => undefined,

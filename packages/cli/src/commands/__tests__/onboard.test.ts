@@ -344,6 +344,55 @@ describe("onboard", () => {
     expect(typeof globalSettingsState.cliOnboardingCompletedAt).toBe("string");
   });
 
+  /*
+  FNXC:GithubStarAsk 2026-08-19-03:59:
+  The star ask runs after onboarding is complete, is one-shot, and must never be able to cost the
+  operator their setup: declining, or ending input on the question, still leaves onboarding stamped.
+  */
+  it("asks for a GitHub star once onboarding completes and stamps the answer", async () => {
+    mockProviderAuthFactory.mockReturnValue(makeProviderAuth());
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await runOnboard({ input: inputFrom(["n", "n", "n", "n", "y"]) });
+
+    const printed = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    // The question itself goes to the readline prompt stream, so assert on the answer's output.
+    expect(printed).toMatch(/Star it here/i);
+    expect(printed).toContain("https://github.com/Runfusion/Fusion");
+    expect(typeof globalSettingsState.githubStarPromptDismissedAt).toBe("string");
+    expect(typeof globalSettingsState.cliOnboardingCompletedAt).toBe("string");
+  });
+
+  it("never asks for a star again once it has been dismissed", async () => {
+    mockProviderAuthFactory.mockReturnValue(makeProviderAuth());
+    const firstLog = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await runOnboard({ input: inputFrom(["n", "n", "n", "n", "n"]) });
+    expect(firstLog.mock.calls.map((call) => String(call[0])).join("\n")).toMatch(/won't ask again/i);
+    const dismissedAt = globalSettingsState.githubStarPromptDismissedAt;
+    expect(typeof dismissedAt).toBe("string");
+    firstLog.mockRestore();
+
+    const secondLog = vi.spyOn(console, "log").mockImplementation(() => {});
+    await runOnboard({ force: true, input: inputFrom(["n", "n", "n", "n"]) });
+
+    expect(secondLog.mock.calls.map((call) => String(call[0])).join("\n")).not.toMatch(/GitHub/i);
+    expect(globalSettingsState.githubStarPromptDismissedAt).toBe(dismissedAt);
+    expect(__testUtils.shouldAskGithubStar(globalSettingsState)).toBe(false);
+    expect(__testUtils.shouldAskGithubStar({})).toBe(true);
+    expect(__testUtils.shouldAskGithubStar({ githubStarPromptDismissedAt: "  " })).toBe(true);
+  });
+
+  it("does not ask for a star on the non-interactive auto-launch path", async () => {
+    mockProviderAuthFactory.mockReturnValue(makeProviderAuth());
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await runOnboard({ interactive: false });
+
+    expect(logSpy.mock.calls.map((call) => String(call[0])).join("\n")).not.toMatch(/GitHub/i);
+    expect(globalSettingsState.githubStarPromptDismissedAt).toBeUndefined();
+  });
+
   it("treats cancellation distinctly from skip and does not persist completion", async () => {
     const providerAuth = makeProviderAuth();
     mockProviderAuthFactory.mockReturnValue(providerAuth);

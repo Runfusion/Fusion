@@ -1,0 +1,121 @@
+/*
+FNXC:ChatMemoryFocusSelector 2026-08-13:
+Styling for the per-conversation memory focus selector chip + popover. Uses only
+design tokens (--space-*, --color/--surface/--border/--text-muted/--accent,
+--radius-*, --shadow-lg, --font-size-*, --font-weight-*) per the styling guide —
+no hardcoded px (except 0), no hex/rgba. A null/empty session focus renders a
+cleared "Focus" chip (never a dangling topic chip); a set topic renders an active
+chip whose label is the topic. Mobile (max-width 768px) widens the popover to the
+viewport minus padding so the inline input stays usable on narrow screens. The
+chip matches --chat-input-control-size (the composer's send/attach control
+height) so it centers with the single-line textarea.
+
+FNXC:ChatMemoryFocusSelector 2026-08-21-13:35:
+RUFU-146 review (PRRT_kwDOSA-8Y86a7RZo): raw literals replaced with existing
+semantic tokens — --btn-border-width (borders), --transition-fast
+(chip transition), --opacity-disabled (disabled chip), --focus-ring-strong
+(focus-visible, previously an invalid `outline: 2px solid var(--focus-ring)`
+declaration since --focus-ring is a box-shadow token), calc(var(--space-xl) * 8)
+(12rem label cap), --z-popover (popover layer), --line-height-normal (help text).
+The 768px breakpoint stays literal by design: --mobile-breakpoint is documented
+in styles.css as documentation-only (custom properties cannot appear in
+@media conditions) and every other component CSS uses the same literal.
+*/
+
+.chat-focus-root {
+  position: relative;
+  flex: none;
+}
+
+.chat-focus-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  min-inline-size: var(--chat-input-control-size, 2.25rem);
+  min-block-size: var(--chat-input-control-size, 2.25rem);
+  block-size: var(--chat-input-control-size, 2.25rem);
+  padding: 0 var(--space-sm);
+  color: var(--text-muted);
+  background: var(--surface);
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-pill, var(--radius-md));
+  cursor: pointer;
+  transition: color var(--transition-fast), border-color var(--transition-fast);
+}
+
+.chat-focus-chip:disabled {
+  opacity: var(--opacity-disabled, 0.5);
+  cursor: default;
+}
+
+.chat-focus-chip:focus-visible {
+  box-shadow: var(--focus-ring-strong);
+}
+
+.chat-focus-chip--active {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.chat-focus-chip-topic,
+.chat-focus-chip-label {
+  max-inline-size: calc(var(--space-xl) * 8);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-size-xs);
+}
+
+.chat-focus-popover {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + var(--space-xs));
+  width: min(calc(var(--space-xl) * 15), calc(100vw - (var(--space-lg) * 2)));
+  max-width: calc(100vw - (var(--space-lg) * 2));
+  max-inline-size: calc(100vw - (var(--space-lg) * 2));
+  padding: var(--space-sm);
+  background: var(--surface);
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  z-index: var(--z-popover);
+}
+
+.chat-focus-title {
+  color: var(--text);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  margin-bottom: var(--space-xs);
+}
+
+.chat-focus-help {
+  color: var(--text-muted);
+  font-size: var(--font-size-2xs);
+  line-height: var(--line-height-normal);
+  margin: 0 0 var(--space-sm);
+}
+
+.chat-focus-input {
+  width: 100%;
+  margin-bottom: var(--space-sm);
+}
+
+.chat-focus-actions {
+  display: flex;
+  gap: var(--space-xs);
+}
+
+.chat-focus-save,
+.chat-focus-clear {
+  flex: 0 0 auto;
+}
+
+@media (max-width: 768px) {
+  .chat-focus-popover {
+    left: var(--space-md);
+    right: var(--space-md);
+    width: auto;
+    max-width: none;
+    max-inline-size: none;
+  }
+}

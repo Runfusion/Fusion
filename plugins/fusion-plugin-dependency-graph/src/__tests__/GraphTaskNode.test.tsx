@@ -67,7 +67,13 @@ describe("GraphTaskNode", () => {
     expect(node).toBeTruthy();
     expect(container.querySelector(".card-title")?.textContent).toContain("Task description");
     expect(node.getAttribute("draggable")).toBe("false");
-    expect(container.querySelector(".card")?.getAttribute("draggable")).toBeNull();
+    /*
+    FNXC:PluginInteropDrift 2026-08-20-21:01:
+    FN-051 removed the native draggable attribute from TaskCard entirely (it is never rendered
+    now), so the card assertion mirrors the dashboard's own TaskCard tests: the attribute must
+    be ABSENT, not "false". The old .toBe("false") could only pass against the pre-FN-051 card.
+    */
+    expect(container.querySelector(".card")?.hasAttribute("draggable")).toBe(false);
   });
 
   it("shows active indicator with capitalized status for in-progress executing tasks", () => {

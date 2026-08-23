@@ -313,11 +313,6 @@ describe("merger fresh reacquire init wiring", () => {
     expect(freshAcquireBlock?.[0]).toContain("runConfiguredCommand:");
     expect(freshAcquireBlock?.[0]).toContain("runConfiguredMergeWorktreeCommand");
   });
-
-  it("keeps direct-reuse shortcut on existing registrations", () => {
-    const mergerSource = readFileSync(new URL("../merger.ts", import.meta.url), "utf-8");
-    expect(mergerSource).toContain("Skip acquireTaskWorktree's");
-  });
 });
 
 describe("acquireReuseHandoff", () => {

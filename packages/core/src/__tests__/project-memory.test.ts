@@ -15,7 +15,13 @@ import {
   searchProjectMemory,
   getProjectMemory,
   resolveMemoryInstructionContext,
+  buildProactiveMemoryCueBlock,
 } from "../memory/project-memory.js";
+import {
+  registerMemoryBackend,
+  captureMemory,
+  type MemoryCaptureEvent,
+} from "../memory/memory-backend.js";
 
 describe("project-memory", () => {
   let testDir: string;
@@ -729,6 +735,217 @@ describe("project-memory", () => {
       expect(result.path).toBe(".fusion/memory/MEMORY.md");
       expect(result.content).toContain("qmd-line");
       expect(result.backend).toBe("qmd");
+    });
+  });
+
+  // ── RUFU-068 Step 3: Stash fail-closed reads, capture helper, topic plumbing ─
+
+  describe("searchProjectMemory topic scoping + fail-closed", () => {
+    const stashHandlers = {
+      read: vi.fn(async () => ({ content: "", exists: false })),
+      exists: vi.fn(async () => false),
+      write: vi.fn(async () => ({ success: true, backend: "stash-test" })),
+      get: vi.fn(async () => ({ path: "x", content: "", startLine: 1, endLine: 1, totalLines: 0, backend: "stash-test" })),
+    };
+
+    it("passes a trimmed real topic into the backend for search", async () => {
+      const search = vi.fn(async () => [{ path: "hit", snippet: "s", score: 1, backend: "stash-test" }]);
+      try {
+        registerMemoryBackend({
+          type: "stash-topic",
+          capabilities: { readable: true, writable: true, supportsAtomicWrite: false, hasConflictResolution: false, persistent: true },
+          ...stashHandlers,
+          search,
+        });
+      } catch {
+        /* registry allows the same type only once in a suite; ignore */
+      }
+      const results = await searchProjectMemory(
+        testDir,
+        { query: "routing", limit: 5 },
+        { memoryBackendType: "stash-topic" },
+        "  sticky   ",
+      );
+      expect(results.length).toBe(1);
+      expect(search).toHaveBeenCalledTimes(1);
+      expect(search.mock.calls[0][1].topic).toBe("sticky");
+    });
+
+    it("treats 'all'/'*'/empty topic as whole-project scope (no topic param)", async () => {
+      const search = vi.fn(async () => []);
+      try {
+        registerMemoryBackend({
+          type: "stash-nofilter",
+          capabilities: { readable: true, writable: true, supportsAtomicWrite: false, hasConflictResolution: false, persistent: true },
+          ...stashHandlers,
+          search,
+        });
+      } catch {
+        /* ignore duplicate registration */
+      }
+      for (const topic of [undefined, "", "  ", "all", "*"]) {
+        await searchProjectMemory(testDir, { query: "q", limit: 5 }, { memoryBackendType: "stash-nofilter" }, topic);
+      }
+      for (const call of search.mock.calls) {
+        expect(call[1].topic).toBeUndefined();
+      }
+    });
+
+    it("fails closed to empty when a stash search throws", async () => {
+      try {
+        registerMemoryBackend({
+          type: "stash-boom",
+          capabilities: { readable: true, writable: true, supportsAtomicWrite: false, hasConflictResolution: false, persistent: true },
+          ...stashHandlers,
+          search: vi.fn(async () => {
+            throw new Error("stash unreachable");
+          }),
+        });
+      } catch {
+        /* ignore duplicate registration */
+      }
+      await expect(searchProjectMemory(testDir, { query: "q", limit: 5 }, { memoryBackendType: "stash-boom" })).resolves.toEqual([]);
+    });
+  });
+
+  describe("getProjectMemory fail-closed", () => {
+    it("degrades to an empty window when the backend throws", async () => {
+      try {
+        registerMemoryBackend({
+          type: "stash-get-boom",
+          capabilities: { readable: true, writable: true, supportsAtomicWrite: false, hasConflictResolution: false, persistent: true },
+          read: vi.fn(async () => ({ content: "", exists: false })),
+          exists: vi.fn(async () => false),
+          search: vi.fn(async () => []),
+          get: vi.fn(async () => {
+            throw new Error("stash down");
+          }),
+        });
+      } catch {
+        /* ignore duplicate registration */
+      }
+      const result = await getProjectMemory(
+        testDir,
+        { path: ".fusion/memory/MEMORY.md", startLine: 1, lineCount: 5 },
+        { memoryBackendType: "stash-get-boom" },
+      );
+      expect(result.content).toBe("");
+      expect(result.totalLines).toBe(0);
+      expect(result.backend).toBe("stash-get-boom");
+    });
+
+    it("still throws for a backend with no get()", async () => {
+      try {
+        registerMemoryBackend({
+          type: "stash-no-get",
+          capabilities: { readable: true, writable: false, supportsAtomicWrite: false, hasConflictResolution: false, persistent: true },
+          read: vi.fn(async () => ({ content: "", exists: false })),
+          exists: vi.fn(async () => false),
+          search: vi.fn(async () => []),
+        });
+      } catch {
+        /* ignore duplicate registration */
+      }
+      await expect(
+        getProjectMemory(testDir, { path: "x", startLine: 1, lineCount: 1 }, { memoryBackendType: "stash-no-get" }),
+      ).rejects.toThrow("does not support memory_get");
+    });
+  });
+
+  describe("captureMemory helper", () => {
+    it("no-ops for a backend without the capture seam and resolves false", async () => {
+      // qmd backend has no capture/endSession seam -> no-op result.
+      const result = await captureMemory(
+        testDir,
+        { memoryBackendType: "qmd" },
+        "sess-1",
+        [{ event_type: "message", agent_name: "agent", content: "hi" }],
+      );
+      expect(result.ok).toBe(false);
+    });
+
+    it("resolves (does not throw) when the capture backend throws", async () => {
+      try {
+        registerMemoryBackend({
+          type: "stash-capture-boom",
+          capabilities: { readable: true, writable: true, supportsAtomicWrite: false, hasConflictResolution: false, persistent: true },
+          read: vi.fn(async () => ({ content: "", exists: false })),
+          exists: vi.fn(async () => false),
+          search: vi.fn(async () => []),
+          get: vi.fn(async () => ({ path: "x", content: "", startLine: 1, endLine: 1, totalLines: 0, backend: "t" })),
+          endSession: vi.fn(async () => {}),
+          capture: vi.fn(async () => {
+            throw new Error("gateway exploded");
+          }),
+        });
+      } catch {
+        /* ignore duplicate registration */
+      }
+      const events: MemoryCaptureEvent[] = [{ event_type: "message", agent_name: "agent", content: "x" }];
+      await expect(
+        captureMemory(
+          testDir,
+          { memoryBackendType: "stash-capture-boom" },
+          "sess-2",
+          events,
+        ),
+      ).resolves.toMatchObject({ ok: false });
+    });
+  });
+
+  describe("buildProactiveMemoryCueBlock", () => {
+    it("returns empty when memory is disabled", async () => {
+      const block = await buildProactiveMemoryCueBlock(testDir, "query", { memoryEnabled: false, memoryBackendType: "qmd" });
+      expect(block).toBe("");
+    });
+
+    it("injects a topic-scoped cue and scopes the search query to the topic", async () => {
+      const search = vi.fn(async () => [
+        { path: ".fusion/memory/MEMORY.md", snippet: "scheduler retries on failure", score: 0.9, backend: "stash-cue" },
+      ]);
+      try {
+        registerMemoryBackend({
+          type: "stash-cue",
+          capabilities: { readable: true, writable: true, supportsAtomicWrite: false, hasConflictResolution: false, persistent: true },
+          read: vi.fn(async () => ({ content: "", exists: false })),
+          exists: vi.fn(async () => false),
+          search,
+          get: vi.fn(async () => ({ path: "x", content: "", startLine: 1, endLine: 1, totalLines: 0, backend: "t" })),
+        });
+      } catch {
+        /* ignore duplicate registration */
+      }
+      const block = await buildProactiveMemoryCueBlock(
+        testDir,
+        "scheduler",
+        { memoryBackendType: "stash-cue" },
+        { limit: 3, topic: "scheduler" },
+      );
+      expect(block).toContain("Relevant Prior Context");
+      expect(block).toContain("scheduler retries");
+      expect(search.mock.calls[0][1].topic).toBe("scheduler");
+    });
+
+    it("collapses a whole-project topic (all/*/empty) to no topic filter", async () => {
+      const search = vi.fn(async () => []);
+      try {
+        registerMemoryBackend({
+          type: "stash-cue-all",
+          capabilities: { readable: true, writable: true, supportsAtomicWrite: false, hasConflictResolution: false, persistent: true },
+          read: vi.fn(async () => ({ content: "", exists: false })),
+          exists: vi.fn(async () => false),
+          search,
+          get: vi.fn(async () => ({ path: "x", content: "", startLine: 1, endLine: 1, totalLines: 0, backend: "t" })),
+        });
+      } catch {
+        /* ignore duplicate registration */
+      }
+      for (const topic of [undefined, "", "all", "*"]) {
+        await buildProactiveMemoryCueBlock(testDir, "q", { memoryBackendType: "stash-cue-all" }, { topic });
+      }
+      for (const call of search.mock.calls) {
+        expect(call[1].topic).toBeUndefined();
+      }
     });
   });
 });

@@ -78,8 +78,19 @@ pgTest("VAL-CROSS-004: Settings persistence (PostgreSQL)", () => {
     expect(updated.tokenStrategy.shortLived).toMatchObject({ enabled: true, ttlMs: 120_000 });
     expect(updated.lifecycle).toMatchObject({ rememberLastRunning: true });
 
+    /*
+    FNXC:RemoteAccessSettings 2026-08-23-17:05:
+    `null` is the explicit CLEAR sentinel, and clearing a global key means "fall back to its
+    default" — `GlobalSettingsStore.updateSettings` deletes the key and then re-applies
+    `DEFAULT_GLOBAL_SETTINGS`, so `remoteAccess` can never read back as `undefined`. Assert the
+    contract that actually matters after a clear: the settings return to the shipped defaults and
+    the previously persisted token is gone.
+    */
     await store.updateGlobalSettings({ remoteAccess: null });
-    expect((await store.getSettings()).remoteAccess).toBeUndefined();
+    const cleared = (await store.getSettings()).remoteAccess!;
+    expect(cleared).toEqual(DEFAULT_GLOBAL_SETTINGS.remoteAccess);
+    expect(cleared.tokenStrategy.persistent.token).toBeNull();
+    expect(cleared.activeProvider).toBeNull();
   });
 
   it("persists project-level settings via updateSettings", async () => {

@@ -287,7 +287,13 @@ pgTest("Artifacts / Documents / Evals (PostgreSQL backend mode)", () => {
   it("runs a scheduled evaluation batch through AsyncEvalStore", async () => {
     const store = h.store();
     const completedAt = "2026-07-13T20:00:00.000Z";
-    const task = await store.createTask({ description: "Scheduled evaluation candidate" });
+    /*
+    FNXC:MergeAuthority 2026-08-23-16:50:
+    A merge door now refuses a card whose ENABLED pre-merge optional groups produced no result
+    (b47fb70b81 / 038f802ba4). This case only needs a completed card to evaluate, so it declares no
+    pre-merge gates rather than depending on the default-on groups the door legitimately blocks on.
+    */
+    const task = await store.createTask({ description: "Scheduled evaluation candidate", enabledWorkflowSteps: [] });
     await store.moveTask(task.id, "todo");
     await store.moveTask(task.id, "in-progress");
     await store.moveTask(task.id, "in-review");

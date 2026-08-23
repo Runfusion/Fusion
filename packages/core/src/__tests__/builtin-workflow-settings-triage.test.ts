@@ -66,14 +66,50 @@ describe("workflow-native built-in workflow settings", () => {
     REVISE blocks at all. They are enum-typed with defaults, so the number-typed assertions below
     deliberately continue to cover only the three cap settings.
     */
+    /*
+    FNXC:ReviewConvergence 2026-08-23-23:05:
+    FN-149 (a786c45bb9) added the six review-convergence/arbitration keys to this catalog: they are
+    review-loop policy of the same kind as the caps and the severity gate, so they belong here and
+    stay OUT of the moved catalog / MOVED_SETTINGS_KEYS (asserted below). 455bdbc007 removed their
+    duplicate defaults from DEFAULT_PROJECT_SETTINGS, making these declarations their single source
+    of truth. The `*Enabled` pair is defaulted; the provider/model lanes are deliberately undefaulted
+    so an unset workflow value means "no alternate target configured".
+    */
     expect(BUILTIN_REVIEW_REVISION_SETTINGS.map((setting) => setting.id)).toEqual([
       "reviewerInlineFixes",
       "planReviewMaxRevisions",
       "codeReviewMaxRevisions",
       "planReviewBlockingSeverity",
       "codeReviewBlockingSeverity",
+      "reviewConvergenceEscalationEnabled",
+      "reviewConvergenceEscalationProvider",
+      "reviewConvergenceEscalationModelId",
+      "reviewArbitrationEnabled",
+      "reviewArbitrationProvider",
+      "reviewArbitrationModelId",
       "planReviewReplanCap",
     ]);
+    for (const id of ["reviewConvergenceEscalationEnabled", "reviewArbitrationEnabled"]) {
+      const setting = revisionById.get(id);
+      expect(setting?.type, `${id} should be boolean`).toBe("boolean");
+      expect(setting?.default, `${id} should default on`).toBe(true);
+      expect(fullIds.has(id), `${id} should be in the full built-in catalog`).toBe(true);
+      expect(movedIds.has(id), `${id} should not be in the moved-key catalog`).toBe(false);
+      expect(movedKeyIds.has(id), `${id} should not be in MOVED_SETTINGS_KEYS`).toBe(false);
+    }
+    for (const id of [
+      "reviewConvergenceEscalationProvider",
+      "reviewConvergenceEscalationModelId",
+      "reviewArbitrationProvider",
+      "reviewArbitrationModelId",
+    ]) {
+      const setting = revisionById.get(id);
+      expect(setting?.type, `${id} should be a string lane`).toBe("string");
+      expect(setting, `${id} should carry no declaration default`).not.toHaveProperty("default");
+      expect(fullIds.has(id), `${id} should be in the full built-in catalog`).toBe(true);
+      expect(movedIds.has(id), `${id} should not be in the moved-key catalog`).toBe(false);
+      expect(movedKeyIds.has(id), `${id} should not be in MOVED_SETTINGS_KEYS`).toBe(false);
+    }
     for (const id of ["planReviewBlockingSeverity", "codeReviewBlockingSeverity"]) {
       const setting = revisionById.get(id);
       expect(setting, `${id} should be declared`).toBeDefined();

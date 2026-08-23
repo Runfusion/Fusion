@@ -283,7 +283,7 @@ export function buildRunImplementationDeps(
       "shouldDeferCompletionForGlobalPause", "clearCompletedTaskWatchdog", "resolveResumeLanes",
       "transitionReviewAddressing", "buildActionGateContext", "buildPermanentAgentGatingContext",
       "resolveMcpServers", "captureModifiedFiles", "handleNonContinuableSessionError",
-      "signalTaskComplete", "getAutoRecoveryDispatcher", "registerConfiguredCommandController",
+      "signalTaskComplete", "signalTaskTerminalFailed", "getAutoRecoveryDispatcher", "registerConfiguredCommandController",
       "unregisterConfiguredCommandController", "tryBootstrapMisbindingRecovery", "addActiveWorktree",
       "getAuthoritativeAssignedAgent", "resolveSeamColumnAgent", "sendTaskBackForFix",
       "runWithExecutorSemaphore", "resetStepsIfWorkLost", "recoverMissingWorktreeSessionStartFailure",
@@ -1079,8 +1079,24 @@ export function buildSignalTaskCompleteDeps(host: any): any {
   return {
     store: host.store,
     capturedReflectionTaskIds: host.capturedReflectionTaskIds,
+    rootDir: host.rootDir,
+    capturedMemoryTaskIds: host.capturedMemoryTaskIds,
     reflectionService: host.options.reflectionService,
     onComplete: host.options.onComplete,
+  };
+}
+
+/*
+FNXC:StashSessionCapture 2026-08-19-05:09:
+(RUFU-122) Minimal deps bag for the terminal-failure transcript capture seam:
+store/rootDir plus the SAME capturedMemoryTaskIds gate the completion seam
+uses — triggerTaskMemoryCapture picks exactly the fields it needs.
+*/
+export function buildSignalTaskTerminalFailedDeps(host: any): any {
+  return {
+    store: host.store,
+    rootDir: host.rootDir,
+    capturedMemoryTaskIds: host.capturedMemoryTaskIds,
   };
 }
 

@@ -310,6 +310,14 @@ export type RunImplementationDeps = {
   shouldDeferCompletionForGlobalPause: AnyFn;
   shouldDeferForHeartbeat: AnyFn;
   signalTaskComplete: AnyFn;
+  /*
+  FNXC:StashSessionCapture 2026-08-19-05:09:
+  (RUFU-122) Terminal-failure capture seam: the executor post-loop finally calls this
+  when a run exits with the task terminally failed, so failed/parked transcripts
+  reach Stash like completed ones (same capturedMemoryTaskIds gate, at most once
+  per task across both seams).
+  */
+  signalTaskTerminalFailed: AnyFn;
   terminateAllChildren: AnyFn;
   transitionReviewAddressing: AnyFn;
   tryBootstrapMisbindingRecovery: AnyFn;
@@ -3851,6 +3859,30 @@ export async function runImplementation(
         } else if (latestTask.status === "failed") {
           await deps.transitionReviewAddressing(task.id, ["in-progress", "queued"], "failed");
         }
+      }
+
+      /*
+      FNXC:StashSessionCapture 2026-08-19-05:09:
+      (RUFU-122) Shared terminal-failure seam: EVERY executor exit — execution
+      failure, transient-retry exhaustion, auto-recovery parks (status "failed" +
+      paused), worktree-liveness failures, and the completion handoffs alike —
+      funnels through this finally. When the freshly-read task is terminally
+      failed, fire the transcript capture behind the SAME capturedMemoryTaskIds
+      gate the completion seam uses, so a task captured on completion can never
+      be re-captured on failure and vice versa (at most once per task). The
+      fresh getTask read is deliberate: the in-scope `task` parameter predates
+      every terminal mutation in the try body. Best-effort: a read or capture
+      failure here must never break run teardown.
+      */
+      try {
+        const terminalTask = await deps.store.getTask(task.id);
+        if (terminalTask?.status === "failed") {
+          deps.signalTaskTerminalFailed(terminalTask);
+        }
+      } catch (terminalCaptureErr: unknown) {
+        executorLog.debug(
+          `RUFU-122 terminal-failure transcript capture skipped for ${task.id}: ${terminalCaptureErr instanceof Error ? terminalCaptureErr.message : String(terminalCaptureErr)}`,
+        );
       }
 
       /*
