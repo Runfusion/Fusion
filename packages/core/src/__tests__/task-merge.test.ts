@@ -1125,12 +1125,13 @@ describe("getMergeConfirmedFinalizationBlocker", () => {
     expect(getMergeConfirmedFinalizationBlocker(replanned)).toBeUndefined();
   });
 
-  /* A no-op merge with no commit sha landed NOTHING, so incomplete steps stay an honest blocker —
-     and the executor's no-op branch depends on that reason still firing. */
-  /* The exemption needs a DURABLE merge record naming the landed commit. A no-op merge with no sha
-     landed nothing, and the content-scan recovery path (mergeDetails absent, landing inferred from
-     branch content) must keep the blocker or it would launder an unfinished task to done on a
-     heuristic — see `landed-content-soft-blocker.real-git.test.ts`. */
+  /*
+  FNXC:MergeConfirmedFinalization 2026-08-23-17:55:
+  The exemption needs a DURABLE merge record naming the landed commit. A no-op merge with no sha
+  landed nothing, and the content-scan recovery path (mergeDetails absent, landing inferred from
+  branch content) must keep the blocker or it would launder an unfinished task to done on a
+  heuristic — see `landed-content-soft-blocker.real-git.test.ts`.
+  */
   it("still blocks incomplete steps without a durable merge record", () => {
     expect(getMergeConfirmedFinalizationBlocker({
       ...landedWithUnfinishedWork,

@@ -616,6 +616,7 @@ export function getMergeConfirmedFinalizationBlocker(
   options: { reviewColumns?: ReadonlySet<string>; requiredPreMergeStepIds?: ReadonlySet<string> } = {},
 ): string | undefined {
   /*
+  FNXC:MergeConfirmedFinalization 2026-08-23-17:55:
   THE EXEMPTION NEEDS A DURABLE MERGE RECORD, not merely a belief that content landed. Two nearby
   paths look similar and are not:
 
