@@ -15,7 +15,7 @@ vi.mock("../../api", () => ({
   updateGlobalSettings: (...args: unknown[]) => mockUpdateGlobalSettings(...(args as [])),
 }));
 
-const { markGitHubStarPromptShown, useGitHubStarPromptShown } = await import("../useGitHubStarPrompt");
+const { markGitHubStarPromptShown, useGitHubStarPromptShown, useGitHubStarPromptState } = await import("../useGitHubStarPrompt");
 
 describe("useGitHubStarPromptShown", () => {
   beforeEach(() => {
@@ -146,5 +146,39 @@ describe("useGitHubStarPromptShown", () => {
 
     await waitFor(() => expect(mockUpdateGlobalSettings).toHaveBeenCalled());
     expect(result.current).toBe(true);
+  });
+
+  /*
+  FNXC:GithubStarAsk 2026-08-23-23:35:
+  The durable answer and the display gate must stay separable. A one-shot trigger that fires while the
+  lookup is in flight reads `dismissed` (still false — nobody has dismissed anything), so it is
+  recorded; the gate stays suppressed until `resolved`, so nothing renders in the meantime.
+  */
+  it("reports the durable answer as not-dismissed while the lookup is still in flight", async () => {
+    const { result } = renderHook(() => useGitHubStarPromptState());
+
+    expect(result.current.dismissed).toBe(false);
+    expect(result.current.resolved).toBe(false);
+
+    await waitFor(() => expect(result.current.resolved).toBe(true));
+    expect(result.current.dismissed).toBe(false);
+  });
+
+  it("reports dismissed without a lookup when the local record is already set", () => {
+    localStorage.setItem("fusion:github-star-prompt-shown", "1");
+
+    const { result } = renderHook(() => useGitHubStarPromptState());
+
+    expect(result.current.dismissed).toBe(true);
+    expect(mockFetchGlobalSettings).not.toHaveBeenCalled();
+  });
+
+  it("resolves even when the lookup fails, so the gate stops suppressing", async () => {
+    mockFetchGlobalSettings.mockRejectedValue(new Error("offline"));
+
+    const { result } = renderHook(() => useGitHubStarPromptState());
+
+    await waitFor(() => expect(result.current.resolved).toBe(true));
+    expect(result.current.dismissed).toBe(false);
   });
 });

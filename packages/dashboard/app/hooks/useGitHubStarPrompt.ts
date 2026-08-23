@@ -53,18 +53,28 @@ export function markGitHubStarPromptShown(): void {
   });
 }
 
-export function useGitHubStarPromptShown(): boolean {
-  const shown = useSyncExternalStore(subscribe, read, () => false);
-  /*
-  FNXC:GithubStarAsk 2026-08-23-23:20:
-  "Not asked yet" and "we have not looked yet" are different answers, and only the first may show the
-  prompt. Until the durable lookup settles, this profile cannot know whether the operator already
-  answered in the CLI or another browser, so the hook reports shown=true and the ask stays hidden —
-  an unknown must never produce the duplicate ask the whole cross-surface record exists to prevent.
-  A FAILED lookup also settles: an unreachable server leaves the local record as the answer rather
-  than suppressing the ask forever.
-  */
-  const [hydrated, setHydrated] = useState(false);
+/*
+FNXC:GithubStarAsk 2026-08-23-23:35:
+Two different facts, deliberately kept apart. `dismissed` is the durable answer — this operator already
+answered, on some surface. `resolved` says only whether the durable lookup has finished, so callers can
+tell "not asked yet" from "we have not looked yet".
+
+Collapsing them into one boolean breaks one caller or the other. Reporting "shown" while unresolved is
+right for the DISPLAY gate (an unknown must never render a duplicate ask) but wrong for the TRIGGER
+that records a completed task: that transition is one-shot, so a trigger suppressed during the lookup
+window is dropped for good and the prompt never appears even when nobody had dismissed it. So the
+display gate consumes `dismissed || !resolved`, while the trigger consumes `dismissed` alone.
+*/
+export interface GitHubStarPromptState {
+  /** The durable answer: this operator already answered on some surface. */
+  dismissed: boolean;
+  /** False only while the durable lookup is still in flight; a FAILED lookup resolves too. */
+  resolved: boolean;
+}
+
+export function useGitHubStarPromptState(): GitHubStarPromptState {
+  const dismissed = useSyncExternalStore(subscribe, read, () => false);
+  const [resolved, setResolved] = useState(false);
 
   /*
   FNXC:GithubStarAsk 2026-08-19-03:59:
@@ -73,7 +83,7 @@ export function useGitHubStarPromptShown(): boolean {
   local record is unset, so it is a single request on the machines that still might ask.
   */
   useEffect(() => {
-    if (shown || typeof window === "undefined") return;
+    if (dismissed || typeof window === "undefined") return;
     let cancelled = false;
     void fetchGlobalSettings()
       .then((settings) => {
@@ -92,12 +102,28 @@ export function useGitHubStarPromptShown(): boolean {
         // Unreachable settings mean we simply keep the local record as-is.
       })
       .finally(() => {
-        if (!cancelled) setHydrated(true);
+        /*
+        FNXC:GithubStarAsk 2026-08-23-23:20:
+        A failed lookup resolves as well: an unreachable server must leave the local record as the
+        answer rather than suppressing the ask forever.
+        */
+        if (!cancelled) setResolved(true);
       });
     return () => {
       cancelled = true;
     };
-  }, [shown]);
+  }, [dismissed]);
 
-  return shown || !hydrated;
+  return { dismissed, resolved };
+}
+
+/**
+ * FNXC:GithubStarAsk 2026-08-23-23:35:
+ * The DISPLAY gate: true when the ask must stay hidden — either it was already answered, or we do not
+ * yet know. Trigger sites must use `useGitHubStarPromptState().dismissed` instead, or they will drop a
+ * one-shot trigger that arrives during the lookup window.
+ */
+export function useGitHubStarPromptShown(): boolean {
+  const { dismissed, resolved } = useGitHubStarPromptState();
+  return dismissed || !resolved;
 }
