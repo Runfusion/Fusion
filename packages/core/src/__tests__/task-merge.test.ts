@@ -862,6 +862,13 @@ describe("isTaskReadyForMerge", () => {
     expect(isTaskReadyForMerge(baseTask)).toBe(true);
   });
 
+  it("uses the caller's resolved review lanes", () => {
+    expect(isTaskReadyForMerge(
+      { ...baseTask, column: "signoff" },
+      { reviewColumns: new Set(["signoff"]) },
+    )).toBe(true);
+  });
+
   it("returns false when pre-merge step failed", () => {
     expect(isTaskReadyForMerge({
       ...baseTask,

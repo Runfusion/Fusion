@@ -119,7 +119,7 @@ describe("reliability interactions: self-healing", () => {
     await fx.writeAndCommit("src/sh.txt", "z\n", "feat: sh");
     await fx.checkout("main");
     await fx.writeAndCommit("src/sh.txt", "z\n", "feat: landed");
-    /* FNXC:BranchNaming 2026-08-24-02:10: a branch write is a provenance boundary
+    /* FNXC:BranchNaming 2026-08-23-18:51: a branch write is a provenance boundary
        (updateTaskUnlockedImpl); without an explicit origin this threw before the scenario ran. */
     await fx.store.updateTask(fx.task.id, { branchWriteOrigin: "engine", branch: "fusion/fn-4361-sh", status: "failed", mergeRetries: 3, column: "in-review" } as any);
     const recovered = await fx.selfHeal.recoverAlreadyMergedReviewTasks();

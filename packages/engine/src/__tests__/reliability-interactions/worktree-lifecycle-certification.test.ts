@@ -75,7 +75,7 @@ async function makeCertFixture(input?: { column?: string; brokenBranchBinding?: 
   await fx.store.updateTask(taskId, {
     worktree: worktreePath,
     branch: input?.brokenBranchBinding ? `${canonicalBranch}-renamed-away` : canonicalBranch,
-    /* FNXC:BranchNaming 2026-08-24-02:10: a branch write is a provenance boundary
+    /* FNXC:BranchNaming 2026-08-23-18:51: a branch write is a provenance boundary
        (`updateTaskUnlockedImpl`); without an explicit origin this fixture threw before any
        certification scenario ran. The engine is what binds a task to its worktree branch. */
     branchWriteOrigin: "engine",

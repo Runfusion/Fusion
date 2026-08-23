@@ -20,7 +20,7 @@ describeIfGit("reliability interactions: audit + recovery", () => {
     await fx.checkout("main");
     await fx.writeAndCommit("src/tree.txt", "one\n", "feat: main part1");
     await fx.writeAndCommit("src/tree.txt", "one\ntwo\n", "feat: main part2");
-    /* FNXC:BranchNaming 2026-08-24-02:10: a branch write is a provenance boundary (updateTaskUnlockedImpl); without an explicit origin this threw before the scenario ran.*/
+    /* FNXC:BranchNaming 2026-08-23-18:51: a branch write is a provenance boundary (updateTaskUnlockedImpl); without an explicit origin this threw before the scenario ran.*/
     await fx.store.updateTask(fx.task.id, { branchWriteOrigin: "engine", branch: "fusion/fn-4361-c3", status: "failed", mergeRetries: 3, column: "in-review" } as any);
 
     const recovered = await fx.selfHeal.recoverAlreadyMergedReviewTasks();

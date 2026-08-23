@@ -657,9 +657,17 @@ export function getTaskDoneBypassBlocker(
 
 export function isTaskReadyForMerge(
   task: Pick<Task, "column" | "paused" | "status" | "error" | "steps" | "workflowStepResults">,
-  options: { requiredPreMergeStepIds?: ReadonlySet<string> } = {},
+  options: { reviewColumns?: ReadonlySet<string>; requiredPreMergeStepIds?: ReadonlySet<string> } = {},
 ): boolean {
-  return getTaskMergeBlocker(task, options) === undefined;
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-08-23-18:49:
+  Merge readiness must forward the caller's resolved review lanes instead of falling back to the
+  legacy `in-review` literal on custom workflows.
+  */
+  return getTaskMergeBlocker(task, {
+    reviewColumns: options.reviewColumns,
+    requiredPreMergeStepIds: options.requiredPreMergeStepIds,
+  }) === undefined;
 }
 
 export interface TaskCompletionBlockerOptions {
