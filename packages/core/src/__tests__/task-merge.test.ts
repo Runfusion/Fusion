@@ -1147,6 +1147,30 @@ describe("getMergeConfirmedFinalizationBlocker", () => {
     })).toBeUndefined();
   });
 
+  /*
+  FNXC:MergeConfirmedFinalization 2026-08-23-09:48:
+  Resolved review lanes and required pre-merge steps must reach the hard blocker on both durable-merge and non-durable finalization paths; neither path may fall back to default lane vocabulary.
+  */
+  it("forwards resolved lane options across durable and non-durable finalization", () => {
+    const customReviewTask = {
+      ...baseTask,
+      column: "approval",
+    };
+    const options = {
+      reviewColumns: new Set(["approval"]),
+      requiredPreMergeStepIds: new Set(["code-review"]),
+    };
+
+    expect(getMergeConfirmedFinalizationBlocker({
+      ...customReviewTask,
+      mergeDetails: { mergeConfirmed: true, commitSha: "abc123" } as never,
+    }, options)).toBe(PRE_MERGE_STEPS_NOT_RUN_BLOCKER);
+    expect(getMergeConfirmedFinalizationBlocker({
+      ...customReviewTask,
+      mergeDetails: { mergeConfirmed: true, noOpMerge: true } as never,
+    }, options)).toBe(PRE_MERGE_STEPS_NOT_RUN_BLOCKER);
+  });
+
   it("still blocks on a failed pre-merge review", () => {
     // A review that actually rejected this content is a real signal even after landing; the
     // FN-7720 operator bypass is the sanctioned way past it.
