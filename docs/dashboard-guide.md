@@ -2158,6 +2158,10 @@ The dashboard's CSS is split into a global stylesheet (`packages/dashboard/app/s
 
 **Rule:** New CSS for a component goes in `app/components/ComponentName.css`, NOT `styles.css`. Only design tokens, primitives (`.btn`, `.card`, `.modal`, `.form-input`), and cross-component `@media` overrides belong in the global file.
 
+### Banners
+
+Use the shared `Banner` component for dashboard notices. Its `tone` selects semantic info, warning, error, success, or neutral tinting; `layout` selects inline cards or sticky chrome; and `density` selects compact or regular spacing. Banners use a tinted surface and `var(--btn-border-width)` hairline border, never a left accent bar. Declaration values use design tokens: raw px is allowed only in `@media` conditions, zero values, and `var()` fallbacks.
+
 ### Dialog anatomy: spacing and stacking
 
 Two rules that a new dialog gets wrong the same way every time. Both were paid for by the Set Up AI

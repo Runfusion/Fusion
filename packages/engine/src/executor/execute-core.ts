@@ -29,6 +29,7 @@
 import type { Task } from "@fusion/core";
 import { executorLog } from "../logger.js";
 import { dropPreHeldExecutorSlot } from "../concurrency/concurrency.js";
+import { getActivePrincipalHoldCooldown } from "./execute-workflow-graph.js";
 
 export type ExecuteCoreDeps = {
   completionFinalizedTaskIds: Set<string>;
@@ -53,6 +54,26 @@ export async function executeCore(deps: ExecuteCoreDeps, task: Task): Promise<vo
   if (task.deletedAt) {
     executorLog.warn(`${task.id}: refusing execute — task is soft-deleted`);
     if (dropPreHeldExecutorSlot(task.id)) deps.releaseSemaphore();
+    return;
+  }
+  /*
+  FNXC:WorkflowAgentRouting 2026-08-23-22:22:
+  Honor an active principal-hold cooldown BEFORE the graphRouting claim. Re-entering the graph only to re-fence
+  and re-park IS the hot loop: one graph run, two work-item writes, and two audit rows per pass for a condition
+  that cannot change without operator action (enabling or adding an agent). Skipping here is what makes the hold
+  a real wait rather than a label.
+
+  Restored after the U4 executor peel (#3317) rewrote executor.ts from a pre-change base, dropped
+  `isPrincipalHoldCoolingDown` outright, and re-inlined the read inside executeWorkflowGraph behind
+  `!opts?.alreadyClaimed` — which this, the only caller, always sets. The ladder kept recording and clearing
+  correctly, so it read as working while never once deferring a dispatch.
+
+  This must stay AHEAD of the claim: returning after `graphRouting.add` would leave the claim owned by nobody.
+  The `execute()` wrapper owns the pre-held slot release for every exit path, so no slot bookkeeping belongs here.
+  */
+  const principalHoldCooldown = getActivePrincipalHoldCooldown(task.id);
+  if (principalHoldCooldown) {
+    executorLog.debug(`execute() called for ${task.id} while a workflow-principal hold is cooling down (${principalHoldCooldown.reason}) — deferring`);
     return;
   }
   /*

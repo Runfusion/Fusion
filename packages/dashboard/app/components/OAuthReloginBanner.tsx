@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useState, type JSX } from "react";
 import { useTranslation } from "react-i18next";
-import { AlertTriangle, X } from "lucide-react";
+import { AlertTriangle } from "lucide-react";
 import { fetchAuthStatus, type AuthProvider } from "../api";
 import { OAUTH_RELOGIN_SUCCESS_EVENT } from "../auth";
+import { Banner } from "./Banner";
 import "./OAuthReloginBanner.css";
 
 const DISMISS_STORAGE_KEY = "fusion:oauth-relogin-dismissed";
@@ -143,7 +144,9 @@ export function OAuthReloginBanner({
   };
 
   return (
-    <section className="oauth-relogin-banner" role="status" aria-live="polite">
+    <Banner className="oauth-relogin-banner" tone="warning" role="status" aria-live="polite" actions={<div className="oauth-relogin-banner__actions">
+      <button type="button" className="btn btn-sm" onClick={() => onReLogin(isSingleProvider ? visibleExpiredProviders[0]?.id : undefined)}>{t("auth.relogin", "Re-login")}</button>
+    </div>} onDismiss={handleDismiss} dismissLabel={t("actions.dismissOAuth", "Dismiss OAuth re-login banner")}> 
       <div className="oauth-relogin-banner__content">
         <AlertTriangle aria-hidden="true" />
         <p className="oauth-relogin-banner__message">
@@ -152,23 +155,6 @@ export function OAuthReloginBanner({
             : t("auth.reloginRequiredMultiple", "Re-login required: {{providers}}", { providers: providerList })}
         </p>
       </div>
-      <div className="oauth-relogin-banner__actions">
-        <button
-          type="button"
-          className="btn btn-sm"
-          onClick={() => onReLogin(isSingleProvider ? visibleExpiredProviders[0]?.id : undefined)}
-        >
-          {t("auth.relogin", "Re-login")}
-        </button>
-        <button
-          type="button"
-          className="btn-icon oauth-relogin-banner__dismiss"
-          aria-label={t("actions.dismissOAuth", "Dismiss OAuth re-login banner")}
-          onClick={handleDismiss}
-        >
-          <X aria-hidden="true" />
-        </button>
-      </div>
-    </section>
+    </Banner>
   );
 }
