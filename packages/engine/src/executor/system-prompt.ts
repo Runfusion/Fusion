@@ -318,9 +318,15 @@ export function getExecutorSystemPrompt(
   settings: Settings,
   toolAvailability?: { taskCreateWithheld?: boolean; delegateWithheld?: boolean },
 ): string {
+  /*
+  FNXC:WorkflowRouting 2026-08-23-13:25:
+  Tool availability is opt-out at this production boundary: omitted availability, an empty object,
+  and omitted fields all preserve the core resolver's available-by-default contract. Only an
+  explicit withheld=true removes that tool's created-task workflow guidance.
+  */
   const customPrompt = resolveAgentPrompt("executor", settings.agentPrompts, {
-    taskCreateToolAvailable: toolAvailability?.taskCreateWithheld === false,
-    delegateTaskToolAvailable: toolAvailability?.delegateWithheld === false,
+    taskCreateToolAvailable: toolAvailability?.taskCreateWithheld !== true,
+    delegateTaskToolAvailable: toolAvailability?.delegateWithheld !== true,
   });
   const basePrompt = customPrompt || EXECUTOR_SYSTEM_PROMPT;
   /*
