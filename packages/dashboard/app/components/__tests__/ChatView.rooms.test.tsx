@@ -490,26 +490,27 @@ describe("ChatView — rooms (FN-3805..FN-3811 contract)", () => {
 
   it("keeps the level-only thinking control reachable beside attach on mobile", async () => {
     const viewportSpy = mockMobileViewport();
+    try {
+      const { container } = await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} experimentalFeatures={{ chatRooms: true }} />);
+      await userEvent.click(screen.getByTestId("chat-room-item-room-a"));
+      await waitFor(() => expect(screen.getByTestId("chat-back-btn")).toBeInTheDocument());
 
-    const { container } = await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} experimentalFeatures={{ chatRooms: true }} />);
-    await userEvent.click(screen.getByTestId("chat-room-item-room-a"));
-    await waitFor(() => expect(screen.getByTestId("chat-back-btn")).toBeInTheDocument());
+      const header = container.querySelector(".chat-room-thread-header");
+      expect(header).toBeInTheDocument();
+      expect(container.querySelector("[data-testid='chat-room-thinking-level']")).toBeNull();
+      expect(container.querySelector("label[for='chat-room-thinking-level']")).toBeNull();
+      expect(container.querySelector(".chat-room-thinking-level-field")).toBeNull();
 
-    const header = container.querySelector(".chat-room-thread-header");
-    expect(header).toBeInTheDocument();
-    expect(container.querySelector("[data-testid='chat-room-thinking-level']")).toBeNull();
-    expect(container.querySelector("label[for='chat-room-thinking-level']")).toBeNull();
-    expect(container.querySelector(".chat-room-thinking-level-field")).toBeNull();
-
-    const attachButton = screen.getByTestId("chat-attach-btn");
-    const thinkingButton = screen.getByTestId("chat-thinking-btn");
-    expect(attachButton.nextElementSibling).toContainElement(thinkingButton);
-    await userEvent.click(thinkingButton);
-    expect(screen.getByRole("listbox")).toBeInTheDocument();
-    expect(screen.queryByTestId("chat-thinking-mode-toggle")).toBeNull();
-    expect(screen.queryByTestId("chat-thinking-model-picker")).toBeNull();
-
-    viewportSpy.mockRestore();
+      const attachButton = screen.getByTestId("chat-attach-btn");
+      const thinkingButton = screen.getByTestId("chat-thinking-btn");
+      expect(attachButton.nextElementSibling).toContainElement(thinkingButton);
+      await userEvent.click(thinkingButton);
+      expect(screen.getByRole("listbox")).toBeInTheDocument();
+      expect(screen.queryByTestId("chat-thinking-mode-toggle")).toBeNull();
+      expect(screen.queryByTestId("chat-thinking-model-picker")).toBeNull();
+    } finally {
+      viewportSpy.mockRestore();
+    }
   });
 
   it("omits the room composer thinking control when no room is active", async () => {
