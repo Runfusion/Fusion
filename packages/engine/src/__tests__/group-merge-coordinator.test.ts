@@ -1292,7 +1292,7 @@ function createPostReviewTask(groupId: string): Record<string, any> {
     dependencies: [],
     steps: [{ name: "Code Review", status: "done" }],
     /*
-    FNXC:RequiredPreMergeSteps 2026-08-24-00:20:
+    FNXC:RequiredPreMergeSteps 2026-08-23-18:07:
     This fixture IS a post-Code-Review member, so its enabled pre-merge groups must carry passing
     RESULTS — the merge door reads `workflowStepResults`, not the step row whose name happens to say
     "Code Review". Without them the door refused this card before the branch-group routing under
@@ -1340,7 +1340,7 @@ function createPostReviewStore(task: Record<string, any>, branchGroup: Record<st
     listTasksByBranchGroup: vi.fn(async () => (branchGroup ? [task] : [])),
     getBranchGroup: vi.fn(() => branchGroup),
     updateTask: vi.fn(async (_id: string, patch: Record<string, unknown>) => Object.assign(task, patch)),
-    /* FNXC:MergeMockDrift 2026-08-24-00:20: production write seam used by the merge path; a fake
+    /* FNXC:MergeMockDrift 2026-08-23-18:07: production write seam used by the merge path; a fake
        store omitting it throws before the routing behaviour under test runs. */
     updateTaskAtomic: vi.fn(async (_id: string, updater: (current: typeof task) => Record<string, unknown> | undefined) => {
       const patch = await updater(task);

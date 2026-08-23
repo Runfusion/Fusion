@@ -77,7 +77,7 @@ const SUCCESS_PATH = [
   "execute",
   "browser-verification",
   /*
-  FNXC:WorkflowGraphTests 2026-08-24-00:40:
+  FNXC:WorkflowGraphTests 2026-08-23-18:07:
   `completion-summary` runs BEFORE `code-review`, not after. The built-in coding IR wires
   `browser-verification -> completion-summary -> code-review` (see builtin-coding-workflow-ir.ts),
   and production task logs show the same order — the summary describes the work, then the review

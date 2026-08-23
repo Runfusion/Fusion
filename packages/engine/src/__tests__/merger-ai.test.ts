@@ -89,7 +89,7 @@ function makeStore(
     title: "do the thing",
     steps: [],
     /*
-    FNXC:RequiredPreMergeSteps 2026-08-24-00:20:
+    FNXC:RequiredPreMergeSteps 2026-08-23-18:07:
     These fixtures exercise AI-MERGE MECHANICS — clean-room setup, push, abort, cleanup, lease
     handling — not review gating. The merge door refuses any card whose enabled optional pre-merge
     groups have produced no result, and the built-in coding workflow enables Plan Review and Code

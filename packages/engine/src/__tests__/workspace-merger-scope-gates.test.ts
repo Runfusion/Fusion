@@ -88,7 +88,7 @@ describeIfGit("landWorkspaceTask file-scope gates", () => {
      */
     addBranch(fx, "repo-b", "repo-a/feature.txt");
     const task = {
-      id: TASK_ID, title: "workspace scope", description: "", column: "in-review", branch: BRANCH, enabledWorkflowSteps: [], /* FNXC:RequiredPreMergeSteps 2026-08-24-00:20: merge-mechanics fixture; an unspecified list makes the door refuse on default-on Plan/Code Review before the behaviour under test runs. */ 
+      id: TASK_ID, title: "workspace scope", description: "", column: "in-review", branch: BRANCH, enabledWorkflowSteps: [], /* FNXC:RequiredPreMergeSteps 2026-08-23-18:07: merge-mechanics fixture; an unspecified list makes the door refuse on default-on Plan/Code Review before the behaviour under test runs. */
       comments: [], steeringComments: [], dependencies: [], steps: [], log: [], currentStep: 0,
       workspaceWorktrees: {
         "repo-a": { worktreePath: fx.repoPath("repo-a"), branch: BRANCH },
@@ -127,7 +127,7 @@ describeIfGit("landWorkspaceTask file-scope gates", () => {
     addBranch(fx, "repo-a");
     addBranch(fx, "repo-b", "unapproved.ts");
     const task = {
-      id: TASK_ID, title: "workspace scope", description: "", column: "in-review", branch: BRANCH, enabledWorkflowSteps: [], /* FNXC:RequiredPreMergeSteps 2026-08-24-00:20: merge-mechanics fixture; an unspecified list makes the door refuse on default-on Plan/Code Review before the behaviour under test runs. */ 
+      id: TASK_ID, title: "workspace scope", description: "", column: "in-review", branch: BRANCH, enabledWorkflowSteps: [], /* FNXC:RequiredPreMergeSteps 2026-08-23-18:07: merge-mechanics fixture; an unspecified list makes the door refuse on default-on Plan/Code Review before the behaviour under test runs. */
       comments: [], steeringComments: [], dependencies: [], steps: [], log: [], currentStep: 0,
       workspaceWorktrees: {
         "repo-a": { worktreePath: fx.repoPath("repo-a"), branch: BRANCH },
@@ -155,7 +155,7 @@ describeIfGit("landWorkspaceTask file-scope gates", () => {
     fx = await createWorkspaceFixture(["repo-a"]);
     addBranch(fx, "repo-a");
     const task = {
-      id: TASK_ID, title: "workspace scope", description: "", column: "in-review", branch: BRANCH, enabledWorkflowSteps: [], /* FNXC:RequiredPreMergeSteps 2026-08-24-00:20: merge-mechanics fixture; an unspecified list makes the door refuse on default-on Plan/Code Review before the behaviour under test runs. */ 
+      id: TASK_ID, title: "workspace scope", description: "", column: "in-review", branch: BRANCH, enabledWorkflowSteps: [], /* FNXC:RequiredPreMergeSteps 2026-08-23-18:07: merge-mechanics fixture; an unspecified list makes the door refuse on default-on Plan/Code Review before the behaviour under test runs. */
       comments: [], steeringComments: [], dependencies: [], steps: [], log: [], currentStep: 0,
       workspaceWorktrees: { "repo-a": { worktreePath: fx.repoPath("repo-a"), branch: BRANCH } },
       repositoryScope: {

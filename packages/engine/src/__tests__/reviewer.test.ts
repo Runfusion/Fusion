@@ -1306,7 +1306,7 @@ describe("reviewStep — validator model overrides", () => {
 
 describe("default reviewer prompt", () => {
   /*
-  FNXC:ReviewerPrompt 2026-08-24-01:10:
+  FNXC:ReviewerPrompt 2026-08-23-18:07:
   FOUR TESTS REMOVED, not repaired. They asserted that DEFAULT_REVIEWER_PROMPT still carried the
   task-SPLITTING contract — "Subtask breakdown", "12+ implementation steps", "The bar for splitting
   is high", and a REVISE that directs the planner to `fn_task_create` 2-5 child tasks. FN-074

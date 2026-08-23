@@ -272,7 +272,7 @@ const STORE_METHOD_CLASSIFICATION: Record<string, Omit<SurfaceClassification, "m
   updatePrInfoByNumber: { kind: "writer", reason: "persists or mutates TaskStore state" },
   updateSettings: { kind: "writer", reason: "persists or mutates TaskStore state" },
   /*
-  FNXC:DurableWriteInventory 2026-08-24-00:40:
+  FNXC:DurableWriteInventory 2026-08-23-18:07:
   Public TaskStore write surfaces added since this inventory was last regenerated. Each persists or
   mutates task state, so each is a durable writer:
     - dismissAiMergeReviewFinding / mutateTaskRepositoryScope / resetTaskPublication /
@@ -509,7 +509,7 @@ const NON_WRITER_REASONS: Record<string, string> = Object.fromEntries([
   "getMergeQueuedTaskIdsAsync",
   "getMergeRequestRecord",
   "getMergeRequestRecordAsync",
-  /* FNXC:MergeAuthority 2026-08-24-00:40: batched sibling of the read above; same read-only shape. */
+  /* FNXC:MergeAuthority 2026-08-23-18:07: batched sibling of the read above; same read-only shape. */
   "getMergeRequestRecordsAsync",
   "getMissionStore",
   "getMutationsForRun",
@@ -623,7 +623,7 @@ const NON_WRITER_REASONS: Record<string, string> = Object.fromEntries([
   "listWorkflowSettingValuesForProject",
   "listWorkflowSteps",
   "listWorkflowWorkItemsForTask",
-  /* FNXC:MergeAuthority 2026-08-24-00:40: batched sibling of the read above; same read-only shape. */
+  /* FNXC:MergeAuthority 2026-08-23-18:07: batched sibling of the read above; same read-only shape. */
   "listWorkflowWorkItemsForTasks",
   "listWorkflowWorkItemsForTaskSync",
   "loadWorkflowRunBranches",

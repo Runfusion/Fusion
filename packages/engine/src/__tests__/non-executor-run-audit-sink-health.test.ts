@@ -275,7 +275,7 @@ describe("FN-9175 non-executor audit sink health", () => {
     it.each(hostileModes)("returns a resolving fence audit promise with a %s sink", async (mode) => {
       mergerAiAuditCapture.fences.length = 0;
       const sink = sinkFor(mode);
-      /* FNXC:RequiredPreMergeSteps 2026-08-24-00:40: this fixture must REACH runAiMerge's generation
+      /* FNXC:RequiredPreMergeSteps 2026-08-23-18:07: this fixture must REACH runAiMerge's generation
          fence (see the note below), so it must clear the merge door first. An unspecified optional-step
          list makes the door refuse on the workflow's default-on Plan/Code Review groups before any
          fence is constructed, leaving `fences` empty and `recordAudit` undefined. */
