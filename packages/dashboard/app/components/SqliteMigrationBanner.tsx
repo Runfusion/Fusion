@@ -17,6 +17,7 @@ import { useTranslation } from "react-i18next";
 import { DatabaseZap } from "lucide-react";
 import type { Settings } from "@fusion/core";
 import { fetchSettings, updateSettings } from "../api";
+import { Banner } from "./Banner";
 import "./SqliteMigrationBanner.css";
 
 export const FUSION_DISCORD_URL = "https://discord.gg/ksrfuy7WYR";
@@ -60,8 +61,21 @@ export function SqliteMigrationBanner({ projectId }: { projectId: string }) {
   };
 
   return (
-    <div className="sqlite-migration-banner" role="status" aria-live="polite">
-      <DatabaseZap aria-hidden="true" />
+    <Banner
+      className="sqlite-migration-banner"
+      tone="success"
+      icon={<DatabaseZap aria-hidden="true" />}
+      role="status"
+      aria-live="polite"
+      actions={<div className="sqlite-migration-banner-actions">
+        <a className="btn btn-sm" href={FUSION_DISCORD_URL} target="_blank" rel="noreferrer">
+          {t("app.sqliteMigration.needHelp", "Get help on Discord")}
+        </a>
+        <button type="button" className="btn btn-sm btn-ghost" onClick={dismiss}>
+          {t("app.sqliteMigration.dismiss", "Dismiss")}
+        </button>
+      </div>}
+    >
       <div className="sqlite-migration-banner-body">
         <strong>
           {t("app.sqliteMigration.title", "Your data was migrated to PostgreSQL")}
@@ -79,19 +93,6 @@ export function SqliteMigrationBanner({ projectId }: { projectId: string }) {
           <time dateTime={notice.migratedAt}>{notice.migratedAt}</time>
         </span>
       </div>
-      <div className="sqlite-migration-banner-actions">
-        <a
-          className="btn btn-sm"
-          href={FUSION_DISCORD_URL}
-          target="_blank"
-          rel="noreferrer"
-        >
-          {t("app.sqliteMigration.needHelp", "Get help on Discord")}
-        </a>
-        <button type="button" className="btn btn-sm btn-ghost" onClick={dismiss}>
-          {t("app.sqliteMigration.dismiss", "Dismiss")}
-        </button>
-      </div>
-    </div>
+    </Banner>
   );
 }
