@@ -428,7 +428,11 @@ describe("worktree path boundary helpers", () => {
         parameters: {},
         execute: vi.fn().mockResolvedValue({ ok: true, content: [] }),
       });
-      const toolNames = ["read", "glob", "grep", "write", "edit", "bash"];
+      /*
+      FNXC:WorktreeBoundary 2026-08-23-03:44:
+      Symlink-escape coverage must include every filesystem wrapper plus both Bash path surfaces. Read-only aliases and verification cwd checks are part of the same boundary invariant, not optional follow-up cases.
+      */
+      const toolNames = ["read", "glob", "grep", "find", "ls", "write", "edit", "bash", "fn_run_verification"];
       const tools = toolNames.map(makeTool);
       const worktreeRoot = "/project/.worktrees/fn-001";
       const projectRoot = "/project";
@@ -456,10 +460,24 @@ describe("worktree path boundary helpers", () => {
 
       for (const { symlink, path } of escapeCases) {
         for (const tool of wrapped as any[]) {
-          const params = tool.name === "bash" ? { command: "pwd", cwd: symlink } : { path };
+          const params = tool.name === "bash"
+            ? { command: "pwd", cwd: symlink }
+            : tool.name === "fn_run_verification"
+              ? { command: "pnpm test", cwd: symlink }
+              : { path };
           const result = await tool.execute(`call-${tool.name}-${symlink}`, params);
           expect(result).toMatchObject({ ok: false, error: expect.stringContaining("outside the worktree boundary") });
         }
+
+        const wrappedBash = (wrapped as any[]).find((tool) => tool.name === "bash");
+        const commandTargetResult = await wrappedBash.execute(`call-bash-command-${symlink}`, {
+          command: `cd ${symlink} && pwd`,
+          cwd: worktreeRoot,
+        });
+        expect(commandTargetResult).toMatchObject({
+          ok: false,
+          error: expect.stringContaining("outside the worktree boundary"),
+        });
       }
       for (const tool of tools) {
         expect(tool.execute).not.toHaveBeenCalled();
