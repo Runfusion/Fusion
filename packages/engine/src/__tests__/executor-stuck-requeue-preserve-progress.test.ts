@@ -333,6 +333,24 @@ describe("TaskExecutor stuck requeue preserve-progress reconciliation", () => {
     vi.useFakeTimers();
     const task = createTask();
     const store = createMutableStore(task);
+    /*
+    FNXC:StuckRequeue 2026-08-23-22:35:
+    A completion BARRIER, not a wait-and-hope. The grace-timeout callback is async past its timer:
+    `resetStepsIfWorkLost` awaits `loadWorkspaceConfig(rootDir)`, which is REAL async fs I/O, and
+    `vi.advanceTimersByTimeAsync` only drains timers and microtasks — it returns while that I/O leg
+    is still outstanding. Asserting straight after the advance therefore read the graph's
+    `step 0 = in-progress` before the reconciliation's reset landed (deterministic in isolation;
+    order-dependent, and observed flaking, in a whole-file run). The product is correct: the reset,
+    the currentStep clear, and the requeue all happen, in that order, and the requeue move is LAST.
+    Awaiting it is the exact, poll-free point at which every assertion below is observable.
+    */
+    const forceRequeued = new Promise<void>((resolve) => {
+      store.moveTask.mockImplementation(async (_taskId: string, column: Task["column"], options?: { preserveProgress?: boolean }) => {
+        task.column = column;
+        if (column === "todo" && options?.preserveProgress) resolve();
+        return task;
+      });
+    });
     let releasePrompt!: () => void;
     const promptRelease = new Promise<void>((resolve) => {
       releasePrompt = resolve;
@@ -344,6 +362,7 @@ describe("TaskExecutor stuck requeue preserve-progress reconciliation", () => {
     await startedPromise;
     executor.markStuckAborted(task.id, true);
     await vi.advanceTimersByTimeAsync(60_000);
+    await forceRequeued;
 
     expect(task.steps.map((step) => step.status)).toEqual(["pending", "pending", "pending"]);
     expect(task.currentStep).toBe(0);

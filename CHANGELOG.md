@@ -2,6 +2,38 @@
 
 User-facing release notes aggregated across all packages. This file is auto-synced from each `packages/*/CHANGELOG.md` by `scripts/release.mjs` — do not edit by hand.
 
+## 0.77.0-beta.8
+
+### Highlights
+
+- Auto-merge no longer merges a task before its workflow code review finishes
+- Tasks whose branch already merged no longer stick as failed with unfinished steps
+- Full Chat gains a resizable docked conversation sidebar and thread-title switching
+- Chat and the mobile nav bar stay usable with the on-screen keyboard open
+- New Iceberg theme, plus chat filter, back arrow, and mailbox task ID fixes
+
+### New
+
+- Full Chat has a resizable docked conversation sidebar; its width and open state persist across sessions.
+- Switch Direct chats straight from the thread title without going back to the conversation list.
+- Added the Iceberg color theme: navy-slate in dark mode, pale blue-gray in light.
+
+### Fixed
+
+- Auto-merge is fenced on satisfied pre-merge gates: the in-review sweep, the column-entry handoff, the unpause re-enqueue, and the pre-dispatch check all service recoveries instead of starting merges. A card merges only when it is merge-confirmed, parked at a merge-region node, recovering an interrupted attempt, or long-quiescent, and a foreign live session always defers. Workspace and shared-branch-group cards follow the same rules.
+- A task whose branch already landed can no longer get stuck as failed with unfinished steps; once landing is proven, incomplete steps are logged rather than blocking finalization. A no-op merge that landed no content still blocks.
+- Restored title-based duplicate redirects in triage, and planning-stall diagnostics now survive a failed audit write instead of being silently marked as throttled.
+- The Chat message box stays visible above the software keyboard on tablets and landscape phones.
+- The mobile navigation bar no longer rises with the on-screen keyboard.
+- The chat conversation switcher dropdown is now visible on narrow chat surfaces.
+- The chat sidebar shows a compact Archived toggle on the tag filter line, and the tag filter has proper inner padding so "All tags" is not cramped.
+- Chat's back button uses a real back arrow icon instead of a text character.
+- Mailbox task links show the real task ID instead of a raw placeholder.
+
+### Performance
+
+- Merge sweep reads are batched, so admission costs a fixed number of queries per poll rather than scaling with the number of cards on the board.
+
 ## 0.77.0-beta.7
 
 ### Highlights

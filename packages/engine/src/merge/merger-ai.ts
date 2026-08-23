@@ -2591,7 +2591,16 @@ export async function landWorkspaceTask(
         recorded as `landed` in the in-memory result first so the error payload is accurate.
         */
         try {
-          if (durableLandLease) {
+          /*
+          FNXC:Workspace 2026-08-23-22:15:
+          Resolve the write-ahead land intent ONLY when one was written. `landOneRepo` records an
+          intent solely for a REMOTE target (it needs the tenancy fence pin and the remote URL), so a
+          local-only workspace land — the FN-122 contract: no remote, no fence, no intent — reached
+          this resolver with nothing to resolve, got `missing`, and hard-failed a fully landed repo as
+          a partial land after its integration ref had already advanced. Gate both sides on the same
+          condition so the intent lifecycle cannot be half-applied.
+          */
+          if (durableLandLease && workspaceTarget.target.kind === "remote") {
             assertLeaseLive();
             const resolved = await store.resolveWorkspaceLandIntent({
               handle: durableLandLease,

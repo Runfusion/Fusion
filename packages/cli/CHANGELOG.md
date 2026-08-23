@@ -1,5 +1,50 @@
 # @runfusion/fusion
 
+## 0.77.0-beta.8
+
+### Minor Changes
+
+- 3af5441: summary: Add the Iceberg color theme (navy-slate dark, pale blue-gray light).
+  category: feature
+- 0fc2c23: summary: Switch Direct chats from the thread title without returning to the conversation list.
+  category: feature
+  dev: Adds the ChatThreadTitleSwitcher component and stable menu test IDs.
+- eaa1d47: summary: Add a resizable docked conversation sidebar to full Chat.
+  category: feature
+  dev: Persists fusion:chat-docked-sidebar-width and fusion:chat-docked-sidebar-open.
+
+### Patch Changes
+
+- 323d55a: summary: Chat sidebar shows a compact Archived toggle on the tag filter line.
+  category: fix
+  dev: ChatView sidebar filter row (.chat-sidebar-filter-row); .chat-archived-toggle restyled, testid unchanged.
+- bd93723: summary: Give the chat sidebar tag filter proper inner padding so "All tags" is not cramped.
+  category: fix
+  dev: Updates `.chat-tag-filter select` padding in ChatView.css to `var(--space-sm) var(--space-md)`; pinned by a stylesheet-source regression test.
+- 46b329f: summary: Chat's back button now shows a real back arrow icon instead of a text character.
+  category: fix
+- 3f448f7: summary: Mailbox task links now show the real task ID instead of a raw placeholder.
+  category: fix
+  dev: Aligns MailboxRelatedWorkLink with the mailbox.viewTask and mailbox.viewTaskAria {{id}} variable contract.
+- 52d124b: summary: Keep the Chat message box visible above the software keyboard on tablets and landscape phones.
+  category: fix
+  dev: Aligns keyboard tracking hosts, promotes the thread clamp, and measures thread viewport offset.
+- 3857e0d: summary: Make the chat conversation switcher dropdown visible on narrow chat surfaces.
+  category: fix
+  dev: Anchors the narrow-host menu to the thread header and adds the --space-3xs focus-ring token.
+- 3d37cfa: summary: Stop the mobile navigation bar from rising with the on-screen keyboard.
+  category: fix
+  dev: Clamp computeIcbOffsets, add computeMobileBarKeyboardFlags focus state, useKeyboardFocusPending, and useMobileBarKeyboardState.
+- 455bdbc: summary: Restore title-based duplicate redirects and keep planning-stall diagnostics after a failed audit write.
+  category: fix
+  dev: Re-applies FN-8840's title-aware path in `triage.ts` (reverted by accident in 1cf86baa1c) and adds an engine `emitBoundedRunAuditWithOutcome` seam plus `RunAuditor.databaseWithOutcome` so the FN-8600 throttle marker is only set on a proven write.
+- a879ead: summary: A task whose branch already merged can no longer get stuck as failed with unfinished steps.
+  category: fix
+  dev: `getMergeConfirmedFinalizationBlocker` (core) exempts incomplete `steps` at all four merge-confirmed finalization sites once landing is proven, while a no-op merge that landed no content still blocks. Unfinished steps are logged as `MergeConfirmedFinalizeUnfinishedSteps` rather than dropped.
+- 038f802: summary: Auto-merge no longer merges a task before its workflow's code review has finished.
+  category: fix
+  dev: Every merge door — the in-review sweep, the 300ms column-entry handoff, the unpause re-enqueue, and the pre-dispatch check — is demoted from merge initiator to recovery servicer. `classifyMergeSweepAdmission` (core) admits a card only when it is merge-confirmed, parked at a merge-region node, recovering an interrupted attempt, or long-quiescent; a foreign live session always defers, and every initiation is fenced on satisfied pre-merge gates. Sweep reads are batched (`listWorkflowWorkItemsForTasks`, `getMergeRequestRecordsAsync`) so admission costs O(1) queries per poll rather than O(cards). Workspace and shared-branch-group cards resolve through the same rules — `branch-group-*` nodes are merge-region, and an in-flight sub-repo land reads as live.
+
 ## 0.77.0-beta.7
 
 ### Minor Changes

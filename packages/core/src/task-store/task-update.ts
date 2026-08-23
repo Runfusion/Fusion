@@ -371,6 +371,21 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
           movedToTriage = true;
         }
       }
+      /*
+      FNXC:HybridStepStorage 2026-08-23-20:05:
+      AN EMPTY `steps` ARRAY MEANS "NOT PARSED YET", NOT "THIS TASK HAS NO STEPS". The write below is
+      literal and persists `[]` faithfully (task row and task.json both show it), but PROMPT.md is the
+      source of truth for a task's plan, so every read path re-derives steps from it whenever the
+      stored array is empty: `getTaskImpl` (reads.ts), the two list hydration paths (reads.ts), and
+      `updateStep`'s auto-init (merge-queue-ops.ts) — whose range error says outright that "its steps
+      are defined in PROMPT.md".
+
+      Consequence for callers, measured 2026-08-23: `updateTask(id, { steps: [] })` looks like a
+      silent no-op through `getTask` while a PROMPT.md with step headings exists, because the read
+      re-populates it. That is the designed hybrid contract, NOT a lost write — an investigation
+      mistook it for a PostgreSQL persistence bug. To make a task genuinely stepless, remove the step
+      headings from PROMPT.md; clearing this array only marks the plan unparsed.
+      */
       if (updates.steps !== undefined) task.steps = updates.steps;
       // U11/KTD-13: customFields writes are validated against the task's workflow
       // field schema through the single authority (task-fields.ts). The patch is

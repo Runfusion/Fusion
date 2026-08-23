@@ -82,7 +82,7 @@ export async function captureWorkspaceReviewEvidence(options: {
     const ahead = Number(await git(["rev-list", "--count", range], entry.worktreePath)) > 0;
     const qualifiedFiles = files.map((file) => `${repository}/${file}`);
     const fingerprint = files.length > 0
-      ? await computeReviewDiffFingerprint(entry.worktreePath, baseCommitSha)
+      ? await computeReviewDiffFingerprint(entry.worktreePath, baseCommitSha, branch)
       : undefined;
     const netZero = ahead && files.length === 0;
     repositories.push({ repository, baseCommitSha, branch, files, qualifiedFiles, fingerprint, ahead, netZero });
