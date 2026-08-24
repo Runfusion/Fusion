@@ -38,11 +38,23 @@ vi.mock("lucide-react", async (importOriginal) => {
   };
 });
 
+/*
+FNXC:ChatNavigation 2026-08-23-23:20:
+Chat opens list-first (FN-054) and FN-9193 docks that list beside the thread on desktop, so the
+thread and composer exist only after a conversation row is opened; the Back affordance no longer
+renders while the docked list is visible, so detail entry is detected by the thread itself.
+*/
 async function renderWithAct(ui: Parameters<typeof rtlRender>[0]) {
   let result: ReturnType<typeof rtlRender> | undefined;
   await act(async () => {
     result = rtlRender(ui);
   });
+  if (!document.querySelector(".chat-thread, .chat-room-thread-header")) {
+    const item = document.querySelector<HTMLElement>(
+      ".chat-session-item, .chat-room-item",
+    );
+    if (item) await act(async () => { fireEvent.click(item); });
+  }
   return result!;
 }
 

@@ -902,8 +902,17 @@ describe("PluginManager", () => {
     await screen.findAllByText("WhatsApp Chat");
     await userEvent.click(screen.getByTitle("Settings"));
 
-    expect(await screen.findByTestId("whatsapp-pairing-instructions")).toBeTruthy();
-    expect(screen.getAllByText("Allowed WhatsApp Senders")).toHaveLength(2);
+    /*
+    FNXC:WhatsAppPairing 2026-08-23-21:00:
+    FN-013 localized the pairing instructions, so the allow-list field name is now interpolated into
+    one sentence rather than rendered as its own exact-text node: the instructions must still name
+    the field, and the settings form still carries exactly one label for it.
+    */
+    const instructions = await screen.findByTestId("whatsapp-pairing-instructions");
+    expect(instructions).toHaveTextContent("Allowed WhatsApp Senders");
+    expect(screen.getAllByText("Allowed WhatsApp Senders")).toHaveLength(1);
+    expect(instructions.compareDocumentPosition(screen.getByText("Allowed WhatsApp Senders")))
+      .toBe(Node.DOCUMENT_POSITION_FOLLOWING);
   });
 
   it("shows plugin detail view when settings button is clicked", async () => {

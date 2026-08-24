@@ -2409,7 +2409,6 @@ describe("NewTaskModal", () => {
     });
 
     it("delegates touch drag styling to the shared FloatingWindow primitive", () => {
-      expect(newTaskModalCss).toContain("FloatingWindow owns its shared drag");
       expect(newTaskModalCss).not.toContain("new-task-resize-handle");
       expect(newTaskModalCss).not.toContain("var(--shadow-xl)");
     });

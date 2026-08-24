@@ -59,7 +59,7 @@ describe("planning prompt-write surfaces", () => {
     const reviewerSource = await readFile(new URL("../execution/reviewer.ts", import.meta.url), "utf8");
     const { store } = createProductionShapedStore();
 
-    expect(reviewerSource).toContain("createTaskPromptWriteTool(options.store, options.taskId)");
+    expect(reviewerSource).toContain("createTaskPromptWriteTool(options.store, options.taskId, toRunMutationContext(reviewerRunContext))");
     expect(getText(await runTool(createTriagePromptWriteTool(store, TASK_ID)))).toBe(`Updated PROMPT.md for ${TASK_ID}.`);
   });
 

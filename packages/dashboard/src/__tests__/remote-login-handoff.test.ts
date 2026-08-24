@@ -104,6 +104,19 @@ async function bootRemoteServer(input: {
   return { app, dir, settings };
 }
 
+/*
+FNXC:RemoteAuth 2026-08-23-23:45:
+A validated remote login must redirect to bare "/" and deliver an expiring HttpOnly remote-session cookie. It must NEVER put the daemon token in the redirect URL: that handed every recipient of a shared link the dashboard's real non-expiring credential (URL bar, history, any URL log) and made revoking the remote token useless (fix(security) 0e7c353f2b). These assertions previously encoded the pre-fix `/?token=<daemonToken>` handoff.
+*/
+function expectSessionHandoff(response: { status: number; headers: Record<string, unknown> }): void {
+  expect(response.status).toBe(302);
+  expect(response.headers.location).toBe("/");
+  const setCookie = String(response.headers["set-cookie"] ?? "");
+  expect(setCookie).toContain("fusion_remote_session=");
+  expect(setCookie).toContain("HttpOnly");
+  expect(setCookie).not.toContain(daemonToken);
+}
+
 describe("remote-login global settings handoff", () => {
   const dirs: string[] = [];
   afterEach(async () => { await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true }))); });
@@ -117,8 +130,7 @@ describe("remote-login global settings handoff", () => {
     const loginUrl = await apiRequest(app, "POST", "/api/remote-access/auth/login-url", { mode: "persistent" });
     for (const payload of [url.body, qr.body, { url: (loginUrl.body as { loginUrl: string }).loginUrl }]) {
       const handoff = await request(app, "GET", `/remote-login?rt=${tokenFromLoginUrl(payload)}`);
-      expect(handoff.status).toBe(302);
-      expect(handoff.headers.location).toBe(`/?token=${daemonToken}`);
+      expectSessionHandoff(handoff as never);
     }
   });
 
@@ -182,7 +194,10 @@ describe("remote-login global settings handoff", () => {
     try {
       const env = await bootRemoteServer({ token: "env-token", useEnvironmentToken: true });
       dirs.push(env.dir);
-      expect((await request(env.app, "GET", "/remote-login?rt=env-token")).headers.location).toBe("/?token=environment-daemon-token");
+      const envHandoff = await request(env.app, "GET", "/remote-login?rt=env-token");
+      expect(envHandoff.headers.location).toBe("/");
+      expect(String(envHandoff.headers["set-cookie"] ?? "")).toContain("fusion_remote_session=");
+      expect(String(envHandoff.headers["set-cookie"] ?? "")).not.toContain("environment-daemon-token");
     } finally {
       if (previous === undefined) delete process.env.FUSION_DAEMON_TOKEN;
       else process.env.FUSION_DAEMON_TOKEN = previous;
@@ -207,7 +222,6 @@ describe("remote-login global settings handoff", () => {
     const app = createServer(new RemoteLoginStore(serverSettings) as unknown as TaskStore, { daemon: { token: daemonToken }, ...createInertOptions() });
     const response = await request(app, "GET", "/remote-login?rt=new-token");
 
-    expect(response.status).toBe(302);
-    expect(response.headers.location).toBe(`/?token=${daemonToken}`);
+    expectSessionHandoff(response as never);
   });
 });

@@ -48,6 +48,9 @@ vi.mock("../../api", () => ({
   fetchGitRemotesDetailed: (...args: unknown[]) => mockFetchGitRemotesDetailed(...args),
   fetchDashboardHealth: (...args: unknown[]) => mockFetchDashboardHealth(...args),
   checkForUpdates: (...args: unknown[]) => mockCheckForUpdates(...args),
+  /* FNXC:DashboardTests 2026-08-23-17:45: SettingsModal now pulls the cached update-check hooks, which import the singular `checkForUpdate`; a mock missing it fails the whole module. */
+  checkForUpdate: vi.fn(() => Promise.resolve({ currentVersion: "0.0.0", latestVersion: null, updateAvailable: false })),
+  refreshUpdateCheck: vi.fn(() => Promise.resolve({ currentVersion: "0.0.0", latestVersion: null, updateAvailable: false })),
   fetchRemoteSettings: (...args: unknown[]) => mockFetchRemoteSettings(...args),
   updateRemoteSettings: vi.fn(),
   fetchRemoteStatus: vi.fn(),

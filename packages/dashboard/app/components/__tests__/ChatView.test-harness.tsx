@@ -71,7 +71,13 @@ export const defaultChatState: UseChatReturn = {
   deleteSession: vi.fn(),
   sendMessage: vi.fn(),
   editMessageAndResend: vi.fn(),
-  stopStreaming: vi.fn(),
+  /*
+  FNXC:ChatStreamCancel 2026-08-23-23:20:
+  stopStreaming resolves a durable cancellation promise, and ChatView's `/new` and `/clear` handlers
+  chain `.then(...)` on it. A bare vi.fn() returns undefined and throws inside the handler, so the
+  default double must resolve.
+  */
+  stopStreaming: vi.fn().mockResolvedValue(undefined),
   pendingMessages: [],
   clearPendingMessage: vi.fn(),
   loadMoreMessages: vi.fn(),
@@ -104,6 +110,33 @@ export async function renderWithAct(ui: Parameters<typeof rtlRender>[0]) {
     result = rtlRender(ui);
   });
   return result!;
+}
+
+/*
+FNXC:ChatNavigation 2026-08-23-23:20:
+Chat opens list-first on EVERY host (FN-054), and FN-9193's docked desktop sidebar keeps the list
+beside the thread instead of swapping it away — so the thread only exists after a conversation is
+opened, and the Back affordance exists only while the list is hidden. Detail-scoped suites therefore
+enter through the conversation item and detect the thread itself; waiting on `chat-back-btn` asserts a
+control the docked layout deliberately omits.
+*/
+export function isChatDetailOpen() {
+  return Boolean(document.querySelector(".chat-thread, .chat-room-thread-header"));
+}
+
+export async function openFirstConversation() {
+  if (isChatDetailOpen()) return;
+  const item = document.querySelector<HTMLElement>(
+    ".chat-session-item, .chat-room-item",
+  );
+  if (!item) return;
+  await userEvent.click(item);
+}
+
+export async function renderChatDetailWithAct(ui: Parameters<typeof rtlRender>[0]) {
+  const result = await renderWithAct(ui);
+  await openFirstConversation();
+  return result;
 }
 
 export const activeSessionFixture: ChatSessionInfo = {
@@ -139,8 +172,16 @@ export function setupMockChat(overrides: Partial<UseChatReturn> = {}) {
   mockUseChat.mockReturnValue(state);
 }
 
+/*
+FNXC:ChatNavigation 2026-08-23-23:20:
+Mirror setupMockChat's session default: an active room must also appear in the room LIST, because
+list-first navigation (FN-054) opens a thread only after its conversation row is clicked. A fixture
+with an activeRoom but an empty rooms array can never reach the room composer.
+*/
 export function setupMockRooms(overrides: Partial<UseChatRoomsResult> = {}) {
-  const state: UseChatRoomsResult = { ...defaultRoomsState, ...overrides };
+  const activeRoom = overrides.activeRoom ?? defaultRoomsState.activeRoom;
+  const rooms = overrides.rooms ?? (activeRoom ? [activeRoom] : defaultRoomsState.rooms);
+  const state: UseChatRoomsResult = { ...defaultRoomsState, ...overrides, rooms };
   mockUseChatRooms.mockReturnValue(state);
 }
 

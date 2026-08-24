@@ -21,8 +21,9 @@ describe("FN-8607 migrated modal FloatingWindow contract", () => {
     expect(fixture.optOut).toMatch(/.+/);
   });
 
+  /* FNXC:ModalTouchGeometry 2026-08-23-21:10: FN-074 removed task splitting, retiring the Subtask Breakdown host from this inventory (11 -> 10). */
   it("records every hosted production modal in the fixture table", () => {
-    expect(migratedModalFixtures.filter((fixture) => fixture.key)).toHaveLength(11);
+    expect(migratedModalFixtures.filter((fixture) => fixture.key)).toHaveLength(10);
   });
 
   it("makes every FN-8607 host a full-screen sheet on phone and short viewports", () => {

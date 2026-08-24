@@ -60,7 +60,10 @@ describe("memory MCP child transport", () => {
       child.stdin!.write('{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"graph_query","arguments":{}}}\n');
       child.stdin!.write('{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"recall_search","arguments":{"query":"memory"}}}\n');
       await received;
-      expect(messages[0]?.result).toMatchObject({ protocolVersion: "2024-11-05" });
+      expect(messages[0]?.result).toMatchObject({
+        protocolVersion: "2024-11-05",
+        serverInfo: { name: "fusion-memory", version: expect.any(String) },
+      });
       expect(messages[1]?.result).toMatchObject({ tools: expect.arrayContaining([expect.objectContaining({ name: "graph_query" })]) });
       expect(messages[2]?.result).toMatchObject({ content: [{ type: "text", text: expect.any(String) }] });
       expect(messages[2]?.result).not.toMatchObject({ isError: true });

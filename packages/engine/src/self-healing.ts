@@ -7664,7 +7664,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
             }
           }
           if (resolveExplicitDuplicateMarker(null, task.title).marker?.canonicalId === canonicalMarkerId) {
-            await this.store.updateTask(task.id, { title: `Duplicate redirect cleared: ${canonicalMarkerId}` });
+            await this.store.updateTask(task.id, { title: `Duplicate redirect cleared: ${canonicalMarkerId}` }, UNATTRIBUTED_MUTATION_CONTEXT);
           }
           await this.store.updateTask(task.id, buildMarkerClearedReplanTaskPatch(canonicalId), UNATTRIBUTED_MUTATION_CONTEXT);
           if (typeof this.store.logEntry === "function") {
@@ -15451,7 +15451,7 @@ const movedTask = await this.store.moveTask(task.id, completeLane, undefined, UN
           });
           if (!transition) continue;
           if (transition.kind === "exhausted") {
-            await this.store.logEntry(task.id, `No-progress no-task_done recovery exhausted after ${transition.prior}/${MAX_TASK_DONE_RETRIES} attempts; task remains failed for operator action`);
+            await this.store.logEntry(task.id, `No-progress no-task_done recovery exhausted after ${transition.prior}/${MAX_TASK_DONE_RETRIES} attempts; task remains failed for operator action`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
             await auditor.database({
               type: "task:no-progress-no-task-done-requeue-exhausted",
               target: task.id,
@@ -15460,9 +15460,9 @@ const movedTask = await this.store.moveTask(task.id, completeLane, undefined, UN
             continue;
           }
 
-          await this.store.logEntry(task.id, `Auto-recovered no-progress no-task_done failure — retry ${transition.prior + 1}/${MAX_TASK_DONE_RETRIES} in ${formatDelay(transition.delayMs)}, moved back to todo`);
+          await this.store.logEntry(task.id, `Auto-recovered no-progress no-task_done failure — retry ${transition.prior + 1}/${MAX_TASK_DONE_RETRIES} in ${formatDelay(transition.delayMs)}, moved back to todo`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
           // #1411: the locked status claim fences duplicate backward moves before this public move acquires its own lock.
-          await this.store.moveTask(task.id, await resolveReboundTargetForTask(this.store, task.id), { moveSource: "engine", recoveryRehome: true });
+          await this.store.moveTask(task.id, await resolveReboundTargetForTask(this.store, task.id), { moveSource: "engine", recoveryRehome: true }, UNATTRIBUTED_MUTATION_CONTEXT);
           await auditor.database({
             type: "task:no-progress-no-task-done-requeue",
             target: task.id,
@@ -16111,7 +16111,7 @@ const movedTask = await this.store.moveTask(task.id, completeLane, undefined, UN
             // FNXC:DuplicateIntake 2026-08-09-02:14: title-only redirects must not erase executable prompts.
             if (duplicateResolution.source !== "title") rmSync(promptPath, { force: true });
             if (resolveExplicitDuplicateMarker(null, task.title).marker?.canonicalId === marker.canonicalId) {
-              await this.store.updateTask(task.id, { title: `Duplicate redirect cleared: ${marker.canonicalId}` });
+              await this.store.updateTask(task.id, { title: `Duplicate redirect cleared: ${marker.canonicalId}` }, UNATTRIBUTED_MUTATION_CONTEXT);
             }
             await this.store.updateTask(task.id, buildMarkerClearedReplanTaskPatch(canonicalTask.id), UNATTRIBUTED_MUTATION_CONTEXT);
             if (typeof this.store.logEntry === "function") {

@@ -2517,7 +2517,15 @@ describe("useChat", () => {
     act(() => streamHandlers?.onText("Distinct direct prefix"));
     await waitFor(() => expect(result.current.streamingText).toBe("Distinct direct prefix"));
 
-    act(() => result.current.stopStreaming());
+    /*
+    FNXC:ChatStreamCancel 2026-08-23-23:20:
+    stopStreaming returns the durable cancellation promise (FN-100), so a concise-arrow
+    `act(() => result.current.stopStreaming())` hands React a thenable and opens an ASYNC act scope
+    that nothing awaits: the act queue stays installed, every later setState is queued instead of
+    rendered, and the rest of this file sees a frozen hook. Keep these calls statement-bodied with an
+    explicit `void` so the act scope stays synchronous.
+    */
+    act(() => { void result.current.stopStreaming(); });
     await waitFor(() => expect(mockCancelChatResponse).toHaveBeenCalledWith("session-001", "proj-123"));
     await waitFor(() => {
       const assistants = result.current.messages.filter((message) => message.role === "assistant" && message.content === "Distinct direct prefix");
@@ -2585,7 +2593,7 @@ describe("useChat", () => {
     act(() => streamHandlers?.onText("Distinct retained prefix"));
     await waitFor(() => expect(result.current.streamingText).toBe("Distinct retained prefix"));
 
-    act(() => result.current.stopStreaming());
+    act(() => { void result.current.stopStreaming(); });
     await waitFor(() => expect(mockCancelChatResponse).toHaveBeenCalledWith("session-001", "proj-123"));
     await waitFor(() => {
       expect(result.current.messages.filter((message) => message.content === "Distinct retained prefix")).toHaveLength(1);
