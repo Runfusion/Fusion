@@ -12,6 +12,7 @@ import { activeSessionRegistry } from "../agents/active-session-registry.js";
 
 const {
   execMock,
+  execFileMock,
   accessMock,
   rmMock,
   chmodMock,
@@ -26,8 +27,11 @@ const {
 } = vi.hoisted(() => {
   const mock = vi.fn();
   (mock as any)[Symbol.for("nodejs.util.promisify.custom")] = mock;
+  const execFileMock = vi.fn().mockResolvedValue({ stdout: "", stderr: "" });
+  (execFileMock as any)[Symbol.for("nodejs.util.promisify.custom")] = execFileMock;
   return {
     execMock: mock,
+    execFileMock,
     accessMock: vi.fn(),
     rmMock: vi.fn(),
     chmodMock: vi.fn(),
@@ -42,7 +46,7 @@ const {
   };
 });
 
-vi.mock("node:child_process", () => ({ exec: execMock, execFile: vi.fn() }));
+vi.mock("node:child_process", () => ({ exec: execMock, execFile: execFileMock }));
 vi.mock("node:fs", () => ({ existsSync: existsSyncMock }));
 vi.mock("node:fs/promises", () => ({ access: accessMock, chmod: chmodMock, rm: rmMock }));
 vi.mock("../execution/branch-conflicts.js", () => ({
@@ -79,6 +83,8 @@ vi.mock("../worktree/worktree-prune.js", () => ({
 
 beforeEach(() => {
   execMock.mockReset();
+  execFileMock.mockReset();
+  execFileMock.mockResolvedValue({ stdout: "", stderr: "" });
   accessMock.mockReset();
   rmMock.mockReset();
   rmMock.mockResolvedValue(undefined as never);
@@ -276,6 +282,24 @@ describe("NativeWorktreeBackend", () => {
     await expect(new NativeWorktreeBackend().remove({ rootDir: "/repo", worktreePath: "/repo/.worktrees/fn-1" })).rejects.toBe(error);
     expect(rmMock).not.toHaveBeenCalled();
     expect(pruneWorktreeAdminEntriesMock).not.toHaveBeenCalled();
+  });
+
+  it("prunes a missing defensive worktree registration without recursive fallback", async () => {
+    execMock.mockRejectedValueOnce({ stderr: "fatal: '/repo/.worktrees/fn-1' is not a working tree" });
+    existsSyncMock.mockReturnValue(false);
+
+    await new NativeWorktreeBackend().remove({
+      rootDir: "/repo",
+      worktreePath: "/repo/.worktrees/fn-1",
+      force: false,
+    });
+
+    expect(rmMock).not.toHaveBeenCalled();
+    expect(pruneWorktreeAdminEntriesMock).toHaveBeenCalledWith(expect.objectContaining({
+      rootDir: "/repo",
+      reason: "remove-missing-fallback",
+      target: "/repo/.worktrees/fn-1",
+    }));
   });
 
   it("retries errno-only recoverable cleanup failures before pruning once", async () => {
@@ -954,7 +978,7 @@ describe("removeWorktree", () => {
     });
 
     expect(execMock).toHaveBeenCalledWith(
-      'git worktree remove --force "/repo/.worktrees/fn-1"',
+      'git worktree remove "/repo/.worktrees/fn-1"',
       expect.objectContaining({ cwd: "/repo", timeout: 60000 }),
     );
     expect(audit.git).toHaveBeenCalledWith({ type: "worktree:remove", target: "/repo/.worktrees/fn-1" });
