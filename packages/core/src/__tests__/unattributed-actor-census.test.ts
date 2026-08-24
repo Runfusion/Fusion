@@ -323,10 +323,17 @@ marker is the honest label for it.
 The ratchet still does its job from the new floor: it exists to make growth visible and explained,
 and raising it silently — or excluding these files — is the failure it guards against.
 */
+/*
+FNXC:Identity 2026-08-23-06:40 — floor LOWERED after the 220-commit main merge (499 -> 481).
+This is the ratchet working as designed: the drop is real, not an accounting change. Engine fell
+because main's own run-context threading replaced marker sites with derived actors, and dashboard
+fell because FN-074 deleted the task-splitting/parent-deletion paths that carried several of them.
+Lowering the floor in the same commit is what stops the reclaimed ground from being given back.
+*/
 const BASELINE_BY_PACKAGE: Readonly<Record<string, number>> = {
   core: 34,
-  engine: 310,
-  dashboard: 153,
+  engine: 307,
+  dashboard: 138,
   cli: 2,
 };
 const BASELINE = Object.values(BASELINE_BY_PACKAGE).reduce((sum, n) => sum + n, 0);

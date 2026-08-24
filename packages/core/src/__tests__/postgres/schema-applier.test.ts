@@ -1796,6 +1796,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       AI_MERGE_REVIEW_RECONCILIATION_VERSION,
       TASK_REPOSITORY_SCOPE_VERSION,
       REVIEW_CONVERGENCE_STAGE_VERSION,
+      CHAT_SESSION_MEMORY_FOCUS_VERSION,
       IDENTITY_ACTORS_VERSION,
     ]);
     expect((await applySchemaBaseline(ctx.db, { pluginHooks: [] })).applied).toBe(false);
@@ -1888,6 +1889,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       AI_MERGE_REVIEW_RECONCILIATION_VERSION,
       TASK_REPOSITORY_SCOPE_VERSION,
       REVIEW_CONVERGENCE_STAGE_VERSION,
+      CHAT_SESSION_MEMORY_FOCUS_VERSION,
       IDENTITY_ACTORS_VERSION,
     ]);
   });
@@ -2113,6 +2115,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       AI_MERGE_REVIEW_RECONCILIATION_VERSION,
       TASK_REPOSITORY_SCOPE_VERSION,
       REVIEW_CONVERGENCE_STAGE_VERSION,
+      CHAT_SESSION_MEMORY_FOCUS_VERSION,
       IDENTITY_ACTORS_VERSION,
     ]);
   });
@@ -2219,6 +2222,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       AI_MERGE_REVIEW_RECONCILIATION_VERSION,
       TASK_REPOSITORY_SCOPE_VERSION,
       REVIEW_CONVERGENCE_STAGE_VERSION,
+      CHAT_SESSION_MEMORY_FOCUS_VERSION,
       IDENTITY_ACTORS_VERSION,
     ]);
   });
@@ -2325,6 +2329,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       AI_MERGE_REVIEW_RECONCILIATION_VERSION,
       TASK_REPOSITORY_SCOPE_VERSION,
       REVIEW_CONVERGENCE_STAGE_VERSION,
+      CHAT_SESSION_MEMORY_FOCUS_VERSION,
       IDENTITY_ACTORS_VERSION,
     ]);
   });
