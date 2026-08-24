@@ -3,6 +3,7 @@ import {
   resolveWorkflowIrForTask,
   type Task,
   type TaskStore,
+  type WorkflowIr,
   type WorkflowIrNode,
 } from "@fusion/core";
 
@@ -23,8 +24,8 @@ refuses when the node exists but is neither `defaultOn` nor in the task's select
 presence-only probe would admit that second case straight into the non-unwinding path. This shares
 the reroute's own condition so the two cannot drift.
 */
-export async function isCodeReviewRouteReachable(store: TaskStore, task: Task): Promise<boolean> {
-  const ir = await resolveWorkflowIrForTask(store, task.id);
+export async function isCodeReviewRouteReachable(store: TaskStore, task: Task, resolvedIr?: WorkflowIr): Promise<boolean> {
+  const ir = resolvedIr ?? await resolveWorkflowIrForTask(store, task.id);
   const node = ir.nodes.find(isCodeReviewNode);
   if (!node) return false;
   if (node.config?.defaultOn === true) return true;

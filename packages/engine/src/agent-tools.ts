@@ -6822,17 +6822,12 @@ async function classifyWorkspaceRepoLateAcquire(
   if (!fusionCore.resolveReviewColumns(workflowIr).includes(currentTask.column)) {
     return { decision: "blocked", reason: "not-a-review-column" };
   }
-  if (!isTaskReviewEvidenced(currentTask)) return { decision: "blocked", reason: "no-review-evidence" };
-  if (!await isCodeReviewRouteReachable(store, currentTask)) {
+  if (!fusionCore.requiresRepositoryReviewEvidence(currentTask)) return { decision: "blocked", reason: "no-review-evidence" };
+  // The classifier already resolved this task's IR; reuse it rather than compiling it twice.
+  if (!await isCodeReviewRouteReachable(store, currentTask, workflowIr)) {
     return { decision: "blocked", reason: "no-code-review-route" };
   }
   return { decision: "allowed-with-review-reentry" };
-}
-
-/** KTD6a: the shape whose landing fence actually evaluates repository review evidence. */
-function isTaskReviewEvidenced(task: import("@fusion/core").Task): boolean {
-  if (task.repositoryScope?.reviewEvidence !== undefined) return true;
-  return (task.enabledWorkflowSteps ?? []).some((step) => /review/i.test(step));
 }
 
 const LATE_ACQUIRE_REFUSAL_DETAIL: Record<Extract<WorkspaceLateAcquireDecision, { decision: "blocked" }>["reason"], string> = {

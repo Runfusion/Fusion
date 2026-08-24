@@ -75,7 +75,11 @@ export function getTaskSelectClauseWithActivityLogLimitImpl(store: TaskStore, li
       "tokenUsageInputTokens", "tokenUsageOutputTokens", "tokenUsageCachedTokens", "tokenUsageCacheWriteTokens", "tokenUsageTotalTokens", "tokenUsageFirstUsedAt", "tokenUsageLastUsedAt", "tokenUsageModelProvider", "tokenUsageModelId", "tokenUsagePerModel", "tokenBudgetSoftAlertedAt", "tokenBudgetHardAlertedAt", "tokenBudgetOverride",
       "createdAt", "updatedAt", "columnMovedAt", "firstExecutionAt", "cumulativeActiveMs", "cumulativePlanningMs", "planningStartedAt", "executionStartedAt", "executionCompletedAt",
       "dependencies", "steps", "customFields", "attachments", "steeringComments",
-      "comments", "review", "reviewState", "workflowStepResults", "prInfo", "prInfos", "issueInfo", "githubTracking", "sourceIssueProvider", "sourceIssueRepository", "sourceIssueExternalIssueId", "sourceIssueNumber", "sourceIssueUrl", "sourceIssueClosedAt", "mergeDetails", "workspaceWorktrees", "repositoryScope", "externalBlock",
+      "comments", "review", "reviewState", "workflowStepResults", "prInfo", "prInfos", "issueInfo", "githubTracking", "sourceIssueProvider", "sourceIssueRepository", "sourceIssueExternalIssueId", "sourceIssueNumber", "sourceIssueUrl", "sourceIssueClosedAt", "mergeDetails", "workspaceWorktrees",
+      // FNXC:WorkspaceWorktree 2026-08-24-06:11: R15's pinned segment must appear in BOTH projections
+      // (see getTaskSelectClauseImpl2). A task read through this path without it reads as UNPINNED, so
+      // every later resolution re-derives `taskId.toLowerCase()` and disagrees with what is on disk.
+      "workspaceWorktreeDirSegment", "repositoryScope", "externalBlock",
       "noCommitsExpected", "enabledWorkflowSteps", "modifiedFiles", "declaredSymbols",
       "missionId", "sliceId", "scopeOverride", "scopeOverrideReason", "scopeAutoWiden", "assignedAgentId", "pausedByAgentId", "assigneeUserId", "nodeId", "effectiveNodeId", "effectiveNodeSource",
       "sourceType", "sourceAgentId", "sourceRunId", "sourceSessionId", "sourceMessageId", "sourceParentTaskId", "sourceMetadata",
