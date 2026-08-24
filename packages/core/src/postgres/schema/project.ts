@@ -2669,13 +2669,4 @@ export const projectTableNames = [
   "unplanned_execution_blocks", "workflow_agent_capacity_leases",
   /* FNXC:Identity 2026-08-09-03:04: registered so the PG test harness TRUNCATEs and vacuums grants; omitting it lets identity rows leak between tests as an order-dependent flake. */
   "actor_role_grants",
-  /*
-  FNXC:WorkflowAgentRouting 2026-08-09-03:04:
-  Pre-existing omission, found while registering the identity tables above and fixed here because it is
-  the same one-line hazard this list exists to prevent. Migration 0046 created
-  `project.workflow_agent_capacity_leases` and defined its drizzle table, but never added it to this
-  registry — so the PG test harness has never TRUNCATEd or vacuumed it, and rows survive between tests as
-  an order-dependent flake. Not part of the identity feature; corrected in place rather than left to rot.
-  */
-  "workflow_agent_capacity_leases",
 ] as const;

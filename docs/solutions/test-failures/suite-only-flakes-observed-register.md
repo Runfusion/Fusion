@@ -529,3 +529,72 @@ per the standing rule in AGENTS.md.
 `engine-default` run (821 files) and not reproducible in isolation (4 passed), on a tree where the
 file itself was unmodified. Same file, same suite-only signature as the entry above; recorded here
 rather than as a separate entry so the sighting count stays honest.
+
+---
+
+## Entry: `PlanningModeModal.planning-flow` under dashboard lane sharding (first sighting)
+
+- **File:** `packages/dashboard/app/components/__tests__/PlanningModeModal.planning-flow.test.tsx`
+- **Exact tests:** a DIFFERENT case failed on each of two consecutive full-lane runs —
+  `PlanningModeModal sequential flow > keeps the newer session when delayed duplicate reconciliation returns 'a durable question' on 'mobile'`, then
+  `PlanningModeModal sequential flow > can refine a stopped initial plan into the first question`.
+- **Owner:** unowned — first sighting for this file. Recorded rather than quarantined: the file carries 83 tests and quarantine is file-level.
+- **Observed tree/SHA:** `c82e420ba0`, via the package's real command `pnpm --filter @fusion/dashboard test` (the `run-quality-tests.mjs` lane runner), lane `app:backfill-3` (`--project dashboard-app-quality-backfill --shard=3/4`), concurrency 2, 6144MiB heap per lane.
+- **Observed frequency:** twice in two full-lane runs, each time a different case; passes 83/83 in isolation every time.
+
+Verbatim observed failure (second run):
+
+```
+FAIL  |dashboard-app-quality-backfill| app/components/__tests__/PlanningModeModal.planning-flow.test.tsx > PlanningModeModal sequential flow > can refine a stopped initial plan into the first question
+TestingLibraryElementError: Unable to find an element by: [data-testid="planning-plan-review"]
+```
+
+| run | result |
+|---|---|
+| lane runner, default (fail-fast), `c82e420ba0` | **failed** on the delayed-duplicate-reconciliation case |
+| lane runner, `--all --no-fail-fast`, same tree | **failed** on the refine-stopped-plan case |
+| isolated `vitest run <file>`, same tree, repeatedly | **passed** 83/83 |
+
+The moving target plus a "cannot find element" shape points at render/settle timing under a loaded
+shard, not a product defect — a wait that is adequate on an idle machine and not under four
+concurrent 6GB lanes. No timeout was widened, no retry added, no assertion relaxed. A SECOND sighting
+of the *same* case is an ordinary on-sight quarantine per the standing rule in AGENTS.md; because the
+case moves, the honest rescue is a deterministic settle signal in this file's harness rather than a
+longer wait.
+
+---
+
+## Entry: dashboard `api:backfill-*` lanes — PostgreSQL contention under lane concurrency (pattern, not a single test)
+
+- **Files:** no fixed set. Across three consecutive full-lane runs on the same tree, a DIFFERENT file failed each time:
+  - run 1: `app/components/__tests__/PlanningModeModal.planning-flow.test.tsx`
+  - run 2: `src/__tests__/routes-branch-groups.test.ts`, `src/__tests__/routes-planning.test.ts`
+  - run 3: `src/__tests__/register-signal-routes.test.ts`, `src/__tests__/server-view-preload.test.ts`
+- **Command:** `pnpm --filter @fusion/dashboard test -- --all --no-fail-fast` (the `run-quality-tests.mjs` lane runner: 15 lanes, concurrency 2, 6144MiB heap per lane).
+- **Observed tree/SHA:** `cc19584cc4`.
+- **Every one passes in isolation**, including re-running the exact multi-file command that had just failed.
+
+Failure shape in run 3 (`api:backfill-1`, `api:backfill-2`):
+
+```
+Error: Hook timed out in 15000ms.
+fnlvl=warn [dashboard-github-tracking-reconciler] … pass failed (other passes still run): Failed query: select … from "project"."tasks" …
+```
+
+The hook timeout arrives alongside PostgreSQL `Failed query` warnings, so the proximate cause is
+database contention/exhaustion when two api lanes and their workers share one PostgreSQL instance —
+the same class FN-9131 investigated for core's loaded PostgreSQL directory, where a shared
+connection-budget primitive made a loaded run WORSE and was reverted. This is suite infrastructure,
+not a defect in any of the five files above, and chasing the file that happened to lose the race on a
+given run is whack-a-mole.
+
+Scale for context: run 3 executed roughly 15,200 tests across 15 lanes and failed 2.
+
+**Not quarantined deliberately.** Quarantine is file-level and the failing file moves, so quarantining
+would evict healthy coverage without touching the cause. The rescue is a connection/concurrency budget
+for the api lanes (or per-lane database isolation), owned by whoever owns the lane runner. No timeout
+was widened, no retry added, and no assertion relaxed anywhere in this investigation.
+
+One genuinely structural failure WAS found and fixed rather than recorded here: the lane runner's own
+self-tests spawned `pnpm --filter @fusion/dashboard test`, re-entering the suite from inside it. See
+`cc19584cc4`.

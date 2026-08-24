@@ -274,6 +274,12 @@ export const CHAT_SESSION_MEMORY_FOCUS_VERSION = "0066";
  * created on an upgraded database while a fresh one looked fine. A per-migration identity is
  * immutable only once RELEASED; this one has not been. Main shipped 0060 as workspace coordination
  * leases, so identity must be 0061.
+ *
+ * FNXC:Identity 2026-08-24-02:12:
+ * Renumbered again 0061 -> 0067 after origin/main shipped 0061-0066 (FN-066..FN-094, FN-149,
+ * memory-focus). The apply block is a sibling of the 0066 gate, never nested inside it: a database
+ * that already recorded memory-focus (every current origin/main install) would otherwise skip the
+ * identity tables while a fresh database looked fine.
  */
 export const IDENTITY_ACTORS_VERSION = "0067";
 
@@ -1412,19 +1418,24 @@ export async function applySchemaBaseline(
       const migrationSql = await readFile(CHAT_SESSION_MEMORY_FOCUS_MIGRATION_PATH, "utf8");
       await tx.execute(sql.raw(migrationSql));
       await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${CHAT_SESSION_MEMORY_FOCUS_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+
     /*
     FNXC:Identity 2026-08-15-22:52:
     Identity storage is additive: it never touches the dead-looking project_auth_* tables, whose live
     writer is the SQLite→Postgres cutover migrator (a missing target there is a fail-closed startup
     error, so dropping them would brick legacy upgrades). Apply AFTER every upstream migration (through 0066) so
     upgraded databases that already recorded 0060 still receive the identity tables as 0067.
+
+    FNXC:Identity 2026-08-24-02:12:
+    Sibling of the 0066 gate, not nested inside it. Nesting would skip identity on every database
+    that already recorded memory-focus — the production upgrade path from origin/main.
     */
     if (!identityActorsAlreadyApplied) {
       const migrationSql = await readFile(IDENTITY_ACTORS_MIGRATION_PATH, "utf8");
       await tx.execute(sql.raw(migrationSql));
       await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${IDENTITY_ACTORS_VERSION}) ON CONFLICT (version) DO NOTHING`);
-      schemaChanged = true;
-    }
       schemaChanged = true;
     }
     return { applied: schemaChanged, pluginHooksRun: pluginHooks.length };

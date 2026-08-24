@@ -12,7 +12,7 @@
  *   - Storing a raw session value would upgrade the accepted "local shell user reaches Postgres"
  *     residual to "impersonates any administrator over HTTP" (and the same for a backup dump).
  *   - KTD11: `project_auth_*` looks dead but has a live writer (the SQLite→Postgres cutover
- *     migrator); a missing target there is a fail-closed startup error, so it must survive 0061.
+ *     migrator); a missing target there is a fail-closed startup error, so it must survive 0067.
  */
 
 import { createHmac } from "node:crypto";
@@ -25,6 +25,7 @@ import {
 } from "../__test-utils__/pg-test-harness.js";
 import {
   applySchemaBaseline,
+  CHAT_SESSION_MEMORY_FOCUS_VERSION,
   getAppliedMigrations,
   IDENTITY_ACTORS_VERSION,
   SCHEMA_BASELINE_VERSION,
@@ -111,6 +112,51 @@ pgDescribe("identity schema: migration 0067", () => {
 
       const applied = await getAppliedMigrations(h.adminDb);
       expect(applied).toContain(IDENTITY_ACTORS_VERSION);
+    });
+  });
+
+  /*
+  FNXC:Identity 2026-08-24-02:12:
+  origin/main databases already recorded memory-focus as 0066. Identity must still apply as 0067
+  on that shape — nesting the 0067 gate inside the 0066 `if` would skip actor tables on every
+  upgraded install while a fresh database looked fine.
+  */
+  it("applies identity tables when memory-focus 0066 is already recorded", async () => {
+    await withHarness(async (h) => {
+      await h.adminSql.unsafe(`
+        DELETE FROM public.fusion_schema_migrations WHERE version = '${IDENTITY_ACTORS_VERSION}';
+        DROP TABLE IF EXISTS project.actor_role_grants;
+        DROP TABLE IF EXISTS central.actor_provider_links;
+        DROP TABLE IF EXISTS central.actor_sessions;
+        DROP TABLE IF EXISTS central.actor_credentials;
+        DROP TABLE IF EXISTS central.actors;
+      `);
+      const appliedBefore = await getAppliedMigrations(h.adminDb);
+      expect(appliedBefore).toContain(CHAT_SESSION_MEMORY_FOCUS_VERSION);
+      expect(appliedBefore).not.toContain(IDENTITY_ACTORS_VERSION);
+
+      await expect(applySchemaBaseline(h.adminDb, { pluginHooks: [] })).resolves.toMatchObject({
+        applied: true,
+      });
+
+      const appliedAfter = await getAppliedMigrations(h.adminDb);
+      expect(appliedAfter).toContain(CHAT_SESSION_MEMORY_FOCUS_VERSION);
+      expect(appliedAfter).toContain(IDENTITY_ACTORS_VERSION);
+
+      const rows = (await h.adminSql`
+        SELECT table_schema, table_name
+        FROM information_schema.tables
+        WHERE (table_schema = 'central' AND table_name IN ('actors', 'actor_credentials', 'actor_sessions', 'actor_provider_links'))
+           OR (table_schema = 'project' AND table_name = 'actor_role_grants')
+        ORDER BY table_schema, table_name
+      `) as unknown as Array<{ table_schema: string; table_name: string }>;
+      expect(rows.map((r) => `${r.table_schema}.${r.table_name}`)).toEqual([
+        "central.actor_credentials",
+        "central.actor_provider_links",
+        "central.actor_sessions",
+        "central.actors",
+        "project.actor_role_grants",
+      ]);
     });
   });
 

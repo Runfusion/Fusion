@@ -643,32 +643,32 @@ importers:
     dependencies:
       '@capacitor-community/safe-area':
         specifier: ^7.0.0
-        version: 7.0.0(@capacitor/core@7.6.1)
+        version: 7.0.0(@capacitor/core@8.5.0)
       '@capacitor/app':
         specifier: ^7.1.2
-        version: 7.1.2(@capacitor/core@7.6.1)
+        version: 7.1.2(@capacitor/core@8.5.0)
       '@capacitor/core':
-        specifier: ^7.0.0
-        version: 7.6.1
+        specifier: ^8.5.0
+        version: 8.5.0
       '@capacitor/preferences':
         specifier: ^7.0.0
-        version: 7.0.4(@capacitor/core@7.6.1)
+        version: 7.0.4(@capacitor/core@8.5.0)
       '@capacitor/push-notifications':
         specifier: ^8.1.2
-        version: 8.1.2(@capacitor/core@7.6.1)
+        version: 8.1.2(@capacitor/core@8.5.0)
       '@capacitor/share':
         specifier: ^7.0.4
-        version: 7.0.4(@capacitor/core@7.6.1)
+        version: 7.0.4(@capacitor/core@8.5.0)
     devDependencies:
       '@capacitor/android':
         specifier: ^7.0.0
-        version: 7.6.1(@capacitor/core@7.6.1)
+        version: 7.6.1(@capacitor/core@8.5.0)
       '@capacitor/cli':
         specifier: ^7.0.0
         version: 7.6.1
       '@capacitor/ios':
         specifier: ^8.4.2
-        version: 8.4.2(@capacitor/core@7.6.1)
+        version: 8.4.2(@capacitor/core@8.5.0)
       '@types/node':
         specifier: ^25.5.2
         version: 25.9.5
@@ -1701,8 +1701,8 @@ packages:
     engines: {node: '>=20.0.0'}
     hasBin: true
 
-  '@capacitor/core@7.6.1':
-    resolution: {integrity: sha512-nsNouCMxgYenyemy20sZwZYMtFi93LSZVWm2KqHTYIPIDgwx24+PzwHIdRQBZdK7hpvD5jQEhWuo/QyLLnAyBQ==}
+  '@capacitor/core@8.5.0':
+    resolution: {integrity: sha512-Ca4krtqH1hothjtBIwf2J2TW7IhYq1ujp8QeItTiJohNsqij8ja2DYYH3DU0l8RmxCWaBAFTGA2TgOgOMCSNsQ==}
 
   '@capacitor/ios@8.4.2':
     resolution: {integrity: sha512-ClVzIjK++yRjsRPOpdEzhsZfbHfoEc0f4M6vD0v7sWh0qcoF6NkxNAeHpWTn4OPJpJfpGGoYsq+IfEHrYyBiWA==}
@@ -8581,17 +8581,17 @@ snapshots:
       hashery: 1.5.1
       keyv: 5.6.0
 
-  '@capacitor-community/safe-area@7.0.0(@capacitor/core@7.6.1)':
+  '@capacitor-community/safe-area@7.0.0(@capacitor/core@8.5.0)':
     dependencies:
-      '@capacitor/core': 7.6.1
+      '@capacitor/core': 8.5.0
 
-  '@capacitor/android@7.6.1(@capacitor/core@7.6.1)':
+  '@capacitor/android@7.6.1(@capacitor/core@8.5.0)':
     dependencies:
-      '@capacitor/core': 7.6.1
+      '@capacitor/core': 8.5.0
 
-  '@capacitor/app@7.1.2(@capacitor/core@7.6.1)':
+  '@capacitor/app@7.1.2(@capacitor/core@8.5.0)':
     dependencies:
-      '@capacitor/core': 7.6.1
+      '@capacitor/core': 8.5.0
 
   '@capacitor/cli@7.6.1':
     dependencies:
@@ -8615,25 +8615,25 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@capacitor/core@7.6.1':
+  '@capacitor/core@8.5.0':
     dependencies:
       tslib: 2.8.1
 
-  '@capacitor/ios@8.4.2(@capacitor/core@7.6.1)':
+  '@capacitor/ios@8.4.2(@capacitor/core@8.5.0)':
     dependencies:
-      '@capacitor/core': 7.6.1
+      '@capacitor/core': 8.5.0
 
-  '@capacitor/preferences@7.0.4(@capacitor/core@7.6.1)':
+  '@capacitor/preferences@7.0.4(@capacitor/core@8.5.0)':
     dependencies:
-      '@capacitor/core': 7.6.1
+      '@capacitor/core': 8.5.0
 
-  '@capacitor/push-notifications@8.1.2(@capacitor/core@7.6.1)':
+  '@capacitor/push-notifications@8.1.2(@capacitor/core@8.5.0)':
     dependencies:
-      '@capacitor/core': 7.6.1
+      '@capacitor/core': 8.5.0
 
-  '@capacitor/share@7.0.4(@capacitor/core@7.6.1)':
+  '@capacitor/share@7.0.4(@capacitor/core@8.5.0)':
     dependencies:
-      '@capacitor/core': 7.6.1
+      '@capacitor/core': 8.5.0
 
   '@changesets/apply-release-plan@7.1.0':
     dependencies:

@@ -83,14 +83,28 @@ class EchoAgent {
         sessionId,
         update: {
           sessionUpdate: "agent_message_chunk",
-          content: { type: "text", text: "Working on it." },
+          content: { type: "text", text: "Working on " },
+        },
+      });
+      await this.connection.sessionUpdate({
+        sessionId,
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "it." },
         },
       });
       await this.connection.sessionUpdate({
         sessionId,
         update: {
           sessionUpdate: "agent_thought_chunk",
-          content: { type: "text", text: "Let me think about this." },
+          content: { type: "text", text: "Let me think " },
+        },
+      });
+      await this.connection.sessionUpdate({
+        sessionId,
+        update: {
+          sessionUpdate: "agent_thought_chunk",
+          content: { type: "text", text: "about this." },
         },
       });
       await this.connection.sessionUpdate({
