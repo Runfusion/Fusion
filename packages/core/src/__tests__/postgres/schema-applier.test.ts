@@ -724,7 +724,7 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 final-schema parity (table counts)", 
     GitHub check state (106 → 107); 0049 adds the agent-activity outbox and counter (→ 109);
     0050 adds immutable lock, evidence, and report history (109 → 112); 0052 adds recall records (→ 113);
     0060 adds workspace coordination leases and land intents (→ 115).
-    FNXC:Identity 2026-08-15-22:52: 0061 adds project.actor_role_grants (→ 116). Plugin tables are added separately
+    FNXC:Identity 2026-08-15-22:52: 0067 adds project.actor_role_grants (→ 116). Plugin tables are added separately
     by the schema-init hook and are excluded here.
     */
     expect(bySchema.project).toBe(116);
@@ -735,7 +735,7 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 final-schema parity (table counts)", 
     so fresh and upgraded databases converge on the same shape.
 
     FNXC:Identity 2026-08-15-22:52:
-    21, not 17: migration 0061 adds central.actors, actor_credentials, actor_sessions, and
+    21, not 17: migration 0067 adds central.actors, actor_credentials, actor_sessions, and
     actor_provider_links (KTD7 — identity is central because one daemon serves N projects).
     */
     expect(bySchema.central).toBe(21);

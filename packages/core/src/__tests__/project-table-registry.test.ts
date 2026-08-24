@@ -29,4 +29,14 @@ describe("project table registry", () => {
     const declared = new Set([...source.matchAll(/projectSchema\.table\(\s*"([a-z0-9_]+)"/g)].map((m) => m[1]!));
     expect(projectTableNames.filter((name) => !declared.has(name)).sort()).toEqual([]);
   });
+
+  /*
+  FNXC:PgTableRegistry 2026-08-24-02:12:
+  A merge that concatenates both sides' registry tails can list a table twice. TRUNCATE is
+  idempotent so tests stay green, but the duplicate is a drift signal that the next omitted
+  table will hide behind. One entry per declared table.
+  */
+  it("registers each project table once", () => {
+    expect([...new Set(projectTableNames)]).toEqual([...projectTableNames]);
+  });
 });
