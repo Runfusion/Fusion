@@ -105,6 +105,7 @@ import {
   createTaskAssignTool,
   createUpdateAgentConfigTool,
   createWebFetchTool,
+  createAcquireRepoWorktreeTool,
   isAgentDelegateTaskToolAvailable,
   isAgentTaskCreateToolAvailable,
 } from "../agent-tools.js";
@@ -259,6 +260,8 @@ export type RunImplementationDeps = {
   getRunContextFor: (taskId: string) => EngineRunContext | undefined;
   addActiveWorktree: AnyFn;
   appendReviewRemediationSteps: AnyFn;
+  // FNXC:WorkspaceLateAcquire 2026-08-24-06:11: KTD16 — optional so a test-constructed deps bag stays valid; absent degrades to "not merge-pending".
+  isTaskMergePendingOrActive?: (taskId: string) => Promise<boolean> | boolean;
   attemptExecutorVerificationFix: AnyFn;
   buildActionGateContext: AnyFn;
   buildInjectedRuntimeEnv: AnyFn;
@@ -2184,6 +2187,35 @@ export async function runImplementation(
         // Add plugin tools from PluginRunner
         ...getEnabledPluginTools(deps.options.pluginRunner),
       ];
+
+
+      if (deps.workspaceConfig && deps.workspaceConfig.repos.length > 0) {
+        customTools.push(createAcquireRepoWorktreeTool({
+          workspaceRootDir: deps.rootDir,
+          workspaceRepos: deps.workspaceConfig.repos,
+          resolveWorkspaceRepos: async () => (await deps.refreshWorkspaceConfig?.())?.repos ?? [],
+          task,
+          store: deps.store,
+          settings,
+          logger: executorLog,
+          secretsStore: deps.options.secretsStore,
+          runContext: engineRunContext,
+          audit,
+          // FNXC:Workspace 2026-06-21-22:30: F2 — register each freshly-acquired sub-repo worktree path in this task's activeWorktrees Set (KTD2) so owner/liveness checks see live per-repo worktrees, not just the browse-only root.
+          onAcquired: (worktreePath: string) => deps.addActiveWorktree(task.id, worktreePath),
+          /*
+          FNXC:WorkspaceLateAcquire 2026-08-24-06:11:
+          R9/KTD16: tier 2 of the late-acquire gate refuses while a merge is pending or active for
+          this task, driven by the engine's own merge-pipeline providers rather than a status read.
+          The executor exposes them here; absent means "not merge-pending".
+          */
+          isMergePendingOrActive: (taskId: string) => deps.isTaskMergePendingOrActive?.(taskId) ?? false,
+          taskEnv,
+          // FNXC:Workspace 2026-06-22 — forward the configured worktree-init runner so sub-repo worktrees run configured setup.
+          runConfiguredCommand: (command, cwd, timeoutMs, env) =>
+            runConfiguredCommand(command, cwd, timeoutMs, env, audit),
+        }));
+      }
 
 
       // Accumulates the full assistant text output for the most recent session.

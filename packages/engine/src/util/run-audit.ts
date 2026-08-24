@@ -667,6 +667,16 @@ export type DatabaseMutationType =
   /** Metadata: { taskId, path, kind: "workspace-repo-acquire", registeredAt, ageMs, staleBindingAgeFloorMs, ownerColumn, ownerTerminalReason }. */
   | "task:reclaim-phantom-workspace-acquire-lease"
   /*
+  FNXC:WorkspaceLateAcquire 2026-08-24-06:11:
+  R13: a repository acquired while the task sits in a review column is a scope extension that costs
+  a full Code Review re-entry — the scope mutation clears the task's whole `reviewEvidence` map, so
+  EVERY repository is re-reviewed, not only the new one. Emitted exactly once per permitted late
+  acquisition through `emitBoundedRunAudit`. Metadata is ids/counts/fixed outcomes only:
+  { taskId, repo, column, repositoryCount, rerouteOutcome: "seeded" | "active-continuation" | "failed" };
+  never the executor's reason prose.
+  */
+  | "task:workspace-scope-extended-post-review"
+  /*
   FNXC:Workspace 2026-08-15-05:13:
   Metadata: { taskId, repo, worktreePath, success, reason, lane, worktreeOutcome, pruned, branch,
   branchOutcome, attempt }. Values are ids/counts/fixed outcomes only; branch cleanup is auditable

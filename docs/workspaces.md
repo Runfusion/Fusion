@@ -45,7 +45,26 @@ The configuration file is written by registration, repository initialization, th
 
 In **Settings → General → Workspace repositories**, choose a detected candidate or enter a direct-child directory and select **Add**. The same operation is available to integrations as `POST /api/git/workspace-repos` with `{ "repo": "api" }`. Adds are idempotent. Fusion requires an in-root direct child that is a real Git work tree and rejects excluded names (`node_modules`, `.fusion`, `.git`, `.pi`, `.worktrees`), absolute paths, and escapes.
 
-Workspace membership is captured when a task begins. Fusion acquires every configured member for that task, so adding or removing a repository affects later tasks rather than changing a running task's checkout set. Create a follow-up task when newly configured repository work is needed.
+
+A running task picks up a newly added member on its next `fn_acquire_repo_worktree` call without restarting the engine. Membership only grows during a live run: a failed or empty refresh preserves the last known-good members; removals require an engine restart.
+
+A task that has already reached a **review** column can still acquire a new repository, provided nothing has landed — see [Late repository acquisition](#late-repository-acquisition) for the conditions and the price.
+
+### Late repository acquisition
+
+Acquisition during review is permitted only when all of the following hold, each proven before the checkout is created:
+
+- no repository in the task carries a `landedSha`, the task is not merging (`merging`, `merging-pr`, `merging-fix`, `workspace-review-required`), and no merge is queued or running for it;
+- the task's column is a real review column of its own workflow (a completed or archived column is refused, and so is a literal `in-review` column under a workflow that declares no review traits);
+- the task is review-evidenced — it carries recorded repository review evidence or an enabled review step. Without that shape the landing-time approval fence does not evaluate at all, so an unreviewed repository could land silently;
+- the task's workflow has a reachable Code Review step (present, and either on by default or selected for this task).
+
+A permitted acquisition is recorded as `task:workspace-scope-extended-post-review` (ids, counts, and fixed outcomes only) so the extension is inspectable after the fact.
+
+A permitted acquisition **costs a full re-review**. Recording the repository-scope extension clears the task's entire review-evidence map and fails every superseded Code Review result, so the forced Code Review re-entry re-reviews **every** repository in scope, not only the newly acquired one. Weigh that against filing a follow-up task, which remains the cheaper answer when the new repository's work is separable.
+
+Once landing has begun the refusal is absolute: landing is non-atomic, so a scope change there cannot be undone. The refusal names the blocking reason (`already-landed`, `merging`, `merge-pending`, `not-a-review-column`, `no-review-evidence`, `no-code-review-route`) and points at `fn_task_create` for the follow-up task. The re-entry is seeded only **after** a successful acquisition, and a failed re-entry never unwinds the checkout — the tool reports the repository as acquired with the review re-entry still pending.
+
 
 ## The workspaceMode setting
 

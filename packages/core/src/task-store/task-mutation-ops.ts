@@ -766,11 +766,27 @@ FN-258 removes per-task repository selection. This engine-only replacement write
 scope from workspace.json under the existing planning and advisory locks, preserving the review fence
 only when the complete configured set is unchanged.
 */
+/*
+FNXC:WorkspaceLateAcquire 2026-09-04-04:42:
+Late repository acquisition records a delta against the durable scope so a running review-stage
+task can extend membership without replacing a stale snapshot. FN-258 still materializes the
+confirmed set from workspace.json; the mutation is the executor/operator event that forces that
+refresh and the full-re-review cost.
+*/
+export type TaskRepositoryScopeMutation = {
+  action: "add" | "refuse";
+  repositories: string[];
+  reason: string;
+  actor: string;
+};
+
 export async function updateTaskRepositoryScopeImpl(
   store: TaskStore,
   id: string,
-  requestedScope: TaskRepositoryScope | undefined,
+  requestedScope: TaskRepositoryScope | TaskRepositoryScopeMutation | undefined,
 ): Promise<Task> {
+  const isMutation = requestedScope !== undefined && "action" in requestedScope;
+  const requestedAsScope = isMutation ? undefined : requestedScope;
   const configuredRepositories = [...new Set(((await loadWorkspaceConfig(store.getRootDir()))?.repos ?? [])
     .map((repository) => repository.trim())
     .filter(Boolean))].sort();
@@ -800,7 +816,7 @@ export async function updateTaskRepositoryScopeImpl(
       const replacement = configuredRepositories.length === 0
         ? undefined
         : {
-            ...requestedScope,
+            ...requestedAsScope,
             repositories: configuredRepositories,
             state: "confirmed" as const,
             confirmedBy: "workspace" as const,

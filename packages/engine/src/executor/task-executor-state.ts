@@ -137,6 +137,16 @@ export abstract class TaskExecutorState {
   protected graphSeamThinkingLevel = new Map<string, ThinkingLevel>();
   protected graphSeamSkillName = new Map<string, string>();
   protected mergeRequester?: (taskId: string, options?: { signal?: AbortSignal }) => Promise<MergeResult>;
+  /*
+  FNXC:WorkspaceLateAcquire 2026-08-24-06:11:
+  R9/KTD16: the in-memory merge pipeline (mergeQueue + mergeActive) is private to ProjectEngine and
+  reaches subsystems only by being pushed onto the runtime. The workspace late-acquire gate needs the
+  same signal, so it arrives through the same provider seam rather than a second one. Unwired means
+  "not merge-pending" — the fail-open default self-healing already takes — so a runtime that never
+  wires it degrades to the status-only check.
+  */
+  protected mergePendingProvider?: (taskId: string) => boolean | Promise<boolean>;
+  protected activeMergeTaskIdProvider?: () => string | null;
   protected sessionContentionHoldAttempts = new Map<string, number>();
   /**
    * FNXC:CodeOrganization 2026-08-04-07:40:
