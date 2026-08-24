@@ -365,6 +365,8 @@ const SETTING_DESCRIPTION_KEYS: Record<string, string> = {
 const NOT_SURFACED_ALLOWLIST: Record<string, string> = {
   // FNXC:TaskOutputLanguage 2026-08-19-14:56: Legacy compatibility remains persisted but hidden behind the three-mode selector.
   taskDefinitionInInputLanguage: "legacy task-output-language compatibility flag, not a rendered Settings field",
+  // FNXC:GitHubStarPrompt 2026-08-24-00:34: Internal dismissal timestamp written by useGitHubStarPrompt when the operator dismisses the star ask; runtime bookkeeping state, not a user-editable Settings field.
+  githubStarPromptDismissedAt: "internal star-prompt dismissal timestamp written by useGitHubStarPrompt; not a rendered Settings field",
   /*
   FNXC:OriginWorkflowSelection 2026-07-26-19:40:
   Server-side mirror of the operator's Board workflow lane, written by the dashboard

@@ -209,7 +209,14 @@ export async function bundlePluginEntry({ pluginId, srcDir, destDir, withMcpAsse
     platform: "node",
     target: "node22",
     outfile: join(destDir, "bundled.js"),
-    external: ["@fusion/engine", ...external],
+    /*
+     * FNXC:CliPackaging 2026-08-24-02:16:
+     * sharp 0.35 (desktop generate-icons, plus optional Baileys media helpers) ships
+     * platform img-sharp native .node addons and glob Release sharp-*-*.node requires.
+     * esbuild cannot load .node files, so keep the whole family external for every
+     * plugin bundle — the same native-module policy as node-pty / cpu-features on the CLI bin.
+     */
+    external: ["@fusion/engine", "sharp", "@img/sharp-*", ...external],
     /*
      * FNXC:BundledPlugins 2026-07-17-09:20:
      * CJS dependencies bundled into ESM output (e.g. Baileys in the WhatsApp plugin) compile to esbuild's __require helper, which throws "Dynamic require of \"crypto\" is not supported" at load time in an ESM module. Inject the same createRequire shim dist/bin.js uses so every bundled.js can require node builtins.
@@ -437,6 +444,15 @@ const cliBuildConfig = {
     "embedded-postgres",
     /^@embedded-postgres\//,
     /*
+     * FNXC:CliPackaging 2026-08-24-02:16:
+     * sharp 0.35 changed its package layout to img-sharp platform optional native
+     * addons. esbuild follows those requires and fails with no .node loader plus
+     * unresolved sharp-*-*.node globs. Leave sharp external the same way as
+     * cpu-features; it is a desktop/Baileys native helper, not a published CLI dep.
+     */
+    "sharp",
+    "@img/sharp-*",
+    /*
     FNXC:ReviewArtifacts 2026-07-19-10:00:
     The engine lazy-loads playwright-core only for a gated local feature-video.
     Keep it external because Playwright has optional Chromium BiDi internals that
@@ -605,8 +621,11 @@ const cliBuildConfig = {
       /*
        * FNXC:BundledPlugins 2026-07-15-09:12:
        * Baileys contains optional dynamic require() paths for QR/link-preview/media helpers that are not needed for plugin module load. Keep those optional packages external so the published WhatsApp Chat bundled.js can be produced and loaded without reintroducing a raw TypeScript src/ entry under node_modules.
+       * FNXC:CliPackaging 2026-08-24-02:16: sharp 0.35 is the media-helper native that actually
+       * breaks CI (esbuild cannot resolve @img/sharp-* .node addons). Keep it listed here
+       * with jimp even though bundlePluginEntry also default-externalizes the sharp family.
        */
-      external: ["jimp", "link-preview-js", "qrcode-terminal"],
+      external: ["jimp", "link-preview-js", "qrcode-terminal", "sharp"],
     });
 
     await bundlePluginEntry({
