@@ -706,6 +706,16 @@ const NOT_SURFACED_ALLOWLIST: Record<string, string> = {
    */
   memoryBackendUrl: "project-scoped TencentDB gateway URL row (rendered in MemorySection only for the tencentdb backend); canonical schema default is empty (`''`) = use the runtime DEFAULT_GATEWAY_URL (http://127.0.0.1:8420), conveyed by the row's placeholder/help, not a description-field claim",
   stashApiKey: "Stash API-key secret override, not rendered as a settings field (the primary key lives in the global secrets store `stash-api-key` per MemorySection help, never in settings); canonical schema default is empty (`''`) = use the resolved global secret",
+  /*
+   * FNXC:SettingsDescriptionGuard 2026-08-24-02:57:
+   * Upstream #3516 added the one-time GitHub-star prompt dismissal timestamp
+   * (global settings, stamped by `fn onboard` and the dashboard hook on
+   * dismissal) without extending this guard, leaving the full-suite guard red
+   * on non-blocking lanes. It is not surfaced as a settings row, so no
+   * description field exists to claim a default; the canonical default is
+   * `undefined` (never dismissed) read directly by `shouldAskGithubStar`.
+   */
+  githubStarPromptDismissedAt: "one-time GitHub-star prompt dismissal timestamp (global settings, stamped on dismissal by `fn onboard` / useGitHubStarPrompt, never rendered as a settings row); canonical schema default is `undefined` (prompt not yet dismissed), consumed directly by shouldAskGithubStar",
 };
 
 describe("FN-7505 settings default-value description guard", () => {
