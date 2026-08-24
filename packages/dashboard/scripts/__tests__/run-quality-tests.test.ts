@@ -10,6 +10,23 @@ import { describe, expect, it } from "vitest";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const workspaceRoot = resolve(__dirname, "../../../..");
 const fixtureRunnerPath = join(__dirname, "quality-runner-fixture.mjs");
+const dashboardRoot = resolve(__dirname, "../..");
+const orchestratorPath = join(dashboardRoot, "scripts/run-quality-tests.mjs");
+
+/*
+FNXC:QualityRunnerSelfTest 2026-08-23-19:35:
+THE ORCHESTRATOR IS INVOKED DIRECTLY, NOT THROUGH `pnpm ... test`. These cases run inside the very
+lane set they describe (`api:curated`), so spawning the package command re-entered the suite from
+within itself. Under a full 15-lane run that child had to resolve pnpm through Corepack while other
+lanes held the machine, and it intermittently produced NOTHING — an empty lane log read as "0 lanes
+launched" and failed an assertion about the orchestrator, with no orchestrator defect involved.
+Observed twice on 2026-08-23 in `--all --no-fail-fast` runs; both times the file passed alone.
+
+Running `node scripts/run-quality-tests.mjs` keeps every assertion below (lane names, lane count,
+fail-fast labelling, `--` passthrough — parseArgs is unit-tested above) while removing the pnpm
+dependency and the recursion. The one thing the pnpm spawn additionally proved, that the package
+script actually points at this orchestrator, is asserted directly in "package.json wires…" below.
+*/
 
 interface QualityLane {
   name: string;
@@ -155,14 +172,21 @@ describe("dashboard quality orchestrator", () => {
     expect(() => parseArgs(["--", "--not-a-quality-option"])).toThrow("Unknown argument: --not-a-quality-option");
   });
 
+  it("package.json wires the dashboard test script at this orchestrator", () => {
+    /* The cases below invoke scripts/run-quality-tests.mjs directly, so this is what proves the
+       package command still reaches it — the one assertion the removed pnpm spawn uniquely carried. */
+    const pkg = JSON.parse(readFileSync(join(dashboardRoot, "package.json"), "utf8")) as { scripts?: Record<string, string> };
+    expect(pkg.scripts?.test).toContain("scripts/run-quality-tests.mjs");
+  });
+
   it.each(["--all", "--no-fail-fast"])("runs package aggregate alias %s through all 15 lanes without hiding failures", async (aggregateAlias) => {
     const { qualityLanes } = await loadModule();
     const temporaryDirectory = mkdtempSync(join(tmpdir(), "fn-8714-quality-runner-"));
     const laneLogPath = join(temporaryDirectory, "lanes.log");
 
     try {
-      const result = spawnSync("pnpm", ["--filter", "@fusion/dashboard", "test", "--", aggregateAlias], {
-        cwd: workspaceRoot,
+      const result = spawnSync(process.execPath, [orchestratorPath, "--", aggregateAlias], {
+        cwd: dashboardRoot,
         encoding: "utf8",
         env: {
           ...process.env,
@@ -196,12 +220,22 @@ describe("dashboard quality orchestrator", () => {
     const laneLogPath = join(temporaryDirectory, "lanes.log");
 
     try {
-      const result = spawnSync("pnpm", ["--filter", "@fusion/dashboard", "test"], {
-        cwd: workspaceRoot,
+      const result = spawnSync(process.execPath, [orchestratorPath], {
+        cwd: dashboardRoot,
         encoding: "utf8",
         env: {
           ...process.env,
           npm_config_ignore_scripts: "true",
+          /*
+          FNXC:QualityRunnerSelfTest 2026-08-23-19:20:
+          These cases spawn the package's OWN `pnpm ... test` command, so the child inherits Corepack.
+          Inside a full lane run the child hit Corepack's interactive prompt
+          ("! Corepack is about to download .../pnpm-10.33.0.tgz"), never launched, and the lane log
+          came back empty — the assertion then read 0 launched projects and failed. It passed when the
+          file was run alone only because that shell had already resolved pnpm. Disable the prompt so
+          the child resolves pnpm non-interactively; this changes nothing about what is asserted.
+          */
+          COREPACK_ENABLE_DOWNLOAD_PROMPT: "0",
           FUSION_DASHBOARD_TEST_CONCURRENCY: "1",
           FUSION_DASHBOARD_QUALITY_TEST_MODE: "1",
           FUSION_DASHBOARD_QUALITY_RUNNER: fixtureRunnerPath,

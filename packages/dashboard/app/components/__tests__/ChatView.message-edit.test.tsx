@@ -45,6 +45,7 @@ vi.mock("../../api", async (importOriginal) => {
     fetchDiscoveredSkills: vi.fn().mockResolvedValue([]),
     fetchTasks: vi.fn().mockResolvedValue([]),
     searchFiles: vi.fn().mockResolvedValue({ files: [] }),
+    fetchChatSession: vi.fn().mockResolvedValue({ session: { memoryFocus: null } }),
   };
 });
 vi.mock("lucide-react", async (importOriginal) => {
@@ -61,6 +62,16 @@ async function renderWithAct(ui: Parameters<typeof rtlRender>[0]) {
     result = rtlRender(ui);
   });
   return result!;
+}
+
+/*
+FNXC:ChatNavigation 2026-08-23-17:55:
+FN-054 made Chat list-first: the transcript and composer render only inside an explicitly opened
+conversation, so every ChatView-level case must drill in from the conversation list first. Without
+this the absence assertions below would pass vacuously against an empty detail pane.
+*/
+function openDirectDetail(sessionId = "session-001") {
+  fireEvent.click(screen.getByTestId(`chat-session-${sessionId}`));
 }
 
 const mockUseChat = vi.mocked(useChatModule.useChat);
@@ -165,6 +176,7 @@ describe("ChatView message edit affordance", () => {
     }));
 
     await renderWithAct(<ChatView addToast={vi.fn()} />);
+    openDirectDetail();
 
     const editButton = screen.getByTestId("chat-message-edit-user-1");
     const userMessage = screen.getByTestId("chat-message-user-1");
@@ -187,6 +199,7 @@ describe("ChatView message edit affordance", () => {
     }));
 
     await renderWithAct(<ChatView addToast={vi.fn()} />);
+    openDirectDetail();
 
     expect(screen.queryByTestId("chat-message-edit-user-1")).toBeNull();
   });
@@ -203,6 +216,7 @@ describe("ChatView message edit affordance", () => {
     await renderWithAct(<ChatView addToast={vi.fn()} experimentalFeatures={{ chatRooms: true }} />);
 
     fireEvent.click(screen.getByTestId("chat-sidebar-scope-rooms"));
+    fireEvent.click(screen.getByTestId(`chat-room-item-${roomA.slug}`));
 
     expect(screen.queryByTestId("chat-message-edit-room-user-1")).toBeNull();
   });
@@ -216,6 +230,7 @@ describe("ChatView message edit affordance", () => {
     }));
 
     await renderWithAct(<ChatView addToast={vi.fn()} />);
+    openDirectDetail();
 
     expect(screen.queryByTestId("chat-message-edit-user-1")).toBeNull();
   });
@@ -230,6 +245,7 @@ describe("ChatView message edit affordance", () => {
     }));
 
     await renderWithAct(<ChatView addToast={vi.fn()} />);
+    openDirectDetail();
 
     fireEvent.click(screen.getByTestId("chat-message-edit-user-1"));
 
@@ -278,6 +294,7 @@ describe("ChatView message edit affordance", () => {
     }));
 
     await renderWithAct(<ChatView addToast={vi.fn()} />);
+    openDirectDetail();
 
     fireEvent.click(screen.getByTestId("chat-message-edit-user-1"));
     const editor = screen.getByTestId("chat-message-edit-editor-user-1");
@@ -350,6 +367,7 @@ describe("ChatView message edit affordance", () => {
     }));
 
     await renderWithAct(<ChatView addToast={vi.fn()} />);
+    openDirectDetail();
 
     const assistantMessage = screen.getByTestId("chat-message-assistant-1");
     expect(assistantMessage.querySelector("[aria-label='Edit message']")).toBeNull();

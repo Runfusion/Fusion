@@ -181,7 +181,19 @@ describe("CLI Vitest workspace resolution", () => {
       ]),
     );
 
-    for (const entry of normalized) {
+    /*
+    FNXC:CliTests 2026-08-23-16:25:
+    THIS GUARD IS ABOUT INTERNAL WORKSPACE PACKAGES, AND ONLY THEY CAN OBEY IT. The alias list also
+    carries a THIRD-PARTY dedupe entry (`@earendil-works/pi-coding-agent`), added so peer-hashed pnpm
+    instances collapse onto one resolved path and `vi.mock` — which is resolved-path scoped — reaches
+    dashboard and engine. That package ships no source in node_modules, so its replacement is a `dist`
+    entry by necessity; holding it to the source-entry rule would ban the alias that keeps the mock
+    scope guard working. Scope the sweep to workspace-owned finds and pin the third-party alias
+    separately, so a workspace package silently regressing to `dist` still fails here.
+    */
+    const internalAliases = normalized.filter((entry) => entry.find.includes("@fusion"));
+    expect(internalAliases.length).toBeGreaterThan(0);
+    for (const entry of internalAliases) {
       expect(
         entry.replacement.includes(`${join("packages", "")}`) ||
           entry.replacement.includes(`${join("plugins", "")}`),
@@ -189,6 +201,12 @@ describe("CLI Vitest workspace resolution", () => {
       expect(entry.replacement).toContain(`${join("src", "")}`);
       expect(entry.replacement).not.toContain(`${join("dist", "")}`);
     }
+
+    const piAlias = normalized.find((entry) => entry.find === String(/^@earendil-works\/pi-coding-agent$/));
+    expect(piAlias?.replacement).toBe(
+      join(cliRoot, "node_modules", "@earendil-works", "pi-coding-agent", "dist", "index.js"),
+    );
+    expect(normalized.filter((entry) => !entry.find.includes("@fusion"))).toEqual([piAlias]);
 
     const coreGhCliIndex = normalized.findIndex((entry) => entry.find === String(/^@fusion\/core\/gh-cli$/));
     const coreIndex = normalized.findIndex((entry) => entry.find === String(/^@fusion\/core$/));

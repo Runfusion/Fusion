@@ -569,12 +569,24 @@ it("loads mailbox only when Mail tab is opened", async () => {
 
   expect(mockFetchAgentMailbox).not.toHaveBeenCalled();
 
-  await user.click(screen.getByText("Mail"));
+  const style = document.createElement("style");
+  style.textContent = loadAllAppCss();
+  document.head.append(style);
+  try {
+    await user.click(screen.getByText("Mail"));
 
-  await waitFor(() => {
-    expect(mockFetchAgentMailbox).toHaveBeenCalledWith("agent-001", undefined);
-    expect(screen.getByText("Inbox message")).toBeInTheDocument();
-  });
+    await waitFor(() => {
+      expect(mockFetchAgentMailbox).toHaveBeenCalledWith("agent-001", undefined);
+      expect(screen.getByText("Inbox message")).toBeInTheDocument();
+    });
+
+    for (const button of screen.getByTestId("agent-detail-mail-subtabs").querySelectorAll("button")) {
+      expect(getComputedStyle(button.querySelector("svg")!).flexShrink).toBe("0");
+    }
+    expect(getComputedStyle(screen.getByTestId("agent-detail-mail-subtabs").querySelector(".mailbox-tab-badge")!).flexShrink).toBe("0");
+  } finally {
+    style.remove();
+  }
 });
 
 it("switches Mail tab between inbox and outbox", async () => {

@@ -3080,6 +3080,9 @@ describe("executor base prompt runtime self-awareness", () => {
 });
 
 describe("completion recommendation prompt contract", () => {
+  const getCreatedTaskWorkflowRoutingClause = (prompt: string): string | undefined =>
+    prompt.split("\n").find((line) => line.startsWith("- You may still set the workflow on tasks you create via "));
+
   it.each([
     ["built-in default", { agentPrompts: undefined }],
     ["custom executor prompt", {
@@ -3119,6 +3122,48 @@ describe("completion recommendation prompt contract", () => {
     } as any);
     expect(customDisabledPrompt).toContain("Always send recommendations.");
     expect(customDisabledPrompt).toMatch(/Always send recommendations\.[\s\S]*Ignore any earlier generic recommendation guidance/);
+  });
+
+  /*
+  FNXC:WorkflowRouting 2026-08-23-13:25:
+  The production executor prompt resolver treats creation tools as available by default. Only an
+  explicit withheld=true removes that tool's created-task workflow guidance; omitted and empty
+  availability inputs preserve both clauses, while one withheld tool preserves the other clause.
+  */
+  it.each([
+    ["task creation only", { taskCreateWithheld: false, delegateWithheld: true }, "`fn_task_create`", "`fn_delegate_task`"],
+    ["delegation only", { taskCreateWithheld: true, delegateWithheld: false }, "`fn_delegate_task`", "`fn_task_create`"],
+  ])("renders workflow routing for the %s surface", async (_label, availability, presentTool, absentTool) => {
+    const { getExecutorSystemPrompt } = await import("../executor.js");
+    const prompt = getExecutorSystemPrompt({ agentPrompts: undefined } as any, availability);
+
+    const clause = getCreatedTaskWorkflowRoutingClause(prompt);
+    expect(clause).toBe(`- You may still set the workflow on tasks you create via ${presentTool}.`);
+    expect(clause).not.toContain(absentTool);
+  });
+
+  it.each([
+    ["omitted availability", undefined],
+    ["empty availability", {}],
+  ])("keeps both workflow creation clauses for %s", async (_label, availability) => {
+    const { getExecutorSystemPrompt } = await import("../executor.js");
+    const prompt = getExecutorSystemPrompt({ agentPrompts: undefined } as any, availability);
+
+    expect(getCreatedTaskWorkflowRoutingClause(prompt)).toBe(
+      "- You may still set the workflow on tasks you create via `fn_task_create` or `fn_delegate_task`.",
+    );
+    expect(prompt).not.toContain("Follow-up task creation is disabled for this session");
+  });
+
+  it("removes created-task workflow guidance when both creation tools are withheld", async () => {
+    const { getExecutorSystemPrompt } = await import("../executor.js");
+    const prompt = getExecutorSystemPrompt(
+      { agentPrompts: undefined } as any,
+      { taskCreateWithheld: true, delegateWithheld: true },
+    );
+
+    expect(getCreatedTaskWorkflowRoutingClause(prompt)).toBeUndefined();
+    expect(prompt).toContain("Task-execution sessions structurally withhold `fn_task_create` and `fn_delegate_task`");
   });
 
   it.each([

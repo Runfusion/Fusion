@@ -1,6 +1,6 @@
 import "./SetupWarningBanner.css";
-import { X } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { Banner } from "./Banner";
 
 interface SetupWarningBannerProps {
   /** Whether an AI provider is connected */
@@ -37,29 +37,13 @@ export function SetupWarningBanner({
     return null;
   }
 
-  const dismissButton = onDismiss ? (
-    <button
-      type="button"
-      className="setup-warning-banner__dismiss touch-target"
-      aria-label={t("setup.dismissWarning", "Dismiss setup warning")}
-      onClick={onDismiss}
-    >
-      <X size={16} aria-hidden="true" />
-    </button>
-  ) : null;
-
   if (compact) {
     return (
-      <div
-        className={`setup-warning-banner setup-warning-banner--compact${onDismiss ? " setup-warning-banner--dismissible" : ""}`}
-        role="status"
-        aria-live="polite"
-      >
+      <Banner className={`setup-warning-banner setup-warning-banner--compact${onDismiss ? " setup-warning-banner--dismissible" : ""}`} tone="warning" density="compact" role="status" aria-live="polite" onDismiss={onDismiss} dismissLabel={t("setup.dismissWarning", "Dismiss setup warning")}> 
         <p className="setup-warning-banner__compact-text">
           {t("setup.compactWarning", "⚠ Setup incomplete — AI and/or GitHub features will be limited.")}
         </p>
-        {dismissButton}
-      </div>
+      </Banner>
     );
   }
 
@@ -82,12 +66,7 @@ export function SetupWarningBanner({
   }
 
   return (
-    <div
-      className={`setup-warning-banner${onDismiss ? " setup-warning-banner--dismissible" : ""}`}
-      role="status"
-      aria-live="polite"
-    >
-      {dismissButton}
+    <Banner className={`setup-warning-banner${onDismiss ? " setup-warning-banner--dismissible" : ""}`} tone="warning" role="status" aria-live="polite" onDismiss={onDismiss} dismissLabel={t("setup.dismissWarning", "Dismiss setup warning")}> 
       {warningItems.map((warning) => (
         <div key={warning.key} className="setup-warning-banner__item">
           <strong className="setup-warning-banner__title">{warning.title}</strong>
@@ -101,6 +80,6 @@ export function SetupWarningBanner({
           ) : null}
         </div>
       ))}
-    </div>
+    </Banner>
   );
 }

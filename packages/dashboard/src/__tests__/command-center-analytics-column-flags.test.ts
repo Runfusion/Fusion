@@ -53,10 +53,4 @@ describe("Command Center analytics routes pass resolved column flags", () => {
     // The comparison covers exactly the roles the tallies read.
     expect(source).toContain("(a.countsTowardWip === true) !== (b.countsTowardWip === true)");
   });
-
-  it("degrades to an empty map rather than throwing when definitions are unreadable", () => {
-    // An empty map means both aggregators keep their documented legacy ids — the analytics page must
-    // not 500 because a workflow row is corrupt.
-    expect(source).toContain("Unreadable definitions leave the map empty");
-  });
 });

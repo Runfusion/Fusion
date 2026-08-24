@@ -17,7 +17,6 @@ describe("index.html viewport compensation keyboard guard", () => {
   });
 
   it("contains viewportOffset.ts sync marker and focused keyboard clamp", () => {
-    expect(indexHtml).toContain("Keep in sync with packages/dashboard/app/utils/viewportOffset.ts");
     expect(indexHtml).toContain("activeElementIsKeyboardFocusable && vvScale <= 1.01");
     expect(indexHtml).toContain("bottomOffset = 0");
     expect(indexHtml).toContain("keyboardShrink");

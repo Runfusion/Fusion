@@ -230,11 +230,16 @@ describe("autoLayout — foreach / unreachable / cycles", () => {
   });
 
   it("keeps built-in consecutive container runs connected in the editor layout", () => {
+    /*
+    FNXC:WorkspaceReviewSeal 2026-08-23-20:32:
+    FN-120 moved `completion-summary` ahead of Code Review in both built-ins so the approval is the
+    final write-sensitive pre-merge gate; the connected editor runs below follow that order.
+    */
     assertAutoLayoutRunConnected("coding", workflowDef(BUILTIN_CODING_WORKFLOW_IR), [
       "execute",
       "browser-verification",
+      "completion-summary",
       "code-review",
-      "review",
     ]);
     /*
     FNXC:WorkflowAutoLayout 2026-07-07-08:10:
@@ -243,8 +248,8 @@ describe("autoLayout — foreach / unreachable / cycles", () => {
     assertAutoLayoutRunConnected("stepwise", workflowDef(BUILTIN_STEPWISE_CODING_WORKFLOW_IR), [
       "steps",
       "browser-verification",
-      "code-review",
       "completion-summary",
+      "code-review",
     ]);
   });
 

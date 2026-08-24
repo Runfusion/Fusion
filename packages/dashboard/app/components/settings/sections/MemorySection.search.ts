@@ -18,6 +18,31 @@ export const memorySearchEntries: SettingsSearchEntry[] = [
       "Agents get memory_search, memory_get, and memory_append tools. Search defaults to qmd with a local file fallback. Default: enabled.",
     keywords: ["recall", "knowledge"],
   },
+  /*
+  FNXC:StashSessionCapture 2026-08-19-05:09:
+  (RUFU-122) Task-terminal transcript upload controls (Stash backend only).
+  executorSessionCaptureIncludeStatus is schema-only by design and has no row,
+  so it is deliberately absent from this index.
+  */
+  {
+    sectionId: "memory",
+    key: "executorSessionCaptureEnabled",
+    labelKey: "settings.memory.executorSessionCapture",
+    labelFallback: "Executor session capture",
+    helpKey: "settings.memory.uploadTaskAgentLogTranscriptToStash",
+    helpFallback:
+      "Upload each task's agent-log transcript (agent-log.jsonl) to Stash when the task terminalizes (done or failed). Off: only the completion/failure anchor event is captured. Default: enabled.",
+    keywords: ["transcript", "agent log", "session"],
+  },
+  {
+    sectionId: "memory",
+    key: "executorSessionCaptureMaxEvents",
+    labelKey: "settings.memory.maxTranscriptEventsPerTask",
+    labelFallback: "Max transcript events per task",
+    helpKey: "settings.memory.capOnTranscriptEventsUploadedPerTask",
+    helpFallback: "Cap on transcript events uploaded per task (default 20000). The most recent events are kept.",
+    keywords: ["cap", "limit", "volume"],
+  },
   {
     sectionId: "memory",
     key: "memoryAutoSummarizeEnabled",
@@ -91,5 +116,32 @@ export const memorySearchEntries: SettingsSearchEntry[] = [
     helpFallback:
       "Cron expression for dream processing. Default: 0 4 * * * (daily at 4 AM).",
     keywords: ["timing"],
+  },
+  /*
+  FNXC:StashSessionCapture 2026-08-19-05:09:
+  (RUFU-122) The backend selector and the stash-only URL row were rendered with
+  descriptor keys but never registered here — the search-index drift guard
+  (settings-search-index.test.ts) fails on any rendered-but-unindexed key, so
+  both are indexed alongside the RUFU-122 transcript rows.
+  */
+  {
+    sectionId: "memory",
+    key: "memoryBackendType",
+    labelKey: "settings.memory.backendLabel",
+    labelFallback: "Memory backend",
+    helpKey: "settings.memory.backendHelp",
+    helpFallback:
+      "Which store agent memory reads/writes. Per project: qmd (indexed, default), local files, a read-only backend, or Stash (personal knowledge-base). Switching backends retro-actively is not supported.",
+    keywords: ["qmd", "backend", "stash", "store"],
+  },
+  {
+    sectionId: "memory",
+    key: "stashUrl",
+    labelKey: "settings.memory.stashUrlLabel",
+    labelFallback: "Stash server URL",
+    helpKey: "settings.memory.stashUrlHelp",
+    helpFallback:
+      "Base URL of the Stash server (e.g. http://127.0.0.1:3457). Used only when the backend above is Stash. The API key lives in the global secrets store, never in settings.",
+    keywords: ["url", "endpoint", "server"],
   },
 ];

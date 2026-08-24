@@ -26,6 +26,8 @@ vi.mock("../../api", async (importOriginal) => {
   return {
     ...actual,
     fetchAgents: vi.fn().mockResolvedValue([{ id: "agent-1", name: "Alpha", role: "executor", state: "idle", createdAt: "2026-04-08T00:00:00.000Z", updatedAt: "2026-04-08T00:00:00.000Z", metadata: {} }]),
+    // FNXC:ChatMemoryFocus (RUFU-068): ChatView fetches per-session detail to seed the focus chip; the harness never asserts on it, so resolve to a whole-project session.
+    fetchChatSession: vi.fn().mockResolvedValue({ session: { memoryFocus: null } }),
   };
 });
 vi.mock("lucide-react", async (importOriginal) => {
@@ -36,11 +38,23 @@ vi.mock("lucide-react", async (importOriginal) => {
   };
 });
 
+/*
+FNXC:ChatNavigation 2026-08-23-23:20:
+Chat opens list-first (FN-054) and FN-9193 docks that list beside the thread on desktop, so the
+thread and composer exist only after a conversation row is opened; the Back affordance no longer
+renders while the docked list is visible, so detail entry is detected by the thread itself.
+*/
 async function renderWithAct(ui: Parameters<typeof rtlRender>[0]) {
   let result: ReturnType<typeof rtlRender> | undefined;
   await act(async () => {
     result = rtlRender(ui);
   });
+  if (!document.querySelector(".chat-thread, .chat-room-thread-header")) {
+    const item = document.querySelector<HTMLElement>(
+      ".chat-session-item, .chat-room-item",
+    );
+    if (item) await act(async () => { fireEvent.click(item); });
+  }
   return result!;
 }
 

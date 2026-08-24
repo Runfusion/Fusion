@@ -120,16 +120,23 @@ describe("SettingsModal mobile embedded close button (FN-7627)", () => {
     expect(baseElement.querySelector(".modal-close")?.getAttribute("aria-label")).toMatch(/close/i);
   });
 
-  it("keeps the task-definition input-language toggle reachable in Project Models on mobile", async () => {
+  /*
+  FNXC:TaskOutputLanguage 2026-08-23-21:30:
+  The boolean "write task definitions in the operator's input language" toggle was replaced by the
+  three-way `taskOutputLanguage` selector (English / user input language / Fusion interface
+  language), which is the sole task-output control in the shared desktop/mobile Project Models
+  section. Mobile must still reach it and be able to choose the input-language mode.
+  */
+  it("keeps the AI-authored task language selector reachable in Project Models on mobile", async () => {
     mockUseViewportMode.mockReturnValue("mobile");
     renderModal({ presentation: "embedded", projectId: "proj-1", initialSection: "project-models" });
     await waitFor(() => expect(mockFetchSettings).toHaveBeenCalled());
 
-    const toggle = await screen.findByRole("checkbox", { name: "Write task definitions in the operator's input language" });
-    expect(toggle).toBeVisible();
-    expect(toggle).not.toBeDisabled();
-    fireEvent.click(toggle);
-    expect(toggle).toBeChecked();
+    const selector = await screen.findByRole("combobox", { name: /AI-authored task language/i });
+    expect(selector).toBeVisible();
+    expect(selector).not.toBeDisabled();
+    fireEvent.change(selector, { target: { value: "input" } });
+    expect(selector).toHaveValue("input");
   });
 
   /*

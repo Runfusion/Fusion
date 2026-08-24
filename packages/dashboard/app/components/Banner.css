@@ -1,0 +1,81 @@
+/*
+FNXC:DashboardBanners 2026-08-23-22:36:
+Dashboard banners share one shell so tone is expressed through a tint and a hairline full border using var(--btn-border-width), preserving thick-border themes. The operator explicitly removed left highlight borders, so this primitive must never add an accent bar.
+*/
+.banner {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  border: var(--btn-border-width) solid color-mix(in srgb, var(--banner-tone) 30%, var(--border));
+  background: color-mix(in srgb, var(--banner-tone) 10%, var(--surface));
+  color: var(--text);
+}
+
+.banner--info { --banner-tone: var(--color-info); }
+.banner--warning { --banner-tone: var(--color-warning); }
+.banner--error { --banner-tone: var(--color-error); }
+.banner--success { --banner-tone: var(--color-success); }
+.banner--neutral { --banner-tone: var(--text-muted); }
+
+.banner--inline {
+  margin-bottom: var(--space-md);
+  border-radius: var(--radius-md);
+}
+
+.banner--chrome {
+  position: sticky;
+  top: 0;
+  z-index: var(--z-sticky);
+  border-inline: 0;
+  border-top: 0;
+  border-radius: 0;
+}
+
+.banner--compact {
+  padding: var(--space-xs) var(--space-sm);
+}
+
+.banner__icon {
+  display: flex;
+  flex: 0 0 auto;
+  color: var(--banner-tone);
+}
+
+.banner__copy {
+  min-width: 0;
+  flex: 1;
+}
+
+.banner__title {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.banner__body { color: var(--text-muted); }
+
+.banner__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex: 0 0 auto;
+}
+
+.banner__dismiss {
+  flex: 0 0 auto;
+  color: var(--text-muted);
+}
+
+.banner__dismiss:hover { color: var(--text); }
+.banner__dismiss:focus-visible { box-shadow: var(--focus-ring-strong); }
+
+@media (max-width: 768px) {
+  .banner {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .banner__actions {
+    width: 100%;
+  }
+}

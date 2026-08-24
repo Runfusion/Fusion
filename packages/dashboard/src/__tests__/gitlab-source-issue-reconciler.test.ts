@@ -162,7 +162,11 @@ describe("GitLabSourceIssueReconciler.backfillSourceIssueClosedAt", () => {
       const store = harness.store;
 
       try {
-      const task = await store.createTask({ description: "Archived GitLab issue", sourceIssue: gitlabTask("template").sourceIssue });
+      /*
+      FNXC:WorkflowSteps 2026-08-23-23:40:
+      The merge door refuses `done` for a task whose ENABLED optional pre-merge groups produced no result. This fixture only needs an archived row to reconcile, so it enables no pre-merge steps rather than pretending reviews ran.
+      */
+      const task = await store.createTask({ description: "Archived GitLab issue", sourceIssue: gitlabTask("template").sourceIssue, enabledWorkflowSteps: [] });
       await store.moveTask(task.id, "todo");
       await store.moveTask(task.id, "in-progress");
       await store.moveTask(task.id, "in-review");

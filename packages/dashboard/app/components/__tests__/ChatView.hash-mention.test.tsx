@@ -40,6 +40,7 @@ vi.mock("../../api", () => ({
     { id: "FN-5218", title: "Hash entries in chat", column: "todo" },
   ]),
   searchFiles: vi.fn().mockResolvedValue({ files: [] }),
+  fetchChatSession: vi.fn().mockResolvedValue({ session: { memoryFocus: null } }),
 }));
 
 const mockUseChat = vi.mocked(useChatModule.useChat);
@@ -94,6 +95,9 @@ describe("ChatView hash mentions", () => {
         <ChatView />
       </FileBrowserProvider>,
     );
+
+    /* FNXC:ChatNavigation 2026-08-23-18:40: FN-054 made Chat list-first, so the composer exists only inside an opened conversation. */
+    fireEvent.click(screen.getByTestId(`chat-session-${activeSession.id}`));
 
     const textarea = screen.getByPlaceholderText("Type a message...") as HTMLTextAreaElement;
     fireEvent.change(textarea, {

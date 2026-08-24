@@ -1,12 +1,13 @@
 import "./UpdateAvailableBanner.css";
 import { useEffect, useState } from "react";
-import { Power, RefreshCw, X } from "lucide-react";
+import { Power, RefreshCw } from "lucide-react";
 import { useTranslation, Trans } from "react-i18next";
 import { getErrorMessage } from "@fusion/core";
 import { fetchSystemInfo, installUpdate, requestSystemRestart } from "../api";
 import type { UpdateInstallResponse } from "../api";
 import { systemRestartRecovery, useSystemRestartRecovery } from "../hooks/useSystemRestartRecovery";
 import { pendingUpdateInstallState, usePendingUpdateInstall } from "../hooks/usePendingUpdateInstall";
+import { Banner } from "./Banner";
 
 interface UpdateAvailableBannerProps {
   latestVersion: string;
@@ -113,7 +114,14 @@ export function UpdateAvailableBanner({ latestVersion, currentVersion, onDismiss
   const restartUnavailable = restartSupported === false;
 
   return (
-    <div className="update-available-banner" role="status" aria-live="polite">
+    <Banner
+      className="update-available-banner"
+      tone="info"
+      role="status"
+      aria-live="polite"
+      onDismiss={onDismiss}
+      dismissLabel={t("updateBanner.dismissLabel", "Dismiss update notice")}
+    >
       <div className="update-available-banner__content">
         <p className="update-available-banner__text">
           <Trans
@@ -217,14 +225,6 @@ export function UpdateAvailableBanner({ latestVersion, currentVersion, onDismiss
           )}
         </div>
       </div>
-      <button
-        type="button"
-        className="update-available-banner__dismiss touch-target"
-        aria-label={t("updateBanner.dismissLabel", "Dismiss update notice")}
-        onClick={onDismiss}
-      >
-        <X size={16} aria-hidden="true" />
-      </button>
-    </div>
+    </Banner>
   );
 }

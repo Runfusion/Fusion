@@ -1,5 +1,6 @@
 import { AlertTriangle, RefreshCw } from "lucide-react";
 import { Trans, useTranslation } from "react-i18next";
+import { Banner } from "./Banner";
 
 import "./DbCorruptionBanner.css";
 
@@ -33,7 +34,7 @@ export function DbCorruptionBanner({
   const checkedAtLabel = lastCheckedAt ? new Date(lastCheckedAt).toLocaleString() : null;
 
   return (
-    <section className="db-corruption-banner" role="alert" aria-live="assertive">
+    <Banner as="section" className="db-corruption-banner" tone="error" role="alert" aria-live="assertive">
       <div className="db-corruption-banner__header">
         <div className="db-corruption-banner__headline-wrap">
           <span className="status-dot status-dot--error" aria-hidden="true" />
@@ -82,6 +83,6 @@ export function DbCorruptionBanner({
         />
       </p>
       {refreshError ? <p className="db-corruption-banner__error">{refreshError}</p> : null}
-    </section>
+    </Banner>
   );
 }

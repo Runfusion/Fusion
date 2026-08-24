@@ -141,6 +141,14 @@ export default defineConfig({
         replacement: resolve(__dirname, "node_modules/@earendil-works/pi-coding-agent/dist/index.js"),
       },
       { find: /^@fusion\/core\/gh-cli$/, replacement: resolve(__dirname, "../core/src/gh-cli.ts") },
+      /*
+      FNXC:CliTests 2026-08-23-16:20:
+      `@fusion/core/mcp-builtin-servers` is a real package export whose "import" condition points at
+      `dist/`, so engine's `mcp-resolution.ts` fails to resolve it in a source checkout with no built
+      core dist ("Cannot find package"). Alias the subpath to source like every other internal entry,
+      and keep it BEFORE the `@fusion/core` root alias so the subpath is not swallowed.
+      */
+      { find: /^@fusion\/core\/mcp-builtin-servers$/, replacement: resolve(__dirname, "../core/src/config/mcp-builtin-servers.ts") },
       { find: /^@fusion\/core$/, replacement: resolve(__dirname, "../core/src/index.ts") },
       { find: /^@fusion\/dashboard\/planning$/, replacement: resolve(__dirname, "../dashboard/src/planning.ts") },
       { find: /^@fusion\/dashboard$/, replacement: resolve(__dirname, "../dashboard/src/index.ts") },

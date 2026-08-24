@@ -29,6 +29,7 @@ vi.mock("../../api", async (importOriginal) => {
     fetchTasks: vi.fn().mockResolvedValue([]),
     fetchSettings: vi.fn().mockResolvedValue({}),
     searchFiles: vi.fn().mockResolvedValue({ files: [] }),
+    fetchChatSession: vi.fn().mockResolvedValue({ session: { memoryFocus: null } }),
   };
 });
 
@@ -87,7 +88,7 @@ const defaultChatState: UseChatReturn = {
   deleteSession: vi.fn(),
   sendMessage: vi.fn(),
   editMessageAndResend: vi.fn(),
-  stopStreaming: vi.fn(),
+  stopStreaming: vi.fn().mockResolvedValue(undefined),
   pendingMessages: [],
   clearPendingMessage: vi.fn(),
   loadMoreMessages: vi.fn(),
@@ -136,8 +137,24 @@ function mockDesktopViewport() {
   }));
 }
 
+/*
+FNXC:ChatNavigation 2026-08-23-23:20:
+Chat is list-first on every host (FN-054) and FN-9193 docks that list beside the thread on desktop,
+so the composer exists only after a conversation row is opened. Detect the thread itself rather than
+`chat-back-btn`, which the docked layout deliberately omits.
+*/
+export async function openFirstConversation() {
+  if (document.querySelector(".chat-thread, .chat-room-thread-header")) return;
+  const item = document.querySelector<HTMLElement>(
+    ".chat-session-item, .chat-room-item",
+  );
+  if (item) await userEvent.click(item);
+}
+
 async function renderChatView() {
-  return await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} experimentalFeatures={{ chatRooms: true }} />);
+  const result = await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} experimentalFeatures={{ chatRooms: true }} />);
+  await openFirstConversation();
+  return result;
 }
 
 describe("ChatView draft persistence", () => {

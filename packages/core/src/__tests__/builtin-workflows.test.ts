@@ -311,9 +311,12 @@ describe("built-in workflows", () => {
     expect(ir.nodes.some((n) => n.id === "browser-verification" && n.kind === "optional-group")).toBe(true);
     expect(ir.nodes.some((n) => n.id === "code-review" && n.kind === "optional-group")).toBe(true);
     expect(ir.edges.some((edge) => edge.from === "steps" && edge.to === "browser-verification" && edge.condition === "success")).toBe(true);
-    expect(ir.edges.some((edge) => edge.from === "browser-verification" && edge.to === "code-review" && edge.condition === "success")).toBe(true);
-    expect(ir.edges.some((edge) => edge.from === "code-review" && edge.to === "completion-summary" && edge.condition === "success")).toBe(true);
-    expect(ir.edges.some((edge) => edge.from === "completion-summary" && edge.to === "merge-gate" && edge.condition === "success")).toBe(true);
+    // FNXC:WorkflowBuiltins 2026-08-23-22:55: FN-120 (10c399d01e) moved completion-summary AHEAD of
+    // code-review so no built-in agent can reopen the reviewed worktree. Suffix is now
+    // browser-verification -> completion-summary -> code-review -> merge-gate.
+    expect(ir.edges.some((edge) => edge.from === "browser-verification" && edge.to === "completion-summary" && edge.condition === "success")).toBe(true);
+    expect(ir.edges.some((edge) => edge.from === "completion-summary" && edge.to === "code-review" && edge.condition === "success")).toBe(true);
+    expect(ir.edges.some((edge) => edge.from === "code-review" && edge.to === "merge-gate" && edge.condition === "success")).toBe(true);
     expect(ir.nodes.some((node) => node.id === "review")).toBe(false);
     const foreach = ir.nodes.find((n) => n.kind === "foreach");
     expect(foreach).toBeDefined();
@@ -339,8 +342,9 @@ describe("built-in workflows", () => {
     expect(ir.nodes.some((node) => node.id === "review")).toBe(false);
     expect(ir.edges.some((edge) => edge.from === "plan" && edge.to === "plan-review" && edge.condition === "success")).toBe(true);
     expect(ir.edges.some((edge) => edge.from === "plan-review" && edge.to === "parse" && edge.condition === "success")).toBe(true);
-    expect(ir.edges.some((edge) => edge.from === "code-review" && edge.to === "completion-summary" && edge.condition === "success")).toBe(true);
-    expect(ir.edges.some((edge) => edge.from === "completion-summary" && edge.to === "merge-gate" && edge.condition === "success")).toBe(true);
+    // FNXC:WorkflowBuiltins 2026-08-23-22:55: post-FN-120 suffix — completion-summary precedes code-review.
+    expect(ir.edges.some((edge) => edge.from === "completion-summary" && edge.to === "code-review" && edge.condition === "success")).toBe(true);
+    expect(ir.edges.some((edge) => edge.from === "code-review" && edge.to === "merge-gate" && edge.condition === "success")).toBe(true);
 
     const foreach = ir.nodes.find((node) => node.kind === "foreach");
     expect(foreach).toBeDefined();
@@ -1284,8 +1288,9 @@ describe("built-in workflows", () => {
       expect((plan?.config as { prompt?: string } | undefined)?.prompt).toContain("You are a task specification agent");
       expect(steps?.kind).toBe("foreach");
       expect(codeReview?.kind).toBe("optional-group");
-      expect(coding?.ir.edges.some((edge) => edge.from === "code-review" && edge.to === "completion-summary")).toBe(true);
-      expect(coding?.ir.edges.some((edge) => edge.from === "completion-summary" && edge.to === "merge-gate")).toBe(true);
+      // FNXC:WorkflowBuiltins 2026-08-23-22:55: post-FN-120 suffix — completion-summary precedes code-review.
+      expect(coding?.ir.edges.some((edge) => edge.from === "completion-summary" && edge.to === "code-review")).toBe(true);
+      expect(coding?.ir.edges.some((edge) => edge.from === "code-review" && edge.to === "merge-gate")).toBe(true);
       expect((legacyExecute?.config as { prompt?: string } | undefined)?.prompt).toContain("You are a task execution agent");
       // No `merge` seam node post-FN-6035 — merge runs as native primitives.
       expect(coding?.ir.nodes.find((node) => node.id === "merge")).toBeUndefined();

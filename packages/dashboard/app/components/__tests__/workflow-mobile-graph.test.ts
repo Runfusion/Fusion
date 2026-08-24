@@ -147,7 +147,19 @@ describe("buildMobileWorkflowGraph", () => {
       expect(browserVerification?.kind, name).toBe("optional-group");
       expect(codeReview?.kind, name).toBe("optional-group");
       expect(incomingRow?.outgoing.some((out) => out.target === "browser-verification"), name).toBe(true);
+      /*
+      FNXC:WorkspaceReviewSeal 2026-08-23-20:30:
+      FN-120 moved `completion-summary` BEFORE Code Review in both built-ins, so a worktree-acquiring
+      summary agent can no longer invalidate a recorded approval. The mobile outline's container run
+      is therefore browser-verification → completion-summary → code-review.
+      */
       expect(browserVerification?.outgoing.map((out) => [out.target, out.label]), name).toEqual(
+        expect.arrayContaining([
+          ["completion-summary", "success"],
+        ]),
+      );
+      const completionSummary = rows.find((row) => row.id === "completion-summary");
+      expect(completionSummary?.outgoing.map((out) => [out.target, out.label]), name).toEqual(
         expect.arrayContaining([
           ["code-review", "success"],
         ]),

@@ -51,8 +51,15 @@ vi.mock("../../update-cache.js", () => ({
 // FNXC:UpdateChannels 2026-07-19-13:45: update.ts uses the REAL shared semver/
 // channel helpers, but importing the @fusion/core barrel would drag core's
 // git-binary through this file's node:child_process mock. Substitute the
-// barrel with the actual app-version source module (the only part used here).
-vi.mock("@fusion/core", async () => await vi.importActual("../../../../core/src/i18n/app-version.js"));
+// barrel with the actual source modules it consumes.
+// FNXC:UpdateManagement 2026-08-23-22:58: the externally-managed update guard
+// added `resolveUpdatesExternallyManaged`/`EXTERNALLY_MANAGED_UPDATE_MESSAGE`
+// imports to update.ts; the barrel substitute must carry them too or every
+// non-check-only case throws "no export defined on the mock".
+vi.mock("@fusion/core", async () => ({
+  ...(await vi.importActual<Record<string, unknown>>("../../../../core/src/i18n/app-version.js")),
+  ...(await vi.importActual<Record<string, unknown>>("../../../../core/src/config/update-management.js")),
+}));
 
 import { runUpdate } from "../update.js";
 

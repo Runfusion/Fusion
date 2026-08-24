@@ -117,7 +117,7 @@ export interface AgentRuntimeOptions {
   systemPrompt: string;
   tools?: "coding" | "readonly";
   /**
-   * FNXC:AcpSubscribeCompat 2026-08-21-19:12:
+   * FNXC:AcpTaskEnv 2026-08-21-19:12:
    * Task-scoped subprocess environment (engine contract); allow-list still gates forwarding.
    */
   taskEnv?: NodeJS.ProcessEnv;
@@ -187,7 +187,7 @@ export interface AcpSession {
    * call sites call it unconditionally (execute-workflow-step.ts, pi.ts).
    * ACP sessions stream through the bridging client handler onto `callbacks`
    * instead, so this adapter replays each forwarded event to every handler.
-   * Returns a no-op unsubscribe for interface compatibility.
+   * Returns an unsubscribe function that removes only the registered handler.
    */
   subscribe(handler: (event: unknown) => void): () => void;
 }

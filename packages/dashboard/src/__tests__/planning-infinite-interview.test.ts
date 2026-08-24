@@ -136,6 +136,17 @@ const EFFECT_INTENSITY = {
   ],
 };
 
+/*
+FNXC:TaskOutputLanguage 2026-08-23-23:12:
+FN-037 appends a "## Task Output Language" section to every resolved planning system prompt, so the delivered prompt is no longer byte-identical to PLANNING_SYSTEM_PROMPT. These assertions still guard the same invariant — the canonical base is used, unmodified and with no project override leaked in — by pinning the base as an exact prefix plus that one appended section.
+*/
+const PLANNING_LANGUAGE_SECTION_HEADING = "\n\n## Task Output Language\n";
+
+function expectResolvedPlanningSystemPrompt(prompt: string): void {
+  expect(prompt.startsWith(PLANNING_SYSTEM_PROMPT + PLANNING_LANGUAGE_SECTION_HEADING)).toBe(true);
+  expect(prompt.slice(PLANNING_SYSTEM_PROMPT.length + PLANNING_LANGUAGE_SECTION_HEADING.length)).not.toContain("## Task Output Language");
+}
+
 describe("reactive Planning Mode question contract", () => {
   beforeEach(() => {
     __resetPlanningState();
@@ -528,7 +539,8 @@ describe("reactive Planning Mode question contract", () => {
     expect(prompts[1]).toContain("Use audit logs");
     expect(prompts[3]).toContain("Use audit logs");
     expect(prompts[3]).toContain("Add a staged rollout.");
-    expect(agentSystemPrompts).toEqual([PLANNING_SYSTEM_PROMPT, PLANNING_SYSTEM_PROMPT]);
+    expect(agentSystemPrompts).toHaveLength(2);
+    for (const agentSystemPrompt of agentSystemPrompts) expectResolvedPlanningSystemPrompt(agentSystemPrompt);
     expect((await getSession(created.sessionId))?.pendingContextualComments).toBeUndefined();
   });
 
@@ -684,7 +696,8 @@ describe("reactive Planning Mode question contract", () => {
     });
     expect(session?.history).toEqual([expect.objectContaining({ response: { "background-direction": "add-effects" } })]);
     expect(session?.currentQuestion).toMatchObject({ id: "effect-type" });
-    expect(agentSystemPrompts).toEqual([PLANNING_SYSTEM_PROMPT]);
+    expect(agentSystemPrompts).toHaveLength(1);
+    expectResolvedPlanningSystemPrompt(agentSystemPrompts[0]);
   });
 
   it("uses a model-authored initial plan on the non-streaming first turn", async () => {
@@ -743,7 +756,7 @@ describe("reactive Planning Mode question contract", () => {
     await vi.waitFor(() => expect(systemPrompts).toHaveLength(2));
 
     for (const systemPrompt of systemPrompts) {
-      expect(systemPrompt).toBe(PLANNING_SYSTEM_PROMPT);
+      expectResolvedPlanningSystemPrompt(systemPrompt);
       expect(systemPrompt).not.toContain("PROMPT.md NO-CODE CREATE CHILD TASK");
       expect(systemPrompt).toContain('"type":"question"');
     }
