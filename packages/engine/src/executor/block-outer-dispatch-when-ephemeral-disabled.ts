@@ -52,6 +52,11 @@ export async function blockOuterDispatchWhenEphemeralDisabled(
     const liveTask = (await deps.store.getTask(task.id).catch(() => null)) ?? task;
     const reboundColumn = await resolveReboundColumnFor(deps.store, liveTask.id);
     if (liveTask.column !== reboundColumn) {
+      /*
+      FNXC:Identity 2026-08-24-02:18:
+      Ephemeral-disabled dispatch block rehomes and queues through `runContextFor` so the blocked
+      mutation is attributable to the live executor run.
+      */
       await deps.store.moveTask(liveTask.id, reboundColumn, {
         preserveProgress: true,
         preserveWorktree: true,

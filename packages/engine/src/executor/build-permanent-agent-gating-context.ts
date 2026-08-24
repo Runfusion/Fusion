@@ -98,6 +98,11 @@ export function buildPermanentAgentGatingContext(
       if (!taskId) return;
       deps.approvalSuspended.add(taskId);
       try {
+        /*
+        FNXC:Identity 2026-08-24-02:18:
+        Permanent-agent approval pause uses `runContextFor` so the hold is attributed to the gated
+        agent rather than the deprecated unattributed overload.
+        */
         await deps.store.pauseTask(taskId, true, deps.runContextFor(taskId), { pausedByAgentId: actorId, pausedReason: AWAITING_APPROVAL_PAUSE_REASON });
         await deps.store.logEntry(
           taskId,

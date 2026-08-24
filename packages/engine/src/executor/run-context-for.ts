@@ -7,6 +7,12 @@
  */
 import type { RunMutationContext } from "@fusion/core";
 import { mutationContextForAgent } from "@fusion/core";
+/*
+FNXC:Identity 2026-08-24-02:18:
+`toRunMutationContext` is exported from `util/run-audit.ts` in this slice so `runContextForTotal`
+can convert a live `EngineRunContext` into a store `RunMutationContext`. A missing named export
+here is a compile break, not a later-stack concern.
+*/
 import { toRunMutationContext, type EngineRunContext } from "../util/run-audit.js";
 
 export const EXECUTOR_LANE_AGENT_ID = "executor";

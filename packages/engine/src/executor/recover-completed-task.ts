@@ -295,6 +295,11 @@ export async function recoverCompletedTask(
       column, so `hold === intake` and the hop correctly collapses to the single move below;
       a board that still separates them (pre-U11, or a custom lineage) keeps the re-home.
       */
+      /*
+      FNXC:Identity 2026-08-24-02:18:
+      Completed-task recovery rehomes through store.moveTask. Attributed executor writes in this
+      slice pass `runContextFor`; these planner-lane hops keep the existing store arity.
+      */
       if (originColumn === plannerLanes.intake && plannerLanes.hold !== plannerLanes.intake) {
         completionTask = await deps.store.moveTask(task.id, plannerLanes.hold, {
           moveSource: "engine",

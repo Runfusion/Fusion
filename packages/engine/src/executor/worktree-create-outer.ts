@@ -19,7 +19,12 @@ import { runContextForTotal } from "./run-context-for.js";
 const execAsync = promisify(exec);
 
 export type WorktreeOuterStore = {
-  updateTask: (taskId: string, patch: Record<string, unknown>) => Promise<unknown>;
+  /*
+  FNXC:Identity 2026-08-24-02:18:
+  Outer create/rebase/squash writes share this store. `updateTask` must accept the run carrier so
+  clearing a missing start-point and other worktree-create mutations stay attributable.
+  */
+  updateTask: (taskId: string, patch: Record<string, unknown>, runContext?: RunMutationContext) => Promise<unknown>;
   getSettings: () => Promise<Settings | Partial<Settings>>;
   /** Mirrors TaskStore.logEntry so safe breadcrumbs match main (action, outcome?, runContext?). */
   logEntry: (
@@ -56,6 +61,7 @@ export type WorktreeOuterCreateDeps = {
     taskId: string,
     depTip: string,
     label: string,
+    runContext?: RunMutationContext,
   ) => Promise<void>;
   /*
   FNXC:Identity 2026-08-14-08:10 (review finding — the remote-rebase breadcrumbs were unattributed):
@@ -124,6 +130,12 @@ export async function squashImportDepIntoWorktree(
   taskId: string,
   depTip: string,
   label: string,
+  /*
+  FNXC:Identity 2026-08-24-02:18:
+  PR 3430 review: squash-import breadcrumbs must receive the same total carrier `createWorktree`
+  already resolves for remote-rebase. Omitting it left the import log on the deprecated overload.
+  */
+  runContext?: RunMutationContext,
 ): Promise<void> {
   // No-op when dep is already represented in the worktree's history.
   try {
@@ -187,6 +199,8 @@ export async function squashImportDepIntoWorktree(
   await store.logEntry(
     taskId,
     `Squash-imported dependency content from ${label} into worktree (single import commit instead of inheriting raw commits)`,
+    undefined,
+    runContext,
   );
 }
 
@@ -325,13 +339,14 @@ export async function createWorktree(
   // Track the worktree path we're attempting to use (may change during recovery)
   const currentPath = path;
   let resolvedStartPoint: string | undefined;
+  const runContext = runContextForTotal(deps.getRunContextFor, taskId);
   if (startPoint) {
     const resolved = await deps.resolveWorktreeStartPoint(startPoint, taskId);
     if (resolved === null) {
       // Stored baseBranch no longer exists (e.g., upstream dep merged and branch
       // deleted while this task sat queued/stuck). Clear it on the task so any
       // subsequent retry branches from the default base, and proceed from HEAD.
-      await deps.store.updateTask(taskId, { executionStartBranch: null });
+      await deps.store.updateTask(taskId, { executionStartBranch: null }, runContext);
     } else {
       resolvedStartPoint = resolved;
     }
@@ -382,6 +397,7 @@ export async function createWorktree(
           taskId,
           squashImport.depTip,
           squashImport.label,
+          runContext,
         ).catch((importErr: unknown) => {
           executorLog.warn(
             `Squash-import of ${squashImport.label} into ${result.branch} failed for ${taskId} (continuing without): ${importErr instanceof Error ? importErr.message : String(importErr)}`,
@@ -398,7 +414,7 @@ export async function createWorktree(
         result.branch,
         taskId,
         undefined,
-        runContextForTotal(deps.getRunContextFor, taskId),
+        runContext,
       ).catch((err: unknown) => {
         executorLog.warn(
           `Post-create worktree rebase failed for ${taskId} (continuing): ${err instanceof Error ? err.message : String(err)}`,
@@ -416,6 +432,7 @@ export async function createWorktree(
           taskId,
           `Worktree creation failed after ${deps.maxWorktreeRetries} attempts`,
           errorMessage,
+          runContext,
         );
         if (isBranchConflict) {
           throw error;

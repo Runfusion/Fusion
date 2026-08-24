@@ -45,6 +45,11 @@ export async function tryBootstrapMisbindingRecovery(
     ? await classifyTaskWorktree(deps.rootDir, worktreePath)
     : { ok: false as const };
   if (!worktreePath || !worktreeClassification.ok) {
+    /*
+    FNXC:Identity 2026-08-24-02:18:
+    Bootstrap-misbinding recovery logs (unavailable worktree, re-anchor start, re-anchor failure)
+    use `runContextFor` so the recovery breadcrumb stays on the live executor run.
+    */
     await deps.store.logEntry(task.id, `[recovery] bootstrap misbinding detected but worktree unavailable for re-anchor: ${worktreePath ?? "none"}`, undefined, deps.runContextFor(task.id));
     return false;
   }

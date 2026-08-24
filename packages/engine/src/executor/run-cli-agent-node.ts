@@ -46,6 +46,11 @@ export async function runCliAgentNode(
 ): Promise<WorkflowNodeResult> {
   const runtime = deps.cliAgentRuntime;
   if (!runtime) {
+    /*
+    FNXC:Identity 2026-08-24-02:18:
+    CLI-agent error logs (runtime missing, no worktree, missing adapter, capacity) go through
+    `runContextFor` so the graph node's live run owns the failure breadcrumb.
+    */
     await deps.store.logEntry(
       live.id,
       `Workflow node '${node.id}' uses the cli-agent executor but no CLI agent runtime is wired`,
