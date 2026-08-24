@@ -576,19 +576,51 @@ Error: Hook timed out in 15000ms.
 fnlvl=warn [dashboard-github-tracking-reconciler] … pass failed (other passes still run): Failed query: select … from "project"."tasks" …
 ```
 
-The hook timeout arrives alongside PostgreSQL `Failed query` warnings, so the proximate cause is
-database contention/exhaustion when two api lanes and their workers share one PostgreSQL instance —
-the same class FN-9131 investigated for core's loaded PostgreSQL directory, where a shared
-connection-budget primitive made a loaded run WORSE and was reverted. This is suite infrastructure,
-not a defect in any of the five files above, and chasing the file that happened to lose the race on a
-given run is whack-a-mole.
+The hook timeout arrives alongside PostgreSQL `Failed query` warnings. Those warnings were FIRST READ
+as proof of connection exhaustion; that reading was WRONG and is retracted here. The warnings come from
+a background github-tracking reconciler still polling an already-torn-down store, i.e. noise that
+follows the timeout rather than causing it. Measured 2026-08-23: a live `dashboard-api-quality-backfill`
+lane peaked at **14 backend connections against `max_connections=100`**. There is no connection
+shortage. Two attempts to act on the exhaustion theory were reverted — lowering the harness `poolMax`
+from 5 to 2 took core's PostgreSQL suite from 1 failure to 11, matching FN-9131, where a shared
+connection-budget primitive also made a loaded run worse.
+
+This is suite infrastructure, not a defect in any of the five files above, and chasing the file that
+happened to lose the race on a given run is whack-a-mole.
 
 Scale for context: run 3 executed roughly 15,200 tests across 15 lanes and failed 2.
 
-**Not quarantined deliberately.** Quarantine is file-level and the failing file moves, so quarantining
-would evict healthy coverage without touching the cause. The rescue is a connection/concurrency budget
-for the api lanes (or per-lane database isolation), owned by whoever owns the lane runner. No timeout
-was widened, no retry added, and no assertion relaxed anywhere in this investigation.
+### Reproduction attempt 2026-08-23 — did NOT reproduce
+
+Re-run on a quiet 28-core machine at `7e59494448`, after this session's 816 cross-package test failures
+were fixed:
+
+| Run | Result |
+| --- | --- |
+| `--group api` alone (3 lanes) | **passed** — 156 files, 1,437 tests, 0 hook timeouts, 0 gate degradations |
+| full runner, all 15 lanes | **passed** — 23,584 tests, 0 hook timeouts, 0 gate degradations, 0 failed files |
+
+Two candidate mechanisms were tested and NEITHER is supported by evidence:
+
+1. **DDL admission saturation.** `pg-ddl-admission.ts` waits up to `acquireTimeoutMs` (default 10s),
+   then degrades and runs the DDL anyway, against a 15s `hookTimeout` — mechanically enough to overrun.
+   But both runs emitted **zero** `[pg-ddl-admission] degraded` warnings, so the gate never saturated.
+   Unsupported; do not cite it as the cause without a run that actually shows the warning.
+2. **CPU oversubscription.** The api group spends `import 191.63s` against `tests 45.01s`, and
+   `hookTimeout` is wall-clock, so a starved worker overruns setup without any database involvement.
+   This remains the leading candidate purely because it survives the disproofs above — the original
+   sightings occurred while several agent subprocesses ran concurrently, and the clean 2026-08-23 runs
+   had a quiet machine. It is UNPROVEN: no run has yet captured the failure with CPU pressure recorded.
+
+**Next attempt should capture, at the moment of failure:** per-worker CPU wait, the gate's
+`observe()` degradation counters, and which hook overran. Without those, any fix is a guess.
+
+**Not quarantined deliberately, and nothing deleted.** Quarantine is file-level and the failing file
+moves, so quarantining would evict healthy coverage without touching the cause. Deleting the files was
+considered and rejected: they are 112 tests pinning FN-8823 (shared-branch-group merge boundaries),
+FN-7438, FN-7611, FN-8341, and FN-8442, including an explicit guard against a hand-rolled
+`promoteBranchGroup` mock. No timeout was widened, no retry added, and no assertion relaxed anywhere in
+this investigation.
 
 One genuinely structural failure WAS found and fixed rather than recorded here: the lane runner's own
 self-tests spawned `pnpm --filter @fusion/dashboard test`, re-entering the suite from inside it. See
