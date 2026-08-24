@@ -2005,31 +2005,24 @@ async function ensureWorkspaceTaskDirSegmentPin(input: {
   });
   /*
   FNXC:WorkspaceWorktree 2026-08-24-06:11:
-  The pin is write-ONCE: two concurrent first acquisitions for the same task (a mid-flight scope
-  extension racing the primary dispatch) must converge on one directory, or one of them creates a
-  checkout the other cannot resolve. Mint under the store's per-task advisory lock and re-read
-  inside it, so the loser adopts the winner's segment instead of overwriting it. A store without the
-  atomic seam (focused test fakes) degrades to the plain write.
+  The pin is write-ONCE, so minting it is a compare-and-set rather than a read-then-write: two
+  first acquisitions for one task (a mid-flight scope extension racing the primary dispatch, or two
+  nodes on one central database) must converge on a single directory, or one creates a checkout the
+  other cannot resolve — permanently, since the pin is never re-derived. `pinWorkspaceWorktreeDirSegment`
+  performs that CAS under the task advisory transaction lock; the loser adopts the winner's segment.
+  A store without the seam (focused test fakes) degrades to the plain write.
   */
-  const atomic = (input.store as Partial<TaskStore>).updateTaskAtomic;
-  let pinned = segment;
-  if (typeof atomic === "function") {
-    const updated = await atomic.call(input.store, input.task.id, (current: Task) => {
-      const existingPin = current.workspaceWorktreeDirSegment;
-      if (typeof existingPin === "string" && existingPin.length > 0) {
-        pinned = existingPin;
-        return null;
-      }
-      return { workspaceWorktreeDirSegment: segment };
-    }, input.runContext);
-    input.logger?.log(`${input.task.id}: pinned workspace worktree directory segment ${pinned}`);
-    if (fallbackReason && pinned === segment) {
+  const pinCas = (input.store as Partial<TaskStore>).pinWorkspaceWorktreeDirSegment;
+  if (typeof pinCas === "function") {
+    const outcome = await pinCas.call(input.store, input.task.id, segment);
+    input.logger?.log(`${input.task.id}: ${outcome.minted ? "pinned" : "adopted"} workspace worktree directory segment ${outcome.segment}`);
+    if (fallbackReason && outcome.minted) {
       await input.store.logEntry(
         input.task.id,
         `[worktree] workspace directory name fell back to the task id (${fallbackReason})`,
       ).catch(() => {});
     }
-    return updated;
+    return outcome.task;
   }
   await input.store.updateTask(input.task.id, { workspaceWorktreeDirSegment: segment }, input.runContext);
   input.logger?.log(`${input.task.id}: pinned workspace worktree directory segment ${segment}`);

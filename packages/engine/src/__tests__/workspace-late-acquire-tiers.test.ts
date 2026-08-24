@@ -297,6 +297,23 @@ describe("workspace late repository acquisition tiers", () => {
     expect(result.content[0]?.text).toContain("pending");
   });
 
+  it("keeps a committed reroute reported as done when the task-log write fails", async () => {
+    acquireSucceeds();
+    const fake = makeFake(reviewEvidencedTask());
+    fake.store.logEntry = vi.fn(async (_id: string, message: string) => {
+      if (message.includes("during review")) throw new Error("log write failed");
+      fake.logs.push(message);
+    });
+
+    const result = await toolFor(fake).execute("call", { repo: "repo-b" } as never);
+
+    expect(result.isError).not.toBe(true);
+    expect(fake.seeds).toHaveLength(1);
+    // The reroute committed, so the executor must NOT be told the re-entry is still pending.
+    expect((result.details as any).reviewReentry).toMatchObject({ rerouted: true, reason: "seeded" });
+    expect(result.content[0]?.text).not.toContain("pending");
+  });
+
   it("treats a throwing merge-pending provider as not merge-pending rather than crashing", async () => {
     acquireSucceeds();
     const fake = makeFake(reviewEvidencedTask());

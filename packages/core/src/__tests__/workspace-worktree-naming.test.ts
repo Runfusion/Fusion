@@ -5,10 +5,13 @@ project's existing `worktreeNaming` setting. The interesting behavior is the fal
 the happy path: a branch-derived name is operator convenience, so an unusable one degrades to the
 task id and never fails an acquisition.
 */
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   deriveWorkspaceTaskDirSegment,
+  resolveWorktreesDirLayout,
   resolveWorkspaceTaskWorktreeDir,
+  workspaceWorktreeGroupSegment,
   WORKSPACE_RESERVED_TASK_DIR_SEGMENTS,
 } from "../tasks/worktree-layout.js";
 
@@ -73,5 +76,28 @@ describe("workspace task directory naming", () => {
       .toEqual({ segment: "close-the-late-acquire-gap" });
     expect(deriveWorkspaceTaskDirSegment({ taskId: "FN-9206", worktreeNaming: "task-title", title: "", description: "Fallback description text" }).segment)
       .toBe("fallback-description-text");
+  });
+
+  /*
+  FNXC:WorkspaceWorktree 2026-08-24-06:11:
+  R17: the group segment above the task directory stays derived from the workspace basename and is
+  independent of `worktreeNaming`, so archive disposal and the pi-extension candidate builder can
+  still resolve a grouped root from settings alone — neither has a Task in hand. If naming ever
+  reached the group level, those two callers would resolve a different directory than acquisition.
+  */
+  it("resolves the grouped root from settings alone, with no task and no naming mode", () => {
+    const grouped = resolveWorktreesDirLayout(join(workspace, "api"), { worktreesDir: "/var/tmp/trees" } as any, {
+      workspaceRootDir: workspace,
+      repoRelPath: "api",
+    });
+    expect(grouped).toBe("/var/tmp/trees/PRD-1234-my-slug/api");
+    expect(workspaceWorktreeGroupSegment(workspace)).toBe("PRD-1234-my-slug");
+
+    // Every naming mode leaves the group segment untouched; only the task level below it moves.
+    for (const worktreeNaming of ["branch", "task-title", "task-id", undefined]) {
+      const { segment } = deriveWorkspaceTaskDirSegment({ taskId: "FN-9207", worktreeNaming, branch: "feature/PRD-9999-other", title: "Other" });
+      expect(resolveWorkspaceTaskWorktreeDir(workspace, { worktreesDir: "/var/tmp/trees" } as any, segment))
+        .toBe(`/var/tmp/trees/PRD-1234-my-slug/${segment}`);
+    }
   });
 });

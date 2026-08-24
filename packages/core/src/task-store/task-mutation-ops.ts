@@ -899,6 +899,52 @@ export async function updateWorkspaceReviewStateImpl(
   });
 }
 
+/*
+FNXC:WorkspaceWorktree 2026-08-24-06:11:
+R15/KTD10: the workspace task-directory segment is WRITE-ONCE, so its mint is a compare-and-set,
+not a read-then-write. `updateTaskAtomic`'s `withTaskLock` is an in-process Map lock — it serializes
+one store instance, and this repo supports several nodes against one central database, so two
+processes racing a task's first workspace acquisition would both read "no pin" and the later write
+would win. Because the pin is never re-derived afterwards, a lost race leaves one node's recorded
+paths permanently disagreeing with the directory the other created. This mirrors the transactional
+advisory-lock CAS the sibling repository-scope writers in this file already use: the first mint wins
+and every later caller adopts it.
+*/
+export async function pinWorkspaceWorktreeDirSegmentImpl(
+  store: TaskStore,
+  id: string,
+  segment: string,
+): Promise<{ task: Task; segment: string; minted: boolean }> {
+  const candidate = segment.trim();
+  if (!candidate) throw new Error(`Cannot pin an empty workspace worktree directory segment for ${id}`);
+  return store.withTaskLock(id, async () => {
+    const layer = store.asyncLayer!;
+    const outcome = await layer.transactionImmediate(async (tx) => {
+      await acquireTaskAdvisoryXactLock(tx, layer.projectId, id);
+      const row = await readTaskRowInTransaction(tx, id, { includeDeleted: true }, layer.projectId);
+      if (!row) throw new TaskNotFoundError(id);
+      if (row.deletedAt) throw new TaskDeletedError(id, row.deletedAt as string);
+      const current = store.rowToTask(store.pgRowToTaskRow(row));
+      const existing = current.workspaceWorktreeDirSegment;
+      if (typeof existing === "string" && existing.length > 0) {
+        return { task: current, segment: existing, minted: false };
+      }
+      const [updatedRow] = await tx.update(schema.project.tasks).set({
+        workspaceWorktreeDirSegment: candidate,
+        updatedAt: new Date().toISOString(),
+      }).where(and(eq(schema.project.tasks.id, id), taskProjectScope(layer))).returning();
+      if (!updatedRow) throw new TaskNotFoundError(id);
+      return { task: store.rowToTask(store.pgRowToTaskRow(updatedRow)), segment: candidate, minted: true };
+    });
+    if (outcome.minted) {
+      await store.writeTaskJsonFile(store.taskDir(id), outcome.task);
+      if (store.isWatching) store.taskCache.set(id, { ...outcome.task });
+      store.emitTaskLifecycleEventSafely("task:updated", [outcome.task]);
+    }
+    return outcome;
+  });
+}
+
 export type PublishWorkspaceCodeReviewEvidenceInput = {
   expectedScopeRevision: number;
   reviewEvidence: NonNullable<TaskRepositoryScope["reviewEvidence"]>;

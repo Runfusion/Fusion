@@ -7070,12 +7070,15 @@ export function createAcquireRepoWorktreeTool(opts: {
         // `rerouted` is the boolean; an `active-continuation` reason is success — a live continuation
         // already owns the re-review, so seeding a second one would double-review the task.
         const reentryOk = reviewReentry.rerouted || reviewReentry.reason === "active-continuation";
+        // The log line must never rewrite the outcome above it: a failed write here with a
+        // COMMITTED reroute would fall into the catch below and report a pending re-entry that
+        // already happened, sending the executor after work the graph has taken.
         await store.logEntry(
           task.id,
           `fn_acquire_repo_worktree: acquired ${repo} during review and ${reentryOk ? "routed the task back through Code Review" : "could NOT seed Code Review re-entry"} (${reviewReentry.reason}); every repository in scope is re-reviewed`,
           undefined,
           runContext,
-        );
+        ).catch(() => {});
       } catch (bookkeepingError) {
         /*
         The repository IS acquired here and a live session may already be using its checkout, so a
